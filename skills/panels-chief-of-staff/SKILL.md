@@ -108,6 +108,9 @@ Do not use these commands for ordinary Ticket edits, convenient Stage jumps, or 
 Ticket worker is doing inside Panels. Clear ambiguity with the user instead of
 importing a claim you cannot reconcile confidently.
 
+When creating a Ticket that relies on existing Tickets being complete, pass each
+prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
+
 ## Authority boundary
 
 You act through the `panels` CLI and the Panels API. The server is the source of truth. Never edit the database or files directly to change Panels state.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from planner.conversation.hermes_backend_configuration import (
+    PLANNER_SKILL_NAMES,
     hermes_src_root,
     provision_planner_home_skills,
     resolve_hermes_python,
@@ -45,7 +46,13 @@ def test_resolve_planner_home_precedence() -> None:
 def test_provision_planner_home_skills_symlinks_repo_skills_idempotently(
     tmp_path: Path,
 ) -> None:
-    names = ("panels", "panels-worker", "panels-chief-of-staff")
+    names = (
+        "panels",
+        "panels-ticket-management",
+        "panels-worker",
+        "panels-chief-of-staff",
+    )
+    assert "panels-ticket-management" in PLANNER_SKILL_NAMES
     provision_planner_home_skills(tmp_path, names)
     provision_planner_home_skills(tmp_path, names)
     for name in names:

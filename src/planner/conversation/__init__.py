@@ -19,6 +19,7 @@ from .backend_contracts import (
     LegacyAcpSessionModelSelection,
     PermissionRequestCallback,
     ReverseServiceCapabilities,
+    SessionNotificationNormalizer,
     WorkingDirectoryResolver,
 )
 from .configuration import (
@@ -290,6 +291,7 @@ __all__ = [
     "QueueSnapshotEnvelope",
     "QueuedPrompt",
     "ReverseServiceCapabilities",
+    "SessionNotificationNormalizer",
     "ResolveConversationBinding",
     "ResolveConversationEmployee",
     "OrderedAcpConversationIngress",

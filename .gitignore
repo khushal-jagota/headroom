@@ -11,3 +11,4 @@ playwright-report/
 *.egg-info/
 .gstack/
 agent_backends/node_modules/
+web/node_modules/

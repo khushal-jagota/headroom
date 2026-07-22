@@ -1,23 +1,41 @@
 <script lang="ts">
   import { lineDiff } from "../../lib/acp/lineDiff";
+  import { panelsFileEditMetadata } from "../../lib/acp/fileEditMetadata";
 
   let {
     path,
     oldText,
-    newText
+    newText,
+    fieldMeta
   }: {
     path: string;
     oldText?: string | null;
     newText: string;
+    fieldMeta?: unknown;
   } = $props();
 
-  let rows = $derived(lineDiff(oldText, newText));
+  let bounded = $derived(panelsFileEditMetadata(fieldMeta));
+  let rows = $derived(
+    bounded?.detailState === "omitted"
+      ? []
+      : lineDiff(oldText, newText, {
+          oldStartLine: bounded?.oldStartLine,
+          newStartLine: bounded?.newStartLine,
+          emptyNewTextMeansNoLines: bounded?.operation === "delete",
+          normalizedSnapshotFragments: bounded !== null,
+        }),
+  );
   const labels = { context: "Context", delete: "Deleted", add: "Added" } as const;
   const markers = { context: " ", delete: "−", add: "+" } as const;
 </script>
 
 <figure class="acp-diff" data-acp-diff>
   <figcaption>{path}</figcaption>
+  {#if bounded?.detailState === "truncated"}
+    <div class="acp-diff-notice">Some edit detail was truncated</div>
+  {:else if bounded?.detailState === "omitted"}
+    <div class="acp-diff-notice">Edit detail was omitted</div>
+  {/if}
   <div class="acp-diff-lines" role="table" aria-label={`Line changes for ${path}`}>
     {#each rows as row}
       <div class={`acp-diff-line acp-diff-line--${row.kind}`} role="row">
@@ -38,6 +56,7 @@
     font-size: var(--type-xs);
     margin-bottom: var(--space-1);
   }
+  .acp-diff-notice { color: var(--text-faint); font-size: var(--type-xs); margin-bottom: var(--space-1); }
   .acp-diff-lines {
     background: var(--surface-sunken);
     overflow-x: auto;

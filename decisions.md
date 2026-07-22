@@ -149,6 +149,22 @@ therefore uses the smaller tag treatment.
 
 # Tickets, gates, and the resolution engine
 
+## D-blockers-derived-intake-and-presentation — Keep one relationship and derive its effects
+
+Both Ticket-creation paths accept `blocked_by_ticket_ids` and add those existing Ticket
+sources through the canonical `blocks` writer inside the creator's one transaction. This
+keeps endpoint, duplicate, and cycle validation plus link events in one engine; the action
+wakes eligibility only after that transaction returns successfully.
+
+Blocked is presentation and scheduling, never stored Ticket position. Kickoff wins first;
+after Kickoff, an active incoming blocker selects a synthetic quiet Workspace section while
+the card retains its real Stage. Ticket detail projects only active direct incoming rows and
+removes them through the existing link-delete route. Reverse and cleared rows remain
+available to internal link readers that need canonical relationship facts, but are not a
+Ticket-detail or copied-Ticket presentation.
+Blocker removal retains visible `Remove` text but uses the blocker title in its accessible
+name so each control is distinguishable.
+
 ## D-lifecycle-gates — Kickoff plus five worker stages are ordinary gated fields
 
 The ticket lifecycle is `needs_kickoff → needs_success → needs_approach → needs_plan →
@@ -1893,6 +1909,22 @@ therefore one nonempty `message.delta`, the same terminal `interrupted` assertio
 assertion that no shutdown-settlement SQLite lock error was logged. No production change follows
 from this fixture correction; the final canonical `./verify` still remains.
 
+## D-compact-worker-settings — Editable Worker settings are a managed overlay, not structure
+
+Worker identity, Stage order, gated fields, terminality, and specialist-skill identity remain in the
+immutable Python registry. One managed Worker-settings source owns only existing Stage ownership
+defaults and the canonical editable specialist-skill description/body. Ticket rows persist the default
+captured on current-Stage entry before any global default can be changed; explicit per-Ticket overrides
+remain authoritative. The UI reads composed Worker detail through dedicated `workers` resources while
+`/api/worker-types` stays the structural lifecycle manifest. Edited specialist skills are materialized
+into the planner Hermes home without resetting or rewriting existing Employee session ids.
+
+The work is isolated because the main worktree contains unrelated Hermes-relay changes. Implementation
+uses serial contract-bounded agent passes and read-only Codex review; only the final settled tree runs
+canonical `./verify`. A failed event transaction restores the prior managed file and live skill while
+the per-Worker lock is still held. Candidate files remain for repair, and the browser keeps attempted
+edits visible instead of pretending a failed write succeeded.
+
 ## D-exploration-worker — Exploration extracts the transferable problem before it produces work
 
 `exploration` is a first-class Worker type for premises that are not yet understood well enough to
@@ -2022,6 +2054,13 @@ column disambiguates. Find the old number here to reach its current slug (or its
 ---
 
 # ACP conversation presentation (2026-07-21)
+
+## D-acp-unmatched-tool-updates-are-quiet — Separate valid protocol events from visible transcript content
+
+A structurally valid `tool_call_update` without a matching pending tool call is incomplete transcript
+context, not unsupported agent content. The browser keeps the raw envelope available to transport
+history but does not create visible message, timeline, or unsupported-content state. Matched updates
+still patch their tool call, and recognized unsupported updates remain visible.
 
 ## D-acp-task-strip-active-only — A stored plan is visible only while work remains
 
@@ -3024,3 +3063,67 @@ with later live updates behind it. The production live queue remains slow-client
 raised from 128 to 1,024 envelopes for operational headroom. Replay integrity failures and genuine
 live slow-client evictions close through one idempotent permission-detach owner and are logged with
 identity, generation, counts, and limits but no conversation content.
+
+## D-compact-workers-current-main-closeout — preserve current ACP and schema history
+**Context:** The approved compact Workers commits predated the current conversation composition,
+environment isolation, managed-Markdown pipeline, and main's schema v28/v29 migrations. Main also
+advanced again during Closeout.
+
+**Decision:** Replay the approved behavior onto current main rather than restoring retired `minds`
+or gateway-adapter code. Keep main's v28/v29 migrations and add captured ownership defaults as v30.
+Use the configured runtime registry everywhere, materialize managed specialist skills from each
+instance database parent after its canonical data tree is settled, and keep failed description/body
+candidates independent from canonical publication. A successful save of one field updates that field
+in the candidate without publishing or discarding the other field's failed draft.
+
+**Why:** Worker settings belong beside the active database, while Employee sessions and current ACP
+composition remain untouched. Versioned migration order protects live databases, and preserving a
+failed draft across an independent save is required by the approved direct-edit interaction.
+
+The current-main post-fork SDK regression continues to require exact-session routing, source-before-
+replay ordering, and a fully drained healthy ingress. It does not require a candidate notification to
+arrive before the subsequent load request: the private response epoch is installed first, and ACP does
+not guarantee notification/request wire ordering across the prior fork response.
+# 2026-07-22 — t_m024gke4 implementation routing
+
+- Delegate the approved implementation as one focused slice because the projection writer, HTTP
+  boundary, shared Svelte route, classifier, and cross-layer regressions form one coupled contract.
+  One agent owns all edits serially; an independent agent reviews the settled diff afterward.
+- Do not create a visual planning artifact: this ticket reuses the existing spinner, filled dot,
+  quiet ring, error mark, and green completed mark without changing layout or inventing a new visual.
+- Preserve the unrelated dirty `composition.py` and nested-worktree state exactly; this ticket has no
+  reason to touch those paths.
+
+## Review resolution
+
+- Keep permission attention ahead of active in the existing classifier. The Kickoff explicitly says
+  a pending permission remains filled, and the implementation now documents the exact order and
+  asserts exact terminal-precedence results.
+- Treat a response completing while its Ticket is open as seen. This is the approved no-visibility
+  acknowledgement boundary; adding a response generation or compare-and-swap field would introduce
+  unrequested durable machinery. The independent re-review accepted this and reported no violations.
+- Repair the first canonical-run failure in the Playwright setup only: open the intentionally
+  collapsed Done section before asserting its completed Ticket's green mark. Product behavior stays
+  unchanged.
+- Close out directly on `main` because this approved implementation was developed there rather than
+  on a feature branch. Stage and commit only the Ticket-owned paths; concurrent Hermes configuration,
+  skill/worktree, Vite-cache, and nested-worktree changes stay outside the commit.
+# 2026-07-22 — Panels owns bounded Codex file-edit ingress
+
+- Do not patch or fork `@agentclientprotocol/codex-acp`. Panels pins but does not own that adapter,
+  and carrying a modified `node_modules` artifact would make every dependency upgrade an integration
+  hazard.
+- Let the backend definition supply the normalizer, but execute it inside ordered ingress only after
+  the raw notification and typed SDK callback match. Run it before the slot's live or private
+  `session/load` downstream is selected. This preserves wire-integrity matching and gives one behavior
+  for live and restored conversations without teaching the generic Hub that one backend inflates edits.
+- Bound normalized edit detail to 64 KiB beyond the serialized mandatory tool/file identities. Use
+  grouped hunks only for bounded small inputs. For large inputs, cap comparison work and show fixed
+  head/tail evidence; if the bounded scan cannot locate a huge middle-only change, publish an explicit
+  omitted-detail diff instead of fabricated rows or invented line origins.
+- Preserve semantic edit evidence—path, completion status, changed hunks, source line origins, and
+  explicit truncation—while removing unchanged full-file snapshots. Keep the existing replay byte
+  ceiling as a genuine integrity bound rather than raising it to accommodate amplification.
+- Treat this as one contract-scoped conversation slice. Use TDD at the child-ingress and real Hub
+  replay seams, independent implementation review, and the repository's one final `./verify` before
+  advancing `main`.

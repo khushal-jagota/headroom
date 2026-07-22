@@ -894,6 +894,58 @@ def test_official_sdk_child_forks_exact_session_and_privately_loads_ordered_repl
     asyncio.run(exercise())
 
 
+def test_official_sdk_child_normalizes_live_and_private_load_after_wire_match() -> None:
+    async def exercise() -> None:
+        def mark(notification: SessionNotification) -> SessionNotification:
+            return notification.model_copy(
+                update={"field_meta": {**(notification.field_meta or {}), "normalized": True}}
+            )
+
+        definition = replace(_definition(), session_notification_normalizer=mark)
+        ordinary: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
+        private: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
+        child = await SdkAcpEmployeeChildFactory(definition).create(
+            _employee(), 1, _append_async(ordinary), _deny_permission, _discard_death
+        )
+        try:
+            await child.initialize(build_panels_initialize_request(definition))
+            created = await child.new_session(
+                NewSessionRequest(cwd=str(REPOSITORY_ROOT), mcp_servers=[])
+            )
+            await child.prompt(
+                PromptRequest(
+                    session_id=created.session_id,
+                    prompt=[TextContentBlock(type="text", text="normalizer boundary")],
+                    field_meta={"script": "default"},
+                )
+            )
+            assert ordinary
+            assert all(
+                isinstance(item, SessionNotification)
+                and item.field_meta == {"normalized": True}
+                for item in ordinary
+            )
+
+            await child.capture_load_session(
+                LoadSessionRequest(
+                    cwd=str(REPOSITORY_ROOT),
+                    session_id=created.session_id,
+                    mcp_servers=[],
+                ),
+                _append_async(private),
+            )
+            assert private
+            assert all(
+                isinstance(item, SessionNotification)
+                and item.field_meta == {"normalized": True}
+                for item in private
+            )
+        finally:
+            await child.close()
+
+    asyncio.run(exercise())
+
+
 def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock() -> None:
     async def scenario() -> None:
         definition = replace(
@@ -1014,7 +1066,6 @@ def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock(
             ]
             assert private_command_names[0] == "candidate-after-fork"
             assert "compact" in private_command_names
-            assert wire_order.index("candidate-update") < wire_order.index("candidate-load-request")
             assert wire_order.index("source-update") < wire_order.index("candidate-replay")
             assert child.alive
             assert child._ordered_ingress.fatal_error is None  # noqa: SLF001

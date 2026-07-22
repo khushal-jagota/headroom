@@ -78,10 +78,22 @@ def main() -> None:
         assert step.get_attribute("aria-expanded") == "false"
         step.click()
         assert step.get_attribute("aria-expanded") == "true"
-        assert page.locator("[data-acp-diff]").count() == 1
+        assert page.locator("[data-acp-diff]").count() == 3
         assert page.get_by_role("table", name="Line changes for runtime.txt").count() == 1
-        assert page.get_by_role("cell", name="Deleted").count() == 1
-        assert page.get_by_role("cell", name="Added").count() == 1
+        assert page.get_by_role("cell", name="Deleted").count() >= 1
+        assert page.get_by_role("cell", name="Added").count() >= 1
+        diff = page.locator("[data-acp-diff]")
+        assert diff.get_by_text("Some edit detail was truncated", exact=True).count() == 1
+        rows = diff.locator("[role='row']")
+        assert rows.nth(0).locator("[role='cell']").nth(0).inner_text() == "41"
+        assert rows.nth(1).locator("[role='cell']").nth(1).inner_text() == "51"
+        assert "partial" in step.inner_text()
+        added = page.get_by_role("table", name="Line changes for added-newline.txt")
+        deleted = page.get_by_role("table", name="Line changes for deleted-newline.txt")
+        assert added.locator("[role='row']").count() == 1
+        assert added.get_by_role("cell", name="Added", exact=True).count() == 1
+        assert deleted.locator("[role='row']").count() == 1
+        assert deleted.get_by_role("cell", name="Deleted", exact=True).count() == 1
         terminal = page.get_by_role("region", name="Terminal terminal-runtime")
         assert "released" in terminal.inner_text()
         assert "runtime output" in terminal.inner_text()

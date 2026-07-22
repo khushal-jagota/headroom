@@ -176,6 +176,27 @@ function runStateAssertions(subject, fixtureStream) {
   assert.equal(subject.projectConversationSnapshot(state).session.pendingToolCalls["tool-1"].expanded, true);
   assert.equal(subject.projectConversationSnapshot(state).session.pendingToolCalls["tool-1"].content.length, 2);
 
+  const beforeUnmatchedToolUpdate = subject.projectConversationSnapshot(state);
+  const unmatchedToolUpdate = updateEnvelope(100, {
+    sessionUpdate: "tool_call_update",
+    toolCallId: "missing-tool",
+    status: "completed",
+  });
+  assert.equal(subject.validateServerEnvelope(unmatchedToolUpdate).ok, true);
+  reduce(unmatchedToolUpdate);
+  const afterUnmatchedToolUpdate = subject.projectConversationSnapshot(state);
+  assert.deepEqual(afterUnmatchedToolUpdate.session.messages, beforeUnmatchedToolUpdate.session.messages);
+  assert.deepEqual(afterUnmatchedToolUpdate.timeline, beforeUnmatchedToolUpdate.timeline);
+  assert.deepEqual(afterUnmatchedToolUpdate.session.pendingToolCalls, beforeUnmatchedToolUpdate.session.pendingToolCalls);
+  assert.deepEqual(afterUnmatchedToolUpdate.unsupportedAgentContent, beforeUnmatchedToolUpdate.unsupportedAgentContent);
+
+  const planRemoved = updateEnvelope(101, { sessionUpdate: "plan_removed" });
+  assert.equal(subject.validateServerEnvelope(planRemoved).ok, true);
+  reduce(planRemoved);
+  assert.deepEqual(subject.projectConversationSnapshot(state).unsupportedAgentContent, [
+    { key: "plan_removed:0", reason: "Unsupported agent content" },
+  ]);
+
   let queuedBoundaryState = subject.createConversationState("employee-1");
   const reduceQueuedBoundary = (transition) => {
     queuedBoundaryState = subject.reduceConversationState(

@@ -75,6 +75,8 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **`panels worker note <id> <field> --body-file -`** — preserve user guidance next to a field without touching its value.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket, when a
   step spins off a new one. Worker type is required; choose it for the work being created.
+  When creating a Ticket that relies on existing Tickets being complete, pass each
+  prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
 
 Never invoke `panels chief`.
 

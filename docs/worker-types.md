@@ -175,6 +175,31 @@ move into the header or become a display of the worker's current settings.
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
 
+## Managed settings and the Workers screen
+
+The registry remains the immutable workflow definition. A managed source beside the database owns
+only the ownership default for each existing non-terminal Stage and the existing specialist skill's
+description and Markdown body. The Workers screen exposes those settings without allowing Worker
+identity, Stage structure, fields, or skill identity to change.
+
+A Ticket captures the managed ownership default when it enters a Stage. Later global changes affect
+only future entries; the Ticket's explicit Stage override still wins. Settings writes use validated
+candidates, atomic replacement, one writer lock per Worker, and a last-known-good revision. A failed
+event write restores both the managed source and the live Hermes materialization.
+
+The skill name is read-only. Description and Markdown body are ordinary direct edits that save, fail,
+and retry independently. Successful skill edits refresh the configured planner Hermes home without
+changing existing Employee session ids. Codex and Claude Code continue to use the repository skill
+source exposed through their native project links.
+
+`GET /api/workers` serves the compact index. `GET /api/workers/{id}` composes registry structure with
+managed settings. `worker_settings_changed` invalidates only `workers` and the matching
+`worker:<id>` browser resource.
+
+_Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
+`src/planner/conversation/hermes_backend_configuration.py`, and
+`web/src/routes/WorkersRoute.svelte`.
+
 ## The Ticket owns its Employee launch setup
 
 Each Worker type supplies the Worker, Model, and Reasoning values used to start a new

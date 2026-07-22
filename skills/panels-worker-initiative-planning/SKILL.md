@@ -151,8 +151,9 @@ complete enough to approve as the exact creation package.
 Create exactly the approved outlines and nothing broader. Use the outlined Worker type,
 title, placement, and kickoff context. When the planning Ticket belongs to a sprint
 item, create the new Tickets under that same item. Otherwise preserve the planning
-Ticket's project and sprint context without inventing a new container. Add only approved
-blocking links.
+Ticket's project and sprint context without inventing a new container. When creating a
+Ticket that relies on existing Tickets being complete, pass each prerequisite Ticket id
+with repeatable `--blocked-by <ticket-id>`.
 
 Encode shared context proportionately: each created Ticket should understand its own
 boundary without receiving the entire initiative record. Update the sprint item only

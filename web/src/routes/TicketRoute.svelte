@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { fetchText } from "../lib/api";
   import {
     mutateJsonWithResourceEffect,
@@ -67,6 +67,16 @@
     { value: "", label: "(no project)" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
+
+  onMount(() => {
+    void mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/acknowledge-completed-response`,
+      { method: "POST" },
+      { kind: "ticketChanged", ticketId: stableId }
+    ).catch((err) => {
+      headerError = err;
+    });
+  });
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
     const effect = "title" in body
@@ -216,7 +226,25 @@
 
   function hasBlockerRows(detail: TicketDetail): boolean {
     const summary = detail.blocker_summary;
-    return Boolean(summary && (summary.blocked_by.length > 0 || summary.blocks.length > 0));
+    return Boolean(summary?.blocked_by.length);
+  }
+
+  async function removeBlocker(blockerTicketId: string): Promise<void> {
+    headerError = null;
+    const query = new URLSearchParams({
+      from_id: blockerTicketId,
+      to_id: stableId,
+      kind: "blocks"
+    });
+    try {
+      await mutateJsonWithResourceEffect(
+        `/api/links?${query.toString()}`,
+        { method: "DELETE" },
+        { kind: "ticketChanged", ticketId: stableId }
+      );
+    } catch (err) {
+      headerError = err;
+    }
   }
 
   onDestroy(() => {
@@ -382,27 +410,18 @@
               <div class="ticket-blocker-group" data-blocker-group="blocked-by">
                 <div class="ticket-blocker-heading">Blocked by</div>
                 {#each blockerSummary?.blocked_by || [] as blocker}
-                  <a
-                    class="ticket-blocker-row"
-                    class:ticket-blocker-row--cleared={!blocker.active}
-                    href={blocker.href}
-                  >
-                    <span class="ticket-blocker-title">{blocker.title}</span>
-                    <span class="ticket-blocker-state">{blocker.active ? "active" : "cleared"}</span>
-                  </a>
-                {/each}
-              </div>
-              <div class="ticket-blocker-group" data-blocker-group="blocks">
-                <div class="ticket-blocker-heading">Blocks</div>
-                {#each blockerSummary?.blocks || [] as blockedTarget}
-                  <a
-                    class="ticket-blocker-row"
-                    class:ticket-blocker-row--cleared={!blockedTarget.active}
-                    href={blockedTarget.href}
-                  >
-                    <span class="ticket-blocker-title">{blockedTarget.title}</span>
-                    <span class="ticket-blocker-state">{blockedTarget.active ? "active" : "cleared"}</span>
-                  </a>
+                  <div class="ticket-blocker-row">
+                    <a class="ticket-blocker-link" href={blocker.href}>
+                      <span class="ticket-blocker-title">{blocker.title}</span>
+                    </a>
+                    <button
+                      type="button"
+                      class="ticket-act"
+                      data-remove-blocker={blocker.ticket_id}
+                      aria-label={`Remove blocker ${blocker.title}`}
+                      onclick={() => void removeBlocker(blocker.ticket_id)}
+                    >Remove</button>
+                  </div>
                 {/each}
               </div>
             </section>

@@ -363,9 +363,7 @@ function reduceSessionUpdate(
       return withMessageTimeline({ ...boundary.state, session }, boundary.messageId, boundary.existed);
     }
     case 'tool_call_update': {
-      if (!state.session.pendingToolCalls.has(update.toolCallId)) {
-        return addUnsupportedContent(state, `tool-update:${update.toolCallId}`);
-      }
+      if (!state.session.pendingToolCalls.has(update.toolCallId)) return state;
       return {
         ...state,
         session: patchSessionToolCall(state.session, update.toolCallId, update),

@@ -1,5 +1,42 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Bound Codex file-edit conversation payloads
+
+Live reproduction for Ticket `t_m024gke4` is exact: its durable Codex session loads 239 typed ACP
+notifications, but Panels attempts 241 browser envelopes totaling 1,137,603 bytes against the
+1,048,576-byte reset-buffer limit. The hub therefore clears the atomic replay and closes every
+attach with 1013 `conversation replay unavailable; retry`; the browser receives no cursor, renders
+no history, and cannot send. Ticket `errored` status is unrelated.
+
+One completed Codex `Editing files` update is 956,514 bytes. The pinned external Codex ACP adapter
+expands two small append patches against `PROGRESS.md` and `decisions.md` into complete old/new file
+snapshots. Panels will not patch or fork that dependency. Instead, its backend definition supplies
+one typed normalizer applied inside ordered ingress after the raw/typed fingerprint match and before
+both live publication and private replay capture.
+Codex file edits will retain truthful paths, status, bounded changed hunks, original line origins,
+and explicit truncation metadata without forwarding complete unchanged files. Other Codex updates
+and all other backends remain byte-for-byte unchanged. The reset-buffer ceiling remains the final
+integrity guard, with focused live/replay regressions followed by one canonical `./verify`.
+
+The implementation now bounds Codex edit detail to 64 KiB beyond measured mandatory identity,
+uses grouped small-file hunks and fixed-work large-file evidence, and carries truthful origin and
+truncation metadata through transcript steps and permission prompts. Focused normalizer, real SDK
+child live/private-load, frontend component, and Hub replay tests are green; the Hub fixture proves a
+raw update above 1 MiB reaches `ready` after normalization without changing the replay cap.
+
+Independent implementation review found and resolved collision-ordering and trailing-newline
+presentation defects; the final review reports `NO VIOLATIONS`. The canonical `./verify` passed
+Ruff, strict Mypy across 153 source files, 1,304 unit tests, compile/CSS checks, zero Svelte
+diagnostics, the production build and frontend tests, and all 116 Playwright tests; final
+`VERIFY: PASS`.
+
+Landed on main and restarted. A live attach to the affected Ticket now replays all 239 ACP updates,
+reaches `ready` at sequence 241, and transfers 198,376 bytes total; the largest envelope is 60,730
+bytes. The pre-existing dirty main-worktree contents were restored exactly for every non-generated
+path. The one generated-bundle conflict was resolved by rebuilding from the combined source tree,
+so the dirty bundle contains both the landed fix and the owner's restored frontend work. Both
+temporary stashes were removed; older owner stashes and all dirty nested worktrees remain untouched.
+
 Read this first after any context compaction. It is the build's memory — a snapshot of where
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
@@ -18,9 +55,112 @@ Focused evidence is green: 68 registry and 51 hub tests; selected cold-load, act
 replacement, real-WebSocket, and slow-browser focused tests pass. Ready reconnect now uses a
 subscriber-local reset-complete-history-one-terminal-ready snapshot without canonical mutation, and
 malformed or noncontiguous snapshots fail closed. All review findings are resolved with a final
-result of `PASS`. Final canonical `./verify` passed Ruff, strict Mypy over 148 source files, 1,306 unit
-tests, compile/CSS checks, zero Svelte diagnostics, frontend build/tests, and 111 e2e tests; final
-VERIFY: PASS. Next step: propose implementation.
+result of `PASS`. Implementation was approved. Closeout is integrating current main and will verify
+the prospective merged tree before advancing main.
+
+## Current work cycle (2026-07-22): Coherent blocked-Ticket intake and workspace (`t_np7fjas6`)
+
+Both ordinary and Chief external-work Ticket creators now accept zero or more existing
+blocker Ticket ids through API and repeatable CLI options. Ticket insertion, every canonical
+`blocks` link, and all creation/link events share the creator's one transaction; missing or
+duplicate blockers return structured link errors with no writes, and a successful action
+wakes eligibility once after commit.
+
+The board exposes only the derived active-blocker fact. Workspace presentation keeps blocked
+Kickoff Tickets in Kickoff, then places blocked post-Kickoff Tickets in a synthetic quiet
+Blocked section above Kickoff without changing their real Stage or control state. Ticket
+detail now omits empty blocker context, shows only direct active incoming blockers, and removes
+links during Kickoff or later through the canonical delete route. Cleared and reverse rows are
+removed from Ticket detail and copied Ticket text; Ticket-to-Sprint-item link behavior remains
+unchanged.
+
+The settled focused gates are green: the 141-test backend Ticket/link/Sprint/creator suite,
+strict Mypy across 150 source files, focused Ruff, all frontend tests, zero Svelte diagnostics,
+the production frontend build, and both Chromium blocker scenarios. Independent review found
+indistinguishable blocker-removal accessible names. Exact browser RED proved no `aria-label`;
+dynamic `Remove blocker <title>` labels and assertions are GREEN, and narrow follow-up review
+reports `NO VIOLATIONS`. The first canonical `./verify` run had Ruff, Mypy, build, frontend,
+and 116 Playwright tests green, but unit tests failed only because this isolated worktree lacked
+the ignored locked `agent_backends` packages. `npm ci` from `agent_backends/package-lock.json`
+restored the harness; the unchanged complete 1,297-test unit suite then passed. The unchanged full
+canonical `./verify` then passed Ruff, strict Mypy across 150 source files, 1,297 unit tests,
+compile/CSS checks, zero Svelte diagnostics, the production build and frontend tests, and 116
+Playwright tests; final `VERIFY: PASS`. The creator guidance follow-up at `c759a2e` is included.
+Main `0534d7d` was merged into the feature at `4e4e741`, with only a PROGRESS conflict that
+preserved both active records. The prospective merged tree's canonical `./verify` passed Ruff,
+strict Mypy across 152 source files, 1,297 unit tests, compile/CSS checks, zero Svelte diagnostics,
+the production build and frontend tests, and 116 Playwright tests; final `VERIFY: PASS`. Main was
+fast-forwarded from `0534d7d` to `30d7729`. Unrelated dirty work was stashed and restored unstaged;
+restore conflicts preserved both board tests and the pre-existing local bundle pointer. All 16
+untracked files matched their pre-merge hashes, and the dirty status path set matched except for
+the old bundle deletion now owned by the landed commit. No restart or deploy. Next: propose
+Closeout.
+
+## Current work cycle (2026-07-22): Clear Worker-message attention on Ticket open (`t_m024gke4`)
+
+The approved implementation plan adds one idempotent Ticket-open acknowledgement that clears only
+the durable completed-response attention fact, routes it through the shared Ticket surface and the
+existing ticket-scoped invalidation path, and keeps the server-side Workspace-dot classifier as the
+single decision point. The classifier will restore the existing green completed mark for terminal
+Tickets after exceptional, active, and attention states take precedence. Focused projection/API,
+classifier/view, frontend, and Playwright regressions will cover both Ticket entry paths, preserved
+attention, repeat acknowledgement, and terminal green before the one canonical `./verify` run.
+
+Implementation and independent review are complete with no unresolved violations. The first
+canonical `./verify` exposed only a faulty new Playwright setup: the completed card was correctly
+present under the existing collapsed Done section, but the test waited for visibility before opening
+Done. The test-only integration repair opens Done first; its focused browser regression passed.
+
+The final canonical `./verify` passed Ruff, strict Mypy across 153 source files, 1,314 unit tests,
+compile/CSS checks, zero Svelte diagnostics, the production frontend build and frontend tests, and
+all 116 Playwright tests; final `VERIFY: PASS`. A concurrent external change landed during the run;
+the green gate covers that combined current tree, and its unrelated Hermes configuration,
+skill/worktree, and Vite-cache changes remain untouched. Closeout committed exactly this Ticket's
+backend, frontend, tests, generated bundle, docs, and memory changes on `main` as `bf0b219`, from
+base `553b0a4`. All unrelated worktree state remains unstaged. The documented Panels supervisor
+restart was accepted, and a post-restart `panels ticket show t_m024gke4` confirmed the replacement
+server is healthy on the expected `needs_closeout` Ticket. No external deployment applies. Next:
+propose Closeout for approval.
+Pre-existing `src/planner/conversation/composition.py`, nested `.claude` worktree, and `.worktrees/`
+changes are unrelated and must remain untouched. No blocker.
+
+## Current work cycle (2026-07-22): Quiet unmatched ACP tool updates (`t_7dr3czcm`)
+
+The browser reducer now ignores a structurally valid `tool_call_update` when its `toolCallId` is
+absent from `pendingToolCalls`; it adds no message, timeline entry, or unsupported-content marker.
+Matched tool updates still patch normally, while recognized unsupported updates such as
+`plan_removed` remain visible as unsupported agent content.
+
+Focused TDD evidence: `node tests/acp-browser-state.test.mjs` first failed on the new unmatched-update
+assertion, then passed after the reducer change. Main advanced by fast-forward from
+`d60e62dda2aa7ac1693fdf989bf72d41009e724d` to `bc9de5ca40fa3099e006e8a7ac875c5b0146f7fc`.
+The canonical `./verify` evidence remains the exact prospective/final tree result: Ruff, strict mypy
+across 152 source files, 1,292 unit tests, compile/CSS checks, zero Svelte diagnostics, production
+frontend build/tests, and 115 Playwright E2E tests passed; final `VERIFY: PASS`. Unrelated local
+changes were preserved exactly. No deploy or restart applied.
+
+## Current work cycle (2026-07-22): compact Workers Closeout (`t_6v0bjnwh`)
+
+The approved compact Workers implementation and its direct-edit correction are reconciled with
+current ACP-era `main` on `closeout/t_6v0bjnwh-current-main`. The integration preserves main's
+Project v28 and Ticket-conversation projection v29 migrations; captured Stage ownership defaults
+are the additive v30 migration. A backup copy of the live schema-v28 database migrated through
+v29/v30 with 119 Tickets, no missing non-terminal defaults, no terminal defaults, and no foreign-key
+violations.
+
+Focused backend, frontend, environment-isolation, and browser gates pass. The independent full-diff
+review found two Closeout defects: an independent skill-field save could overwrite the other field's
+failed candidate, and environment preparation could materialize specialist settings from the wrong
+parent before replacing its data tree. Both were fixed with RED/GREEN regressions. The final focused
+review reports `NO VIOLATIONS`. The canonical gate also exposed an unrelated racy ACP test assertion:
+a post-fork notification may safely arrive after the next load request once the exact-session private
+epoch is installed. The test still proves exact private/source routing, replay order, and no deadlock,
+but no longer asserts that unsupported wire ordering.
+
+The settled tracked tree is reserved for the repository's one canonical `./verify`; its full output is
+captured as the Ticket's managed `verify-closeout.log`. Only a `VERIFY: PASS` may advance `main`.
+After landing, use the documented Panels restart, verify the Workers API and page, preserve the
+unrelated `composition.py` and nested-worktree edits exactly, then propose Closeout.
 
 ## Current work cycle (2026-07-21): Ticket Workspace dot projection (`t_xb76vw05`)
 
@@ -3068,3 +3208,6 @@ Venv being built in worktree for final verify. No commits yet — owner commits.
 Wave 3 complete (2026-07-21): T6 reconciled all tests (web suite + tests/support/acp_component_runtime.py + e2e selectors) and surfaced a genuine TranscriptView keying regression (duplicate user render-item keys crashed the transcript on first prompt) — fixed by orchestrator (per-part keys). Combined-diff review's blocker (transcript CSS written to main tree by T2) recovered into worktree; main tree restored clean. agent_backends npm ci was needed in the fresh worktree (22 env-only unit failures before it). Final reserved ./verify: PASS — all gates ok (ruff, mypy, unit, build check, frontend, e2e 103 passed). Branch worktree-chat-panel-redesign ready for owner commit; nothing committed.
 Committed 66a2d1e on owner instruction; main merged in (b308a7f: employee-configuration work; e2e selector conflicts resolved, dist rebuilt) and fast-forwarded back into main.
 Dogfood round (2026-07-21, Claude worker on t_74sa1y1j): three fixes uncommitted in worktree — (1) stanza-internal grids get min-width:0 so wide step output scrolls instead of blowing the pane; (2) failure auto-open deleted at stanza and step level (owner: failures a worker self-corrects are not worth surfacing open); (3) narration-led stanza folding in groupMessageBlocks — Claude sends narration text, not thought chunks, so an all-text content part immediately followed by tool_calls becomes the stanza's collapsed lead (streams as prose, folds when tools arrive; final answer stays prose; Hermes thought path unchanged). ./verify after: PASS (1084 unit, 105 e2e). Markdown underscore-italics mangling seen and deliberately left alone (owner ruled not an issue).
+
+## Frontend dependency tracking cleanup (2026-07-22)
+Stage: complete, awaiting commit. `web/node_modules/` is now ignored and its 3,985 generated dependency files are removed from the Git index while the local install remains intact. Focused checks prove the path is ignored, Git tracks zero files below it, and `npm --prefix web run check` passes. Worktrees and their dependencies were explicitly left untouched. Blockers: none.

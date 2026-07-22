@@ -18,6 +18,7 @@ const indexPath = join(webRoot, "tests", `.acp07-component-index-${process.pid}.
 let serverProcess;
 
 const ticketRouteSource = await readFile(new URL("../src/routes/TicketRoute.svelte", import.meta.url), "utf8");
+const boardRouteSource = await readFile(new URL("../src/routes/BoardRoute.svelte", import.meta.url), "utf8");
 const employeeConfigurationSource = await readFile(
   new URL("../src/components/EmployeeConfigurationSetup.svelte", import.meta.url),
   "utf8",
@@ -26,6 +27,8 @@ assert.match(ticketRouteSource, /<EmployeeConfigurationSetup/);
 assert.match(ticketRouteSource, /beforeApproval=\{name === "kickoff" && detail\.employee_configuration_editable/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-configuration/);
 assert.match(ticketRouteSource, /kind: "ticketChanged", ticketId: stableId/);
+assert.match(ticketRouteSource, /\/acknowledge-completed-response/);
+assert.match(boardRouteSource, /settled:\s*\{\s*state: "completed"/);
 assert.match(ticketRouteSource, /deferInitialAttach=\{detail\.employee_configuration_editable\}/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.match(employeeConfigurationSource, /employee_launch_model/);

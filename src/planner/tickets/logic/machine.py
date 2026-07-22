@@ -130,19 +130,19 @@ def effective_stage_ownership_mode(
     stage_ownership_overrides: Mapping[str, StageOwnershipMode],
     *,
     worker_type_definition: WorkerTypeDefinition,
+    default_stage_ownership_mode: StageOwnershipMode | None,
 ) -> StageOwnershipMode | None:
     if worker_type_definition.is_terminal(stage):
         return None
     if stage in stage_ownership_overrides:
         return stage_ownership_overrides[stage]
-    default = worker_type_definition.stage_definition(stage).default_ownership_mode
-    if default is None:
+    if default_stage_ownership_mode is None:
         raise PlannerError(
             ErrorCode.validation,
-            "non-terminal stage has no default ownership",
+            "non-terminal ticket has no captured stage ownership default",
             {"stage": stage},
         )
-    return default
+    return default_stage_ownership_mode
 
 
 def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:

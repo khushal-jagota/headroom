@@ -15,7 +15,11 @@ from acp.connection import StreamDirection, StreamEvent
 from acp.schema import SessionNotification
 from pydantic import ValidationError
 
-from .backend_contracts import AcpConversationIngress
+from .backend_contracts import (
+    AcpConversationIngress,
+    SessionNotificationNormalizer,
+    identity_session_notification_normalizer,
+)
 from .configuration import ACP_SESSION_UPDATE_INGRESS_MAX_ITEMS
 from .wire_contracts import (
     PROTOCOL_UPDATE_REJECTED_STATUS,
@@ -115,12 +119,16 @@ class OrderedAcpConversationIngress:
         *,
         max_items: int = ACP_SESSION_UPDATE_INGRESS_MAX_ITEMS,
         fatal_callback: FatalCallback | None = None,
+        session_notification_normalizer: SessionNotificationNormalizer = (
+            identity_session_notification_normalizer
+        ),
     ) -> None:
         if max_items <= 0:
             raise ValueError("max_items must be positive")
         self._downstream = downstream
         self._max_items = max_items
         self._fatal_callback = fatal_callback
+        self._session_notification_normalizer = session_notification_normalizer
         self._slots: deque[_ReservedSlot] = deque()
         self._next_ordinal = 1
         self._last_consumed_ordinal = 0
@@ -377,7 +385,10 @@ class OrderedAcpConversationIngress:
                 assert slot.payload is not None
                 try:
                     downstream = slot.downstream or self._downstream
-                    await downstream(slot.payload)
+                    payload = slot.payload
+                    if isinstance(payload, SessionNotification):
+                        payload = self._session_notification_normalizer(payload)
+                    await downstream(payload)
                 except asyncio.CancelledError:
                     raise
                 except BaseException as error:

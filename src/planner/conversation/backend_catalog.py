@@ -179,7 +179,9 @@ def _materialize_hermes(
             else context.data_directory / "hermes-home"
         )
     ).resolve(strict=False)
-    provision_planner_home_skills(planner_home)
+    provision_planner_home_skills(
+        planner_home, configured_database_parent=context.data_directory
+    )
     hermes_python = _lexical_absolute_path(resolve_hermes_python())
     hermes_executable = _hermes_executable_for_python(hermes_python)
     if not _hermes_executable_is_available(hermes_executable):

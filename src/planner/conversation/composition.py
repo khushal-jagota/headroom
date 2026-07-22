@@ -116,7 +116,7 @@ class ConversationComposition:
 
         if test_options is None:
             employee_runtime_definitions = configured_employee_runtime_definitions()
-            ingress_capacity = 256
+            ingress_capacity = 2_048
             browser_capacity = ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
             reset_buffer_byte_limit = 1_048_576
             connection_id_factory = None

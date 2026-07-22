@@ -357,6 +357,286 @@ textarea {
   display: flex;
 }
 
+/* --- Workers ------------------------------------------------------------- */
+
+.workers-page {
+  max-width: var(--measure-index);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-page-tail);
+}
+
+.workers-page--detail {
+  max-width: calc(var(--measure-index) + var(--space-7) + var(--space-7));
+}
+
+.workers-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.workers-head h1,
+.worker-skill-head h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-lg);
+  line-height: 1.2;
+}
+
+.workers-list {
+  display: grid;
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.workers-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  color: inherit;
+  text-decoration: none;
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.workers-row:hover .workers-row-title {
+  color: var(--text-strong);
+}
+
+.workers-row-main,
+.worker-detail-facts {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.workers-row-title {
+  color: var(--text-default);
+  font-weight: 600;
+}
+
+.workers-row-id,
+.workers-row-meta,
+.workers-row-count,
+.worker-detail-facts,
+.worker-stage-id,
+.worker-row-error {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+}
+
+.workers-row-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workers-row-count {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.workers-back {
+  display: inline-block;
+  margin-bottom: var(--space-4);
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+  text-decoration: none;
+}
+
+.workers-back:hover {
+  color: var(--text-default);
+}
+
+.worker-detail-facts {
+  justify-content: flex-end;
+}
+
+.worker-stage-table-shell {
+  width: 100%;
+}
+
+.worker-stage-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.worker-stage-table th,
+.worker-stage-table td {
+  padding: var(--space-2) var(--space-2);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  text-align: left;
+  vertical-align: top;
+}
+
+.worker-stage-table th {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.worker-stage-name {
+  display: block;
+  color: var(--text-default);
+  font-weight: 500;
+}
+
+.worker-stage-id {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.worker-owner-select {
+  width: 100%;
+  max-width: calc(var(--space-7) * 3);
+  min-width: 0;
+  background: var(--surface-sunken);
+  color: var(--text-strong);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+}
+
+.worker-owner-select[data-saving="true"] {
+  color: var(--text-faint);
+}
+
+.worker-readonly-owner {
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+}
+
+.worker-row-error {
+  margin-top: var(--space-1);
+  color: var(--accent-error);
+  overflow-wrap: anywhere;
+}
+
+.worker-skill {
+  margin-top: var(--space-6);
+}
+
+.worker-skill-head {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.worker-skill-content {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.worker-skill-meta {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.worker-skill-meta div,
+.worker-skill-field {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.worker-skill-meta dt,
+.worker-skill-field > span {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.worker-skill-meta dd {
+  margin: 0;
+  color: var(--text-default);
+}
+
+.worker-skill-body {
+  min-width: 0;
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.worker-skill-inline,
+.worker-skill-body-editable {
+  color: var(--text-default);
+  overflow-wrap: anywhere;
+}
+
+.worker-skill-inline {
+  min-height: calc(var(--space-6) + var(--space-1));
+}
+
+.worker-skill-body-editable {
+  min-height: calc(var(--space-7) * 4);
+}
+
+@media (max-width: 720px) {
+  .workers-page {
+    max-width: none;
+    padding: var(--space-4) 0 var(--space-page-tail);
+  }
+
+  .workers-head,
+  .workers-back,
+  .worker-skill {
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+  }
+
+  .workers-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-2);
+    padding: var(--space-3);
+  }
+
+  .workers-row-meta {
+    grid-column: 1 / -1;
+  }
+
+  .worker-detail-head {
+    display: grid;
+  }
+
+  .worker-detail-facts {
+    justify-content: flex-start;
+  }
+
+  .worker-stage-table th,
+  .worker-stage-table td {
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .worker-stage-gated-field {
+    display: none;
+  }
+
+  .worker-stage-table th:first-child,
+  .worker-stage-table td:first-child {
+    width: 58%;
+  }
+
+  .worker-owner-select {
+    max-width: 100%;
+  }
+
+}
+
 /* --- Entrance ------------------------------------------------------------ */
 
 .screen-enter {
@@ -2145,83 +2425,43 @@ select {
   margin: 0 auto;
 }
 
-.board-workspace-heading-row {
+/* Chief of Staff is a top-level peer of the project headers: it carries the same
+ * serif project-label weight and sits first in the rail, above the projects. It is a
+ * navigation target (not a collapsing group), so its selected/hover state is a fill —
+ * and it keeps the chief row's original --board-workspace-rail-pad-x horizontal inset,
+ * so that fill sits inset exactly as before. */
+.board-workspace-chief-peer {
+  width: 100%;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
   gap: var(--space-2);
-}
-
-/* Chief of Staff sits as the top rail row — a quiet full-width row that fills to
- * overlay on hover and when it's the active pane. Its own padding IS the rail
- * inset, like a ticket row's. */
-.board-workspace-chief-button {
-  width: 100%;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-default);
+  color: var(--text-strong);
+  cursor: pointer;
   padding: var(--space-2) var(--board-workspace-rail-pad-x);
   text-align: left;
-  font-family: var(--font-ui);
-  font-size: var(--type-sm);
-  font-weight: 500;
-  line-height: 1.35;
+  transition: background var(--motion-fast) var(--motion-ease);
 }
 
-.board-workspace-chief-button:hover,
-.board-workspace-chief-button[aria-pressed="true"] {
+.board-workspace-chief-peer:hover,
+.board-workspace-chief-peer.active {
   background: var(--surface-overlay);
-  color: var(--text-strong);
 }
 
-/* The filter row keeps Hide done as a quiet text toggle aligned to the right. */
-.board-workspace-filters {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin: 0;
-  padding: var(--space-3) var(--board-workspace-rail-pad-x) var(--space-2);
-  font-size: var(--type-xs);
+.board-workspace-chief-peer-label {
+  min-width: 0;
+  font-family: var(--font-serif);
+  font-size: calc(var(--space-7) - var(--space-2));
+  font-weight: 500;
+  line-height: 1;
 }
 
-/* The transparent checkbox keeps keyboard focus visible on its label. */
-.board-workspace-hide-done-toggle:focus-within {
-  outline: var(--border-strong) solid var(--accent-bright);
-  outline-offset: var(--border-hairline);
-  color: var(--text-default);
-}
-
-/* The toggle reads as plain text per the mockup — its on/off shows in the text
- * colour. The real checkbox stays (same semantics) but is a transparent overlay
- * covering the label so it remains the click/actionability target. */
-.board-workspace-hide-done-toggle {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex: 0 0 auto;
-  margin-left: auto;
-  color: var(--text-faintest);
-  cursor: pointer;
-  font-size: var(--type-xs);
-  line-height: 1.35;
-  white-space: nowrap;
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-hide-done-toggle:hover,
-.board-workspace-hide-done-toggle--on {
-  color: var(--text-muted);
-}
-
-.board-workspace-hide-done-toggle input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
+/* The first project sits one top-level gap below the Chief-of-Staff peer, matching
+ * the rhythm between project headers so Chief of Staff reads as a sibling area. */
+.board-workspace-chief-peer + .board-workspace-index-section {
+  margin-top: calc(var(--space-7) - var(--space-1));
 }
 
 /* Project → worker type → current stage. Scale carries the project boundary; worker
@@ -3209,19 +3449,16 @@ select {
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
+.ticket-blocker-link {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
 .ticket-blocker-row:hover .ticket-blocker-title {
   color: var(--text-strong);
-}
-
-.ticket-blocker-state {
-  font-size: var(--type-xs);
-  color: var(--accent-bright);
-  white-space: nowrap;
-}
-
-.ticket-blocker-row--cleared .ticket-blocker-title,
-.ticket-blocker-row--cleared .ticket-blocker-state {
-  color: var(--text-faintest);
 }
 
 /* The blank spacer where the user-note row would carry a stage mark — it keeps the

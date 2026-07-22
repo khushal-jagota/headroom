@@ -30,6 +30,7 @@ from planner.runtime.automatic_employee_step_eligibility_wake import (
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
+from planner.worker_settings.api import router as worker_settings_router
 from planner.worker_types.configuration import (
     configured_employee_runtime_definitions,
     install_employee_runtime_definitions_for_test,
@@ -191,7 +192,13 @@ def create_app(
     async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:
         return JSONResponse(status_code=http_status_for(exc.code), content=exc.to_payload())
 
-    for domain_router in (tickets_router, projects_router, sprints_router, days_router):
+    for domain_router in (
+        tickets_router,
+        projects_router,
+        sprints_router,
+        days_router,
+        worker_settings_router,
+    ):
         app.include_router(domain_router, prefix="/api")
     app.include_router(files_router)
 

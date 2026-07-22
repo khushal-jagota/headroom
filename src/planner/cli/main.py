@@ -488,6 +488,12 @@ def ticket() -> None:
 @click.option("--project-id", default=None, help="Project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
+@click.option(
+    "--blocked-by",
+    "blocked_by_ticket_ids",
+    multiple=True,
+    help="Existing blocking Ticket id (repeatable).",
+)
 @click.option("--kickoff-note", default=None, help="Proposed intake context / user guidance.")
 @click.option(
     "--kickoff-note-file",
@@ -505,6 +511,7 @@ def ticket_create(
     project_id: str | None,
     sprint: str | None,
     sprint_item: str | None,
+    blocked_by_ticket_ids: tuple[str, ...],
     kickoff_note: str | None,
     kickoff_note_file: str | None,
     as_json: bool,
@@ -529,6 +536,8 @@ def ticket_create(
         body["sprint_id"] = sprint_value_for_write(sprint, as_json)
     if sprint_item is not None:
         body["sprint_item_id"] = sprint_item
+    if blocked_by_ticket_ids:
+        body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
     data = http.send(
         "POST", "/api/tickets", as_json=as_json, json_body=body, request_actor="ordinary"
     )
@@ -1123,6 +1132,7 @@ _EXTERNAL_WORK_CREATE_FIXED_KEYS = _EXTERNAL_WORK_RECONCILE_FIXED_KEYS | frozens
         "project_id",
         "sprint_id",
         "sprint_item_id",
+        "blocked_by_ticket_ids",
     }
 )
 
@@ -1268,6 +1278,12 @@ def chief_reconcile_ticket_from_external_work(
 @click.option("--project-id", default=None, help="Project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
 @click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
+@click.option(
+    "--blocked-by",
+    "blocked_by_ticket_ids",
+    multiple=True,
+    help="Existing blocking Ticket id (repeatable).",
+)
 @json_option
 def chief_create_ticket_from_external_work(
     title: str,
@@ -1288,6 +1304,7 @@ def chief_create_ticket_from_external_work(
     project_id: str | None,
     sprint: str | None,
     sprint_item: str | None,
+    blocked_by_ticket_ids: tuple[str, ...],
     as_json: bool,
 ) -> None:
     body = _external_work_body(
@@ -1318,6 +1335,8 @@ def chief_create_ticket_from_external_work(
         body["sprint_id"] = sprint_value_for_write(sprint, as_json)
     if sprint_item is not None:
         body["sprint_item_id"] = sprint_item
+    if blocked_by_ticket_ids:
+        body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
     data = http.send(
         "POST",
         "/api/chief/tickets/from-external-work",

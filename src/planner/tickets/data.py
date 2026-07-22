@@ -15,7 +15,7 @@ from typing import Protocol
 
 from planner.conversation.backend_catalog import EmployeeBackendCatalog
 from planner.core import links as core_links
-from planner.core.contracts import EventKind, Priority
+from planner.core.contracts import EventKind, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event, delete_entity_history
 from planner.core.ids import ID_PREFIXES, new_id
@@ -45,6 +45,10 @@ from planner.tickets.logic import (
     resolution,
 )
 from planner.tickets.logic.decisions import Decision
+from planner.worker_settings.service import (
+    database_parent_from_connection,
+    read_stage_default_ownership_for_ticket_entry,
+)
 from planner.worker_types.configuration import (
     ConfiguredEmployeeRuntimeDefinitions,
     configured_employee_runtime_definitions,
@@ -106,13 +110,14 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
     overrides = _stage_ownership_overrides_from_json(row["stage_ownership_overrides"])
     default_ownership = (
         None
-        if worker_type_definition.is_terminal(stage)
-        else worker_type_definition.stage_definition(stage).default_ownership_mode
+        if row["default_stage_ownership_mode"] is None
+        else StageOwnershipMode(str(row["default_stage_ownership_mode"]))
     )
     effective_ownership = machine.effective_stage_ownership_mode(
         stage,
         overrides,
         worker_type_definition=worker_type_definition,
+        default_stage_ownership_mode=default_ownership,
     )
     return Ticket(
         id=row["id"],
@@ -188,6 +193,24 @@ def _active_blocker_stage(stage: str) -> bool:
     return stage not in {"done", "dropped"}
 
 
+def _default_stage_ownership_for_entry(
+    conn: sqlite3.Connection,
+    worker_type_definition: WorkerTypeDefinition,
+    stage: str,
+) -> StageOwnershipMode | None:
+    if worker_type_definition.is_terminal(stage):
+        return None
+    database_parent = database_parent_from_connection(conn)
+    if database_parent is None:
+        return worker_type_definition.stage_definition(stage).default_ownership_mode
+    return read_stage_default_ownership_for_ticket_entry(
+        database_parent,
+        configured_worker_type_registry(),
+        worker_type_definition.worker_type,
+        stage,
+    )
+
+
 def _outgoing_block_target_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
     rows = conn.execute(
         "SELECT to_id FROM links WHERE from_id = ? AND kind = 'blocks' ORDER BY to_id",
@@ -207,6 +230,11 @@ def _apply_decision(
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
     worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
     worker_type_definition.validate_ticket_position(str(new_stage), str(new_ceiling))
+    new_default_stage_ownership_mode = (
+        _default_stage_ownership_for_entry(conn, worker_type_definition, str(new_stage))
+        if str(new_stage) != ticket.stage
+        else ticket.default_stage_ownership_mode
+    )
     active_before = _active_blocker_stage(ticket.stage)
     active_after = _active_blocker_stage(new_stage)
     affected_blocked_target_ids: tuple[str, ...] = ()
@@ -221,11 +249,16 @@ def _apply_decision(
                         {"ticket_id": ticket.id, "to_id": target_id},
                     )
     conn.execute(
-        "UPDATE tickets SET fields = ?, stage = ?, ceiling = ?, at_cap = ?, updated_at = ? "
-        "WHERE id = ?",
+        "UPDATE tickets SET fields = ?, stage = ?, default_stage_ownership_mode = ?, "
+        "ceiling = ?, at_cap = ?, updated_at = ? WHERE id = ?",
         (
             fields_codec.fields_to_json(new_fields),
             str(new_stage),
+            (
+                new_default_stage_ownership_mode.value
+                if new_default_stage_ownership_mode is not None
+                else None
+            ),
             str(new_ceiling),
             new_at_cap.value,
             now,
@@ -300,6 +333,7 @@ def _resting_status_for_ticket(
         ticket.stage,
         ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
+        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
     if ownership_mode is None:
         return TicketStatus.empty
@@ -315,6 +349,7 @@ def _entered_stage_status_for_ticket(
         ticket.stage,
         ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
+        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
     if ownership_mode is StageOwnershipMode.user:
         return TicketStatus.user_takeover
@@ -573,6 +608,7 @@ def create_ticket(
     worker_type: str,
     employee_backend: str | None = None,
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -600,6 +636,9 @@ def create_ticket(
     )
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
+    default_stage_ownership_mode = _default_stage_ownership_for_entry(
+        conn, worker_type_definition, initial_stage
+    )
     ticket_id = new_id(ID_PREFIXES["ticket"])
     initial_fields = fields_codec.with_slot(
         TicketFields.empty(worker_type_definition.field_ids()),
@@ -642,9 +681,9 @@ def create_ticket(
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
-            "ticket_status, stage_ownership_overrides, "
+            "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
             "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -662,6 +701,11 @@ def create_ticket(
                 AtCap.propose.value,
                 TicketStatus.awaiting_approval.value,
                 "{}",
+                (
+                    default_stage_ownership_mode.value
+                    if default_stage_ownership_mode is not None
+                    else None
+                ),
                 fields_json,
                 now,
                 now,
@@ -694,6 +738,8 @@ def create_ticket(
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        for blocker_ticket_id in blocked_by_ticket_ids or []:
+            core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -716,6 +762,7 @@ def create_ticket_from_external_work(
     worker_type: str,
     employee_backend: str | None = None,
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
 ) -> Ticket:
     if kickoff_note is None:
         kickoff_note = ""
@@ -751,6 +798,9 @@ def create_ticket_from_external_work(
     # applied decision then jumps it to target_stage. first_worker_stage is the concept
     # here; default_ceiling is now needs_kickoff and would wrongly re-park kickoff.
     first_worker = worker_type_definition.first_worker_stage()
+    default_stage_ownership_mode = _default_stage_ownership_for_entry(
+        conn, worker_type_definition, first_worker
+    )
     ticket_id = new_id(ID_PREFIXES["ticket"])
     initial_fields = fields_codec.with_slot(
         TicketFields.empty(worker_type_definition.field_ids()),
@@ -790,8 +840,9 @@ def create_ticket_from_external_work(
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
-            "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "default_stage_ownership_mode, employee_session_id, alias, fields, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -814,6 +865,11 @@ def create_ticket_from_external_work(
                 AtCap.propose.value,
                 TicketStatus.empty.value,
                 "{}",
+                (
+                    default_stage_ownership_mode.value
+                    if default_stage_ownership_mode is not None
+                    else None
+                ),
                 fields_codec.fields_to_json(initial_fields),
                 now,
                 now,
@@ -832,6 +888,8 @@ def create_ticket_from_external_work(
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        for blocker_ticket_id in blocked_by_ticket_ids or []:
+            core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
@@ -1316,6 +1374,11 @@ def set_stage_ownership(
             stage,
             ticket.stage_ownership_overrides,
             worker_type_definition=worker_type_definition,
+            default_stage_ownership_mode=(
+                ticket.default_stage_ownership_mode
+                if stage == ticket.stage
+                else _default_stage_ownership_for_entry(conn, worker_type_definition, stage)
+            ),
         )
         assert effective_before is not None
         overrides = dict(ticket.stage_ownership_overrides)
@@ -1327,6 +1390,11 @@ def set_stage_ownership(
             stage,
             overrides,
             worker_type_definition=worker_type_definition,
+            default_stage_ownership_mode=(
+                ticket.default_stage_ownership_mode
+                if stage == ticket.stage
+                else _default_stage_ownership_for_entry(conn, worker_type_definition, stage)
+            ),
         )
         if overrides == ticket.stage_ownership_overrides:
             return ticket
@@ -1450,6 +1518,7 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             ticket.stage,
             overrides,
             worker_type_definition=worker_type_definition,
+            default_stage_ownership_mode=ticket.default_stage_ownership_mode,
         )
         conn.execute(
             "UPDATE tickets SET stage_ownership_overrides = ?, updated_at = ? WHERE id = ?",

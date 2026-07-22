@@ -656,7 +656,13 @@ class SdkAcpEmployeeChildFactory:
         ingress_kwargs: dict[str, Any] = {"fatal_callback": on_ingress_fatal}
         if self._ingress_max_items is not None:
             ingress_kwargs["max_items"] = self._ingress_max_items
-        ordered_ingress = OrderedAcpConversationIngress(update_ingress, **ingress_kwargs)
+        ordered_ingress = OrderedAcpConversationIngress(
+            update_ingress,
+            session_notification_normalizer=(
+                self.definition.session_notification_normalizer
+            ),
+            **ingress_kwargs,
+        )
         ordered_ingress.start()
         client = _SdkClientBridge(
             ordered_ingress,

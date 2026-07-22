@@ -67,6 +67,7 @@ def _cases(
             stage,
             ticket.stage_ownership_overrides,
             worker_type_definition=definition,
+            default_stage_ownership_mode=ticket.default_stage_ownership_mode,
         ),
         StageOwnershipMode | None,
     )

@@ -55,7 +55,6 @@ _CODING_COPY_TEXT_GOLDEN = (
     "recap:\n(none)\n"
     "\n"
     "blocked_by:\n(none)\n"
-    "blocks:\n(none)\n"
 )
 
 

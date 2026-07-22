@@ -73,11 +73,24 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
         "--project-id",
         "project_vylo",
     )["id"]
-    for ticket_id in (waiting, running, errored):
+    completed = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Completed ticket",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    for ticket_id in (waiting, running, errored, completed):
         _add_today(api, server, ticket_id)
         _set_ticket_stage(server, ticket_id, "needs_success")
     _set_ticket_status(server, running, "agent_running_step")
     _set_ticket_status(server, errored, "errored")
+    _set_ticket_stage(server, completed, "done")
+    _set_ticket_status(server, completed, "empty")
 
     page = open_page(
         context_factory(),
@@ -90,17 +103,25 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
     waiting_card = f'[data-card][data-ticket-id="{waiting}"]'
     running_card = f'[data-card][data-ticket-id="{running}"]'
     errored_card = f'[data-card][data-ticket-id="{errored}"]'
+    completed_card = f'[data-card][data-ticket-id="{completed}"]'
+    completed_stage = (
+        '[data-project-key="project_vylo"] [data-worker-type="coding"] '
+        '[data-stage-key="done"]'
+    )
+    assert not page.is_visible(completed_card)
+    page.click(f"{completed_stage} > summary")
     for selector, title in (
         (waiting_card, "Waiting ticket"),
         (running_card, "Running ticket"),
         (errored_card, "Errored ticket"),
+        (completed_card, "Completed ticket"),
     ):
         page.wait_for_selector(selector, timeout=WAIT_MS)
         assert page.text_content(f"{selector} .list-row-title").strip() == title
         assert page.locator(f"{selector} .board-workspace-row-byline").count() == 0
         assert page.locator(f"{selector} .board-workspace-row-metadata").count() == 0
 
-    for card in (waiting_card, running_card, errored_card):
+    for card in (waiting_card, running_card, errored_card, completed_card):
         assert page.locator(f"{card} > *").count() == 2
         assert page.locator(f"{card} .board-workspace-stage-mark").count() == 1
 
@@ -126,6 +147,13 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
     assert errored_mark.count() == 1
     assert errored_mark.get_attribute("data-workspace-dot-state") == "exceptional"
     assert errored_mark.get_attribute("aria-label") == "Worker exception"
+
+    completed_mark = page.locator(
+        f'{completed_card} [data-stage-state="completed"]'
+    )
+    assert completed_mark.count() == 1
+    assert completed_mark.get_attribute("data-workspace-dot-state") == "settled"
+    assert completed_mark.get_attribute("aria-label") == "Worker complete"
 
 
 def test_workspace_dot_follows_projection_activity_and_reload(
@@ -188,7 +216,7 @@ def test_workspace_dot_follows_projection_activity_and_reload(
     assert page.get_attribute(mark, "data-workspace-dot-state") == "needs_attention"
     assert page.get_attribute(mark, "aria-label") == "Worker needs attention"
 
-    projection.reset(ticket_id)
+    page.click(f'[data-card][data-ticket-id="{ticket_id}"]')
     page.wait_for_function(
         "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
         "=== 'current-waiting'",
@@ -197,6 +225,34 @@ def test_workspace_dot_follows_projection_activity_and_reload(
     )
     assert page.get_attribute(mark, "data-workspace-dot-state") == "quiet"
     assert page.get_attribute(mark, "aria-label") == "Worker quiet"
+
+    page.click("[data-chief-of-staff-button]")
+    projection.record_activity(ticket_id, "thinking")
+    projection.record_activity(ticket_id, "idle")
+    projection.record_permission(ticket_id, True)
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.getAttribute('data-workspace-dot-state') "
+        "=== 'needs_attention'",
+        arg=mark,
+        timeout=WAIT_MS,
+    )
+
+    with page.expect_response(
+        lambda response: response.url.endswith(
+            f"/api/tickets/{ticket_id}/acknowledge-completed-response"
+        ),
+        timeout=WAIT_MS,
+    ) as acknowledgement_response:
+        page.goto(f"{server.base}/#/ticket/{ticket_id}")
+    assert acknowledgement_response.value.status == 200
+    page.wait_for_selector(f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS)
+    acknowledged = projection.read(ticket_id)
+    assert acknowledged.has_completed_response_awaiting_user is False
+    assert acknowledged.has_pending_permission is True
+
+    page.goto(f"{server.base}/#/workspace")
+    page.wait_for_selector(mark, timeout=WAIT_MS)
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "needs_attention"
 
 
 def test_workspace_groups_populated_project_worker_and_stage_sections_in_contract_order(
@@ -330,7 +386,9 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
         "el.querySelector('.board-workspace-project-label')).fontSize}))",
     )
     assert [item["fontSize"] for item in project_geometry] == ["40px", "40px", "40px"]
-    assert [item["marginTop"] for item in project_geometry] == ["0px", "44px", "44px"]
+    # The first project sits one top-level gap below the Chief-of-Staff peer, so every
+    # project section carries the same top margin.
+    assert [item["marginTop"] for item in project_geometry] == ["44px", "44px", "44px"]
 
     vylo = '[data-project-key="project_vylo"]'
     worker_labels = page.eval_on_selector_all(
@@ -352,7 +410,7 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
         "> [data-stage-section] > summary .board-workspace-stage-label",
         "els => els.map(el => el.textContent.trim())",
     )
-    assert coding_stage_labels == ["Success", "Plan"]
+    assert coding_stage_labels == ["Success", "Plan", "Done"]
     stage_type = page.eval_on_selector(
         f"{coding} [data-stage-key='needs_success'] .board-workspace-stage-label",
         "el => ({fontSize: getComputedStyle(el).fontSize, "
@@ -360,7 +418,11 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
     )
     assert stage_type == {"fontSize": "11px", "textTransform": "uppercase"}
     assert page.locator(f'{coding} [data-stage-key="needs_kickoff"]').count() == 0
-    assert page.locator(f'{coding} [data-stage-key="done"]').count() == 0
+    # Done renders as its own stage section (no more Hide-done filter), collapsed by
+    # default so its tickets are present in the DOM but not visible.
+    done_stage = f'{coding} [data-stage-key="done"]'
+    assert page.locator(done_stage).count() == 1
+    assert page.get_attribute(done_stage, "open") is None
 
     plan = f'{coding} [data-stage-key="needs_plan"]'
     plan_titles = page.eval_on_selector_all(
@@ -378,26 +440,32 @@ def test_workspace_groups_populated_project_worker_and_stage_sections_in_contrac
     assert new_worker_stage_labels == ["Stages", "Thinking"]
     assert page.locator(f'{new_worker} [data-stage-key="needs_understanding"]').count() == 0
 
-    assert page.is_checked("[data-hide-done-toggle]")
-    assert page.locator(f'[data-card][data-ticket-id="{done}"]').count() == 0
+    # There is no Hide-done filter; the collapsed Done section holds its ticket in the
+    # DOM but out of view, and opening the disclosure reveals it like any other stage.
+    assert page.locator("[data-hide-done-toggle]").count() == 0
+    done_card = f'[data-card][data-ticket-id="{done}"]'
+    assert page.locator(done_card).count() == 1
+    assert not page.is_visible(done_card)
+    page.click(f"{done_stage} > summary")
+    page.wait_for_selector(done_card, state="visible", timeout=WAIT_MS)
 
-    page.click('.shell-links a[data-screen="day"]')
-    page.wait_for_selector('section[data-screen="day"]', timeout=WAIT_MS)
-    page.click('.shell-links a[data-screen="workspace"]')
-    page.wait_for_selector("[data-hide-done-toggle]", timeout=WAIT_MS)
-    assert page.is_checked("[data-hide-done-toggle]")
-    assert page.locator(f'[data-card][data-ticket-id="{done}"]').count() == 0
+    # The New Worker group has no done tickets, so no empty Done section renders.
+    assert page.locator(f'{new_worker} [data-stage-key="done"]').count() == 0
 
-    page.uncheck("[data-hide-done-toggle]")
-    page.wait_for_selector(f'[data-card][data-ticket-id="{done}"]', timeout=WAIT_MS)
-    assert page.locator(f'{coding} [data-stage-key="done"]').count() == 1
-
-    page.click('.shell-links a[data-screen="day"]')
-    page.wait_for_selector('section[data-screen="day"]', timeout=WAIT_MS)
-    page.click('.shell-links a[data-screen="workspace"]')
-    page.wait_for_selector("[data-hide-done-toggle]", timeout=WAIT_MS)
-    assert not page.is_checked("[data-hide-done-toggle]")
-    page.wait_for_selector(f'[data-card][data-ticket-id="{done}"]', timeout=WAIT_MS)
+    # Chief of Staff reads at project-header weight: same serif size as the project
+    # labels, sitting first in the rail, and still selects the chief pane.
+    chief = 'section[data-screen="workspace"] [data-chief-of-staff-button]'
+    chief_type = page.eval_on_selector(
+        f"{chief} .board-workspace-chief-peer-label",
+        "el => ({fontSize: getComputedStyle(el).fontSize, "
+        "fontFamily: getComputedStyle(el).fontFamily})",
+    )
+    project_type = page.eval_on_selector(
+        ".board-workspace-project-label",
+        "el => ({fontSize: getComputedStyle(el).fontSize, "
+        "fontFamily: getComputedStyle(el).fontFamily})",
+    )
+    assert chief_type == project_type
 
 
 def test_workspace_group_disclosures_are_independent_and_chevrons_reveal_on_intent(

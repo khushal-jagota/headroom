@@ -3,15 +3,14 @@
   import { resourceCatalogue } from "../lib/resourceCatalogue";
   import { labelize } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
-  import type { WorkerTypesResponse } from "../lib/lifecycle";
-  import Button from "../components/Button.svelte";
+  import type { WorkerTypeManifest, WorkerTypesResponse } from "../lib/lifecycle";
   import AcpConversation from "../components/AcpConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
 
-  let { hideDone = $bindable(true), ticketId }: { hideDone?: boolean; ticketId?: string } = $props();
+  let { ticketId }: { ticketId?: string } = $props();
 
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const noProjectKey = "__no_project__";
@@ -21,7 +20,7 @@
   let allCards = $derived(columns.flatMap((column) => column.cards));
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
   let rightPaneMode = $derived<"chief" | "ticket">(selectedCard ? "ticket" : "chief");
-  let projectSections = $derived(buildProjectSections(columns, hideDone, manifest.data));
+  let projectSections = $derived(buildProjectSections(columns, manifest.data));
 
   $effect(() => {
     if (ticketId && board.data && !board.loading && !board.stale && !selectedCard) {
@@ -37,7 +36,7 @@
     window.location.hash = "#/workspace";
   }
 
-  type WorkspaceDotState = "exceptional" | "active" | "needs_attention" | "quiet";
+  type WorkspaceDotState = "exceptional" | "active" | "needs_attention" | "settled" | "quiet";
 
   type WorkspaceDotPresentation = {
     state: FieldStageVisualState;
@@ -60,6 +59,11 @@
       state: "current-awaiting-approval",
       marker: null,
       ariaLabel: "Worker needs attention"
+    },
+    settled: {
+      state: "completed",
+      marker: null,
+      ariaLabel: "Worker complete"
     },
     quiet: {
       state: "current-waiting",
@@ -105,9 +109,32 @@
     return index !== undefined && index >= 0 ? index : Number.MAX_SAFE_INTEGER;
   }
 
+  function workspaceStage(card: Record<string, any>): string {
+    if (card.stage === "needs_kickoff") return card.stage;
+    return card.blocked ? "blocked" : card.stage;
+  }
+
+  function workspaceStageSortValue(
+    workerTypes: WorkerTypesResponse | undefined,
+    stage: string,
+    card: Record<string, any>
+  ): number {
+    return stage === "blocked" ? -1 : stageSortValue(workerTypes, card);
+  }
+
+  function isTerminalStage(
+    manifestWorker: WorkerTypeManifest | undefined,
+    stage: string
+  ): boolean {
+    return Boolean(manifestWorker?.stages.find((candidate) => candidate.id === stage)?.is_terminal);
+  }
+
   type StageSection = {
     key: string;
     label: string;
+    // Terminal (Done) stages render collapsed by default; every other stage is open.
+    // Keyed off the served manifest's is_terminal so it generalizes across worker types.
+    collapsed: boolean;
     cards: Record<string, any>[];
   };
 
@@ -125,7 +152,6 @@
 
   function buildProjectSections(
     sourceColumns: Array<{ stage: string; cards: Record<string, any>[] }>,
-    shouldHideDone: boolean,
     workerTypes: WorkerTypesResponse | undefined
   ): ProjectSection[] {
     const groups = new Map<string, { key: string; label: string; cards: Record<string, any>[] }>();
@@ -133,13 +159,13 @@
 
     for (const column of sourceColumns) {
       for (const card of column.cards) {
-        if (shouldHideDone && column.stage === "done") continue;
         const key = card.group_project_id || noProjectKey;
         const label = card.group_project || "No project";
         if (!groups.has(key)) groups.set(key, { key, label, cards: [] });
         groups.get(key)?.cards.push({
           ...card,
           stage: column.stage,
+          workspace_stage: workspaceStage({ ...card, stage: column.stage }),
           boardSequence: sequence
         });
         sequence += 1;
@@ -169,28 +195,31 @@
         .map(([workerType, cards]) => {
           const cardsByStage = new Map<string, Record<string, any>[]>();
           for (const card of cards) {
-            if (!cardsByStage.has(card.stage)) cardsByStage.set(card.stage, []);
-            cardsByStage.get(card.stage)?.push(card);
+            if (!cardsByStage.has(card.workspace_stage)) cardsByStage.set(card.workspace_stage, []);
+            cardsByStage.get(card.workspace_stage)?.push(card);
           }
+
+          const manifestWorker = workerTypes?.worker_types.find(
+            (candidate) => candidate.worker_type === workerType
+          );
 
           const stages = Array.from(cardsByStage.entries())
             .sort(([leftStage, leftCards], [rightStage, rightCards]) => {
               const manifestDelta =
-                stageSortValue(workerTypes, leftCards[0]) - stageSortValue(workerTypes, rightCards[0]);
+                workspaceStageSortValue(workerTypes, leftStage, leftCards[0]) -
+                workspaceStageSortValue(workerTypes, rightStage, rightCards[0]);
               return manifestDelta || leftStage.localeCompare(rightStage);
             })
             .map(([stage, stageCards]) => ({
               key: stage,
-              label: currentStageLabel(stageCards[0]),
+              label: stage === "blocked" ? "Blocked" : currentStageLabel(stageCards[0]),
+              collapsed: stage === "blocked" ? false : isTerminalStage(manifestWorker, stage),
               cards: stageCards.sort((left, right) => {
                 const activityDelta = activitySortValue(right) - activitySortValue(left);
                 return activityDelta || left.boardSequence - right.boardSequence;
               })
             }));
 
-          const manifestWorker = workerTypes?.worker_types.find(
-            (candidate) => candidate.worker_type === workerType
-          );
           return {
             key: workerType,
             label: manifestWorker?.label ?? labelize(workerType),
@@ -218,28 +247,16 @@
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
         <section class="board-workspace-left" aria-label="Workspace ticket tree">
-          <div class="board-workspace-heading-row">
-            <Button
-              variant="quiet"
-              class="board-workspace-chief-button"
-              aria-pressed={rightPaneMode === "chief"}
-              data-chief-of-staff-button=""
-              onclick={showChiefOfStaff}
-            >
-              Chief of Staff
-            </Button>
-          </div>
-
-          <div class="board-workspace-filters" data-workspace-filters>
-            <label class="board-workspace-hide-done-toggle" class:board-workspace-hide-done-toggle--on={hideDone}>
-              <input
-                type="checkbox"
-                data-hide-done-toggle
-                bind:checked={hideDone}
-              />
-              <span>Hide done</span>
-            </label>
-          </div>
+          <button
+            type="button"
+            class="board-workspace-chief-peer"
+            class:active={rightPaneMode === "chief"}
+            aria-pressed={rightPaneMode === "chief"}
+            data-chief-of-staff-button=""
+            onclick={showChiefOfStaff}
+          >
+            <span class="board-workspace-chief-peer-label">Chief of Staff</span>
+          </button>
 
           {#each projectSections as project}
             <Disclosure
@@ -272,7 +289,7 @@
                         <Disclosure
                           variant="workspace-stage"
                           chevron="trailing"
-                          defaultOpen={true}
+                          defaultOpen={!stage.collapsed}
                           data-stage-section=""
                           data-stage-key={stage.key}
                         >
@@ -283,7 +300,9 @@
                           <div class="board-workspace-stage-tickets">
                             {#each stage.cards as card}
                               {@const stageField = currentStageField(card)}
-                              {@const workspaceDotState = card.workspace_dot_state as WorkspaceDotState}
+                              {@const workspaceDotState = (card.workspace_stage === "blocked"
+                                ? "quiet"
+                                : card.workspace_dot_state) as WorkspaceDotState}
                               {@const workspacePresentation = workspaceDotPresentation[workspaceDotState]}
                               <button
                                 type="button"
@@ -302,7 +321,7 @@
                                   data-stage-field={stageField}
                                   data-stage-state={workspacePresentation.state}
                                   data-marker={workspacePresentation.marker || undefined}
-                                  data-workspace-dot-state={card.workspace_dot_state}
+                                  data-workspace-dot-state={workspaceDotState}
                                   aria-label={workspacePresentation.ariaLabel}
                                 />
                               </button>

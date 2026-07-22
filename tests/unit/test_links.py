@@ -19,10 +19,12 @@ _EMPTY_CODING_FIELDS = fields_to_json(TicketFields.empty(CODING_WORKER_TYPE_DEFI
 
 
 def _ticket(conn, ticket_id: str, stage: str = "needs_success") -> None:
+    captured_default = None if stage in {"done", "dropped"} else "worker"
     conn.execute(
-        "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, ceiling, fields, "
-        "created_at, updated_at) VALUES (?, ?, 'coding', 'hermes', ?, 'needs_success', ?, 1, 1)",
-        (ticket_id, ticket_id, stage, _EMPTY_CODING_FIELDS),
+        "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, ceiling, "
+        "default_stage_ownership_mode, fields, created_at, updated_at) "
+        "VALUES (?, ?, 'coding', 'hermes', ?, 'needs_success', ?, ?, 1, 1)",
+        (ticket_id, ticket_id, stage, captured_default, _EMPTY_CODING_FIELDS),
     )
 
 
@@ -160,24 +162,22 @@ def test_ticket_detail_and_copy_text_use_resolved_blocker_summary(tmp_db) -> Non
     detail = ticket_views.ticket_detail(tmp_db, "t_blocked", 1)
 
     assert detail["blocked"] is True
-    assert detail["blocker_summary"]["blocked_by"] == [
-        {
-            "ticket_id": "t_active_blocker",
-            "title": "Active blocker",
-            "stage": "needs_plan",
-            "active": True,
-            "href": "#/ticket/t_active_blocker",
-        },
-        {
-            "ticket_id": "t_done_blocker",
-            "title": "Done blocker",
-            "stage": "done",
-            "active": False,
-            "href": "#/ticket/t_done_blocker",
-        },
-    ]
+    assert detail["blocker_summary"] == {
+        "blocked_by": [
+            {
+                "ticket_id": "t_active_blocker",
+                "title": "Active blocker",
+                "stage": "needs_plan",
+                "href": "#/ticket/t_active_blocker",
+            }
+        ]
+    }
     assert "links" not in detail
     copy_text = ticket_views.copy_text(tmp_db, "t_blocked")
     assert "blocked_by:" in copy_text
-    assert "- active: Active blocker (t_active_blocker, needs_plan)" in copy_text
-    assert "- cleared: Done blocker (t_done_blocker, done)" in copy_text
+    assert "- Active blocker (t_active_blocker, needs_plan)" in copy_text
+    assert "Done blocker" not in copy_text
+    assert "blocks:" not in copy_text
+
+    cleared_detail = ticket_views.ticket_detail(tmp_db, "t_done_blocker", 1)
+    assert "blocker_summary" not in cleared_detail

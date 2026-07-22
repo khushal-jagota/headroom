@@ -17,7 +17,9 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets import data
 from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, StageOwnershipMode, TicketStatus
 from planner.tickets.logic import machine
+from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import StageDefinition
 
 
@@ -47,6 +49,7 @@ def test_stage_ownership_contract_manifest_and_pure_resolution() -> None:
             "needs_success",
             {},
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
+            default_stage_ownership_mode=StageOwnershipMode.worker,
         )
         is StageOwnershipMode.worker
     )
@@ -55,6 +58,7 @@ def test_stage_ownership_contract_manifest_and_pure_resolution() -> None:
             "needs_success",
             {"needs_success": StageOwnershipMode.paired},
             worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
+            default_stage_ownership_mode=StageOwnershipMode.worker,
         )
         is StageOwnershipMode.paired
     )
@@ -109,6 +113,22 @@ def test_registry_rejects_missing_or_terminal_default_ownership() -> None:
         )
     assert terminal.value.code is ErrorCode.validation
     assert terminal.value.message == "terminal stage may not declare default ownership"
+
+
+def test_non_terminal_effective_ownership_requires_captured_default() -> None:
+    with pytest.raises(PlannerError) as raised:
+        machine.effective_stage_ownership_mode(
+            "needs_success",
+            {},
+            worker_type_definition=CODING_WORKER_TYPE_DEFINITION,
+            default_stage_ownership_mode=None,
+        )
+
+    assert raised.value.code is ErrorCode.validation
+    assert (
+        raised.value.message
+        == "non-terminal ticket has no captured stage ownership default"
+    )
 
 
 def test_stage_definition_constructor_requires_the_ownership_argument() -> None:
@@ -171,6 +191,76 @@ def test_ownership_override_set_clear_takeover_release_derives_resting_status(
     ticket = data.take_over_ticket(tmp_db, ticket.id, now=6)
     assert ticket.stage_ownership_overrides == {"needs_success": StageOwnershipMode.user}
     assert ticket.ticket_status is TicketStatus.user_takeover
+
+
+def test_ticket_current_stage_default_is_captured_until_next_stage_entry(
+    tmp_db,
+) -> None:
+    registry = configured_worker_type_registry()
+    settings_parent = worker_settings_service.database_parent_from_connection(tmp_db)
+    assert settings_parent is not None
+
+    first = data.create_ticket(
+        tmp_db,
+        title="Frozen default",
+        actor="human",
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+        kickoff_note="go",
+        worker_type="coding",
+    )
+    first = data.accept_proposal(
+        tmp_db,
+        first.id,
+        field="kickoff",
+        actor="human",
+        now=2,
+        next_ceiling="needs_success",
+        at_cap=AtCap.propose,
+    )
+    assert first.stage == "needs_success"
+    assert first.default_stage_ownership_mode is StageOwnershipMode.worker
+    assert first.effective_stage_ownership_mode is StageOwnershipMode.worker
+
+    worker_settings_service.update_stage_default_ownership(
+        settings_parent,
+        registry,
+        "coding",
+        "needs_success",
+        StageOwnershipMode.user,
+    )
+
+    unchanged = data.read_ticket(tmp_db, first.id)
+    assert unchanged.default_stage_ownership_mode is StageOwnershipMode.worker
+    assert unchanged.effective_stage_ownership_mode is StageOwnershipMode.worker
+
+    taken = data.take_over_ticket(tmp_db, first.id, now=3)
+    assert taken.effective_stage_ownership_mode is StageOwnershipMode.user
+    released = data.release_ticket(tmp_db, first.id, now=4)
+    assert released.stage_ownership_overrides == {}
+    assert released.default_stage_ownership_mode is StageOwnershipMode.worker
+    assert released.effective_stage_ownership_mode is StageOwnershipMode.worker
+
+    second = data.create_ticket(
+        tmp_db,
+        title="New default",
+        actor="human",
+        now=5,
+        title_max_chars=TITLE_MAX_CHARS,
+        kickoff_note="go",
+        worker_type="coding",
+    )
+    second = data.accept_proposal(
+        tmp_db,
+        second.id,
+        field="kickoff",
+        actor="human",
+        now=6,
+        next_ceiling="needs_success",
+        at_cap=AtCap.propose,
+    )
+    assert second.default_stage_ownership_mode is StageOwnershipMode.user
+    assert second.effective_stage_ownership_mode is StageOwnershipMode.user
 
 
 def test_future_stage_ownership_event_reports_that_stages_effective_mode(tmp_db) -> None:
