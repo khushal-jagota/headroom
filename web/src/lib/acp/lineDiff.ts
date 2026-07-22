@@ -7,6 +7,13 @@ export interface DiffLine {
   readonly newLine: number | null;
 }
 
+export interface LineDiffOptions {
+  readonly oldStartLine?: number | null;
+  readonly newStartLine?: number | null;
+  readonly emptyNewTextMeansNoLines?: boolean;
+  readonly normalizedSnapshotFragments?: boolean;
+}
+
 interface EditOperation {
   kind: DiffLineKind;
   text: string;
@@ -73,27 +80,48 @@ function shortestEditScript(oldLines: readonly string[], newLines: readonly stri
   return [];
 }
 
-export function lineDiff(oldText: string | null | undefined, newText: string): DiffLine[] {
-  const newLines = newText.split('\n');
+export function lineDiff(
+  oldText: string | null | undefined,
+  newText: string,
+  options: LineDiffOptions = {},
+): DiffLine[] {
+  const split = options.normalizedSnapshotFragments ? snapshotLines : ordinaryLines;
+  const newLines = options.emptyNewTextMeansNoLines && newText === '' ? [] : split(newText);
   const operations = oldText == null
     ? newLines.map((text): EditOperation => ({ kind: 'add', text }))
-    : shortestEditScript(oldText.split('\n'), newLines);
-  let oldLine = 1;
-  let newLine = 1;
+    : shortestEditScript(split(oldText), newLines);
+  let oldLine = options.oldStartLine ?? null;
+  let newLine = options.newStartLine ?? null;
+  const ordinaryOrigins = options.oldStartLine === undefined && options.newStartLine === undefined;
+  if (ordinaryOrigins) {
+    oldLine = 1;
+    newLine = 1;
+  }
   return operations.map((operation) => {
     if (operation.kind === 'context') {
       const line = { ...operation, oldLine, newLine };
-      oldLine += 1;
-      newLine += 1;
+      if (oldLine !== null) oldLine += 1;
+      if (newLine !== null) newLine += 1;
       return line;
     }
     if (operation.kind === 'delete') {
       const line = { ...operation, oldLine, newLine: null };
-      oldLine += 1;
+      if (oldLine !== null) oldLine += 1;
       return line;
     }
     const line = { ...operation, oldLine: null, newLine };
-    newLine += 1;
+    if (newLine !== null) newLine += 1;
     return line;
   });
+}
+
+function ordinaryLines(text: string): string[] {
+  return text.split('\n');
+}
+
+function snapshotLines(text: string): string[] {
+  if (text === '') return [];
+  const lines = text.split('\n');
+  if (lines.at(-1) === '') lines.pop();
+  return lines;
 }

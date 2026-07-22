@@ -334,6 +334,12 @@ exact(
   keysForEvent(event("t_left", "link_added", { from_id: "t_left", to_id: "si_right" })),
   ["ticket:t_left", "items:backlog", "board", "sprint:current"]
 );
+for (const kind of ["link_added", "link_removed"]) {
+  exact(
+    keysForEvent(event("t_blocker", kind, { from_id: "t_blocker", to_id: "t_dependent" })),
+    ["ticket:t_blocker", "ticket:t_dependent", "board", "sprint:current"]
+  );
+}
 exact(
   keysForEvent(event("t_source", "stage_changed", {
     affected_blocked_target_ids: ["t_blocked", "si_blocked"]

@@ -28,7 +28,7 @@ from planner.worker_types.configuration import (
     configured_employee_runtime_definitions,
 )
 
-from .backend_contracts import AcpConversationIngress
+from .backend_contracts import AcpConversationIngress, ConversationIngressTransition
 from .configuration import ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
 from .employee_configuration import EmployeeConfigurationCatalogService
 from .employee_registry import (
@@ -163,6 +163,7 @@ class ConversationComposition:
             busy_timeout_ms=busy_timeout_ms,
             employee_backend_catalog=catalog,
             chief_backend_key="hermes",
+            worker_type_registry=employee_runtime_definitions.worker_type_registry,
         )
         ticket_conversation_projection = TicketConversationProjection(
             db_path,
@@ -178,9 +179,9 @@ class ConversationComposition:
             worker_client_message_id_factory=worker_client_message_id_factory,
             ticket_conversation_projection=ticket_conversation_projection,
         )
-        source_ingress = _BindOnceAsyncCallback[[ConversationIngressSource, object], None](
-            "conversation ingress"
-        )
+        source_ingress = _BindOnceAsyncCallback[
+            [ConversationIngressSource, ConversationIngressTransition], None
+        ]("conversation ingress")
         source_permission = _BindOnceAsyncCallback[
             [ConversationRuntimeHandle, RequestPermissionRequest],
             RequestPermissionResponse,
@@ -211,6 +212,9 @@ class ConversationComposition:
             compare_and_swap_binding=repository.compare_and_swap,
             compare_and_swap_initial_binding=repository.compare_and_swap_initial,
             resolve_employee=repository.resolve_employee,
+            resolve_employee_for_new_conversation=(
+                repository.resolve_employee_for_new_conversation
+            ),
             resolve_compaction_boundaries=repository.resolve_compaction_boundaries,
             compare_and_swap_compaction=repository.compare_and_swap_compaction,
             conversation_ingress=cast(AcpConversationIngress, reject_unscoped_ingress),

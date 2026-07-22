@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from acp.schema import (
     CancelNotification,
@@ -37,6 +37,18 @@ from .wire_contracts import ProtocolUpdateRejectedPayload
 
 type ConversationReplayItem = (
     SessionNotification | ProtocolUpdateRejectedPayload | ContextCompaction
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationIngressReplayBatch:
+    """One raw load replay submitted to the conversation ingress sequencer."""
+
+    items: tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...]
+
+
+type ConversationIngressTransition = (
+    SessionNotification | ProtocolUpdateRejectedPayload | ConversationIngressReplayBatch
 )
 
 
@@ -82,6 +94,32 @@ class BackendTurnStrategy(Protocol):
 
 
 WorkingDirectoryResolver = Callable[[ConversationEmployee], Path]
+SessionNotificationNormalizer = Callable[[SessionNotification], SessionNotification]
+
+
+@dataclass(frozen=True, slots=True)
+class SessionNotificationReplaySlotAdmission:
+    slot_key: Hashable
+    disposition: Literal["accumulate", "replace"]
+    serialized_notification_bytes: int
+    serialized_materialized_base_bytes: int
+    serialized_accumulation_fragment_bytes: int
+
+
+class SessionNotificationReplayMaterializer(Protocol):
+    def classify(
+        self, notification: SessionNotification
+    ) -> SessionNotificationReplaySlotAdmission | None: ...
+
+    def materialize(
+        self, notifications: tuple[SessionNotification, ...]
+    ) -> SessionNotification: ...
+
+
+def identity_session_notification_normalizer(
+    notification: SessionNotification,
+) -> SessionNotification:
+    return notification
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +134,15 @@ class AgentBackendDefinition:
     reverse_service_capabilities: ReverseServiceCapabilities
     working_directory_resolver: WorkingDirectoryResolver
     turn_strategy: BackendTurnStrategy
+    session_notification_normalizer: SessionNotificationNormalizer = (
+        identity_session_notification_normalizer
+    )
+    employee_environment_overrides: Callable[
+        [ConversationEmployee], tuple[tuple[str, str], ...]
+    ] | None = None
+    session_notification_replay_materializer: (
+        SessionNotificationReplayMaterializer | None
+    ) = None
 
     def __post_init__(self) -> None:
         _require_non_empty_text(self.backend_key, field_name="backend_key")
@@ -161,6 +208,8 @@ class AcpEmployeeChild(Protocol):
     async def set_config_option(
         self, session_id: str, config_id: str, value: str
     ) -> SetSessionConfigOptionResponse: ...
+
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None: ...
 
     async def close_session(self, session_id: str) -> None: ...
 

@@ -216,12 +216,16 @@ def test_hermes_probe_rejects_missing_configured_provider(tmp_path: Path) -> Non
 class _LegacyModelChild:
     def __init__(self, *, failure: BaseException | None = None) -> None:
         self.requests: list[tuple[str, str]] = []
+        self.mode_requests: list[tuple[str, str]] = []
         self.failure = failure
 
     async def set_legacy_session_model(self, session_id: str, model_id: str) -> None:
         self.requests.append((session_id, model_id))
         if self.failure is not None:
             raise self.failure
+
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        self.mode_requests.append((session_id, mode_id))
 
 
 def test_hermes_launch_applies_only_explicit_model_and_rejects_reasoning_first(
@@ -242,6 +246,7 @@ def test_hermes_launch_applies_only_explicit_model_and_rejects_reasoning_first(
             ),
         )
         assert child.requests == []
+        assert child.mode_requests == [("hermes-first", "dont_ask")]
 
         await adapter.configure_initial_session(
             child,  # type: ignore[arg-type]
@@ -253,6 +258,10 @@ def test_hermes_launch_applies_only_explicit_model_and_rejects_reasoning_first(
             ),
         )
         assert child.requests == [("hermes-first", "provider:selected")]
+        assert child.mode_requests == [
+            ("hermes-first", "dont_ask"),
+            ("hermes-first", "dont_ask"),
+        ]
 
         with pytest.raises(EmployeeConfigurationError, match="does not support"):
             await adapter.configure_initial_session(
@@ -380,10 +389,11 @@ def test_hermes_model_is_applied_once_before_first_binding_and_never_reapplied(
         )
 
         first = await registry.get_or_spawn(employee)
-        assert operations[:4] == [
+        assert operations[:5] == [
             "initialize",
             "new_session",
             "set_legacy_session_model:hermes-1-1:provider:selected",
+            "set_session_mode:hermes-1-1:dont_ask",
             "publish_first_binding",
         ]
         assert first.employee.employee_launch_model is None
@@ -415,6 +425,7 @@ def test_hermes_model_is_applied_once_before_first_binding_and_never_reapplied(
         loaded = await registry.get_or_spawn(employee)
         assert loaded.binding == replacement.binding
         assert sum(item.startswith("set_legacy_session_model:") for item in operations) == 1
+        assert sum(item.startswith("set_session_mode:") for item in operations) == 2
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

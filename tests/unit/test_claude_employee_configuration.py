@@ -214,6 +214,9 @@ class _ScriptedClaudeChild:
             return SetSessionConfigOptionResponse(config_options=options)
         raise RuntimeError(f"unexpected configuration option {config_id!r}")
 
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        self._operations.append(("set_session_mode", session_id, mode_id))
+
     async def close_session(self, session_id: str) -> None:
         self._operations.append(("close_session", session_id, None))
         if self._script.close_session_failure:
@@ -295,6 +298,7 @@ def _provider(
         definition=definition,
         child_factory=child_factory,
         workspace_root=REPOSITORY_ROOT,
+        full_access_mode="bypassPermissions",
     )
     return definition, child_factory, adapter, delegate_factory
 
@@ -420,6 +424,7 @@ def test_claude_configuration_preserves_explicit_default_and_decorator_normaliza
         assert delegate.operations == [
             ("set_config_option", "provider-choice-17", "claude-sonnet"),
             ("set_config_option", "thinking-choice-refreshed", "default"),
+            ("set_session_mode", "claude-session-1-1", "bypassPermissions"),
         ]
 
         delegate.operations.clear()
@@ -432,7 +437,9 @@ def test_claude_configuration_preserves_explicit_default_and_decorator_normaliza
                 employee_launch_reasoning_effort=None,
             ),
         )
-        assert delegate.operations == []
+        assert delegate.operations == [
+            ("set_session_mode", "claude-session-1-1", "bypassPermissions")
+        ]
 
         captured: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
 
@@ -571,11 +578,12 @@ def test_first_claude_session_configures_before_binding_and_never_reapplies_afte
                 ],
             )
         )
-        assert delegate.operations[:6] == [
+        assert delegate.operations[:7] == [
             ("initialize", None, None),
             ("new_session", None, None),
             ("set_config_option", "provider-choice-17", "claude-sonnet"),
             ("set_config_option", "thinking-choice-refreshed", "default"),
+            ("set_session_mode", "claude-session-1-1", "bypassPermissions"),
             ("binding", None, None),
             ("prompt", "claude-session-1-1", None),
         ]
@@ -592,6 +600,11 @@ def test_first_claude_session_configures_before_binding_and_never_reapplies_afte
         await registry.new_conversation(employee)
         assert not any(operation[0] == "set_config_option" for operation in delegate.operations)
         assert ("new_session", None, None) in delegate.operations
+        assert any(
+            operation[0] == "set_session_mode"
+            and operation[2] == "bypassPermissions"
+            for operation in delegate.operations
+        )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

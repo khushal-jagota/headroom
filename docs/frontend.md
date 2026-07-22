@@ -19,16 +19,22 @@ One screen per part of the system:
   refuses to work until "how far may the worker go next" has been answered, both
   halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
-  rail groups tickets by project, then orders rows by Worker type, that type's Stage,
-  and recent activity. It shows one current-stage dot per ticket. The board card owns
-  one derived Workspace result with the fixed precedence **exceptional**, **active**,
-  **needs attention**, then **quiet**. Active work spins; attention is a filled dot;
-  quiet is a ring; exceptional keeps the error treatment. Exceptional is derived only
-  from the Ticket's canonical confirmed backend Worker error; failed or interrupted ACP
-  activity does not create it. The result combines Ticket facts with a small durable Ticket-linked ACP projection, so a browser reload or an
-  unopened conversation does not invent or retain stale activity. Initial and repeated
+   rail groups tickets by project, then orders rows by Worker type, that type's Stage,
+   and recent activity. It shows one current-stage dot per ticket. The board card owns
+  one derived Workspace result with the fixed precedence **exceptional**, **permission
+  attention**, **active**, **other attention**, **settled**, then **quiet**. Active work
+  spins; attention is a filled dot; a completed Ticket is green; quiet is a ring;
+  exceptional keeps the error treatment. Exceptional is derived only from the Ticket's
+  canonical confirmed backend Worker error; failed or interrupted ACP activity does not
+  create it. The result combines Ticket facts with a small durable Ticket-linked ACP
+  projection, so a browser reload or an unopened conversation does not invent or retain
+  stale activity. Initial and repeated
   idle are quiet until an admitted turn has real activity; a completed response stays
-  attention through reconnect/load until a new turn or explicit reset. It includes
+  attention through reconnect/load until a new turn, explicit reset, or the user opens
+  that Ticket. Opening acknowledges only the completed-response fact; proposal,
+  permission, ownership, and error attention remain authoritative. A response that
+  completes while its Ticket is open is already seen; there is no response-generation
+  or message-visibility tracking. The result includes
   every Ticket status. Done tickets sit under their own **Done** stage section, which
   is collapsed by default and can be opened to browse like any other section; when a
   group has no done tickets, no Done section appears. **Chief of Staff** sits first in
@@ -95,7 +101,10 @@ share.
   Conversation state is intentionally outside the Resource Catalogue. Each ACP pane
   owns one typed `/api/conversation` WebSocket controller. Its session replay,
   generation, sequence, queue, permissions, terminal state, and delivery receipts are
-  conversation state rather than cached REST resources. Ticket
+  conversation state rather than cached REST resources. The controller reduces the
+  ordered replay envelopes into a private candidate and publishes the complete
+  conversation to the pane once at `ready`; an existing complete transcript remains
+  visible during a refresh, while post-ready updates still render incrementally. Ticket
   `employee_session_changed` still refreshes only the matching `ticket:<id>` so the
   Ticket mirror stays current without refetching unrelated product projections.
 

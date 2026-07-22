@@ -34,26 +34,15 @@ def _prio_rank(priority: str) -> int:
 
 def blocker_summary_json(summary: BlockerSummary) -> JsonDict:
     return {
-        "blocked": summary.blocked,
         "blocked_by": [
             {
                 "ticket_id": row.ticket_id,
                 "title": row.title,
                 "stage": row.stage,
-                "active": row.active,
                 "href": row.href,
             }
             for row in summary.blocked_by
-        ],
-        "blocks": [
-            {
-                "target_id": row.target_id,
-                "target_kind": row.target_kind,
-                "title": row.title,
-                "active": row.active,
-                "href": row.href,
-            }
-            for row in summary.blocks
+            if row.active
         ],
     }
 
@@ -160,7 +149,6 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
     detail.update(
         {
             "blocked": blocker_summary.blocked,
-            "blocker_summary": blocker_summary_json(blocker_summary),
             "effective_sprint_id": tickets_data.get_effective_sprint_id(conn, ticket_id),
             "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
@@ -168,6 +156,8 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
             ),
         }
     )
+    if blocker_summary.blocked:
+        detail["blocker_summary"] = blocker_summary_json(blocker_summary)
     return detail
 
 
@@ -192,23 +182,13 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         return fields_codec.get_slot(fields, field_id)
 
     blocker_summary = core_links.blocker_summary(conn, ticket_id)
-    blocked_by_rows = blocker_summary.blocked_by
-    blocks_rows = blocker_summary.blocks
+    blocked_by_rows = tuple(row for row in blocker_summary.blocked_by if row.active)
     blocked_by_block = (
         "\n".join(
-            f"- {'active' if row.active else 'cleared'}: {row.title} ({row.ticket_id}, {row.stage})"
+            f"- {row.title} ({row.ticket_id}, {row.stage})"
             for row in blocked_by_rows
         )
         if blocked_by_rows
-        else "(none)"
-    )
-    blocks_block = (
-        "\n".join(
-            f"- {'active' if row.active else 'cleared'}: {row.title} "
-            f"({row.target_id}, {row.target_kind})"
-            for row in blocks_rows
-        )
-        if blocks_rows
         else "(none)"
     )
     field_blocks = "".join(
@@ -229,7 +209,6 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
         f"recap:\n{show(ticket.recap)}\n"
         f"\n"
         f"blocked_by:\n{blocked_by_block}\n"
-        f"blocks:\n{blocks_block}\n"
     )
 
 
@@ -259,6 +238,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
+    blocked_target_ids = core_links.blocked_target_ids(conn)
     coding_order = registry.require("coding").stage_ids()
     column_order: list[str] = list(coding_order)
     by_stage: dict[str, list[tuple[tuple[int, int, str, int], JsonDict]]] = {
@@ -339,8 +319,10 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
                         row["has_completed_response_awaiting_user"] or 0
                     ),
                     has_pending_permission=bool(row["has_pending_permission"] or 0),
+                    is_completed=stage == worker_type_definition.completed_stage(),
                 )
             ).value,
+            "blocked": str(row["id"]) in blocked_target_ids,
         }
         sort_key = (
             _prio_rank(priority),

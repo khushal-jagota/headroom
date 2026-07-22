@@ -39,6 +39,7 @@ def create_ticket(
     deadline: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
 ) -> Ticket:
     ticket = tickets_data.create_ticket(
         conn,
@@ -54,6 +55,7 @@ def create_ticket(
         sprint_item_id=sprint_item_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
+        blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
     automatic_employee_step_eligibility_wake.wake()
     return ticket
@@ -78,6 +80,7 @@ def create_ticket_from_external_work(
     deadline: str | None = None,
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
 ) -> Ticket:
     ticket = tickets_data.create_ticket_from_external_work(
         conn,
@@ -96,6 +99,7 @@ def create_ticket_from_external_work(
         sprint_item_id=sprint_item_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
+        blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
     automatic_employee_step_eligibility_wake.wake()
     return ticket

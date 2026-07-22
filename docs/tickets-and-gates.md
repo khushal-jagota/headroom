@@ -122,6 +122,31 @@ Standalone tickets may point at a project by `project_id`. API responses also in
 `project`, the display name, for compatibility. A ticket under a sprint item does not
 store its own project because the parent item owns that classification.
 
+### Blockers
+
+An ordinary Ticket create and a Chief external-work Ticket create may name any number
+of existing blocker Ticket ids. Panels creates the dependent Ticket, every directed
+`blocks` link, and their events in one transaction. A missing, invalid, or repeated
+blocker rejects the whole create with a structured error. Nothing is saved. A successful
+create commits once, then wakes Automatic Employee eligibility once.
+
+Blocking is always derived from direct incoming links whose blocker Ticket is not done
+or dropped. It does not write a Blocked Stage or change the dependent Ticket's real
+Stage, ownership, scope, proposal, or direct user controls. It only prevents an Automatic
+Employee step. Every active blocker must clear before automatic work can resume.
+
+The Workspace keeps a blocked Ticket in Kickoff until Kickoff is approved. After
+Kickoff, a Ticket with any active blocker appears quietly in a synthetic **Blocked**
+section above Kickoff. The row does not repeat blocker names. When the final blocker is
+removed, done, or dropped, the Ticket returns to its unchanged real Stage and its normal
+attention state.
+
+Ticket detail shows only direct blockers that are active now. Each row links to the
+blocker and can remove that one link, during Kickoff or later. The section is absent
+when no active blocker remains. Panels does not show reverse, cleared, transitive, or
+graph views. A Ticket may still block a Sprint item through the same existing directed
+link engine.
+
 ### Ordinary Ticket edits
 
 One ordinary edit may change a Ticket's title, priority, deadline, project, and

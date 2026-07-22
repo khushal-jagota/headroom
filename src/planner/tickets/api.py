@@ -72,6 +72,7 @@ from planner.tickets.contracts import (
     TicketEdit,
     ValueEditBody,
 )
+from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_types.configuration import (
     configured_employee_runtime_definitions,
     configured_worker_type_registry,
@@ -173,6 +174,13 @@ def body_opt_str(body: JsonDict, key: str) -> str | None:
     return raw
 
 
+def body_str_list(body: JsonDict, key: str) -> list[str]:
+    raw = body.get(key, [])
+    if not isinstance(raw, list) or any(not isinstance(value, str) for value in raw):
+        raise PlannerError(ErrorCode.validation, f"invalid {key}", {key: raw})
+    return list(raw)
+
+
 # --- Worker-type-driven ingress helpers -----------------------------------------
 # The Ticket's Worker type is resolved first, then each ingress position is validated
 # against that Worker type's definition (not a global enum), and a bare str is passed to
@@ -228,6 +236,7 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         project_id=body_opt_str(raw, "project_id"),
         sprint_id=body_opt_str(raw, "sprint_id"),
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
+        blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
@@ -249,6 +258,7 @@ _EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
         "project_id",
         "sprint_id",
         "sprint_item_id",
+        "blocked_by_ticket_ids",
     }
 )
 
@@ -328,6 +338,7 @@ def _marshal_external_create(
         body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
+    body["blocked_by_ticket_ids"] = body_str_list(raw, "blocked_by_ticket_ids")
     return body
 
 
@@ -427,6 +438,7 @@ async def create_ticket(
         sprint_item_id=body["sprint_item_id"],
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
+        blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
         automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -472,6 +484,7 @@ async def create_ticket_from_external_work(
         sprint_item_id=body.get("sprint_item_id"),
         worker_type=worker_type,
         employee_backend=body.get("employee_backend"),
+        blocked_by_ticket_ids=body.get("blocked_by_ticket_ids", []),
         automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -625,6 +638,25 @@ async def get_worker_self_ticket(
 @router.get("/tickets/{ticket_id}")
 async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
+
+
+@router.post("/tickets/{ticket_id}/acknowledge-completed-response")
+async def acknowledge_ticket_completed_response(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+) -> JsonDict:
+    """Record that a direct user has opened the Ticket's completed response."""
+    require_direct_write(ctx)
+    tickets_data.read_ticket(conn, ticket_id)
+    changed = TicketConversationProjection(
+        cfg.db_path,
+        now=clk.now_unix,
+        busy_timeout_ms=cfg.db_busy_timeout_ms,
+    ).acknowledge_completed_response(ticket_id)
+    return {"acknowledged": changed}
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")

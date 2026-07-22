@@ -7,7 +7,7 @@ import contextlib
 import json
 import logging
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypedDict, cast
 
@@ -23,6 +23,11 @@ from starlette.websockets import WebSocketDisconnect
 
 from planner.tickets.conversation_projection import TicketConversationProjection
 
+from .backend_contracts import (
+    ConversationIngressReplayBatch,
+    ConversationIngressTransition,
+    SessionNotificationReplayMaterializer,
+)
 from .configuration import (
     ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES,
     ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
@@ -55,7 +60,6 @@ from .runtime_ports import (
 )
 from .sqlite_binding_repository import SqliteConversationBindingRepository
 from .turn_broker import (
-    ConversationTurnAttachState,
     ConversationTurnBroker,
     ConversationTurnBrokerError,
     PromptIngressBarrierResult,
@@ -190,6 +194,35 @@ class BrowserSubscription:
     closure_logged: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _OrdinaryReplayEntryKey:
+    sequence: int
+
+
+@dataclass(frozen=True, slots=True)
+class _MaterializedReplayEntryKey:
+    backend_slot_key: Hashable
+
+
+@dataclass(slots=True)
+class _OrdinaryReplayEntry:
+    sequence: int
+    serialized: str
+    stored_bytes: int
+
+
+@dataclass(slots=True)
+class _MaterializedReplayEntry:
+    sequence: int
+    envelope: AcpSessionUpdateEnvelope
+    notifications: list[SessionNotification]
+    accumulated_serialized_value_bytes: int
+    stored_bytes: int
+
+
+type _ReplayEntry = _OrdinaryReplayEntry | _MaterializedReplayEntry
+
+
 @dataclass(slots=True)
 class _StreamState:
     employee: ConversationEmployee
@@ -203,6 +236,10 @@ class _StreamState:
     reset_buffer_envelope_count: int = 0
     reset_buffer_attempted_bytes: int = 0
     reset_buffer_available: bool = True
+    replay_materializer: SessionNotificationReplayMaterializer | None = None
+    replay_entries: dict[
+        _OrdinaryReplayEntryKey | _MaterializedReplayEntryKey, _ReplayEntry
+    ] = field(default_factory=dict)
     persistent_rejection: ProtocolUpdateRejectedPayload | None = None
     browsers: dict[str, BrowserSubscription] = field(default_factory=dict)
     supports_steer: bool = False
@@ -306,6 +343,10 @@ class ConversationHub:
         self._source_capture: dict[
             tuple[str, int, int], deque[SessionNotification | ProtocolUpdateRejectedPayload]
         ] = {}
+        self._source_load_replay: dict[
+            tuple[str, int, int],
+            tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...],
+        ] = {}
         self._prompt_ingress: dict[tuple[str, int, int, int, int], _PromptIngressState] = {}
         self._compaction_transitions: dict[str, _CompactionTransitionState] = {}
         self._requested_cancel_recovery_transitions: dict[
@@ -343,14 +384,32 @@ class ConversationHub:
     async def registry_conversation_ingress(
         self,
         source: ConversationIngressSource,
-        payload: object,
+        payload: ConversationIngressTransition,
     ) -> None:
-        if not isinstance(payload, (SessionNotification, ProtocolUpdateRejectedPayload)):
+        operation: Callable[[], None]
+        if isinstance(payload, ConversationIngressReplayBatch):
+            if not all(
+                isinstance(item, (SessionNotification, ProtocolUpdateRejectedPayload))
+                for item in payload.items
+            ):
+                raise TypeError("replay batch must contain typed ACP updates or rejections")
+
+            def ingest_replay_batch_operation() -> None:
+                self._ingest_replay_batch(source, payload)
+
+            operation = ingest_replay_batch_operation
+        elif isinstance(payload, (SessionNotification, ProtocolUpdateRejectedPayload)):
+
+            def ingest_source_operation() -> None:
+                self._ingest_source(source, payload)
+
+            operation = ingest_source_operation
+        else:
             raise TypeError("registry ingress must be a typed ACP update or rejection")
-        self._admit_nowait(
+        await self._admit(
             source.employee.employee_id,
-            lambda: self._ingest_source(source, payload),
-            on_failure=lambda error: self._schedule_source_failure(source, error),
+            operation,
+            on_failure=lambda error: self._handle_ingress_failure(source, payload, error),
         )
 
     async def registry_child_died(
@@ -361,6 +420,9 @@ class ConversationHub:
         employee_id = source.employee.employee_id
 
         def classify() -> int | None:
+            source_key = self._source_key(source)
+            self._source_load_replay.pop(source_key, None)
+            self._source_capture.pop(source_key, None)
             stream = self._streams.get(employee_id)
             transition = self._requested_cancel_recovery_transitions.get(
                 employee_id
@@ -372,7 +434,7 @@ class ConversationHub:
                     original.child_generation,
                     id(original.record_identity),
                 )
-                if self._source_key(source) == original_key:
+                if source_key == original_key:
                     binding_generation = original.binding.binding_generation
                     self._fail_requested_cancel_recovery_transition_state(
                         employee_id,
@@ -380,7 +442,7 @@ class ConversationHub:
                         "Employee connection failed",
                     )
                     return binding_generation
-            if stream is None or stream.source_key != self._source_key(source):
+            if stream is None or stream.source_key != source_key:
                 return None
             self._publish_child_death(source)
             return stream.binding.binding_generation
@@ -495,26 +557,14 @@ class ConversationHub:
                 )
                 return subscription
 
-            handle = await self._require_registry().resolve_runtime_handle(
-                employee_id, binding.binding_generation
+            await self._enqueue_and_wait(
+                employee_id,
+                lambda: self._attach_subscription_from_ready_stream(
+                    stream, subscription
+                ),
             )
-            attach_state = await self._require_broker().attach_state(handle)
-            if attach_state.phase in {"running", "cancelling", "capture-finalizing"}:
-                await self._enqueue_and_wait(
-                    employee_id,
-                    lambda: self._attach_active_subscription(stream, subscription, attach_state),
-                )
-                if subscription.close_reason is not None:
-                    await self._detach_subscription_permission(subscription)
-                return subscription
-
-            await self._enqueue_and_wait(employee_id, lambda: self._open_capture(stream))
-            record = await self._require_registry().attach(employee)
-            await self._establish_stream(
-                record,
-                sequence_floor=stream.sequence,
-                initial_subscription=subscription,
-            )
+            if subscription.close_reason is not None:
+                await self._detach_subscription_permission(subscription)
             return subscription
         except BaseException:
             await self._detach_subscription_permission(subscription)
@@ -616,7 +666,8 @@ class ConversationHub:
         deadline = asyncio.get_running_loop().time() + self._new_conversation_timeout_seconds
         await self._require_broker().prepare_new_conversation(handle, deadline)
         record = await self._require_registry().new_conversation(stream.employee)
-        record = await self._require_registry().attach(record.employee)
+        # session/new leaves the replacement live on this child. Loading it again is
+        # both redundant and invalid for providers that persist only after a first turn.
         async def establish_and_reset() -> None:
             established = await self._establish_stream(
                 record, sequence_floor=0, force_new_binding=True
@@ -745,6 +796,9 @@ class ConversationHub:
                     id(replacement_handle.record_identity),
                 ),
                 runtime_handle=replacement_handle,
+                replay_materializer=(
+                    replacement_handle.definition.session_notification_replay_materializer
+                ),
                 supports_steer=(
                     replacement_handle.definition.turn_capabilities.supports_steer
                 ),
@@ -995,6 +1049,9 @@ class ConversationHub:
                     id(replacement_handle.record_identity),
                 ),
                 runtime_handle=replacement_handle,
+                replay_materializer=(
+                    replacement_handle.definition.session_notification_replay_materializer
+                ),
                 sequence=old_stream.sequence,
                 persistent_rejection=old_stream.persistent_rejection,
                 supports_steer=(
@@ -1393,11 +1450,13 @@ class ConversationHub:
         await websocket.accept()
         subscription: BrowserSubscription | None = None
         writer: asyncio.Task[None] | None = None
+        requested_employee_id: str | None = None
         try:
             first = await self._receive_action(websocket)
             if not isinstance(first, AttachAction):
                 await websocket.close(code=1008, reason=INVALID_ACTION_CLOSE_REASON)
                 return
+            requested_employee_id = first.employee_id
             subscription = await self.attach_browser(
                 first.employee_id,
                 last_seen_binding_generation=first.last_seen_binding_generation,
@@ -1419,6 +1478,17 @@ class ConversationHub:
             with contextlib.suppress(Exception):
                 await websocket.close(code=1008, reason=INVALID_ACTION_CLOSE_REASON)
         except Exception:
+            _LOGGER.exception(
+                "conversation websocket failed",
+                extra={
+                    "conversation_employee_id": requested_employee_id,
+                    "conversation_connection_id": (
+                        subscription.connection_id
+                        if subscription is not None
+                        else None
+                    ),
+                },
+            )
             with contextlib.suppress(Exception):
                 await websocket.close(code=1011, reason="conversation transport failed")
         finally:
@@ -1531,6 +1601,9 @@ class ConversationHub:
             binding=binding,
             source_key=self._source_key(source),
             runtime_handle=runtime_handle,
+            replay_materializer=(
+                runtime_handle.definition.session_notification_replay_materializer
+            ),
             sequence=sequence,
             persistent_rejection=persistent,
             browsers={},
@@ -1540,11 +1613,12 @@ class ConversationHub:
             self._publish_connection_now(stream, "reset", "Conversation loaded")
             if persistent is not None:
                 self._publish_rejection_now(stream, persistent)
-            captured = self._source_capture.pop(stream.source_key, deque())
+            load_replay = self._source_load_replay.pop(stream.source_key, ())
+            captured_live = self._source_capture.pop(stream.source_key, deque())
             self._publish_replay_batch_now(
                 stream,
                 runtime_handle,
-                tuple(captured),
+                load_replay + tuple(captured_live),
                 compacted_boundaries,
             )
             self._publish_connection_now(stream, "ready", "Ready")
@@ -1581,7 +1655,14 @@ class ConversationHub:
                 )
             return False
 
-        replay = tuple(stream.reset_buffer)
+        replay = self._subscriber_snapshot_bootstrap(stream)
+        if replay is None:
+            stream.reset_buffer_available = False
+            for browser in tuple(stream.browsers.values()):
+                self._close_browser_subscription(
+                    stream, browser, REPLAY_UNAVAILABLE_CLOSE_REASON, "replay"
+                )
+            return False
         for browser in tuple(existing_browsers.values()):
             try:
                 queue = cast(_BrowserOutboundQueue, browser.queue)
@@ -1631,22 +1712,166 @@ class ConversationHub:
         stream.source_key = (stream.employee.employee_id, -1, -1)
         stream.runtime_handle = None
 
-    def _attach_active_subscription(
+    def _attach_subscription_from_ready_stream(
         self,
         stream: _StreamState,
         subscription: BrowserSubscription,
-        attach_state: ConversationTurnAttachState,
     ) -> None:
-        del attach_state
         if not stream.reset_buffer_available:
             self._close_browser_subscription(
                 stream, subscription, REPLAY_UNAVAILABLE_CLOSE_REASON, "replay"
             )
             return
-        self._publish_connection_now(stream, "ready", "Ready")
         queue = cast(_BrowserOutboundQueue, subscription.queue)
-        queue.set_initial_bootstrap(tuple(stream.reset_buffer))
+        bootstrap = self._subscriber_snapshot_bootstrap(stream)
+        if bootstrap is None:
+            self._close_browser_subscription(
+                stream, subscription, REPLAY_UNAVAILABLE_CLOSE_REASON, "replay"
+            )
+            return
+        queue.set_initial_bootstrap(bootstrap)
         stream.browsers[subscription.connection_id] = subscription
+
+    def _subscriber_snapshot_bootstrap(
+        self,
+        stream: _StreamState,
+    ) -> tuple[str, ...] | None:
+        snapshot = self._materialized_replay_snapshot(stream)
+        if not snapshot:
+            return None
+        try:
+            decoded = tuple(
+                SERVER_ENVELOPE_ADAPTER.validate_json(
+                    serialized,
+                    strict=True,
+                    by_alias=True,
+                    by_name=False,
+                )
+                for serialized in snapshot
+            )
+        except (ValidationError, ValueError, TypeError):
+            return None
+        reset_envelopes = tuple(
+            envelope
+            for envelope in decoded
+            if envelope.type == "connection" and envelope.payload.state == "reset"
+        )
+        if (
+            len(reset_envelopes) != 1
+            or decoded[0] is not reset_envelopes[0]
+            or any(
+                envelope.employee_id != stream.employee.employee_id
+                or envelope.entity_kind != stream.employee.entity_kind
+                or envelope.entity_id != stream.employee.entity_id
+                or envelope.acp_session_id != stream.binding.acp_session_id
+                or envelope.binding_generation
+                != stream.binding.binding_generation
+                for envelope in decoded
+            )
+            or any(
+                current.sequence >= following.sequence
+                for current, following in zip(decoded, decoded[1:], strict=False)
+            )
+            or decoded[-1].sequence != stream.sequence
+            or (
+                stream.replay_materializer is None
+                and tuple(envelope.sequence for envelope in decoded)
+                != tuple(
+                    range(
+                        stream.sequence - len(decoded) + 1,
+                        stream.sequence + 1,
+                    )
+                )
+            )
+        ):
+            return None
+        ready_envelopes = tuple(
+            envelope
+            for envelope in decoded
+            if envelope.type == "connection" and envelope.payload.state == "ready"
+        )
+        if not ready_envelopes:
+            return None
+        snapshot_bytes = sum(len(serialized.encode("utf-8")) for serialized in snapshot)
+        canonical_sequences_are_contiguous = tuple(
+            envelope.sequence for envelope in decoded
+        ) == tuple(range(stream.sequence - len(decoded) + 1, stream.sequence + 1))
+        if (
+            len(ready_envelopes) == 1
+            and decoded[-1] is ready_envelopes[0]
+            and canonical_sequences_are_contiguous
+            and snapshot_bytes <= self._reset_buffer_byte_limit
+        ):
+            return snapshot
+
+        ready = ready_envelopes[-1]
+        bootstrap = [
+            envelope
+            for envelope in decoded
+            if not (
+                envelope.type == "connection" and envelope.payload.state == "ready"
+            )
+        ]
+        bootstrap.append(ready)
+        first_sequence = stream.sequence - len(bootstrap) + 1
+        try:
+            normalized = tuple(
+                SERVER_ENVELOPE_ADAPTER.validate_python(
+                    self._resequence_server_envelope(
+                        envelope, first_sequence + offset
+                    ).model_dump(by_alias=True, exclude_none=True),
+                    strict=True,
+                    by_alias=True,
+                    by_name=False,
+                ).model_dump_json(by_alias=True, exclude_none=True)
+                for offset, envelope in enumerate(bootstrap)
+            )
+        except (ValidationError, ValueError, TypeError):
+            return None
+        if (
+            sum(len(serialized.encode("utf-8")) for serialized in normalized)
+            > self._reset_buffer_byte_limit
+        ):
+            return None
+        return normalized
+
+    def _materialized_replay_snapshot(self, stream: _StreamState) -> tuple[str, ...]:
+        materializer = stream.replay_materializer
+        if materializer is None:
+            return tuple(stream.reset_buffer)
+        snapshot: list[str] = []
+        for entry in stream.replay_entries.values():
+            if isinstance(entry, _OrdinaryReplayEntry):
+                snapshot.append(entry.serialized)
+                continue
+            notification = materializer.materialize(tuple(entry.notifications))
+            envelope = entry.envelope.model_copy(update={"payload": notification})
+            validated = SERVER_ENVELOPE_ADAPTER.validate_python(
+                envelope.model_dump(by_alias=True, exclude_none=True),
+                strict=True,
+                by_alias=True,
+                by_name=False,
+            )
+            snapshot.append(validated.model_dump_json(by_alias=True, exclude_none=True))
+        return tuple(snapshot)
+
+    @staticmethod
+    def _resequence_server_envelope(
+        envelope: ServerEnvelope,
+        sequence: int,
+    ) -> ServerEnvelope:
+        payload = envelope.payload
+        if isinstance(envelope, ActivityEnvelope):
+            payload = envelope.payload.model_copy(update={"sequence": sequence})
+        elif isinstance(envelope, PermissionRequestEnvelope):
+            payload = envelope.payload.model_copy(
+                update={"opened_sequence": sequence}
+            )
+        elif isinstance(envelope, PermissionOutcomeEnvelope):
+            payload = envelope.payload.model_copy(
+                update={"settled_sequence": sequence}
+            )
+        return envelope.model_copy(update={"sequence": sequence, "payload": payload})
 
     def _ingest_source(
         self,
@@ -1734,6 +1959,22 @@ class ConversationHub:
             captured.append(payload)
             return
         self._publish_source_payload(stream, payload)
+
+    def _ingest_replay_batch(
+        self,
+        source: ConversationIngressSource,
+        batch: ConversationIngressReplayBatch,
+    ) -> None:
+        source_key = self._source_key(source)
+        stream = self._streams.get(source.employee.employee_id)
+        if stream is None or stream.source_key != source_key:
+            if stream is not None and stream.ready:
+                return
+            self._source_capture.pop(source_key, None)
+            self._source_load_replay[source_key] = batch.items
+            return
+        for payload in batch.items:
+            self._ingest_source(source, payload)
 
     def _publish_source_payload(
         self,
@@ -1890,10 +2131,13 @@ class ConversationHub:
             stream.reset_buffer_envelope_count = 0
             stream.reset_buffer_attempted_bytes = 0
             stream.reset_buffer_available = True
+            stream.replay_entries = {}
         encoded_size = len(serialized.encode("utf-8"))
         stream.reset_buffer_envelope_count += 1
         stream.reset_buffer_attempted_bytes += encoded_size
-        if stream.reset_buffer_available:
+        if stream.replay_materializer is not None:
+            self._admit_materialized_replay_envelope(stream, validated, serialized)
+        elif stream.reset_buffer_available:
             if stream.reset_buffer_bytes + encoded_size <= self._reset_buffer_byte_limit:
                 stream.reset_buffer.append(serialized)
                 stream.reset_buffer_bytes += encoded_size
@@ -1908,6 +2152,75 @@ class ConversationHub:
                 self._close_browser_subscription(
                     stream, browser, SLOW_CONSUMER_CLOSE_REASON, "live"
                 )
+
+    def _admit_materialized_replay_envelope(
+        self,
+        stream: _StreamState,
+        envelope: ServerEnvelope,
+        serialized: str,
+    ) -> None:
+        materializer = stream.replay_materializer
+        assert materializer is not None
+        admission = None
+        if isinstance(envelope, AcpSessionUpdateEnvelope) and isinstance(
+            envelope.payload, SessionNotification
+        ):
+            admission = materializer.classify(envelope.payload)
+        if admission is None:
+            ordinary_key = _OrdinaryReplayEntryKey(envelope.sequence)
+            stored_bytes = len(serialized.encode("utf-8"))
+            stream.replay_entries[ordinary_key] = _OrdinaryReplayEntry(
+                sequence=envelope.sequence,
+                serialized=serialized,
+                stored_bytes=stored_bytes,
+            )
+            stream.reset_buffer_bytes += stored_bytes
+            stream.reset_buffer_available = (
+                stream.reset_buffer_bytes <= self._reset_buffer_byte_limit
+            )
+            return
+        materialized_envelope = cast(AcpSessionUpdateEnvelope, envelope)
+        notification = materialized_envelope.payload
+        materialized_key = _MaterializedReplayEntryKey(admission.slot_key)
+        existing = stream.replay_entries.pop(materialized_key, None)
+        if isinstance(existing, _MaterializedReplayEntry):
+            stream.reset_buffer_bytes -= existing.stored_bytes
+        notifications = (
+            existing.notifications
+            if isinstance(existing, _MaterializedReplayEntry)
+            and admission.disposition == "accumulate"
+            else []
+        )
+        notifications.append(notification)
+        if admission.disposition == "replace":
+            accumulated_serialized_value_bytes = 0
+            stored_bytes = len(serialized.encode("utf-8"))
+        else:
+            accumulated_serialized_value_bytes = (
+                existing.accumulated_serialized_value_bytes
+                if isinstance(existing, _MaterializedReplayEntry)
+                else 0
+            ) + admission.serialized_accumulation_fragment_bytes
+            serialized_envelope_bytes = len(serialized.encode("utf-8"))
+            envelope_bytes_without_notification = (
+                serialized_envelope_bytes - admission.serialized_notification_bytes
+            )
+            stored_bytes = (
+                envelope_bytes_without_notification
+                + admission.serialized_materialized_base_bytes
+                + accumulated_serialized_value_bytes
+            )
+        stream.replay_entries[materialized_key] = _MaterializedReplayEntry(
+            sequence=envelope.sequence,
+            envelope=materialized_envelope,
+            notifications=notifications,
+            accumulated_serialized_value_bytes=accumulated_serialized_value_bytes,
+            stored_bytes=stored_bytes,
+        )
+        stream.reset_buffer_bytes += stored_bytes
+        stream.reset_buffer_available = (
+            stream.reset_buffer_bytes <= self._reset_buffer_byte_limit
+        )
 
     def _close_browser_subscription(
         self,
@@ -2128,10 +2441,7 @@ class ConversationHub:
     async def _enqueue_and_wait(self, employee_id: str, operation: Callable[[], Any]) -> Any:
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         sequencer = self._sequencer(employee_id)
-        try:
-            sequencer.queue.put_nowait(_SequencedOperation(operation, future))
-        except asyncio.QueueFull:
-            raise RuntimeError("conversation ingress sequencer is full") from None
+        await sequencer.queue.put(_SequencedOperation(operation, future))
         try:
             return await asyncio.shield(future)
         except asyncio.CancelledError:
@@ -2145,7 +2455,7 @@ class ConversationHub:
         with contextlib.suppress(BaseException):
             future.result()
 
-    def _admit_nowait(
+    async def _admit(
         self,
         employee_id: str,
         operation: Callable[[], Any],
@@ -2153,10 +2463,7 @@ class ConversationHub:
         on_failure: Callable[[Exception], None] | None = None,
     ) -> None:
         sequencer = self._sequencer(employee_id)
-        try:
-            sequencer.queue.put_nowait(_SequencedOperation(operation, None, on_failure))
-        except asyncio.QueueFull:
-            raise RuntimeError("conversation ingress sequencer is full") from None
+        await sequencer.queue.put(_SequencedOperation(operation, None, on_failure))
 
     def _sequencer(self, employee_id: str) -> _EmployeeSequencer:
         sequencer = self._sequencers.get(employee_id)
@@ -2260,6 +2567,34 @@ class ConversationHub:
             ),
         )
         task.add_done_callback(lambda completed: self._consume_background(completed, error))
+
+    def _handle_ingress_failure(
+        self,
+        source: ConversationIngressSource,
+        payload: ConversationIngressTransition,
+        error: Exception,
+    ) -> None:
+        if isinstance(payload, ConversationIngressReplayBatch):
+            transition_kind = "replay"
+            transition_count = len(payload.items)
+        else:
+            transition_kind = "ingress"
+            transition_count = 1
+        _LOGGER.error(
+            json.dumps(
+                {
+                    "event": "conversation_ingress_operation_failed",
+                    "phase": "sequencer_drain",
+                    "employee_id": source.employee.employee_id,
+                    "child_generation": source.child_generation,
+                    "transition_kind": transition_kind,
+                    "transition_count": transition_count,
+                    "exception_type": type(error).__name__,
+                },
+                separators=(",", ":"),
+            )
+        )
+        self._schedule_source_failure(source, error)
 
     @staticmethod
     def _tracked_key(handle: TrackedTurnHandle) -> tuple[str, int, int, int]:

@@ -15,6 +15,10 @@ from .backend_contracts import (
     BackendTurnStrategy,
     ReverseServiceCapabilities,
 )
+from .codex_session_notification_normalizer import normalize_codex_session_notification
+from .codex_session_notification_replay_materializer import (
+    CodexSessionNotificationReplayMaterializer,
+)
 from .contracts import ConversationEmployee
 from .employee_configuration import StableAcpEmployeeSessionConfigurationAdapter
 from .sdk_child import SdkAcpEmployeeChildFactory
@@ -160,6 +164,10 @@ def build_codex_acp_backend_definition(
         ),
         working_directory_resolver=_first_workspace_root,
         turn_strategy=turn_strategy,
+        session_notification_normalizer=normalize_codex_session_notification,
+        session_notification_replay_materializer=(
+            CodexSessionNotificationReplayMaterializer()
+        ),
     )
 
 
@@ -202,6 +210,7 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
                     definition=definition,
                     child_factory=child_factory,
                     workspace_root=repository_root,
+                    full_access_mode="agent-full-access",
                 )
             ),
         )

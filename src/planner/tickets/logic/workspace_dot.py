@@ -11,7 +11,7 @@ from planner.tickets.contracts import (
 
 
 def workspace_dot_state(facts: WorkspaceDotFacts) -> WorkspaceDotState:
-    """Classify one Ticket with exceptional > active > attention > quiet precedence."""
+    """Classify one Ticket with exceptional > active/attention > settled > quiet precedence."""
 
     if facts.backend_error is not None:
         return WorkspaceDotState.exceptional
@@ -42,5 +42,8 @@ def workspace_dot_state(facts: WorkspaceDotFacts) -> WorkspaceDotState:
         }
     ):
         return WorkspaceDotState.needs_attention
+
+    if facts.is_completed:
+        return WorkspaceDotState.settled
 
     return WorkspaceDotState.quiet

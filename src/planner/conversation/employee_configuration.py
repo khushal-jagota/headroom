@@ -169,6 +169,7 @@ class StableAcpEmployeeSessionConfigurationAdapter:
         workspace_root: Path,
         model_category: str = "model",
         reasoning_category: str = "thought_level",
+        full_access_mode: str | None = None,
     ) -> None:
         if not workspace_root.is_absolute():
             raise ValueError("employee configuration workspace root must be absolute")
@@ -181,6 +182,7 @@ class StableAcpEmployeeSessionConfigurationAdapter:
         self._reasoning_category = _require_non_empty_text(
             reasoning_category, field_name="reasoning semantic category"
         )
+        self._full_access_mode = full_access_mode
 
     @property
     def backend_key(self) -> str:
@@ -329,6 +331,8 @@ class StableAcpEmployeeSessionConfigurationAdapter:
                     raise EmployeeConfigurationError(
                         "ACP reasoning selection did not become the current value"
                     )
+            if self._full_access_mode is not None:
+                await child.set_session_mode(response.session_id, self._full_access_mode)
         except asyncio.CancelledError:
             raise
         except EmployeeConfigurationError:

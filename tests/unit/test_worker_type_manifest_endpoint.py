@@ -74,24 +74,24 @@ def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
 
-    assert served["employee_backends"] == ["hermes", "probe-backend"]
+    assert served["employee_backends"] == ["hermes", "codex", "claude", "probe-backend"]
     assert [item["default_employee_backend"] for item in served["worker_types"]] == [
-        "hermes",
-        "hermes",
-        "hermes",
-        "hermes",
+        "codex",
+        "codex",
+        "codex",
+        "codex",
         "probe-backend",
     ]
     assert [item["default_employee_model"] for item in served["worker_types"]] == [
-        None,
-        None,
-        None,
-        None,
+        "gpt-5.6-sol",
+        "gpt-5.6-sol",
+        "gpt-5.6-sol",
+        "gpt-5.6-sol",
         "probe-model",
     ]
     assert [
         item["default_employee_reasoning_effort"] for item in served["worker_types"]
-    ] == [None, None, None, None, "probe-high"]
+    ] == ["medium", "medium", "medium", "medium", "probe-high"]
     assert (
         PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
         == ("hermes", "codex", "claude")
@@ -115,5 +115,5 @@ def test_installed_probe_appears_after_shipped_worker_types(app, probe_installed
         "initiative_planning",
         "probe",
     ]
-    assert served["employee_backends"] == ["hermes", "probe-backend"]
+    assert served["employee_backends"] == ["hermes", "codex", "claude", "probe-backend"]
     assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")

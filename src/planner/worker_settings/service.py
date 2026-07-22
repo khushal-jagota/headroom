@@ -22,6 +22,8 @@ import yaml
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings.contracts import (
+    ManagedChiefSettings,
+    ManagedEmployeeLaunchDefaults,
     ManagedSkill,
     ManagedWorkerSettings,
     SpecialistSkillPatch,
@@ -36,6 +38,11 @@ SETTINGS_FILE_NAME: Final = "settings.json"
 SKILL_FILE_NAME: Final = "SKILL.md"
 LAST_KNOWN_GOOD_DIR_NAME: Final = ".last-known-good"
 CANDIDATES_DIR_NAME: Final = ".candidates"
+CHIEF_SETTINGS_KEY: Final = "chief_of_staff"
+CHIEF_LABEL: Final = "Chief of Staff"
+DEFAULT_CHIEF_BACKEND: Final = "codex"
+DEFAULT_CHIEF_MODEL: Final = "gpt-5.6-sol"
+DEFAULT_CHIEF_REASONING_EFFORT: Final = "medium"
 _WORKER_LOCKS_GUARD = threading.Lock()
 _WORKER_LOCKS: dict[tuple[str, str], threading.RLock] = {}
 
@@ -47,9 +54,7 @@ class _PathSnapshot:
         self._is_symlink = path.is_symlink()
         self._link_target = os.readlink(path) if self._is_symlink else None
         self._bytes = (
-            path.read_bytes()
-            if self._exists and not self._is_symlink and path.is_file()
-            else None
+            path.read_bytes() if self._exists and not self._is_symlink and path.is_file() else None
         )
 
     def restore(self) -> None:
@@ -120,11 +125,17 @@ def _worker_settings_lock(root: Path, worker_type: str) -> threading.RLock:
         return lock
 
 
+def chief_settings_binding_snapshot_lock(
+    configured_database_parent: Path | str,
+) -> threading.RLock:
+    """Return the reentrant lock guarding a Chief launch-settings snapshot."""
+    root = managed_worker_settings_root(configured_database_parent)
+    return _worker_settings_lock(root, CHIEF_SETTINGS_KEY)
+
+
 def _atomic_replace_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix=f".{path.name}.tmp-{os.getpid()}-", dir=path.parent
-    )
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.tmp-{os.getpid()}-", dir=path.parent)
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as tmp:
@@ -182,7 +193,61 @@ def _bootstrap_settings_payload(definition: WorkerTypeDefinition) -> JsonDict:
             for stage in definition.stages
             if not stage.is_terminal and stage.default_ownership_mode is not None
         },
+        "launch_defaults": _launch_defaults_payload(
+            ManagedEmployeeLaunchDefaults(
+                employee_backend=definition.worker_profile.default_employee_backend,
+                employee_launch_model=definition.worker_profile.default_employee_model,
+                employee_launch_reasoning_effort=(
+                    definition.worker_profile.default_employee_reasoning_effort
+                ),
+            )
+        ),
     }
+
+
+def _launch_defaults_payload(defaults: ManagedEmployeeLaunchDefaults) -> JsonDict:
+    return {
+        "employee_backend": defaults.employee_backend,
+        "employee_launch_model": defaults.employee_launch_model,
+        "employee_launch_reasoning_effort": defaults.employee_launch_reasoning_effort,
+    }
+
+
+def _validate_launch_defaults(
+    raw: object,
+    *,
+    registry: WorkerTypeRegistry,
+    fallback: ManagedEmployeeLaunchDefaults | None = None,
+) -> ManagedEmployeeLaunchDefaults:
+    if raw is None and fallback is not None:
+        return fallback
+    if not isinstance(raw, dict) or set(raw) != {
+        "employee_backend",
+        "employee_launch_model",
+        "employee_launch_reasoning_effort",
+    }:
+        raise PlannerError(
+            ErrorCode.validation,
+            "employee launch defaults must be an exact object",
+            {},
+        )
+    backend = raw["employee_backend"]
+    if not isinstance(backend, str):
+        raise PlannerError(ErrorCode.validation, "employee backend must be a string", {})
+    backend = registry.employee_backend_catalog.require_registered(backend)
+    optional: list[str | None] = []
+    for key in ("employee_launch_model", "employee_launch_reasoning_effort"):
+        value = raw[key]
+        if value is not None and (
+            not isinstance(value, str) or not value or value != value.strip()
+        ):
+            raise PlannerError(ErrorCode.validation, f"{key} must be null or trimmed text", {})
+        optional.append(value)
+    return ManagedEmployeeLaunchDefaults(
+        employee_backend=backend,
+        employee_launch_model=optional[0],
+        employee_launch_reasoning_effort=optional[1],
+    )
 
 
 def _ensure_bootstrapped(root: Path, definition: WorkerTypeDefinition) -> None:
@@ -201,9 +266,10 @@ def _ensure_bootstrapped(root: Path, definition: WorkerTypeDefinition) -> None:
 
 
 def _current_revision_is_missing(root: Path, worker_type: str) -> bool:
-    return not _settings_path(root, worker_type).is_file() or not _skill_path(
-        root, worker_type
-    ).is_file()
+    return (
+        not _settings_path(root, worker_type).is_file()
+        or not _skill_path(root, worker_type).is_file()
+    )
 
 
 def _load_json_object(path: Path) -> JsonDict:
@@ -240,9 +306,7 @@ def _validate_settings_payload(
             "stage ownership defaults must be an object",
             {"worker_type": definition.worker_type},
         )
-    editable_stage_ids = {
-        stage.id for stage in definition.stages if not stage.is_terminal
-    }
+    editable_stage_ids = {stage.id for stage in definition.stages if not stage.is_terminal}
     terminal_stage_ids = {
         stage.id for stage in (*definition.stages, definition.dropped_stage) if stage.is_terminal
     }
@@ -397,11 +461,7 @@ def _render_skill_from_existing_frontmatter(
     index = 0
     while index < len(frontmatter_lines):
         replacement_key = next(
-            (
-                key
-                for key, (start, _end) in spans.items()
-                if start == index and key in replacements
-            ),
+            (key for key, (start, _end) in spans.items() if start == index and key in replacements),
             None,
         )
         if replacement_key is None:
@@ -425,7 +485,7 @@ def _render_skill_from_existing_frontmatter(
 
 
 def _read_settings_with_recovery(
-    root: Path, definition: WorkerTypeDefinition
+    root: Path, definition: WorkerTypeDefinition, registry: WorkerTypeRegistry
 ) -> ManagedWorkerSettings:
     if _current_revision_is_missing(root, definition.worker_type):
         if not _restore_last_known_good(root, definition.worker_type):
@@ -433,6 +493,19 @@ def _read_settings_with_recovery(
     try:
         settings_payload = _load_json_object(_settings_path(root, definition.worker_type))
         defaults = _validate_settings_payload(settings_payload, definition)
+        profile = definition.worker_profile
+        launch_defaults = _validate_launch_defaults(
+            settings_payload.get("launch_defaults"),
+            registry=registry,
+            fallback=ManagedEmployeeLaunchDefaults(
+                profile.default_employee_backend,
+                profile.default_employee_model,
+                profile.default_employee_reasoning_effort,
+            ),
+        )
+        if "launch_defaults" not in settings_payload:
+            settings_payload["launch_defaults"] = _launch_defaults_payload(launch_defaults)
+            _atomic_replace_json(_settings_path(root, definition.worker_type), settings_payload)
         skill_text = _skill_path(root, definition.worker_type).read_text(encoding="utf-8")
         skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
     except PlannerError:
@@ -440,6 +513,19 @@ def _read_settings_with_recovery(
             raise
         settings_payload = _load_json_object(_settings_path(root, definition.worker_type))
         defaults = _validate_settings_payload(settings_payload, definition)
+        profile = definition.worker_profile
+        launch_defaults = _validate_launch_defaults(
+            settings_payload.get("launch_defaults"),
+            registry=registry,
+            fallback=ManagedEmployeeLaunchDefaults(
+                profile.default_employee_backend,
+                profile.default_employee_model,
+                profile.default_employee_reasoning_effort,
+            ),
+        )
+        if "launch_defaults" not in settings_payload:
+            settings_payload["launch_defaults"] = _launch_defaults_payload(launch_defaults)
+            _atomic_replace_json(_settings_path(root, definition.worker_type), settings_payload)
         skill_text = _skill_path(root, definition.worker_type).read_text(encoding="utf-8")
         skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
     _backup_last_known_good(root, definition.worker_type)
@@ -458,6 +544,7 @@ def _read_settings_with_recovery(
         worker_type=definition.worker_type,
         stage_ownership_defaults=defaults,
         specialist_skill=skill,
+        launch_defaults=launch_defaults,
         candidate_specialist_skill=candidate_skill,
     )
 
@@ -470,7 +557,11 @@ def read_worker_settings(
     definition = registry.require(worker_type)
     root = managed_worker_settings_root(configured_database_parent)
     with _worker_settings_lock(root, worker_type):
-        return _read_settings_with_recovery(root, definition)
+        settings = _read_settings_with_recovery(root, definition, registry)
+        _validate_launch_defaults(
+            _launch_defaults_payload(settings.launch_defaults), registry=registry
+        )
+        return settings
 
 
 def read_stage_default_ownership_for_ticket_entry(
@@ -500,6 +591,7 @@ def read_worker_management_index(
                 label=definition.label,
                 specialist_skill_name=definition.worker_profile.specialist_skill,
                 stage_ownership_defaults=settings.stage_ownership_defaults,
+                launch_defaults=settings.launch_defaults,
             )
         )
     return tuple(summaries)
@@ -514,6 +606,122 @@ def read_worker_management_detail(
         manifest=registry.manifest(worker_type),
         settings=read_worker_settings(configured_database_parent, registry, worker_type),
     )
+
+
+def _chief_settings_path(root: Path) -> Path:
+    return root / CHIEF_SETTINGS_KEY / SETTINGS_FILE_NAME
+
+
+def _default_chief_launch_defaults() -> ManagedEmployeeLaunchDefaults:
+    return ManagedEmployeeLaunchDefaults(
+        employee_backend=DEFAULT_CHIEF_BACKEND,
+        employee_launch_model=DEFAULT_CHIEF_MODEL,
+        employee_launch_reasoning_effort=DEFAULT_CHIEF_REASONING_EFFORT,
+    )
+
+
+def read_chief_settings(
+    configured_database_parent: Path | str,
+    registry: WorkerTypeRegistry,
+) -> ManagedChiefSettings:
+    root = managed_worker_settings_root(configured_database_parent)
+    path = _chief_settings_path(root)
+    with _worker_settings_lock(root, CHIEF_SETTINGS_KEY):
+        if not path.is_file():
+            _atomic_replace_json(
+                path,
+                {
+                    "employee_id": CHIEF_SETTINGS_KEY,
+                    "label": CHIEF_LABEL,
+                    "launch_defaults": _launch_defaults_payload(_default_chief_launch_defaults()),
+                },
+            )
+        payload = _load_json_object(path)
+        if payload.get("employee_id") != CHIEF_SETTINGS_KEY or payload.get("label") != CHIEF_LABEL:
+            raise PlannerError(ErrorCode.validation, "managed Chief settings are invalid", {})
+        return ManagedChiefSettings(
+            employee_id=CHIEF_SETTINGS_KEY,
+            label=CHIEF_LABEL,
+            launch_defaults=_validate_launch_defaults(
+                payload.get("launch_defaults"), registry=registry
+            ),
+        )
+
+
+def update_employee_launch_defaults(
+    configured_database_parent: Path | str,
+    registry: WorkerTypeRegistry,
+    worker_type: str,
+    payload: dict[str, Any],
+    *,
+    after_publish: Callable[[], None] | None = None,
+) -> ManagedWorkerSettings:
+    definition = registry.require(worker_type)
+    root = managed_worker_settings_root(configured_database_parent)
+    with _worker_settings_lock(root, worker_type):
+        current = _read_settings_with_recovery(root, definition, registry)
+        launch_defaults = _validate_launch_defaults(payload, registry=registry)
+        settings_payload: JsonDict = {
+            "worker_type": worker_type,
+            "stage_ownership_defaults": {
+                key: mode.value for key, mode in sorted(current.stage_ownership_defaults.items())
+            },
+            "launch_defaults": _launch_defaults_payload(launch_defaults),
+        }
+        snapshot = _PathSnapshot(_settings_path(root, worker_type))
+        try:
+            _atomic_replace_json(_settings_path(root, worker_type), settings_payload)
+            if after_publish is not None:
+                after_publish()
+        except Exception:
+            snapshot.restore()
+            raise
+        return _read_settings_with_recovery(root, definition, registry)
+
+
+def update_chief_launch_defaults(
+    configured_database_parent: Path | str,
+    registry: WorkerTypeRegistry,
+    payload: dict[str, Any],
+    *,
+    after_publish: Callable[[], None] | None = None,
+) -> ManagedChiefSettings:
+    root = managed_worker_settings_root(configured_database_parent)
+    with _worker_settings_lock(root, CHIEF_SETTINGS_KEY):
+        launch_defaults = _validate_launch_defaults(payload, registry=registry)
+        path = _chief_settings_path(root)
+        snapshot = _PathSnapshot(path)
+        try:
+            _atomic_replace_json(
+                path,
+                {
+                    "employee_id": CHIEF_SETTINGS_KEY,
+                    "label": CHIEF_LABEL,
+                    "launch_defaults": _launch_defaults_payload(launch_defaults),
+                },
+            )
+            if after_publish is not None:
+                after_publish()
+        except Exception:
+            snapshot.restore()
+            raise
+        return ManagedChiefSettings(CHIEF_SETTINGS_KEY, CHIEF_LABEL, launch_defaults)
+
+
+def read_worker_launch_defaults_for_ticket_creation(
+    conn: sqlite3.Connection,
+    registry: WorkerTypeRegistry,
+    worker_type: str,
+) -> ManagedEmployeeLaunchDefaults:
+    parent = database_parent_from_connection(conn)
+    if parent is None:
+        profile = registry.require(worker_type).worker_profile
+        return ManagedEmployeeLaunchDefaults(
+            profile.default_employee_backend,
+            profile.default_employee_model,
+            profile.default_employee_reasoning_effort,
+        )
+    return read_worker_settings(parent, registry, worker_type).launch_defaults
 
 
 def update_stage_default_ownership(
@@ -540,14 +748,13 @@ def update_stage_default_ownership(
         )
     root = managed_worker_settings_root(configured_database_parent)
     with _worker_settings_lock(root, worker_type):
-        current = _read_settings_with_recovery(root, definition)
+        current = _read_settings_with_recovery(root, definition, registry)
         defaults = dict(current.stage_ownership_defaults)
         defaults[stage] = ownership_mode
         payload: JsonDict = {
             "worker_type": worker_type,
-            "stage_ownership_defaults": {
-                key: mode.value for key, mode in sorted(defaults.items())
-            },
+            "stage_ownership_defaults": {key: mode.value for key, mode in sorted(defaults.items())},
+            "launch_defaults": _launch_defaults_payload(current.launch_defaults),
         }
         _validate_settings_payload(payload, definition)
         _atomic_replace_json(_candidate_settings_path(root, worker_type), payload)
@@ -560,7 +767,7 @@ def update_stage_default_ownership(
         except Exception:
             settings_snapshot.restore()
             raise
-        return _read_settings_with_recovery(root, definition)
+        return _read_settings_with_recovery(root, definition, registry)
 
 
 def save_specialist_skill(
@@ -597,7 +804,7 @@ def save_specialist_skill(
         )
     root = managed_worker_settings_root(configured_database_parent)
     with _worker_settings_lock(root, worker_type):
-        current = _read_settings_with_recovery(root, definition)
+        current = _read_settings_with_recovery(root, definition, registry)
         rendered = _render_skill_from_existing_frontmatter(
             current.specialist_skill.source_text,
             expected_skill_name=definition.worker_profile.specialist_skill,
@@ -641,7 +848,7 @@ def save_specialist_skill(
             if runtime_skill_snapshot is not None:
                 runtime_skill_snapshot.restore()
             raise
-        return _read_settings_with_recovery(root, definition)
+        return _read_settings_with_recovery(root, definition, registry)
 
 
 def patch_specialist_skill(
@@ -670,7 +877,7 @@ def patch_specialist_skill(
     definition = registry.require(worker_type)
     root = managed_worker_settings_root(configured_database_parent)
     with _worker_settings_lock(root, worker_type):
-        current = _read_settings_with_recovery(root, definition)
+        current = _read_settings_with_recovery(root, definition, registry)
         canonical_payload: dict[str, Any] = {
             "description": current.specialist_skill.description,
             "markdown_body": current.specialist_skill.markdown_body,
@@ -699,7 +906,7 @@ def patch_specialist_skill(
             )
         finally:
             _atomic_replace_text(_candidate_skill_path(root, worker_type), candidate_rendered)
-        return _read_settings_with_recovery(root, definition)
+        return _read_settings_with_recovery(root, definition, registry)
 
 
 def materialize_specialist_skill(

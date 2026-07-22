@@ -260,7 +260,11 @@ def _wait_for_ready(runtime: RuntimeProcess) -> None:
             response = httpx.get(f"{runtime.instance.base}/api/meta", timeout=0.5)
         except httpx.HTTPError:
             response = None
-        if response is not None and response.status_code == 200:
+        if (
+            response is not None
+            and response.status_code == 200
+            and Path(runtime.instance.manifest["server_control_socket_path"]).exists()
+        ):
             return
         time.sleep(0.1)
     raise AssertionError(
@@ -334,7 +338,9 @@ def _scrubbed_env() -> dict[str, str]:
 
 
 def _test_port(tmp_path: Path, offset: int) -> int:
-    return 19_000 + (sum(tmp_path.name.encode("utf-8")) % 500) + offset
+    return 20_000 + (
+        (os.getpid() * 3 + sum(tmp_path.name.encode("utf-8"))) % 19_997
+    ) + offset
 
 
 def _repository_root(tmp_path: Path, name: str) -> Path:

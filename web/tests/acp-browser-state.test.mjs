@@ -582,6 +582,175 @@ function semanticState(snapshot) {
 }
 
 function runControllerAssertions(subject, fixture, envelopeStates, controllerCases) {
+  const feedEnvelopeStatesLive = (harness, throughSequence = Infinity, onEnvelope = () => undefined) => {
+    harness.sockets[0].feed(envelopeStates[0]);
+    harness.sockets[0].feed({ ...envelopeStates.at(-1), sequence: 2 });
+    assert.equal(harness.controller.snapshot().cursor?.sequence, 2, "the live-action fixture must commit ready");
+    for (const original of envelopeStates.slice(1, -1)) {
+      if (original.sequence > throughSequence) break;
+      harness.sockets[0].feed({
+        ...original,
+        sequence: original.sequence + 1,
+        payload: {
+          ...original.payload,
+          ...(original.payload.sequence === original.sequence ? { sequence: original.sequence + 1 } : {}),
+          ...(original.payload.openedSequence === original.sequence ? { openedSequence: original.sequence + 1 } : {}),
+          ...(original.payload.settledSequence === original.sequence ? { settledSequence: original.sequence + 1 } : {}),
+        },
+      });
+      onEnvelope(original);
+    }
+  };
+  const atomicReplay = controllerHarness(subject);
+  const atomicPublications = [];
+  atomicReplay.controller.subscribe((snapshot) => {
+    atomicPublications.push({
+      cursor: snapshot.cursor?.sequence ?? null,
+      messages: snapshot.session.messages.length,
+    });
+  });
+  atomicReplay.controller.attach();
+  atomicReplay.sockets[0].open();
+  const replayReadyIndex = fixture.replay.findIndex(
+    (envelope) => envelope.type === "connection" && envelope.payload.state === "ready",
+  );
+  assert.ok(replayReadyIndex > 1, "the replay fixture must contain a non-empty reset/ready transaction");
+  for (const envelope of fixture.replay.slice(0, replayReadyIndex)) {
+    atomicReplay.sockets[0].feed(envelope);
+    assert.equal(
+      atomicReplay.controller.snapshot().session.messages.length,
+      0,
+      "an incomplete replay candidate must stay outside snapshot()",
+    );
+  }
+  assert.equal(
+    atomicPublications.some((publication) => publication.messages > 0),
+    false,
+    "RED: replay must not publish transcript-bearing snapshots before ready",
+  );
+  const publicationsBeforeReady = atomicPublications.length;
+  atomicReplay.sockets[0].feed(fixture.replay[replayReadyIndex]);
+  assert.equal(atomicPublications.length, publicationsBeforeReady + 1, "ready publishes the replay exactly once");
+  assert.ok(atomicReplay.controller.snapshot().session.messages.length > 0, "ready commits the complete replay");
+  const publicationsBeforeLive = atomicPublications.length;
+  atomicReplay.sockets[0].feed(baseEnvelope(16, "human_echo", {
+    clientMessageId: "post-ready-live",
+    prompt: { sessionId: "session-browser", prompt: [{ type: "text", text: "Post-ready live" }] },
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
+  assert.equal(atomicPublications.length, publicationsBeforeLive + 1, "post-ready live updates publish incrementally");
+  assert.equal(atomicReplay.controller.snapshot().session.messages.at(-1).id, "post-ready-live");
+
+  const committedFailure = controllerHarness(subject);
+  committedFailure.controller.attach();
+  committedFailure.sockets[0].open();
+  for (const envelope of fixture.live) committedFailure.sockets[0].feed(envelope);
+  const committedBeforeReplacement = committedFailure.controller.snapshot();
+  committedFailure.sockets[0].feed(baseEnvelope(16, "connection", {
+    state: "reset", detail: "Reloading", supportsSteer: true, resetBindingGeneration: 1,
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
+  committedFailure.sockets[0].feed(baseEnvelope(17, "human_echo", {
+    clientMessageId: "partial-replacement",
+    prompt: { sessionId: "session-browser", prompt: [{ type: "text", text: "Must stay hidden" }] },
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
+  assert.deepEqual(
+    committedFailure.controller.snapshot().session.messages,
+    committedBeforeReplacement.session.messages,
+    "replacement replay retains the last committed transcript",
+  );
+  committedFailure.sockets[0].onclose?.();
+  assert.equal(
+    committedFailure.controller.snapshot().session.messages.some((message) => message.id === "partial-replacement"),
+    false,
+    "socket close discards a partial replacement replay",
+  );
+  committedFailure.runTimer();
+  committedFailure.sockets[1].open();
+  assert.deepEqual(committedFailure.sockets[1].sent[0], {
+    type: "attach",
+    employeeId: "employee-browser",
+    lastSeenBindingGeneration: 1,
+    lastSeenSequence: 15,
+  }, "recovery attaches from the committed cursor, not the abandoned candidate");
+
+  const malformedReplay = controllerHarness(subject);
+  malformedReplay.controller.attach();
+  malformedReplay.sockets[0].open();
+  for (const envelope of fixture.live) malformedReplay.sockets[0].feed(envelope);
+  const committedBeforeMalformedReplay = malformedReplay.controller.snapshot();
+  malformedReplay.sockets[0].feed(baseEnvelope(16, "connection", {
+    state: "reset", detail: "Reloading", supportsSteer: true, resetBindingGeneration: 1,
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
+  malformedReplay.sockets[0].feed(baseEnvelope(17, "human_echo", {
+    clientMessageId: "malformed-partial",
+    prompt: { sessionId: "session-browser", prompt: [{ type: "text", text: "Never publish this candidate" }] },
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
+  malformedReplay.sockets[0].feed("not json");
+  assert.deepEqual(
+    malformedReplay.controller.snapshot().session.messages,
+    committedBeforeMalformedReplay.session.messages,
+    "raw malformed data discards the transcript-bearing replay candidate",
+  );
+  assert.equal(malformedReplay.controller.snapshot().cursor.sequence, 15, "the candidate cursor remains hidden");
+  assert.equal(
+    malformedReplay.controller.snapshot().recoverableConnectionError,
+    "Conversation data could not be read. Reconnecting…",
+  );
+  assert.equal(malformedReplay.sockets[0].closed, true);
+  assert.equal(malformedReplay.timerCount(), 1);
+  malformedReplay.runTimer();
+  malformedReplay.sockets[1].open();
+  assert.deepEqual(malformedReplay.sockets[1].sent[0], {
+    type: "attach",
+    employeeId: "employee-browser",
+    lastSeenBindingGeneration: 1,
+    lastSeenSequence: 15,
+  }, "malformed-replay recovery attaches from the committed cursor only");
+
+  const replacement = controllerHarness(subject);
+  replacement.controller.attach();
+  replacement.sockets[0].open();
+  for (const envelope of fixture.live) replacement.sockets[0].feed(envelope);
+  const oldReplacementMessages = replacement.controller.snapshot().session.messages;
+  const replacementPublications = [];
+  replacement.controller.subscribe((snapshot) => replacementPublications.push(snapshot.session.messages));
+  replacement.sockets[0].feed(baseEnvelope(16, "connection", {
+    state: "reset", detail: "Reloading", supportsSteer: true, resetBindingGeneration: 1,
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
+  replacement.sockets[0].feed(baseEnvelope(17, "human_echo", {
+    clientMessageId: "complete-replacement",
+    prompt: { sessionId: "session-browser", prompt: [{ type: "text", text: "Replacement complete" }] },
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
+  assert.deepEqual(replacement.controller.snapshot().session.messages, oldReplacementMessages);
+  const replacementPublicationsBeforeReady = replacementPublications.length;
+  replacement.sockets[0].feed(baseEnvelope(18, "connection", {
+    state: "ready", detail: "Ready", supportsSteer: true,
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
+  assert.equal(replacementPublications.length, replacementPublicationsBeforeReady + 1);
+  assert.deepEqual(replacement.controller.snapshot().session.messages.map((message) => message.id), ["complete-replacement"]);
+
+  for (const failure of ["error", "replay-unavailable"]) {
+    const partial = controllerHarness(subject);
+    partial.controller.attach();
+    partial.sockets[0].open();
+    partial.sockets[0].feed(fixture.live[0]);
+    partial.sockets[0].feed(fixture.live[1]);
+    if (failure === "error") partial.sockets[0].onerror?.();
+    else partial.sockets[0].onclose?.({ reason: subject.REPLAY_UNAVAILABLE_CLOSE_REASON });
+    assert.equal(partial.controller.snapshot().session.messages.length, 0, `${failure} cannot expose partial replay`);
+    assert.equal(partial.controller.snapshot().cursor, null, `${failure} discards the replay cursor`);
+  }
+  const disposedReplay = controllerHarness(subject);
+  let disposedReplayPublications = 0;
+  disposedReplay.controller.subscribe(() => { disposedReplayPublications += 1; });
+  disposedReplay.controller.attach();
+  disposedReplay.sockets[0].open();
+  disposedReplay.sockets[0].feed(fixture.live[0]);
+  disposedReplay.sockets[0].feed(fixture.live[1]);
+  const publicationsBeforeReplayDispose = disposedReplayPublications;
+  disposedReplay.controller.dispose();
+  assert.equal(disposedReplayPublications, publicationsBeforeReplayDispose, "dispose during replay does not publish");
+  assert.equal(disposedReplay.controller.snapshot().session.messages.length, 0, "dispose discards partial replay");
+
   const live = controllerHarness(subject);
   live.controller.attach();
   assert.equal(live.sockets.length, 1);
@@ -626,9 +795,9 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
   const states = controllerHarness(subject);
   states.controller.attach();
   states.sockets[0].open();
-  for (const envelope of envelopeStates) {
-    states.sockets[0].feed(envelope);
+  feedEnvelopeStatesLive(states, Infinity, (envelope) => {
     if (envelope.sequence === 9) {
+      assert.equal(states.controller.snapshot().cursor?.sequence, 10);
       assert.deepEqual(states.controller.snapshot().queue.map((item) => item.clientMessageId), ["queue-1", "queue-2"]);
       states.controller.cancelQueued("queue-1");
       assert.deepEqual(states.sockets[0].sent.at(-1), {
@@ -653,7 +822,7 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
         optionId: "allow-always",
       });
     }
-  }
+  });
   const statesSnapshot = states.controller.snapshot();
   assert.equal(statesSnapshot.receipts["client-browser"].state, "rejected");
   assert.equal(statesSnapshot.queue.length, 0);
@@ -686,9 +855,8 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
   assert.deepEqual(gap.sockets[1].sent[0], {
     type: "attach",
     employeeId: "employee-browser",
-    lastSeenBindingGeneration: 1,
-    lastSeenSequence: 1,
   });
+  gap.sockets[1].feed(fixture.live[0]);
   gap.sockets[1].feed(baseEnvelope(2, "connection", {
     state: "ready",
     detail: "Recovered",
@@ -729,11 +897,20 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
   ordering.sockets[0].open();
   ordering.sockets[0].feed(controllerCases.valid.reset);
   ordering.sockets[0].feed(controllerCases.valid.exactNext);
+  ordering.sockets[0].feed(baseEnvelope(3, "connection", {
+    state: "ready", detail: "Ready", supportsSteer: true,
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
   const exactSnapshot = ordering.controller.snapshot();
   ordering.sockets[0].feed(controllerCases.rawInvalid.duplicate);
   ordering.sockets[0].feed(controllerCases.rawInvalid.lower);
   assert.deepEqual(ordering.controller.snapshot(), exactSnapshot, "duplicate and lower sequences are ignored");
   ordering.sockets[0].feed(controllerCases.valid.higherGenerationReset);
+  ordering.sockets[0].feed(baseEnvelope(2, "connection", {
+    state: "ready", detail: "Ready", supportsSteer: true,
+  }, {
+    employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser",
+    bindingGeneration: 2,
+  }));
   assert.equal(ordering.controller.snapshot().cursor.bindingGeneration, 2);
   assert.equal(ordering.controller.snapshot().session.messages.length, 0);
   const higherSnapshot = ordering.controller.snapshot();
@@ -753,10 +930,7 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
     entityId: "ticket-browser",
     acpSessionId: "session-browser",
   }));
-  sameBindingReset.sockets[0].onclose?.();
-  sameBindingReset.runTimer();
-  sameBindingReset.sockets[1].open();
-  sameBindingReset.sockets[1].feed(baseEnvelope(10, "connection", {
+  sameBindingReset.sockets[0].feed(baseEnvelope(3, "connection", {
     state: "reset",
     detail: "Conversation reloaded",
     supportsSteer: true,
@@ -766,10 +940,9 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
     entityId: "ticket-browser",
     acpSessionId: "session-browser",
   }));
-  assert.equal(sameBindingReset.controller.snapshot().cursor.sequence, 10);
-  assert.equal(Object.keys(sameBindingReset.controller.snapshot().protocolRejections).length, 1);
+  assert.equal(sameBindingReset.controller.snapshot().cursor, null);
   const afterReplacementReset = sameBindingReset.controller.snapshot();
-  sameBindingReset.sockets[1].feed(baseEnvelope(10, "connection", {
+  sameBindingReset.sockets[0].feed(baseEnvelope(3, "connection", {
     state: "reset",
     detail: "Stale reset",
     supportsSteer: true,
@@ -784,7 +957,7 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
     afterReplacementReset,
     "equal same-binding resets are ignored",
   );
-  sameBindingReset.sockets[1].feed(baseEnvelope(11, "connection", {
+  sameBindingReset.sockets[0].feed(baseEnvelope(4, "connection", {
     state: "ready",
     detail: "Ready",
     supportsSteer: true,
@@ -793,7 +966,8 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
     entityId: "ticket-browser",
     acpSessionId: "session-browser",
   }));
-  assert.equal(sameBindingReset.controller.snapshot().cursor.sequence, 11);
+  assert.equal(sameBindingReset.controller.snapshot().cursor.sequence, 4);
+  assert.equal(Object.keys(sameBindingReset.controller.snapshot().protocolRejections).length, 1);
 
   const replayUnavailable = controllerHarness(subject);
   replayUnavailable.controller.attach();
@@ -827,7 +1001,7 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
   const disconnectedPermission = controllerHarness(subject);
   disconnectedPermission.controller.attach();
   disconnectedPermission.sockets[0].open();
-  for (const envelope of envelopeStates.slice(0, 16)) disconnectedPermission.sockets[0].feed(envelope);
+  feedEnvelopeStatesLive(disconnectedPermission, 16);
   assert.equal(Object.keys(disconnectedPermission.controller.snapshot().permissions).length, 1);
   disconnectedPermission.sockets[0].onclose?.();
   assert.equal(Object.keys(disconnectedPermission.controller.snapshot().permissions).length, 0);
@@ -835,7 +1009,7 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
   const failedPermission = controllerHarness(subject, { failPermissionSend: true });
   failedPermission.controller.attach();
   failedPermission.sockets[0].open();
-  for (const envelope of envelopeStates.slice(0, 16)) failedPermission.sockets[0].feed(envelope);
+  feedEnvelopeStatesLive(failedPermission, 16);
   assert.equal(failedPermission.controller.respondToPermission("permission-browser", "allow-once").ok, false);
   assert.equal(
     failedPermission.controller.snapshot().permissions["permission-browser"].submittingOptionId,
@@ -848,6 +1022,9 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
   humanEchoGrouping.controller.attach();
   humanEchoGrouping.sockets[0].open();
   for (const envelope of controllerCases.valid.humanEchoGrouping) humanEchoGrouping.sockets[0].feed(envelope);
+  humanEchoGrouping.sockets[0].feed(baseEnvelope(5, "connection", {
+    state: "ready", detail: "Ready", supportsSteer: true,
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
   const groupedMessages = humanEchoGrouping.controller.snapshot().session.messages.map((message) => ({
     role: message.role,
     text: message.parts.flatMap((part) => part.type === "content" ? part.content : [])
@@ -880,6 +1057,9 @@ function runControllerAssertions(subject, fixture, envelopeStates, controllerCas
       acpSessionId: "session-browser",
     }));
   }
+  receiptRecency.sockets[0].feed(baseEnvelope(5, "connection", {
+    state: "ready", detail: "Ready", supportsSteer: true,
+  }, { employeeId: "employee-browser", entityId: "ticket-browser", acpSessionId: "session-browser" }));
   assert.equal(receiptRecency.controller.snapshot().latestReceiptClientMessageId, "older-key");
   assert.equal(receiptRecency.controller.snapshot().latestReceiptSequence, 4);
 

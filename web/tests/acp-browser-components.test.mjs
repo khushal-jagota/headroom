@@ -61,24 +61,55 @@ const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-acp-components-"
 const runtimeMainPath = join(webRoot, "tests", `.acp-component-runtime-${process.pid}.ts`);
 const runtimeIndexPath = join(webRoot, "tests", `.acp-component-runtime-${process.pid}.html`);
 const runtimePermissionProbePath = join(webRoot, "tests", `.acp-permission-runtime-${process.pid}.py`);
+const runtimeReplayProbePath = join(webRoot, "tests", `.acp-replay-runtime-${process.pid}.py`);
 let serverProcess;
 
 try {
   await writeFile(runtimeMainPath, `
 import { mount } from "svelte";
 import AcpConversationPane from "../src/components/acp/AcpConversationPane.svelte";
-import type { ConversationController } from "../src/lib/acp/conversationController";
+import { createConversationController, type ConversationController } from "../src/lib/acp/conversationController";
 import type { ConversationSnapshot } from "../src/lib/acp/conversationState";
 
 const plan = [{ content: "Ship runtime proof", status: "in_progress", priority: "high" }];
 const tool = {
   toolCallId: "tool-runtime",
   title: "Runtime tool",
-  kind: "shell",
+  kind: "edit",
   status: "completed",
   expanded: false,
   content: [
-    { type: "diff", path: "runtime.txt", oldText: "before\\n", newText: "after\\n" },
+    {
+      type: "diff", path: "runtime.txt", oldText: "before", newText: "after",
+      _meta: {
+        "https://panels.local/acp/codex-file-edit/v1": {
+          operation: "update", detailState: "complete", oldStartLine: 999,
+          newStartLine: 999, oldLineCount: 1, newLineCount: 1,
+        },
+        "https://panels.local/acp/codex-file-edit/v1#9007199254740992": {
+          operation: "update", detailState: "complete", oldStartLine: 777,
+          newStartLine: 777, oldLineCount: 1, newLineCount: 1,
+        },
+        "https://panels.local/acp/codex-file-edit/v1#9007199254740993": {
+          operation: "update", detailState: "truncated", oldStartLine: 41,
+          newStartLine: 51, oldLineCount: null, newLineCount: null,
+        },
+      },
+    },
+    {
+      type: "diff", path: "added-newline.txt", oldText: null, newText: "one\\n",
+      _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+        operation: "add", detailState: "complete", oldStartLine: null,
+        newStartLine: 7, oldLineCount: 0, newLineCount: 1,
+      } },
+    },
+    {
+      type: "diff", path: "deleted-newline.txt", oldText: "one\\n", newText: "",
+      _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+        operation: "delete", detailState: "complete", oldStartLine: 9,
+        newStartLine: null, oldLineCount: 1, newLineCount: 0,
+      } },
+    },
     { type: "terminal", terminalId: "terminal-runtime" },
   ],
   locations: [],
@@ -411,13 +442,37 @@ const controller: ConversationController = {
                 path: "/workspace/first.txt",
                 oldText: ["first before", ...Array.from({ length: 80 }, (_, index) => "shared " + index)].join("\\n") + "\\n",
                 newText: ["first after", ...Array.from({ length: 80 }, (_, index) => "shared " + index)].join("\\n") + "\\n",
+                _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+                  operation: "update", detailState: "truncated", oldStartLine: 101,
+                  newStartLine: 201, oldLineCount: null, newLineCount: null,
+                } },
               },
               { type: "terminal", terminalId: "permission-terminal-must-stay-hidden" },
               {
                 type: "diff",
                 path: "/workspace/second.txt",
                 oldText: null,
-                newText: "second added",
+                newText: "",
+                _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+                  operation: "add", detailState: "omitted", oldStartLine: null,
+                  newStartLine: null, oldLineCount: null, newLineCount: null,
+                } },
+              },
+              {
+                type: "diff", path: "/workspace/added-newline.txt",
+                oldText: null, newText: "one\\n",
+                _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+                  operation: "add", detailState: "complete", oldStartLine: null,
+                  newStartLine: 7, oldLineCount: 0, newLineCount: 1,
+                } },
+              },
+              {
+                type: "diff", path: "/workspace/deleted-newline.txt",
+                oldText: "one\\n", newText: "",
+                _meta: { "https://panels.local/acp/codex-file-edit/v1": {
+                  operation: "delete", detailState: "complete", oldStartLine: 9,
+                  newStartLine: null, oldLineCount: 1, newLineCount: 0,
+                } },
               },
             ],
           },
@@ -431,8 +486,65 @@ mount(AcpConversationPane, {
   target: document.getElementById("app")!,
   props: { controller, employeeLabel: "Runtime employee" },
 });
+
+class ManualReplayTransport {
+  callbacks: any;
+  sent: any[] = [];
+  constructor(callbacks: any) { this.callbacks = callbacks; }
+  open() {}
+  send(action: any) { this.sent.push(action); return { ok: true as const }; }
+  close() {}
+  detach() {}
+}
+let replayTransport: ManualReplayTransport;
+const replayEnvelope = (sequence: number, type: string, payload: any) => ({
+  wireVersion: 1,
+  employeeId: "employee-replay-runtime",
+  entityKind: "ticket",
+  entityId: "ticket-replay-runtime",
+  acpSessionId: "session-replay-runtime",
+  bindingGeneration: 1,
+  sequence,
+  type,
+  payload,
+});
+(window as any).__mountReplay = () => {
+  document.body.innerHTML = '<div id="app-replay"></div>';
+  const replayController = createConversationController({
+    employeeId: "employee-replay-runtime",
+    transportFactory: (callbacks) => (replayTransport = new ManualReplayTransport(callbacks)),
+    reconnectDelayMs: 25,
+    setTimer: (callback) => window.setTimeout(callback, 25),
+    clearTimer: (timer) => window.clearTimeout(timer as number),
+    now: () => 1000,
+    fallbackId: (turn, role, segment) => "replay-fallback-" + turn + "-" + role + "-" + segment,
+    clientMessageId: () => "replay-client",
+  });
+  mount(AcpConversationPane, {
+    target: document.getElementById("app-replay")!,
+    props: { controller: replayController, employeeLabel: "Replay runtime employee" },
+  });
+};
+(window as any).__openReplay = () => replayTransport.callbacks.onOpen();
+(window as any).__feedReplayReset = () => replayTransport.callbacks.onEnvelope(replayEnvelope(1, "connection", {
+  state: "reset", detail: "Loaded", supportsSteer: true, resetBindingGeneration: 1,
+}));
+(window as any).__feedReplayMessage = (sequence: number) => replayTransport.callbacks.onEnvelope(replayEnvelope(
+  sequence,
+  "human_echo",
+  {
+    clientMessageId: "replay-human-" + sequence,
+    prompt: {
+      sessionId: "session-replay-runtime",
+      prompt: [{ type: "text", text: "Replay line " + sequence + " contains enough text to occupy visible transcript space." }],
+    },
+  },
+));
+(window as any).__feedReplayReady = (sequence: number) => replayTransport.callbacks.onEnvelope(replayEnvelope(
+  sequence, "connection", { state: "ready", detail: "Ready", supportsSteer: true },
+));
 `);
-  await writeFile(runtimeIndexPath, `<!doctype html><html><head><style>html, body { margin: 0; } #app { display: flex; height: 620px; min-height: 0; }</style></head><body><div id="app"></div><script type="module" src="./${runtimeMainPath.split("/").at(-1)}"></script></body></html>`);
+  await writeFile(runtimeIndexPath, `<!doctype html><html><head><style>html, body { margin: 0; } #app { display: flex; height: 620px; min-height: 0; } #app-replay { display: flex; height: 320px; min-height: 0; }</style></head><body><div id="app"></div><script type="module" src="./${runtimeMainPath.split("/").at(-1)}"></script></body></html>`);
   await build({
     root: webRoot,
     base: "./",
@@ -503,9 +615,10 @@ with sync_playwright() as playwright:
 
     page.evaluate("window.__showPermissionDiff()")
     diffs = permission.locator("[data-acp-diff]")
-    assert diffs.count() == 2
+    assert diffs.count() == 4
     assert diffs.locator("figcaption").all_inner_texts() == [
-        "/workspace/first.txt", "/workspace/second.txt"
+        "/workspace/first.txt", "/workspace/second.txt",
+        "/workspace/added-newline.txt", "/workspace/deleted-newline.txt"
     ]
     first = diffs.nth(0)
     assert first.get_by_role("table", name="Line changes for /workspace/first.txt").count() == 1
@@ -513,12 +626,19 @@ with sync_playwright() as playwright:
     assert first.get_by_role("cell", name="Added", exact=True).count() == 1
     assert first.get_by_text("first before", exact=True).count() == 1
     assert first.get_by_text("first after", exact=True).count() == 1
-    assert first.locator("[role='row']").nth(0).locator("[role='cell']").nth(0).inner_text() == "1"
-    assert first.locator("[role='row']").nth(1).locator("[role='cell']").nth(1).inner_text() == "1"
+    assert first.get_by_text("Some edit detail was truncated", exact=True).count() == 1
+    assert first.locator("[role='row']").nth(0).locator("[role='cell']").nth(0).inner_text() == "101"
+    assert first.locator("[role='row']").nth(1).locator("[role='cell']").nth(1).inner_text() == "201"
     second = diffs.nth(1)
     assert second.get_by_role("table", name="Line changes for /workspace/second.txt").count() == 1
-    assert second.get_by_role("cell", name="Added", exact=True).count() == 1
-    assert second.get_by_text("second added", exact=True).count() == 1
+    assert second.locator("[role='row']").count() == 0
+    assert second.get_by_text("Edit detail was omitted", exact=True).count() == 1
+    added = diffs.nth(2)
+    deleted = diffs.nth(3)
+    assert added.locator("[role='row']").count() == 1
+    assert added.get_by_role("cell", name="Added", exact=True).count() == 1
+    assert deleted.locator("[role='row']").count() == 1
+    assert deleted.get_by_role("cell", name="Deleted", exact=True).count() == 1
     assert page.get_by_text("ARBITRARY PERMISSION CONTENT MUST STAY HIDDEN").count() == 0
     assert page.get_by_text("permission-terminal-must-stay-hidden").count() == 0
 
@@ -562,11 +682,75 @@ print("acp_permission_runtime.py: diff and no-diff assertions passed")
   const permissionExitCode = await new Promise((resolve) => permissionProbe.on("close", resolve));
   assert.equal(permissionExitCode, 0, permissionOutput);
   assert.match(permissionOutput, /diff and no-diff assertions passed/);
+
+  await writeFile(runtimeReplayProbePath, `
+from playwright.sync_api import sync_playwright
+import sys
+
+with sync_playwright() as playwright:
+    browser = playwright.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.set_default_timeout(5_000)
+    page.goto(sys.argv[1], wait_until="networkidle")
+    page.evaluate("window.__loadProductionStyles()")
+    page.evaluate("window.__mountReplay()")
+    thread = page.locator("#app-replay [data-chat-messages]")
+
+    def settle():
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+
+    def dimensions():
+        return thread.evaluate("element => ({ height: element.scrollHeight, client: element.clientHeight, bottom: element.scrollHeight - element.scrollTop - element.clientHeight })")
+
+    page.evaluate("window.__openReplay()")
+    page.evaluate("window.__feedReplayReset()")
+    settle()
+    initial = dimensions()
+    pre_ready_increases = []
+    previous = initial["height"]
+    for sequence in range(2, 32):
+        page.evaluate("sequence => window.__feedReplayMessage(sequence)", sequence)
+        settle()
+        current = dimensions()
+        if current["height"] > previous:
+            pre_ready_increases.append((previous, current["height"], current["bottom"]))
+        previous = current["height"]
+
+    assert pre_ready_increases == [], f"RED: replay painted before ready: {pre_ready_increases}"
+    page.evaluate("window.__feedReplayReady(32)")
+    settle()
+    ready = dimensions()
+    assert ready["height"] > initial["height"]
+    assert ready["height"] > ready["client"], "production styles must create a genuinely overflowing transcript"
+    assert ready["bottom"] <= 1, ready
+    assert thread.locator("[data-acp-message]").count() == 30
+
+    page.evaluate("window.__feedReplayMessage(33)")
+    settle()
+    live = dimensions()
+    assert live["height"] > ready["height"], "post-ready live rendering remains incremental"
+    assert live["bottom"] <= 1, live
+    browser.close()
+
+print("acp_replay_runtime.py: atomic replay presentation assertions passed")
+`);
+  const replayProbe = spawn(
+    join(repositoryRoot, ".venv", "bin", "python"),
+    [runtimeReplayProbePath, url],
+    { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let replayOutput = "";
+  replayProbe.stdout.on("data", (chunk) => { replayOutput += chunk; });
+  replayProbe.stderr.on("data", (chunk) => { replayOutput += chunk; });
+  const replayExitCode = await new Promise((resolve) => replayProbe.on("close", resolve));
+  assert.equal(replayExitCode, 0, replayOutput);
+  assert.match(replayOutput, /atomic replay presentation assertions passed/);
 } finally {
   serverProcess?.kill();
   await rm(runtimeMainPath, { force: true });
   await rm(runtimeIndexPath, { force: true });
   await rm(runtimePermissionProbePath, { force: true });
+  await rm(runtimeReplayProbePath, { force: true });
   await rm(temporaryDirectory, { recursive: true, force: true });
 }
 

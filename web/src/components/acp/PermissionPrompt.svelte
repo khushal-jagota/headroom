@@ -49,7 +49,7 @@
     const mountedDiffs = diffs.map((diff) => mount(DiffView, {
       target,
       anchor,
-      props: { path: diff.path, oldText: diff.oldText, newText: diff.newText }
+      props: { path: diff.path, oldText: diff.oldText, newText: diff.newText, fieldMeta: diff._meta }
     }));
     return () => {
       for (const mountedDiff of mountedDiffs) void unmount(mountedDiff);

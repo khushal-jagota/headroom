@@ -37,7 +37,7 @@ _CODING_COPY_TEXT_GOLDEN = (
     "Coding ticket\n"
     "stage: needs_success\n"
     "priority: P3\n"
-    "employee_backend: hermes\n"
+    "employee_backend: codex\n"
     "owner: worker\n"
     "\n"
     "kickoff:\nkickoff body\nkickoff_user_note:\n(none)\n"
@@ -55,7 +55,6 @@ _CODING_COPY_TEXT_GOLDEN = (
     "recap:\n(none)\n"
     "\n"
     "blocked_by:\n(none)\n"
-    "blocks:\n(none)\n"
 )
 
 

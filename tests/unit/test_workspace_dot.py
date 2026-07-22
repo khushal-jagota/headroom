@@ -122,6 +122,10 @@ from planner.tickets.logic.workspace_dot import workspace_dot_state
             WorkspaceDotFacts(ticket_status=TicketStatus.empty),
             WorkspaceDotState.quiet,
         ),
+        (
+            WorkspaceDotFacts(ticket_status=TicketStatus.empty, is_completed=True),
+            WorkspaceDotState.settled,
+        ),
     ],
 )
 def test_workspace_dot_truth_table(
@@ -139,3 +143,45 @@ def test_workspace_dot_exceptional_precedes_active_and_attention() -> None:
         has_pending_permission=True,
     )
     assert workspace_dot_state(facts) is WorkspaceDotState.exceptional
+
+
+@pytest.mark.parametrize(
+    ("facts", "expected"),
+    [
+        (
+            WorkspaceDotFacts(
+                ticket_status=TicketStatus.errored,
+                backend_error="Provider process exited unexpectedly",
+                is_completed=True,
+            ),
+            WorkspaceDotState.exceptional,
+        ),
+        (
+            WorkspaceDotFacts(
+                ticket_status=TicketStatus.agent_running_step,
+                is_completed=True,
+            ),
+            WorkspaceDotState.active,
+        ),
+        (
+            WorkspaceDotFacts(
+                ticket_status=TicketStatus.awaiting_approval,
+                is_completed=True,
+            ),
+            WorkspaceDotState.needs_attention,
+        ),
+        (
+            WorkspaceDotFacts(
+                ticket_status=TicketStatus.empty,
+                has_completed_response_awaiting_user=True,
+                is_completed=True,
+            ),
+            WorkspaceDotState.needs_attention,
+        ),
+    ],
+)
+def test_workspace_dot_live_state_precedes_settled(
+    facts: WorkspaceDotFacts,
+    expected: WorkspaceDotState,
+) -> None:
+    assert workspace_dot_state(facts) is expected

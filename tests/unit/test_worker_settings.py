@@ -22,9 +22,7 @@ from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
-def _app(
-    tmp_path: Path, *, raise_server_exceptions: bool = True
-) -> tuple[TestClient, Path]:
+def _app(tmp_path: Path, *, raise_server_exceptions: bool = True) -> tuple[TestClient, Path]:
     db_path = tmp_path / "worker-settings.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -56,19 +54,14 @@ def test_workers_api_composes_registry_with_managed_settings_and_emits_event(
         detail = client.get("/api/workers/coding").json()
         assert "worker_type" not in detail
         assert detail["manifest"]["worker_type"] == "coding"
-        assert (
-            detail["settings"]["specialist_skill"]["name"]
-            == "panels-worker-coding"
-        )
+        assert detail["settings"]["specialist_skill"]["name"] == "panels-worker-coding"
 
         updated = client.put(
             "/api/workers/coding/stages/needs_success/default-ownership",
             json={"ownership_mode": "user"},
         )
         assert updated.status_code == 200
-        assert (
-            updated.json()["stage_ownership_defaults"]["needs_success"] == "user"
-        )
+        assert updated.json()["stage_ownership_defaults"]["needs_success"] == "user"
 
         terminal = client.put(
             "/api/workers/coding/stages/done/default-ownership",
@@ -92,6 +85,73 @@ def test_workers_api_composes_registry_with_managed_settings_and_emits_event(
             "worker_type": "coding",
             "changed": "stage_default_ownership",
         }
+    finally:
+        conn.close()
+
+
+def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
+    tmp_path: Path,
+) -> None:
+    client, db_path = _app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        before = tickets_data.create_ticket(
+            conn,
+            title="Historical launch",
+            actor="human",
+            now=1,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="coding",
+        )
+        assert (
+            before.employee_backend,
+            before.employee_launch_model,
+            before.employee_launch_reasoning_effort,
+        ) == ("codex", "gpt-5.6-sol", "medium")
+    finally:
+        conn.close()
+
+    with client:
+        index = client.get("/api/workers").json()
+        assert index["chief_of_staff"]["launch_defaults"] == {
+            "employee_backend": "codex",
+            "employee_launch_model": "gpt-5.6-sol",
+            "employee_launch_reasoning_effort": "medium",
+        }
+        changed = client.put(
+            "/api/workers/coding/launch-defaults",
+            json={
+                "employee_backend": "claude",
+                "employee_launch_model": "claude-sonnet",
+                "employee_launch_reasoning_effort": "high",
+            },
+        )
+        assert changed.status_code == 200
+
+    conn = connect(str(db_path))
+    try:
+        historical = tickets_data.read_ticket(conn, before.id)
+        after = tickets_data.create_ticket_from_external_work(
+            conn,
+            title="Future external launch",
+            target_stage="needs_success",
+            provided_values={},
+            kickoff_note="Completed elsewhere",
+            actor="chief",
+            now=2,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="coding",
+        )
+        assert (
+            historical.employee_backend,
+            historical.employee_launch_model,
+            historical.employee_launch_reasoning_effort,
+        ) == ("codex", "gpt-5.6-sol", "medium")
+        assert (
+            after.employee_backend,
+            after.employee_launch_model,
+            after.employee_launch_reasoning_effort,
+        ) == ("claude", "claude-sonnet", "high")
     finally:
         conn.close()
 
@@ -134,8 +194,7 @@ def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_sess
             == "API materialized description"
         )
         assert (
-            saved_description.json()["specialist_skill"]["markdown_body"]
-            == before["markdown_body"]
+            saved_description.json()["specialist_skill"]["markdown_body"] == before["markdown_body"]
         )
 
         saved_body = client.patch(
@@ -144,8 +203,7 @@ def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_sess
         )
         assert saved_body.status_code == 200
         assert (
-            saved_body.json()["specialist_skill"]["description"]
-            == "API materialized description"
+            saved_body.json()["specialist_skill"]["description"] == "API materialized description"
         )
         assert (
             saved_body.json()["specialist_skill"]["markdown_body"]
@@ -177,8 +235,7 @@ def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_sess
         ).fetchone()
         assert row["employee_session_id"] == "session_keep_api"
         events = conn.execute(
-            "SELECT entity_id, kind, payload FROM events "
-            "WHERE kind = ? ORDER BY id",
+            "SELECT entity_id, kind, payload FROM events WHERE kind = ? ORDER BY id",
             (EventKind.worker_settings_changed.value,),
         ).fetchall()
         assert [row["entity_id"] for row in events] == ["worker_coding", "worker_coding"]
@@ -418,10 +475,7 @@ def test_independent_skill_patch_preserves_failed_other_field_candidate(tmp_path
     assert saved.specialist_skill.markdown_body == "\n# Original\n\nBody\n"
     assert saved.candidate_specialist_skill is not None
     assert saved.candidate_specialist_skill.description == "Description winner"
-    assert (
-        saved.candidate_specialist_skill.markdown_body
-        == "\n# Failed body\n\nKeep for retry\n"
-    )
+    assert saved.candidate_specialist_skill.markdown_body == "\n# Failed body\n\nKeep for retry\n"
 
 
 def test_corrupt_current_files_restore_exact_prior_good_revision(tmp_path: Path) -> None:
@@ -452,6 +506,29 @@ def test_corrupt_current_files_restore_exact_prior_good_revision(tmp_path: Path)
     assert recovered.specialist_skill.description == "Prior good description"
     assert settings_path.read_text(encoding="utf-8") == prior_good_settings
     assert skill_path.read_text(encoding="utf-8") == prior_good_skill
+
+
+def test_corrupt_current_files_restore_custom_launch_defaults_on_first_read(
+    tmp_path: Path,
+) -> None:
+    registry = configured_worker_type_registry()
+    expected = worker_settings_service.update_employee_launch_defaults(
+        tmp_path,
+        registry,
+        "coding",
+        {
+            "employee_backend": "claude",
+            "employee_launch_model": "claude-sonnet",
+            "employee_launch_reasoning_effort": "high",
+        },
+    ).launch_defaults
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    settings_path = root / "coding" / "settings.json"
+    settings_path.write_text("{not-json", encoding="utf-8")
+
+    recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+
+    assert recovered.launch_defaults == expected
 
 
 @pytest.mark.parametrize("missing_file_name", ["settings.json", "SKILL.md"])
@@ -486,10 +563,7 @@ def test_missing_current_file_restores_exact_edited_last_known_good_revision(
     recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
 
     assert recovered.stage_ownership_defaults["needs_plan"] == StageOwnershipMode.user
-    assert (
-        recovered.specialist_skill.description
-        == "Edited last known good description"
-    )
+    assert recovered.specialist_skill.description == "Edited last known good description"
     assert settings_path.read_text(encoding="utf-8") == edited_settings
     assert skill_path.read_text(encoding="utf-8") == edited_skill
 
@@ -526,8 +600,7 @@ def test_concurrent_stage_updates_keep_both_values_and_leave_no_temp_files(
     temp_files = [
         path
         for path in root.rglob("*")
-        if path.name.startswith(".settings.json.tmp-")
-        or path.name.startswith(".SKILL.md.tmp-")
+        if path.name.startswith(".settings.json.tmp-") or path.name.startswith(".SKILL.md.tmp-")
     ]
     assert temp_files == []
 
@@ -604,11 +677,7 @@ def test_skill_save_replaces_quoted_multiline_description_and_preserves_unrelate
         '  final line with \\"quote\\""\n'
     )
     unrelated_after_description = (
-        "# unrelated comment stays byte-for-byte\n"
-        "\n"
-        "unknown-list:\n"
-        "  - one\n"
-        "  - two: value\n"
+        "# unrelated comment stays byte-for-byte\n\nunknown-list:\n  - one\n  - two: value\n"
     )
     skill_path.write_text(
         "---\n"

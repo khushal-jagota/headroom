@@ -54,6 +54,7 @@ class WorkspaceDotState(StrEnum):
     exceptional = "exceptional"
     active = "active"
     needs_attention = "needs_attention"
+    settled = "settled"
     quiet = "quiet"
 
 
@@ -67,6 +68,7 @@ class WorkspaceDotFacts:
     latest_activity_state: WorkspaceActivityState | None = None
     has_completed_response_awaiting_user: bool = False
     has_pending_permission: bool = False
+    is_completed: bool = False
 
 
 @dataclass(frozen=True)
@@ -139,6 +141,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
+    blocked_by_ticket_ids: list[str]
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
@@ -165,6 +168,7 @@ class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     project_id: NotRequired[str | None]
     sprint_id: NotRequired[str | None]
     sprint_item_id: NotRequired[str | None]
+    blocked_by_ticket_ids: NotRequired[list[str]]
 
 
 class ProposeBody(TypedDict, total=False):  # POST /tickets/{id}/propose/{field}

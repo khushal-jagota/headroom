@@ -63,6 +63,10 @@ class TicketConversationProjection:
     def record_permission(self, ticket_id: str, pending: bool) -> bool:
         return self._write(ticket_id, has_pending_permission=pending)
 
+    def acknowledge_completed_response(self, ticket_id: str) -> bool:
+        """Mark only the latest completed Worker response as seen."""
+        return self._write(ticket_id, has_completed_response_awaiting_user=False)
+
     def reset(self, ticket_id: str) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
@@ -109,6 +113,7 @@ class TicketConversationProjection:
         *,
         latest_activity_state: WorkspaceActivityState | None = None,
         has_pending_permission: bool | None = None,
+        has_completed_response_awaiting_user: bool | None = None,
     ) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
@@ -126,14 +131,19 @@ class TicketConversationProjection:
                 if has_pending_permission is not None
                 else previous.has_pending_permission
             )
-            next_response = previous.has_completed_response_awaiting_user
-            if latest_activity_state in _RESPONSE_COMPLETING_ACTIVITY_STATES:
-                next_response = False
-            elif (
-                latest_activity_state is WorkspaceActivityState.idle
-                and previous.latest_activity_state in _RESPONSE_COMPLETING_ACTIVITY_STATES
-            ):
-                next_response = True
+            next_response = (
+                has_completed_response_awaiting_user
+                if has_completed_response_awaiting_user is not None
+                else previous.has_completed_response_awaiting_user
+            )
+            if has_completed_response_awaiting_user is None:
+                if latest_activity_state in _RESPONSE_COMPLETING_ACTIVITY_STATES:
+                    next_response = False
+                elif (
+                    latest_activity_state is WorkspaceActivityState.idle
+                    and previous.latest_activity_state in _RESPONSE_COMPLETING_ACTIVITY_STATES
+                ):
+                    next_response = True
             if latest_activity_state is not None:
                 next_permission = previous.has_pending_permission
             current = TicketConversationProjectionSnapshot(

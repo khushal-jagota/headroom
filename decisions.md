@@ -54,6 +54,28 @@ unrelated durable sessions belonging to those homes, not temporary sessions to d
 conversation projection therefore uses the next forward version, v29, with its own shape validation,
 dispatch, and migration tests. The existing v25 through v28 migrations keep their established behavior.
 
+# Conversation
+
+## D-acp-session-load-atomic-replay — Admit a complete private load as one replay transition
+
+A private complete session load is captured and admitted as one sequenced replay transition. A
+per-generation publication barrier orders live callbacks that race the load without holding the gate
+across external I/O, and temporary sequencer pressure backpressures rather than dropping or failing
+admitted updates. Once a ready stream exists, ordinary browser reconnect uses its materialized Panels
+snapshot instead of issuing another `session/load`.
+
+Exact source and barrier cleanup covers retry, child death, and shutdown. Logs remain content-free,
+and the existing finite browser and external-operation protections remain in force.
+
+## D-ready-reconnect-subscriber-snapshot — Rebuild ready reconnect replay without canonical mutation
+
+Reconnect copies the complete materialized reset epoch and collapses ready markers to one terminal
+ready. The contiguous range ends at the unchanged current sequence, with no mutation of canonical
+state, existing browsers, or the backend; the next live event remains current sequence plus one.
+
+Snapshots are strictly typed, contain exactly one reset as the first event, are contiguous and end at
+the current sequence, and remain within the byte bound. Invalid snapshots fail as replay unavailable.
+
 # Workspace
 
 ## D-ticket-error-requires-explicit-backend-provenance — Correctness failures are not Ticket failures
@@ -144,6 +166,22 @@ identity should read as the content heading inside its card; stage is repeated n
 therefore uses the smaller tag treatment.
 
 # Tickets, gates, and the resolution engine
+
+## D-blockers-derived-intake-and-presentation — Keep one relationship and derive its effects
+
+Both Ticket-creation paths accept `blocked_by_ticket_ids` and add those existing Ticket
+sources through the canonical `blocks` writer inside the creator's one transaction. This
+keeps endpoint, duplicate, and cycle validation plus link events in one engine; the action
+wakes eligibility only after that transaction returns successfully.
+
+Blocked is presentation and scheduling, never stored Ticket position. Kickoff wins first;
+after Kickoff, an active incoming blocker selects a synthetic quiet Workspace section while
+the card retains its real Stage. Ticket detail projects only active direct incoming rows and
+removes them through the existing link-delete route. Reverse and cleared rows remain
+available to internal link readers that need canonical relationship facts, but are not a
+Ticket-detail or copied-Ticket presentation.
+Blocker removal retains visible `Remove` text but uses the blocker title in its accessible
+name so each control is distinguishable.
 
 ## D-lifecycle-gates — Kickoff plus five worker stages are ordinary gated fields
 
@@ -3064,6 +3102,35 @@ The current-main post-fork SDK regression continues to require exact-session rou
 replay ordering, and a fully drained healthy ingress. It does not require a candidate notification to
 arrive before the subsequent load request: the private response epoch is installed first, and ACP does
 not guarantee notification/request wire ordering across the prior fork response.
+# 2026-07-22 — t_xq6ragj3 permission is a launch invariant
+
+- The owner's live correction supersedes the approved plan's permission snapshot. Permission is
+  always full access at actual new-session launch, so it has no editable setting, Ticket field,
+  binding field, database column, or migration state.
+- Backend, Model, and Reasoning keep their established ownership: Ticket creation copies Worker
+  defaults once; a new Chief conversation copies current Chief defaults into its binding. Ticket
+  New Conversation does not reapply historical Model or Reasoning.
+- Preserve the established same-child Ticket New Conversation lifecycle and apply only the
+  backend-native full-access mode there. Chief alone needs a fresh child because its managed
+  Backend may change between conversations.
+- Independent review's lock-order finding is accepted. Chief launch snapshots and Chief settings
+  saves both acquire the managed Chief settings lock before SQLite, so an exact snapshot is
+  serialized without a settings-lock/`BEGIN IMMEDIATE` inversion.
+- Independent review's recovery finding is accepted. A restored last-known-good Worker settings
+  file is parsed for its managed launch trio on the first read; immutable profile defaults remain
+  only the legacy-file fallback.
+- Rebase the isolated implementation branch onto current main before its final gate. Main advanced
+  during interrupted Employee turns; syncing the feature branch avoids testing a mixed historical
+  baseline and does not integrate this Ticket into main before Closeout.
+- At Closeout, merge current main into the feature branch and preserve both independently verified
+  conversation extensions: launch environment overrides/full-access modes and atomic replay
+  materialization. Align the newly landed Hermes-only replay fixture explicitly rather than
+  weakening production backend validation.
+- Treat process-scoped ports and supervisor-socket-aware readiness as a test-only integration repair.
+  Interrupted verification left a supervisor lease on the test's former fixed port, allowing an
+  orphan application child to impersonate readiness. Do not signal that process or the operator's
+  server; prevent cross-run collisions instead.
+
 # 2026-07-22 — t_m024gke4 implementation routing
 
 - Delegate the approved implementation as one focused slice because the projection writer, HTTP
@@ -3073,3 +3140,85 @@ not guarantee notification/request wire ordering across the prior fork response.
   quiet ring, error mark, and green completed mark without changing layout or inventing a new visual.
 - Preserve the unrelated dirty `composition.py` and nested-worktree state exactly; this ticket has no
   reason to touch those paths.
+
+## Review resolution
+
+- Keep permission attention ahead of active in the existing classifier. The Kickoff explicitly says
+  a pending permission remains filled, and the implementation now documents the exact order and
+  asserts exact terminal-precedence results.
+- Treat a response completing while its Ticket is open as seen. This is the approved no-visibility
+  acknowledgement boundary; adding a response generation or compare-and-swap field would introduce
+  unrequested durable machinery. The independent re-review accepted this and reported no violations.
+- Repair the first canonical-run failure in the Playwright setup only: open the intentionally
+  collapsed Done section before asserting its completed Ticket's green mark. Product behavior stays
+  unchanged.
+- Close out directly on `main` because this approved implementation was developed there rather than
+  on a feature branch. Stage and commit only the Ticket-owned paths; concurrent Hermes configuration,
+  skill/worktree, Vite-cache, and nested-worktree changes stay outside the commit.
+
+## D-backend-error-follows-main-schema-v31
+
+- Preserve current main's v31 as the durable Chief launch-snapshot migration. Renumber the
+  ticket's additive `backend_error` migration to v32 so an existing main database runs the
+  provenance cleanup instead of being mistaken for an already-upgraded Ticket schema.
+- Keep the migrations separate and ordered. A pre-v31 database first gains the Chief binding
+  columns and records v31, then gains `backend_error`, clears unproven legacy errors, and records
+  v32. Fresh DDL contains both final shapes, while each version validator still owns one contract.
+- Resolve Workspace tests and documentation additively: canonical backend error remains the only
+  exceptional fact, ahead of main's permission/active/attention/settled precedence; main's blocked
+  and completed behavior remains covered.
+
+## D-browser-replay-is-one-presentation-transaction
+
+- Keep the existing server replay architecture. The bootstrap queue correctly separates replay from
+  bounded live backpressure and the typed WebSocket correctly preserves individual envelope order.
+  Neither promises one browser render.
+- Put the missing transaction in `conversationController.ts`, where protocol admission becomes
+  subscriber-visible presentation. Reduce an admitted `reset -> replay -> ready` into a detached
+  candidate, retain the last committed snapshot, and publish the candidate once at `ready`.
+- Discard an incomplete candidate on every existing recovery path. This prevents a recovery error
+  publication from accidentally exposing partial history and makes `snapshot()` match what
+  subscribers can see.
+- Keep post-ready live publication incremental and keep the existing pane follow-scroll unchanged.
+  The old full-resource chat loaded before rendering; ACP replay is incremental transport, so copying
+  its scroll behavior required restoring that missing load-complete presentation boundary.
+- Defer giant frames, transcript caching, pagination, and virtualization. They address future payload
+  or rendering scale, not the measured multi-commit initial paint defect.
+# 2026-07-22 — Panels owns bounded Codex file-edit ingress
+
+- Do not patch or fork `@agentclientprotocol/codex-acp`. Panels pins but does not own that adapter,
+  and carrying a modified `node_modules` artifact would make every dependency upgrade an integration
+  hazard.
+- Let the backend definition supply the normalizer, but execute it inside ordered ingress only after
+  the raw notification and typed SDK callback match. Run it before the slot's live or private
+  `session/load` downstream is selected. This preserves wire-integrity matching and gives one behavior
+  for live and restored conversations without teaching the generic Hub that one backend inflates edits.
+- Bound normalized edit detail to 64 KiB beyond the serialized mandatory tool/file identities. Use
+  grouped hunks only for bounded small inputs. For large inputs, cap comparison work and show fixed
+  head/tail evidence; if the bounded scan cannot locate a huge middle-only change, publish an explicit
+  omitted-detail diff instead of fabricated rows or invented line origins.
+- Preserve semantic edit evidence—path, completion status, changed hunks, source line origins, and
+  explicit truncation—while removing unchanged full-file snapshots. Keep the existing replay byte
+  ceiling as a genuine integrity bound rather than raising it to accommodate amplification.
+- Treat this as one contract-scoped conversation slice. Use TDD at the child-ingress and real Hub
+  replay seams, independent implementation review, and the repository's one final `./verify` before
+  advancing `main`.
+
+## D-live-terminal-reconnect-materialization — Consolidate provider terminal deltas only in reconnect replay
+
+- Preserve the 1 MiB replay ceiling as an integrity guard. The defect is not the ceiling; it is
+  retaining thousands of transient terminal deltas as independent reconnect history.
+- Keep the canonical live stream exact for already attached browsers. Consolidation belongs only
+  to the subscriber-local replay representation, keyed by ACP session and tool-call identity.
+- Keep provider extension knowledge out of the Hub. A typed backend-definition hook owns exact
+  Codex `terminal_output_delta` recognition and combination; the Hub owns only generic keyed replay
+  slots, byte accounting, ordering, validation, and subscriber-local resequencing.
+- Treat only the exact `terminal_output_delta` extension shape as additive. Malformed, conflicting,
+  or unrelated ACP metadata retains existing append-only behavior rather than being guessed at.
+- A completed or failed terminal update is authoritative for the adapter's final aggregate; it may
+  replace that tool call's accumulated replay delta while retaining the full terminal update.
+- Recognition requires the exact pinned Codex active or final extension shape, including matching
+  terminal and tool-call identities. Empty final output is still authoritative; missing or extra
+  extension fields are not inferred.
+- Canonical replay accounting measures the stored materialized entries. Subscriber-local sequence
+  normalization is validated separately and never mutates that canonical byte count.

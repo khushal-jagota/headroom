@@ -134,6 +134,8 @@ def build_confined_child_environment(
         name: ambient[name] for name in definition.inherited_environment_names if name in ambient
     }
     environment.update(definition.environment_overrides)
+    if definition.employee_environment_overrides is not None:
+        environment.update(definition.employee_environment_overrides(employee))
     for name in tuple(environment):
         if name.startswith("PLAN_") or name == "HERMES_TUI_SKILLS":
             del environment[name]
@@ -482,6 +484,13 @@ class SdkAcpEmployeeChild(AcpEmployeeChild):
             {"sessionId": session_id, "modelId": model_id},
         )
 
+    async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        self._require_alive()
+        await self._connection.set_session_mode(
+            session_id=session_id,
+            mode_id=mode_id,
+        )
+
     async def close_session(self, session_id: str) -> None:
         self._require_alive()
         await self._connection.close_session(session_id=session_id)
@@ -656,7 +665,13 @@ class SdkAcpEmployeeChildFactory:
         ingress_kwargs: dict[str, Any] = {"fatal_callback": on_ingress_fatal}
         if self._ingress_max_items is not None:
             ingress_kwargs["max_items"] = self._ingress_max_items
-        ordered_ingress = OrderedAcpConversationIngress(update_ingress, **ingress_kwargs)
+        ordered_ingress = OrderedAcpConversationIngress(
+            update_ingress,
+            session_notification_normalizer=(
+                self.definition.session_notification_normalizer
+            ),
+            **ingress_kwargs,
+        )
         ordered_ingress.start()
         client = _SdkClientBridge(
             ordered_ingress,

@@ -162,24 +162,22 @@ def test_ticket_detail_and_copy_text_use_resolved_blocker_summary(tmp_db) -> Non
     detail = ticket_views.ticket_detail(tmp_db, "t_blocked", 1)
 
     assert detail["blocked"] is True
-    assert detail["blocker_summary"]["blocked_by"] == [
-        {
-            "ticket_id": "t_active_blocker",
-            "title": "Active blocker",
-            "stage": "needs_plan",
-            "active": True,
-            "href": "#/ticket/t_active_blocker",
-        },
-        {
-            "ticket_id": "t_done_blocker",
-            "title": "Done blocker",
-            "stage": "done",
-            "active": False,
-            "href": "#/ticket/t_done_blocker",
-        },
-    ]
+    assert detail["blocker_summary"] == {
+        "blocked_by": [
+            {
+                "ticket_id": "t_active_blocker",
+                "title": "Active blocker",
+                "stage": "needs_plan",
+                "href": "#/ticket/t_active_blocker",
+            }
+        ]
+    }
     assert "links" not in detail
     copy_text = ticket_views.copy_text(tmp_db, "t_blocked")
     assert "blocked_by:" in copy_text
-    assert "- active: Active blocker (t_active_blocker, needs_plan)" in copy_text
-    assert "- cleared: Done blocker (t_done_blocker, done)" in copy_text
+    assert "- Active blocker (t_active_blocker, needs_plan)" in copy_text
+    assert "Done blocker" not in copy_text
+    assert "blocks:" not in copy_text
+
+    cleared_detail = ticket_views.ticket_detail(tmp_db, "t_done_blocker", 1)
+    assert "blocker_summary" not in cleared_detail

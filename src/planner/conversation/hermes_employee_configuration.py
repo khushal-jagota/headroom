@@ -98,14 +98,14 @@ class HermesEmployeeSessionConfigurationAdapter:
                 "Hermes does not support employee launch reasoning selection"
             )
         model = launch_configuration.employee_launch_model
-        if model is None:
-            return
-        if not isinstance(child, LegacyAcpSessionModelSelection):
-            raise EmployeeConfigurationError(
-                "Hermes ACP child does not support legacy model selection"
-            )
         try:
-            await child.set_legacy_session_model(response.session_id, model)
+            if model is not None:
+                if not isinstance(child, LegacyAcpSessionModelSelection):
+                    raise EmployeeConfigurationError(
+                        "Hermes ACP child does not support legacy model selection"
+                    )
+                await child.set_legacy_session_model(response.session_id, model)
+            await child.set_session_mode(response.session_id, "dont_ask")
         except asyncio.CancelledError:
             raise
         except EmployeeConfigurationError:

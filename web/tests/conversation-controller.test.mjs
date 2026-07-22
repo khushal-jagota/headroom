@@ -23,6 +23,7 @@ class FakeTransport {
 
   send(action) {
     this.sent.push(structuredClone(action));
+    this.onSend?.(action);
     return { ok: true };
   }
 
@@ -52,6 +53,17 @@ function connectionEnvelope(sequence, state, overrides = {}) {
       ...(state === "reset" ? { resetBindingGeneration: 1 } : {}),
     },
     ...overrides,
+  };
+}
+
+function humanEnvelope(sequence, text) {
+  return {
+    ...connectionEnvelope(sequence, "ready"),
+    type: "human_echo",
+    payload: {
+      clientMessageId: `restored-${sequence}`,
+      prompt: { sessionId: "session-deferred", prompt: [{ type: "text", text }] },
+    },
   };
 }
 
@@ -136,13 +148,25 @@ try {
   deferred.runReconnect();
   assert.equal(deferred.transports.length, 2);
   deferred.transports[1].callbacks.onOpen();
+  const deferredPublications = [];
+  let latestDeferredSnapshot = deferred.controller.snapshot();
+  deferred.controller.subscribe((snapshot) => {
+    latestDeferredSnapshot = snapshot;
+    deferredPublications.push(structuredClone(snapshot));
+  });
+  let snapshotAtPromptSend = null;
+  deferred.transports[1].onSend = (action) => {
+    if (action.type === "prompt") snapshotAtPromptSend = structuredClone(latestDeferredSnapshot);
+  };
   deferred.transports[1].callbacks.onEnvelope(connectionEnvelope(1, "reset"));
   assert.equal(
     deferred.transports[1].sent.filter((action) => action.type === "prompt").length,
     0,
     "reset alone does not release the pending first prompt",
   );
-  deferred.transports[1].callbacks.onEnvelope(connectionEnvelope(2, "ready"));
+  deferred.transports[1].callbacks.onEnvelope(humanEnvelope(2, "Restored before first demand"));
+  assert.equal(deferred.controller.snapshot().session.messages.length, 0);
+  deferred.transports[1].callbacks.onEnvelope(connectionEnvelope(3, "ready"));
   const delivered = deferred.transports[1].sent.filter((action) => action.type === "prompt");
   assert.equal(delivered.length, 1);
   assert.deepEqual(delivered[0], {
@@ -155,7 +179,20 @@ try {
     },
     deliveryChoice: "normal",
   });
-  deferred.transports[1].callbacks.onEnvelope(connectionEnvelope(3, "ready"));
+  assert.equal(
+    snapshotAtPromptSend.session.messages.some((message) => message.id === "restored-2"),
+    true,
+    "the complete replay is committed before the deferred prompt reaches transport",
+  );
+  const replayPublicationIndex = deferredPublications.findIndex((snapshot) => (
+    snapshot.session.messages.some((message) => message.id === "restored-2")
+    && !snapshot.session.messages.some((message) => message.id === "client-1")
+  ));
+  const optimisticPublicationIndex = deferredPublications.findIndex((snapshot) => (
+    snapshot.session.messages.some((message) => message.id === "client-1")
+  ));
+  assert.ok(replayPublicationIndex >= 0 && optimisticPublicationIndex > replayPublicationIndex);
+  deferred.transports[1].callbacks.onEnvelope(connectionEnvelope(4, "ready"));
   assert.equal(
     deferred.transports[1].sent.filter((action) => action.type === "prompt").length,
     1,
@@ -164,7 +201,7 @@ try {
   deferred.transports[1].callbacks.onClose(null);
   deferred.runReconnect();
   deferred.transports[2].callbacks.onOpen();
-  deferred.transports[2].callbacks.onEnvelope(connectionEnvelope(4, "ready"));
+  deferred.transports[2].callbacks.onEnvelope(connectionEnvelope(5, "ready"));
   assert.equal(
     deferred.transports[2].sent.filter((action) => action.type === "prompt").length,
     0,

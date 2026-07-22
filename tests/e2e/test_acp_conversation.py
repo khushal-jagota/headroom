@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -57,14 +58,44 @@ from planner.days.logic.dates import resolve_day_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, AtCap
 from planner.worker_context import data as worker_context_data
+from planner.worker_settings import service as worker_settings_service
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
     PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
     build_employee_runtime_definitions,
 )
+from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
+from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
+from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTED_AGENT = REPOSITORY_ROOT / "tests/support/acp_scripted_agent.py"
 E2E_SERVER = REPOSITORY_ROOT / "tests/support/acp_e2e_server.py"
+
+_SCRIPTED_WORKER_TYPE_DEFINITIONS = tuple(
+    replace(
+        definition,
+        worker_profile=replace(
+            definition.worker_profile,
+            default_employee_backend="hermes",
+            default_employee_model=None,
+            default_employee_reasoning_effort=None,
+        ),
+    )
+    for definition in (
+        CODING_WORKER_TYPE_DEFINITION,
+        NEW_WORKER_TYPE_DEFINITION,
+        EXPLORATION_WORKER_TYPE_DEFINITION,
+        INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION,
+    )
+)
+
+
+def _scripted_runtime_definitions(catalog: EmployeeBackendCatalog) -> Any:
+    return build_employee_runtime_definitions(
+        catalog,
+        worker_type_definitions=_SCRIPTED_WORKER_TYPE_DEFINITIONS,
+    )
 
 
 def test_production_employee_backend_catalog_is_hermes_codex_claude() -> None:
@@ -115,6 +146,43 @@ class _GenerationScopedSdkChildFactory:
             permission_callback,
             death_callback,
         )
+
+
+class _LoadAuditedChild:
+    def __init__(self, child: Any, calls: dict[str, int]) -> None:
+        self._child = child
+        self._calls = calls
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._child, name)
+
+    async def new_session(self, request: Any) -> Any:
+        self._calls["new_session"] += 1
+        return await self._child.new_session(request)
+
+    async def load_session(self, request: Any) -> Any:
+        self._calls["load_session"] += 1
+        return await self._child.load_session(request)
+
+    async def capture_load_session(self, request: Any, private_ingress: Any) -> Any:
+        self._calls["capture_load_session"] += 1
+        return await self._child.capture_load_session(request, private_ingress)
+
+
+class _LoadAuditedSdkChildFactory:
+    def __init__(self, definition: AgentBackendDefinition) -> None:
+        self._delegate = SdkAcpEmployeeChildFactory(definition)
+        self.calls = {
+            "create": 0,
+            "new_session": 0,
+            "load_session": 0,
+            "capture_load_session": 0,
+        }
+
+    async def create(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls["create"] += 1
+        child = await self._delegate.create(*args, **kwargs)
+        return _LoadAuditedChild(child, self.calls)
 
 
 def _definition(
@@ -174,11 +242,17 @@ def _application(
     *,
     browser_capacity: int = 128,
     reset_buffer_byte_limit: int = 1_048_576,
+    ingress_capacity: int = 256,
     child_factory: Any | None = None,
 ) -> Any:
     factory = child_factory if child_factory is not None else SdkAcpEmployeeChildFactory(definition)
     return _application_with_backends(
-        config, clock, ((definition, factory),), browser_capacity, reset_buffer_byte_limit
+        config,
+        clock,
+        ((definition, factory),),
+        browser_capacity,
+        reset_buffer_byte_limit,
+        ingress_capacity=ingress_capacity,
     )
 
 
@@ -189,6 +263,7 @@ def _application_with_backends(
     browser_capacity: int = 128,
     reset_buffer_byte_limit: int = 1_048_576,
     employee_configuration_adapters: dict[str, Any] | None = None,
+    ingress_capacity: int = 256,
 ) -> Any:
     catalog = EmployeeBackendCatalog(
         tuple(
@@ -204,12 +279,23 @@ def _application_with_backends(
             for definition, factory in backends
         )
     )
+    runtime_definitions = _scripted_runtime_definitions(catalog)
+    worker_settings_service.update_chief_launch_defaults(
+        Path(config.db_path).expanduser().parent,
+        runtime_definitions.worker_type_registry,
+        {
+            "employee_backend": "hermes",
+            "employee_launch_model": None,
+            "employee_launch_reasoning_effort": None,
+        },
+    )
     return create_app(
         config,
         clock,
         lambda: connect(config.db_path),
         conversation_test_options=ConversationTestOptions(
-            employee_runtime_definitions=build_employee_runtime_definitions(catalog),
+            employee_runtime_definitions=runtime_definitions,
+            ingress_capacity=ingress_capacity,
             browser_capacity=browser_capacity,
             reset_buffer_byte_limit=reset_buffer_byte_limit,
         ),
@@ -232,7 +318,7 @@ def _seed_eligible_ticket(
         actor="test",
         now=clock.now_unix(),
         title_max_chars=200,
-        employee_backend=employee_backend,
+        employee_backend=employee_backend or "hermes",
         employee_runtime_definitions=employee_runtime_definitions,
     )
     tickets_data.accept_proposal(
@@ -327,6 +413,7 @@ def _vite_vertical_server(tmp_path: Path) -> Iterator[tuple[str, str, Path, Path
             actor="test",
             now=1,
             title_max_chars=200,
+            employee_backend="hermes",
         )
     backend_port = _free_port()
     vite_port = _free_port()
@@ -497,7 +584,7 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
             assert selector.input_value() == "hermes"
             assert selector.locator("option").evaluate_all(
                 "options => options.map(option => option.value)"
-            ) == ["hermes", "probe-backend"]
+            ) == ["hermes", "codex", "claude", "probe-backend"]
             with connect(str(database_path)) as conn:
                 assert (
                     conn.execute(
@@ -670,7 +757,7 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
             config.boundary_hour,
             title="Fake non-Hermes shared session",
             employee_backend="probe-backend",
-            employee_runtime_definitions=build_employee_runtime_definitions(catalog),
+            employee_runtime_definitions=_scripted_runtime_definitions(catalog),
         )
 
     app = _application_with_backends(config, clock, backends)
@@ -746,7 +833,7 @@ def test_employee_configuration_catalog_does_not_bind_and_first_prompt_uses_sele
             ),
         )
     )
-    runtime_definitions = build_employee_runtime_definitions(catalog)
+    runtime_definitions = _scripted_runtime_definitions(catalog)
     with connect(db_path) as conn:
         create_schema(conn)
         ticket = tickets_data.create_ticket(
@@ -1053,6 +1140,7 @@ def test_fresh_uvicorn_process_resumes_durable_binding(tmp_path: Path) -> None:
             actor="test",
             now=1,
             title_max_chars=200,
+            employee_backend="hermes",
         )
     port = _free_port()
     first = _start_acp_backend(db_path=db_path, logs_dir=tmp_path / "first-logs", port=port)
@@ -1104,6 +1192,91 @@ def test_fresh_uvicorn_process_resumes_durable_binding(tmp_path: Path) -> None:
         _stop_process(second)
 
 
+def test_cold_attach_batches_durable_history_larger_than_ingress_capacity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = str(tmp_path / "cold-replay.db")
+    durable_store = tmp_path / "cold-replay-sessions.json"
+    monkeypatch.setenv("ACP_TEST_DURABLE_STORE_PATH", str(durable_store))
+    config = load_config(
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": db_path,
+            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+            "PLAN_FAKE_NOW": "2026-07-20T12:00:00+00:00",
+            "PLAN_DISPATCH_ENABLED": "0",
+        }
+    )
+    clock = build_clock(config)
+    with connect(db_path) as conn:
+        create_schema(conn)
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            employee_backend="hermes",
+            title="ACP cold replay batch",
+            actor="test",
+            now=clock.now_unix(),
+            title_max_chars=200,
+        )
+
+    history_size = 8
+    first = _application(config, clock, _definition())
+    with TestClient(first) as client:
+        with client.websocket_connect("/api/conversation") as websocket:
+            websocket.send_json({"type": "attach", "employeeId": ticket.id})
+            initial = _receive_until(websocket, _is_ready)
+            session_id = str(initial[0]["acpSessionId"])
+            action = _prompt_action(
+                ticket.id,
+                session_id,
+                "cold-replay-history",
+                "build durable history",
+                script="burst",
+            )
+            action["prompt"]["_meta"]["count"] = history_size
+            websocket.send_json(action)
+            _receive_until(websocket, _is_idle)
+
+    audited_factory = _LoadAuditedSdkChildFactory(_definition())
+    restarted = _application(
+        config,
+        clock,
+        _definition(),
+        ingress_capacity=2,
+        child_factory=audited_factory,
+    )
+    with TestClient(restarted) as client:
+        with client.websocket_connect("/api/conversation") as websocket:
+            websocket.send_json({"type": "attach", "employeeId": ticket.id})
+            replay = _receive_until(websocket, _is_ready)
+
+        replay_texts = [
+            item["payload"]["update"]["content"]["text"]
+            for item in replay
+            if item["type"] == "acp_session_update"
+            and item["payload"]["update"]["sessionUpdate"] == "agent_thought_chunk"
+        ]
+        assert replay_texts == [f"burst-{index}" for index in range(history_size)]
+        assert audited_factory.calls == {
+            "create": 1,
+            "new_session": 0,
+            "load_session": 0,
+            "capture_load_session": 1,
+        }
+        calls_after_cold_attach = audited_factory.calls.copy()
+
+        with client.websocket_connect("/api/conversation") as reconnected:
+            reconnected.send_json({"type": "attach", "employeeId": ticket.id})
+            ordinary_replay = _receive_until(reconnected, _is_ready)
+
+        assert any(
+            item["type"] == "acp_session_update" for item in ordinary_replay
+        )
+        assert audited_factory.calls == calls_after_cold_attach
+
+
 def test_official_fork_compaction_survives_refresh_child_death_and_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1130,6 +1303,7 @@ def test_official_fork_compaction_survives_refresh_child_death_and_restart(
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
 
     first_replacement_session_id = ""
@@ -1369,6 +1543,7 @@ def test_automatic_official_fork_retargets_and_runs_queued_successor(
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     definition = _compaction_definition()
     replacement_definition = AgentBackendDefinition(
@@ -1498,6 +1673,7 @@ def test_missing_fork_capability_retires_source_and_fresh_attach_restores_bindin
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     app = _application(config, clock, _compaction_definition())
     with TestClient(app) as client:
@@ -1592,6 +1768,7 @@ def test_browser_and_worker_share_one_real_sdk_session(
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
         conn.execute(
             "INSERT INTO events (entity_id, kind, payload, created_at) "
@@ -1751,7 +1928,7 @@ def test_browser_and_worker_share_one_real_sdk_session(
                     "lastSeenSequence": last_sequence,
                 }
             )
-            replay = _receive_until(refreshed, _is_ready)
+            replay = _receive_until(refreshed, _is_ready, limit=128)
             assert any(
                 item["type"] == "acp_session_update"
                 and item["payload"]["update"]["sessionUpdate"] == "agent_thought_chunk"
@@ -1760,8 +1937,7 @@ def test_browser_and_worker_share_one_real_sdk_session(
 
             with client.websocket_connect("/api/conversation") as second_browser:
                 second_browser.send_json({"type": "attach", "employeeId": ticket.id})
-                _receive_until(second_browser, _is_ready)
-                _receive_until(refreshed, _is_ready)
+                _receive_until(second_browser, _is_ready, limit=128)
                 old_handle = client.portal.call(
                     app.state.conversation.registry.resolve_runtime_handle,
                     ticket.id,
@@ -1910,6 +2086,7 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
         send_now_ticket = tickets_data.create_ticket(
             conn,
@@ -1918,6 +2095,7 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
 
     app = _application(config, clock, _definition())
@@ -1931,7 +2109,6 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
             stop_session = str(stop_initial[0]["acpSessionId"])
             stop_second.send_json({"type": "attach", "employeeId": stop_ticket.id})
             _receive_until(stop_second, _is_ready)
-            _receive_until(stop_first, _is_ready)
             stop_old = client.portal.call(
                 app.state.conversation.registry.resolve_runtime_handle,
                 stop_ticket.id,
@@ -2322,15 +2499,7 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
 
             with client.websocket_connect("/api/conversation") as websocket:
                 websocket.send_json({"type": "attach", "employeeId": ticket.id})
-                ready_count = 0
-
-                def complete_active_replay(envelope: dict[str, Any]) -> bool:
-                    nonlocal ready_count
-                    if _is_ready(envelope):
-                        ready_count += 1
-                    return ready_count == 2
-
-                replay = _receive_until(websocket, complete_active_replay)
+                replay = _receive_until(websocket, _is_ready)
                 assert (
                     sum(
                         item["type"] == "connection" and item["payload"]["state"] == "reset"
@@ -2338,6 +2507,8 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
                     )
                     == 1
                 )
+                assert sum(_is_ready(item) for item in replay) == 1
+                assert _is_ready(replay[-1])
                 worker_user_updates = [
                     item
                     for item in replay
@@ -2501,6 +2672,7 @@ def test_worker_failure_settles_before_queued_successor(
                 actor="test",
                 now=clock.now_unix(),
                 title_max_chars=200,
+                employee_backend="hermes",
             )
         app = _application(
             config,
@@ -2604,6 +2776,7 @@ def test_active_vertical_replay_fails_closed_without_harming_live_browser(
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     app = _application(
         config,
@@ -2702,6 +2875,7 @@ def test_real_websocket_replay_larger_than_live_queue_reaches_ready_then_deliver
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     app = _application(config, clock, _definition(), browser_capacity=16)
 
@@ -2752,7 +2926,7 @@ def test_real_websocket_replay_larger_than_live_queue_reaches_ready_then_deliver
             )
             assert attach_state.phase == "running"
             replay_ready_sequence = client.portal.call(
-                lambda: app.state.conversation.hub._streams[ticket.id].sequence + 1
+                lambda: app.state.conversation.hub._streams[ticket.id].sequence
             )
             with client.websocket_connect("/api/conversation") as replay:
                 replay.send_json({"type": "attach", "employeeId": ticket.id})
@@ -2792,7 +2966,7 @@ def test_real_websocket_replay_larger_than_live_queue_reaches_ready_then_deliver
             _receive_until(live, _is_idle)
 
 
-def test_existing_websocket_crosses_large_replacement_replay_without_partial_transcript(
+def test_idle_reconnect_reuses_large_snapshot_without_reloading_or_resetting_existing_websocket(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2820,24 +2994,24 @@ def test_existing_websocket_crosses_large_replacement_replay_without_partial_tra
             actor="test",
             now=clock.now_unix(),
             title_max_chars=200,
+            employee_backend="hermes",
         )
     live_capacity = 16
-    app = _application(
+    history_app = _application(
         config,
         clock,
         _definition(),
         browser_capacity=live_capacity,
     )
 
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/conversation") as existing:
-            existing.send_json({"type": "attach", "employeeId": ticket.id})
-            initial = _receive_until(existing, _is_ready)
+    with TestClient(history_app) as client:
+        with client.websocket_connect("/api/conversation") as history_browser:
+            history_browser.send_json({"type": "attach", "employeeId": ticket.id})
+            initial = _receive_until(history_browser, _is_ready)
             session_id = str(initial[0]["acpSessionId"])
-            last_sequence = int(initial[-1]["sequence"])
             prompt_texts = [f"durable refresh turn {index}" for index in range(3)]
             for index, prompt_text in enumerate(prompt_texts):
-                existing.send_json(
+                history_browser.send_json(
                     _prompt_action(
                         ticket.id,
                         session_id,
@@ -2845,42 +3019,57 @@ def test_existing_websocket_crosses_large_replacement_replay_without_partial_tra
                         prompt_text,
                     )
                 )
-                turn = _receive_until(existing, _is_idle)
-                last_sequence = int(turn[-1]["sequence"])
+                _receive_until(history_browser, _is_idle)
+
+    app = _application(
+        config,
+        clock,
+        _definition(),
+        browser_capacity=live_capacity,
+    )
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/conversation") as existing:
+            existing.send_json({"type": "attach", "employeeId": ticket.id})
+            existing_replay = _receive_until(existing, _is_ready, limit=128)
+            last_sequence = int(existing_replay[-1]["sequence"])
 
             with client.websocket_connect("/api/conversation") as refresher:
                 refresher.send_json({"type": "attach", "employeeId": ticket.id})
                 refresher_replay = _receive_until(refresher, _is_ready, limit=128)
-                replacement = _receive_until(existing, _is_ready, limit=128)
 
-                assert len(replacement) > live_capacity
-                assert replacement[0]["type"] == "connection"
-                assert replacement[0]["payload"]["state"] == "reset"
-                assert replacement[-1]["type"] == "connection"
-                assert replacement[-1]["payload"]["state"] == "ready"
-                assert replacement[0]["sequence"] == last_sequence + 1
-                assert [item["sequence"] for item in replacement] == list(
-                    range(replacement[0]["sequence"], replacement[-1]["sequence"] + 1)
+                assert len(refresher_replay) > live_capacity
+                assert refresher_replay[0]["type"] == "connection"
+                assert refresher_replay[0]["payload"]["state"] == "reset"
+                assert refresher_replay[-1]["type"] == "connection"
+                assert refresher_replay[-1]["payload"]["state"] == "ready"
+                assert [item["sequence"] for item in refresher_replay] == list(
+                    range(1, last_sequence + 1)
                 )
                 assert all(
                     item["acpSessionId"] == session_id
                     and item["bindingGeneration"] == 1
-                    for item in replacement
+                    for item in refresher_replay
                 )
-                rendered_replacement = json.dumps(replacement)
-                assert all(text in rendered_replacement for text in prompt_texts)
-                assert [item["sequence"] for item in refresher_replay] == [
-                    item["sequence"] for item in replacement
-                ]
+                rendered_replay = json.dumps(refresher_replay)
+                assert all(text in rendered_replay for text in prompt_texts)
+                assert refresher_replay == existing_replay
 
-            existing.send_json(
-                _prompt_action(
-                    ticket.id,
-                    session_id,
-                    "after-large-refresh",
-                    "live after large refresh",
+                existing.send_json(
+                    _prompt_action(
+                        ticket.id,
+                        session_id,
+                        "after-large-refresh",
+                        "live after large refresh",
+                    )
                 )
-            )
-            later_live = _receive_until(existing, _is_idle)
-            assert later_live[0]["sequence"] == replacement[-1]["sequence"] + 1
-            assert "live after large refresh" in json.dumps(later_live)
+                existing_suffix = _receive_until(existing, _is_idle)
+                refresher_suffix = _receive_until(refresher, _is_idle)
+
+                assert existing_suffix[0]["sequence"] == last_sequence + 1
+                assert not any(
+                    item["type"] == "connection"
+                    and item["payload"]["state"] == "reset"
+                    for item in existing_suffix
+                )
+                assert "live after large refresh" in json.dumps(existing_suffix)
+                assert refresher_suffix == existing_suffix

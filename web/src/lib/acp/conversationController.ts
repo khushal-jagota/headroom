@@ -92,7 +92,8 @@ export function createConversationController(options: ConversationControllerOpti
     now: options.now,
     fallbackId: options.fallbackId,
   };
-  let state = options.initialState ?? createConversationState(options.employeeId);
+  let committedState = options.initialState ?? createConversationState(options.employeeId);
+  let replayCandidate: ConversationState | null = null;
   let currentEpoch: SocketEpoch | null = null;
   let nextEpoch = 1;
   let failedEpoch: number | null = null;
@@ -104,7 +105,7 @@ export function createConversationController(options: ConversationControllerOpti
 
   const publish = (): void => {
     if (disposed) return;
-    const snapshot = projectConversationSnapshot(state);
+    const snapshot = projectConversationSnapshot(committedState);
     for (const subscriber of subscribers) subscriber(snapshot);
   };
 
@@ -112,7 +113,7 @@ export function createConversationController(options: ConversationControllerOpti
     nextTransition: Parameters<typeof reduceConversationState>[1],
     shouldPublish = true,
   ): void => {
-    state = reduceConversationState(state, nextTransition, dependencies);
+    committedState = reduceConversationState(committedState, nextTransition, dependencies);
     if (shouldPublish) publish();
   };
 
@@ -130,7 +131,7 @@ export function createConversationController(options: ConversationControllerOpti
     choice: TurnDeliveryChoice,
     clientMessageId: string,
   ): ConversationActionResult => {
-    const cursor = state.cursor;
+    const cursor = committedState.cursor;
     if (!cursor) return { ok: false, reason: 'Conversation is not ready', clientMessageId };
     const prompt: PromptRequest = {
       sessionId: cursor.acpSessionId,
@@ -174,6 +175,7 @@ export function createConversationController(options: ConversationControllerOpti
     if (disposed || epoch.blocked || currentEpoch?.epoch !== epoch.epoch) return;
     epoch.blocked = true;
     failedEpoch = epoch.epoch;
+    replayCandidate = null;
     transition({ kind: 'recoverable_connection_error', message });
     epoch.transport.detach();
     epoch.transport.close();
@@ -187,23 +189,47 @@ export function createConversationController(options: ConversationControllerOpti
     reset: boolean,
     preserveProtocolRejections = false,
   ): void => {
+    let protocolState = replayCandidate ?? committedState;
     if (reset) {
-      transition({ kind: 'session_reset', preserveProtocolRejections }, false);
+      protocolState = reduceConversationState(
+        protocolState,
+        { kind: 'session_reset', preserveProtocolRejections },
+        dependencies,
+      );
     }
     const cursor = cursorFor(envelope);
-    transition({ kind: 'server_envelope', envelope, cursor }, false);
+    protocolState = reduceConversationState(
+      protocolState,
+      { kind: 'server_envelope', envelope, cursor },
+      dependencies,
+    );
     if (
       envelope.type === 'connection'
       && envelope.payload.state === 'ready'
       && failedEpoch !== null
       && epoch.epoch > failedEpoch
     ) {
-      transition({ kind: 'clear_recoverable_connection_error' }, false);
+      protocolState = reduceConversationState(
+        protocolState,
+        { kind: 'clear_recoverable_connection_error' },
+        dependencies,
+      );
       failedEpoch = null;
     }
-    publish();
+    if (reset || replayCandidate !== null) {
+      replayCandidate = protocolState;
+    } else {
+      committedState = protocolState;
+    }
     if (envelope.type === 'connection' && envelope.payload.state === 'ready') {
+      if (replayCandidate !== null) {
+        committedState = replayCandidate;
+        replayCandidate = null;
+      }
+      publish();
       deliverPendingInitialPrompt();
+    } else if (replayCandidate === null) {
+      publish();
     }
   };
 
@@ -213,7 +239,7 @@ export function createConversationController(options: ConversationControllerOpti
       closeEpochForRecovery(epoch, INVALID_ERROR);
       return;
     }
-    const cursor = state.cursor;
+    const cursor = (replayCandidate ?? committedState).cursor;
     if (!cursor) {
       if (
         envelope.type !== 'connection'
@@ -270,6 +296,7 @@ export function createConversationController(options: ConversationControllerOpti
   const handleSocketEnd = (epoch: SocketEpoch, stateName: 'closed' | 'error'): void => {
     if (disposed || epoch.blocked || currentEpoch?.epoch !== epoch.epoch) return;
     epoch.blocked = true;
+    replayCandidate = null;
     epoch.transport.detach();
     epoch.transport.close();
     currentEpoch = null;
@@ -290,7 +317,7 @@ export function createConversationController(options: ConversationControllerOpti
       onOpen: () => {
         if (disposed || epoch.blocked || currentEpoch?.epoch !== epochNumber) return;
         transition({ kind: 'local_connection', state: 'open', detail: 'Connected' });
-        const cursor = state.cursor;
+        const cursor = committedState.cursor;
         const action: BrowserAction = cursor
           ? {
               type: 'attach',
@@ -325,16 +352,16 @@ export function createConversationController(options: ConversationControllerOpti
       openSocket();
     },
     snapshot(): ConversationSnapshot {
-      return projectConversationSnapshot(state);
+      return projectConversationSnapshot(committedState);
     },
     subscribe(listener): () => void {
       if (disposed) return () => undefined;
       subscribers.add(listener);
-      listener(projectConversationSnapshot(state));
+      listener(projectConversationSnapshot(committedState));
       return () => subscribers.delete(listener);
     },
     prompt(contentBlocks, requestedChoice): ConversationActionResult {
-      const snapshot = projectConversationSnapshot(state);
+      const snapshot = projectConversationSnapshot(committedState);
       if (!snapshot.cursor) {
         if (!options.deferInitialAttach) return { ok: false, reason: 'Conversation is not ready' };
         if (pendingInitialPrompt) {
@@ -371,7 +398,7 @@ export function createConversationController(options: ConversationControllerOpti
       return send({ type: 'new_conversation', employeeId: options.employeeId });
     },
     respondToPermission(requestId, optionId): ConversationActionResult {
-      const permission = state.permissions[requestId];
+      const permission = committedState.permissions[requestId];
       if (!permission || permission.submittingOptionId) {
         return { ok: false, reason: 'Permission request is no longer pending' };
       }
@@ -407,7 +434,8 @@ export function createConversationController(options: ConversationControllerOpti
       currentEpoch?.transport.detach();
       currentEpoch?.transport.close();
       currentEpoch = null;
-      state = reduceConversationState(state, { kind: 'dispose' }, dependencies);
+      replayCandidate = null;
+      committedState = reduceConversationState(committedState, { kind: 'dispose' }, dependencies);
     },
   };
 }

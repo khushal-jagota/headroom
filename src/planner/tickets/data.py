@@ -15,7 +15,7 @@ from typing import Protocol
 
 from planner.conversation.backend_catalog import EmployeeBackendCatalog
 from planner.core import links as core_links
-from planner.core.contracts import EventKind, Priority
+from planner.core.contracts import EventKind, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import append_event, delete_entity_history
 from planner.core.ids import ID_PREFIXES, new_id
@@ -48,6 +48,7 @@ from planner.tickets.logic.decisions import Decision
 from planner.worker_settings.service import (
     database_parent_from_connection,
     read_stage_default_ownership_for_ticket_entry,
+    read_worker_launch_defaults_for_ticket_creation,
 )
 from planner.worker_types.configuration import (
     ConfiguredEmployeeRuntimeDefinitions,
@@ -563,7 +564,8 @@ def write_employee_configuration(
             )
         conn.execute(
             "UPDATE tickets SET employee_backend = ?, employee_launch_model = ?, "
-            "employee_launch_reasoning_effort = ?, updated_at = ? WHERE id = ?",
+            "employee_launch_reasoning_effort = ?, "
+            "updated_at = ? WHERE id = ?",
             (
                 normalized.employee_backend,
                 normalized.employee_launch_model,
@@ -614,30 +616,34 @@ def create_ticket(
     worker_type: str,
     employee_backend: str | None = None,
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
     runtime_definitions = employee_runtime_definitions or configured_employee_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
+    launch_defaults = read_worker_launch_defaults_for_ticket_creation(
+        conn, runtime_definitions.worker_type_registry, worker_type
+    )
     selected_employee_backend = runtime_definitions.employee_backend_catalog.require_registered(
         employee_backend
         if employee_backend is not None
-        else worker_type_definition.worker_profile.default_employee_backend
+        else launch_defaults.employee_backend
     )
     employee_backend_was_overridden = (
         employee_backend is not None
         and selected_employee_backend
-        != worker_type_definition.worker_profile.default_employee_backend
+        != launch_defaults.employee_backend
     )
     selected_employee_launch_model = (
         None
         if employee_backend_was_overridden
-        else worker_type_definition.worker_profile.default_employee_model
+        else launch_defaults.employee_launch_model
     )
     selected_employee_launch_reasoning_effort = (
         None
         if employee_backend_was_overridden
-        else worker_type_definition.worker_profile.default_employee_reasoning_effort
+        else launch_defaults.employee_launch_reasoning_effort
     )
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
@@ -743,6 +749,8 @@ def create_ticket(
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        for blocker_ticket_id in blocked_by_ticket_ids or []:
+            core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -765,6 +773,7 @@ def create_ticket_from_external_work(
     worker_type: str,
     employee_backend: str | None = None,
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
 ) -> Ticket:
     if kickoff_note is None:
         kickoff_note = ""
@@ -775,25 +784,28 @@ def create_ticket_from_external_work(
         admission.validate_body(recap, "recap")
     runtime_definitions = employee_runtime_definitions or configured_employee_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
+    launch_defaults = read_worker_launch_defaults_for_ticket_creation(
+        conn, runtime_definitions.worker_type_registry, worker_type
+    )
     selected_employee_backend = runtime_definitions.employee_backend_catalog.require_registered(
         employee_backend
         if employee_backend is not None
-        else worker_type_definition.worker_profile.default_employee_backend
+        else launch_defaults.employee_backend
     )
     employee_backend_was_overridden = (
         employee_backend is not None
         and selected_employee_backend
-        != worker_type_definition.worker_profile.default_employee_backend
+        != launch_defaults.employee_backend
     )
     selected_employee_launch_model = (
         None
         if employee_backend_was_overridden
-        else worker_type_definition.worker_profile.default_employee_model
+        else launch_defaults.employee_launch_model
     )
     selected_employee_launch_reasoning_effort = (
         None
         if employee_backend_was_overridden
-        else worker_type_definition.worker_profile.default_employee_reasoning_effort
+        else launch_defaults.employee_launch_reasoning_effort
     )
     # External work is "already done elsewhere": seed at the type's FIRST WORKER stage
     # (needs_success / needs_understanding / needs_alpha), NOT the leading needs_kickoff — the
@@ -890,6 +902,8 @@ def create_ticket_from_external_work(
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        for blocker_ticket_id in blocked_by_ticket_ids or []:
+            core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
