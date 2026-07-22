@@ -2001,6 +2001,13 @@ column disambiguates. Find the old number here to reach its current slug (or its
 
 # ACP conversation presentation (2026-07-21)
 
+## D-acp-unmatched-tool-updates-are-quiet — Separate valid protocol events from visible transcript content
+
+A structurally valid `tool_call_update` without a matching pending tool call is incomplete transcript
+context, not unsupported agent content. The browser keeps the raw envelope available to transport
+history but does not create visible message, timeline, or unsupported-content state. Matched updates
+still patch their tool call, and recognized unsupported updates remain visible.
+
 ## D-acp-task-strip-active-only — A stored plan is visible only while work remains
 
 The ACP plan snapshot remains durable conversation state, but its task pill represents current work.

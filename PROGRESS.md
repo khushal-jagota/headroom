@@ -4,6 +4,18 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-22): Quiet unmatched ACP tool updates (`t_7dr3czcm`)
+
+The browser reducer now ignores a structurally valid `tool_call_update` when its `toolCallId` is
+absent from `pendingToolCalls`; it adds no message, timeline entry, or unsupported-content marker.
+Matched tool updates still patch normally, while recognized unsupported updates such as
+`plan_removed` remain visible as unsupported agent content.
+
+Focused TDD evidence: `node tests/acp-browser-state.test.mjs` first failed on the new unmatched-update
+assertion, then passed after the reducer change. Canonical `./verify` passed Ruff, strict mypy across 148
+source files, 1,274 unit tests, compile/CSS checks, zero Svelte diagnostics, production frontend build/tests,
+and 110 Playwright E2E tests; final `VERIFY: PASS`. No blockers.
+
 ## Current work cycle (2026-07-21): Ticket Workspace dot projection (`t_xb76vw05`)
 
 The one pure `workspace_dot_state` classifier is implemented with exceptional > active > needs_attention
