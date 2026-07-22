@@ -8,11 +8,12 @@ import os
 from pathlib import Path
 
 from planner.environments.contracts import (
+    DynamicEnvironmentPort,
     EnvironmentDefaults,
     EnvironmentKind,
     EnvironmentValidationError,
+    FixedEnvironmentPort,
     ResolvedEnvironmentInstance,
-    validate_tcp_port,
 )
 from planner.environments.logic.validation import (
     validate_absolute_environment_root,
@@ -66,17 +67,6 @@ def acquire_environment_registry_lock(environment_root: Path) -> EnvironmentRegi
     return EnvironmentRegistryLock(environment_root)
 
 
-def allocate_preview_port(
-    *,
-    used_ports: set[int],
-    defaults: EnvironmentDefaults,
-) -> int:
-    for port in range(defaults.preview_ports.start, defaults.preview_ports.end + 1):
-        if port not in used_ports:
-            return port
-    raise EnvironmentValidationError("no preview ports are available")
-
-
 def resolve_environment_instance(
     *,
     kind: EnvironmentKind,
@@ -104,7 +94,11 @@ def resolve_environment_instance(
         instance_id=resolved_instance_id,
         environment_root=resolved_environment_root,
     )
-    resolved_port = _resolve_port(kind=kind, port=port, defaults=resolved_defaults)
+    resolved_port_policy = _resolve_port_policy(
+        kind=kind,
+        port=port,
+        defaults=resolved_defaults,
+    )
     resolved_credentials_env_file = validate_nonproduction_credential_reference_outside_live_root(
         kind=kind,
         environment_root=resolved_environment_root,
@@ -124,7 +118,7 @@ def resolve_environment_instance(
         logs_dir=instance_root / "logs",
         dispatcher_lock_path=instance_root / "run" / "dispatcher.lock",
         server_control_socket_path=server_control_socket_path,
-        port=resolved_port,
+        port_policy=resolved_port_policy,
         credentials_env_file=resolved_credentials_env_file,
         allowed_repository_roots=resolved_repository_roots,
         expected_linux_account="panels-live" if kind == "live" else "panels-worker",
@@ -144,21 +138,21 @@ def _default_instance_root(
         return environment_root / "live"
     if kind == "staging":
         return environment_root / "staging"
-    if kind == "preview":
-        return environment_root / "previews" / instance_id
     raise EnvironmentValidationError(f"unknown environment kind: {kind}")
 
 
-def _resolve_port(
+def _resolve_port_policy(
     *,
     kind: EnvironmentKind,
     port: int | None,
     defaults: EnvironmentDefaults,
-) -> int:
-    if port is not None:
-        return validate_tcp_port(port)
+) -> FixedEnvironmentPort | DynamicEnvironmentPort:
     if kind == "live":
-        return validate_tcp_port(defaults.live_port, label="live default port")
+        return FixedEnvironmentPort(port if port is not None else defaults.live_port)
     if kind == "staging":
-        return validate_tcp_port(defaults.staging_port, label="staging default port")
-    raise EnvironmentValidationError("preview port must be allocated by the caller")
+        if port is not None:
+            raise EnvironmentValidationError(
+                "staging selects its port at launch; --port is only valid for live"
+            )
+        return DynamicEnvironmentPort(defaults.staging_bind_attempts)
+    raise EnvironmentValidationError(f"unknown environment kind: {kind}")

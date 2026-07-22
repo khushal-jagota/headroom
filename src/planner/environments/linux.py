@@ -76,7 +76,7 @@ def _unit_name(manifest: EnvironmentManifest) -> str:
         return "panels-live.service"
     if manifest.kind == "staging":
         return "panels-staging.service"
-    return f"panels-preview-{manifest.instance_id}.service"
+    raise EnvironmentValidationError(f"unknown environment kind: {manifest.kind}")
 
 
 def _unit_text(manifest: EnvironmentManifest, unit_name: str) -> str:
@@ -91,8 +91,6 @@ def _unit_text(manifest: EnvironmentManifest, unit_name: str) -> str:
         "--kind",
         manifest.kind,
     ]
-    if manifest.kind == "preview":
-        command.extend(["--instance-id", manifest.instance_id])
     command.extend(
         [
             "--environment-root",

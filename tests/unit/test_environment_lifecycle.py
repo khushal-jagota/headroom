@@ -1,695 +1,397 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import os
-import shutil
-from concurrent.futures import ThreadPoolExecutor
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from planner.environments import materialize
-from planner.environments.contracts import (
-    EnvironmentDefaults,
-    EnvironmentPortRange,
-    EnvironmentValidationError,
-)
-from planner.server_lifecycle.contracts import ServerLifecycleAlreadyOwnedError
+from planner.environments.contracts import EnvironmentValidationError
 from planner.server_lifecycle.control import resolve_server_lifecycle_lease_path
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 
 
-@pytest.mark.parametrize(
-    ("field", "tampered_value"),
-    [
-        ("kind", "staging"),
-        ("instance_id", "other-feature"),
-        ("environment_root", "outside-root"),
-        ("instance_root", "outside-root/previews/feature"),
-        ("db_path", "outside-root/data/planner.db"),
-        ("managed_files_root", "outside-root/data/files"),
-        ("hermes_home", "outside-root/hermes-home"),
-        ("logs_dir", "outside-root/logs"),
-        ("dispatcher_lock_path", "outside-root/run/dispatcher.lock"),
-        ("server_control_socket_path", "outside-root/run/server-control.sock"),
-        ("expected_linux_account", "panels-live"),
-        ("fixture_version", "tampered-fixture"),
-        ("repository_roots", "outside-root/repository"),
-    ],
-)
-def test_inspect_rejects_tampered_manifest_fields(
+def test_staging_prepare_is_persistent_and_inspect_has_no_runtime_port(
     tmp_path: Path,
-    field: str,
-    tampered_value: str,
 ) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
+    repository = _repository(tmp_path, "staging-repo")
+    root = _environment_root(tmp_path)
     prepared = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="feature",
-        environment_root=environment_root,
-        port=9120,
-        repository_roots=(repository_root,),
-    )
-    outside_root = tmp_path / "outside"
-    outside_repository = outside_root / "repository"
-    outside_repository.mkdir(parents=True)
-    (outside_repository / ".git").mkdir()
-    replacement = str(tmp_path / tampered_value)
-    payload = _manifest_payload(prepared.instance_root)
-    payload[field] = [replacement] if field == "repository_roots" else replacement
-    _write_manifest_payload(prepared.instance_root, payload)
-
-    with pytest.raises(EnvironmentValidationError, match="manifest"):
-        materialize.inspect_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            repository_roots=(),
-        )
-
-
-def test_run_rejects_tampered_manifest_before_exec(tmp_path: Path) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    prepared = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="feature",
-        environment_root=environment_root,
-        port=9121,
-        repository_roots=(repository_root,),
-    )
-    payload = _manifest_payload(prepared.instance_root)
-    payload["db_path"] = str(tmp_path / "outside" / "planner.db")
-    _write_manifest_payload(prepared.instance_root, payload)
-
-    with pytest.raises(EnvironmentValidationError, match="manifest"):
-        materialize.inspect_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            repository_roots=(),
-        )
-
-
-def test_remove_rejects_tampered_instance_root_and_never_deletes_that_path(
-    tmp_path: Path,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    prepared = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="feature",
-        environment_root=environment_root,
-        port=9122,
-        repository_roots=(repository_root,),
-    )
-    outside_root = tmp_path / "outside-delete-target"
-    outside_root.mkdir()
-    sentinel = outside_root / "sentinel.txt"
-    sentinel.write_text("do not delete", encoding="utf-8")
-    payload = _manifest_payload(prepared.instance_root)
-    payload["instance_root"] = str(outside_root)
-    _write_manifest_payload(prepared.instance_root, payload)
-
-    with pytest.raises(EnvironmentValidationError, match="manifest"):
-        materialize.remove_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            repository_roots=(),
-        )
-
-    assert sentinel.read_text(encoding="utf-8") == "do not delete"
-    assert prepared.instance_root.exists()
-
-
-def test_reset_rejects_tampered_environment_root_before_materializing_there(
-    tmp_path: Path,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    prepared = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="feature",
-        environment_root=environment_root,
-        port=9123,
-        repository_roots=(repository_root,),
-    )
-    outside_environment_root = tmp_path / "outside-envs"
-    payload = _manifest_payload(prepared.instance_root)
-    payload["environment_root"] = str(outside_environment_root)
-    payload["instance_root"] = str(outside_environment_root / "previews" / "feature")
-    payload["db_path"] = str(
-        outside_environment_root / "previews" / "feature" / "data" / "planner.db"
-    )
-    payload["managed_files_root"] = str(
-        outside_environment_root / "previews" / "feature" / "data" / "files"
-    )
-    payload["hermes_home"] = str(
-        outside_environment_root / "previews" / "feature" / "hermes-home"
-    )
-    payload["logs_dir"] = str(outside_environment_root / "previews" / "feature" / "logs")
-    payload["dispatcher_lock_path"] = str(
-        outside_environment_root / "previews" / "feature" / "run" / "dispatcher.lock"
-    )
-    payload["server_control_socket_path"] = str(
-        outside_environment_root / "previews" / "feature" / "run" / "server-control.sock"
-    )
-    _write_manifest_payload(prepared.instance_root, payload)
-
-    with pytest.raises(EnvironmentValidationError, match="manifest"):
-        materialize.reset_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            repository_roots=(),
-        )
-
-    assert not outside_environment_root.exists()
-    assert prepared.instance_root.exists()
-
-
-@pytest.mark.parametrize(
-    ("body", "message"),
-    [
-        ("ANTHROPIC_API_KEY", "malformed"),
-        ("ANTHROPIC_API_KEY=one\nANTHROPIC_API_KEY=two", "duplicate"),
-        ("STRIPE_SECRET_KEY=secret", "unknown"),
-        ("PLAN_DB_PATH=/tmp/poison.db", "forbidden"),
-    ],
-)
-def test_prepare_rejects_existing_invalid_credential_file_before_lock_or_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    body: str,
-    message: str,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    credentials_env_file = tmp_path / "credentials.env"
-    credentials_env_file.write_text(body, encoding="utf-8")
-
-    def fail_if_lock_is_acquired(_environment_root: Path) -> object:
-        raise AssertionError("credential validation must happen before registry lock")
-
-    monkeypatch.setattr(
-        materialize,
-        "acquire_environment_registry_lock",
-        fail_if_lock_is_acquired,
-    )
-
-    with pytest.raises(EnvironmentValidationError, match=message):
-        materialize.prepare_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            port=9124,
-            credentials_env_file=credentials_env_file,
-            repository_roots=(repository_root,),
-        )
-
-    assert not (environment_root / "previews" / "feature").exists()
-
-
-def test_exact_reprepare_revalidates_existing_credential_file_before_returning(
-    tmp_path: Path,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    credentials_env_file = tmp_path / "credentials.env"
-    credentials_env_file.write_text("ANTHROPIC_API_KEY=first-secret", encoding="utf-8")
-    prepared = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="feature",
-        environment_root=environment_root,
-        port=9125,
-        credentials_env_file=credentials_env_file,
-        repository_roots=(repository_root,),
-    )
-    original_manifest_payload = _manifest_payload(prepared.instance_root)
-    original_database_hash = _sha256(prepared.db_path)
-    credentials_env_file.write_text(
-        "ANTHROPIC_API_KEY=one\nANTHROPIC_API_KEY=two",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(EnvironmentValidationError, match="duplicate"):
-        materialize.prepare_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            port=9125,
-            credentials_env_file=credentials_env_file,
-            repository_roots=(repository_root,),
-        )
-
-    assert _manifest_payload(prepared.instance_root) == original_manifest_payload
-    assert _sha256(prepared.db_path) == original_database_hash
-
-
-def test_prepare_rejects_repository_root_shared_with_prepared_instance(
-    tmp_path: Path,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    materialize.prepare_environment_instance(
         kind="staging",
-        environment_root=environment_root,
-        repository_roots=(repository_root,),
+        environment_root=root,
+        repository_roots=(repository,),
+        now=123,
     )
+    marker = prepared.managed_files_root / "activity.txt"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("retained", encoding="utf-8")
 
-    with pytest.raises(EnvironmentValidationError, match="repository_roots"):
-        materialize.prepare_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            port=9127,
-            repository_roots=(repository_root / ".." / repository_root.name,),
-        )
-
-    assert not (environment_root / "previews" / "feature").exists()
-
-
-@pytest.mark.parametrize(
-    ("kind", "instance_id", "credentials_relative_path"),
-    [
-        ("staging", None, "live/staging.env"),
-        ("preview", "feature", "live/previews/feature.env"),
-    ],
-)
-def test_prepare_rejects_nonproduction_credential_reference_under_live_before_live_exists(
-    tmp_path: Path,
-    kind: str,
-    instance_id: str | None,
-    credentials_relative_path: str,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    credentials_env_file = environment_root / credentials_relative_path
-
-    with pytest.raises(EnvironmentValidationError, match="live"):
-        materialize.prepare_environment_instance(
-            kind=kind,  # type: ignore[arg-type]
-            instance_id=instance_id,
-            environment_root=environment_root,
-            port=9126 if kind == "preview" else None,
-            credentials_env_file=credentials_env_file,
-            repository_roots=(repository_root,),
-        )
-
-    assert not (environment_root / "live").exists()
-    assert not (environment_root / "staging").exists()
-    assert not (environment_root / "previews" / "feature").exists()
-
-
-def test_prepare_is_exactly_idempotent_for_existing_manifest(tmp_path: Path) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-
-    first = materialize.prepare_environment_instance(
+    inspected = materialize.inspect_environment_instance(
         kind="staging",
-        environment_root=environment_root,
-        repository_roots=(repository_root,),
-        now=1_800_000_010,
+        environment_root=root,
+        repository_roots=(),
     )
-    first_manifest_payload = _manifest_payload(first.instance_root)
-    first_database_hash = _sha256(first.db_path)
+    payload = materialize.manifest_to_json_dict(inspected)
 
-    second = materialize.prepare_environment_instance(
-        kind="staging",
-        environment_root=environment_root,
-        repository_roots=(repository_root,),
-        now=1_800_000_099,
-    )
-
-    assert second == first
-    assert _manifest_payload(first.instance_root) == first_manifest_payload
-    assert _sha256(first.db_path) == first_database_hash
+    assert marker.read_text(encoding="utf-8") == "retained"
+    assert payload["runtime_port_policy"] == "dynamic"
+    assert payload["bind_attempts"] == 10
+    assert "port" not in payload
+    assert "running" not in payload
+    manifest_payload = json.loads((prepared.instance_root / "manifest.json").read_text())
+    assert manifest_payload["runtime_port"] == {"bind_attempts": 10, "kind": "dynamic"}
+    assert "port" not in manifest_payload
 
 
-def test_live_prepare_defaults_prepared_at_to_current_time(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    monkeypatch.setattr(materialize.time, "time", lambda: 1_923_456_789.9)
-
-    live = materialize.prepare_environment_instance(
-        kind="live",
-        environment_root=environment_root,
-        repository_roots=(repository_root,),
-    )
-
-    assert live.prepared_at == 1_923_456_789
-    assert live.prepared_at != 1_800_000_000
-
-
-def test_mismatched_reprepare_fails_without_mutating_existing_instance(
+def test_staging_reset_replaces_fake_state_but_preserves_prepared_identity(
     tmp_path: Path,
 ) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    env_file = tmp_path / "preview.env"
-    env_file.write_text("ANTHROPIC_API_KEY=first-secret", encoding="utf-8")
-    preview = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="feature-one",
-        environment_root=environment_root,
-        port=9130,
-        credentials_env_file=env_file,
-        repository_roots=(repository_root,),
-    )
-    original_manifest_payload = _manifest_payload(preview.instance_root)
-    original_database_hash = _sha256(preview.db_path)
-
-    with pytest.raises(EnvironmentValidationError):
-        materialize.prepare_environment_instance(
-            kind="preview",
-            instance_id="feature-one",
-            environment_root=environment_root,
-            port=9131,
-            credentials_env_file=env_file,
-            repository_roots=(repository_root,),
-        )
-
-    assert _manifest_payload(preview.instance_root) == original_manifest_payload
-    assert _sha256(preview.db_path) == original_database_hash
-
-
-def test_concurrent_preview_prepares_allocate_distinct_durable_ports(
-    tmp_path: Path,
-) -> None:
-    environment_root = _short_environment_root(tmp_path)
-    defaults = EnvironmentDefaults(preview_ports=EnvironmentPortRange(9140, 9145))
-    repository_roots = {
-        preview_id: _repository_root(tmp_path, f"{preview_id}-repo")
-        for preview_id in ("one", "two", "three", "four")
-    }
-
-    def prepare_preview(preview_id: str) -> int:
-        manifest = materialize.prepare_environment_instance(
-            kind="preview",
-            instance_id=preview_id,
-            environment_root=environment_root,
-            repository_roots=(repository_roots[preview_id],),
-            defaults=defaults,
-        )
-        return manifest.port
-
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        ports = tuple(executor.map(prepare_preview, ("one", "two", "three", "four")))
-
-    assert len(set(ports)) == 4
-    assert set(ports).issubset(set(range(9140, 9146)))
-    for preview_id, port in zip(("one", "two", "three", "four"), ports, strict=True):
-        inspected = materialize.inspect_environment_instance(
-            kind="preview",
-            instance_id=preview_id,
-            environment_root=environment_root,
-            repository_roots=(repository_roots[preview_id],),
-        )
-        assert inspected.port == port
-
-
-def test_prepare_validates_existing_registry_manifests_before_writing(
-    tmp_path: Path,
-) -> None:
-    live_repository_root = _repository_root(tmp_path, "live-repo")
-    staging_repository_root = _repository_root(tmp_path, "staging-repo")
-    preview_repository_root = _repository_root(tmp_path, "preview-repo")
-    environment_root = _short_environment_root(tmp_path)
-    live = materialize.prepare_environment_instance(
-        kind="live",
-        environment_root=environment_root,
-        repository_roots=(live_repository_root,),
-    )
-    staging = materialize.prepare_environment_instance(
-        kind="staging",
-        environment_root=environment_root,
-        repository_roots=(staging_repository_root,),
-    )
-    staging_manifest_path = staging.instance_root / "manifest.json"
-    staging_payload = json.loads(staging_manifest_path.read_text(encoding="utf-8"))
-    staging_payload["port"] = live.port
-    staging_manifest_path.write_text(
-        json.dumps(staging_payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(EnvironmentValidationError):
-        materialize.prepare_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            repository_roots=(preview_repository_root,),
-            defaults=EnvironmentDefaults(preview_ports=EnvironmentPortRange(9150, 9151)),
-        )
-
-    assert not (environment_root / "previews" / "feature").exists()
-
-
-@pytest.mark.parametrize("port", [-1, 0, 65536])
-def test_inspect_rejects_manifest_ports_outside_tcp_boundaries(
-    tmp_path: Path,
-    port: int,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
+    repository = _repository(tmp_path, "staging-repo")
+    root = _environment_root(tmp_path)
     prepared = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="feature",
-        environment_root=environment_root,
-        port=9126,
-        repository_roots=(repository_root,),
-    )
-    payload = _manifest_payload(prepared.instance_root)
-    payload["port"] = port
-    _write_manifest_payload(prepared.instance_root, payload)
-
-    with pytest.raises(EnvironmentValidationError, match="port"):
-        materialize.inspect_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            repository_roots=(),
-        )
-
-
-def test_reset_and_remove_fail_while_server_lifecycle_lease_is_held(
-    tmp_path: Path,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    staging = materialize.prepare_environment_instance(
         kind="staging",
-        environment_root=environment_root,
-        repository_roots=(repository_root,),
+        environment_root=root,
+        repository_roots=(repository,),
+        now=123,
+    )
+    marker = prepared.managed_files_root / "activity.txt"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("discard", encoding="utf-8")
+
+    reset = materialize.reset_environment_instance(
+        kind="staging",
+        environment_root=root,
+        repository_roots=(),
+        now=456,
+    )
+
+    assert reset.instance_root == prepared.instance_root
+    assert reset.prepared_at == 456
+    assert reset.db_path.is_file()
+    assert not marker.exists()
+
+
+def test_staging_reset_refuses_while_instance_lifecycle_is_owned(tmp_path: Path) -> None:
+    repository = _repository(tmp_path, "staging-repo")
+    root = _environment_root(tmp_path)
+    prepared = materialize.prepare_environment_instance(
+        kind="staging",
+        environment_root=root,
+        repository_roots=(repository,),
     )
     lease = PortScopedServerLifecycleLease(
-        resolve_server_lifecycle_lease_path(staging.port),
-        staging.port,
+        prepared.instance_root / "run" / "server-lifecycle.lock",
+        0,
     )
     lease.acquire()
     try:
-        with pytest.raises(EnvironmentValidationError):
+        with pytest.raises(EnvironmentValidationError, match="is running"):
             materialize.reset_environment_instance(
                 kind="staging",
-                environment_root=environment_root,
-                repository_roots=(repository_root,),
-            )
-        with pytest.raises(EnvironmentValidationError):
-            materialize.remove_environment_instance(
-                kind="staging",
-                environment_root=environment_root,
-                repository_roots=(repository_root,),
+                environment_root=root,
+                repository_roots=(),
             )
     finally:
         lease.release()
 
-    assert staging.instance_root.exists()
 
-
-def test_reset_holds_lifecycle_lease_until_failed_fixture_cleanup_finishes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    staging = materialize.prepare_environment_instance(
-        kind="staging",
-        environment_root=environment_root,
-        repository_roots=(repository_root,),
-    )
-    marker = staging.db_path.parent / "marker.txt"
-    marker.write_text("old data", encoding="utf-8")
-    observed_lease_block = False
-
-    def fail_after_proving_lease_is_held(*args, **kwargs):  # type: ignore[no-untyped-def]
-        nonlocal observed_lease_block
-        probe = PortScopedServerLifecycleLease(
-            resolve_server_lifecycle_lease_path(staging.port),
-            staging.port,
-        )
-        with pytest.raises(ServerLifecycleAlreadyOwnedError):
-            probe.acquire()
-        observed_lease_block = True
-        raise RuntimeError("fixture failed")
-
-    monkeypatch.setattr(
-        materialize,
-        "build_fake_environment_database",
-        fail_after_proving_lease_is_held,
-    )
-
-    with pytest.raises(RuntimeError, match="fixture failed"):
-        materialize.reset_environment_instance(
-            kind="staging",
-            environment_root=environment_root,
-            repository_roots=(repository_root,),
-        )
-
-    assert observed_lease_block is True
-    assert marker.read_text(encoding="utf-8") == "old data"
-    _assert_port_lease_is_free(staging.port)
-
-
-def test_remove_refuses_live_and_removes_only_selected_instance(
-    tmp_path: Path,
-) -> None:
-    live_repository_root = _repository_root(tmp_path, "live-repo")
-    first_repository_root = _repository_root(tmp_path, "first-repo")
-    second_repository_root = _repository_root(tmp_path, "second-repo")
-    replacement_repository_root = _repository_root(tmp_path, "replacement-repo")
-    environment_root = _short_environment_root(tmp_path)
-    defaults = EnvironmentDefaults(preview_ports=EnvironmentPortRange(9160, 9161))
-    live = materialize.prepare_environment_instance(
+def test_live_import_copies_committed_wal_files_settings_and_hermes(tmp_path: Path) -> None:
+    repository = _repository(tmp_path, "live-repo")
+    root = _environment_root(tmp_path)
+    prepared = materialize.prepare_environment_instance(
         kind="live",
-        environment_root=environment_root,
-        repository_roots=(live_repository_root,),
+        environment_root=root,
+        port=_test_port(tmp_path),
+        repository_roots=(repository,),
+        now=123,
     )
-    first = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="first",
-        environment_root=environment_root,
-        repository_roots=(first_repository_root,),
-        defaults=defaults,
-    )
-    second = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="second",
-        environment_root=environment_root,
-        repository_roots=(second_repository_root,),
-        defaults=defaults,
-    )
+    prepared.db_path.parent.mkdir(parents=True, exist_ok=True)
+    prepared.db_path.write_bytes(b"old-db")
+    prepared.managed_files_root.mkdir(parents=True, exist_ok=True)
+    (prepared.managed_files_root / "old.txt").write_text("old", encoding="utf-8")
 
-    with pytest.raises(EnvironmentValidationError):
-        materialize.remove_environment_instance(
-            kind="live",
-            environment_root=environment_root,
-            repository_roots=(live_repository_root,),
+    source_db, source_files, source_hermes = _live_sources(tmp_path)
+    connection = sqlite3.connect(source_db)
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("CREATE TABLE imported (value TEXT NOT NULL)")
+    connection.execute("INSERT INTO imported VALUES ('from-wal')")
+    connection.commit()
+    assert source_db.with_name(source_db.name + "-wal").exists()
+    try:
+        imported = materialize.import_live_environment_state(
+            environment_root=root,
+            source_db_path=source_db,
+            source_managed_files_root=source_files,
+            source_hermes_home=source_hermes,
         )
+    finally:
+        connection.close()
 
-    removed = materialize.remove_environment_instance(
-        kind="preview",
-        instance_id="first",
-        environment_root=environment_root,
-        repository_roots=(first_repository_root,),
+    with sqlite3.connect(imported.db_path) as copied:
+        assert copied.execute("SELECT value FROM imported").fetchone() == ("from-wal",)
+    assert (imported.managed_files_root / "file.txt").read_text() == "managed"
+    assert (imported.db_path.parent / "worker-settings" / "settings.json").read_text() == "{}"
+    assert (imported.hermes_home / "sessions" / "session.json").read_text() == "session"
+    assert not (imported.managed_files_root / "old.txt").exists()
+
+
+def test_live_import_refuses_running_live(tmp_path: Path) -> None:
+    repository = _repository(tmp_path, "live-repo")
+    root = _environment_root(tmp_path)
+    port = _test_port(tmp_path)
+    materialize.prepare_environment_instance(
+        kind="live",
+        environment_root=root,
+        port=port,
+        repository_roots=(repository,),
     )
-    replacement = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="third",
-        environment_root=environment_root,
-        repository_roots=(replacement_repository_root,),
-        defaults=defaults,
-    )
-
-    assert removed.instance_root == first.instance_root
-    assert not first.instance_root.exists()
-    assert second.instance_root.exists()
-    assert live.instance_root.exists()
-    assert replacement.port == first.port
-
-
-def test_remove_holds_lifecycle_lease_until_failed_cleanup_finishes(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repository_root = _repository_root()
-    environment_root = _short_environment_root(tmp_path)
-    preview = materialize.prepare_environment_instance(
-        kind="preview",
-        instance_id="feature",
-        environment_root=environment_root,
-        port=9170,
-        repository_roots=(repository_root,),
-    )
-    observed_lease_block = False
-
-    def fail_after_proving_lease_is_held(path, *args, **kwargs):  # type: ignore[no-untyped-def]
-        nonlocal observed_lease_block
-        if Path(path) == preview.instance_root:
-            probe = PortScopedServerLifecycleLease(
-                resolve_server_lifecycle_lease_path(preview.port),
-                preview.port,
-            )
-            with pytest.raises(ServerLifecycleAlreadyOwnedError):
-                probe.acquire()
-            observed_lease_block = True
-            raise RuntimeError("cleanup failed")
-        return original_rmtree(path, *args, **kwargs)
-
-    original_rmtree = materialize.shutil.rmtree
-    monkeypatch.setattr(materialize.shutil, "rmtree", fail_after_proving_lease_is_held)
-
-    with pytest.raises(RuntimeError, match="cleanup failed"):
-        materialize.remove_environment_instance(
-            kind="preview",
-            instance_id="feature",
-            environment_root=environment_root,
-            repository_roots=(repository_root,),
-        )
-
-    assert observed_lease_block is True
-    assert preview.instance_root.exists()
-    _assert_port_lease_is_free(preview.port)
-
-
-def _manifest_payload(instance_root: Path) -> dict[str, object]:
-    return json.loads((instance_root / "manifest.json").read_text(encoding="utf-8"))
-
-
-def _write_manifest_payload(instance_root: Path, payload: dict[str, object]) -> None:
-    (instance_root / "manifest.json").write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _repository_root(tmp_path: Path | None = None, name: str = "repo") -> Path:
-    if tmp_path is None:
-        return Path(__file__).resolve().parents[2]
-    repository_root = tmp_path / name
-    repository_root.mkdir()
-    (repository_root / ".git").mkdir()
-    return repository_root
-
-
-def _short_environment_root(tmp_path: Path) -> Path:
-    digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
-    environment_root = Path("/tmp") / f"pe-{os.getpid()}-{digest}"
-    if environment_root.exists():
-        shutil.rmtree(environment_root)
-    return environment_root
-
-
-def _assert_port_lease_is_free(port: int) -> None:
+    source_db, source_files, source_hermes = _live_sources(tmp_path)
+    sqlite3.connect(source_db).close()
     lease = PortScopedServerLifecycleLease(resolve_server_lifecycle_lease_path(port), port)
     lease.acquire()
-    lease.release()
+    try:
+        with pytest.raises(EnvironmentValidationError, match="is running"):
+            materialize.import_live_environment_state(
+                environment_root=root,
+                source_db_path=source_db,
+                source_managed_files_root=source_files,
+                source_hermes_home=source_hermes,
+            )
+    finally:
+        lease.release()
+
+
+def test_live_import_copy_failure_leaves_existing_state_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path, "live-repo")
+    root = _environment_root(tmp_path)
+    prepared = materialize.prepare_environment_instance(
+        kind="live",
+        environment_root=root,
+        port=_test_port(tmp_path),
+        repository_roots=(repository,),
+    )
+    prepared.db_path.parent.mkdir(parents=True, exist_ok=True)
+    prepared.db_path.write_bytes(b"unchanged")
+    prepared.managed_files_root.mkdir(parents=True, exist_ok=True)
+    (prepared.managed_files_root / "old.txt").write_text("unchanged", encoding="utf-8")
+    source_db, source_files, source_hermes = _live_sources(tmp_path)
+    sqlite3.connect(source_db).close()
+
+    def fail_copytree(*_args: object, **_kwargs: object) -> None:
+        raise OSError("injected copy failure")
+
+    monkeypatch.setattr(materialize.shutil, "copytree", fail_copytree)
+    with pytest.raises(EnvironmentValidationError, match="injected copy failure"):
+        materialize.import_live_environment_state(
+            environment_root=root,
+            source_db_path=source_db,
+            source_managed_files_root=source_files,
+            source_hermes_home=source_hermes,
+        )
+
+    assert prepared.db_path.read_bytes() == b"unchanged"
+    assert (prepared.managed_files_root / "old.txt").read_text() == "unchanged"
+
+
+def test_live_import_rejects_sources_inside_live_root(tmp_path: Path) -> None:
+    repository = _repository(tmp_path, "live-repo")
+    root = _environment_root(tmp_path)
+    prepared = materialize.prepare_environment_instance(
+        kind="live",
+        environment_root=root,
+        port=_test_port(tmp_path),
+        repository_roots=(repository,),
+    )
+    prepared.db_path.parent.mkdir(parents=True, exist_ok=True)
+    sqlite3.connect(prepared.db_path).close()
+    prepared.managed_files_root.mkdir(parents=True, exist_ok=True)
+    (prepared.db_path.parent / "worker-settings").mkdir(exist_ok=True)
+
+    with pytest.raises(EnvironmentValidationError, match="outside"):
+        materialize.import_live_environment_state(
+            environment_root=root,
+            source_db_path=prepared.db_path,
+            source_managed_files_root=prepared.managed_files_root,
+            source_hermes_home=prepared.hermes_home,
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "environment_root",
+        "instance_root",
+        "db_path",
+        "managed_files_root",
+        "hermes_home",
+        "logs_dir",
+        "dispatcher_lock_path",
+        "server_control_socket_path",
+    ),
+)
+def test_inspect_rejects_tampered_manifest_paths(tmp_path: Path, field: str) -> None:
+    repository = _repository(tmp_path, "staging-repo")
+    root = _environment_root(tmp_path)
+    prepared = materialize.prepare_environment_instance(
+        kind="staging",
+        environment_root=root,
+        repository_roots=(repository,),
+    )
+    manifest_path = prepared.instance_root / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload[field] = str((tmp_path / "outside" / field).resolve())
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(EnvironmentValidationError, match="manifest"):
+        materialize.inspect_environment_instance(
+            kind="staging",
+            environment_root=root,
+            repository_roots=(),
+        )
+
+
+def test_reprepare_rejects_live_port_or_repository_change(tmp_path: Path) -> None:
+    first_repository = _repository(tmp_path, "live-repo")
+    second_repository = _repository(tmp_path, "other-repo")
+    root = _environment_root(tmp_path)
+    port = _test_port(tmp_path)
+    materialize.prepare_environment_instance(
+        kind="live",
+        environment_root=root,
+        port=port,
+        repository_roots=(first_repository,),
+    )
+    with pytest.raises(EnvironmentValidationError, match="port"):
+        materialize.prepare_environment_instance(
+            kind="live",
+            environment_root=root,
+            port=port + 1,
+            repository_roots=(first_repository,),
+        )
+    with pytest.raises(EnvironmentValidationError, match="repository"):
+        materialize.prepare_environment_instance(
+            kind="live",
+            environment_root=root,
+            port=port,
+            repository_roots=(second_repository,),
+        )
+
+
+def test_staging_remove_requires_stopped_instance_and_removes_only_its_root(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path, "staging-repo")
+    root = _environment_root(tmp_path)
+    prepared = materialize.prepare_environment_instance(
+        kind="staging",
+        environment_root=root,
+        repository_roots=(repository,),
+    )
+    sibling = root / "keep.txt"
+    sibling.write_text("keep", encoding="utf-8")
+    lease = PortScopedServerLifecycleLease(
+        prepared.instance_root / "run" / "server-lifecycle.lock", 0
+    )
+    lease.acquire()
+    try:
+        with pytest.raises(EnvironmentValidationError, match="is running"):
+            materialize.remove_environment_instance(
+                kind="staging", environment_root=root, repository_roots=()
+            )
+    finally:
+        lease.release()
+    materialize.remove_environment_instance(
+        kind="staging", environment_root=root, repository_roots=()
+    )
+    assert not prepared.instance_root.exists()
+    assert sibling.read_text(encoding="utf-8") == "keep"
+
+
+def test_reset_failure_keeps_previous_staging_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = _repository(tmp_path, "staging-repo")
+    root = _environment_root(tmp_path)
+    prepared = materialize.prepare_environment_instance(
+        kind="staging", environment_root=root, repository_roots=(repository,)
+    )
+    original = prepared.db_path.read_bytes()
+
+    def fail_fixture(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected fixture failure")
+
+    monkeypatch.setattr(materialize, "build_fake_environment_database", fail_fixture)
+    with pytest.raises(RuntimeError, match="injected"):
+        materialize.reset_environment_instance(
+            kind="staging", environment_root=root, repository_roots=()
+        )
+    assert prepared.db_path.read_bytes() == original
+
+
+def test_sqlite_backup_handles_uri_metacharacters_in_source_path(tmp_path: Path) -> None:
+    source = tmp_path / "source?#.db"
+    destination = tmp_path / "destination.db"
+    with sqlite3.connect(source) as connection:
+        connection.execute("CREATE TABLE sample (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO sample VALUES ('copied')")
+    materialize._sqlite_backup(source, destination)
+    with sqlite3.connect(destination) as connection:
+        assert connection.execute("SELECT value FROM sample").fetchone() == ("copied",)
+
+
+def test_live_import_rejects_nested_source_directories(tmp_path: Path) -> None:
+    repository = _repository(tmp_path, "live-repo")
+    root = _environment_root(tmp_path)
+    materialize.prepare_environment_instance(
+        kind="live",
+        environment_root=root,
+        port=_test_port(tmp_path),
+        repository_roots=(repository,),
+    )
+    source_db, source_files, _source_hermes = _live_sources(tmp_path)
+    sqlite3.connect(source_db).close()
+    nested_hermes = source_files / "hermes"
+    nested_hermes.mkdir()
+    with pytest.raises(EnvironmentValidationError, match="overlapping paths"):
+        materialize.import_live_environment_state(
+            environment_root=root,
+            source_db_path=source_db,
+            source_managed_files_root=source_files,
+            source_hermes_home=nested_hermes,
+        )
+
+
+def _live_sources(tmp_path: Path) -> tuple[Path, Path, Path]:
+    source_data = tmp_path / "source" / "data"
+    source_data.mkdir(parents=True)
+    source_db = source_data / "planner.db"
+    worker_settings = source_data / "worker-settings"
+    worker_settings.mkdir()
+    (worker_settings / "settings.json").write_text("{}", encoding="utf-8")
+    source_files = tmp_path / "source" / "files"
+    source_files.mkdir()
+    (source_files / "file.txt").write_text("managed", encoding="utf-8")
+    source_hermes = tmp_path / "source" / "hermes"
+    (source_hermes / "sessions").mkdir(parents=True)
+    (source_hermes / "sessions" / "session.json").write_text("session", encoding="utf-8")
+    return source_db, source_files, source_hermes
+
+
+def _repository(tmp_path: Path, name: str) -> Path:
+    repository = tmp_path / name
+    repository.mkdir()
+    (repository / ".git").mkdir()
+    return repository.resolve()
+
+
+def _environment_root(tmp_path: Path) -> Path:
+    return Path("/tmp") / f"pe-{tmp_path.parent.name}-{tmp_path.name}"
+
+
+def _test_port(tmp_path: Path) -> int:
+    return 30_000 + sum(tmp_path.name.encode("utf-8")) % 20_000

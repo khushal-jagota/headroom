@@ -25,11 +25,16 @@ def run_application_process() -> None:
         create_schema(bootstrap)
 
     clock = build_clock(config)
+
     def conn_factory() -> sqlite3.Connection:
         return connect(config.db_path, config.db_busy_timeout_ms)
 
     app = create_app(config, clock, conn_factory)
-    uvicorn.run(app, host=HOST, port=config.port)
+    listener_fd = os.environ.get("PLAN_SERVER_LISTENER_FD")
+    if listener_fd is not None:
+        uvicorn.run(app, fd=int(listener_fd))
+    else:
+        uvicorn.run(app, host=HOST, port=config.port)
 
 
 if __name__ == "__main__":

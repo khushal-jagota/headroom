@@ -127,9 +127,7 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
     )
 
 
-def _create_projects(
-    conn: sqlite3.Connection, *, now: int
-) -> tuple[Project, Project]:
+def _create_projects(conn: sqlite3.Connection, *, now: int) -> tuple[Project, Project]:
     return (
         projects_data.create_project(
             conn,
@@ -140,7 +138,7 @@ def _create_projects(
         projects_data.create_project(
             conn,
             name="Harbor Ops",
-            summary="Fictional operations workspace for preview testing.",
+            summary="Fictional operations workspace for staging testing.",
             now=now,
         ),
     )
@@ -157,7 +155,7 @@ def _create_items(
         sprints_data.create_item(
             conn,
             title="Prepare isolated runtime story",
-            body="Small representative plan for fictional staging and preview work.",
+            body="Small representative plan for fictional staging work.",
             priority=Priority.P1,
             project_id=project_ids[0],
             sprint_id=sprint_id,
@@ -189,7 +187,7 @@ def _create_tickets(
         target_stage="needs_approach",
         provided_values={
             "kickoff": "Build fictional state only.",
-            "success": "Staging and preview data are independent.",
+            "success": "Staging data is isolated from live data.",
         },
         actor="fake-fixture",
         now=now,
@@ -217,16 +215,16 @@ def _create_tickets(
     )
     exploration = tickets_data.create_ticket_from_external_work(
         conn,
-        title="Compare preview reset outcomes",
+        title="Compare staging reset outcomes",
         target_stage="needs_research_plan",
         provided_values={
-            "kickoff": "Inspect reset behavior in a fictional preview.",
+            "kickoff": "Inspect reset behavior in fictional staging.",
             "understanding": "The reset should replace data only for that instance.",
         },
         actor="fake-fixture",
         now=now,
         title_max_chars=TITLE_MAX_CHARS,
-        kickoff_note="Inspect reset behavior in a fictional preview.",
+        kickoff_note="Inspect reset behavior in fictional staging.",
         recap="Exploration is ready for a research plan.",
         sprint_item_id=sprint_item_ids[1],
         worker_type="exploration",

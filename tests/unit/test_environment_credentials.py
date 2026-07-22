@@ -87,7 +87,7 @@ def test_environment_file_supports_explicit_production_only_policy(tmp_path: Pat
     )
 
     with pytest.raises(EnvironmentValidationError, match="production-only"):
-        parse_environment_file(env_file, kind="preview", policy=policy)
+        parse_environment_file(env_file, kind="staging", policy=policy)
 
     assert parse_environment_file(env_file, kind="live", policy=policy) == {
         "EXAMPLE_LIVE_ONLY": "secret"
@@ -122,6 +122,7 @@ def test_launch_environment_scrubs_ambient_and_adds_contract_values(
         credentials={"ANTHROPIC_API_KEY": "file-secret"},
         ambient=ambient,
         hermes_python=Path("/operator-hermes/bin/python"),
+        runtime_port=43123,
     )
 
     assert run_env["LANG"] == "en_GB.UTF-8"
@@ -132,7 +133,7 @@ def test_launch_environment_scrubs_ambient_and_adds_contract_values(
     assert run_env["HOME"] == str(instance.hermes_home)
     assert run_env["ANTHROPIC_API_KEY"] == "file-secret"
     assert run_env["PLAN_DB_PATH"] == str(instance.db_path)
-    assert run_env["PLAN_PORT"] == str(instance.port)
+    assert run_env["PLAN_PORT"] == "43123"
     assert run_env["PLAN_LOGS_DIR"] == str(instance.logs_dir)
     assert run_env["PLAN_DISPATCHER_LOCK_PATH"] == str(instance.dispatcher_lock_path)
     assert run_env["PLAN_SERVER_CONTROL_SOCKET"] == str(instance.server_control_socket_path)
@@ -167,6 +168,7 @@ def test_hidden_test_launch_seam_injects_fake_runtime_itself(tmp_path: Path) -> 
         credentials={},
         ambient=ambient,
         hermes_python=Path("/operator-hermes/bin/python"),
+        runtime_port=43124,
     )
 
     assert run_env["PLAN_TEST_MODE"] == "1"
