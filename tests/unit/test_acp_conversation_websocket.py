@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
+
+import pytest
 
 from planner.conversation.hub import (
     INVALID_ACTION_CLOSE_REASON,
@@ -147,6 +150,38 @@ def test_websocket_scopes_socket_to_first_employee() -> None:
         await hub.websocket(socket)  # type: ignore[arg-type]
         assert socket.closed == [(1008, INVALID_ACTION_CLOSE_REASON)]
         assert hub.detached == ["browser-1"]
+
+    asyncio.run(exercise())
+
+
+def test_websocket_logs_unexpected_attach_failure_with_employee(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FailingAttachHub(_Hub):
+        async def attach_browser(
+            self, employee_id: str, **kwargs: Any
+        ) -> BrowserSubscription:
+            del kwargs
+            raise RuntimeError("no rollout found")
+
+    async def exercise() -> None:
+        hub = _FailingAttachHub()
+        socket = _Socket(
+            [_text_action({"type": "attach", "employeeId": "t_employee"})]
+        )
+        with caplog.at_level(logging.ERROR, logger="planner.conversation.hub"):
+            await hub.websocket(socket)  # type: ignore[arg-type]
+
+        assert socket.closed == [(1011, "conversation transport failed")]
+        failures = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "conversation websocket failed"
+        ]
+        assert len(failures) == 1
+        assert failures[0].conversation_employee_id == "t_employee"  # type: ignore[attr-defined]
+        assert failures[0].exc_info is not None
+        assert "no rollout found" in caplog.text
 
     asyncio.run(exercise())
 

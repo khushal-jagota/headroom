@@ -1150,6 +1150,7 @@ def test_new_conversation_resets_projection_after_new_binding_is_established(
 
         await hub.new_conversation("t_hub")
 
+        assert registry.attach_calls == 1
         assert hub._streams["t_hub"].binding == replacement_binding  # noqa: SLF001
         assert projection.read("t_hub").has_completed_response_awaiting_user is False
         await hub.shutdown(asyncio.get_running_loop().time() + 1)

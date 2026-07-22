@@ -666,7 +666,8 @@ class ConversationHub:
         deadline = asyncio.get_running_loop().time() + self._new_conversation_timeout_seconds
         await self._require_broker().prepare_new_conversation(handle, deadline)
         record = await self._require_registry().new_conversation(stream.employee)
-        record = await self._require_registry().attach(record.employee)
+        # session/new leaves the replacement live on this child. Loading it again is
+        # both redundant and invalid for providers that persist only after a first turn.
         async def establish_and_reset() -> None:
             established = await self._establish_stream(
                 record, sequence_floor=0, force_new_binding=True
@@ -1449,11 +1450,13 @@ class ConversationHub:
         await websocket.accept()
         subscription: BrowserSubscription | None = None
         writer: asyncio.Task[None] | None = None
+        requested_employee_id: str | None = None
         try:
             first = await self._receive_action(websocket)
             if not isinstance(first, AttachAction):
                 await websocket.close(code=1008, reason=INVALID_ACTION_CLOSE_REASON)
                 return
+            requested_employee_id = first.employee_id
             subscription = await self.attach_browser(
                 first.employee_id,
                 last_seen_binding_generation=first.last_seen_binding_generation,
@@ -1475,6 +1478,17 @@ class ConversationHub:
             with contextlib.suppress(Exception):
                 await websocket.close(code=1008, reason=INVALID_ACTION_CLOSE_REASON)
         except Exception:
+            _LOGGER.exception(
+                "conversation websocket failed",
+                extra={
+                    "conversation_employee_id": requested_employee_id,
+                    "conversation_connection_id": (
+                        subscription.connection_id
+                        if subscription is not None
+                        else None
+                    ),
+                },
+            )
             with contextlib.suppress(Exception):
                 await websocket.close(code=1011, reason="conversation transport failed")
         finally:
