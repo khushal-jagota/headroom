@@ -33,6 +33,7 @@ from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import parse_workspace
 from planner.tickets.contracts import FieldSlot, TicketFields
 from planner.tickets.logic import fields_codec
+from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_employee_runtime_definitions
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -295,13 +296,30 @@ def _import_tickets(
         ):
             fields = fields_codec.with_slot(fields, field, FieldSlot(value=value))
         worker_type_definition.validate_ticket_position(ticket.stage, ticket.stage)
+        default_stage_ownership_mode = None
+        if not worker_type_definition.is_terminal(ticket.stage):
+            database_parent = worker_settings_service.database_parent_from_connection(conn)
+            if database_parent is None:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "seed import requires a database file to capture stage ownership defaults",
+                    {"worker_type": ticket.worker_type, "stage": ticket.stage},
+                )
+            default_stage_ownership_mode = (
+                worker_settings_service.read_stage_default_ownership_for_ticket_entry(
+                    database_parent,
+                    configured_employee_runtime_definitions().worker_type_registry,
+                    ticket.worker_type,
+                    ticket.stage,
+                )
+            )
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, stage, priority, deadline, "
             "project_id, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, "
+            "sprint_id, recap, ceiling, at_cap, default_stage_ownership_mode, "
             "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 ticket.title,
@@ -316,6 +334,11 @@ def _import_tickets(
                 "",
                 ticket.stage,
                 "propose",
+                (
+                    default_stage_ownership_mode.value
+                    if default_stage_ownership_mode is not None
+                    else None
+                ),
                 ticket.employee_session_id,
                 ticket.alias,
                 fields_codec.fields_to_json(fields),

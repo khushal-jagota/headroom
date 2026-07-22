@@ -51,10 +51,9 @@ its old event lines are replaced by one minimal deletion audit.
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
   it moves through, and the resolution engine, scope, and approval gate that govern
   every advance. The correctness heart of the system.
-- **Worker types** (`worker-types.md`) — the registry that declares each workflow: one
-  Worker type's Stages, gates, fields, specialist skill, and starting Employee backend,
-  model, and reasoning effort. A new Ticket copies those starting values once, then owns
-  its launch setup during pristine Kickoff.
+- **Worker types and settings** (`worker-types.md`) — the registry declares each workflow's
+  immutable Stages, gates, fields, specialist identity, and starting Employee setup. Managed
+  settings own prospective Stage defaults and editable specialist-skill content.
 - **The employee runtime** (`employee-runtime.md`) — the single AI worker that
   carries each worker-owned ticket Stage forward, and the loop that fires it, watches
   it, configures its first session, and feeds proposals back through the gate.

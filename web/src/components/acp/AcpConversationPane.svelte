@@ -214,6 +214,12 @@
         onThoughtExpanded={(messageId, partIndex, expanded) => stableController.setThoughtExpanded(messageId, partIndex, expanded)}
         onToolExpanded={(toolCallId, expanded) => stableController.setToolExpanded(toolCallId, expanded)}
       />
+      {#if pendingPermission}
+        <PermissionPrompt
+          permission={pendingPermission}
+          onSelect={(requestId, optionId) => { stableController.respondToPermission(requestId, optionId); }}
+        />
+      {/if}
     </div>
     {#if jumpVisible}
       <button
@@ -226,13 +232,6 @@
   </div>
 
   <TaskProgressStrip plan={snapshot.session.plan} activity={snapshot.activity} />
-
-  {#if pendingPermission}
-    <PermissionPrompt
-      permission={pendingPermission}
-      onSelect={(requestId, optionId) => { stableController.respondToPermission(requestId, optionId); }}
-    />
-  {/if}
 
   <AcpComposer
     commands={snapshot.session.availableCommands}

@@ -122,7 +122,6 @@ def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
         )
         card = f'[data-card][data-ticket-id="{ticket_id}"]'
         page.wait_for_selector(card, timeout=WAIT_MS)
-        assert page.is_checked("[data-hide-done-toggle]")
         assert page.locator('[aria-label="Ticket status"]').count() == 0
         assert page.get_attribute(card, "data-ticket-status") == "paired_work"
         success_stage = '[data-worker-type="coding"] [data-stage-key="needs_success"]'

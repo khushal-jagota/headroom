@@ -17,7 +17,9 @@ import type {
   ProjectsResponse,
   ReviewResponse,
   SprintsResponse,
-  TicketDetail
+  TicketDetail,
+  WorkerManagementDetail,
+  WorkersResponse
 } from "./types";
 
 export type EventEntityPrefix =
@@ -27,7 +29,8 @@ export type EventEntityPrefix =
   | "day"
   | "idea"
   | "project"
-  | "agent";
+  | "agent"
+  | "worker";
 
 export type CatalogueResourceIdentity =
   | "board"
@@ -39,7 +42,9 @@ export type CatalogueResourceIdentity =
   | "sprints"
   | "sprint:current"
   | "worker-types"
-  | `ticket:${string}`;
+  | "workers"
+  | `ticket:${string}`
+  | `worker:${string}`;
 
 export type PlannerEvent = Readonly<{
   id: number;
@@ -62,7 +67,8 @@ export type ResourceMutationEffect =
   | Readonly<{ kind: "reviewTicketAccepted"; ticketId: string }>
   | Readonly<{ kind: "reviewTicketReturnedForRevision"; ticketId: string }>
   | Readonly<{ kind: "todayDayChanged" }>
-  | Readonly<{ kind: "currentSprintChanged" }>;
+  | Readonly<{ kind: "currentSprintChanged" }>
+  | Readonly<{ kind: "workerSettingsChanged"; workerType: string }>;
 
 export interface ResourceCatalogue {
   board(): ResourceHandle<BoardResponse>;
@@ -75,6 +81,8 @@ export interface ResourceCatalogue {
   currentSprint(): ResourceHandle<CurrentSprintResponse>;
   ticket(ticketId: string): ResourceHandle<TicketDetail>;
   workerTypeManifests(): ResourceHandle<WorkerTypesResponse>;
+  workers(): ResourceHandle<WorkersResponse>;
+  worker(workerType: string): ResourceHandle<WorkerManagementDetail>;
 }
 
 type EventFacts = Readonly<{
@@ -105,7 +113,8 @@ const ENTITY_PREFIXES: readonly EventEntityPrefix[] = [
   "day",
   "idea",
   "project",
-  "agent"
+  "agent",
+  "worker"
 ];
 
 const REVIEW_TICKET_EVENT_KINDS = new Set([
@@ -144,7 +153,7 @@ function staticDefinition<T>(
 }
 
 function parameterizedDefinition<T>(
-  prefix: "ticket",
+  prefix: "ticket" | "worker",
   path: (id: string) => string,
   options: {
     eventInvalidated: boolean;
@@ -290,6 +299,21 @@ const RESOURCE_DEFINITIONS = {
     "worker-types",
     "/api/worker-types",
     { eventInvalidated: false }
+  ),
+  workers: staticDefinition<WorkersResponse>("workers", "/api/workers", {
+    eventInvalidated: true,
+    affectedByEvent: (facts) => (eventEntityId(facts, "worker") ? ["workers"] : [])
+  }),
+  worker: parameterizedDefinition<WorkerManagementDetail>(
+    "worker",
+    (workerType) => `/api/workers/${encodeURIComponent(workerType)}`,
+    {
+      eventInvalidated: true,
+      affectedByEvent: (facts) =>
+        eventEntityId(facts, "worker")
+          ? [`worker:${facts.event.entity_id.slice("worker_".length)}`]
+          : []
+    }
   )
 } as const;
 
@@ -326,7 +350,12 @@ export const resourceCatalogue: ResourceCatalogue = {
     const id = requireId(ticketId, "ticketId");
     return openResource(RESOURCE_DEFINITIONS.ticket, id);
   },
-  workerTypeManifests: () => openResource(RESOURCE_DEFINITIONS.workerTypeManifests)
+  workerTypeManifests: () => openResource(RESOURCE_DEFINITIONS.workerTypeManifests),
+  workers: () => openResource(RESOURCE_DEFINITIONS.workers),
+  worker: (workerType) => {
+    const id = requireId(workerType, "workerType");
+    return openResource(RESOURCE_DEFINITIONS.worker, id);
+  }
 };
 
 function entityPrefix(entityId: unknown): EventEntityPrefix {
@@ -496,6 +525,16 @@ function mutationEffectPlan(effect: ResourceMutationEffect): MutationEffectPlan 
         ],
         refreshReview: false
       };
+    case "workerSettingsChanged": {
+      const workerType = requireId(effect.workerType, "workerType");
+      return {
+        identities: [
+          RESOURCE_DEFINITIONS.workers.identity(),
+          RESOURCE_DEFINITIONS.worker.identity(workerType)
+        ],
+        refreshReview: false
+      };
+    }
   }
   return assertNever(effect);
 }

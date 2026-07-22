@@ -1871,6 +1871,22 @@ therefore one nonempty `message.delta`, the same terminal `interrupted` assertio
 assertion that no shutdown-settlement SQLite lock error was logged. No production change follows
 from this fixture correction; the final canonical `./verify` still remains.
 
+## D-compact-worker-settings — Editable Worker settings are a managed overlay, not structure
+
+Worker identity, Stage order, gated fields, terminality, and specialist-skill identity remain in the
+immutable Python registry. One managed Worker-settings source owns only existing Stage ownership
+defaults and the canonical editable specialist-skill description/body. Ticket rows persist the default
+captured on current-Stage entry before any global default can be changed; explicit per-Ticket overrides
+remain authoritative. The UI reads composed Worker detail through dedicated `workers` resources while
+`/api/worker-types` stays the structural lifecycle manifest. Edited specialist skills are materialized
+into the planner Hermes home without resetting or rewriting existing Employee session ids.
+
+The work is isolated because the main worktree contains unrelated Hermes-relay changes. Implementation
+uses serial contract-bounded agent passes and read-only Codex review; only the final settled tree runs
+canonical `./verify`. A failed event transaction restores the prior managed file and live skill while
+the per-Worker lock is still held. Candidate files remain for repair, and the browser keeps attempted
+edits visible instead of pretending a failed write succeeded.
+
 ## D-exploration-worker — Exploration extracts the transferable problem before it produces work
 
 `exploration` is a first-class Worker type for premises that are not yet understood well enough to
@@ -3009,3 +3025,24 @@ with later live updates behind it. The production live queue remains slow-client
 raised from 128 to 1,024 envelopes for operational headroom. Replay integrity failures and genuine
 live slow-client evictions close through one idempotent permission-detach owner and are logged with
 identity, generation, counts, and limits but no conversation content.
+
+## D-compact-workers-current-main-closeout — preserve current ACP and schema history
+**Context:** The approved compact Workers commits predated the current conversation composition,
+environment isolation, managed-Markdown pipeline, and main's schema v28/v29 migrations. Main also
+advanced again during Closeout.
+
+**Decision:** Replay the approved behavior onto current main rather than restoring retired `minds`
+or gateway-adapter code. Keep main's v28/v29 migrations and add captured ownership defaults as v30.
+Use the configured runtime registry everywhere, materialize managed specialist skills from each
+instance database parent after its canonical data tree is settled, and keep failed description/body
+candidates independent from canonical publication. A successful save of one field updates that field
+in the candidate without publishing or discarding the other field's failed draft.
+
+**Why:** Worker settings belong beside the active database, while Employee sessions and current ACP
+composition remain untouched. Versioned migration order protects live databases, and preserving a
+failed draft across an independent save is required by the approved direct-edit interaction.
+
+The current-main post-fork SDK regression continues to require exact-session routing, source-before-
+replay ordering, and a fully drained healthy ingress. It does not require a candidate notification to
+arrive before the subsequent load request: the private response epoch is installed first, and ACP does
+not guarantee notification/request wire ordering across the prior fork response.

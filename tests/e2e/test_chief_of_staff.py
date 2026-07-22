@@ -58,7 +58,7 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     )
     assert page.url == f"{server.base}/#/workspace"
     assert page.get_attribute("[data-chat-input]", "placeholder") == "Message Chief of Staff..."
-    assert page.is_checked("[data-hide-done-toggle]")
+    assert page.locator("[data-hide-done-toggle]").count() == 0
     assert page.locator('[aria-label="Ticket status"]').count() == 0
 
     card = f'[data-card][data-ticket-id="{tid}"]'
@@ -123,7 +123,6 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
 
     page.reload()
     page.wait_for_selector(first_ticket, timeout=WAIT_MS)
-    assert page.is_checked("[data-hide-done-toggle]")
     no_project_section = '[data-project-key="__no_project__"]'
     no_project_summary = f'{no_project_section} > .disclosure-summary'
     page.click(no_project_summary)
@@ -132,13 +131,11 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
     page.click(f'[data-card][data-ticket-id="{second_id}"]')
     page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)
     page.wait_for_selector(second_ticket, timeout=WAIT_MS)
-    assert page.is_checked("[data-hide-done-toggle]")
     assert page.get_attribute(no_project_section, "open") is None
 
     page.go_back()
     page.wait_for_url(f"{server.base}/#/workspace/{encoded_first_id}", timeout=WAIT_MS)
     page.wait_for_selector(first_ticket, timeout=WAIT_MS)
-    assert page.is_checked("[data-hide-done-toggle]")
     assert page.get_attribute(no_project_section, "open") is None
 
     page.go_forward()

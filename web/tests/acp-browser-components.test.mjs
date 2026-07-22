@@ -85,6 +85,18 @@ const tool = {
   rawInput: { command: "runtime-input" },
   rawOutput: { result: "runtime-output" },
 };
+const longMessages = Array.from({ length: 18 }, (_, index) => ({
+  id: "long-runtime-" + index,
+  role: index % 2 === 0 ? "user" : "agent",
+  timestamp: index + 3,
+  parts: [{
+    type: "content",
+    content: [{
+      type: "text",
+      text: "Long transcript line " + (index + 1) + " keeps earlier conversation available while permission is pending.",
+    }],
+  }],
+}));
 const messages = [
   {
     id: "human-runtime",
@@ -300,6 +312,10 @@ const controller: ConversationController = {
 (window as any).__acpActions = actions;
 (window as any).__acpPromptAttempts = promptAttempts;
 (window as any).__acpRevokedObjectUrls = revokedObjectUrls;
+(window as any).__loadProductionStyles = () => Promise.all([
+  import("../../assets/tokens.css"),
+  import("../../assets/app.css"),
+]);
 (window as any).__setConversationDeliveryState = (
   ready: boolean,
   supportsSteer: boolean,
@@ -367,6 +383,14 @@ const controller: ConversationController = {
 });
 (window as any).__showPermissionDiff = () => emit({
   ...current,
+  session: {
+    ...current.session,
+    messages: [...current.session.messages, ...longMessages],
+  },
+  timeline: [
+    ...current.timeline,
+    ...longMessages.map((message) => ({ kind: "message", messageId: message.id })),
+  ],
   permissions: {
     ...current.permissions,
     "permission-runtime": {
@@ -385,8 +409,8 @@ const controller: ConversationController = {
               {
                 type: "diff",
                 path: "/workspace/first.txt",
-                oldText: "first before\\nshared\\n",
-                newText: "first after\\nshared\\n",
+                oldText: ["first before", ...Array.from({ length: 80 }, (_, index) => "shared " + index)].join("\\n") + "\\n",
+                newText: ["first after", ...Array.from({ length: 80 }, (_, index) => "shared " + index)].join("\\n") + "\\n",
               },
               { type: "terminal", terminalId: "permission-terminal-must-stay-hidden" },
               {
@@ -408,7 +432,7 @@ mount(AcpConversationPane, {
   props: { controller, employeeLabel: "Runtime employee" },
 });
 `);
-  await writeFile(runtimeIndexPath, `<!doctype html><html><body><div id="app"></div><script type="module" src="./${runtimeMainPath.split("/").at(-1)}"></script></body></html>`);
+  await writeFile(runtimeIndexPath, `<!doctype html><html><head><style>html, body { margin: 0; } #app { display: flex; height: 620px; min-height: 0; }</style></head><body><div id="app"></div><script type="module" src="./${runtimeMainPath.split("/").at(-1)}"></script></body></html>`);
   await build({
     root: webRoot,
     base: "./",
@@ -454,6 +478,7 @@ with sync_playwright() as playwright:
     page = browser.new_page()
     page.set_default_timeout(5_000)
     page.goto(sys.argv[1], wait_until="networkidle")
+    page.evaluate("window.__loadProductionStyles()")
 
     permission = page.locator("[data-acp-permission='permission-runtime']")
     # No diff content on the wire yet, so the sunken diff well is absent.
@@ -497,10 +522,22 @@ with sync_playwright() as playwright:
     assert page.get_by_text("ARBITRARY PERMISSION CONTENT MUST STAY HIDDEN").count() == 0
     assert page.get_by_text("permission-terminal-must-stay-hidden").count() == 0
 
+    # A long permission diff is ordinary content in the existing transcript
+    # scroller. It must not collapse the usable chat viewport in this fixed-height
+    # pane, and the transcript must remain scrollable while approval is pending.
+    thread = page.locator("[data-chat-messages]")
+    assert thread.evaluate("element => element.clientHeight") >= 160
+    assert thread.evaluate("element => element.scrollHeight > element.clientHeight")
+    assert page.evaluate("""() => document.querySelector('[data-chat-messages]').contains(
+        document.querySelector('[data-acp-permission="permission-runtime"]')
+    )""")
+
     # Selecting the filled primary (last allow) disables every option while the
     # decision is in flight, with opacity only — no status text appears.
     options = option_group.get_by_role("button")
     primary = permission.locator(".acp-permission-allow.primary")
+    primary.scroll_into_view_if_needed()
+    assert primary.is_visible()
     primary.click()
     assert primary.get_attribute("aria-pressed") == "true"
     assert all(options.nth(index).is_disabled() for index in range(3))
