@@ -249,7 +249,8 @@ function isTerminalState(value: Record<string, unknown>): boolean {
 
 function validatePayload(value: Record<string, unknown>): boolean {
   const { type, payload, acpSessionId } = value;
-  if (!isRecord(payload) || typeof acpSessionId !== 'string') return false;
+  if (!isRecord(payload) || (typeof acpSessionId !== 'string' && acpSessionId !== null)) return false;
+  if (acpSessionId === null) return type === 'connection' && isConnection(payload);
   switch (type) {
     case 'acp_session_update':
       return isSessionNotification(payload, acpSessionId);
@@ -300,7 +301,7 @@ export function validateServerEnvelope(value: unknown):
     || !isString(value.employeeId)
     || !['ticket', 'agent'].includes(String(value.entityKind))
     || !isString(value.entityId)
-    || !isString(value.acpSessionId)
+    || !(isString(value.acpSessionId) || value.acpSessionId === null)
     || !isInteger(value.bindingGeneration)
     || !isInteger(value.sequence)
     || typeof value.type !== 'string'

@@ -217,6 +217,7 @@ class ConversationComposition:
             ),
             resolve_compaction_boundaries=repository.resolve_compaction_boundaries,
             compare_and_swap_compaction=repository.compare_and_swap_compaction,
+            ensure_conversation=repository.ensure_conversation,
             conversation_ingress=cast(AcpConversationIngress, reject_unscoped_ingress),
             permission_callback=reject_unscoped_permission,
             source_aware_permission_callback=source_permission,

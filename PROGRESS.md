@@ -1,5 +1,29 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Empty Panels conversations and lazy ACP binding
+
+The reconnecting failure was structural: Panels persisted an ACP session as soon as **New** was
+pressed, but Codex does not make an empty session loadable until its first turn. A later Panels
+restart therefore tried to load a provider session that did not exist durably. The scoped contract
+and plan are in `orchestration/tickets/acp-lazy-new-conversation/`.
+
+Implementation now gives Panels its own durable employee conversation generation. Browser attach
+to an unbound conversation returns an empty reset/ready state without spawning a backend. **New**
+advances that generation, clears the old binding and Ticket mirror, closes the old child, snapshots
+Chief launch defaults, and leaves the conversation empty. The first browser or Automatic Employee
+prompt creates and binds the ACP session through the existing registry and broker. Browser prompts
+carry content rather than a fabricated provider session id, and stale generation cursors receive a
+full current reset. Structured activation/load failures include employee, generation, backend, and
+operation.
+
+The real composition proves empty attach, first activation, New without replacement creation, old
+child retirement, and generation-2 first activation. Final review also proved New can retire a
+durable binding after a Panels restart without loading it, and that a Chief settings edit after New
+cannot alter the accepted empty conversation's eventual launch setup. Canonical `./verify` passes:
+ruff, mypy over 154 source files, 1,379 unit tests, compile/CSS checks, Svelte check, production
+frontend build and tests, and 118 e2e tests. Remaining: scoped commit and live restart/proof.
+Unrelated dirty nested worktrees remain untouched.
+
 ## Current work cycle (2026-07-22): Paint ACP browser replay atomically
 
 Live Playwright measurement proves the Ticket-switch complaint is not a wrong final scroll position:

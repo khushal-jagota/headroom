@@ -285,6 +285,70 @@ def test_binding_cas_updates_ticket_mirror_atomically(tmp_path: Path) -> None:
         check.close()
 
 
+def test_unbound_conversation_generation_is_durable_without_an_acp_session(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "empty-conversation.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    _insert_ticket(conn, "t_empty", employee_backend="codex")
+    conn.close()
+    repository = SqliteConversationBindingRepository(
+        str(db_path),
+        workspace_root=tmp_path,
+        integer_now=lambda: 30,
+        employee_backend_catalog=_catalog("codex"),
+        chief_backend_key="codex",
+    )
+
+    conversation = asyncio.run(repository.ensure_conversation("t_empty"))
+
+    assert conversation.employee_id == "t_empty"
+    assert conversation.backend_key == "codex"
+    assert conversation.conversation_generation == 1
+    assert asyncio.run(repository.resolve("t_empty")) is None
+    check = connect(str(db_path))
+    try:
+        assert check.execute(
+            "SELECT employee_session_id FROM tickets WHERE id = 't_empty'"
+        ).fetchone()[0] is None
+        assert check.execute(
+            "SELECT COUNT(*) FROM conversation_session_bindings WHERE employee_id = 't_empty'"
+        ).fetchone()[0] == 0
+    finally:
+        check.close()
+
+
+def test_new_conversation_clears_binding_and_first_later_binding_uses_its_generation(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "new-empty-conversation.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    _insert_ticket(conn, "t_empty")
+    conn.close()
+    repository = SqliteConversationBindingRepository(
+        str(db_path), workspace_root=tmp_path, integer_now=lambda: 30
+    )
+    first = ConversationSessionBinding(
+        employee_id="t_empty",
+        acp_session_id="session-1",
+        backend_key="hermes",
+        binding_generation=1,
+    )
+    asyncio.run(repository.compare_and_swap(None, first))
+
+    empty = asyncio.run(repository.start_new_conversation("t_empty", first))
+
+    assert empty.conversation_generation == 2
+    assert asyncio.run(repository.resolve("t_empty")) is None
+    second = first.model_copy(
+        update={"acp_session_id": "session-2", "binding_generation": 2}
+    )
+    assert asyncio.run(repository.compare_and_swap(None, second)) == second
+    assert asyncio.run(repository.resolve("t_empty")) == second
+
+
 def test_binding_cas_returns_loser_and_commits_exact_successor(tmp_path: Path) -> None:
     db_path = tmp_path / "cas.db"
     conn = connect(str(db_path))
@@ -859,6 +923,69 @@ def test_chief_first_binding_has_no_second_product_mirror(tmp_path: Path) -> Non
         str(row["name"])
         for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
+
+
+def test_new_chief_conversation_owns_launch_snapshot_until_first_binding(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "chief-empty-snapshot.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    conn.close()
+    registry = configured_worker_type_registry()
+    worker_settings_service.update_chief_launch_defaults(
+        tmp_path,
+        registry,
+        {
+            "employee_backend": "codex",
+            "employee_launch_model": "gpt-5.6-sol",
+            "employee_launch_reasoning_effort": "medium",
+        },
+    )
+    repository = _SqliteConversationBindingRepository(
+        str(db_path),
+        workspace_root=tmp_path,
+        integer_now=lambda: 30,
+        busy_timeout_ms=5000,
+        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        chief_backend_key="codex",
+        worker_type_registry=registry,
+    )
+
+    empty = asyncio.run(repository.start_new_conversation(CHIEF_OF_STAFF_ENTITY_ID, None))
+    assert (
+        empty.backend_key,
+        empty.employee_launch_model,
+        empty.employee_launch_reasoning_effort,
+        empty.conversation_generation,
+    ) == ("codex", "gpt-5.6-sol", "medium", 2)
+
+    worker_settings_service.update_chief_launch_defaults(
+        tmp_path,
+        registry,
+        {
+            "employee_backend": "codex",
+            "employee_launch_model": "gpt-5.6-sol-new",
+            "employee_launch_reasoning_effort": "high",
+        },
+    )
+    employee = asyncio.run(repository.resolve_employee(CHIEF_OF_STAFF_ENTITY_ID))
+    assert (
+        employee.backend_key,
+        employee.employee_launch_model,
+        employee.employee_launch_reasoning_effort,
+    ) == ("codex", "gpt-5.6-sol", "medium")
+    candidate = ConversationSessionBinding(
+        employee_id=CHIEF_OF_STAFF_ENTITY_ID,
+        acp_session_id="chief-session",
+        backend_key="codex",
+        employee_launch_model="gpt-5.6-sol",
+        employee_launch_reasoning_effort="medium",
+        binding_generation=2,
+    )
+    prepared = EmployeeLaunchConfiguration("codex", "gpt-5.6-sol", "medium")
+
+    assert asyncio.run(repository.compare_and_swap_initial(candidate, prepared)) == candidate
 
 
 def test_chief_settings_save_and_initial_binding_share_settings_then_sqlite_order(

@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Final, Literal, Self
 
-from acp.schema import PromptRequest, SessionNotification
+from acp.schema import (
+    AudioContentBlock,
+    EmbeddedResourceContentBlock,
+    ImageContentBlock,
+    PromptRequest,
+    ResourceContentBlock,
+    SessionNotification,
+    TextContentBlock,
+)
 from pydantic import Field, TypeAdapter, ValidationError, field_validator, model_validator
 
 from .contracts import (
@@ -88,15 +96,28 @@ class _ServerEnvelope(_ConversationModel):
     employee_id: str
     entity_kind: ConversationEntityKind
     entity_id: str
-    acp_session_id: str
+    acp_session_id: str | None
     binding_generation: Annotated[int, Field(gt=0)]
     sequence: Annotated[int, Field(gt=0)]
 
-    @field_validator("employee_id", "entity_id", "acp_session_id")
+    @field_validator("employee_id", "entity_id")
     @classmethod
     def _validate_identifiers(cls, value: str, info: object) -> str:
         field_name = getattr(info, "field_name", "identifier")
         return _require_non_empty_text(value, field_name=field_name)
+
+    @field_validator("acp_session_id")
+    @classmethod
+    def _validate_optional_session_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _require_non_empty_text(value, field_name="acp_session_id")
+
+    @model_validator(mode="after")
+    def _validate_empty_conversation_envelope(self) -> Self:
+        if self.acp_session_id is None and self.type != "connection":
+            raise ValueError("only an empty connection envelope may omit the ACP session")
+        return self
 
 
 class AcpSessionUpdateEnvelope(_ServerEnvelope):
@@ -251,7 +272,14 @@ class AttachAction(_BrowserAction):
 class PromptAction(_BrowserAction):
     type: Literal["prompt"]
     client_message_id: str
-    prompt: PromptRequest
+    prompt: list[
+        TextContentBlock
+        | ImageContentBlock
+        | AudioContentBlock
+        | ResourceContentBlock
+        | EmbeddedResourceContentBlock
+    ]
+    prompt_meta: dict[str, Any] | None = None
     delivery_choice: TurnDeliveryChoice
 
     @field_validator("client_message_id")

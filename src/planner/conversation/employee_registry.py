@@ -41,6 +41,7 @@ from .contracts import (
     ConversationCompactionBoundaryProvenance,
     ConversationEmployee,
     ConversationSessionBinding,
+    EmployeeConversation,
 )
 from .employee_configuration import EmployeeSessionConfigurationAdapter
 from .runtime_ports import (
@@ -71,6 +72,7 @@ CompareAndSwapInitialConversationBinding = Callable[
     Awaitable[ConversationSessionBinding],
 ]
 ResolveConversationEmployee = Callable[[str], Awaitable[ConversationEmployee]]
+EnsureEmployeeConversation = Callable[[str], Awaitable[EmployeeConversation]]
 ResolveConversationCompactionBoundaries = Callable[
     [ConversationSessionBinding],
     Awaitable[tuple[ConversationCompactionBoundaryProvenance, ...]],
@@ -182,6 +184,7 @@ class AcpEmployeeRegistry:
         source_aware_child_death_callback: SourceAwareChildDeathCallback | None = None,
         resolve_compaction_boundaries: ResolveConversationCompactionBoundaries | None = None,
         compare_and_swap_compaction: CompareAndSwapConversationCompaction | None = None,
+        ensure_conversation: EnsureEmployeeConversation | None = None,
     ) -> None:
         materialized_keys = tuple(
             backend.definition.backend_key for backend in materialized_backends
@@ -219,6 +222,7 @@ class AcpEmployeeRegistry:
         self._source_aware_child_death_callback = source_aware_child_death_callback
         self._resolve_compaction_boundaries = resolve_compaction_boundaries
         self._compare_and_swap_compaction = compare_and_swap_compaction
+        self._ensure_conversation = ensure_conversation
         self._lock = asyncio.Lock()
         self._lifecycle_mutation_gates: dict[str, asyncio.Lock] = {}
         self._publication_update_gates: dict[str, asyncio.Lock] = {}
@@ -415,6 +419,33 @@ class AcpEmployeeRegistry:
         if not self._record_matches(record, employee):
             return await self.new_conversation(employee)
         return record
+
+    async def retire_conversation(
+        self, employee_id: str, binding_generation: int
+    ) -> None:
+        lifecycle_gate = await self._lifecycle_mutation_gate(employee_id)
+        async with lifecycle_gate:
+            publication_gate = await self._publication_update_gate(employee_id)
+            child: AcpEmployeeChild | None = None
+            async with publication_gate:
+                async with self._lock:
+                    record = self._records.get(employee_id)
+                    if record is None:
+                        return
+                    if record.binding.binding_generation != binding_generation:
+                        raise AcpEmployeeStaleGeneration(
+                            "conversation retirement names a stale binding generation"
+                        )
+                    self._records.pop(employee_id, None)
+                    accepted = self._accepted_callback_generations.get(employee_id)
+                    if accepted is not None:
+                        accepted.discard(record.child_generation)
+                    self._record_identity_by_generation.pop(
+                        (employee_id, record.child_generation), None
+                    )
+                    child = record.child
+            if child is not None:
+                await child.close()
 
     async def _replace_conversation(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
         if employee.entity_kind == "ticket":
@@ -644,11 +675,16 @@ class AcpEmployeeRegistry:
                         response,
                         launch_configuration,
                     )
+                conversation_generation = (
+                    (await self._ensure_conversation(employee.employee_id)).conversation_generation
+                    if self._ensure_conversation is not None
+                    else 1
+                )
                 candidate = ConversationSessionBinding(
                     employee_id=employee.employee_id,
                     acp_session_id=response.session_id,
                     backend_key=employee.backend_key,
-                    binding_generation=1,
+                    binding_generation=conversation_generation,
                     employee_launch_model=employee.employee_launch_model,
                     employee_launch_reasoning_effort=(
                         employee.employee_launch_reasoning_effort

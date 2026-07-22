@@ -173,10 +173,7 @@ try {
     type: "prompt",
     employeeId: "ticket-deferred",
     clientMessageId: "client-1",
-    prompt: {
-      sessionId: "session-deferred",
-      prompt: [{ type: "text", text: "First demand" }],
-    },
+    prompt: [{ type: "text", text: "First demand" }],
     deliveryChoice: "normal",
   });
   assert.equal(
@@ -208,6 +205,36 @@ try {
     "reconnect after delivery does not replay the prompt",
   );
   deferred.controller.dispose();
+
+  const empty = controllerHarness(subject);
+  empty.controller.attach();
+  empty.transports[0].callbacks.onOpen();
+  empty.transports[0].callbacks.onEnvelope(connectionEnvelope(1, "reset", {
+    acpSessionId: null,
+    payload: {
+      state: "reset",
+      detail: "New conversation",
+      supportsSteer: false,
+      resetBindingGeneration: 1,
+    },
+  }));
+  empty.transports[0].callbacks.onEnvelope(connectionEnvelope(2, "ready", {
+    acpSessionId: null,
+    payload: { state: "ready", detail: "Ready", supportsSteer: false },
+  }));
+  assert.equal(empty.controller.prompt([{ type: "text", text: "Activate" }], "normal").ok, true);
+  assert.deepEqual(empty.transports[0].sent.at(-1), {
+    type: "prompt",
+    employeeId: "ticket-deferred",
+    clientMessageId: "client-1",
+    prompt: [{ type: "text", text: "Activate" }],
+    deliveryChoice: "normal",
+  });
+  empty.transports[0].callbacks.onEnvelope(connectionEnvelope(3, "reset"));
+  empty.transports[0].callbacks.onEnvelope(connectionEnvelope(4, "ready"));
+  assert.equal(empty.controller.snapshot().cursor.acpSessionId, "session-deferred");
+  assert.equal(empty.controller.snapshot().connection.state, "ready");
+  empty.controller.dispose();
 
   const disposed = controllerHarness(subject, { deferInitialAttach: true });
   assert.equal(disposed.controller.prompt([{ type: "text", text: "Drop me" }], "normal").ok, true);

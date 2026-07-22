@@ -8,7 +8,9 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from planner.core.contracts import EventKind
 from planner.core.db import connect
+from planner.core.events import append_event
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
@@ -27,6 +29,7 @@ from .contracts import (
     ConversationEmployee,
     ConversationEntityKind,
     ConversationSessionBinding,
+    EmployeeConversation,
     parse_conversation_compaction_boundaries_json,
 )
 
@@ -63,6 +66,18 @@ class SqliteConversationBindingRepository:
 
     async def resolve(self, employee_id: str) -> ConversationSessionBinding | None:
         return await asyncio.to_thread(self._resolve_sync, employee_id)
+
+    async def ensure_conversation(self, employee_id: str) -> EmployeeConversation:
+        return await asyncio.to_thread(self._ensure_conversation_sync, employee_id)
+
+    async def start_new_conversation(
+        self,
+        employee_id: str,
+        expected_binding: ConversationSessionBinding | None,
+    ) -> EmployeeConversation:
+        return await asyncio.to_thread(
+            self._start_new_conversation_sync, employee_id, expected_binding
+        )
 
     async def resolve_employee(self, employee_id: str) -> ConversationEmployee:
         return await asyncio.to_thread(self._resolve_employee_sync, employee_id)
@@ -133,6 +148,104 @@ class SqliteConversationBindingRepository:
         finally:
             conn.close()
 
+    def _ensure_conversation_sync(self, employee_id: str) -> EmployeeConversation:
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conversation = self._ensure_conversation_in_transaction(conn, employee_id)
+            conn.execute("COMMIT")
+            return conversation
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+
+    def _start_new_conversation_sync(
+        self,
+        employee_id: str,
+        expected_binding: ConversationSessionBinding | None,
+    ) -> EmployeeConversation:
+        chief_settings_lock = (
+            chief_settings_binding_snapshot_lock(Path(self._db_path).expanduser().parent)
+            if employee_id == CHIEF_OF_STAFF_ENTITY_ID
+            and self._worker_type_registry is not None
+            else None
+        )
+        if chief_settings_lock is not None:
+            chief_settings_lock.acquire()
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self._ensure_conversation_in_transaction(conn, employee_id)
+            actual = self._read_validated_binding(conn, employee_id)
+            if actual != expected_binding:
+                raise ConversationBindingError(
+                    "durable binding changed before starting the new conversation"
+                )
+            (
+                entity_kind,
+                mirror_session,
+                selected_backend,
+                employee_launch_model,
+                employee_launch_reasoning_effort,
+            ) = self._classify_and_read_mirror(conn, employee_id)
+            if entity_kind == "ticket" and mirror_session != (
+                None if expected_binding is None else expected_binding.acp_session_id
+            ):
+                raise ConversationBindingError(
+                    "product mirror changed before starting the new conversation"
+                )
+            now = self._integer_now()
+            if expected_binding is not None:
+                conn.execute(
+                    "DELETE FROM conversation_session_bindings WHERE employee_id = ?",
+                    (employee_id,),
+                )
+            if entity_kind == "ticket" and mirror_session is not None:
+                conn.execute(
+                    "UPDATE tickets SET employee_session_id = NULL, updated_at = ? WHERE id = ?",
+                    (now, employee_id),
+                )
+                append_event(
+                    conn,
+                    employee_id,
+                    EventKind.employee_session_changed,
+                    {"employee_session_id": None},
+                    now,
+                )
+            candidate = EmployeeConversation(
+                employee_id=employee_id,
+                backend_key=selected_backend,
+                conversation_generation=current.conversation_generation + 1,
+                employee_launch_model=employee_launch_model,
+                employee_launch_reasoning_effort=employee_launch_reasoning_effort,
+            )
+            conn.execute(
+                "UPDATE employee_conversations SET backend_key = ?, "
+                "employee_launch_model = ?, employee_launch_reasoning_effort = ?, "
+                "conversation_generation = ?, updated_at = ? WHERE employee_id = ?",
+                (
+                    candidate.backend_key,
+                    candidate.employee_launch_model,
+                    candidate.employee_launch_reasoning_effort,
+                    candidate.conversation_generation,
+                    now,
+                    employee_id,
+                ),
+            )
+            conn.execute("COMMIT")
+            return candidate
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+            if chief_settings_lock is not None:
+                chief_settings_lock.release()
+
     def _resolve_employee_sync(self, employee_id: str) -> ConversationEmployee:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:
@@ -144,16 +257,44 @@ class SqliteConversationBindingRepository:
                 employee_launch_reasoning_effort,
             ) = self._classify_and_read_mirror(conn, employee_id)
             binding = self._read_validated_binding(conn, employee_id)
-            backend_key = binding.backend_key if binding is not None else selected_backend
+            conversation_row = conn.execute(
+                "SELECT backend_key, employee_launch_model, "
+                "employee_launch_reasoning_effort FROM employee_conversations "
+                "WHERE employee_id = ?",
+                (employee_id,),
+            ).fetchone()
+            backend_key = (
+                binding.backend_key
+                if binding is not None
+                else (
+                    str(conversation_row["backend_key"])
+                    if conversation_row is not None
+                    else selected_backend
+                )
+            )
             return ConversationEmployee(
                 employee_id=employee_id,
                 entity_kind=entity_kind,
                 entity_id=employee_id,
                 workspace_roots=(self._workspace_root,),
                 backend_key=backend_key,
-                employee_launch_model=(employee_launch_model if binding is None else None),
+                employee_launch_model=(
+                    (
+                        employee_launch_model
+                        if conversation_row is None
+                        else conversation_row["employee_launch_model"]
+                    )
+                    if binding is None
+                    else None
+                ),
                 employee_launch_reasoning_effort=(
-                    employee_launch_reasoning_effort if binding is None else None
+                    (
+                        employee_launch_reasoning_effort
+                        if conversation_row is None
+                        else conversation_row["employee_launch_reasoning_effort"]
+                    )
+                    if binding is None
+                    else None
                 ),
             )
         finally:
@@ -252,11 +393,23 @@ class SqliteConversationBindingRepository:
                 employee_launch_model,
                 employee_launch_reasoning_effort,
             ) = self._classify_and_read_mirror(conn, candidate.employee_id)
-            if entity_kind == "agent" and expected is not None:
-                managed = self._managed_chief_configuration()
-                selected_backend = managed.employee_backend
-                employee_launch_model = managed.employee_launch_model
-                employee_launch_reasoning_effort = managed.employee_launch_reasoning_effort
+            conversation = self._ensure_conversation_in_transaction(
+                conn, candidate.employee_id
+            )
+            if entity_kind == "agent":
+                if expected is None:
+                    selected_backend = conversation.backend_key
+                    employee_launch_model = conversation.employee_launch_model
+                    employee_launch_reasoning_effort = (
+                        conversation.employee_launch_reasoning_effort
+                    )
+                else:
+                    managed = self._managed_chief_configuration()
+                    selected_backend = managed.employee_backend
+                    employee_launch_model = managed.employee_launch_model
+                    employee_launch_reasoning_effort = (
+                        managed.employee_launch_reasoning_effort
+                    )
             self._require_registered_backend(candidate.backend_key)
             if candidate.backend_key != selected_backend:
                 raise ConversationBindingError(
@@ -280,8 +433,10 @@ class SqliteConversationBindingRepository:
                 conn.execute("COMMIT")
                 return actual
             if expected is None:
-                if candidate.binding_generation != 1:
-                    raise ConversationBindingError("first binding generation must be one")
+                if candidate.binding_generation != conversation.conversation_generation:
+                    raise ConversationBindingError(
+                        "first binding must target the current conversation generation"
+                    )
                 if entity_kind == "ticket" and mirror_session is not None:
                     raise ConversationBindingError(
                         "unbound employee already has a different product mirror"
@@ -414,6 +569,19 @@ class SqliteConversationBindingRepository:
                     raise ConversationBindingError(
                         "complete binding changed during compare-and-swap"
                     )
+            conn.execute(
+                "UPDATE employee_conversations SET backend_key = ?, "
+                "employee_launch_model = ?, employee_launch_reasoning_effort = ?, "
+                "conversation_generation = ?, updated_at = ? WHERE employee_id = ?",
+                (
+                    candidate.backend_key,
+                    candidate.employee_launch_model,
+                    candidate.employee_launch_reasoning_effort,
+                    candidate.binding_generation,
+                    now,
+                    candidate.employee_id,
+                ),
+            )
             committed, committed_compaction_boundaries = self._read_validated_binding_row(
                 conn, candidate.employee_id
             )
@@ -438,6 +606,78 @@ class SqliteConversationBindingRepository:
     ) -> ConversationSessionBinding | None:
         binding, _compacted_boundaries = self._read_validated_binding_row(conn, employee_id)
         return binding
+
+    def _ensure_conversation_in_transaction(
+        self, conn: sqlite3.Connection, employee_id: str
+    ) -> EmployeeConversation:
+        row = conn.execute(
+            "SELECT employee_id, entity_kind, entity_id, backend_key, "
+            "employee_launch_model, employee_launch_reasoning_effort, "
+            "conversation_generation FROM employee_conversations WHERE employee_id = ?",
+            (employee_id,),
+        ).fetchone()
+        if row is not None:
+            if str(row["employee_id"]) != employee_id or str(row["entity_id"]) != employee_id:
+                raise ConversationBindingError("conversation entity metadata is inconsistent")
+            return EmployeeConversation(
+                employee_id=employee_id,
+                backend_key=str(row["backend_key"]),
+                conversation_generation=int(row["conversation_generation"]),
+                employee_launch_model=(
+                    None
+                    if row["employee_launch_model"] is None
+                    else str(row["employee_launch_model"])
+                ),
+                employee_launch_reasoning_effort=(
+                    None
+                    if row["employee_launch_reasoning_effort"] is None
+                    else str(row["employee_launch_reasoning_effort"])
+                ),
+            )
+        (
+            entity_kind,
+            _mirror_session,
+            selected_backend,
+            employee_launch_model,
+            employee_launch_reasoning_effort,
+        ) = self._classify_and_read_mirror(conn, employee_id)
+        binding, _boundaries = self._read_validated_binding_row(conn, employee_id)
+        conversation = EmployeeConversation(
+            employee_id=employee_id,
+            backend_key=binding.backend_key if binding is not None else selected_backend,
+            conversation_generation=(
+                binding.binding_generation if binding is not None else 1
+            ),
+            employee_launch_model=(
+                binding.employee_launch_model
+                if binding is not None
+                else employee_launch_model
+            ),
+            employee_launch_reasoning_effort=(
+                binding.employee_launch_reasoning_effort
+                if binding is not None
+                else employee_launch_reasoning_effort
+            ),
+        )
+        now = self._integer_now()
+        conn.execute(
+            "INSERT INTO employee_conversations "
+            "(employee_id, entity_kind, entity_id, backend_key, employee_launch_model, "
+            "employee_launch_reasoning_effort, conversation_generation, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                employee_id,
+                entity_kind,
+                employee_id,
+                conversation.backend_key,
+                conversation.employee_launch_model,
+                conversation.employee_launch_reasoning_effort,
+                conversation.conversation_generation,
+                now,
+                now,
+            ),
+        )
+        return conversation
 
     def _read_validated_binding_row(
         self, conn: sqlite3.Connection, employee_id: str
