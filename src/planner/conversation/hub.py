@@ -352,15 +352,24 @@ class ConversationHub:
         source: ConversationIngressSource,
         payload: ConversationIngressTransition,
     ) -> None:
+        operation: Callable[[], None]
         if isinstance(payload, ConversationIngressReplayBatch):
             if not all(
                 isinstance(item, (SessionNotification, ProtocolUpdateRejectedPayload))
                 for item in payload.items
             ):
                 raise TypeError("replay batch must contain typed ACP updates or rejections")
-            operation = lambda: self._ingest_replay_batch(source, payload)
+
+            def ingest_replay_batch_operation() -> None:
+                self._ingest_replay_batch(source, payload)
+
+            operation = ingest_replay_batch_operation
         elif isinstance(payload, (SessionNotification, ProtocolUpdateRejectedPayload)):
-            operation = lambda: self._ingest_source(source, payload)
+
+            def ingest_source_operation() -> None:
+                self._ingest_source(source, payload)
+
+            operation = ingest_source_operation
         else:
             raise TypeError("registry ingress must be a typed ACP update or rejection")
         await self._admit(
@@ -1757,10 +1766,7 @@ class ConversationHub:
             payload = envelope.payload.model_copy(
                 update={"settled_sequence": sequence}
             )
-        return cast(
-            ServerEnvelope,
-            envelope.model_copy(update={"sequence": sequence, "payload": payload}),
-        )
+        return envelope.model_copy(update={"sequence": sequence, "payload": payload})
 
     def _ingest_source(
         self,
