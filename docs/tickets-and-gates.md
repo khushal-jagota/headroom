@@ -84,6 +84,21 @@ second message or active-turn table, and there is no separate Employee-history H
 route. Pending worker context reaches the employee only when `AcpStepGateway` includes
 it in the real ACP prompt and ACP admits that prompt.
 
+### Confirmed Worker failures
+
+A Ticket becomes `errored` only when the active backend Worker reports a concrete
+failure. The Ticket stores that exact text in `backend_error`, returns it through both
+Ticket and Board reads, and shows it plainly on the Ticket page. The status and reason
+are one fact: every transition to a non-error status clears the reason in the same
+database write.
+
+Employee-step correctness records are broader. They can record an errored delivery even
+when the Ticket remains available, because cancellation uncertainty, restart cleanup,
+session contention, permissions, browser publication, replay, and projection failures
+are not confirmed backend Worker failures. Workspace uses only the Ticket's canonical
+`backend_error` to choose its exceptional treatment; failed or interrupted conversation
+activity alone does not make the Workspace row exceptional.
+
 ### Work completed outside Panels
 
 When work was completed elsewhere, the Chief can reconcile an existing ticket or create

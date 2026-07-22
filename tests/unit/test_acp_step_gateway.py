@@ -274,9 +274,16 @@ class _Broker:
         if self.cancel_never_completes:
             await asyncio.Future()
 
-    def complete(self, status: str = "complete", error: str | None = None) -> None:
+    def complete(
+        self,
+        status: str = "complete",
+        error: str | None = None,
+        failure_provenance: str | None = None,
+    ) -> None:
         assert self.tracked is not None
-        result = TrackedTurnResult(status, error=error)  # type: ignore[arg-type]
+        result = TrackedTurnResult(  # type: ignore[arg-type]
+            status, error=error, failure_provenance=failure_provenance
+        )
         self.tracked.completion.set_result(result)
         self.after(self.tracked)
 
@@ -411,19 +418,36 @@ def test_worker_context_prepares_once_on_caller_thread_and_acknowledges_after_tr
 
 
 @pytest.mark.parametrize(
-    ("terminal_status", "terminal_error", "expected_status", "expected_error"),
+    (
+        "terminal_status",
+        "terminal_error",
+        "terminal_provenance",
+        "expected_status",
+        "expected_error",
+        "expected_provenance",
+    ),
     [
-        ("complete", None, "complete", None),
-        ("interrupted", None, "interrupted", None),
-        ("errored", "ACP failed", "errored", "ACP failed"),
+        ("complete", None, None, "complete", None, None),
+        ("interrupted", None, None, "interrupted", None, None),
+        ("errored", "ACP failed", "backend", "errored", "ACP failed", "backend"),
+        (
+            "errored",
+            "Prompt cancellation timed out",
+            "conversation",
+            "errored",
+            "Prompt cancellation timed out",
+            "conversation",
+        ),
     ],
 )
 def test_terminal_result_maps_exactly_to_employee_step_result(
     tmp_path: Path,
     terminal_status: str,
     terminal_error: str | None,
+    terminal_provenance: str | None,
     expected_status: str,
     expected_error: str | None,
+    expected_provenance: str | None,
 ) -> None:
     loop_thread = _LoopThread()
     try:
@@ -440,7 +464,9 @@ def test_terminal_result_maps_exactly_to_employee_step_result(
         )
         caller.start()
         assert broker.started.wait(1)
-        loop_thread.loop.call_soon_threadsafe(broker.complete, terminal_status, terminal_error)
+        loop_thread.loop.call_soon_threadsafe(
+            broker.complete, terminal_status, terminal_error, terminal_provenance
+        )
         caller.join(timeout=1)
         assert not caller.is_alive()
         result = result_holder[0]
@@ -448,10 +474,12 @@ def test_terminal_result_maps_exactly_to_employee_step_result(
             result.status,
             result.employee_session_id,
             result.error,
+            result.failure_provenance,
         ) == (
             expected_status,
             binding.acp_session_id,
             expected_error,
+            expected_provenance,
         )
     finally:
         loop_thread.close()

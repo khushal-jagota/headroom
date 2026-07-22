@@ -15,7 +15,7 @@ from planner.tickets.logic.workspace_dot import workspace_dot_state
     ("facts", "expected"),
     [
         (
-            WorkspaceDotFacts(ticket_status=TicketStatus.errored),
+            WorkspaceDotFacts(ticket_status=TicketStatus.errored, backend_error="provider failed"),
             WorkspaceDotState.exceptional,
         ),
         (
@@ -23,14 +23,14 @@ from planner.tickets.logic.workspace_dot import workspace_dot_state
                 ticket_status=TicketStatus.empty,
                 latest_activity_state=WorkspaceActivityState.failed,
             ),
-            WorkspaceDotState.exceptional,
+            WorkspaceDotState.quiet,
         ),
         (
             WorkspaceDotFacts(
                 ticket_status=TicketStatus.empty,
                 latest_activity_state=WorkspaceActivityState.interrupted,
             ),
-            WorkspaceDotState.exceptional,
+            WorkspaceDotState.quiet,
         ),
         (
             WorkspaceDotFacts(
@@ -137,6 +137,7 @@ def test_workspace_dot_truth_table(
 def test_workspace_dot_exceptional_precedes_active_and_attention() -> None:
     facts = WorkspaceDotFacts(
         ticket_status=TicketStatus.errored,
+        backend_error="provider failed",
         latest_activity_state=WorkspaceActivityState.thinking,
         has_pending_proposal=True,
         has_pending_permission=True,
@@ -150,6 +151,7 @@ def test_workspace_dot_exceptional_precedes_active_and_attention() -> None:
         (
             WorkspaceDotFacts(
                 ticket_status=TicketStatus.errored,
+                backend_error="Provider process exited unexpectedly",
                 is_completed=True,
             ),
             WorkspaceDotState.exceptional,

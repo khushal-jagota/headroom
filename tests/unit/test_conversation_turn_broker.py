@@ -77,6 +77,7 @@ from planner.conversation.runtime_ports import (
     RequestedCancelRecoveryTransitionToken,
     RequestedCancelRuntimeReplacement,
 )
+from planner.conversation.sdk_child import AcpChildProcessExited
 from planner.conversation.turn_broker import (
     ConversationTurnBroker,
     ConversationTurnBrokerError,
@@ -951,7 +952,7 @@ def test_requested_cancel_recovery_failure_rejects_all_frozen_intent_without_idl
     asyncio.run(exercise())
 
 
-def test_uncancelled_prompt_exception_still_fails_generation() -> None:
+def test_uncancelled_prompt_exception_preserves_backend_reason() -> None:
     async def exercise() -> None:
         broker, child, publisher, handle, _runtime = _fixture()
         tracked = await broker.deliver_tracked_normal(
@@ -967,7 +968,8 @@ def test_uncancelled_prompt_exception_still_fails_generation() -> None:
         result = await asyncio.wait_for(tracked.completion, timeout=1)
         assert result.status == "errored"
         assert result.response is None
-        assert result.error == "Employee connection failed"
+        assert result.error == "prompt transport failed"
+        assert result.failure_provenance == "backend"
         assert [
             event[1].state for event in publisher.events if event[0] == "activity"
         ][-1] == "failed"
@@ -1109,7 +1111,7 @@ class _PromptFailureReasonStrategy(_Strategy):
         (None, True),
     ),
 )
-def test_invalid_or_raising_prompt_failure_reason_hook_preserves_generic_reason(
+def test_invalid_or_raising_prompt_failure_reason_hook_uses_backend_exception(
     hook_result: Any, hook_raises: bool
 ) -> None:
     async def exercise() -> None:
@@ -1132,7 +1134,8 @@ def test_invalid_or_raising_prompt_failure_reason_hook_preserves_generic_reason(
 
         result = await asyncio.wait_for(tracked.completion, timeout=1)
         assert result.status == "errored"
-        assert result.error == "Employee connection failed"
+        assert result.error == "private transport detail"
+        assert result.failure_provenance == "backend"
         assert len(strategy.calls) == 1
         binding, seen_prompt, seen_error = strategy.calls[0]
         assert binding is handle.binding
@@ -1142,13 +1145,13 @@ def test_invalid_or_raising_prompt_failure_reason_hook_preserves_generic_reason(
             event[1].detail
             for event in publisher.events
             if event[0] == "activity" and event[1].state == "failed"
-        ] == ["Employee connection failed"]
+        ] == ["private transport detail"]
         await broker.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 
 
-def test_compaction_prompt_exception_without_hook_preserves_generic_reason() -> None:
+def test_compaction_prompt_exception_without_hook_preserves_backend_exception() -> None:
     async def exercise() -> None:
         broker, child, publisher, handle, _runtime = _fixture(
             strategy=_Strategy(),
@@ -1166,10 +1169,11 @@ def test_compaction_prompt_exception_without_hook_preserves_generic_reason() -> 
 
         result = await asyncio.wait_for(tracked.completion, timeout=1)
         assert result.status == "errored"
-        assert result.error == "Employee connection failed"
+        assert result.error == "private compaction error"
+        assert result.failure_provenance == "backend"
         compactions = [event[1] for event in publisher.events if event[0] == "compaction"]
         assert [item.state for item in compactions] == ["compacting", "failed"]
-        assert compactions[-1].reason == "Employee connection failed"
+        assert compactions[-1].reason == "private compaction error"
         await broker.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1191,7 +1195,8 @@ def test_valid_prompt_failure_reason_hook_is_not_consulted_without_boundary() ->
 
         result = await asyncio.wait_for(tracked.completion, timeout=1)
         assert result.status == "errored"
-        assert result.error == "Employee connection failed"
+        assert result.error == "private ordinary error"
+        assert result.failure_provenance == "backend"
         assert strategy.calls == []
         assert not [event for event in publisher.events if event[0] == "compaction"]
         await broker.shutdown(asyncio.get_running_loop().time() + 1)
@@ -1199,7 +1204,7 @@ def test_valid_prompt_failure_reason_hook_is_not_consulted_without_boundary() ->
     asyncio.run(exercise())
 
 
-def test_ordinary_codex_prompt_exception_preserves_generic_reason() -> None:
+def test_ordinary_codex_prompt_exception_preserves_backend_exception() -> None:
     async def exercise() -> None:
         broker, child, publisher, handle, _runtime = _fixture(
             strategy=CodexAcpTurnStrategy(),
@@ -1217,7 +1222,8 @@ def test_ordinary_codex_prompt_exception_preserves_generic_reason() -> None:
 
         result = await asyncio.wait_for(tracked.completion, timeout=1)
         assert result.status == "errored"
-        assert result.error == "Employee connection failed"
+        assert result.error == "private ordinary error"
+        assert result.failure_provenance == "backend"
         assert not [event for event in publisher.events if event[0] == "compaction"]
         await broker.shutdown(asyncio.get_running_loop().time() + 1)
 
@@ -1295,7 +1301,13 @@ def test_idle_and_active_choice_rejections_never_fall_back() -> None:
         broker, child, publisher, handle, _runtime = _fixture(supports_steer=False)
         await broker.deliver(handle, "idle-queue", "queue", _prompt())
         await broker.deliver(handle, "idle-steer", "steer", _prompt())
-        await broker.deliver(handle, "active", "normal", _prompt("active"))
+        await broker.deliver_tracked_normal(
+            handle,
+            "active",
+            _prompt("active"),
+            before_prompt_started=lambda _handle: None,
+            after_prompt_settled=lambda _handle: None,
+        )
         await broker.deliver(handle, "second-normal", "normal", _prompt())
         await broker.deliver(handle, "unsupported-steer", "steer", _prompt())
         receipts = [event[1] for event in publisher.events if event[0] == "receipt"]
@@ -1322,7 +1334,13 @@ def test_idle_and_active_choice_rejections_never_fall_back() -> None:
 def test_queued_cancel_and_user_cancel_advance_only_remaining_head() -> None:
     async def exercise() -> None:
         broker, child, publisher, handle, runtime = _fixture()
-        await broker.deliver(handle, "active", "normal", _prompt("active"))
+        await broker.deliver_tracked_normal(
+            handle,
+            "active",
+            _prompt("active"),
+            before_prompt_started=lambda _handle: None,
+            after_prompt_settled=lambda _handle: None,
+        )
         await broker.deliver(handle, "q1", "queue", _prompt("one"))
         await broker.deliver(handle, "q2", "queue", _prompt("two"))
         await broker.cancel(handle, "q1")
@@ -1356,10 +1374,18 @@ def test_send_now_timeout_retires_generation_and_rejects_all_intent() -> None:
     async def exercise() -> None:
         broker, child, publisher, handle, runtime = _fixture(cancel_timeout_seconds=0.01)
         child.cancel_gate = asyncio.Event()
-        await broker.deliver(handle, "active", "normal", _prompt("active"))
+        tracked = await broker.deliver_tracked_normal(
+            handle,
+            "active",
+            _prompt("active"),
+            before_prompt_started=lambda _handle: None,
+            after_prompt_settled=lambda _handle: None,
+        )
         await broker.deliver(handle, "queued", "queue", _prompt("queued"))
         await broker.deliver(handle, "now", "send_now", _prompt("now"))
         await _wait_until(lambda: runtime.retired == 1)
+        result = await asyncio.wait_for(tracked.completion, timeout=1)
+        assert result.failure_provenance == "conversation"
         receipts = [event[1] for event in publisher.events if event[0] == "receipt"]
         assert [(item.client_message_id, item.state) for item in receipts][-3:] == [
             ("active", "interrupted"),
@@ -1462,6 +1488,54 @@ def test_child_death_rejects_fifo_once_and_stale_death_is_ignored() -> None:
         child.responses.put_nowait(PromptResponse(stop_reason="end_turn"))
         await asyncio.sleep(0)
         assert len(child.prompts) == 1
+        await broker.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_child_process_death_preserves_backend_reason_for_tracked_turn() -> None:
+    async def exercise() -> None:
+        broker, _child, _publisher, handle, _runtime = _fixture()
+        tracked = await broker.deliver_tracked_normal(
+            handle,
+            "active",
+            _prompt("active"),
+            before_prompt_started=lambda _handle: None,
+            after_prompt_settled=lambda _handle: None,
+        )
+        error = AcpChildProcessExited(17, "fatal startup detail")
+
+        await broker.child_died("employee-a", 1, 1, error)
+
+        result = await asyncio.wait_for(tracked.completion, timeout=1)
+        assert result.status == "errored"
+        assert result.error == str(error)
+        assert result.failure_provenance == "backend"
+        await broker.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("")])
+def test_child_death_without_concrete_reason_uses_backend_fallback(
+    error: BaseException | None,
+) -> None:
+    async def exercise() -> None:
+        broker, _child, _publisher, handle, _runtime = _fixture()
+        tracked = await broker.deliver_tracked_normal(
+            handle,
+            "active",
+            _prompt("active"),
+            before_prompt_started=lambda _handle: None,
+            after_prompt_settled=lambda _handle: None,
+        )
+
+        await broker.child_died("employee-a", 1, 1, error)
+
+        result = await asyncio.wait_for(tracked.completion, timeout=1)
+        assert result.status == "errored"
+        assert result.error == "Employee connection failed"
+        assert result.failure_provenance == "backend"
         await broker.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

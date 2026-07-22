@@ -541,11 +541,21 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
         now=now,
     )
     assert t.ticket_status is TicketStatus.errored
+    assert t.backend_error == "boom"
     assert t.employee_session_id == "sess-3"
+
+    t = data.drop_ticket(tmp_db, t.id, actor="human", now=now + 1)
+    assert t.ticket_status is TicketStatus.empty
+    assert t.backend_error is None
+    assert tuple(
+        tmp_db.execute(
+            "SELECT ticket_status, backend_error FROM tickets WHERE id = ?", (t.id,)
+        ).fetchone()
+    ) == ("empty", None)
 
     status_events = _events(tmp_db, cfg, t.id, EventKind.ticket_status_changed)
     assert all("worker" not in e.payload for e in status_events)
-    assert status_events[-1].payload == {"ticket_status": "errored", "error": "boom"}
+    assert status_events[-2].payload == {"ticket_status": "errored", "error": "boom"}
 
 
 def test_claim_running_step_employee_session_id_logs_lookup_event(

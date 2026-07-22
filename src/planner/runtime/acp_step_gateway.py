@@ -293,6 +293,7 @@ class AcpStepGateway:
             "errored",
             binding.acp_session_id,
             terminal.error or "ACP worker turn failed",
+            terminal.failure_provenance or "conversation",
         )
 
     async def _interrupt(self, employee_session_id: str, entity_id: str) -> None:

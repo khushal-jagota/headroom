@@ -3407,6 +3407,14 @@ select {
   background: var(--accent-bright);
 }
 
+.ticket-backend-error {
+  margin-top: var(--space-3);
+  color: var(--accent-error);
+  font-size: var(--type-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 /* A flexible gap shoves the text actions to the right end of the facts line. */
 .ticket-facts-gap {
   flex: 1;

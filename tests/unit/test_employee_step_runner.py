@@ -33,6 +33,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
     EmployeeLaunchConfiguration,
+    StageOwnershipMode,
     TicketStatus,
 )
 
@@ -314,6 +315,261 @@ def test_busy_step_interrupts_record_and_releases_ticket(tmp_path: Path) -> None
     conn = connect(db_path)
     assert conn.execute("SELECT status FROM employee_step_runs").fetchone()[0] == "interrupted"
     assert tickets_data.read_ticket(conn, ticket_id).ticket_status is TicketStatus.empty
+
+
+@pytest.mark.parametrize(
+    ("result", "expected_step_status", "expected_ticket_status", "expected_backend_error"),
+    [
+        (EmployeeStepRunResult("interrupted", "session-1", None), "interrupted", "empty", None),
+        (
+            EmployeeStepRunResult(
+                "errored",
+                "session-1",
+                "Prompt cancellation timed out",
+                failure_provenance="conversation",
+            ),
+            "errored",
+            "empty",
+            None,
+        ),
+        (
+            EmployeeStepRunResult(
+                "errored",
+                "session-1",
+                "Provider process exited",
+                failure_provenance="backend",
+            ),
+            "errored",
+            "errored",
+            "Provider process exited",
+        ),
+    ],
+)
+def test_only_confirmed_backend_failure_marks_ticket_errored(
+    tmp_path: Path,
+    result: EmployeeStepRunResult,
+    expected_step_status: str,
+    expected_ticket_status: str,
+    expected_backend_error: str | None,
+) -> None:
+    db_path, ticket_id = _eligible_ticket(tmp_path)
+    runner = _runner(db_path, _Gateway(result))
+    runner.try_run_automatic_step(ticket_id)
+    assert runner.wait_idle(timeout=2)
+
+    conn = connect(db_path)
+    step = conn.execute(
+        "SELECT status, error FROM employee_step_runs WHERE ticket_id = ?", (ticket_id,)
+    ).fetchone()
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    conn.close()
+    assert step["status"] == expected_step_status
+    assert ticket.ticket_status.value == expected_ticket_status
+    assert ticket.backend_error == expected_backend_error
+
+
+def test_unclassified_gateway_exception_keeps_ticket_non_error(tmp_path: Path) -> None:
+    class CrashingGateway(_Gateway):
+        def run_ticket_step(self, *args, **kwargs) -> EmployeeStepRunResult:
+            del args, kwargs
+            raise RuntimeError("conversation projection failed")
+
+    db_path, ticket_id = _eligible_ticket(tmp_path)
+    runner = _runner(db_path, CrashingGateway())
+    runner.try_run_automatic_step(ticket_id)
+    assert runner.wait_idle(timeout=2)
+
+    conn = connect(db_path)
+    step = conn.execute(
+        "SELECT status, error FROM employee_step_runs WHERE ticket_id = ?", (ticket_id,)
+    ).fetchone()
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    conn.close()
+    assert tuple(step) == (
+        "errored",
+        "employee step crashed: conversation projection failed",
+    )
+    assert ticket.ticket_status is TicketStatus.empty
+    assert ticket.backend_error is None
+
+
+def test_uncertain_complete_settlement_keeps_ticket_non_error(tmp_path: Path) -> None:
+    db_path, ticket_id = _eligible_ticket(tmp_path)
+
+    class ConcurrentSettlementGateway(_Gateway):
+        def run_ticket_step(self, *args, **kwargs) -> EmployeeStepRunResult:
+            result = super().run_ticket_step(*args, **kwargs)
+            conn = connect(db_path)
+            conn.execute(
+                "UPDATE employee_step_runs SET status = 'interrupted', error = 'concurrent stop' "
+                "WHERE ticket_id = ? AND status = 'running'",
+                (ticket_id,),
+            )
+            conn.close()
+            return result
+
+    runner = _runner(db_path, ConcurrentSettlementGateway())
+    runner.try_run_automatic_step(ticket_id)
+    assert runner.wait_idle(timeout=2)
+
+    conn = connect(db_path)
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    conn.close()
+    assert ticket.ticket_status is TicketStatus.empty
+    assert ticket.backend_error is None
+
+
+def test_restart_missing_session_records_failure_and_releases_to_user_control(
+    tmp_path: Path,
+) -> None:
+    db_path, ticket_id = _eligible_ticket(tmp_path)
+    conn = connect(db_path)
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    tickets_data.set_stage_ownership(
+        conn,
+        ticket_id,
+        stage=ticket.stage,
+        ownership_mode=StageOwnershipMode.user,
+        now=4,
+    )
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "employee_session_id = NULL WHERE id = ?",
+        (ticket_id,),
+    )
+    running = SqliteEmployeeStepRepository().start(conn, ticket_id, now=10)
+    conn.close()
+    gateway = _Gateway()
+
+    runner = _runner(db_path, gateway)
+    runner.recover_running_step(ticket_id)
+    assert runner.wait_idle(timeout=2)
+
+    conn = connect(db_path)
+    recorded = SqliteEmployeeStepRepository().require(conn, running.employee_step_id)
+    released = tickets_data.read_ticket(conn, ticket_id)
+    conn.close()
+    assert recorded.status == "errored"
+    assert recorded.error == "restart recovery has no existing Employee session"
+    assert released.ticket_status is TicketStatus.user_takeover
+    assert released.backend_error is None
+    assert gateway.calls == []
+
+
+def test_revision_missing_session_releases_to_paired_control_without_replay(
+    tmp_path: Path,
+) -> None:
+    db_path, ticket_id = _eligible_ticket(tmp_path)
+    conn = connect(db_path)
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    tickets_data.set_stage_ownership(
+        conn,
+        ticket_id,
+        stage=ticket.stage,
+        ownership_mode=StageOwnershipMode.paired,
+        now=4,
+    )
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "employee_session_id = NULL WHERE id = ?",
+        (ticket_id,),
+    )
+    conn.close()
+    gateway = _Gateway()
+
+    runner = _runner(db_path, gateway)
+    handoff = runner.reserve_revision(ticket_id, "Please revise it")
+    handoff.release()
+    assert runner.wait_idle(timeout=2)
+
+    conn = connect(db_path)
+    released = tickets_data.read_ticket(conn, ticket_id)
+    run_count = conn.execute(
+        "SELECT COUNT(*) FROM employee_step_runs WHERE ticket_id = ?", (ticket_id,)
+    ).fetchone()[0]
+    conn.close()
+    assert run_count == 0
+    assert released.ticket_status is TicketStatus.paired_work
+    assert released.backend_error is None
+    assert gateway.calls == []
+
+
+def test_restart_session_mismatch_releases_to_paired_control_without_replay(
+    tmp_path: Path,
+) -> None:
+    db_path, ticket_id = _eligible_ticket(tmp_path)
+    conn = connect(db_path)
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    tickets_data.set_stage_ownership(
+        conn,
+        ticket_id,
+        stage=ticket.stage,
+        ownership_mode=StageOwnershipMode.paired,
+        now=4,
+    )
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "employee_session_id = 'session-current' WHERE id = ?",
+        (ticket_id,),
+    )
+    stale = SqliteEmployeeStepRepository().start(
+        conn, ticket_id, now=10, employee_session_id="session-stale"
+    )
+    conn.close()
+    gateway = _Gateway()
+
+    runner = _runner(db_path, gateway)
+    runner.recover_running_step(ticket_id)
+    assert runner.wait_idle(timeout=2)
+
+    conn = connect(db_path)
+    preserved = SqliteEmployeeStepRepository().require(conn, stale.employee_step_id)
+    released = tickets_data.read_ticket(conn, ticket_id)
+    conn.close()
+    assert preserved.status == "running"
+    assert preserved.employee_session_id == "session-stale"
+    assert released.ticket_status is TicketStatus.paired_work
+    assert released.backend_error is None
+    assert gateway.calls == []
+
+
+def test_active_employee_step_collision_releases_to_user_control_without_replay(
+    tmp_path: Path,
+) -> None:
+    db_path, ticket_id = _eligible_ticket(tmp_path)
+    conn = connect(db_path)
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    tickets_data.set_stage_ownership(
+        conn,
+        ticket_id,
+        stage=ticket.stage,
+        ownership_mode=StageOwnershipMode.user,
+        now=4,
+    )
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "employee_session_id = 'session-1' WHERE id = ?",
+        (ticket_id,),
+    )
+    active = SqliteEmployeeStepRepository().start(
+        conn, ticket_id, now=10, employee_session_id="session-1"
+    )
+    conn.close()
+    gateway = _Gateway()
+
+    runner = _runner(db_path, gateway)
+    handoff = runner.reserve_revision(ticket_id, "Please revise it")
+    handoff.release()
+    assert runner.wait_idle(timeout=2)
+
+    conn = connect(db_path)
+    preserved = SqliteEmployeeStepRepository().require(conn, active.employee_step_id)
+    released = tickets_data.read_ticket(conn, ticket_id)
+    conn.close()
+    assert preserved.status == "running"
+    assert released.ticket_status is TicketStatus.user_takeover
+    assert released.backend_error is None
+    assert gateway.calls == []
 
 
 def test_restart_replaces_exact_running_record_and_reuses_session(tmp_path: Path) -> None:

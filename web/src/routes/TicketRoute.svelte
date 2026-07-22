@@ -359,6 +359,11 @@
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
+          {#if detail.backend_error}
+            <div class="ticket-backend-error" data-backend-error role="alert">
+              {detail.backend_error}
+            </div>
+          {/if}
           {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
             <div class="ticket-leash">
               approved until

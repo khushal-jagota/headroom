@@ -13,11 +13,13 @@ def _add_today(api, server, ticket_id: str) -> None:
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
 
-def _set_ticket_status(server, ticket_id: str, status: str) -> None:
+def _set_ticket_status(
+    server, ticket_id: str, status: str, *, backend_error: str | None = None
+) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (status, ticket_id),
+            "UPDATE tickets SET ticket_status = ?, backend_error = ? WHERE id = ?",
+            (status, backend_error, ticket_id),
         )
 
 
@@ -88,7 +90,9 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
         _add_today(api, server, ticket_id)
         _set_ticket_stage(server, ticket_id, "needs_success")
     _set_ticket_status(server, running, "agent_running_step")
-    _set_ticket_status(server, errored, "errored")
+    _set_ticket_status(
+        server, errored, "errored", backend_error="Provider process exited unexpectedly"
+    )
     _set_ticket_stage(server, completed, "done")
     _set_ticket_status(server, completed, "empty")
 
@@ -154,6 +158,57 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
     assert completed_mark.count() == 1
     assert completed_mark.get_attribute("data-workspace-dot-state") == "settled"
     assert completed_mark.get_attribute("aria-label") == "Worker complete"
+
+
+def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
+    server, context_factory, open_page, cli, api
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Backend failure ticket",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    _add_today(api, server, ticket_id)
+    _set_ticket_stage(server, ticket_id, "needs_success")
+    _set_ticket_status(
+        server,
+        ticket_id,
+        "errored",
+        backend_error="Provider process exited with status 17",
+    )
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/workspace/{ticket_id}",
+        f'[data-card][data-ticket-id="{ticket_id}"]',
+        settled=True,
+    )
+    card = f'[data-card][data-ticket-id="{ticket_id}"]'
+    mark = f"{card} .board-workspace-stage-mark"
+    reason = "[data-backend-error]"
+    page.wait_for_selector(reason, timeout=WAIT_MS)
+    assert page.text_content(reason).strip() == "Provider process exited with status 17"
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "exceptional"
+    assert page.get_attribute(mark, "data-stage-state") == "errored"
+
+    _set_ticket_status(server, ticket_id, "empty")
+    page.reload()
+    page.wait_for_selector(mark, timeout=WAIT_MS)
+    assert page.locator(reason).count() == 0
+    assert page.get_attribute(mark, "data-stage-state") == "current-waiting"
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "quiet"
+    assert page.get_attribute(mark, "data-marker") is None
+    with sqlite3.connect(server.db_path) as conn:
+        assert conn.execute(
+            "SELECT ticket_status, backend_error FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone() == ("empty", None)
 
 
 def test_workspace_dot_follows_projection_activity_and_reload(

@@ -96,6 +96,7 @@ export type TicketDetail = {
   effective_sprint_id?: string | null;
   sprint_item_id?: string | null;
   ticket_status?: string;
+  backend_error: string | null;
   stage_ownership_overrides: Record<string, StageOwnershipMode>;
   default_stage_ownership_mode: StageOwnershipMode | null;
   effective_stage_ownership_mode: StageOwnershipMode | null;

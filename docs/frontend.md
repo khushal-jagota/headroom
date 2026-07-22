@@ -19,14 +19,16 @@ One screen per part of the system:
   refuses to work until "how far may the worker go next" has been answered, both
   halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
-  rail groups tickets by project, then orders rows by Worker type, that type's Stage,
-  and recent activity. It shows one current-stage dot per ticket. The board card owns
+   rail groups tickets by project, then orders rows by Worker type, that type's Stage,
+   and recent activity. It shows one current-stage dot per ticket. The board card owns
   one derived Workspace result with the fixed precedence **exceptional**, **permission
   attention**, **active**, **other attention**, **settled**, then **quiet**. Active work
   spins; attention is a filled dot; a completed Ticket is green; quiet is a ring;
-  exceptional keeps the error treatment. The result combines Ticket
-  facts with a small durable Ticket-linked ACP projection, so a browser reload or an
-  unopened conversation does not invent or retain stale activity. Initial and repeated
+  exceptional keeps the error treatment. Exceptional is derived only from the Ticket's
+  canonical confirmed backend Worker error; failed or interrupted ACP activity does not
+  create it. The result combines Ticket facts with a small durable Ticket-linked ACP
+  projection, so a browser reload or an unopened conversation does not invent or retain
+  stale activity. Initial and repeated
   idle are quiet until an admitted turn has real activity; a completed response stays
   attention through reconnect/load until a new turn, explicit reset, or the user opens
   that Ticket. Opening acknowledges only the completed-response fact; proposal,
@@ -45,6 +47,7 @@ One screen per part of the system:
   a missing ticket safely leaves the Chief of Staff view open.
 - **Ticket** — the whole story of one piece of work: a serif title, a single facts
   line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
+  exact backend Worker failure reason directly below that line when one exists, the
   leash written as one sentence, the recap, then the spine of stages — which stages that
   spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
   `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the

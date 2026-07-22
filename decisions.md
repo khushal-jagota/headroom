@@ -78,6 +78,24 @@ the current sequence, and remain within the byte bound. Invalid snapshots fail a
 
 # Workspace
 
+## D-ticket-error-requires-explicit-backend-provenance — Correctness failures are not Ticket failures
+
+`employee_step_runs` remains the broad execution-correctness record, so it may settle
+`errored` for conversation, publication, replay, projection, or other gateway failures.
+The Ticket becomes `errored` only when the tracked ACP result explicitly identifies a
+backend Worker failure; the exact current reason lives on the Ticket as `backend_error`.
+Every non-error status write clears that reason atomically, and Workspace derives its
+exceptional state only from that field. This preserves existing interruption and
+infrastructure behavior without inventing recovery controls or changing timeout policy.
+
+Schema v31 clears every legacy errored Ticket back to its effective current-Stage resting
+control status, using the current-Stage ownership override when present and otherwise the
+ownership default captured by v30. The v30 run rows had no provenance, so even a
+concrete-looking stored message cannot prove that the backend Worker caused it; guessing
+from text or old status would violate the confirmation boundary. This bounded self-review
+correction collapses ticket decomposition and plan review into one strict TDD slice because
+it changes one migration mapping at the already-established database migration seam.
+
 ## D-ticket-projection-cutover-lock-and-permission-compensation — Serialize replacement publication with Ticket facts
 
 Compaction and requested-cancel recovery acquire the existing per-Ticket projection lock only around their final
@@ -3137,6 +3155,18 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Close out directly on `main` because this approved implementation was developed there rather than
   on a feature branch. Stage and commit only the Ticket-owned paths; concurrent Hermes configuration,
   skill/worktree, Vite-cache, and nested-worktree changes stay outside the commit.
+
+## D-backend-error-follows-main-schema-v31
+
+- Preserve current main's v31 as the durable Chief launch-snapshot migration. Renumber the
+  ticket's additive `backend_error` migration to v32 so an existing main database runs the
+  provenance cleanup instead of being mistaken for an already-upgraded Ticket schema.
+- Keep the migrations separate and ordered. A pre-v31 database first gains the Chief binding
+  columns and records v31, then gains `backend_error`, clears unproven legacy errors, and records
+  v32. Fresh DDL contains both final shapes, while each version validator still owns one contract.
+- Resolve Workspace tests and documentation additively: canonical backend error remains the only
+  exceptional fact, ahead of main's permission/active/attention/settled precedence; main's blocked
+  and completed behavior remains covered.
 
 ## D-browser-replay-is-one-presentation-transaction
 

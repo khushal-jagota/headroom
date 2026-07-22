@@ -401,12 +401,7 @@ class EmployeeStepRunner:
                             error=error,
                             now=now,
                         )
-                    tickets_data.mark_run_errored_if_still_running_step(
-                        conn,
-                        ticket_id,
-                        error=error,
-                        now=now,
-                    )
+                    tickets_data.finish_run_if_still_running_step(conn, ticket_id, now=now)
                     return True
                 prompt = _RESTART_RECOVERY_MESSAGE
                 require_existing_session = True
@@ -442,12 +437,7 @@ class EmployeeStepRunner:
                 if claimed.ticket_status is not TicketStatus.agent_running_step:
                     return False
                 if claimed.employee_session_id is None:
-                    tickets_data.mark_run_errored_if_still_running_step(
-                        conn,
-                        ticket_id,
-                        error="claimed employee revision has no existing session",
-                        now=now,
-                    )
+                    tickets_data.finish_run_if_still_running_step(conn, ticket_id, now=now)
                     return True
                 prompt = f"{_REVISION_GUIDANCE_PREFIX}\n\n{revision_guidance}"
                 require_existing_session = True
@@ -468,15 +458,7 @@ class EmployeeStepRunner:
                     conn.execute("ROLLBACK")
                     raise
                 if employee_step is None:
-                    tickets_data.mark_run_errored_if_still_running_step(
-                        conn,
-                        ticket_id,
-                        error=(
-                            "restart recovery stale Employee-step session id "
-                            "does not match the stored Employee session"
-                        ),
-                        now=now,
-                    )
+                    tickets_data.finish_run_if_still_running_step(conn, ticket_id, now=now)
                     return True
             else:
                 try:
@@ -493,10 +475,9 @@ class EmployeeStepRunner:
                         conn.execute("ROLLBACK")
                         raise
                 except sqlite3.IntegrityError:
-                    tickets_data.mark_run_errored_if_still_running_step(
+                    tickets_data.finish_run_if_still_running_step(
                         conn,
                         ticket_id,
-                        error="employee step collided with an active Employee step",
                         now=self._clock.now_unix(),
                     )
                     return True
@@ -643,7 +624,7 @@ class EmployeeStepRunner:
                     error=error,
                     now=self._clock.now_unix(),
                 )
-                mark_errored(error, current_employee_session_id)
+                finish_running_step(current_employee_session_id)
                 return True
 
             result_employee_session_id = (
@@ -661,10 +642,7 @@ class EmployeeStepRunner:
                     now=self._clock.now_unix(),
                 )
                 if settled_employee_step is None:
-                    mark_errored(
-                        "run interrupted",
-                        result_employee_session_id,
-                    )
+                    finish_running_step(result_employee_session_id)
                     return True
                 finish_running_step(result_employee_session_id)
             elif result.status == "interrupted":
@@ -676,7 +654,7 @@ class EmployeeStepRunner:
                     error=None,
                     now=self._clock.now_unix(),
                 )
-                mark_errored("run interrupted", result_employee_session_id)
+                finish_running_step(result_employee_session_id)
             else:
                 error = result.error or "gateway run failed"
                 repository.settle(
@@ -687,7 +665,10 @@ class EmployeeStepRunner:
                     error=error,
                     now=self._clock.now_unix(),
                 )
-                mark_errored(error, result_employee_session_id)
+                if result.failure_provenance == "backend":
+                    mark_errored(error, result_employee_session_id)
+                else:
+                    finish_running_step(result_employee_session_id)
             return True
         finally:
             conn.close()

@@ -116,6 +116,35 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-22): backend-only Ticket errors (`t_2y1s72x4`)
+
+Implementation is complete on the dedicated ticket branch. After merging current main,
+Ticket schema v32 (following main's Chief-launch v31) owns the exact `backend_error`;
+tracked ACP results distinguish confirmed backend Worker failures from conversation failures;
+and the runner writes Ticket `errored` only for the former. Every non-error status writer
+clears the reason atomically. Legacy v31 errors are
+cleared back to their effective current-Stage resting control status because their
+correctness rows did not preserve provenance. The migration uses a current-Stage ownership
+override before v30's captured default, so user- and paired-owned work does not become
+worker-dispatchable. Workspace exceptional treatment reads only this canonical fact, while
+the Ticket page shows the exact reason.
+
+Strict-TDD corrections cover migration ownership, restart/revision/session/collision
+recovery, and preservation of concrete prompt and child-process backend reasons. The final
+independent review reported both blocking findings resolved. The canonical `./verify` then
+found one stale E2E assertion that still expected an intentional interrupt to error its
+Ticket; that assertion now proves the Ticket returns to `empty`, keeps its session id, clears
+`backend_error`, and retains the interrupted correctness row.
+
+Current main 770c3f9 was merged into the ticket branch at f8e7ec0. The conflict resolution
+preserves main’s Chief-launch v31 migration and adds backend errors as v32, while retaining both
+Workspace contracts. Independent merge review reported NO VIOLATIONS. The prospective merged
+tree’s canonical `./verify` passed Ruff, strict mypy, the unit suite, build and frontend checks,
+and all 118 E2E tests, ending with VERIFY: PASS. No recovery control or timeout policy changed.
+Main fast-forwarded from 770c3f9 to 8594f2b. The four pre-existing dirty nested-worktree paths and
+their exact subproject diffs were preserved byte-for-byte. No restart or deploy was performed.
+Next: propose Closeout.
+
 ## Current work cycle (2026-07-22): Atomic ACP session-load replay (t_k431pv7q)
 
 Implementation is complete on the branch. A first or cold attach privately captures the complete

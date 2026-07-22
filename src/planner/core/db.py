@@ -16,7 +16,7 @@ from planner.core.legacy_execution_route import (
 from planner.projects import data as projects_data
 from planner.worker_types.configuration import configured_worker_type_registry
 
-SCHEMA_VERSION: Final = 31
+SCHEMA_VERSION: Final = 32
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS tickets (
                        CHECK (ticket_status IN ('empty','agent_running_step',
                                                 'awaiting_approval','user_takeover',
                                                 'paired_work','errored')),
+  backend_error        TEXT,                         -- confirmed concrete backend Worker failure
   stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
   default_stage_ownership_mode TEXT CHECK (default_stage_ownership_mode IN ('worker','user','paired')),
   employee_session_id  TEXT,                         -- the Employee's durable Hermes session id
@@ -270,6 +271,14 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _migrate_to_v31(conn)
     elif not _chief_launch_snapshot_schema_is_v31(conn):
         raise RuntimeError("v31 schema is missing Chief launch snapshot columns")
+    if incoming_version < 32:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v32(conn)
+    elif not _tickets_table_is_v32(conn):
+        raise RuntimeError(
+            "v32 Ticket schema is missing the nullable backend_error column without a default"
+        )
     _create_indexes(conn)
 
 
@@ -745,6 +754,57 @@ def _migrate_to_v30(conn: sqlite3.Connection) -> None:
                 f"foreign key check failed after Ticket v30 migration: {violations!r}"
             )
         conn.execute("PRAGMA user_version=30")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _tickets_table_is_v32(conn: sqlite3.Connection) -> bool:
+    columns = {str(row[1]): row for row in conn.execute("PRAGMA table_info(tickets)")}
+    backend_error = columns.get("backend_error")
+    return (
+        backend_error is not None
+        and int(backend_error[3]) == 0
+        and backend_error[4] is None
+    )
+
+
+def _migrate_to_v32(conn: sqlite3.Connection) -> None:
+    """Make confirmed backend Worker failure a first-class Ticket fact."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Ticket v32 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if "backend_error" not in _table_columns(conn, "tickets"):
+            conn.execute("ALTER TABLE tickets ADD COLUMN backend_error TEXT")
+        # v30 correctness rows did not record failure provenance. Their ``errored``
+        # state therefore cannot distinguish a backend Worker failure from a browser,
+        # replay, projection, permission, cancellation, or other conversation failure.
+        # Unknown provenance is not confirmation, so no legacy row may establish the
+        # new canonical backend-error fact.
+        conn.execute(
+            "UPDATE tickets SET ticket_status = CASE COALESCE("
+            "json_extract(stage_ownership_overrides, '$.' || stage), "
+            "default_stage_ownership_mode) "
+            "WHEN 'user' THEN 'user_takeover' "
+            "WHEN 'paired' THEN 'paired_work' "
+            "ELSE 'empty' END, backend_error = NULL "
+            "WHERE ticket_status = 'errored'"
+        )
+        conn.execute(
+            "UPDATE tickets SET backend_error = NULL WHERE ticket_status != 'errored'"
+        )
+        if not _tickets_table_is_v32(conn):
+            raise RuntimeError("Ticket v32 migration could not establish backend_error")
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Ticket v32 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=32")
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
