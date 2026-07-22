@@ -21,6 +21,11 @@ repository root:
 panels environment run --repository-root /opt/panels/<environment>
 ```
 
+Live uses the fixed port in its prepared contract. Start the staging unit only while
+active work needs it and stop it afterward; each start chooses an available loopback
+port and reports the actual URL in the service log. Staging's prepared state remains
+between starts.
+
 The static units use distinct repository root conventions: live uses
 `/opt/panels/live` and staging uses `/opt/panels/staging`. A unit's `WorkingDirectory`, `ExecStart`
 `--repository-root`, and `ReadWritePaths` repository entry must name the same path.
