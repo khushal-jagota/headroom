@@ -3062,3 +3062,12 @@ The current-main post-fork SDK regression continues to require exact-session rou
 replay ordering, and a fully drained healthy ingress. It does not require a candidate notification to
 arrive before the subsequent load request: the private response epoch is installed first, and ACP does
 not guarantee notification/request wire ordering across the prior fork response.
+# 2026-07-22 — t_m024gke4 implementation routing
+
+- Delegate the approved implementation as one focused slice because the projection writer, HTTP
+  boundary, shared Svelte route, classifier, and cross-layer regressions form one coupled contract.
+  One agent owns all edits serially; an independent agent reviews the settled diff afterward.
+- Do not create a visual planning artifact: this ticket reuses the existing spinner, filled dot,
+  quiet ring, error mark, and green completed mark without changing layout or inventing a new visual.
+- Preserve the unrelated dirty `composition.py` and nested-worktree state exactly; this ticket has no
+  reason to touch those paths.

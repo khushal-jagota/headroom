@@ -34,6 +34,20 @@ compile/CSS checks, zero Svelte diagnostics, the production build and frontend t
 Playwright tests; final `VERIFY: PASS`. Next is verified branch commit and Implementation proposal;
 no merge, restart, or deploy.
 
+## Current work cycle (2026-07-22): Clear Worker-message attention on Ticket open (`t_m024gke4`)
+
+The approved implementation plan adds one idempotent Ticket-open acknowledgement that clears only
+the durable completed-response attention fact, routes it through the shared Ticket surface and the
+existing ticket-scoped invalidation path, and keeps the server-side Workspace-dot classifier as the
+single decision point. The classifier will restore the existing green completed mark for terminal
+Tickets after exceptional, active, and attention states take precedence. Focused projection/API,
+classifier/view, frontend, and Playwright regressions will cover both Ticket entry paths, preserved
+attention, repeat acknowledgement, and terminal green before the one canonical `./verify` run.
+
+Current stage: implementation delegated against the approved plan; independent diff review follows.
+Pre-existing `src/planner/conversation/composition.py`, nested `.claude` worktree, and `.worktrees/`
+changes are unrelated and must remain untouched. No blocker.
+
 ## Current work cycle (2026-07-22): Quiet unmatched ACP tool updates (`t_7dr3czcm`)
 
 The browser reducer now ignores a structurally valid `tool_call_update` when its `toolCallId` is
