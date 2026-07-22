@@ -31,9 +31,12 @@ dirty nested worktrees and unrelated backend edits remain untouched.
 The final canonical `./verify` passed Ruff, strict Mypy across 154 source files, all 1,358 unit
 tests, compile/CSS checks, zero Svelte diagnostics, the production build and complete frontend
 suite, and all 117 Playwright tests; final `VERIFY: PASS`. Independent implementation re-review
-reports `NO VIOLATIONS`. Next: commit only this contract's source, tests, generated bundle, docs,
-and memory files; restart Panels; then repeat the long-history paint measurement against the live
-served build.
+reports `NO VIOLATIONS`. The contract landed on current `main` as `ca92361`, without staging the four
+dirty nested worktrees, and the supervised Panels child was replaced successfully. Live switching
+from Chief to the exact affected Ticket `t_xq6ragj3` showed the new pane empty at height 749, then one
+complete 68-message transcript paint at height 25,300 with bottom distance 0. There were no
+intermediate transcript growth commits and no visible travel through history. The equivalent Chief
+load also had one transcript-bearing growth commit. The fix is complete and live.
 
 ## Current work cycle (2026-07-22): Materialize live terminal replay
 

@@ -153,3 +153,14 @@ acp-browser-components.test.mjs: all assertions passed
 [verify] gate e2e suite: ok
 VERIFY: PASS
 ```
+
+## Live restart proof
+
+The implementation landed on current `main` as `ca92361`. `panels restart` was accepted and replaced
+the supervised application child, which served the committed bundle on `127.0.0.1:8767`.
+
+The original per-animation-frame measurement was repeated while switching from Chief to the exact
+affected Ticket `t_xq6ragj3`. The new Ticket pane first appeared empty at height 749, then painted its
+complete 68-message transcript once at height 25,300 with bottom distance 0. No intermediate
+transcript heights were observed. Chief's own long replay likewise produced one transcript-bearing
+growth commit. This is the live inverse of the RED result's 28 pre-ready growth commits.
