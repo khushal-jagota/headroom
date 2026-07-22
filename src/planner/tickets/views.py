@@ -309,6 +309,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
                         row["has_completed_response_awaiting_user"] or 0
                     ),
                     has_pending_permission=bool(row["has_pending_permission"] or 0),
+                    is_completed=stage == worker_type_definition.completed_stage(),
                 )
             ).value,
             "blocked": str(row["id"]) in blocked_target_ids,

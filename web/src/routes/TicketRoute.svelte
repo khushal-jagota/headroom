@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { fetchText } from "../lib/api";
   import {
     mutateJsonWithResourceEffect,
@@ -67,6 +67,16 @@
     { value: "", label: "(no project)" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
+
+  onMount(() => {
+    void mutateJsonWithResourceEffect(
+      `/api/tickets/${stableId}/acknowledge-completed-response`,
+      { method: "POST" },
+      { kind: "ticketChanged", ticketId: stableId }
+    ).catch((err) => {
+      headerError = err;
+    });
+  });
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
     const effect = "title" in body

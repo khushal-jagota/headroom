@@ -3071,6 +3071,21 @@ not guarantee notification/request wire ordering across the prior fork response.
   quiet ring, error mark, and green completed mark without changing layout or inventing a new visual.
 - Preserve the unrelated dirty `composition.py` and nested-worktree state exactly; this ticket has no
   reason to touch those paths.
+
+## Review resolution
+
+- Keep permission attention ahead of active in the existing classifier. The Kickoff explicitly says
+  a pending permission remains filled, and the implementation now documents the exact order and
+  asserts exact terminal-precedence results.
+- Treat a response completing while its Ticket is open as seen. This is the approved no-visibility
+  acknowledgement boundary; adding a response generation or compare-and-swap field would introduce
+  unrequested durable machinery. The independent re-review accepted this and reported no violations.
+- Repair the first canonical-run failure in the Playwright setup only: open the intentionally
+  collapsed Done section before asserting its completed Ticket's green mark. Product behavior stays
+  unchanged.
+- Close out directly on `main` because this approved implementation was developed there rather than
+  on a feature branch. Stage and commit only the Ticket-owned paths; concurrent Hermes configuration,
+  skill/worktree, Vite-cache, and nested-worktree changes stay outside the commit.
 # 2026-07-22 — Panels owns bounded Codex file-edit ingress
 
 - Do not patch or fork `@agentclientprotocol/codex-acp`. Panels pins but does not own that adapter,

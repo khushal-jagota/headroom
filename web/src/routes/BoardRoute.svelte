@@ -36,7 +36,7 @@
     window.location.hash = "#/workspace";
   }
 
-  type WorkspaceDotState = "exceptional" | "active" | "needs_attention" | "quiet";
+  type WorkspaceDotState = "exceptional" | "active" | "needs_attention" | "settled" | "quiet";
 
   type WorkspaceDotPresentation = {
     state: FieldStageVisualState;
@@ -59,6 +59,11 @@
       state: "current-awaiting-approval",
       marker: null,
       ariaLabel: "Worker needs attention"
+    },
+    settled: {
+      state: "completed",
+      marker: null,
+      ariaLabel: "Worker complete"
     },
     quiet: {
       state: "current-waiting",

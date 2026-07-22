@@ -21,13 +21,18 @@ One screen per part of the system:
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
   rail groups tickets by project, then orders rows by Worker type, that type's Stage,
   and recent activity. It shows one current-stage dot per ticket. The board card owns
-  one derived Workspace result with the fixed precedence **exceptional**, **active**,
-  **needs attention**, then **quiet**. Active work spins; attention is a filled dot;
-  quiet is a ring; exceptional keeps the error treatment. The result combines Ticket
+  one derived Workspace result with the fixed precedence **exceptional**, **permission
+  attention**, **active**, **other attention**, **settled**, then **quiet**. Active work
+  spins; attention is a filled dot; a completed Ticket is green; quiet is a ring;
+  exceptional keeps the error treatment. The result combines Ticket
   facts with a small durable Ticket-linked ACP projection, so a browser reload or an
   unopened conversation does not invent or retain stale activity. Initial and repeated
   idle are quiet until an admitted turn has real activity; a completed response stays
-  attention through reconnect/load until a new turn or explicit reset. It includes
+  attention through reconnect/load until a new turn, explicit reset, or the user opens
+  that Ticket. Opening acknowledges only the completed-response fact; proposal,
+  permission, ownership, and error attention remain authoritative. A response that
+  completes while its Ticket is open is already seen; there is no response-generation
+  or message-visibility tracking. The result includes
   every Ticket status. Done tickets sit under their own **Done** stage section, which
   is collapsed by default and can be opened to browse like any other section; when a
   group has no done tickets, no Done section appears. **Chief of Staff** sits first in

@@ -72,6 +72,7 @@ from planner.tickets.contracts import (
     TicketEdit,
     ValueEditBody,
 )
+from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_types.configuration import (
     configured_employee_runtime_definitions,
     configured_worker_type_registry,
@@ -637,6 +638,25 @@ async def get_worker_self_ticket(
 @router.get("/tickets/{ticket_id}")
 async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
+
+
+@router.post("/tickets/{ticket_id}/acknowledge-completed-response")
+async def acknowledge_ticket_completed_response(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+) -> JsonDict:
+    """Record that a direct user has opened the Ticket's completed response."""
+    require_direct_write(ctx)
+    tickets_data.read_ticket(conn, ticket_id)
+    changed = TicketConversationProjection(
+        cfg.db_path,
+        now=clk.now_unix,
+        busy_timeout_ms=cfg.db_busy_timeout_ms,
+    ).acknowledge_completed_response(ticket_id)
+    return {"acknowledged": changed}
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")

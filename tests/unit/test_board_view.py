@@ -253,3 +253,16 @@ def test_board_cards_expose_active_incoming_blocking_without_changing_real_stage
     assert cards[kickoff_dependent]["blocked"] is True
     assert cards[later_dependent]["stage"] == "needs_success"
     assert cards[later_dependent]["blocked"] is True
+
+
+def test_completed_board_card_uses_settled_workspace_dot(tmp_db: Connection) -> None:
+    ticket_id = _ticket(tmp_db, "Completed projection", 1)
+    add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 10)
+    tmp_db.execute(
+        "UPDATE tickets SET stage = 'done', ticket_status = 'empty' WHERE id = ?",
+        (ticket_id,),
+    )
+
+    board = board_view(tmp_db, 20, day_id="day_2026-07-04")
+    card = next(card for column in board["columns"] for card in column["cards"])
+    assert card["workspace_dot_state"] == "settled"

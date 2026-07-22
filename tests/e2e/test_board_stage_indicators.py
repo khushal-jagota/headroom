@@ -73,11 +73,24 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
         "--project-id",
         "project_vylo",
     )["id"]
-    for ticket_id in (waiting, running, errored):
+    completed = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Completed ticket",
+        "--project-id",
+        "project_vylo",
+    )["id"]
+    for ticket_id in (waiting, running, errored, completed):
         _add_today(api, server, ticket_id)
         _set_ticket_stage(server, ticket_id, "needs_success")
     _set_ticket_status(server, running, "agent_running_step")
     _set_ticket_status(server, errored, "errored")
+    _set_ticket_stage(server, completed, "done")
+    _set_ticket_status(server, completed, "empty")
 
     page = open_page(
         context_factory(),
@@ -90,17 +103,25 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
     waiting_card = f'[data-card][data-ticket-id="{waiting}"]'
     running_card = f'[data-card][data-ticket-id="{running}"]'
     errored_card = f'[data-card][data-ticket-id="{errored}"]'
+    completed_card = f'[data-card][data-ticket-id="{completed}"]'
+    completed_stage = (
+        '[data-project-key="project_vylo"] [data-worker-type="coding"] '
+        '[data-stage-key="done"]'
+    )
+    assert not page.is_visible(completed_card)
+    page.click(f"{completed_stage} > summary")
     for selector, title in (
         (waiting_card, "Waiting ticket"),
         (running_card, "Running ticket"),
         (errored_card, "Errored ticket"),
+        (completed_card, "Completed ticket"),
     ):
         page.wait_for_selector(selector, timeout=WAIT_MS)
         assert page.text_content(f"{selector} .list-row-title").strip() == title
         assert page.locator(f"{selector} .board-workspace-row-byline").count() == 0
         assert page.locator(f"{selector} .board-workspace-row-metadata").count() == 0
 
-    for card in (waiting_card, running_card, errored_card):
+    for card in (waiting_card, running_card, errored_card, completed_card):
         assert page.locator(f"{card} > *").count() == 2
         assert page.locator(f"{card} .board-workspace-stage-mark").count() == 1
 
@@ -126,6 +147,13 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
     assert errored_mark.count() == 1
     assert errored_mark.get_attribute("data-workspace-dot-state") == "exceptional"
     assert errored_mark.get_attribute("aria-label") == "Worker exception"
+
+    completed_mark = page.locator(
+        f'{completed_card} [data-stage-state="completed"]'
+    )
+    assert completed_mark.count() == 1
+    assert completed_mark.get_attribute("data-workspace-dot-state") == "settled"
+    assert completed_mark.get_attribute("aria-label") == "Worker complete"
 
 
 def test_workspace_dot_follows_projection_activity_and_reload(
@@ -188,7 +216,7 @@ def test_workspace_dot_follows_projection_activity_and_reload(
     assert page.get_attribute(mark, "data-workspace-dot-state") == "needs_attention"
     assert page.get_attribute(mark, "aria-label") == "Worker needs attention"
 
-    projection.reset(ticket_id)
+    page.click(f'[data-card][data-ticket-id="{ticket_id}"]')
     page.wait_for_function(
         "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
         "=== 'current-waiting'",
@@ -197,6 +225,34 @@ def test_workspace_dot_follows_projection_activity_and_reload(
     )
     assert page.get_attribute(mark, "data-workspace-dot-state") == "quiet"
     assert page.get_attribute(mark, "aria-label") == "Worker quiet"
+
+    page.click("[data-chief-of-staff-button]")
+    projection.record_activity(ticket_id, "thinking")
+    projection.record_activity(ticket_id, "idle")
+    projection.record_permission(ticket_id, True)
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.getAttribute('data-workspace-dot-state') "
+        "=== 'needs_attention'",
+        arg=mark,
+        timeout=WAIT_MS,
+    )
+
+    with page.expect_response(
+        lambda response: response.url.endswith(
+            f"/api/tickets/{ticket_id}/acknowledge-completed-response"
+        ),
+        timeout=WAIT_MS,
+    ) as acknowledgement_response:
+        page.goto(f"{server.base}/#/ticket/{ticket_id}")
+    assert acknowledgement_response.value.status == 200
+    page.wait_for_selector(f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS)
+    acknowledged = projection.read(ticket_id)
+    assert acknowledged.has_completed_response_awaiting_user is False
+    assert acknowledged.has_pending_permission is True
+
+    page.goto(f"{server.base}/#/workspace")
+    page.wait_for_selector(mark, timeout=WAIT_MS)
+    assert page.get_attribute(mark, "data-workspace-dot-state") == "needs_attention"
 
 
 def test_workspace_groups_populated_project_worker_and_stage_sections_in_contract_order(

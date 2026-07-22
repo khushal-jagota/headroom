@@ -89,7 +89,18 @@ Tickets after exceptional, active, and attention states take precedence. Focused
 classifier/view, frontend, and Playwright regressions will cover both Ticket entry paths, preserved
 attention, repeat acknowledgement, and terminal green before the one canonical `./verify` run.
 
-Current stage: implementation delegated against the approved plan; independent diff review follows.
+Implementation and independent review are complete with no unresolved violations. The first
+canonical `./verify` exposed only a faulty new Playwright setup: the completed card was correctly
+present under the existing collapsed Done section, but the test waited for visibility before opening
+Done. The test-only integration repair opens Done first; its focused browser regression passed.
+
+The final canonical `./verify` passed Ruff, strict Mypy across 153 source files, 1,314 unit tests,
+compile/CSS checks, zero Svelte diagnostics, the production frontend build and frontend tests, and
+all 116 Playwright tests; final `VERIFY: PASS`. A concurrent external change landed during the run;
+the green gate covers that combined current tree, and its unrelated Hermes configuration,
+skill/worktree, and Vite-cache changes remain untouched. Implementation is approved; Closeout will
+commit only this Ticket's backend, frontend, tests, generated bundle, docs, and memory changes on
+current `main` base `553b0a4`, leaving all unrelated worktree state unstaged.
 Pre-existing `src/planner/conversation/composition.py`, nested `.claude` worktree, and `.worktrees/`
 changes are unrelated and must remain untouched. No blocker.
 

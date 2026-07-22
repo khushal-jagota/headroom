@@ -54,6 +54,7 @@ class WorkspaceDotState(StrEnum):
     exceptional = "exceptional"
     active = "active"
     needs_attention = "needs_attention"
+    settled = "settled"
     quiet = "quiet"
 
 
@@ -66,6 +67,7 @@ class WorkspaceDotFacts:
     latest_activity_state: WorkspaceActivityState | None = None
     has_completed_response_awaiting_user: bool = False
     has_pending_permission: bool = False
+    is_completed: bool = False
 
 
 @dataclass(frozen=True)
