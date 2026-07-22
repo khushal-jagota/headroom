@@ -1,5 +1,14 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
+
+The Ticket `Adopt staging and separated live operation on the current host` had a missing
+Codex rollout bound to Panels session `019f88f7-0770-7af2-8543-8ff0e230a4f8`, producing a rapid
+retry storm. A recoverable SQLite backup was written under `/private/tmp/`. The binding and Ticket
+session mirror were removed, the active run was settled as errored, and the Ticket was marked
+`errored` with the operator-cleanup reason. Historical runs remain intact; a five-second check
+confirmed no new run or binding was created. Next: discuss the permanent retry/thread-lifecycle fix.
+
 ## Current work cycle (2026-07-22): ACP full-access reload invariant
 
 Codex now launches its ACP adapter in `agent-full-access`. Claude's user configuration uses
@@ -3439,4 +3448,4 @@ Dogfood round (2026-07-21, Claude worker on t_74sa1y1j): three fixes uncommitted
 Stage: complete, awaiting commit. `web/node_modules/` is now ignored and its 3,985 generated dependency files are removed from the Git index while the local install remains intact. Focused checks prove the path is ignored, Git tracks zero files below it, and `npm --prefix web run check` passes. Worktrees and their dependencies were explicitly left untouched. Blockers: none.
 
 ## t_pz271435 — New Worker Runtime Defaults (2026-07-22)
-Stage: Drafting ready for approval. The packaged New Worker definition and specialist now add paired Runtime Defaults between Thinking and Drafting. Existing Ticket fields and managed ownership settings upgrade narrowly without rewinding Tickets or replacing custom launch defaults. Independent implementation review found no unresolved issues; the 166-test focused seam suite, Ruff, and `git diff --check` pass. Closeout must publish the packaged specialist into managed settings, perform final verification/integration, and use the documented restart boundary before claiming activation.
+Stage: Closeout in progress. The packaged New Worker definition and specialist add paired Runtime Defaults between Thinking and Drafting. Existing Ticket fields and managed ownership settings upgrade narrowly without rewinding Tickets or replacing custom launch defaults. Independent implementation review found no unresolved issues. Prospective commit `c7c56b49` passed the canonical `./verify`: Ruff, strict Mypy across 155 source files, 1,386 unit tests, compile/CSS, Svelte and production frontend gates, and 119 E2E tests (`VERIFY: PASS`). Next: fast-forward main, publish the packaged specialist into managed settings, then use the documented restart boundary and confirm activation.
