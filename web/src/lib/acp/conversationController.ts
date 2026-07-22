@@ -133,16 +133,16 @@ export function createConversationController(options: ConversationControllerOpti
   ): ConversationActionResult => {
     const cursor = committedState.cursor;
     if (!cursor) return { ok: false, reason: 'Conversation is not ready', clientMessageId };
-    const prompt: PromptRequest = {
-      sessionId: cursor.acpSessionId,
+    const optimisticPrompt: PromptRequest = {
+      sessionId: cursor.acpSessionId ?? '',
       prompt: [...contentBlocks],
     };
-    transition({ kind: 'optimistic_prompt', clientMessageId, prompt });
+    transition({ kind: 'optimistic_prompt', clientMessageId, prompt: optimisticPrompt });
     const result = send({
       type: 'prompt',
       employeeId: options.employeeId,
       clientMessageId,
-      prompt,
+      prompt: [...contentBlocks],
       deliveryChoice: choice,
     });
     if (!result.ok) {
@@ -254,12 +254,15 @@ export function createConversationController(options: ConversationControllerOpti
     }
     if (envelope.bindingGeneration < cursor.bindingGeneration) return;
     if (envelope.bindingGeneration === cursor.bindingGeneration) {
-      if (!sameIdentity(cursor, envelope)) {
+      const isReset = envelope.type === 'connection' && envelope.payload.state === 'reset';
+      const activatesEmptyConversation = isReset
+        && cursor.acpSessionId === null
+        && envelope.acpSessionId !== null;
+      if (!sameIdentity(cursor, envelope) && !activatesEmptyConversation) {
         closeEpochForRecovery(epoch, INVALID_ERROR);
         return;
       }
       if (envelope.sequence <= cursor.sequence) return;
-      const isReset = envelope.type === 'connection' && envelope.payload.state === 'reset';
       if (isReset && envelope.payload.resetBindingGeneration !== envelope.bindingGeneration) {
         closeEpochForRecovery(epoch, INVALID_ERROR);
         return;

@@ -43,8 +43,10 @@ from .contracts import (
     ConversationPermissionRequest,
     ConversationSessionBinding,
     ConversationTerminalState,
+    EmployeeConversation,
     ProgrammaticPrompt,
     QueuedPrompt,
+    TurnDeliveryChoice,
     TurnDeliveryReceipt,
 )
 from .employee_registry import (
@@ -104,7 +106,7 @@ class _EnvelopeBase(TypedDict):
     employee_id: str
     entity_kind: ConversationEntityKind
     entity_id: str
-    acp_session_id: str
+    acp_session_id: str | None
     binding_generation: int
     sequence: int
 
@@ -340,6 +342,7 @@ class ConversationHub:
         self._ticket_projection_locks: dict[str, asyncio.Lock] = {}
         self._streams: dict[str, _StreamState] = {}
         self._subscriptions: dict[str, BrowserSubscription] = {}
+        self._empty_browsers: dict[str, dict[str, BrowserSubscription]] = {}
         self._source_capture: dict[
             tuple[str, int, int], deque[SessionNotification | ProtocolUpdateRejectedPayload]
         ] = {}
@@ -462,13 +465,36 @@ class ConversationHub:
         self, employee_id: str
     ) -> tuple[ConversationEmployee, ConversationSessionBinding, ConversationRuntimeHandle]:
         await self._wait_for_compaction_and_requested_cancel_recovery(employee_id)
+        conversation = await self.repository.ensure_conversation(employee_id)
         employee = await self.repository.resolve_employee(employee_id)
         binding = await self.repository.resolve(employee_id)
         registry = self._require_registry()
         if binding is None:
-            record = await registry.get_or_spawn(employee)
-            binding = record.binding
-            await self._establish_stream(record, sequence_floor=0)
+            try:
+                record = await registry.get_or_spawn(employee)
+                binding = record.binding
+                employee = record.employee
+                await self._establish_stream(
+                    record,
+                    sequence_floor=(
+                        2
+                        if binding.binding_generation
+                        == conversation.conversation_generation
+                        else 0
+                    ),
+                )
+                await self._adopt_empty_browsers(employee_id)
+            except Exception:
+                _LOGGER.exception(
+                    "conversation backend activation failed",
+                    extra={
+                        "conversation_operation": "activate_on_first_prompt",
+                        "conversation_employee_id": employee_id,
+                        "conversation_generation": conversation.conversation_generation,
+                        "conversation_backend_key": conversation.backend_key,
+                    },
+                )
+                raise
         else:
             handle = await self.ensure_stream_ready(employee_id, binding)
             return employee, binding, handle
@@ -492,10 +518,23 @@ class ConversationHub:
             return await self._require_registry().resolve_runtime_handle(
                 employee_id, binding.binding_generation
             )
-        record = await self._require_registry().attach(employee)
-        if record.binding != binding:
-            raise RuntimeError("registry loaded a different ACP binding")
-        await self._establish_stream(record, sequence_floor=0)
+        try:
+            record = await self._require_registry().attach(employee)
+            if record.binding != binding:
+                raise RuntimeError("registry loaded a different ACP binding")
+            await self._establish_stream(record, sequence_floor=0)
+        except Exception:
+            _LOGGER.exception(
+                "conversation backend load failed",
+                extra={
+                    "conversation_operation": "load_bound_session",
+                    "conversation_employee_id": employee_id,
+                    "conversation_generation": binding.binding_generation,
+                    "conversation_backend_key": binding.backend_key,
+                    "conversation_acp_session_id": binding.acp_session_id,
+                },
+            )
+            raise
         return await self._require_registry().resolve_runtime_handle(
             employee_id, binding.binding_generation
         )
@@ -513,11 +552,15 @@ class ConversationHub:
             raise RuntimeError("conversation hub is closing")
         if (last_seen_binding_generation is None) != (last_seen_sequence is None):
             raise ValueError("conversation cursor fields must be supplied together")
+        conversation = await self.repository.ensure_conversation(employee_id)
         employee = await self.repository.resolve_employee(employee_id)
         binding = await self.repository.resolve(employee_id)
-        if binding is not None and last_seen_binding_generation is not None:
-            if last_seen_binding_generation != binding.binding_generation:
-                raise ValueError("conversation cursor names a different binding")
+        if (
+            last_seen_binding_generation is not None
+            and last_seen_binding_generation != conversation.conversation_generation
+        ):
+            last_seen_binding_generation = None
+            last_seen_sequence = None
         connection_id = connection_id or self._connection_id_factory()
         subscription = BrowserSubscription(
             connection_id=connection_id,
@@ -528,15 +571,14 @@ class ConversationHub:
         self._subscriptions[connection_id] = subscription
         try:
             if binding is None:
-                record = await self._require_registry().get_or_spawn(employee)
-                binding = record.binding
-                if last_seen_binding_generation is not None:
-                    raise ValueError("cursor cannot target a newly created binding")
-                await self._establish_stream(
-                    record,
-                    sequence_floor=0,
-                    initial_subscription=subscription,
+                cast(_BrowserOutboundQueue, subscription.queue).set_initial_bootstrap(
+                    self._empty_conversation_bootstrap(
+                        employee, conversation.conversation_generation
+                    )
                 )
+                self._empty_browsers.setdefault(employee_id, {})[
+                    connection_id
+                ] = subscription
                 return subscription
 
             stream = self._streams.get(employee_id)
@@ -544,17 +586,30 @@ class ConversationHub:
                 if last_seen_sequence > stream.sequence:
                     raise ValueError("conversation cursor sequence is in the future")
             if stream is None or stream.binding != binding or not stream.ready:
-                record = await self._require_registry().attach(employee)
-                if stream is not None:
-                    await self._enqueue_and_wait(
-                        employee_id,
-                        lambda: self._open_capture(stream),
+                try:
+                    record = await self._require_registry().attach(employee)
+                    if stream is not None:
+                        await self._enqueue_and_wait(
+                            employee_id,
+                            lambda: self._open_capture(stream),
+                        )
+                    await self._establish_stream(
+                        record,
+                        sequence_floor=last_seen_sequence or 0,
+                        initial_subscription=subscription,
                     )
-                await self._establish_stream(
-                    record,
-                    sequence_floor=last_seen_sequence or 0,
-                    initial_subscription=subscription,
-                )
+                except Exception:
+                    _LOGGER.exception(
+                        "conversation backend load failed",
+                        extra={
+                            "conversation_operation": "attach_bound_session",
+                            "conversation_employee_id": employee_id,
+                            "conversation_generation": binding.binding_generation,
+                            "conversation_backend_key": binding.backend_key,
+                            "conversation_acp_session_id": binding.acp_session_id,
+                        },
+                    )
+                    raise
                 return subscription
 
             await self._enqueue_and_wait(
@@ -582,6 +637,12 @@ class ConversationHub:
                 employee_id,
                 lambda: self._streams[employee_id].browsers.pop(connection_id, None),
             )
+        for empty_employee_id, browsers in tuple(self._empty_browsers.items()):
+            if connection_id in browsers:
+                browsers.pop(connection_id, None)
+                if not browsers:
+                    self._empty_browsers.pop(empty_employee_id, None)
+                break
         if subscription is not None:
             await self._detach_subscription_permission(subscription)
             self._subscriptions.pop(connection_id, None)
@@ -591,6 +652,10 @@ class ConversationHub:
     async def dispatch_action(self, connection_id: str, action: BrowserAction) -> None:
         if self._closing:
             raise RuntimeError("conversation hub is closing")
+        empty_employee_id = self._empty_employee_for_connection(connection_id)
+        if empty_employee_id is not None:
+            await self._dispatch_empty_action(connection_id, empty_employee_id, action)
+            return
         stream = self._stream_for_connection(connection_id)
         transitioned_from = await self._wait_for_compaction_and_requested_cancel_recovery(
             stream.employee.employee_id
@@ -602,7 +667,11 @@ class ConversationHub:
             stream.employee.employee_id, stream.binding.binding_generation
         )
         if isinstance(action, PromptAction):
-            prompt = action.prompt
+            prompt = PromptRequest(
+                session_id=stream.binding.acp_session_id,
+                prompt=action.prompt,
+                field_meta=action.prompt_meta,
+            )
             if prompt.session_id != stream.binding.acp_session_id:
                 if (
                     transitioned_from is None
@@ -618,7 +687,7 @@ class ConversationHub:
                 action.client_message_id,
                 prompt,
             )
-            await self._require_broker().deliver(
+            await self._deliver_with_logging(
                 handle,
                 action.client_message_id,
                 action.delivery_choice,
@@ -642,15 +711,176 @@ class ConversationHub:
             raise ValueError("browser is already attached")
         raise AssertionError(type(action))
 
-    async def new_conversation(self, employee_id: str) -> ConversationSessionBinding:
+    async def new_conversation(self, employee_id: str) -> EmployeeConversation:
         await self._wait_for_compaction_and_requested_cancel_recovery(employee_id)
         stream = self._streams.get(employee_id)
-        if stream is None:
-            _employee, binding, _handle = await self.ensure_employee_stream(employee_id)
+        binding = (
+            await self.repository.resolve(employee_id)
+            if stream is None
+            else stream.binding
+        )
+        employee = await self.repository.resolve_employee(employee_id)
+        browsers = (
+            dict(self._empty_browsers.get(employee_id, {}))
+            if stream is None
+            else dict(stream.browsers)
+        )
+        if stream is not None:
+            if binding is None:
+                raise RuntimeError("live conversation stream has no durable binding")
+            handle = await self._require_registry().resolve_runtime_handle(
+                employee_id, binding.binding_generation
+            )
+            deadline = asyncio.get_running_loop().time() + self._new_conversation_timeout_seconds
+            await self._require_broker().prepare_new_conversation(handle, deadline)
+        conversation = await self.repository.start_new_conversation(employee_id, binding)
+        if stream is not None:
+            self._streams.pop(employee_id, None)
+        if binding is not None:
+            await self._require_registry().retire_conversation(
+                employee_id, binding.binding_generation
+            )
+        self._empty_browsers[employee_id] = browsers
+        replay = self._empty_conversation_bootstrap(
+            await self.repository.resolve_employee(employee_id),
+            conversation.conversation_generation,
+        )
+        for browser in browsers.values():
+            cast(_BrowserOutboundQueue, browser.queue).put_replay_cutover_nowait(replay)
+        await self._reset_ticket_conversation_projection(employee)
+        return conversation
+
+    async def _dispatch_empty_action(
+        self,
+        connection_id: str,
+        employee_id: str,
+        action: BrowserAction,
+    ) -> None:
+        if action.employee_id != employee_id:
+            raise ValueError("browser action changed employee identity")
+        if isinstance(action, PromptAction):
+            employee, binding, handle = await self.ensure_employee_stream(employee_id)
+            prompt = PromptRequest(
+                session_id=binding.acp_session_id,
+                prompt=action.prompt,
+                field_meta=action.prompt_meta,
+            )
+            await self._publish_human_echo(
+                employee,
+                binding,
+                action.client_message_id,
+                prompt,
+            )
+            await self._deliver_with_logging(
+                handle,
+                action.client_message_id,
+                action.delivery_choice,
+                prompt,
+            )
+            return
+        if isinstance(action, NewConversationAction):
+            await self.new_conversation(employee_id)
+            return
+        if isinstance(action, CancelAction):
+            return
+        if isinstance(action, AttachAction):
+            raise ValueError("browser is already attached")
+        raise ValueError("empty conversation has no permission request")
+
+    async def _deliver_with_logging(
+        self,
+        handle: ConversationRuntimeHandle,
+        client_message_id: str,
+        delivery_choice: TurnDeliveryChoice,
+        prompt: PromptRequest,
+    ) -> None:
+        try:
+            await self._require_broker().deliver(
+                handle,
+                client_message_id,
+                delivery_choice,
+                prompt,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "conversation prompt delivery failed",
+                extra={
+                    "conversation_operation": "deliver_prompt",
+                    "conversation_employee_id": handle.employee.employee_id,
+                    "conversation_generation": handle.binding.binding_generation,
+                    "conversation_backend_key": handle.binding.backend_key,
+                    "conversation_acp_session_id": handle.binding.acp_session_id,
+                    "conversation_client_message_id": client_message_id,
+                },
+            )
+            raise
+
+    async def _adopt_empty_browsers(self, employee_id: str) -> None:
+        browsers = self._empty_browsers.pop(employee_id, {})
+        if not browsers:
+            return
+
+        def adopt() -> None:
             stream = self._streams[employee_id]
-        else:
-            binding = stream.binding
-        return await self._new_conversation_from_stream(stream, binding)
+            replay = self._subscriber_snapshot_bootstrap(stream)
+            if replay is None:
+                raise ConversationTurnBrokerError(REPLAY_UNAVAILABLE_CLOSE_REASON)
+            for browser in browsers.values():
+                cast(_BrowserOutboundQueue, browser.queue).put_replay_cutover_nowait(replay)
+                stream.browsers[browser.connection_id] = browser
+
+        await self._enqueue_and_wait(employee_id, adopt)
+
+    @staticmethod
+    def _empty_conversation_bootstrap(
+        employee: ConversationEmployee,
+        conversation_generation: int,
+    ) -> tuple[str, ...]:
+        envelopes = (
+            ConnectionEnvelope(
+                wire_version=1,
+                type="connection",
+                employee_id=employee.employee_id,
+                entity_kind=employee.entity_kind,
+                entity_id=employee.entity_id,
+                acp_session_id=None,
+                binding_generation=conversation_generation,
+                sequence=1,
+                payload=ConnectionPayload(
+                    state="reset",
+                    detail="New conversation",
+                    supports_steer=False,
+                    reset_binding_generation=conversation_generation,
+                ),
+            ),
+            ConnectionEnvelope(
+                wire_version=1,
+                type="connection",
+                employee_id=employee.employee_id,
+                entity_kind=employee.entity_kind,
+                entity_id=employee.entity_id,
+                acp_session_id=None,
+                binding_generation=conversation_generation,
+                sequence=2,
+                payload=ConnectionPayload(
+                    state="ready",
+                    detail="Ready",
+                    supports_steer=False,
+                ),
+            ),
+        )
+        serialized: list[str] = []
+        for envelope in envelopes:
+            payload = envelope.model_dump(by_alias=True, exclude_none=True)
+            payload["acpSessionId"] = None
+            serialized.append(json.dumps(payload, separators=(",", ":")))
+        return tuple(serialized)
+
+    def _empty_employee_for_connection(self, connection_id: str) -> str | None:
+        for employee_id, browsers in self._empty_browsers.items():
+            if connection_id in browsers:
+                return employee_id
+        return None
 
     async def _new_conversation_from_stream(
         self,
@@ -1410,6 +1640,10 @@ class ConversationHub:
             for browser in stream.browsers.values():
                 browser.close_reason = "conversation service is shutting down"
                 browser.closed.set()
+        for browsers in self._empty_browsers.values():
+            for browser in browsers.values():
+                browser.close_reason = "conversation service is shutting down"
+                browser.closed.set()
 
     async def shutdown(self, deadline: float) -> None:
         self._closing = True
@@ -1429,6 +1663,10 @@ class ConversationHub:
             )
         for stream in self._streams.values():
             for browser in stream.browsers.values():
+                browser.close_reason = "conversation service is shutting down"
+                browser.closed.set()
+        for browsers in self._empty_browsers.values():
+            for browser in browsers.values():
                 browser.close_reason = "conversation service is shutting down"
                 browser.closed.set()
         sequencers = tuple(self._sequencers.values())

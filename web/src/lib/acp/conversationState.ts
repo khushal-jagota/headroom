@@ -43,7 +43,7 @@ export type DeepReadonly<T> =
 export interface ConversationCursor {
   readonly entityKind: 'ticket' | 'agent';
   readonly entityId: string;
-  readonly acpSessionId: string;
+  readonly acpSessionId: string | null;
   readonly bindingGeneration: number;
   readonly sequence: number;
 }

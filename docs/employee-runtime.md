@@ -171,7 +171,9 @@ native Steer. Codex and Claude Code do not; Queue and Send Now remain available.
 Hermes exposes Model selection and no Reasoning selection. Codex and Claude Code expose
 both through ACP, with Reasoning choices discovered again for the selected Model. After
 the first binding, the stored launch model and reasoning are historical only. Bound
-loads, child replacement, compaction recovery, and New Conversation do not reapply them;
+loads, child replacement, and compaction recovery do not reapply them. **New** snapshots the
+selected setup into an empty Panels conversation; its first demand applies that setup while
+creating the real backend session;
 the ACP session owns its live configuration.
 
 Permission is a runtime invariant, not Ticket or binding state. Each actual new Worker or

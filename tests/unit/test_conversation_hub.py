@@ -66,9 +66,8 @@ from planner.conversation.sqlite_binding_repository import (
 )
 from planner.conversation.turn_broker import (
     ConversationTurnAttachState,
-    ConversationTurnBrokerError,
 )
-from planner.conversation.wire_contracts import CancelAction, HumanEcho
+from planner.conversation.wire_contracts import CancelAction, HumanEcho, PromptAction
 from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.tickets.conversation_projection import TicketConversationProjection
@@ -188,6 +187,15 @@ class _Registry:
         )
         return self.handle
 
+    async def retire_conversation(
+        self, employee_id: str, binding_generation: int
+    ) -> None:
+        assert (employee_id, binding_generation) == (
+            self.record.employee.employee_id,
+            self.record.binding.binding_generation,
+        )
+        await self.record.child.close()
+
 
 class _ReplacementRegistry(_Registry):
     def __init__(
@@ -258,6 +266,44 @@ class _Broker:
         self, _handle: ConversationRuntimeHandle, _deadline: float
     ) -> None:
         return None
+
+
+class _DeliveryBroker(_Broker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.deliveries: list[tuple[ConversationRuntimeHandle, str, str, PromptRequest]] = []
+
+    async def deliver(
+        self,
+        handle: ConversationRuntimeHandle,
+        client_message_id: str,
+        delivery_choice: str,
+        prompt: PromptRequest,
+    ) -> None:
+        self.deliveries.append((handle, client_message_id, delivery_choice, prompt))
+
+
+class _ActivatingRegistry(_Registry):
+    def __init__(
+        self,
+        record: AcpEmployeeRecord,
+        handle: ConversationRuntimeHandle,
+        repository: SqliteConversationBindingRepository,
+    ) -> None:
+        super().__init__(record, handle)
+        self.repository = repository
+
+    async def get_or_spawn(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
+        self.attach_calls += 1
+        await self.repository.compare_and_swap_initial(
+            self.record.binding,
+            EmployeeLaunchConfiguration(
+                employee_backend=employee.backend_key,
+                employee_launch_model=employee.employee_launch_model,
+                employee_launch_reasoning_effort=employee.employee_launch_reasoning_effort,
+            ),
+        )
+        return self.record
 
 
 class _ClosingBroker(_Broker):
@@ -386,6 +432,7 @@ async def _ticket_database(
     tmp_path: Path,
     *,
     backend_key: str = "hermes",
+    bound: bool = True,
 ) -> tuple[str, SqliteConversationBindingRepository]:
     db_path = str(tmp_path / "hub.db")
     conn = connect(db_path)
@@ -416,23 +463,24 @@ async def _ticket_database(
         employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
         chief_backend_key="hermes",
     )
-    binding = ConversationSessionBinding(
-        employee_id="t_hub",
-        acp_session_id="session-hub",
-        backend_key=backend_key,
-        binding_generation=1,
-    )
-    employee = await repository.resolve_employee("t_hub")
-    await repository.compare_and_swap_initial(
-        binding,
-        EmployeeLaunchConfiguration(
-            employee_backend=employee.backend_key,
-            employee_launch_model=employee.employee_launch_model,
-            employee_launch_reasoning_effort=(
-                employee.employee_launch_reasoning_effort
+    if bound:
+        binding = ConversationSessionBinding(
+            employee_id="t_hub",
+            acp_session_id="session-hub",
+            backend_key=backend_key,
+            binding_generation=1,
+        )
+        employee = await repository.resolve_employee("t_hub")
+        await repository.compare_and_swap_initial(
+            binding,
+            EmployeeLaunchConfiguration(
+                employee_backend=employee.backend_key,
+                employee_launch_model=employee.employee_launch_model,
+                employee_launch_reasoning_effort=(
+                    employee.employee_launch_reasoning_effort
+                ),
             ),
-        ),
-    )
+        )
     return db_path, repository
 
 
@@ -476,6 +524,100 @@ def _runtime(tmp_path: Path) -> tuple[AcpEmployeeRecord, ConversationRuntimeHand
         identity,  # type: ignore[arg-type]
     )
     return record, handle
+
+
+def test_empty_conversation_survives_restart_and_first_prompt_activates_it(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path, bound=False)
+        record, handle = _runtime(tmp_path)
+        first_registry = _ActivatingRegistry(record, handle, repository)
+        first_hub = ConversationHub(repository)
+        first_hub.bind_owners(  # type: ignore[arg-type]
+            registry=first_registry,
+            broker=_DeliveryBroker(),
+            permission_broker=_Permissions(),
+        )
+
+        first = await first_hub.attach_browser("t_hub", connection_id="browser-first")
+        first_reset = json.loads(await first.queue.get())
+        first_ready = json.loads(await first.queue.get())
+        assert first_reset["acpSessionId"] is None
+        assert first_reset["bindingGeneration"] == 1
+        assert first_ready["payload"]["state"] == "ready"
+        assert first_registry.attach_calls == 0
+        assert await repository.resolve("t_hub") is None
+        await first_hub.detach_browser(first.connection_id)
+        await first_hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+        registry = _ActivatingRegistry(record, handle, repository)
+        broker = _DeliveryBroker()
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=registry,
+            broker=broker,
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-after-restart")
+        await browser.queue.get()
+        await browser.queue.get()
+        assert registry.attach_calls == 0
+
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="message-first",
+                prompt=[TextContentBlock(type="text", text="hello")],
+                delivery_choice="normal",
+            ),
+        )
+
+        activated_reset = json.loads(await browser.queue.get())
+        activated_ready = json.loads(await browser.queue.get())
+        echo = json.loads(await browser.queue.get())
+        assert activated_reset["acpSessionId"] == "session-hub"
+        assert activated_reset["sequence"] == 3
+        assert activated_ready["sequence"] == 4
+        assert echo["type"] == "human_echo"
+        assert registry.attach_calls == 1
+        assert await repository.resolve("t_hub") == record.binding
+        assert len(broker.deliveries) == 1
+        assert broker.deliveries[0][3].session_id == "session-hub"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_stale_browser_generation_receives_current_empty_reset(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        await repository.start_new_conversation("t_hub", record.binding)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+
+        browser = await hub.attach_browser(
+            "t_hub",
+            connection_id="browser-stale-generation",
+            last_seen_binding_generation=1,
+            last_seen_sequence=99,
+        )
+        reset = json.loads(await browser.queue.get())
+        ready = json.loads(await browser.queue.get())
+        assert reset["bindingGeneration"] == 2
+        assert reset["acpSessionId"] is None
+        assert ready["payload"]["state"] == "ready"
+        assert browser.closed.is_set() is False
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
 
 
 def test_publish_allocates_and_serializes_sequence_once(tmp_path: Path) -> None:
@@ -1003,7 +1145,9 @@ def test_stale_publication_does_not_update_ticket_projection(tmp_path: Path) -> 
     asyncio.run(exercise())
 
 
-def test_new_conversation_keeps_projection_when_replacement_fails(tmp_path: Path) -> None:
+def test_new_conversation_becomes_empty_without_creating_a_replacement_session(
+    tmp_path: Path,
+) -> None:
     async def exercise() -> None:
         db_path, repository = await _ticket_database(tmp_path)
         record, handle = _runtime(tmp_path)
@@ -1012,9 +1156,7 @@ def test_new_conversation_keeps_projection_when_replacement_fails(tmp_path: Path
         projection.record_activity("t_hub", "idle")
         hub = ConversationHub(repository, ticket_conversation_projection=projection)
         broker = _Broker()
-        registry = _ReplacementRegistry(
-            record, handle, repository, fail_new_conversation=True
-        )
+        registry = _ReplacementRegistry(record, handle, repository)
         hub.bind_owners(
             registry=registry,  # type: ignore[arg-type]
             broker=broker,  # type: ignore[arg-type]
@@ -1022,119 +1164,54 @@ def test_new_conversation_keeps_projection_when_replacement_fails(tmp_path: Path
         )
         await hub.attach_browser("t_hub", connection_id="browser-a")
 
-        with pytest.raises(RuntimeError, match="replacement failed"):
-            await hub.new_conversation("t_hub")
+        conversation = await hub.new_conversation("t_hub")
 
-        assert projection.read("t_hub").has_completed_response_awaiting_user is True
+        assert conversation.conversation_generation == 2
+        assert await repository.resolve("t_hub") is None
+        assert "t_hub" not in hub._streams  # noqa: SLF001
+        assert projection.read("t_hub").has_completed_response_awaiting_user is False
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 
 
-def test_new_conversation_keeps_projection_when_replay_build_fails_after_binding(
+def test_new_conversation_after_restart_retires_durable_binding_without_loading_it(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
-        db_path, repository = await _ticket_database(tmp_path)
+        _db_path, repository = await _ticket_database(tmp_path)
         record, handle = _runtime(tmp_path)
-        replacement_binding = record.binding.model_copy(
-            update={
-                "acp_session_id": "session-replacement",
-                "binding_generation": 2,
-            }
-        )
-        replacement_child = _Child()
-        replacement_identity = object()
-        replacement_definition = replace(
-            handle.definition, turn_strategy=_MalformedReplayStrategy()
-        )
-        replacement_record = AcpEmployeeRecord(
-            record.employee,
-            replacement_binding,
-            2,
-            replacement_child,
-            replacement_identity,
-        )
-        replacement_handle = ConversationRuntimeHandle(
-            record.employee,
-            replacement_binding,
-            2,
-            replacement_child,
-            replacement_definition,
-            replacement_identity,
-        )
-        projection = TicketConversationProjection(db_path, now=lambda: 2)
-        projection.record_activity("t_hub", "thinking")
-        projection.record_activity("t_hub", "idle")
-        registry = _ReplacementRegistry(
-            record,
-            handle,
-            repository,
-            replacement_record,
-            replacement_handle,
-        )
-        hub = ConversationHub(repository, ticket_conversation_projection=projection)
-        hub.bind_owners(
-            registry=registry,  # type: ignore[arg-type]
-            broker=_Broker(),  # type: ignore[arg-type]
+        registry = _Registry(record, handle)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=registry,
+            broker=_Broker(),
             permission_broker=_Permissions(),
         )
-        await hub.attach_browser("t_hub", connection_id="browser-a")
 
-        with pytest.raises(
-            ConversationTurnBrokerError, match=REPLAY_UNAVAILABLE_CLOSE_REASON
-        ):
-            await hub.new_conversation("t_hub")
+        conversation = await hub.new_conversation("t_hub")
 
-        assert await repository.resolve("t_hub") == replacement_binding
-        assert hub._streams["t_hub"].binding == replacement_binding  # noqa: SLF001
-        assert projection.read("t_hub").has_completed_response_awaiting_user is True
+        assert conversation.conversation_generation == 2
+        assert await repository.resolve("t_hub") is None
+        assert registry.attach_calls == 0
+        assert record.child.alive is False
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 
 
-def test_new_conversation_resets_projection_after_new_binding_is_established(
+def test_new_conversation_sends_an_empty_reset_to_the_connected_browser(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         db_path, repository = await _ticket_database(tmp_path)
         record, handle = _runtime(tmp_path)
-        replacement_binding = record.binding.model_copy(
-            update={
-                "acp_session_id": "session-replacement",
-                "binding_generation": 2,
-            }
-        )
-        replacement_child = _Child()
-        replacement_identity = object()
-        replacement_record = AcpEmployeeRecord(
-            record.employee,
-            replacement_binding,
-            2,
-            replacement_child,
-            replacement_identity,
-        )
-        replacement_handle = ConversationRuntimeHandle(
-            record.employee,
-            replacement_binding,
-            2,
-            replacement_child,
-            handle.definition,
-            replacement_identity,
-        )
-        registry = _ReplacementRegistry(
-            record,
-            handle,
-            repository,
-            replacement_record,
-            replacement_handle,
-        )
+        registry = _ReplacementRegistry(record, handle, repository)
         hub = ConversationHub(repository)
 
         class _OrderingProjection(TicketConversationProjection):
             def reset(self, ticket_id: str) -> bool:
-                assert hub._streams["t_hub"].binding == replacement_binding  # noqa: SLF001
+                assert "t_hub" not in hub._streams  # noqa: SLF001
                 return super().reset(ticket_id)
 
         projection = _OrderingProjection(db_path, now=lambda: 2)
@@ -1146,12 +1223,18 @@ def test_new_conversation_resets_projection_after_new_binding_is_established(
             broker=_Broker(),  # type: ignore[arg-type]
             permission_broker=_Permissions(),
         )
-        await hub.attach_browser("t_hub", connection_id="browser-a")
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+        await browser.queue.get()
+        await browser.queue.get()
 
         await hub.new_conversation("t_hub")
 
         assert registry.attach_calls == 1
-        assert hub._streams["t_hub"].binding == replacement_binding  # noqa: SLF001
+        reset = json.loads(await browser.queue.get())
+        ready = json.loads(await browser.queue.get())
+        assert reset["acpSessionId"] is None
+        assert reset["bindingGeneration"] == 2
+        assert ready["payload"]["state"] == "ready"
         assert projection.read("t_hub").has_completed_response_awaiting_user is False
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
@@ -1247,7 +1330,9 @@ def test_new_conversation_closes_pending_permission_before_projection_cutover(
         replacement = asyncio.create_task(hub.new_conversation("t_hub"))
         await asyncio.wait_for(close_broker.prepare_started.wait(), timeout=1)
         await asyncio.wait_for(close_broker.permission_settled.wait(), timeout=1)
-        assert await asyncio.wait_for(replacement, timeout=1) == replacement_binding
+        empty = await asyncio.wait_for(replacement, timeout=1)
+        assert empty.conversation_generation == 2
+        assert await repository.resolve("t_hub") is None
         response = await asyncio.wait_for(pending_permission, timeout=1)
 
         assert response.outcome.outcome == "cancelled"
@@ -1258,49 +1343,15 @@ def test_new_conversation_closes_pending_permission_before_projection_cutover(
     asyncio.run(exercise())
 
 
-def test_stale_ticket_publication_queued_behind_replacement_cannot_write_projection(
+def test_old_binding_cannot_publish_after_new_conversation_becomes_empty(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         db_path, repository = await _ticket_database(tmp_path)
         record, handle = _runtime(tmp_path)
-        replacement_binding = record.binding.model_copy(
-            update={
-                "acp_session_id": "session-replacement",
-                "binding_generation": 2,
-            }
-        )
-        replacement_child = _Child()
-        replacement_identity = object()
-        replacement_record = AcpEmployeeRecord(
-            record.employee,
-            replacement_binding,
-            2,
-            replacement_child,
-            replacement_identity,
-        )
-        replacement_handle = ConversationRuntimeHandle(
-            record.employee,
-            replacement_binding,
-            2,
-            replacement_child,
-            handle.definition,
-            replacement_identity,
-        )
-        projection = _GatedProjection(db_path)
-        projection.activity_release.set()
-        projection.record_activity("t_hub", "thinking")
-        projection.activity_release.clear()
-        registry = _ReplacementRegistry(
-            record,
-            handle,
-            repository,
-            replacement_record,
-            replacement_handle,
-        )
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        registry = _ReplacementRegistry(record, handle, repository)
         hub = ConversationHub(repository, ticket_conversation_projection=projection)
-        lock = _TrackingAsyncLock()
-        hub._ticket_projection_locks["t_hub"] = lock  # type: ignore[assignment]  # noqa: SLF001
         hub.bind_owners(
             registry=registry,  # type: ignore[arg-type]
             broker=_Broker(),  # type: ignore[arg-type]
@@ -1308,89 +1359,11 @@ def test_stale_ticket_publication_queued_behind_replacement_cannot_write_project
         )
         await hub.attach_browser("t_hub", connection_id="browser-a")
 
-        replacement = asyncio.create_task(hub.new_conversation("t_hub"))
-        assert await asyncio.to_thread(projection.reset_started.wait, 5)
-        stale = asyncio.create_task(
-            hub.publish_activity(record.employee, record.binding, "idle", "stale")
-        )
-        await lock.waiting.wait()
-        projection.reset_release.set()
-
-        await replacement
+        await hub.new_conversation("t_hub")
         with pytest.raises(RuntimeError, match="stale stream"):
-            await stale
-        snapshot = projection.read("t_hub")
-        assert snapshot.latest_activity_state is None
-        assert snapshot.has_completed_response_awaiting_user is False
-        assert snapshot.has_pending_permission is False
-        assert projection.activity_calls == 1
-        await hub.shutdown(asyncio.get_running_loop().time() + 1)
-
-    asyncio.run(exercise())
-
-
-def test_ticket_publication_winning_lock_is_reset_by_replacement(
-    tmp_path: Path,
-) -> None:
-    async def exercise() -> None:
-        db_path, repository = await _ticket_database(tmp_path)
-        record, handle = _runtime(tmp_path)
-        replacement_binding = record.binding.model_copy(
-            update={
-                "acp_session_id": "session-replacement",
-                "binding_generation": 2,
-            }
-        )
-        replacement_child = _Child()
-        replacement_identity = object()
-        replacement_record = AcpEmployeeRecord(
-            record.employee,
-            replacement_binding,
-            2,
-            replacement_child,
-            replacement_identity,
-        )
-        replacement_handle = ConversationRuntimeHandle(
-            record.employee,
-            replacement_binding,
-            2,
-            replacement_child,
-            handle.definition,
-            replacement_identity,
-        )
-        projection = _GatedProjection(db_path)
-        registry = _ReplacementRegistry(
-            record,
-            handle,
-            repository,
-            replacement_record,
-            replacement_handle,
-        )
-        hub = ConversationHub(repository, ticket_conversation_projection=projection)
-        lock = _TrackingAsyncLock()
-        hub._ticket_projection_locks["t_hub"] = lock  # type: ignore[assignment]  # noqa: SLF001
-        hub.bind_owners(
-            registry=registry,  # type: ignore[arg-type]
-            broker=_Broker(),  # type: ignore[arg-type]
-            permission_broker=_Permissions(),
-        )
-        await hub.attach_browser("t_hub", connection_id="browser-a")
-
-        publication = asyncio.create_task(
-            hub.publish_activity(record.employee, record.binding, "thinking", "old")
-        )
-        assert await asyncio.to_thread(projection.activity_started.wait, 5)
-        replacement = asyncio.create_task(hub.new_conversation("t_hub"))
-        await lock.waiting.wait()
-        projection.activity_release.set()
-
-        await publication
-        assert await asyncio.to_thread(projection.reset_started.wait, 5)
-        projection.reset_release.set()
-        await replacement
+            await hub.publish_activity(record.employee, record.binding, "idle", "old")
         assert projection.read("t_hub").latest_activity_state is None
         assert projection.read("t_hub").has_completed_response_awaiting_user is False
-        assert projection.reset_calls == 1
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

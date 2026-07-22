@@ -114,7 +114,7 @@ interface ServerEnvelopeBase {
   employeeId: string;
   entityKind: ConversationEntityKind;
   entityId: string;
-  acpSessionId: string;
+  acpSessionId: string | null;
   bindingGeneration: number;
   sequence: number;
 }
@@ -152,7 +152,8 @@ export type BrowserAction =
       type: 'prompt';
       employeeId: string;
       clientMessageId: string;
-      prompt: PromptRequest;
+      prompt: PromptRequest['prompt'];
+      promptMeta?: PromptRequest['_meta'];
       deliveryChoice: TurnDeliveryChoice;
     }
   | { type: 'cancel'; employeeId: string; queuedClientMessageId?: string }

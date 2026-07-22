@@ -133,6 +133,23 @@ class ConversationSessionBinding(_ConversationModel):
         )
 
 
+class EmployeeConversation(_ConversationModel):
+    """Durable Panels conversation identity, whether or not ACP is bound yet."""
+
+    employee_id: str
+    backend_key: str
+    conversation_generation: Annotated[int, Field(gt=0)]
+    employee_launch_model: str | None = None
+    employee_launch_reasoning_effort: str | None = None
+
+    @field_validator("employee_id", "backend_key")
+    @classmethod
+    def _validate_identifiers(cls, value: str, info: object) -> str:
+        return _require_non_empty_text(
+            value, field_name=str(getattr(info, "field_name", "identifier"))
+        )
+
+
 class ConversationCompactionBoundaryProvenance(_ConversationModel):
     boundary_id: str
     trigger: ContextCompactionTrigger

@@ -212,16 +212,12 @@ def _run_opening_and_human_turn(
                 "employeeId": ticket_id,
                 "clientMessageId": "new-worker-human-1",
                 "deliveryChoice": "normal",
-                "prompt": {
-                    "sessionId": opened["employee_session_id"],
-                    "prompt": [
-                        {
-                            "type": "text",
-                            "text": "Continue the Understanding conversation.",
-                        }
-                    ],
-                    "_meta": {"script": "default"},
-                },
+                "prompt": [
+                    {
+                        "type": "text",
+                        "text": "Continue the Understanding conversation.",
+                    }
+                ],
             }
         )
         turn = _receive_until(websocket, _is_idle)
