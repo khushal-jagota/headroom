@@ -593,6 +593,11 @@ def test_first_claude_session_configures_before_binding_and_never_reapplies_afte
         replacement = await registry.get_or_spawn(employee)
         assert not any(operation[0] == "set_config_option" for operation in delegate.operations)
         assert ("load_session", "claude-session-1-1", None) in delegate.operations
+        assert (
+            "set_session_mode",
+            "claude-session-1-1",
+            "bypassPermissions",
+        ) in delegate.operations
         assert replacement.employee.employee_launch_model is None
         assert replacement.employee.employee_launch_reasoning_effort is None
 

@@ -132,6 +132,7 @@ class _FakeChild:
         self.initialize_requests: list[InitializeRequest] = []
         self.fork_requests: list[ForkSessionRequest] = []
         self.private_load_requests: list[LoadSessionRequest] = []
+        self.mode_requests: list[tuple[str, str]] = []
         self.load_replay_by_session: dict[str, tuple[SessionNotification, ...]] = {}
         self.private_replay_by_session: dict[str, tuple[SessionNotification, ...]] = {}
         self.fail_private_load_session_ids: set[str] = set()
@@ -251,6 +252,7 @@ class _FakeChild:
         )
 
     async def set_session_mode(self, session_id: str, mode_id: str) -> None:
+        self.mode_requests.append((session_id, mode_id))
         if self.operation_observer is not None:
             self.operation_observer(f"set_session_mode:{session_id}:{mode_id}")
 
@@ -1093,11 +1095,13 @@ def test_bound_load_replacement_compaction_and_new_conversation_do_not_reapply_k
             definition=definition,
             child_factory=factory,
             workspace_root=Path("/work"),
+            full_access_mode="unrestricted",
         )
 
         class _ObservingAdapter:
             def __init__(self) -> None:
                 self.configure_calls = 0
+                self.permission_calls = 0
 
             @property
             def backend_key(self) -> str:
@@ -1107,12 +1111,16 @@ def test_bound_load_replacement_compaction_and_new_conversation_do_not_reapply_k
                 return await delegate.discover_catalog(candidate_model)
 
             async def configure_initial_session(
-                self, child: object, response: object, launch_configuration: object
+                self, child: Any, response: Any, launch_configuration: Any
             ) -> None:
                 self.configure_calls += 1
-                await delegate.configure_initial_session(  # type: ignore[arg-type]
-                    child, response, launch_configuration
-                )
+                await delegate.configure_initial_session(child, response, launch_configuration)
+
+            async def enforce_session_permission_mode(
+                self, child: Any, session_id: str
+            ) -> None:
+                self.permission_calls += 1
+                await delegate.enforce_session_permission_mode(child, session_id)
 
         adapter = _ObservingAdapter()
         historical_employee = _employee().model_copy(
@@ -1163,9 +1171,276 @@ def test_bound_load_replacement_compaction_and_new_conversation_do_not_reapply_k
         # New Conversation re-enters the adapter only for backend-native full access;
         # the null launch configuration proves Kickoff values are not reapplied.
         assert adapter.configure_calls == 1
+        assert adapter.permission_calls == 4
+        assert [child.mode_requests for child in factory.children] == [
+            [
+                ("alpha-existing", "unrestricted"),
+                ("alpha-existing", "unrestricted"),
+            ],
+            [("alpha-existing", "unrestricted")],
+            [
+                ("alpha-existing-fork-1", "unrestricted"),
+                ("alpha-3-1", "unrestricted"),
+            ],
+        ]
+        for child in factory.children:
+            loaded_session_ids = [
+                request.session_id for request in child.private_load_requests
+            ]
+            assert child.mode_requests[: len(loaded_session_ids)] == [
+                (session_id, "unrestricted") for session_id in loaded_session_ids
+            ]
         assert not any(
             operation.startswith("set_config_option:") for operation in operations
         )
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_warm_attach_permission_failure_invalidates_the_published_runtime() -> None:
+    class _FailingPermissionAdapter:
+        backend_key = "alpha"
+
+        def __init__(self) -> None:
+            self.permission_calls = 0
+
+        async def discover_catalog(self, candidate_model: str | None) -> object:
+            del candidate_model
+            raise AssertionError("catalog discovery is outside this registry test")
+
+        async def configure_initial_session(
+            self, child: object, response: object, launch_configuration: object
+        ) -> None:
+            del child, response, launch_configuration
+
+        async def enforce_session_permission_mode(
+            self, child: object, session_id: str
+        ) -> None:
+            del child, session_id
+            self.permission_calls += 1
+            if self.permission_calls == 2:
+                raise EmployeeConfigurationError("permission enforcement failed")
+
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        await repository.seed(
+            ConversationSessionBinding(
+                employee_id="employee-a",
+                acp_session_id="durable-session",
+                backend_key="alpha",
+                binding_generation=1,
+            )
+        )
+        adapter = _FailingPermissionAdapter()
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            configuration_adapters={"alpha": adapter},
+        )
+
+        record = await registry.get_or_spawn(_employee())
+        with pytest.raises(EmployeeConfigurationError, match="permission enforcement failed"):
+            await registry.attach(_employee())
+
+        with pytest.raises(ConversationRuntimeUnavailable):
+            await registry.resolve_runtime_handle(
+                record.employee.employee_id, record.binding.binding_generation
+            )
+        await asyncio.sleep(0)
+        assert record.child.alive is False
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_warm_attach_cancellation_during_permission_enforcement_closes_runtime() -> None:
+    class _CancellablePermissionAdapter:
+        backend_key = "alpha"
+
+        def __init__(self) -> None:
+            self.permission_calls = 0
+            self.enforcement_started = asyncio.Event()
+            self.cancel_enforcement = asyncio.Event()
+
+        async def discover_catalog(self, candidate_model: str | None) -> object:
+            del candidate_model
+            raise AssertionError("catalog discovery is outside this registry test")
+
+        async def configure_initial_session(
+            self, child: object, response: object, launch_configuration: object
+        ) -> None:
+            del child, response, launch_configuration
+
+        async def enforce_session_permission_mode(
+            self, child: object, session_id: str
+        ) -> None:
+            del child, session_id
+            self.permission_calls += 1
+            if self.permission_calls == 2:
+                self.enforcement_started.set()
+                await self.cancel_enforcement.wait()
+                raise asyncio.CancelledError
+
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        await repository.seed(
+            ConversationSessionBinding(
+                employee_id="employee-a",
+                acp_session_id="durable-session",
+                backend_key="alpha",
+                binding_generation=1,
+            )
+        )
+        adapter = _CancellablePermissionAdapter()
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            configuration_adapters={"alpha": adapter},
+        )
+
+        record = await registry.get_or_spawn(_employee())
+        attach = asyncio.create_task(registry.attach(_employee()))
+        await adapter.enforcement_started.wait()
+        publication_gate = await registry._publication_update_gate(  # noqa: SLF001
+            record.employee.employee_id
+        )
+        await publication_gate.acquire()
+        try:
+            adapter.cancel_enforcement.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(attach, timeout=1)
+            with pytest.raises(ConversationRuntimeUnavailable):
+                await registry.resolve_runtime_handle(
+                    record.employee.employee_id, record.binding.binding_generation
+                )
+            assert publication_gate.locked()
+        finally:
+            publication_gate.release()
+        await asyncio.sleep(0)
+        assert record.child.alive is False
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_direct_winner_adoption_permission_failure_publishes_no_runtime() -> None:
+    class _RejectingPermissionAdapter:
+        backend_key = "alpha"
+
+        async def discover_catalog(self, candidate_model: str | None) -> object:
+            del candidate_model
+            raise AssertionError("catalog discovery is outside this registry test")
+
+        async def configure_initial_session(
+            self, child: object, response: object, launch_configuration: object
+        ) -> None:
+            del child, response, launch_configuration
+
+        async def enforce_session_permission_mode(
+            self, child: object, session_id: str
+        ) -> None:
+            del child, session_id
+            raise EmployeeConfigurationError("permission enforcement failed")
+
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        winner = ConversationSessionBinding(
+            employee_id="employee-a",
+            acp_session_id="winner-session",
+            backend_key="alpha",
+            binding_generation=1,
+        )
+        first_resolution = True
+
+        async def resolve_binding(
+            _employee_id: str,
+        ) -> ConversationSessionBinding | None:
+            nonlocal first_resolution
+            if first_resolution:
+                first_resolution = False
+                return None
+            return winner
+
+        async def compare_initial(
+            _candidate: ConversationSessionBinding, _configuration: object
+        ) -> ConversationSessionBinding:
+            return winner
+
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            resolve=resolve_binding,
+            configuration_adapters={"alpha": _RejectingPermissionAdapter()},
+            compare_and_swap_initial=compare_initial,
+            resolve_employee=lambda _employee_id: asyncio.sleep(0, result=_employee()),
+        )
+
+        with pytest.raises(EmployeeConfigurationError, match="permission enforcement failed"):
+            await registry.get_or_spawn(_employee())
+
+        with pytest.raises(ConversationRuntimeUnavailable):
+            await registry.resolve_runtime_handle("employee-a", 1)
+        assert len(factory.children) == 2
+        assert all(child.alive is False for child in factory.children)
+        await registry.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_requested_cancel_permission_failure_publishes_no_replacement() -> None:
+    class _RejectingPermissionAdapter:
+        backend_key = "alpha"
+
+        async def discover_catalog(self, candidate_model: str | None) -> object:
+            del candidate_model
+            raise AssertionError("catalog discovery is outside this registry test")
+
+        async def configure_initial_session(
+            self, child: object, response: object, launch_configuration: object
+        ) -> None:
+            del child, response, launch_configuration
+
+        async def enforce_session_permission_mode(
+            self, child: object, session_id: str
+        ) -> None:
+            del child, session_id
+            raise EmployeeConfigurationError("permission enforcement failed")
+
+    async def exercise() -> None:
+        definition = _definition("alpha")
+        factory = _FakeFactory(definition)
+        repository = InMemoryAcpBindingRepository()
+        registry = _registry(
+            {"alpha": definition},
+            {"alpha": factory},
+            repository,
+            configuration_adapters={"alpha": _RejectingPermissionAdapter()},
+        )
+        original = await registry.get_or_spawn(_employee())
+        handle = await registry.resolve_runtime_handle("employee-a", 1)
+
+        with pytest.raises(EmployeeConfigurationError, match="permission enforcement failed"):
+            await registry.replace_runtime_after_requested_cancel(
+                await registry.acquire_runtime_lease(handle),
+                asyncio.get_running_loop().time() + 2,
+            )
+
+        with pytest.raises(ConversationRuntimeUnavailable):
+            await registry.resolve_runtime_handle("employee-a", 1)
+        await asyncio.sleep(0)
+        assert len(factory.children) == 2
+        assert original.child.alive is False
+        assert factory.children[1].alive is False
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1182,6 +1457,7 @@ def test_first_binding_loser_re_resolves_bound_winner_without_reconfiguration() 
             definition=definition,
             child_factory=factory,
             workspace_root=Path("/work"),
+            full_access_mode="unrestricted",
         )
         requested = _employee().model_copy(
             update={
@@ -1235,10 +1511,11 @@ def test_first_binding_loser_re_resolves_bound_winner_without_reconfiguration() 
 
         assert len(factory.children) == 2
         assert sum(operation.startswith("set_config_option:") for operation in operations) == 2
-        assert operations[-3:] == [
+        assert operations[-4:] == [
             "resolve-bound-employee",
             "initialize",
             "capture_load_session",
+            "set_session_mode:winner-session:unrestricted",
         ]
         assert record.binding == winner
         assert record.employee.employee_launch_model is None
@@ -2941,6 +3218,14 @@ def test_backend_change_never_loads_the_other_backends_session() -> None:
     async def exercise() -> None:
         alpha, beta = _definition("alpha"), _definition("beta")
         alpha_factory, beta_factory = _FakeFactory(alpha), _FakeFactory(beta)
+        beta_operations: list[str] = []
+        beta_factory.operation_observer = beta_operations.append
+        beta_adapter = StableAcpEmployeeSessionConfigurationAdapter(
+            definition=beta,
+            child_factory=beta_factory,
+            workspace_root=Path("/work"),
+            full_access_mode="unrestricted",
+        )
         repository = InMemoryAcpBindingRepository()
         await repository.seed(
             ConversationSessionBinding(
@@ -2954,12 +3239,18 @@ def test_backend_change_never_loads_the_other_backends_session() -> None:
             {"alpha": alpha, "beta": beta},
             {"alpha": alpha_factory, "beta": beta_factory},
             repository,
+            configuration_adapters={"beta": beta_adapter},
         )
         record = await registry.get_or_spawn(_employee(backend_key="beta"))
         assert record.binding.backend_key == "beta"
         assert record.binding.binding_generation == 8
         assert beta_factory.children[0].load_requests == []
         assert len(beta_factory.children[0].new_requests) == 1
+        assert beta_operations == [
+            "initialize",
+            "new_session",
+            "set_session_mode:beta-1-1:unrestricted",
+        ]
         assert alpha_factory.children == []
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 

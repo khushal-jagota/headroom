@@ -614,8 +614,12 @@ def test_codex_launch_values_are_not_reapplied_after_first_binding(
         assert not any(
             item.startswith("set_config_option:") for item in replacement_operations
         )
-        assert not any(
-            item.startswith("set_session_mode:") for item in replacement_operations
+        assert any(
+            item == (
+                f"set_session_mode:{replaced.binding.acp_session_id}:"
+                "agent-full-access"
+            )
+            for item in replacement_operations
         )
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 

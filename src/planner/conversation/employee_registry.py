@@ -329,9 +329,19 @@ class AcpEmployeeRegistry:
                     )
             request = self._load_request(record.employee, record.binding.acp_session_id)
             try:
-                await record.child.capture_load_session(
-                    request, cast(AcpConversationIngress, private_ingress)
-                )
+                try:
+                    await self._capture_load_session_with_fixed_permission(
+                        record.child,
+                        request,
+                        cast(AcpConversationIngress, private_ingress),
+                        record.binding.backend_key,
+                    )
+                except BaseException:
+                    await self._invalidate_and_schedule_runtime_handle_close_cancellation_safe(
+                        self._runtime_handle(record)
+                    )
+                    replay_publication_barrier = None
+                    raise
                 async with publication_gate:
                     try:
                         async with self._lock:
@@ -386,6 +396,7 @@ class AcpEmployeeRegistry:
         self,
         child: AcpEmployeeChild,
         request: LoadSessionRequest,
+        backend_key: str,
     ) -> tuple[SessionNotification | ProtocolUpdateRejectedPayload, ...]:
         captured: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
 
@@ -394,10 +405,25 @@ class AcpEmployeeRegistry:
         ) -> None:
             captured.append(item)
 
-        await child.capture_load_session(
-            request, cast(AcpConversationIngress, private_ingress)
+        await self._capture_load_session_with_fixed_permission(
+            child,
+            request,
+            cast(AcpConversationIngress, private_ingress),
+            backend_key,
         )
         return tuple(captured)
+
+    async def _capture_load_session_with_fixed_permission(
+        self,
+        child: AcpEmployeeChild,
+        request: LoadSessionRequest,
+        private_ingress: AcpConversationIngress,
+        backend_key: str,
+    ) -> None:
+        await child.capture_load_session(request, private_ingress)
+        await self._employee_configuration_adapters[
+            backend_key
+        ].enforce_session_permission_mode(child, request.session_id)
 
     async def new_conversation(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
         async with self._lock:
@@ -702,12 +728,17 @@ class AcpEmployeeRegistry:
                     employee.employee_id, generation
                 )
                 captured_replay = await self._capture_load_replay(
-                    child, self._load_request(employee, binding.acp_session_id)
+                    child,
+                    self._load_request(employee, binding.acp_session_id),
+                    binding.backend_key,
                 )
                 winner = binding
                 candidate = binding
             else:
                 response = await child.new_session(self._new_request(employee))
+                await self._employee_configuration_adapters[
+                    employee.backend_key
+                ].enforce_session_permission_mode(child, response.session_id)
                 candidate = ConversationSessionBinding(
                     employee_id=employee.employee_id,
                     acp_session_id=response.session_id,
@@ -769,7 +800,9 @@ class AcpEmployeeRegistry:
                 adopted_employee.employee_id, generation
             )
             captured_replay = await self._capture_load_replay(
-                child, self._load_request(adopted_employee, winner.acp_session_id)
+                child,
+                self._load_request(adopted_employee, winner.acp_session_id),
+                winner.backend_key,
             )
             return await self._publish(
                 adopted_employee,
@@ -1325,9 +1358,11 @@ class AcpEmployeeRegistry:
                 captured.append(item)
 
             await self._await_before_deadline(
-                candidate_child.capture_load_session(
+                self._capture_load_session_with_fixed_permission(
+                    candidate_child,
                     self._load_request(handle.employee, handle.binding.acp_session_id),
                     cast(AcpConversationIngress, private_ingress),
+                    handle.binding.backend_key,
                 ),
                 deadline,
             )
@@ -1406,6 +1441,30 @@ class AcpEmployeeRegistry:
                     return
                 self._invalidate_reserved_handle_locked(handle)
         self._detach_child_close(handle.child)
+
+    async def _invalidate_and_schedule_runtime_handle_close_cancellation_safe(
+        self, handle: ConversationRuntimeHandle
+    ) -> None:
+        async def invalidate_and_schedule_close() -> None:
+            async with self._lock:
+                if self._handle_matches_record(
+                    handle, self._records.get(handle.employee.employee_id)
+                ):
+                    self._invalidate_reserved_handle_locked(handle)
+                replay_publication_barrier = self._replay_publication_barriers.pop(
+                    (handle.employee.employee_id, handle.child_generation), None
+                )
+                if replay_publication_barrier is not None:
+                    replay_publication_barrier.set()
+            self._detach_child_close(handle.child)
+
+        cleanup = asyncio.create_task(invalidate_and_schedule_close())
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
 
     async def prepare_compaction_capture(
         self,
@@ -1519,9 +1578,11 @@ class AcpEmployeeRegistry:
             )
             capture_phase = "private fork load"
             await self._await_before_deadline(
-                candidate_child.capture_load_session(
+                self._capture_load_session_with_fixed_permission(
+                    candidate_child,
                     self._load_request(handle.employee, fork_session_id),
                     cast(AcpConversationIngress, private_ingress),
+                    handle.binding.backend_key,
                 ),
                 deadline,
             )
@@ -2045,9 +2106,11 @@ class AcpEmployeeRegistry:
                 replay.append(item)
 
             await self._await_before_deadline(
-                child.capture_load_session(
+                self._capture_load_session_with_fixed_permission(
+                    child,
                     self._load_request(adopted_employee, winner.acp_session_id),
                     cast(AcpConversationIngress, private_ingress),
+                    winner.backend_key,
                 ),
                 deadline,
             )

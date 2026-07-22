@@ -110,6 +110,10 @@ class EmployeeSessionConfigurationAdapter(Protocol):
         launch_configuration: EmployeeLaunchConfiguration,
     ) -> None: ...
 
+    async def enforce_session_permission_mode(
+        self, child: AcpEmployeeChild, session_id: str
+    ) -> None: ...
+
 
 class NativeEmployeeSessionConfigurationAdapter:
     """Keep a backend at its native state until it supplies a real adapter."""
@@ -156,6 +160,11 @@ class NativeEmployeeSessionConfigurationAdapter:
                 f"employee backend {self.backend_key!r} does not accept explicit "
                 "launch configuration"
             )
+
+    async def enforce_session_permission_mode(
+        self, child: AcpEmployeeChild, session_id: str
+    ) -> None:
+        del child, session_id
 
 
 class StableAcpEmployeeSessionConfigurationAdapter:
@@ -331,8 +340,7 @@ class StableAcpEmployeeSessionConfigurationAdapter:
                     raise EmployeeConfigurationError(
                         "ACP reasoning selection did not become the current value"
                     )
-            if self._full_access_mode is not None:
-                await child.set_session_mode(response.session_id, self._full_access_mode)
+            await self.enforce_session_permission_mode(child, response.session_id)
         except asyncio.CancelledError:
             raise
         except EmployeeConfigurationError:
@@ -340,6 +348,21 @@ class StableAcpEmployeeSessionConfigurationAdapter:
         except BaseException as error:
             raise EmployeeConfigurationError(
                 f"employee backend {self.backend_key!r} launch configuration failed"
+            ) from error
+
+    async def enforce_session_permission_mode(
+        self, child: AcpEmployeeChild, session_id: str
+    ) -> None:
+        if self._full_access_mode is None:
+            return
+        try:
+            await child.set_session_mode(session_id, self._full_access_mode)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            raise EmployeeConfigurationError(
+                f"employee backend {self.backend_key!r} session permission "
+                "configuration failed"
             ) from error
 
     def _new_request(self, employee: ConversationEmployee) -> NewSessionRequest:

@@ -105,13 +105,25 @@ class HermesEmployeeSessionConfigurationAdapter:
                         "Hermes ACP child does not support legacy model selection"
                     )
                 await child.set_legacy_session_model(response.session_id, model)
-            await child.set_session_mode(response.session_id, "dont_ask")
+            await self.enforce_session_permission_mode(child, response.session_id)
         except asyncio.CancelledError:
             raise
         except EmployeeConfigurationError:
             raise
         except BaseException as error:
             raise EmployeeConfigurationError("Hermes launch model selection failed") from error
+
+    async def enforce_session_permission_mode(
+        self, child: AcpEmployeeChild, session_id: str
+    ) -> None:
+        try:
+            await child.set_session_mode(session_id, "dont_ask")
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            raise EmployeeConfigurationError(
+                "Hermes session permission configuration failed"
+            ) from error
 
     async def _run_probe(self) -> object:
         try:

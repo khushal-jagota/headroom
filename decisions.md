@@ -3246,3 +3246,16 @@ not guarantee notification/request wire ordering across the prior fork response.
   validated launch-default endpoints and resource invalidation path.
 - Follow the approved success/approach fields and omit permission controls; the live owner decision
   for the related launch-default work made full access a launch invariant rather than a setting.
+
+# 2026-07-22 — Full access is a runtime-materialization invariant
+
+- The owner explicitly accepts unrestricted defaults for the shared Claude configuration as well as
+  Panels-managed workers. Set the user Claude `permissions.defaultMode` to `bypassPermissions` while
+  preserving every other setting.
+- Treat a provider permission mode as process-local runtime state, not durable ACP session state.
+  Enforce it after both session creation and every durable-session load before publication or prompt.
+- Keep model and reasoning choices initial-session-only. A load may select only the backend's fixed
+  permission mode: Codex `agent-full-access`, Claude Code `bypassPermissions`, Hermes `dont_ask`.
+- Use backend-native unrestricted process defaults where they exist: Codex starts its ACP adapter in
+  `agent-full-access`; Hermes keeps `HERMES_YOLO_MODE=1`. The explicit post-load enforcement remains
+  the cross-provider invariant and protects child replacement and recovery paths.

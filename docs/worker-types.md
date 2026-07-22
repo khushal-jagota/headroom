@@ -229,9 +229,10 @@ conversation copies the then-current trio into its durable binding. An existing 
 continues with the trio it launched with, including after a server restart.
 
 Permission is not a launch setting and is never copied into a Ticket or conversation binding.
-Every new Worker or Chief session starts with the backend's full-access mode: Codex uses
-`agent-full-access`, Claude Code uses `bypassPermissions`, and Hermes uses YOLO plus
-`dont_ask`. Hermes can still surface permission behavior its adapter does not suppress.
+Every new or loaded Worker or Chief session enforces the backend's full-access mode before use:
+Codex uses `agent-full-access`, Claude Code uses `bypassPermissions`, and Hermes uses YOLO plus
+`dont_ask`. Loading does not reapply Model or Reasoning. Hermes can still surface permission
+behavior its adapter does not suppress.
 
 _Code paths:_ `src/planner/conversation/backend_catalog.py` owns the ordered backend
 catalog; `src/planner/worker_types/configuration.py` composes it with the Worker-type

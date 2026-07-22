@@ -148,7 +148,7 @@ def build_codex_acp_backend_definition(
         environment_overrides=(
             ("APP_SERVER_LOGS", str(logs)),
             ("DEFAULT_AUTH_REQUEST", '{"methodId":"api-key"}'),
-            ("INITIAL_AGENT_MODE", "agent"),
+            ("INITIAL_AGENT_MODE", "agent-full-access"),
             ("NO_BROWSER", "1"),
         ),
         expected_agent_name=CODEX_ACP_AGENT_NAME,

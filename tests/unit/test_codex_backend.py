@@ -67,7 +67,7 @@ def test_codex_definition_is_locked_confined_and_permission_only() -> None:
     assert definition.environment_overrides == (
         ("APP_SERVER_LOGS", "/srv/panels/codex-acp-logs"),
         ("DEFAULT_AUTH_REQUEST", '{"methodId":"api-key"}'),
-        ("INITIAL_AGENT_MODE", "agent"),
+        ("INITIAL_AGENT_MODE", "agent-full-access"),
         ("NO_BROWSER", "1"),
     )
     assert definition.turn_capabilities.supports_steer is False
@@ -110,7 +110,7 @@ def test_codex_environment_keeps_only_declared_auth_and_panels_identity() -> Non
         "OPENAI_API_KEY": "openai-key",
         "APP_SERVER_LOGS": "/srv/panels/codex-acp-logs",
         "DEFAULT_AUTH_REQUEST": '{"methodId":"api-key"}',
-        "INITIAL_AGENT_MODE": "agent",
+        "INITIAL_AGENT_MODE": "agent-full-access",
         "NO_BROWSER": "1",
         "PLAN_ACTOR": "worker",
         "PLAN_TICKET_ID": "ticket-codex",

@@ -142,9 +142,10 @@ backend and durable binding.
 Chief has managed Backend, Model, and Reasoning defaults. Starting a new Chief conversation
 copies the current trio into the durable empty conversation. Its first prompt later creates the
 ACP binding from that snapshot; loading an existing Chief conversation keeps its stored trio.
-Permission is not stored configuration. Every actual new Worker or Chief session
-uses backend-native full access. Codex selects `agent-full-access`, Claude Code selects
-`bypassPermissions`, and Hermes starts in YOLO mode and selects `dont_ask`.
+Permission is not stored configuration. Every actual new Worker or Chief session and every
+loaded durable session uses backend-native full access. Codex selects `agent-full-access`,
+Claude Code selects `bypassPermissions`, and Hermes starts in YOLO mode and selects `dont_ask`.
+Loading reasserts only permission; it does not reapply the session's historical Model or Reasoning.
 
 Claude Code runs one initialize-only preflight when Panels starts. That temporary
 child is closed before startup completes and creates no worker session. Codex is lazy:

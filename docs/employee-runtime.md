@@ -178,8 +178,9 @@ the ACP session owns its live configuration.
 
 Permission is a runtime invariant, not Ticket or binding state. Each actual new Worker or
 Chief session receives the backend's full-access mode. A bound reload preserves the durable
-session instead of creating or reconfiguring one. Hermes combines YOLO mode with `dont_ask`,
-but its adapter may still expose residual permission behavior.
+session and its model and reasoning choices, then reasserts only that permission mode before
+the runtime can be used. Hermes combines YOLO mode with `dont_ask`, but its adapter may still
+expose residual permission behavior.
 
 Claude Code receives an initialize-only preflight at server startup, and the temporary
 child closes without creating a session. Codex starts lazily on first demand. Neither

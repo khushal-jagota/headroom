@@ -1,5 +1,22 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): ACP full-access reload invariant
+
+Codex now launches its ACP adapter in `agent-full-access`. Claude's user configuration uses
+`permissions.defaultMode = bypassPermissions`. Codex, Claude Code, and Hermes reassert their fixed
+permission mode after every durable-session load while leaving historical Model and Reasoning
+choices untouched. Every registry load, recovery, adoption, requested-cancel replacement,
+compaction handoff, and backend-switch creation path goes through that invariant. Failed or
+cancelled warm reloads invalidate the exact runtime and schedule child closure before returning;
+the cancellation regression proves cleanup does not wait on a held publication gate.
+
+The focused provider/registry suite, Ruff, strict Mypy, and diff checks pass. Independent contract
+and standards reviews both reported `NO VIOLATIONS`. The one canonical `./verify` passed: Ruff,
+Mypy, 1,383 unit tests, compile/CSS checks, Svelte checks and build, frontend contract tests, and
+119 Playwright end-to-end tests. The scoped commit excludes the concurrent canonical-skill-source
+work. Live activation is blocked because `panels restart` cannot connect to the expected supervisor
+socket; the existing orphaned application process must be restarted by its owning operator.
+
 ## Current work cycle (2026-07-22): Workers-page launch-default controls (`t_f0f8pp6y`)
 
 The existing managed Worker/Chief launch-default authority is now exposed on the Workers page.

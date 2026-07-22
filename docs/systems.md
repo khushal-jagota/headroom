@@ -163,7 +163,8 @@ that same selected backend and durable session after the choice freezes.
 Managed Worker and Chief settings also provide Model and Reasoning defaults. Ticket creation
 copies its Worker's trio once; a new Chief conversation copies the Chief trio into its durable
 empty conversation, and the first demand later creates its backend binding.
-Permission is not managed or persisted. Every new session starts in backend-native full access.
+Permission is not managed or persisted. Every new session starts in backend-native full access,
+and every durable-session load reasserts that mode before the runtime can be used.
 
 _Code paths:_ `src/planner/conversation/`, `src/planner/runtime/acp_step_gateway.py`,
 and `/api/conversation` in `src/planner/core/server.py`.

@@ -425,7 +425,15 @@ def test_hermes_model_is_applied_once_before_first_binding_and_never_reapplied(
         loaded = await registry.get_or_spawn(employee)
         assert loaded.binding == replacement.binding
         assert sum(item.startswith("set_legacy_session_model:") for item in operations) == 1
-        assert sum(item.startswith("set_session_mode:") for item in operations) == 2
+        assert [child.mode_requests for child in factory.children] == [
+            [("hermes-1-1", "dont_ask")],
+            [("hermes-1-1", "dont_ask")],
+            [
+                ("hermes-1-1-fork-1", "dont_ask"),
+                ("hermes-3-1", "dont_ask"),
+            ],
+            [("hermes-3-1", "dont_ask")],
+        ]
         await registry.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
