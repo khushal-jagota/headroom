@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import EventKind
+from planner.core.contracts import EventKind, PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
@@ -529,6 +529,79 @@ def test_corrupt_current_files_restore_custom_launch_defaults_on_first_read(
     recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
 
     assert recovered.launch_defaults == expected
+
+
+def test_new_worker_settings_upgrade_adds_only_runtime_defaults_ownership(
+    tmp_path: Path,
+) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.read_worker_settings(tmp_path, registry, "new_worker")
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    settings_path = root / "new_worker" / "settings.json"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    payload["stage_ownership_defaults"]["needs_stages"] = "user"
+    payload["launch_defaults"] = {
+        "employee_backend": "claude",
+        "employee_launch_model": "claude-sonnet",
+        "employee_launch_reasoning_effort": "high",
+    }
+    del payload["stage_ownership_defaults"]["needs_runtime_defaults"]
+    settings_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    upgraded = worker_settings_service.read_worker_settings(tmp_path, registry, "new_worker")
+
+    assert upgraded.stage_ownership_defaults["needs_runtime_defaults"] == (
+        StageOwnershipMode.paired
+    )
+    assert upgraded.stage_ownership_defaults["needs_stages"] == StageOwnershipMode.user
+    assert upgraded.launch_defaults.employee_backend == "claude"
+    assert upgraded.launch_defaults.employee_launch_model == "claude-sonnet"
+    assert upgraded.launch_defaults.employee_launch_reasoning_effort == "high"
+
+
+def test_new_worker_settings_upgrade_applies_after_last_known_good_restore(
+    tmp_path: Path,
+) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.read_worker_settings(tmp_path, registry, "new_worker")
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    last_good_path = root / ".last-known-good" / "new_worker" / "settings.json"
+    payload = json.loads(last_good_path.read_text(encoding="utf-8"))
+    payload["stage_ownership_defaults"]["needs_thinking"] = "user"
+    payload["launch_defaults"] = {
+        "employee_backend": "claude",
+        "employee_launch_model": "claude-sonnet",
+        "employee_launch_reasoning_effort": "high",
+    }
+    del payload["stage_ownership_defaults"]["needs_runtime_defaults"]
+    last_good_path.write_text(json.dumps(payload), encoding="utf-8")
+    (root / "new_worker" / "settings.json").unlink()
+
+    recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "new_worker")
+
+    assert recovered.stage_ownership_defaults["needs_runtime_defaults"] == (
+        StageOwnershipMode.paired
+    )
+    assert recovered.stage_ownership_defaults["needs_thinking"] == StageOwnershipMode.user
+    assert recovered.launch_defaults.employee_backend == "claude"
+    assert recovered.launch_defaults.employee_launch_model == "claude-sonnet"
+    assert recovered.launch_defaults.employee_launch_reasoning_effort == "high"
+
+
+def test_missing_non_new_worker_stage_default_still_fails_validation(tmp_path: Path) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    for settings_path in (
+        root / "coding" / "settings.json",
+        root / ".last-known-good" / "coding" / "settings.json",
+    ):
+        payload = json.loads(settings_path.read_text(encoding="utf-8"))
+        del payload["stage_ownership_defaults"]["needs_plan"]
+        settings_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PlannerError, match="missing stage defaults"):
+        worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
 
 
 @pytest.mark.parametrize("missing_file_name", ["settings.json", "SKILL.md"])

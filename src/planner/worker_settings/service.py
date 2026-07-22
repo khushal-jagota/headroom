@@ -347,6 +347,28 @@ def _validate_settings_payload(
     return defaults
 
 
+def _upgrade_new_worker_runtime_defaults_ownership(
+    path: Path,
+    payload: JsonDict,
+    definition: WorkerTypeDefinition,
+) -> JsonDict:
+    """Add only the newly required new-worker ownership default to old revisions."""
+    if definition.worker_type != "new_worker" or payload.get("worker_type") != "new_worker":
+        return payload
+    raw_defaults = payload.get("stage_ownership_defaults")
+    if not isinstance(raw_defaults, dict) or "needs_runtime_defaults" in raw_defaults:
+        return payload
+    stage = definition.stage_definition("needs_runtime_defaults")
+    if stage.default_ownership_mode is None:
+        return payload
+    upgraded = dict(payload)
+    upgraded_defaults = dict(raw_defaults)
+    upgraded_defaults[stage.id] = stage.default_ownership_mode.value
+    upgraded["stage_ownership_defaults"] = upgraded_defaults
+    _atomic_replace_json(path, upgraded)
+    return upgraded
+
+
 def _frontmatter_bounds(text: str) -> tuple[list[str], str]:
     lines = text.splitlines(keepends=True)
     if not lines or lines[0].strip() != "---":
@@ -488,7 +510,12 @@ def _read_settings_with_recovery(
         if not _restore_last_known_good(root, definition.worker_type):
             _ensure_bootstrapped(root, definition)
     try:
-        settings_payload = _load_json_object(_settings_path(root, definition.worker_type))
+        settings_path = _settings_path(root, definition.worker_type)
+        settings_payload = _upgrade_new_worker_runtime_defaults_ownership(
+            settings_path,
+            _load_json_object(settings_path),
+            definition,
+        )
         defaults = _validate_settings_payload(settings_payload, definition)
         profile = definition.worker_profile
         launch_defaults = _validate_launch_defaults(
@@ -508,7 +535,12 @@ def _read_settings_with_recovery(
     except PlannerError:
         if not _restore_last_known_good(root, definition.worker_type):
             raise
-        settings_payload = _load_json_object(_settings_path(root, definition.worker_type))
+        settings_path = _settings_path(root, definition.worker_type)
+        settings_payload = _upgrade_new_worker_runtime_defaults_ownership(
+            settings_path,
+            _load_json_object(settings_path),
+            definition,
+        )
         defaults = _validate_settings_payload(settings_payload, definition)
         profile = definition.worker_profile
         launch_defaults = _validate_launch_defaults(

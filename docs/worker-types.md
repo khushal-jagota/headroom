@@ -43,7 +43,8 @@ external-work reconciliation.
 
 The shipped `coding` definition defaults every non-terminal Stage to worker ownership.
 `new_worker` starts with worker-owned Kickoff, then uses paired ownership for Understanding
-before returning to worker-owned Stages, Thinking, Drafting, and Closeout. `exploration`
+before worker-owned Stages and Thinking, pairs again for Runtime Defaults, then returns to
+worker-owned Drafting and Closeout. `exploration`
 uses paired ownership for Understanding and Answer, where the user and worker establish
 the frame and reach the decision together; its other non-terminal Stages default to worker
 ownership. `initiative_planning` uses paired ownership for Question Answers, where
@@ -260,7 +261,10 @@ rather than reconstructing identity from terminal state.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
 
 For `new_worker`, the visible lifecycle after universal Kickoff is
-Understanding, Stages, Thinking, Drafting, Closeout, Done. Understanding is paired:
+Understanding, Stages, Thinking, Runtime Defaults, Drafting, Closeout, Done. Understanding
+and Runtime Defaults are paired. Runtime Defaults approves an explicit registered backend,
+advertised model, and supported reasoning effort before Drafting records them in the
+Worker profile. Understanding:
 Panels dispatches one automatic opening turn into the durable Employee session, human
 conversation continues that same session, and an Understanding proposal waits for approval
 before the Ticket advances to Stages.

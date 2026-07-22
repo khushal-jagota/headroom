@@ -14,11 +14,12 @@ The hard part isn't writing files; it's the **thinking** — what the worker is 
 
 ### The stages
 
-**Understanding → Stages → Thinking → Drafting → Closeout → Done**
+**Understanding → Stages → Thinking → Runtime Defaults → Drafting → Closeout → Done**
 
 - **needs_understanding** — the short paired conversation that captures what this worker is for, where the hard judgment lives, and the boundaries the lifecycle must respect.
 - **needs_stages** — the new worker's lifecycle: its ordered stages, what each one needs, and who owns each Stage by default.
 - **needs_thinking** — the design substance: what a good result looks like, who does the work, the standard each stage holds.
+- **needs_runtime_defaults** — the paired choice of explicit backend, model, and reasoning effort used when this worker starts.
 - **needs_drafting** — the artifacts: the new worker's `SKILL.md` and its Worker type definition.
 - **needs_closeout** — landing it: files placed, registered, provisioned; a restart makes it live.
 
@@ -73,6 +74,20 @@ This is where the worker's value is decided; a thin pass here makes a worthless 
 
 Genericity test: any sentence equally true of a different worker isn't done — replace it with the specific truth about this one.
 
+### needs_runtime_defaults — choose how the worker starts
+
+Recommend one explicit runtime tuple from the approved design and runtime catalog:
+
+- a registered backend;
+- a model advertised by that backend; and
+- a reasoning effort supported by that backend/model, using explicit `None` only when
+  reasoning effort is unsupported.
+
+Use `codex` / `gpt-5.6-sol` / `medium` as the baseline, then change a value only when
+the approved worker design gives a concrete reason. This is paired work: explain the
+tradeoff briefly and wait for approval. Permission is not part of this choice; full
+access is an independent runtime invariant.
+
 ### needs_drafting — write the artifacts
 
 From the approved thinking, write the two files:
@@ -82,6 +97,8 @@ From the approved thinking, write the two files:
   ownership mode on every non-terminal Stage, ordered fields, ceiling range, worker
   profile, and reconciliation support. Novel ids are plain strings; reuse the
   shared `needs_kickoff`/`kickoff`, `needs_closeout`/`closeout`, `done`, `dropped`.
+
+Copy the approved Runtime Defaults values into the definition's `WorkerProfile`.
 
 Point the reviewer at both files and note briefly how they realize the thinking.
 
@@ -98,6 +115,9 @@ The mechanical recipe for adding a worker to the running system:
 6. Announce the Worker type to the agent front doors: add the new specialist to
    `panels-worker`'s worker list, and add the Worker type (with what it's for) to
    `panels-chief-of-staff` so it can create and reconcile it.
+
+Before activation, confirm the managed settings bootstrap contains the same backend,
+model, and reasoning effort approved in Runtime Defaults.
 
 A restart activates the Worker type. Finish the merge, verification, durable recap, and
 every other pre-restart write before requesting it.

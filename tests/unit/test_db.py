@@ -1324,7 +1324,7 @@ def test_kickoff_migration_rolls_back_failed_foreign_key_check_and_preserves_lin
     conn.close()
 
 
-def test_create_schema_adds_missing_new_worker_understanding_slot_idempotently(tmp_path):
+def test_create_schema_adds_missing_new_worker_slots_idempotently(tmp_path):
     conn = connect(str(tmp_path / "new-worker-understanding-slot.db"))
     create_schema(conn)
     old_new_worker_fields = json.dumps(
@@ -1351,6 +1351,11 @@ def test_create_schema_adds_missing_new_worker_understanding_slot_idempotently(t
             },
             "stages": {"value": None, "proposal": None, "user_note": None},
             "thinking": {"value": None, "proposal": None, "user_note": None},
+            "runtime_defaults": {
+                "value": "codex / custom / high",
+                "proposal": None,
+                "user_note": "preserve approved defaults",
+            },
             "drafting": {"value": None, "proposal": None, "user_note": None},
             "closeout": {"value": None, "proposal": None, "user_note": None},
         },
@@ -1483,12 +1488,19 @@ def test_create_schema_adds_missing_new_worker_understanding_slot_idempotently(t
             "understanding",
             "stages",
             "thinking",
+            "runtime_defaults",
             "drafting",
             "closeout",
         ]
         assert fields["understanding"] == {"value": None, "proposal": None, "user_note": None}
+        assert fields["runtime_defaults"] == {
+            "value": None,
+            "proposal": None,
+            "user_note": None,
+        }
         expected_without_understanding = json.loads(old_new_worker_fields)
         del fields["understanding"]
+        del fields["runtime_defaults"]
         assert fields == expected_without_understanding
     assert {
         key: first_rows["t_kickoff"][key]
@@ -2985,6 +2997,7 @@ def test_create_schema_backfills_historical_new_worker_coding_fields_for_audit(t
         "understanding",
         "stages",
         "thinking",
+        "runtime_defaults",
         "drafting",
         "closeout",
         "success",
@@ -2993,10 +3006,14 @@ def test_create_schema_backfills_historical_new_worker_coding_fields_for_audit(t
         "implementation",
     ]
     empty_slot = {"value": None, "proposal": None, "user_note": None}
-    assert {key: fields[key] for key in ("understanding", "stages", "thinking", "drafting")} == {
+    assert {
+        key: fields[key]
+        for key in ("understanding", "stages", "thinking", "runtime_defaults", "drafting")
+    } == {
         "understanding": empty_slot,
         "stages": empty_slot,
         "thinking": empty_slot,
+        "runtime_defaults": empty_slot,
         "drafting": empty_slot,
     }
     for key, value in json.loads(original_fields).items():

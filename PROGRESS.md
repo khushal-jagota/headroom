@@ -3437,3 +3437,6 @@ Dogfood round (2026-07-21, Claude worker on t_74sa1y1j): three fixes uncommitted
 
 ## Frontend dependency tracking cleanup (2026-07-22)
 Stage: complete, awaiting commit. `web/node_modules/` is now ignored and its 3,985 generated dependency files are removed from the Git index while the local install remains intact. Focused checks prove the path is ignored, Git tracks zero files below it, and `npm --prefix web run check` passes. Worktrees and their dependencies were explicitly left untouched. Blockers: none.
+
+## t_pz271435 — New Worker Runtime Defaults (2026-07-22)
+Stage: Drafting ready for approval. The packaged New Worker definition and specialist now add paired Runtime Defaults between Thinking and Drafting. Existing Ticket fields and managed ownership settings upgrade narrowly without rewinding Tickets or replacing custom launch defaults. Independent implementation review found no unresolved issues; the 166-test focused seam suite, Ruff, and `git diff --check` pass. Closeout must publish the packaged specialist into managed settings, perform final verification/integration, and use the documented restart boundary before claiming activation.

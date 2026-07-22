@@ -231,7 +231,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         if "stage_ownership_overrides" not in _table_columns(conn, "tickets"):
             _migrate_tickets_to_v20_contract(conn)
         _migrate_tickets_to_v22_without_execution_route(conn)
-    _migrate_new_worker_understanding_field(conn)
+    _migrate_new_worker_fields(conn)
     _migrate_project_summary_column(conn)
     _migrate_derived_sprint_item_status(conn)
     _migrate_links_blocks_only(conn)
@@ -1450,9 +1450,23 @@ def _migrate_tickets_to_v22_without_execution_route(conn: sqlite3.Connection) ->
             conn.execute("PRAGMA foreign_keys=ON")
 
 
-def _migrate_new_worker_understanding_field(conn: sqlite3.Connection) -> None:
-    lifecycle_order = ("kickoff", "understanding", "stages", "thinking", "drafting", "closeout")
-    new_worker_specific_slots = ("understanding", "stages", "thinking", "drafting")
+def _migrate_new_worker_fields(conn: sqlite3.Connection) -> None:
+    lifecycle_order = (
+        "kickoff",
+        "understanding",
+        "stages",
+        "thinking",
+        "runtime_defaults",
+        "drafting",
+        "closeout",
+    )
+    new_worker_specific_slots = (
+        "understanding",
+        "stages",
+        "thinking",
+        "runtime_defaults",
+        "drafting",
+    )
     rows = conn.execute(
         "SELECT id, fields FROM tickets WHERE worker_type = 'new_worker' ORDER BY id"
     ).fetchall()

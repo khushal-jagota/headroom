@@ -114,6 +114,7 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
     understanding = _file(tmp_path, "understanding.md", "Bounded worker-design understanding")
     stages = _file(tmp_path, "stages.md", "needs_thinking, needs_drafting")
     thinking = _file(tmp_path, "thinking.md", "Worker reasoning contract")
+    runtime_defaults = _file(tmp_path, "runtime-defaults.md", "codex / gpt-5.6-sol / medium")
 
     created = _run(
         server,
@@ -124,21 +125,24 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
         "--worker-type",
         "new_worker",
         "--stage",
-        "needs_thinking",
+        "needs_runtime_defaults",
         "--kickoff-note-file",
         note,
         "--field-file",
         f"understanding={understanding}",
         "--field-file",
         f"stages={stages}",
+        "--field-file",
+        f"thinking={thinking}",
         "--json",
     )
     assert created.returncode == 0, created.stderr
     created_json = json.loads(created.stdout)
-    assert created_json["stage"] == "needs_thinking"
+    assert created_json["stage"] == "needs_runtime_defaults"
     assert created_json["fields"]["understanding"]["value"] == "Bounded worker-design understanding"
     assert created_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
-    assert created_json["fields"]["thinking"]["value"] is None
+    assert created_json["fields"]["thinking"]["value"] == "Worker reasoning contract"
+    assert created_json["fields"]["runtime_defaults"]["value"] is None
 
     reconciled = _run(
         server,
@@ -151,6 +155,8 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
         note,
         "--field-file",
         f"thinking={thinking}",
+        "--field-file",
+        f"runtime_defaults={runtime_defaults}",
         "--json",
     )
     assert reconciled.returncode == 0, reconciled.stderr
@@ -161,6 +167,9 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
     )
     assert reconciled_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
     assert reconciled_json["fields"]["thinking"]["value"] == "Worker reasoning contract"
+    assert reconciled_json["fields"]["runtime_defaults"]["value"] == (
+        "codex / gpt-5.6-sol / medium"
+    )
 
 
 def test_chief_field_file_rejects_ambiguity_before_read_or_request(server) -> None:

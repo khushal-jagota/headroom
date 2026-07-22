@@ -3290,3 +3290,14 @@ not guarantee notification/request wire ordering across the prior fork response.
   user-level migration now. Move the old Codex directory and Claude symlink to explicit temporary
   backups, create direct canonical symlinks under `panels-update-chief-of-staff`, verify the old
   discovery names are absent, then remove the backups only after repository integration is fixed.
+
+# 2026-07-22 — t_pz271435 New Worker Runtime Defaults
+
+- Add one paired `needs_runtime_defaults` gate between Thinking and Drafting. It approves the
+  explicit backend, advertised model, and supported reasoning effort; full access remains a
+  backend-specific launch invariant rather than a stored choice.
+- Grandfather existing New Worker Tickets in place by adding only the empty ordered field slot.
+  Add only the missing paired ownership default to existing New Worker managed settings, preserving
+  custom ownership and launch defaults and leaving general missing-stage validation strict.
+- Drafting changes packaged source and compatibility seams only. Publishing the packaged specialist
+  into managed settings, final verification, and restart-backed activation belong to Closeout.

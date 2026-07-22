@@ -3,8 +3,9 @@ and a compact drive-to-done through the real ``data.*`` writers.
 
 ``new_worker`` is the production type for designing another worker. Its worker
 designs and lands ANOTHER worker; its lifecycle is a bespoke thinking scaffold
-(``needs_kickoff -> needs_understanding -> needs_stages -> needs_thinking -> needs_drafting ->
-needs_closeout -> done``) whose four middle stages/fields are novel. This module proves:
+(``needs_kickoff -> needs_understanding -> needs_stages -> needs_thinking ->
+needs_runtime_defaults -> needs_drafting ->
+needs_closeout -> done``) whose five middle stages/fields are novel. This module proves:
 - the definition validates and serializes to its exact manifest (default_ceiling is
   the leading ``needs_kickoff``; first worker stage is ``needs_understanding``);
 - a ``new_worker`` ticket is created and driven stage-by-stage (propose -> approve ->
@@ -120,6 +121,13 @@ NEW_WORKER_MANIFEST = {
             "default_ownership_mode": "worker",
         },
         {
+            "id": "needs_runtime_defaults",
+            "label": "Runtime Defaults",
+            "gating_field": "runtime_defaults",
+            "is_terminal": False,
+            "default_ownership_mode": "paired",
+        },
+        {
             "id": "needs_drafting",
             "label": "Drafting",
             "gating_field": "drafting",
@@ -152,7 +160,8 @@ NEW_WORKER_MANIFEST = {
         "needs_kickoff": "needs_understanding",
         "needs_understanding": "needs_stages",
         "needs_stages": "needs_thinking",
-        "needs_thinking": "needs_drafting",
+        "needs_thinking": "needs_runtime_defaults",
+        "needs_runtime_defaults": "needs_drafting",
         "needs_drafting": "needs_closeout",
         "needs_closeout": "done",
     },
@@ -161,6 +170,7 @@ NEW_WORKER_MANIFEST = {
         {"id": "understanding", "label": "Understanding"},
         {"id": "stages", "label": "Stages"},
         {"id": "thinking", "label": "Thinking"},
+        {"id": "runtime_defaults", "label": "Runtime Defaults"},
         {"id": "drafting", "label": "Drafting"},
         {"id": "closeout", "label": "Closeout"},
     ],
@@ -169,6 +179,7 @@ NEW_WORKER_MANIFEST = {
         "needs_understanding",
         "needs_stages",
         "needs_thinking",
+        "needs_runtime_defaults",
         "needs_drafting",
         "needs_closeout",
         "done",
@@ -201,6 +212,7 @@ def test_new_worker_gate_map_is_golden() -> None:
         "needs_understanding": "understanding",
         "needs_stages": "stages",
         "needs_thinking": "thinking",
+        "needs_runtime_defaults": "runtime_defaults",
         "needs_drafting": "drafting",
         "needs_closeout": "closeout",
     }
@@ -212,6 +224,7 @@ def test_new_worker_field_order_is_golden() -> None:
         "understanding",
         "stages",
         "thinking",
+        "runtime_defaults",
         "drafting",
         "closeout",
     )
@@ -234,6 +247,7 @@ def test_new_worker_declares_expected_default_ownership_modes() -> None:
         "needs_understanding": "paired",
         "needs_stages": "worker",
         "needs_thinking": "worker",
+        "needs_runtime_defaults": "paired",
         "needs_drafting": "worker",
         "needs_closeout": "worker",
     }
@@ -312,19 +326,46 @@ def test_new_worker_drives_to_done_via_real_writers(
     assert t.stage == "needs_stages"
     assert fields_codec.get_slot(t.fields, "understanding").value == "understanding body"
 
-    # Drive the three worker-owned novel stages: the ceiling (needs_closeout) is BEYOND
-    # each state, so a proposal AUTO-ACCEPTS and advances. Novel field ids round-trip.
-    for field, next_state in (
-        ("stages", "needs_thinking"),
-        ("thinking", "needs_drafting"),
-        ("drafting", "needs_closeout"),
-    ):
+    # Drive the worker-owned stages before Runtime Defaults.
+    for field, next_state in (("stages", "needs_thinking"), ("thinking", "needs_runtime_defaults")):
         t = tickets_data.file_proposal(
             tmp_db, tid, field=field, body=f"{field} body", actor="agent", now=now
         )
         assert t.stage == next_state
         assert fields_codec.get_slot(t.fields, field).value == f"{field} body"
         assert fields_codec.get_slot(t.fields, field).proposal is None
+
+    # Runtime Defaults is paired, so its proposal parks below the ceiling and approval
+    # advances to Drafting. The approved value round-trips through the normal field slot.
+    t = tickets_data.file_proposal(
+        tmp_db,
+        tid,
+        field="runtime_defaults",
+        body="codex / gpt-5.6-sol / medium",
+        actor="agent",
+        now=now,
+    )
+    assert t.stage == "needs_runtime_defaults"
+    assert fields_codec.get_slot(t.fields, "runtime_defaults").proposal is not None
+    t = tickets_data.accept_proposal(
+        tmp_db,
+        tid,
+        field="runtime_defaults",
+        actor="human",
+        now=now,
+        next_ceiling="needs_closeout",
+        at_cap=AtCap.propose,
+    )
+    assert t.stage == "needs_drafting"
+    assert fields_codec.get_slot(t.fields, "runtime_defaults").value == (
+        "codex / gpt-5.6-sol / medium"
+    )
+
+    t = tickets_data.file_proposal(
+        tmp_db, tid, field="drafting", body="drafting body", actor="agent", now=now
+    )
+    assert t.stage == "needs_closeout"
+    assert fields_codec.get_slot(t.fields, "drafting").value == "drafting body"
 
     # At needs_closeout (ceiling ==): propose closeout -> parks; then accept -> done.
     tickets_data.file_proposal(
@@ -345,6 +386,9 @@ def test_new_worker_drives_to_done_via_real_writers(
     assert fields_codec.get_slot(t.fields, "understanding").value == "understanding body"
     assert fields_codec.get_slot(t.fields, "stages").value == "stages body"
     assert fields_codec.get_slot(t.fields, "thinking").value == "thinking body"
+    assert fields_codec.get_slot(t.fields, "runtime_defaults").value == (
+        "codex / gpt-5.6-sol / medium"
+    )
     assert fields_codec.get_slot(t.fields, "drafting").value == "drafting body"
     assert fields_codec.get_slot(t.fields, "closeout").value == "closeout body"
     assert fields_codec.get_slot(t.fields, "closeout").proposal is None

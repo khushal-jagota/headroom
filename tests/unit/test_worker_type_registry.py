@@ -147,6 +147,7 @@ def test_new_worker_definition_has_distinct_behavior() -> None:
         "needs_understanding",
         "needs_stages",
         "needs_thinking",
+        "needs_runtime_defaults",
         "needs_drafting",
         "needs_closeout",
         "done",
@@ -156,11 +157,13 @@ def test_new_worker_definition_has_distinct_behavior() -> None:
         "understanding",
         "stages",
         "thinking",
+        "runtime_defaults",
         "drafting",
         "closeout",
     )
     assert definition.first_worker_stage() == "needs_understanding"
     assert definition.gating_field("needs_thinking") == "thinking"
+    assert definition.gating_field("needs_runtime_defaults") == "runtime_defaults"
 
 
 def test_definition_errors_are_preserved() -> None:
