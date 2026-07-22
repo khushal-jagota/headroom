@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from acp.schema import (
     CancelNotification,
@@ -97,6 +97,25 @@ WorkingDirectoryResolver = Callable[[ConversationEmployee], Path]
 SessionNotificationNormalizer = Callable[[SessionNotification], SessionNotification]
 
 
+@dataclass(frozen=True, slots=True)
+class SessionNotificationReplaySlotAdmission:
+    slot_key: Hashable
+    disposition: Literal["accumulate", "replace"]
+    serialized_notification_bytes: int
+    serialized_materialized_base_bytes: int
+    serialized_accumulation_fragment_bytes: int
+
+
+class SessionNotificationReplayMaterializer(Protocol):
+    def classify(
+        self, notification: SessionNotification
+    ) -> SessionNotificationReplaySlotAdmission | None: ...
+
+    def materialize(
+        self, notifications: tuple[SessionNotification, ...]
+    ) -> SessionNotification: ...
+
+
 def identity_session_notification_normalizer(
     notification: SessionNotification,
 ) -> SessionNotification:
@@ -118,6 +137,9 @@ class AgentBackendDefinition:
     session_notification_normalizer: SessionNotificationNormalizer = (
         identity_session_notification_normalizer
     )
+    session_notification_replay_materializer: (
+        SessionNotificationReplayMaterializer | None
+    ) = None
 
     def __post_init__(self) -> None:
         _require_non_empty_text(self.backend_key, field_name="backend_key")

@@ -3127,3 +3127,22 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Treat this as one contract-scoped conversation slice. Use TDD at the child-ingress and real Hub
   replay seams, independent implementation review, and the repository's one final `./verify` before
   advancing `main`.
+
+## D-live-terminal-reconnect-materialization — Consolidate provider terminal deltas only in reconnect replay
+
+- Preserve the 1 MiB replay ceiling as an integrity guard. The defect is not the ceiling; it is
+  retaining thousands of transient terminal deltas as independent reconnect history.
+- Keep the canonical live stream exact for already attached browsers. Consolidation belongs only
+  to the subscriber-local replay representation, keyed by ACP session and tool-call identity.
+- Keep provider extension knowledge out of the Hub. A typed backend-definition hook owns exact
+  Codex `terminal_output_delta` recognition and combination; the Hub owns only generic keyed replay
+  slots, byte accounting, ordering, validation, and subscriber-local resequencing.
+- Treat only the exact `terminal_output_delta` extension shape as additive. Malformed, conflicting,
+  or unrelated ACP metadata retains existing append-only behavior rather than being guessed at.
+- A completed or failed terminal update is authoritative for the adapter's final aggregate; it may
+  replace that tool call's accumulated replay delta while retaining the full terminal update.
+- Recognition requires the exact pinned Codex active or final extension shape, including matching
+  terminal and tool-call identities. Empty final output is still authoritative; missing or extra
+  extension fields are not inferred.
+- Canonical replay accounting measures the stored materialized entries. Subscriber-local sequence
+  normalization is validated separately and never mutates that canonical byte count.

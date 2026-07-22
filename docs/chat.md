@@ -24,6 +24,14 @@ capacity instead of dropping or failing an admitted update. Once a ready stream
 exists, ordinary browser reconnects rebuild from the materialized Panels snapshot
 and do not issue `session/load`.
 
+Attached browsers receive every live ACP notification in its original order. The
+reconnect snapshot may consolidate backend-owned transient progress that would otherwise
+grow without adding durable conversation meaning. For Codex, Panels recognizes only the
+exact terminal-output extension and combines its active output chunks by tool call; an
+exact completed or failed aggregate replaces those chunks. Malformed, mixed, and unrelated
+notifications remain ordinary append-only replay. This changes only what a reconnect must
+download, not what a browser sees while the command is running.
+
 The pinned Codex adapter can describe one file edit by sending complete before-and-after
 file snapshots. Panels normalizes those Codex diff entries after the raw ACP notification
 has matched its typed callback and before live or replay routing. Small edits become grouped
@@ -43,6 +51,8 @@ genuinely not consuming and closes only that subscription. Replay-unavailable an
 slow-browser closures write content-free structured warnings with the employee,
 session, generation, connection, counts, and configured limits. Replay bootstrap and
 cutover envelopes do not count as queued live envelopes in those warnings.
+The 1 MiB snapshot limit remains in force after consolidation, so genuinely oversized
+materialized history still fails closed as replay unavailable.
 
 Each envelope carries the employee, ACP session, binding generation, and sequence.
 The browser accepts only one contiguous generation. A gap or identity mismatch fails
@@ -211,4 +221,4 @@ mode and no runtime code reads the removed tables.
 
 ---
 
-_Last verified: 2026-07-22 (single ACP conversation with bounded Codex file-edit replay)._
+_Last verified: 2026-07-22 (single ACP conversation with bounded Codex file-edit and terminal replay)._

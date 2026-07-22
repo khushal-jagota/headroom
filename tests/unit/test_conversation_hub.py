@@ -36,6 +36,9 @@ from planner.conversation.backend_contracts import (
 from planner.conversation.codex_session_notification_normalizer import (
     normalize_codex_session_notification,
 )
+from planner.conversation.codex_session_notification_replay_materializer import (
+    CodexSessionNotificationReplayMaterializer,
+)
 from planner.conversation.contracts import (
     ConversationEmployee,
     ConversationSessionBinding,
@@ -3185,6 +3188,300 @@ def test_normalized_codex_edit_over_one_megabyte_replays_through_ready(
         assert update["_meta"] == {"scriptedRawPayloadExceedsOneMiB": True}
         assert len(json.dumps(edit_envelope).encode()) < 65_536
         await child.close()
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_codex_live_terminal_deltas_materialize_for_cursor_reconnect(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, original_handle = _runtime(tmp_path)
+        definition = replace(
+            original_handle.definition,
+            session_notification_replay_materializer=(
+                CodexSessionNotificationReplayMaterializer()
+            ),
+        )
+        handle = replace(original_handle, definition=definition)
+        registry = _Registry(record, handle)
+        hub = ConversationHub(repository, reset_buffer_byte_limit=10_000)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=registry,
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        source = ConversationIngressSource(record.employee, 1, record.record_identity)
+        existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
+        initial = [
+            json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
+            for _ in range(2)
+        ]
+        assert [item["payload"]["state"] for item in initial] == ["reset", "ready"]
+
+        fragments = [f"fragment-{index:03d}-" + ("x" * 100) for index in range(50)]
+        live = []
+        for fragment in fragments:
+            notification = SessionNotification.model_validate(
+                {
+                    "sessionId": record.binding.acp_session_id,
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "terminal-1",
+                        "_meta": {
+                            "terminal_output_delta": {
+                                "data": fragment,
+                                "terminal_id": "terminal-1",
+                            }
+                        },
+                    },
+                }
+            )
+            await hub.registry_conversation_ingress(source, notification)
+            live.append(
+                json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
+            )
+
+        assert [item["sequence"] for item in live] == list(range(3, 53))
+        assert [
+            item["payload"]["update"]["_meta"]["terminal_output_delta"]["data"]
+            for item in live
+        ] == fragments
+        assert not existing.closed.is_set()
+        attach_calls = registry.attach_calls
+
+        reconnect = await hub.attach_browser(
+            "t_hub",
+            connection_id="browser-reconnect",
+            last_seen_binding_generation=record.binding.binding_generation,
+            last_seen_sequence=live[-1]["sequence"],
+        )
+
+        assert reconnect.close_reason is None
+        assert registry.attach_calls == attach_calls
+        replay = [
+            json.loads(await asyncio.wait_for(reconnect.queue.get(), timeout=1))
+            for _ in range(3)
+        ]
+        assert [item["type"] for item in replay] == [
+            "connection",
+            "acp_session_update",
+            "connection",
+        ]
+        assert [item["sequence"] for item in replay] == [50, 51, 52]
+        assert replay[1]["payload"]["update"]["_meta"]["terminal_output_delta"] == {
+            "data": "".join(fragments),
+            "terminal_id": "terminal-1",
+        }
+        assert replay[-1]["payload"]["state"] == "ready"
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        assert stream.reset_buffer_envelope_count == 52
+        assert stream.reset_buffer_attempted_bytes > hub._reset_buffer_byte_limit  # noqa: SLF001
+        assert stream.reset_buffer_bytes == sum(
+            len(item.encode("utf-8"))
+            for item in hub._materialized_replay_snapshot(stream)  # noqa: SLF001
+        )
+        assert stream.reset_buffer_bytes < hub._reset_buffer_byte_limit  # noqa: SLF001
+
+        await hub.publish_activity(record.employee, record.binding, "thinking", "next")
+        next_live = json.loads(
+            await asyncio.wait_for(reconnect.queue.get(), timeout=1)
+        )
+        assert next_live["sequence"] == 53
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_codex_terminal_slots_follow_latest_delta_position_and_final_replaces(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, original_handle = _runtime(tmp_path)
+        handle = replace(
+            original_handle,
+            definition=replace(
+                original_handle.definition,
+                session_notification_replay_materializer=(
+                    CodexSessionNotificationReplayMaterializer()
+                ),
+            ),
+        )
+        registry = _Registry(record, handle)
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=registry,
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="existing")
+        await existing.queue.get()
+        await existing.queue.get()
+        source = ConversationIngressSource(record.employee, 1, record.record_identity)
+
+        def terminal(
+            tool_call_id: str,
+            data: str,
+            *,
+            status: str | None = None,
+            terminal_exit: dict[str, object] | None = None,
+        ) -> SessionNotification:
+            metadata: dict[str, object] = {
+                "terminal_output_delta": {
+                    "data": data,
+                    "terminal_id": tool_call_id,
+                }
+            }
+            if terminal_exit is not None:
+                metadata["terminal_exit"] = terminal_exit
+            update: dict[str, object] = {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": tool_call_id,
+                "_meta": metadata,
+            }
+            if status is not None:
+                update["status"] = status
+                update["rawOutput"] = {
+                    "formatted_output": data,
+                    "exit_code": terminal_exit["exit_code"] if terminal_exit else None,
+                }
+            return SessionNotification.model_validate(
+                {"sessionId": record.binding.acp_session_id, "update": update}
+            )
+
+        await hub.registry_conversation_ingress(source, terminal("terminal-1", "A"))
+        await existing.queue.get()
+        await hub.publish_activity(record.employee, record.binding, "thinking", "between")
+        await existing.queue.get()
+        await hub.registry_conversation_ingress(source, terminal("terminal-2", "C"))
+        await existing.queue.get()
+        await hub.registry_conversation_ingress(source, terminal("terminal-1", "B"))
+        await existing.queue.get()
+        final = terminal(
+            "terminal-2",
+            "COMPLETE",
+            status="completed",
+            terminal_exit={
+                "terminal_id": "terminal-2",
+                "exit_code": 0,
+                "signal": None,
+            },
+        )
+        await hub.registry_conversation_ingress(source, final)
+        await existing.queue.get()
+
+        for _ in range(93):
+            await hub.registry_conversation_ingress(
+                source, terminal("terminal-1", "x")
+            )
+            await existing.queue.get()
+        stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
+        assert stream.sequence == 100
+        canonical_bytes_before_reconnect = stream.reset_buffer_bytes
+        assert canonical_bytes_before_reconnect == sum(
+            len(item.encode("utf-8"))
+            for item in hub._materialized_replay_snapshot(stream)  # noqa: SLF001
+        )
+
+        reconnect = await hub.attach_browser(
+            "t_hub", connection_id="reconnect"
+        )
+        replay = [
+            json.loads(await asyncio.wait_for(reconnect.queue.get(), timeout=1))
+            for _ in range(5)
+        ]
+        assert [item["type"] for item in replay] == [
+            "connection",
+            "activity",
+            "acp_session_update",
+            "acp_session_update",
+            "connection",
+        ]
+        assert replay[1]["payload"]["detail"] == "between"
+        assert replay[2]["payload"] == final.model_dump(
+            by_alias=True, exclude_none=True
+        )
+        assert replay[3]["payload"]["update"]["toolCallId"] == "terminal-1"
+        assert replay[3]["payload"]["update"]["_meta"]["terminal_output_delta"][
+            "data"
+        ] == "AB" + "x" * 93
+        assert [item["sequence"] for item in replay] == [96, 97, 98, 99, 100]
+        assert stream.reset_buffer_bytes == canonical_bytes_before_reconnect
+        replacement = terminal(
+            "terminal-1",
+            "FINAL-ONE",
+            status="completed",
+            terminal_exit={
+                "terminal_id": "terminal-1",
+                "exit_code": 0,
+                "signal": None,
+            },
+        )
+        await hub.registry_conversation_ingress(source, replacement)
+        await existing.queue.get()
+        assert stream.sequence == 101
+        assert stream.reset_buffer_bytes == sum(
+            len(item.encode("utf-8"))
+            for item in hub._materialized_replay_snapshot(stream)  # noqa: SLF001
+        )
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_genuinely_oversized_materialized_terminal_snapshot_fails_closed(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, original_handle = _runtime(tmp_path)
+        handle = replace(
+            original_handle,
+            definition=replace(
+                original_handle.definition,
+                session_notification_replay_materializer=(
+                    CodexSessionNotificationReplayMaterializer()
+                ),
+            ),
+        )
+        hub = ConversationHub(repository, reset_buffer_byte_limit=1_000)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        existing = await hub.attach_browser("t_hub", connection_id="existing")
+        await existing.queue.get()
+        await existing.queue.get()
+        source = ConversationIngressSource(record.employee, 1, record.record_identity)
+        notification = SessionNotification.model_validate(
+            {
+                "sessionId": record.binding.acp_session_id,
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "terminal-1",
+                    "_meta": {
+                        "terminal_output_delta": {
+                            "data": "x" * 2_000,
+                            "terminal_id": "terminal-1",
+                        }
+                    },
+                },
+            }
+        )
+        await hub.registry_conversation_ingress(source, notification)
+        delivered = json.loads(await existing.queue.get())
+        assert delivered["payload"]["update"]["_meta"]["terminal_output_delta"][
+            "data"
+        ] == "x" * 2_000
+
+        reconnect = await hub.attach_browser("t_hub", connection_id="reconnect")
+        assert reconnect.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
+        assert reconnect.queue.empty()
+        assert not existing.closed.is_set()
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
