@@ -106,6 +106,8 @@
 
 <style>
   .acp-permission {
+    min-width: 0;
+    max-width: 100%;
     background: var(--accent-surface);
     border-radius: var(--radius-md);
     color: var(--accent-text);
@@ -113,7 +115,7 @@
     gap: var(--space-3);
     padding: var(--space-3);
   }
-  .acp-permission-head { display: flex; align-items: baseline; gap: var(--space-2); }
+  .acp-permission-head { display: flex; min-width: 0; max-width: 100%; align-items: baseline; gap: var(--space-2); }
   .acp-permission-kind {
     font-family: var(--font-mono);
     font-size: var(--type-xs);
@@ -121,7 +123,13 @@
     text-transform: uppercase;
     color: var(--accent-bright);
   }
-  .acp-permission-title { font-family: var(--font-ui); font-size: var(--type-sm); color: var(--accent-text); }
+  .acp-permission-title {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-family: var(--font-ui);
+    font-size: var(--type-sm);
+    color: var(--accent-text);
+  }
   .acp-permission-count {
     margin-left: auto;
     font-family: var(--font-mono);
@@ -129,9 +137,9 @@
     color: var(--accent-bright);
     font-variant-numeric: tabular-nums;
   }
-  .acp-permission-options { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .acp-permission-options { display: flex; min-width: 0; max-width: 100%; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
   .acp-permission-options .acp-permission-allow.gather { margin-left: auto; }
-  button { font: inherit; cursor: pointer; }
+  button { max-width: 100%; overflow-wrap: anywhere; font: inherit; cursor: pointer; }
   .acp-permission-reject {
     background: transparent;
     border: 0;

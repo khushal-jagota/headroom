@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+from typing import Any
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -23,7 +25,41 @@ def main() -> None:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page()
         page.set_default_timeout(5_000)
+        page.set_viewport_size({"width": 961, "height": 720})
+        image_bytes = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        page.route(
+            "**/files/tickets/t_runtime/runtime-preview.png",
+            lambda route: route.fulfill(
+                status=200, content_type="image/png", body=image_bytes
+            ),
+        )
+        page.route(
+            "**/files/tickets/t_runtime/runtime-preview.md",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/markdown",
+                body=(
+                    "# Ready Markdown preview\n\n"
+                    "| fixture | value |\n| --- | --- |\n"
+                    f"| width | {'preview' * 180} |\n"
+                ),
+            ),
+        )
+        page.route(
+            "**/files/tickets/t_runtime/runtime-preview.html",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/html",
+                body="<!doctype html><p>Ready HTML preview</p>",
+            ),
+        )
         page.goto(arguments.url, wait_until="networkidle")
+        page.evaluate("window.__loadProductionStyles()")
+        page.wait_for_function(
+            "() => getComputedStyle(document.querySelector('.chat-panel')).display === 'flex'"
+        )
 
         # Structure: pane, transcript, task strip, permission prompt, composer.
         assert page.locator("[data-acp-conversation-pane]").count() == 1
@@ -31,6 +67,106 @@ def main() -> None:
         assert page.locator("[data-acp-task-strip]").count() == 1
         assert page.locator("[data-acp-permission='permission-runtime']").count() == 1
         assert page.locator("[data-acp-composer]").count() == 1
+
+        # Production-styled worst-case prose, links, previews, and media must stay
+        # inside the shared pane. Structured code/diff content may scroll only in
+        # its own bounded well.
+        def width_geometry(host_width: int) -> dict[str, Any]:
+            page.evaluate("width => window.__setHostWidth(width)", host_width)
+            return page.evaluate(
+                """() => {
+                  const tolerance = 1;
+                  const host = document.querySelector('#app');
+                  const pane = document.querySelector('[data-acp-conversation-pane]');
+                  const thread = document.querySelector('[data-chat-messages]');
+                  const boundedSelectors = [
+                    '[data-acp-message]',
+                    '.markdown',
+                    '.markdown table',
+                    '[data-file-preview]',
+                    '.file-preview-media',
+                    '.file-preview-doc',
+                    '.file-preview-card',
+                    '.file-preview-frame',
+                    '.acp-stanza',
+                    '.acp-step-detail',
+                    '[data-acp-permission]',
+                    '.acp-permission-head',
+                    '.acp-permission-options',
+                    '[data-acp-composer]',
+                  ];
+                  const inside = (child, parent) => {
+                    const childRect = child.getBoundingClientRect();
+                    const parentRect = parent.getBoundingClientRect();
+                    return childRect.left >= parentRect.left - tolerance
+                      && childRect.right <= parentRect.right + tolerance;
+                  };
+                  const paneRect = pane.getBoundingClientRect();
+                  const threadRect = thread.getBoundingClientRect();
+                  const bounded = boundedSelectors.flatMap((selector) =>
+                    [...document.querySelectorAll(selector)].map((element, index) => ({
+                      selector,
+                      index,
+                      insideThread: thread.contains(element) ? inside(element, thread) : true,
+                      insidePane: inside(element, pane),
+                      clientWidth: element.clientWidth,
+                      scrollWidth: element.scrollWidth,
+                    }))
+                  );
+                  return {
+                    viewport: document.documentElement.clientWidth,
+                    documentScroll: document.documentElement.scrollWidth,
+                    bodyScroll: document.body.scrollWidth,
+                    hostClient: host.clientWidth,
+                    hostScroll: host.scrollWidth,
+                    paneClient: pane.clientWidth,
+                    paneScroll: pane.scrollWidth,
+                    threadClient: thread.clientWidth,
+                    threadScroll: thread.scrollWidth,
+                    paneInsideHost: inside(pane, host),
+                    threadInsidePane:
+                      threadRect.left >= paneRect.left - 1
+                      && threadRect.right <= paneRect.right + 1,
+                    bounded,
+                  };
+                }"""
+            )
+
+        def assert_bounded(host_width: int) -> dict[str, Any]:
+            geometry = width_geometry(host_width)
+            assert geometry["documentScroll"] <= geometry["viewport"], geometry
+            assert geometry["bodyScroll"] <= geometry["viewport"], geometry
+            assert geometry["hostScroll"] <= geometry["hostClient"], geometry
+            assert geometry["paneScroll"] <= geometry["paneClient"], geometry
+            assert geometry["threadScroll"] <= geometry["threadClient"], geometry
+            assert geometry["paneInsideHost"], geometry
+            assert geometry["threadInsidePane"], geometry
+            violations = [
+                item
+                for item in geometry["bounded"]
+                if not item["insidePane"] or not item["insideThread"]
+            ]
+            assert violations == [], {"host_width": host_width, "violations": violations}
+            return geometry
+
+        preview_image = page.locator(".file-preview-media img")
+        preview_image.wait_for(state="visible")
+        assert preview_image.evaluate("image => image.complete && image.naturalWidth > 0")
+        markdown_preview_heading = page.get_by_text("Ready Markdown preview", exact=True)
+        markdown_preview_heading.wait_for(state="visible")
+        preview_frame = page.locator("[data-file-preview-html]")
+        assert preview_frame.get_attribute("sandbox") == "allow-scripts"
+        preview_frame.content_frame.get_by_text(
+            "Ready HTML preview", exact=True
+        ).wait_for(state="visible")
+
+        # Representative pane widths for the 320px padded direct Ticket rail,
+        # Workspace-selected Ticket, Workspace Chief, standalone Chief, and
+        # narrow standalone Chief hosts. Wait for asynchronous previews first so
+        # their final content participates in every geometry assertion.
+        for shared_host_width in (296, 593, 512, 913, 342):
+            assert_bounded(shared_host_width)
+        page.evaluate("width => window.__setHostWidth(width)", 961)
 
         # Header is silent identity + usage. The retired status strip is gone;
         # usage carries no "tokens" word and no cost (none on the wire here).
@@ -79,7 +215,12 @@ def main() -> None:
         step.click()
         assert step.get_attribute("aria-expanded") == "true"
         assert page.locator("[data-acp-diff]").count() == 3
-        assert page.get_by_role("table", name="Line changes for runtime.txt").count() == 1
+        first_tool_diff = page.locator("[data-acp-diff]").first
+        assert page.get_by_role(
+            "table",
+            name="Line changes for runtime-" + "width" * 180 + ".txt",
+            exact=True,
+        ).count() == 1
         assert page.get_by_role("cell", name="Deleted").count() >= 1
         assert page.get_by_role("cell", name="Added").count() >= 1
         diff = page.locator("[data-acp-diff]")
@@ -101,6 +242,12 @@ def main() -> None:
         assert page.get_by_role("button", name="Raw input and output").count() == 0
         assert page.get_by_text("runtime-input").count() == 0
         assert page.get_by_text("runtime-output").count() == 0
+        for shared_host_width in (296, 593, 512, 913, 342):
+            assert_bounded(shared_host_width)
+        page.evaluate("width => window.__setHostWidth(width)", 961)
+        assert first_tool_diff.locator(".acp-diff-lines").evaluate(
+            "element => element.scrollWidth > element.clientWidth"
+        )
 
         # Task pill: a plan exists and the turn is active, so the centred pill
         # reads "{done} / {total} tasks" with the entries in a popover. The
@@ -126,11 +273,11 @@ def main() -> None:
         # Compaction seams are centred flat dividers with lowercase mono labels;
         # no token counts, no summary, no disclosure button.
         compaction = page.locator("[data-acp-compaction='compaction-runtime']")
-        assert compaction.inner_text() == "context compacted · explicit"
+        assert compaction.get_attribute("aria-label") == "context compacted · explicit"
         assert compaction.get_by_role("button").count() == 0
         assert "summary" not in compaction.inner_text().lower()
         failed_compaction = page.locator("[data-acp-compaction='compaction-failed-runtime']")
-        assert failed_compaction.inner_text() == (
+        assert failed_compaction.get_attribute("aria-label") == (
             "context compaction failed · Exact runtime compaction failure"
         )
         assert failed_compaction.get_by_role("button").count() == 0

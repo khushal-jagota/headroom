@@ -335,6 +335,8 @@ textarea {
 
 .chief-chat-page {
   min-height: calc(100vh - var(--space-5) - var(--space-5) - var(--space-5) - var(--space-5));
+  min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -354,6 +356,8 @@ textarea {
 .chief-chat-shell {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   display: flex;
 }
 
@@ -678,6 +682,12 @@ textarea {
 
 /* --- Markdown ------------------------------------------------------------ */
 
+.markdown {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .markdown p {
   margin: 0 0 var(--space-3);
 }
@@ -726,6 +736,7 @@ textarea {
 }
 
 .markdown pre {
+  max-width: 100%;
   background: var(--surface-sunken);
   padding: var(--space-3);
   border-radius: var(--radius-md);
@@ -764,6 +775,8 @@ textarea {
 
 .markdown table {
   width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
   margin: 0 0 var(--space-3);
   border-collapse: collapse;
   font-size: var(--type-sm);
@@ -771,6 +784,8 @@ textarea {
 
 .markdown th,
 .markdown td {
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: var(--space-2);
   border: var(--border-hairline) solid var(--surface-overlay);
   text-align: left;
@@ -796,14 +811,19 @@ textarea {
 
 .markdown a {
   color: var(--accent-bright);
+  overflow-wrap: anywhere;
 }
 
 .file-preview {
+  min-width: 0;
+  max-width: 100%;
   margin: var(--space-2) 0 var(--space-3);
 }
 
 .file-preview-slot {
   display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .file-preview-title,
@@ -811,12 +831,15 @@ textarea {
   color: var(--accent-bright);
   font-size: var(--type-sm);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .file-preview-media,
 .file-preview-doc,
 .file-preview-audio,
 .file-preview-card {
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
   padding: var(--space-3);
   background: var(--surface-sunken);
@@ -867,6 +890,10 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+.file-preview-card-row > * {
+  min-width: 0;
 }
 
 .file-preview-card-body {
@@ -1359,8 +1386,8 @@ button.list-row:hover .list-row-title {
 
 /* Stanza: one beat of work — a Thinking/Thought line; disclosure reveals the
  * full thought then the steps it drove. */
-.acp-stanza { display: grid; gap: var(--space-1); }
-.acp-stanza-body { display: grid; gap: var(--space-1); margin-top: var(--space-1); }
+.acp-stanza { display: grid; min-width: 0; max-width: 100%; gap: var(--space-1); }
+.acp-stanza-body { display: grid; min-width: 0; max-width: 100%; gap: var(--space-1); margin-top: var(--space-1); }
 
 .acp-think {
   display: flex;
@@ -1401,6 +1428,9 @@ button.list-row:hover .list-row-title {
   animation: acp-shimmer var(--motion-loop-bounce) linear infinite;
 }
 .acp-think-body {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-family: var(--font-serif);
   font-size: var(--type-serif-sm);
   line-height: 1.6;
@@ -1483,10 +1513,12 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-pill);
   animation: acp-spin var(--motion-loop-spin) linear infinite;
 }
-.acp-step-detail { margin: var(--space-1) 0 var(--space-2); }
+.acp-step-detail { min-width: 0; max-width: 100%; margin: var(--space-1) 0 var(--space-2); }
 
 /* Command / terminal output: a sunken mono well (no raw input/output). */
 .acp-code-well {
+  min-width: 0;
+  max-width: 100%;
   background: var(--surface-sunken);
   border-radius: var(--radius-sm);
   padding: var(--space-2);
@@ -1581,12 +1613,16 @@ button.list-row:hover .list-row-title {
 .chat-panel {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
 }
 
 .chat-head {
   flex: none;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -1602,6 +1638,8 @@ button.list-row:hover .list-row-title {
 }
 
 .chat-lbl {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: var(--type-xs);
   color: var(--text-default);
   font-family: var(--font-mono);
@@ -1616,6 +1654,7 @@ button.list-row:hover .list-row-title {
 .chat-state--attn { color: var(--accent-text); }
 
 .chat-head-right {
+  flex: none;
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -1677,6 +1716,8 @@ button.list-row:hover .list-row-title {
   position: relative;
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -1684,6 +1725,8 @@ button.list-row:hover .list-row-title {
 .chat-thread {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1691,6 +1734,14 @@ button.list-row:hover .list-row-title {
   padding: var(--space-3) var(--space-1) var(--space-4);
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
+}
+
+.chat-thread > *,
+.chat-u,
+.chat-a,
+.chat-system {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .chat-jump {
@@ -1735,6 +1786,7 @@ button.list-row:hover .list-row-title {
   font-family: var(--font-serif);
   font-size: var(--type-serif-sm);
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 /* employee = bubble-less prose, in the system's serif voice */
 .chat-a {
@@ -1743,6 +1795,7 @@ button.list-row:hover .list-row-title {
   font-family: var(--font-serif);
   font-size: var(--type-serif-sm);
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 /* programmatic prompts = visible system context, never hidden or mistaken for user prose */
 .chat-system {
@@ -1753,6 +1806,7 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-serif-sm);
   line-height: 1.6;
   padding-inline-start: var(--space-3);
+  overflow-wrap: anywhere;
 }
 .chat-system-label {
   color: var(--text-faint);
@@ -1991,7 +2045,7 @@ button.list-row:hover .list-row-title {
 /* Queue tray: queued prompts fused to the top of the sending box — same sunken
  * surface, inset horizontally, top corners rounded, bottom edge open. The box
  * keeps its full native rounding in all states. */
-.chat-box-stack { display: grid; }
+.chat-box-stack { display: grid; min-width: 0; max-width: 100%; }
 .chat-queue-tray {
   margin: 0 var(--space-2);
   padding: var(--space-1) var(--space-2);
@@ -2419,6 +2473,7 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   flex: 1;
   width: 100%;
   max-width: calc(var(--space-7) * 16);
@@ -3230,6 +3285,7 @@ select {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   padding: var(--space-3) var(--space-3) var(--space-4);
 }

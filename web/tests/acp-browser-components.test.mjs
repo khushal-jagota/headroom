@@ -72,6 +72,7 @@ import { createConversationController, type ConversationController } from "../sr
 import type { ConversationSnapshot } from "../src/lib/acp/conversationState";
 
 const plan = [{ content: "Ship runtime proof", status: "in_progress", priority: "high" }];
+const unbrokenToken = "width".repeat(180);
 const tool = {
   toolCallId: "tool-runtime",
   title: "Runtime tool",
@@ -80,7 +81,7 @@ const tool = {
   expanded: false,
   content: [
     {
-      type: "diff", path: "runtime.txt", oldText: "before", newText: "after",
+      type: "diff", path: "runtime-" + unbrokenToken + ".txt", oldText: "before-" + unbrokenToken, newText: "after-" + unbrokenToken,
       _meta: {
         "https://panels.local/acp/codex-file-edit/v1": {
           operation: "update", detailState: "complete", oldStartLine: 999,
@@ -128,12 +129,28 @@ const longMessages = Array.from({ length: 18 }, (_, index) => ({
     }],
   }],
 }));
+const worstCaseMarkdown = [
+  "A long link must wrap inside the shared conversation pane:",
+  "https://example.test/" + unbrokenToken,
+  "",
+  "| output | value |",
+  "| --- | --- |",
+  "| tool | " + unbrokenToken + " |",
+  "",
+  "~~~text",
+  unbrokenToken,
+  "~~~",
+].join("\\n");
 const messages = [
   {
     id: "human-runtime",
     role: "user",
     timestamp: 1,
-    parts: [{ type: "content", content: [{ type: "text", text: "Human runtime message" }] }],
+    parts: [{ type: "content", content: [
+      { type: "text", text: "Human runtime message " + unbrokenToken },
+      { type: "resource_link", uri: "https://example.test/" + unbrokenToken, name: unbrokenToken },
+      { type: "resource_link", uri: "/files/tickets/t_runtime/runtime-preview.png", name: "Runtime image preview" },
+    ] }],
   },
   {
     id: "agent-runtime",
@@ -142,7 +159,12 @@ const messages = [
     parts: [
       { type: "thought", thought: [{ type: "text", text: "Private typed thought" }], expanded: false },
       { type: "tool_calls", toolCalls: [tool] },
-      { type: "content", content: [{ type: "text", text: "Agent runtime answer" }] },
+      { type: "content", content: [
+        { type: "text", text: "Agent runtime answer\\n\\n" + worstCaseMarkdown },
+        { type: "resource_link", uri: "/files/tickets/t_runtime/runtime-preview.md", name: "Runtime Markdown preview" },
+        { type: "resource_link", uri: "/files/tickets/t_runtime/runtime-preview.html", name: "Runtime HTML preview" },
+        { type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" },
+      ] },
       { type: "plan", plan },
     ],
   },
@@ -249,7 +271,7 @@ const initialSnapshot = {
       terminalId: "terminal-runtime",
       lifecycle: "released",
       terminalOutput: {
-        output: "runtime output",
+        output: "runtime output " + unbrokenToken,
         truncated: true,
         exitStatus: { exitCode: 0 },
       },
@@ -343,6 +365,9 @@ const controller: ConversationController = {
 (window as any).__acpActions = actions;
 (window as any).__acpPromptAttempts = promptAttempts;
 (window as any).__acpRevokedObjectUrls = revokedObjectUrls;
+(window as any).__setHostWidth = (width: number) => {
+  document.getElementById("app")!.style.width = width + "px";
+};
 (window as any).__loadProductionStyles = () => Promise.all([
   import("../../assets/tokens.css"),
   import("../../assets/app.css"),
@@ -544,7 +569,7 @@ const replayEnvelope = (sequence: number, type: string, payload: any) => ({
   sequence, "connection", { state: "ready", detail: "Ready", supportsSteer: true },
 ));
 `);
-  await writeFile(runtimeIndexPath, `<!doctype html><html><head><style>html, body { margin: 0; } #app { display: flex; height: 620px; min-height: 0; } #app-replay { display: flex; height: 320px; min-height: 0; }</style></head><body><div id="app"></div><script type="module" src="./${runtimeMainPath.split("/").at(-1)}"></script></body></html>`);
+  await writeFile(runtimeIndexPath, `<!doctype html><html><head><style>html, body { margin: 0; } #app { display: flex; width: 100%; height: 620px; min-width: 0; min-height: 0; } #app-replay { display: flex; width: 100%; height: 320px; min-width: 0; min-height: 0; }</style></head><body><div id="app"></div><script type="module" src="./${runtimeMainPath.split("/").at(-1)}"></script></body></html>`);
   await build({
     root: webRoot,
     base: "./",
@@ -641,6 +666,21 @@ with sync_playwright() as playwright:
     assert deleted.get_by_role("cell", name="Deleted", exact=True).count() == 1
     assert page.get_by_text("ARBITRARY PERMISSION CONTENT MUST STAY HIDDEN").count() == 0
     assert page.get_by_text("permission-terminal-must-stay-hidden").count() == 0
+    geometry = page.evaluate("""() => {
+        const pane = document.querySelector('[data-acp-conversation-pane]');
+        const thread = document.querySelector('[data-chat-messages]');
+        return {
+            viewport: document.documentElement.clientWidth,
+            documentScroll: document.documentElement.scrollWidth,
+            paneClient: pane.clientWidth,
+            paneScroll: pane.scrollWidth,
+            threadClient: thread.clientWidth,
+            threadScroll: thread.scrollWidth,
+        };
+    }""")
+    assert geometry["documentScroll"] <= geometry["viewport"], geometry
+    assert geometry["paneScroll"] <= geometry["paneClient"], geometry
+    assert geometry["threadScroll"] <= geometry["threadClient"], geometry
 
     # A long permission diff is ordinary content in the existing transcript
     # scroller. It must not collapse the usable chat viewport in this fixed-height

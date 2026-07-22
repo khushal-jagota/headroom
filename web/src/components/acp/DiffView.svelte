@@ -49,8 +49,9 @@
 </figure>
 
 <style>
-  .acp-diff { margin: 0; min-width: 0; }
+  .acp-diff { margin: 0; min-width: 0; max-width: 100%; }
   figcaption {
+    overflow-wrap: anywhere;
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
