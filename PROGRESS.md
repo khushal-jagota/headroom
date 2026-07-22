@@ -136,12 +136,12 @@ found one stale E2E assertion that still expected an intentional interrupt to er
 Ticket; that assertion now proves the Ticket returns to `empty`, keeps its session id, clears
 `backend_error`, and retains the interrupted correctness row.
 
-The pre-merge ticket tree passed the canonical `./verify`: Ruff, strict mypy, the unit suite,
-build checks, frontend checks, and all 116 E2E tests. The current-main merge is resolved without
-a commit or full verify. The 189-test focused backend set, three affected Playwright cases,
-frontend component/resource checks, zero-diagnostic Svelte check, rebuilt production bundle,
-Ruff, strict mypy over 154 source files, and non-generated diff checks all pass. No recovery
-control or timeout policy changed.
+Current main 770c3f9 was merged into the ticket branch at f8e7ec0. The conflict resolution
+preserves main’s Chief-launch v31 migration and adds backend errors as v32, while retaining both
+Workspace contracts. Independent merge review reported NO VIOLATIONS. The prospective merged
+tree’s canonical `./verify` passed Ruff, strict mypy, the unit suite, build and frontend checks,
+and all 118 E2E tests, ending with VERIFY: PASS. No recovery control or timeout policy changed.
+Next: fast-forward main and propose Closeout.
 
 ## Current work cycle (2026-07-22): Atomic ACP session-load replay (t_k431pv7q)
 
