@@ -28,9 +28,10 @@ One screen per part of the system:
   unopened conversation does not invent or retain stale activity. Initial and repeated
   idle are quiet until an admitted turn has real activity; a completed response stays
   attention through reconnect/load until a new turn or explicit reset. It includes
-  every Ticket status. Done tickets are hidden in a fresh session; the human can turn
-  off **Hide done** to reveal them, and that choice stays in place when they visit
-  another screen and return.
+  every Ticket status. Done tickets sit under their own **Done** stage section, which
+  is collapsed by default and can be opened to browse like any other section; when a
+  group has no done tickets, no Done section appears. **Chief of Staff** sits first in
+  the rail at the same visual weight as the project headers.
 
   The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the

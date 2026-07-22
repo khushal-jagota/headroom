@@ -29,7 +29,6 @@
   const navStatusClearancePx = 8;
 
   let route = $state<Route>(parseRoute());
-  let workspaceHideDone = $state(true);
   let shellNavElement: HTMLElement | null = null;
 
   function decodeRouteSegment(segment: string): string {
@@ -211,7 +210,7 @@
           {:else if route.name === "review"}
             <ReviewRoute />
           {:else if route.name === "workspace" || route.name === "board"}
-            <BoardRoute bind:hideDone={workspaceHideDone} ticketId={route.params.id} />
+            <BoardRoute ticketId={route.params.id} />
           {:else if route.name === "ticket"}
             <TicketRoute id={route.params.id} />
           {:else if route.name === "sprint"}
