@@ -3137,6 +3137,23 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Close out directly on `main` because this approved implementation was developed there rather than
   on a feature branch. Stage and commit only the Ticket-owned paths; concurrent Hermes configuration,
   skill/worktree, Vite-cache, and nested-worktree changes stay outside the commit.
+
+## D-browser-replay-is-one-presentation-transaction
+
+- Keep the existing server replay architecture. The bootstrap queue correctly separates replay from
+  bounded live backpressure and the typed WebSocket correctly preserves individual envelope order.
+  Neither promises one browser render.
+- Put the missing transaction in `conversationController.ts`, where protocol admission becomes
+  subscriber-visible presentation. Reduce an admitted `reset -> replay -> ready` into a detached
+  candidate, retain the last committed snapshot, and publish the candidate once at `ready`.
+- Discard an incomplete candidate on every existing recovery path. This prevents a recovery error
+  publication from accidentally exposing partial history and makes `snapshot()` match what
+  subscribers can see.
+- Keep post-ready live publication incremental and keep the existing pane follow-scroll unchanged.
+  The old full-resource chat loaded before rendering; ACP replay is incremental transport, so copying
+  its scroll behavior required restoring that missing load-complete presentation boundary.
+- Defer giant frames, transcript caching, pagination, and virtualization. They address future payload
+  or rendering scale, not the measured multi-commit initial paint defect.
 # 2026-07-22 — Panels owns bounded Codex file-edit ingress
 
 - Do not patch or fork `@agentclientprotocol/codex-acp`. Panels pins but does not own that adapter,

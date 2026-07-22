@@ -24,6 +24,13 @@ capacity instead of dropping or failing an admitted update. Once a ready stream
 exists, ordinary browser reconnects rebuild from the materialized Panels snapshot
 and do not issue `session/load`.
 
+The WebSocket still carries that replay as individual typed envelopes. The browser
+controller validates and reduces them in order into a private replay candidate. The
+pane continues to show its last complete conversation (or the ordinary empty first
+attach) until `ready`, when the controller commits and publishes the complete replay
+once. An interrupted replay is discarded rather than shown partially. Updates after
+`ready` keep publishing incrementally as they arrive.
+
 Attached browsers receive every live ACP notification in its original order. The
 reconnect snapshot may consolidate backend-owned transient progress that would otherwise
 grow without adding durable conversation meaning. For Codex, Panels recognizes only the

@@ -80,8 +80,24 @@ try {
     for (const envelope of stream) harness.feed(envelope);
     return harness;
   };
+  const drivePostReadyLive = (stream) => {
+    const harness = createHarness();
+    harness.feed(stream[0]);
+    harness.feed({ ...stream.at(-1), sequence: 2 });
+    for (const original of stream.slice(1, -1)) {
+      harness.feed({
+        ...original,
+        sequence: original.sequence + 1,
+        payload: {
+          ...original.payload,
+          ...(original.payload.sequence === original.sequence ? { sequence: original.sequence + 1 } : {}),
+        },
+      });
+    }
+    return harness;
+  };
 
-  const live = drive(fixture.live);
+  const live = drivePostReadyLive(fixture.live);
   const replay = drive(fixture.replay);
   const thoughtChunks = (snapshot) => snapshot.session.messages
     .flatMap((message) => message.parts)
@@ -123,16 +139,22 @@ try {
     type: "connection",
     payload: { state: "reset", detail: "Reset", supportsSteer: true, resetBindingGeneration: 1 },
   };
+  const ready = (sequence) => ({
+    ...reset,
+    sequence,
+    payload: { state: "ready", detail: "Ready", supportsSteer: true },
+  });
   const grouping = createHarness();
   grouping.feed(reset);
+  grouping.feed(ready(2));
   const stableGroupIds = [];
-  grouping.feed(envelope(2, {
+  grouping.feed(envelope(3, {
     sessionUpdate: "agent_message_chunk",
     messageId: "stable-id",
     content: { type: "text", text: "a" },
   }));
   stableGroupIds.push(grouping.snapshot().session.messages.find((message) => message.id === "stable-id").id);
-  grouping.feed(envelope(3, {
+  grouping.feed(envelope(4, {
     sessionUpdate: "agent_message_chunk",
     messageId: "stable-id",
     content: { type: "text", text: "b" },
@@ -140,32 +162,32 @@ try {
   stableGroupIds.push(grouping.snapshot().session.messages.find((message) => message.id === "stable-id").id);
 
   const boundaryResetGroupIds = [];
-  grouping.feed(envelope(4, {
+  grouping.feed(envelope(5, {
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "first missing-ID group" },
   }));
   boundaryResetGroupIds.push(grouping.snapshot().session.messages.at(-1).id);
-  grouping.feed(envelope(5, {
+  grouping.feed(envelope(6, {
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: " continues" },
   }));
   assert.equal(grouping.snapshot().session.messages.at(-1).id, boundaryResetGroupIds[0]);
-  grouping.feed(envelope(6, {
+  grouping.feed(envelope(7, {
     sessionUpdate: "tool_call",
     toolCallId: "boundary-tool",
     title: "Boundary",
     status: "completed",
   }));
-  grouping.feed(envelope(7, {
+  grouping.feed(envelope(8, {
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "second missing-ID group" },
   }));
   boundaryResetGroupIds.push(grouping.snapshot().session.messages.at(-1).id);
-  grouping.feed(envelope(8, {
+  grouping.feed(envelope(9, {
     sessionUpdate: "plan",
     entries: [{ content: "Boundary", status: "pending", priority: "medium" }],
   }));
-  grouping.feed(envelope(9, {
+  grouping.feed(envelope(10, {
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "third missing-ID group" },
   }));
@@ -185,6 +207,7 @@ try {
       status: "Agent sent an unsupported update",
     },
   }));
+  rejection.feed(ready(4));
 
   const liveSnapshot = live.snapshot();
   const replaySnapshot = replay.snapshot();

@@ -61,13 +61,14 @@ const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-acp-components-"
 const runtimeMainPath = join(webRoot, "tests", `.acp-component-runtime-${process.pid}.ts`);
 const runtimeIndexPath = join(webRoot, "tests", `.acp-component-runtime-${process.pid}.html`);
 const runtimePermissionProbePath = join(webRoot, "tests", `.acp-permission-runtime-${process.pid}.py`);
+const runtimeReplayProbePath = join(webRoot, "tests", `.acp-replay-runtime-${process.pid}.py`);
 let serverProcess;
 
 try {
   await writeFile(runtimeMainPath, `
 import { mount } from "svelte";
 import AcpConversationPane from "../src/components/acp/AcpConversationPane.svelte";
-import type { ConversationController } from "../src/lib/acp/conversationController";
+import { createConversationController, type ConversationController } from "../src/lib/acp/conversationController";
 import type { ConversationSnapshot } from "../src/lib/acp/conversationState";
 
 const plan = [{ content: "Ship runtime proof", status: "in_progress", priority: "high" }];
@@ -485,8 +486,65 @@ mount(AcpConversationPane, {
   target: document.getElementById("app")!,
   props: { controller, employeeLabel: "Runtime employee" },
 });
+
+class ManualReplayTransport {
+  callbacks: any;
+  sent: any[] = [];
+  constructor(callbacks: any) { this.callbacks = callbacks; }
+  open() {}
+  send(action: any) { this.sent.push(action); return { ok: true as const }; }
+  close() {}
+  detach() {}
+}
+let replayTransport: ManualReplayTransport;
+const replayEnvelope = (sequence: number, type: string, payload: any) => ({
+  wireVersion: 1,
+  employeeId: "employee-replay-runtime",
+  entityKind: "ticket",
+  entityId: "ticket-replay-runtime",
+  acpSessionId: "session-replay-runtime",
+  bindingGeneration: 1,
+  sequence,
+  type,
+  payload,
+});
+(window as any).__mountReplay = () => {
+  document.body.innerHTML = '<div id="app-replay"></div>';
+  const replayController = createConversationController({
+    employeeId: "employee-replay-runtime",
+    transportFactory: (callbacks) => (replayTransport = new ManualReplayTransport(callbacks)),
+    reconnectDelayMs: 25,
+    setTimer: (callback) => window.setTimeout(callback, 25),
+    clearTimer: (timer) => window.clearTimeout(timer as number),
+    now: () => 1000,
+    fallbackId: (turn, role, segment) => "replay-fallback-" + turn + "-" + role + "-" + segment,
+    clientMessageId: () => "replay-client",
+  });
+  mount(AcpConversationPane, {
+    target: document.getElementById("app-replay")!,
+    props: { controller: replayController, employeeLabel: "Replay runtime employee" },
+  });
+};
+(window as any).__openReplay = () => replayTransport.callbacks.onOpen();
+(window as any).__feedReplayReset = () => replayTransport.callbacks.onEnvelope(replayEnvelope(1, "connection", {
+  state: "reset", detail: "Loaded", supportsSteer: true, resetBindingGeneration: 1,
+}));
+(window as any).__feedReplayMessage = (sequence: number) => replayTransport.callbacks.onEnvelope(replayEnvelope(
+  sequence,
+  "human_echo",
+  {
+    clientMessageId: "replay-human-" + sequence,
+    prompt: {
+      sessionId: "session-replay-runtime",
+      prompt: [{ type: "text", text: "Replay line " + sequence + " contains enough text to occupy visible transcript space." }],
+    },
+  },
+));
+(window as any).__feedReplayReady = (sequence: number) => replayTransport.callbacks.onEnvelope(replayEnvelope(
+  sequence, "connection", { state: "ready", detail: "Ready", supportsSteer: true },
+));
 `);
-  await writeFile(runtimeIndexPath, `<!doctype html><html><head><style>html, body { margin: 0; } #app { display: flex; height: 620px; min-height: 0; }</style></head><body><div id="app"></div><script type="module" src="./${runtimeMainPath.split("/").at(-1)}"></script></body></html>`);
+  await writeFile(runtimeIndexPath, `<!doctype html><html><head><style>html, body { margin: 0; } #app { display: flex; height: 620px; min-height: 0; } #app-replay { display: flex; height: 320px; min-height: 0; }</style></head><body><div id="app"></div><script type="module" src="./${runtimeMainPath.split("/").at(-1)}"></script></body></html>`);
   await build({
     root: webRoot,
     base: "./",
@@ -624,11 +682,75 @@ print("acp_permission_runtime.py: diff and no-diff assertions passed")
   const permissionExitCode = await new Promise((resolve) => permissionProbe.on("close", resolve));
   assert.equal(permissionExitCode, 0, permissionOutput);
   assert.match(permissionOutput, /diff and no-diff assertions passed/);
+
+  await writeFile(runtimeReplayProbePath, `
+from playwright.sync_api import sync_playwright
+import sys
+
+with sync_playwright() as playwright:
+    browser = playwright.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.set_default_timeout(5_000)
+    page.goto(sys.argv[1], wait_until="networkidle")
+    page.evaluate("window.__loadProductionStyles()")
+    page.evaluate("window.__mountReplay()")
+    thread = page.locator("#app-replay [data-chat-messages]")
+
+    def settle():
+        page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+
+    def dimensions():
+        return thread.evaluate("element => ({ height: element.scrollHeight, client: element.clientHeight, bottom: element.scrollHeight - element.scrollTop - element.clientHeight })")
+
+    page.evaluate("window.__openReplay()")
+    page.evaluate("window.__feedReplayReset()")
+    settle()
+    initial = dimensions()
+    pre_ready_increases = []
+    previous = initial["height"]
+    for sequence in range(2, 32):
+        page.evaluate("sequence => window.__feedReplayMessage(sequence)", sequence)
+        settle()
+        current = dimensions()
+        if current["height"] > previous:
+            pre_ready_increases.append((previous, current["height"], current["bottom"]))
+        previous = current["height"]
+
+    assert pre_ready_increases == [], f"RED: replay painted before ready: {pre_ready_increases}"
+    page.evaluate("window.__feedReplayReady(32)")
+    settle()
+    ready = dimensions()
+    assert ready["height"] > initial["height"]
+    assert ready["height"] > ready["client"], "production styles must create a genuinely overflowing transcript"
+    assert ready["bottom"] <= 1, ready
+    assert thread.locator("[data-acp-message]").count() == 30
+
+    page.evaluate("window.__feedReplayMessage(33)")
+    settle()
+    live = dimensions()
+    assert live["height"] > ready["height"], "post-ready live rendering remains incremental"
+    assert live["bottom"] <= 1, live
+    browser.close()
+
+print("acp_replay_runtime.py: atomic replay presentation assertions passed")
+`);
+  const replayProbe = spawn(
+    join(repositoryRoot, ".venv", "bin", "python"),
+    [runtimeReplayProbePath, url],
+    { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let replayOutput = "";
+  replayProbe.stdout.on("data", (chunk) => { replayOutput += chunk; });
+  replayProbe.stderr.on("data", (chunk) => { replayOutput += chunk; });
+  const replayExitCode = await new Promise((resolve) => replayProbe.on("close", resolve));
+  assert.equal(replayExitCode, 0, replayOutput);
+  assert.match(replayOutput, /atomic replay presentation assertions passed/);
 } finally {
   serverProcess?.kill();
   await rm(runtimeMainPath, { force: true });
   await rm(runtimeIndexPath, { force: true });
   await rm(runtimePermissionProbePath, { force: true });
+  await rm(runtimeReplayProbePath, { force: true });
   await rm(temporaryDirectory, { recursive: true, force: true });
 }
 

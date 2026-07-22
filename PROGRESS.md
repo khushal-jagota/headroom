@@ -1,5 +1,40 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Paint ACP browser replay atomically
+
+Live Playwright measurement proves the Ticket-switch complaint is not a wrong final scroll position:
+the transcript remained bottom-anchored at every observed scrollable frame, but long replay painted
+in multiple commits and advanced the bottom twice (`6562 -> 7191`, then `9378 -> 10007`). The server
+already owns an atomic ordered replay snapshot. Its subscriber bootstrap intentionally streams
+individual envelopes, and the browser controller publishes after every one; Svelte then repeats the
+correct follow-scroll against each growing DOM commit.
+
+The contract places the missing transaction at the browser controller's admission/presentation
+boundary. `reset -> replay -> ready` now reduces into a detached candidate while the last complete
+snapshot remains visible, then commits and publishes once at `ready`. Failure discards the candidate;
+post-ready live updates remain incremental. Before the production change, the controller regression
+exposed one replay message through `snapshot()` before ready, and the real-controller mounted pane
+grew 28 times before ready while remaining bottom-anchored. The focused controller and mounted-browser
+regressions now pass, including replacement cutover, failure discard, committed-cursor recovery,
+deferred-prompt ordering, and post-ready live growth. No Hub, queue, wire, adapter, pane scroll code,
+visual control, pagination, or virtualization changed. All focused controller/component gates pass;
+Svelte check reports zero diagnostics, the production build succeeds, and `git diff --check` is clean.
+Independent diff review found one missing malformed-transport candidate-discard case; the exact
+reset/message/raw-`not json` regression now passes and proves committed-cursor recovery. The first
+canonical `./verify` then passed 1,358 unit tests and all 117 Playwright tests but stopped in the
+frontend conformance script because that old fixture inspected grouping state before ready. The
+grouping, plan-transition, and protocol-rejection probes now commit ready before inspecting replay
+state while retaining post-ready incremental coverage. The focused conformance test and full
+frontend `npm test` pass. One canonical rerun on the settled tree remains. The four pre-existing
+dirty nested worktrees and unrelated backend edits remain untouched.
+
+The final canonical `./verify` passed Ruff, strict Mypy across 154 source files, all 1,358 unit
+tests, compile/CSS checks, zero Svelte diagnostics, the production build and complete frontend
+suite, and all 117 Playwright tests; final `VERIFY: PASS`. Independent implementation re-review
+reports `NO VIOLATIONS`. Next: commit only this contract's source, tests, generated bundle, docs,
+and memory files; restart Panels; then repeat the long-history paint measurement against the live
+served build.
+
 ## Current work cycle (2026-07-22): Materialize live terminal replay
 
 Ticket `t_xq6ragj3` proves a second replay-overflow class after the Codex file-edit correction.

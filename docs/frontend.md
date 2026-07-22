@@ -98,7 +98,10 @@ share.
   Conversation state is intentionally outside the Resource Catalogue. Each ACP pane
   owns one typed `/api/conversation` WebSocket controller. Its session replay,
   generation, sequence, queue, permissions, terminal state, and delivery receipts are
-  conversation state rather than cached REST resources. Ticket
+  conversation state rather than cached REST resources. The controller reduces the
+  ordered replay envelopes into a private candidate and publishes the complete
+  conversation to the pane once at `ready`; an existing complete transcript remains
+  visible during a refresh, while post-ready updates still render incrementally. Ticket
   `employee_session_changed` still refreshes only the matching `ticket:<id>` so the
   Ticket mirror stays current without refetching unrelated product projections.
 
