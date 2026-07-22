@@ -100,8 +100,10 @@ all 116 Playwright tests; final `VERIFY: PASS`. A concurrent external change lan
 the green gate covers that combined current tree, and its unrelated Hermes configuration,
 skill/worktree, and Vite-cache changes remain untouched. Closeout committed exactly this Ticket's
 backend, frontend, tests, generated bundle, docs, and memory changes on `main` as `bf0b219`, from
-base `553b0a4`. All unrelated worktree state remains unstaged. No deployment or restart applies.
-Next: propose Closeout for approval.
+base `553b0a4`. All unrelated worktree state remains unstaged. The documented Panels supervisor
+restart was accepted, and a post-restart `panels ticket show t_m024gke4` confirmed the replacement
+server is healthy on the expected `needs_closeout` Ticket. No external deployment applies. Next:
+propose Closeout for approval.
 Pre-existing `src/planner/conversation/composition.py`, nested `.claude` worktree, and `.worktrees/`
 changes are unrelated and must remain untouched. No blocker.
 
