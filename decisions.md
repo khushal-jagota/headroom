@@ -3,6 +3,24 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-environment-import-one-generation — Live import has one durable commit point
+
+Keep the prepared runtime user home separate from the Hermes home and set it as the launched
+process `HOME`. Live import copies complete `.codex` and `.claude` trees, preserving private modes
+and ordinary symlinks while excluding sockets and other special files. The source user home is a
+locator, so the other explicit state sources may live below it.
+
+Build imported live state as one generation behind an atomic `current` symlink. A failure before
+the pointer switch leaves the former generation current. Removing that former generation is best
+effort after commit and cannot turn a successful switch into a reported rollback.
+
+## D-environment-manager-execs-target — Management code does not become live application code
+
+A root-owned, shared-read manager checkout launches `environment run`, but the launcher validates
+that the selected target checkout's `.venv` imports `planner` from that exact target and then execs
+that interpreter. This lets current environment-management code launch accepted-old-main live code
+without allowing the staging service account to write or read private live paths.
+
 ## How this file is organised
 
 Entries are grouped **by system/topic**, and each carries a **stable slug ID** (e.g.

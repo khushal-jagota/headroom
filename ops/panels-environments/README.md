@@ -14,12 +14,18 @@ so each unit can open its own credential file. The live credential file remains
 read or write live credential content. The staging credential file is
 `0640 panels-worker:panels-worker`.
 
-All services call the same foreground entry point with an environment-specific
-repository root:
+All services call the environment command from the pinned, root-owned manager
+checkout, then select an environment-specific target checkout:
 
 ```sh
-panels environment run --repository-root /opt/panels/<environment>
+/opt/panels/environment-manager/.venv/bin/python -m planner environment run \
+  --repository-root /opt/panels/<environment>
 ```
+
+The manager checkout is readable and executable by both service accounts but writable
+only by root. The launcher validates the target checkout's own `.venv` and then replaces
+itself with that target interpreter. This lets new environment-management code launch an
+accepted older live revision without importing the application from the manager checkout.
 
 Live uses the fixed port in its prepared contract. Start the staging unit only while
 active work needs it and stop it afterward; each start chooses an available loopback

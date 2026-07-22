@@ -61,22 +61,29 @@ panels environment import-live \
   --source-db /path/to/source/data/planning.db \
   --source-managed-files-root /path/to/source/data/files \
   --source-hermes-home /path/to/source/data/hermes-home \
+  --source-runtime-user-home /path/to/source/user-home \
+  --source-logs-root /path/to/source/data/logs \
   --json
 ```
 
 The command requires an already prepared live environment. It reads the committed
 SQLite state through the backup API, including committed WAL data, and stages the
-database, managed files, worker settings, and complete Hermes home before replacing
-the prepared state. Worker settings must exist at `worker-settings` beside the source
-database; that path is inferred so it cannot be omitted accidentally. A failed swap
-rolls back to the prepared state that existed before the command.
+database, managed files, worker settings, complete Hermes home, Codex and Claude
+identity/configuration/session trees, and an archive of the source logs. Worker
+settings must exist at `worker-settings` beside the source database; that path is
+inferred so it cannot be omitted accidentally. The runtime user home locates its
+`.codex` and `.claude` children. Database, Hermes, managed-file, and log sources may
+otherwise live below that home. Sockets and other special files are skipped; private
+directory and file modes and ordinary symlinks are preserved. Panels-owned Hermes
+skill links are repaired to the repository recorded in the prepared live manifest.
 
-Sources must exist, must not overlap one another, and must remain outside the prepared
-live instance. The same command restores a captured backup: point the three source
-arguments at that backup's database, managed-files directory, and Hermes-home
-directory. Keep any archived logs and the prepared credential/configuration reference
-with the cutover record; they are not database state and are not inferred by this
-command.
+All source paths must exist and remain outside the prepared live instance. Durable
+state is built as one new generation and made current with one atomic stable-pointer
+switch. Failure before that switch leaves the previous complete generation current;
+failure to remove the old generation after the switch does not roll back committed
+state. The same command restores a captured backup by supplying its corresponding five
+source locations. The prepared credential-file reference is configuration and is not
+replaced by import.
 
 Starting and stopping live is an operator action. `run` validates the caller-provided
 checkout against the prepared contract, changes to that checkout, and starts the
@@ -216,6 +223,7 @@ Render the account, ownership, and service intent for a prepared environment:
 panels environment render-linux \
   --kind live \
   --environment-root "$ENV_ROOT" \
+  --environment-manager-root /opt/panels/environment-manager \
   --json
 ```
 
@@ -228,9 +236,13 @@ The output is render-only and reports `vps_enforcement_verified` as false. Linux
 isolation exists only after an operator has installed and checked the accounts,
 permissions, credential files, services, and ingress on the target host.
 
-The static units use `/opt/panels/live` and `/opt/panels/staging`. In each unit,
-`WorkingDirectory`, the `environment run --repository-root` value, and the repository
-entry in `ReadWritePaths` must agree.
+The static units use private target checkouts at `/opt/panels/live` and
+`/opt/panels/staging`, plus the root-owned, shared-read manager checkout at
+`/opt/panels/environment-manager`. The manager's pinned Python launches the environment
+command, validates that the target checkout's `.venv` imports `planner` from that exact
+target, and then executes the target interpreter. In each unit, `WorkingDirectory`, the
+`environment run --repository-root` value, and the target repository entry in
+`ReadWritePaths` must agree.
 
 ## Handoffs
 

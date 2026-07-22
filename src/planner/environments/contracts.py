@@ -80,6 +80,7 @@ class ResolvedEnvironmentInstance:
     db_path: Path
     managed_files_root: Path
     hermes_home: Path
+    runtime_user_home: Path
     logs_dir: Path
     dispatcher_lock_path: Path
     server_control_socket_path: Path
@@ -101,6 +102,7 @@ class EnvironmentManifest:
     db_path: Path
     managed_files_root: Path
     hermes_home: Path
+    runtime_user_home: Path
     logs_dir: Path
     dispatcher_lock_path: Path
     server_control_socket_path: Path

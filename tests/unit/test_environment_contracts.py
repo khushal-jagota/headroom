@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from planner.environments.contracts import (
 from planner.environments.logic.registry import resolve_environment_instance
 from planner.environments.logic.validation import (
     validate_instance_id,
+    validate_repository_roots,
     validate_resolved_registry,
 )
 
@@ -38,6 +40,8 @@ def test_live_and_staging_have_distinct_runtime_port_contracts(tmp_path: Path) -
     assert live.port_policy == FixedEnvironmentPort(8767)
     assert staging.port_policy == DynamicEnvironmentPort(bind_attempts=10)
     assert live.instance_root == environment_root.resolve() / "live"
+    assert live.db_path == live.instance_root / "current" / "data" / "planner.db"
+    assert live.runtime_user_home == live.instance_root / "current" / "user-home"
     assert staging.instance_root == environment_root.resolve() / "staging"
 
 
@@ -56,6 +60,13 @@ def test_staging_rejects_a_configured_port(tmp_path: Path) -> None:
 def test_preview_is_not_an_environment_kind(tmp_path: Path) -> None:
     with pytest.raises(EnvironmentValidationError, match="unknown environment kind"):
         validate_instance_id("preview", "feature")  # type: ignore[arg-type]
+
+
+def test_fake_dot_git_directory_is_not_a_worktree(tmp_path: Path) -> None:
+    fake = tmp_path / "fake"
+    (fake / ".git").mkdir(parents=True)
+    with pytest.raises(EnvironmentValidationError, match="not a worktree"):
+        validate_repository_roots((fake,), (fake,))
 
 
 def test_runtime_port_policies_validate_bounds() -> None:
@@ -102,7 +113,7 @@ def _instances(tmp_path: Path):  # type: ignore[no-untyped-def]
 def _repository(tmp_path: Path, name: str = "repo") -> Path:
     repository = tmp_path / name
     repository.mkdir()
-    (repository / ".git").mkdir()
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
     return repository.resolve()
 
 

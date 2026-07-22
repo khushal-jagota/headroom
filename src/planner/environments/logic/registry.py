@@ -94,6 +94,7 @@ def resolve_environment_instance(
         instance_id=resolved_instance_id,
         environment_root=resolved_environment_root,
     )
+    durable_state_root = instance_root / "current" if kind == "live" else instance_root
     resolved_port_policy = _resolve_port_policy(
         kind=kind,
         port=port,
@@ -112,10 +113,15 @@ def resolve_environment_instance(
         instance_id=resolved_instance_id,
         environment_root=resolved_environment_root,
         instance_root=instance_root,
-        db_path=instance_root / "data" / "planner.db",
-        managed_files_root=instance_root / "data" / "files",
-        hermes_home=instance_root / "hermes-home",
-        logs_dir=instance_root / "logs",
+        db_path=durable_state_root / "data" / "planner.db",
+        managed_files_root=durable_state_root / "data" / "files",
+        hermes_home=durable_state_root / "hermes-home",
+        runtime_user_home=durable_state_root / "user-home",
+        logs_dir=(
+            durable_state_root / "logs" / "active"
+            if kind == "live"
+            else durable_state_root / "logs"
+        ),
         dispatcher_lock_path=instance_root / "run" / "dispatcher.lock",
         server_control_socket_path=server_control_socket_path,
         port_policy=resolved_port_policy,

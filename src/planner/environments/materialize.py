@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import tempfile
 import time
 from collections.abc import Iterator
@@ -103,6 +104,8 @@ def prepare_environment_instance(
         )
         manifest = _manifest_from_instance(instance, prepared_at=effective_now)
         _validate_registry_manifests((*registry_manifests, manifest))
+        if kind == "live":
+            _prepare_empty_live_generation(instance)
         _prepare_common_layout(instance)
         if kind != "live":
             _replace_data_tree_from_fixture(instance.db_path, now=effective_now)
@@ -148,7 +151,6 @@ def reset_environment_instance(
             fixture_version=FAKE_FIXTURE_VERSION,
             prepared=True,
         )
-        _validate_registry_manifests(_read_registry_manifests(current.environment_root))
         with _stopped_environment_lifecycle_lease(current):
             _prepare_common_layout(instance)
             _replace_data_tree_from_fixture(instance.db_path, now=now)
@@ -181,7 +183,6 @@ def remove_environment_instance(
         )
         if current.prepared_at is None:
             raise EnvironmentValidationError("environment instance is not prepared")
-        _validate_registry_manifests(_read_registry_manifests(current.environment_root))
         with _stopped_environment_lifecycle_lease(current):
             shutil.rmtree(current.instance_root)
         return current
@@ -193,6 +194,8 @@ def import_live_environment_state(
     source_db_path: Path,
     source_managed_files_root: Path,
     source_hermes_home: Path,
+    source_runtime_user_home: Path,
+    source_logs_root: Path,
 ) -> EnvironmentManifest:
     """Atomically replace a prepared, stopped live environment's durable state."""
     live = inspect_environment_instance(
@@ -207,11 +210,23 @@ def import_live_environment_state(
         source_db_path=source_db_path,
         source_managed_files_root=source_managed_files_root,
         source_hermes_home=source_hermes_home,
+        source_runtime_user_home=source_runtime_user_home,
+        source_logs_root=source_logs_root,
     )
-    source_db, source_files, source_hermes, source_worker_settings = sources
+    (
+        source_db,
+        source_files,
+        source_hermes,
+        source_worker_settings,
+        source_agent_homes,
+        source_logs,
+    ) = sources
 
     with _stopped_environment_lifecycle_lease(live):
-        temporary_root = Path(tempfile.mkdtemp(prefix=".live-import-", dir=str(live.instance_root)))
+        generations_root = live.instance_root / "generations"
+        generations_root.mkdir(parents=True, exist_ok=True)
+        temporary_root = Path(tempfile.mkdtemp(prefix="generation-", dir=str(generations_root)))
+        committed = False
         try:
             staged_data = temporary_root / "data"
             staged_data.mkdir()
@@ -219,14 +234,29 @@ def import_live_environment_state(
             shutil.copytree(source_files, staged_data / "files")
             shutil.copytree(source_worker_settings, staged_data / "worker-settings")
             staged_hermes = temporary_root / "hermes-home"
-            shutil.copytree(source_hermes, staged_hermes)
-            _replace_live_state(live, staged_data=staged_data, staged_hermes=staged_hermes)
+            shutil.copytree(source_hermes, staged_hermes, symlinks=True)
+            staged_runtime_user_home = temporary_root / "user-home"
+            staged_runtime_user_home.mkdir(mode=0o700)
+            for agent_home in source_agent_homes:
+                _copy_durable_tree(agent_home, staged_runtime_user_home / agent_home.name)
+            staged_runtime_user_home.chmod(0o700)
+            staged_logs_root = temporary_root / "logs"
+            (staged_logs_root / "active").mkdir(parents=True)
+            shutil.copytree(source_logs, staged_logs_root / "archive" / "pre-cutover")
+            provision_planner_home_skills(
+                staged_hermes,
+                configured_database_parent=staged_data,
+                panels_skills_source_root=_repository_skill_root(live.repository_roots[0]),
+            )
+            _commit_live_generation(live, temporary_root)
+            committed = True
         except EnvironmentValidationError:
             raise
         except (OSError, sqlite3.Error) as exc:
             raise EnvironmentValidationError(f"live state import failed: {exc}") from exc
         finally:
-            shutil.rmtree(temporary_root, ignore_errors=True)
+            if not committed:
+                shutil.rmtree(temporary_root, ignore_errors=True)
     return live
 
 
@@ -250,7 +280,6 @@ def inspect_environment_instance(
             manifest_path,
             caller_environment_root=resolved_environment_root,
         )
-        _validate_registry_manifests(_read_registry_manifests(resolved_environment_root))
         if repository_roots:
             validate_repository_roots(repository_roots, manifest.repository_roots)
         if port is not None and port != _fixed_port_or_none(manifest):
@@ -300,6 +329,7 @@ def manifest_to_json_dict(
         "db_path": str(manifest.db_path),
         "managed_files_root": str(manifest.managed_files_root),
         "hermes_home": str(manifest.hermes_home),
+        "runtime_user_home": str(manifest.runtime_user_home),
         "logs_dir": str(manifest.logs_dir),
         "dispatcher_lock_path": str(manifest.dispatcher_lock_path),
         "server_control_socket_path": str(manifest.server_control_socket_path),
@@ -376,10 +406,14 @@ def _validate_live_import_sources(
     source_db_path: Path,
     source_managed_files_root: Path,
     source_hermes_home: Path,
-) -> tuple[Path, Path, Path, Path]:
+    source_runtime_user_home: Path,
+    source_logs_root: Path,
+) -> tuple[Path, Path, Path, Path, tuple[Path, Path], Path]:
     source_db = source_db_path.resolve()
     source_files = source_managed_files_root.resolve()
     source_hermes = source_hermes_home.resolve()
+    source_user_home = source_runtime_user_home.resolve()
+    source_logs = source_logs_root.resolve()
     source_worker_settings = source_db.parent / "worker-settings"
     if not source_db.is_file():
         raise EnvironmentValidationError(f"live import database is not a file: {source_db}")
@@ -387,10 +421,28 @@ def _validate_live_import_sources(
         ("managed files", source_files),
         ("Hermes home", source_hermes),
         ("worker settings", source_worker_settings),
+        ("runtime user home", source_user_home),
+        ("logs", source_logs),
     ):
         if not source.is_dir():
             raise EnvironmentValidationError(f"live import {label} is not a directory: {source}")
-    for source in (source_db, source_files, source_hermes, source_worker_settings):
+    source_codex_home = (source_user_home / ".codex").resolve()
+    source_claude_home = (source_user_home / ".claude").resolve()
+    for label, source in (
+        ("Codex home", source_codex_home),
+        ("Claude home", source_claude_home),
+    ):
+        if not source.is_dir():
+            raise EnvironmentValidationError(f"live import {label} is not a directory: {source}")
+    for source in (
+        source_db,
+        source_files,
+        source_hermes,
+        source_worker_settings,
+        source_codex_home,
+        source_claude_home,
+        source_logs,
+    ):
         if source == live.instance_root or live.instance_root in source.parents:
             raise EnvironmentValidationError(
                 f"live import source must be outside the prepared live environment: {source}"
@@ -401,9 +453,19 @@ def _validate_live_import_sources(
             "source_managed_files_root": source_files,
             "source_hermes_home": source_hermes,
             "source_worker_settings": source_worker_settings,
+            "source_codex_home": source_codex_home,
+            "source_claude_home": source_claude_home,
+            "source_logs_root": source_logs,
         }
     )
-    return source_db, source_files, source_hermes, source_worker_settings
+    return (
+        source_db,
+        source_files,
+        source_hermes,
+        source_worker_settings,
+        (source_codex_home, source_claude_home),
+        source_logs,
+    )
 
 
 def _sqlite_backup(source: Path, destination: Path) -> None:
@@ -413,53 +475,106 @@ def _sqlite_backup(source: Path, destination: Path) -> None:
             source_connection.backup(destination_connection)
 
 
-def _replace_live_state(
-    live: EnvironmentManifest,
-    *,
-    staged_data: Path,
-    staged_hermes: Path,
-) -> None:
-    old_data = staged_data.parent / "old-data"
-    old_hermes = staged_data.parent / "old-hermes-home"
-    data_replaced = False
-    hermes_replaced = False
+def _copy_durable_tree(source: Path, destination: Path) -> None:
+    shutil.copytree(
+        source,
+        destination,
+        symlinks=True,
+        ignore=_ignore_transient_special_files,
+    )
+    destination.chmod(0o700)
+
+
+def _ignore_transient_special_files(directory: str, names: list[str]) -> set[str]:
+    ignored: set[str] = set()
+    root = Path(directory)
+    for name in names:
+        mode = (root / name).lstat().st_mode
+        if stat.S_ISSOCK(mode) or stat.S_ISFIFO(mode) or stat.S_ISCHR(mode) or stat.S_ISBLK(mode):
+            ignored.add(name)
+    return ignored
+
+
+def _prepare_empty_live_generation(instance: ResolvedEnvironmentInstance) -> None:
+    generations_root = instance.instance_root / "generations"
+    generations_root.mkdir(parents=True, exist_ok=True)
+    generation = Path(tempfile.mkdtemp(prefix="generation-", dir=str(generations_root)))
+    _commit_live_generation(_manifest_from_instance(instance, prepared_at=None), generation)
+
+
+def _commit_live_generation(live: EnvironmentManifest, generation: Path) -> None:
+    """Durably stage one generation, then atomically change the stable pointer."""
+    generations_root = (live.instance_root / "generations").resolve()
+    resolved_generation = generation.resolve()
+    if generations_root not in resolved_generation.parents:
+        raise EnvironmentValidationError("live generation must be inside its generations root")
+    _fsync_tree(resolved_generation)
+    current = live.instance_root / "current"
+    previous_generation = current.resolve() if current.is_symlink() else None
+    temporary_link = live.instance_root / f".current-{resolved_generation.name}"
+    temporary_link.unlink(missing_ok=True)
+    temporary_link.symlink_to(resolved_generation.relative_to(live.instance_root.resolve()))
+    os.replace(temporary_link, current)
+    _fsync_directory(live.instance_root)
+    if (
+        previous_generation is not None
+        and previous_generation != resolved_generation
+        and generations_root in previous_generation.parents
+    ):
+        try:
+            shutil.rmtree(previous_generation, ignore_errors=True)
+        except OSError:
+            # The new generation is already committed; stale cleanup is best effort.
+            pass
+
+
+def _fsync_tree(root: Path) -> None:
+    for path in sorted(root.rglob("*"), key=lambda candidate: len(candidate.parts), reverse=True):
+        if path.is_symlink():
+            continue
+        if path.is_file():
+            descriptor = os.open(path, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        elif path.is_dir():
+            _fsync_directory(path)
+    _fsync_directory(root)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
     try:
-        os.replace(live.db_path.parent, old_data)
-        os.replace(staged_data, live.db_path.parent)
-        data_replaced = True
-        os.replace(live.hermes_home, old_hermes)
-        os.replace(staged_hermes, live.hermes_home)
-        hermes_replaced = True
-    except BaseException:
-        if hermes_replaced:
-            shutil.rmtree(live.hermes_home, ignore_errors=True)
-            os.replace(old_hermes, live.hermes_home)
-        elif old_hermes.exists() and not live.hermes_home.exists():
-            os.replace(old_hermes, live.hermes_home)
-        if data_replaced:
-            shutil.rmtree(live.db_path.parent, ignore_errors=True)
-            os.replace(old_data, live.db_path.parent)
-        elif old_data.exists() and not live.db_path.parent.exists():
-            os.replace(old_data, live.db_path.parent)
-        raise
-    # The replacement is committed at this point. Leftover rollback copies are
-    # harmless and must not turn a successful import into a reported failure.
-    shutil.rmtree(old_data, ignore_errors=True)
-    shutil.rmtree(old_hermes, ignore_errors=True)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _prepare_common_layout(instance) -> None:  # type: ignore[no-untyped-def]
-    instance.instance_root.mkdir(parents=True, exist_ok=True)
+    instance.instance_root.mkdir(mode=0o750, parents=True, exist_ok=True)
     instance.logs_dir.mkdir(parents=True, exist_ok=True)
     instance.dispatcher_lock_path.parent.mkdir(parents=True, exist_ok=True)
     instance.server_control_socket_path.parent.mkdir(parents=True, exist_ok=True)
+    instance.runtime_user_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    instance.runtime_user_home.chmod(0o700)
 
 
 def _materialize_instance_skills(instance) -> None:  # type: ignore[no-untyped-def]
     provision_planner_home_skills(
         instance.hermes_home,
         configured_database_parent=instance.db_path.parent,
+        panels_skills_source_root=_repository_skill_root(instance.allowed_repository_roots[0]),
     )
+
+
+def _repository_skill_root(repository_root: Path) -> Path:
+    source_root = repository_root / "src" / "planner" / "skills"
+    if not source_root.is_dir():
+        raise EnvironmentValidationError(
+            f"repository has no Panels skill source root: {source_root}"
+        )
+    return source_root.resolve()
 
 
 def _manifest_from_instance(instance, *, prepared_at: int | None) -> EnvironmentManifest:  # type: ignore[no-untyped-def]
@@ -471,6 +586,7 @@ def _manifest_from_instance(instance, *, prepared_at: int | None) -> Environment
         db_path=instance.db_path,
         managed_files_root=instance.managed_files_root,
         hermes_home=instance.hermes_home,
+        runtime_user_home=instance.runtime_user_home,
         logs_dir=instance.logs_dir,
         dispatcher_lock_path=instance.dispatcher_lock_path,
         server_control_socket_path=instance.server_control_socket_path,
@@ -536,6 +652,13 @@ def _read_manifest(
             db_path=Path(payload["db_path"]),
             managed_files_root=Path(payload["managed_files_root"]),
             hermes_home=Path(payload["hermes_home"]),
+            runtime_user_home=Path(
+                payload.get(
+                    "runtime_user_home",
+                    Path(payload["instance_root"])
+                    / ("current/user-home" if payload["kind"] == "live" else "user-home"),
+                )
+            ),
             logs_dir=Path(payload["logs_dir"]),
             dispatcher_lock_path=Path(payload["dispatcher_lock_path"]),
             server_control_socket_path=Path(payload["server_control_socket_path"]),
@@ -572,6 +695,7 @@ def _manifest_payload(manifest: EnvironmentManifest) -> dict[str, Any]:
         "db_path": str(manifest.db_path),
         "managed_files_root": str(manifest.managed_files_root),
         "hermes_home": str(manifest.hermes_home),
+        "runtime_user_home": str(manifest.runtime_user_home),
         "logs_dir": str(manifest.logs_dir),
         "dispatcher_lock_path": str(manifest.dispatcher_lock_path),
         "server_control_socket_path": str(manifest.server_control_socket_path),
@@ -642,6 +766,7 @@ def _validate_manifest_against_location(
     _assert_manifest_field_matches(manifest, expected_manifest, "db_path")
     _assert_manifest_field_matches(manifest, expected_manifest, "managed_files_root")
     _assert_manifest_field_matches(manifest, expected_manifest, "hermes_home")
+    _assert_manifest_field_matches(manifest, expected_manifest, "runtime_user_home")
     _assert_manifest_field_matches(manifest, expected_manifest, "logs_dir")
     _assert_manifest_field_matches(manifest, expected_manifest, "dispatcher_lock_path")
     _assert_manifest_field_matches(manifest, expected_manifest, "server_control_socket_path")
@@ -677,6 +802,7 @@ def _require_manifest_paths_are_absolute(manifest: EnvironmentManifest) -> None:
         "db_path": manifest.db_path,
         "managed_files_root": manifest.managed_files_root,
         "hermes_home": manifest.hermes_home,
+        "runtime_user_home": manifest.runtime_user_home,
         "logs_dir": manifest.logs_dir,
         "dispatcher_lock_path": manifest.dispatcher_lock_path,
         "server_control_socket_path": manifest.server_control_socket_path,
@@ -801,6 +927,7 @@ def _instance_from_manifest(manifest: EnvironmentManifest) -> ResolvedEnvironmen
         db_path=manifest.db_path,
         managed_files_root=manifest.managed_files_root,
         hermes_home=manifest.hermes_home,
+        runtime_user_home=manifest.runtime_user_home,
         logs_dir=manifest.logs_dir,
         dispatcher_lock_path=manifest.dispatcher_lock_path,
         server_control_socket_path=manifest.server_control_socket_path,

@@ -175,6 +175,7 @@ def _isolation_paths(instance: ResolvedEnvironmentInstance) -> dict[str, Path]:
         "db_path": instance.db_path,
         "managed_files_root": instance.managed_files_root,
         "hermes_home": instance.hermes_home,
+        "runtime_user_home": instance.runtime_user_home,
         "logs_dir": instance.logs_dir,
         "dispatcher_lock_path": instance.dispatcher_lock_path,
         "server_control_socket_path": instance.server_control_socket_path,
@@ -190,9 +191,27 @@ def _validate_existing_repository_root(root: Path) -> Path:
     resolved_root = root.resolve()
     if not resolved_root.exists() or not resolved_root.is_dir():
         raise EnvironmentValidationError(f"repository root does not exist: {resolved_root}")
-    if not (resolved_root / ".git").exists():
+    git_marker = resolved_root / ".git"
+    if not _is_git_worktree_marker(git_marker):
         raise EnvironmentValidationError(f"repository root is not a worktree: {resolved_root}")
     return resolved_root
+
+
+def _is_git_worktree_marker(git_marker: Path) -> bool:
+    if git_marker.is_dir():
+        return (git_marker / "HEAD").is_file() and (git_marker / "objects").is_dir()
+    if not git_marker.is_file():
+        return False
+    try:
+        prefix, raw_git_directory = git_marker.read_text(encoding="utf-8").strip().split(":", 1)
+    except (OSError, ValueError):
+        return False
+    if prefix != "gitdir":
+        return False
+    git_directory = Path(raw_git_directory.strip())
+    if not git_directory.is_absolute():
+        git_directory = git_marker.parent / git_directory
+    return git_directory.resolve().is_dir() and (git_directory.resolve() / "HEAD").is_file()
 
 
 def _resolve_for_contract(path: Path) -> Path:

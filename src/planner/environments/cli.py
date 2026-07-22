@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +35,7 @@ from planner.environments.materialize import (
     remove_environment_instance,
     reset_environment_instance,
 )
+from planner.environments.repository_runtime import resolve_repository_runtime_python
 from planner.environments.runtime_port import reserve_available_tcp_listener
 
 ExecFn = Callable[[str, list[str], Mapping[str, str]], object]
@@ -43,6 +43,7 @@ ResolveInstanceFn = Callable[..., ResolvedEnvironmentInstance]
 MaterializeFn = Callable[..., EnvironmentManifest]
 InspectInstanceFn = Callable[..., EnvironmentManifest]
 ImportLiveFn = Callable[..., EnvironmentManifest]
+ResolveRepositoryRuntimePythonFn = Callable[[Path], Path]
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,9 @@ class EnvironmentCliDependencies:
     remove_instance: MaterializeFn = remove_environment_instance
     exec_fn: ExecFn = os.execvpe
     ambient_env: Mapping[str, str] | None = None
-    executable: str = sys.executable
+    resolve_repository_runtime_python: ResolveRepositoryRuntimePythonFn = (
+        resolve_repository_runtime_python
+    )
 
 
 @click.group("environment")
@@ -166,6 +169,16 @@ def inspect(
     type=click.Path(path_type=Path, exists=True, file_okay=False),
     required=True,
 )
+@click.option(
+    "--source-runtime-user-home",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
+@click.option(
+    "--source-logs-root",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
 @click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def import_live(
@@ -175,6 +188,8 @@ def import_live(
     source_db: Path,
     source_managed_files_root: Path,
     source_hermes_home: Path,
+    source_runtime_user_home: Path,
+    source_logs_root: Path,
     json_output: bool,
 ) -> None:
     """Import or restore durable state into a prepared, stopped live environment."""
@@ -185,6 +200,8 @@ def import_live(
             source_db_path=source_db,
             source_managed_files_root=source_managed_files_root,
             source_hermes_home=source_hermes_home,
+            source_runtime_user_home=source_runtime_user_home,
+            source_logs_root=source_logs_root,
         )
     except EnvironmentValidationError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -281,6 +298,11 @@ def remove(
 @click.option("--kind", type=click.Choice(["live", "staging"]), required=True)
 @click.option("--instance-id")
 @click.option("--environment-root", type=click.Path(path_type=Path), required=True)
+@click.option(
+    "--environment-manager-root",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
 @click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def render_linux(
@@ -289,6 +311,7 @@ def render_linux(
     kind: EnvironmentKind,
     instance_id: str | None,
     environment_root: Path,
+    environment_manager_root: Path,
     json_output: bool,
 ) -> None:
     """Render Linux unit and ownership intent without installing it."""
@@ -302,7 +325,10 @@ def render_linux(
             credentials_env_file=None,
             repository_roots=(),
         )
-        rendered = render_linux_specification(manifest)
+        rendered = render_linux_specification(
+            manifest,
+            environment_manager_root=environment_manager_root,
+        )
     except EnvironmentValidationError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -431,15 +457,16 @@ def run_environment_instance(
             instance.instance_root / "run" / "server-lifecycle.lock"
         )
         click.echo(f"staging http://127.0.0.1:{runtime_port}", err=True)
-    argv = [deps.executable, "-m", "planner", "serve"]
     launch_root = _validated_launch_repository_root(
         launch_repository_root,
         allowed_repository_roots=instance.allowed_repository_roots,
     )
+    launch_interpreter = deps.resolve_repository_runtime_python(launch_root)
+    argv = [str(launch_interpreter), "-m", "planner", "serve"]
     previous_cwd = Path.cwd()
     os.chdir(launch_root)
     try:
-        deps.exec_fn(deps.executable, argv, run_env)
+        deps.exec_fn(str(launch_interpreter), argv, run_env)
     finally:
         if listener is not None:
             listener.close()
@@ -494,6 +521,7 @@ def _resolved_instance_from_manifest(manifest: EnvironmentManifest) -> ResolvedE
         db_path=manifest.db_path,
         managed_files_root=manifest.managed_files_root,
         hermes_home=manifest.hermes_home,
+        runtime_user_home=manifest.runtime_user_home,
         logs_dir=manifest.logs_dir,
         dispatcher_lock_path=manifest.dispatcher_lock_path,
         server_control_socket_path=manifest.server_control_socket_path,

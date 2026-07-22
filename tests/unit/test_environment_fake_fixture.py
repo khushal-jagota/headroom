@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -109,7 +111,9 @@ def test_instance_skill_materialization_uses_database_parent(
         dispatcher_lock_path=tmp_path / "locks" / "dispatcher.lock",
         server_control_socket_path=tmp_path / "run" / "server.sock",
         hermes_home=hermes_home,
+        runtime_user_home=tmp_path / "runtime-user-home",
         db_path=data_root / "planning.db",
+        allowed_repository_roots=(Path(__file__).resolve().parents[2],),
     )
 
     environment_materialize._prepare_common_layout(instance)
@@ -263,7 +267,11 @@ def _repository_root(tmp_path: Path | None = None, name: str = "repo") -> Path:
         return Path(__file__).resolve().parents[2]
     repository_root = tmp_path / name
     repository_root.mkdir()
-    (repository_root / ".git").mkdir()
+    subprocess.run(["git", "init", "-q", str(repository_root)], check=True)
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "src" / "planner" / "skills",
+        repository_root / "src" / "planner" / "skills",
+    )
     return repository_root
 
 

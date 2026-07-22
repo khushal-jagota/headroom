@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from planner.environments.contracts import EnvironmentManifest
-from planner.environments.linux import render_linux_specification
+from planner.environments.linux import (
+    DEFAULT_LINUX_ENVIRONMENT_MANAGER_ROOT,
+    render_linux_specification,
+)
 from planner.environments.logic.registry import resolve_environment_instance
 
 ASSET_ROOT = Path(__file__).resolve().parents[2] / "ops" / "panels-environments"
@@ -11,19 +15,29 @@ ASSET_ROOT = Path(__file__).resolve().parents[2] / "ops" / "panels-environments"
 
 def test_live_linux_render_keeps_fixed_external_service_contract(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path, "live")
-    rendered = render_linux_specification(manifest)
+    rendered = render_linux_specification(
+        manifest, environment_manager_root=Path("/opt/panels/environment-manager")
+    )
     assert rendered.required_account == "panels-live"
     assert rendered.unit_name == "panels-live.service"
-    assert "panels environment run --kind live" in rendered.unit_text
+    assert (
+        "/opt/panels/environment-manager/.venv/bin/python -m planner environment run --kind live"
+        in rendered.unit_text
+    )
     assert str(manifest.repository_roots[0]) in rendered.unit_text
 
 
 def test_staging_linux_render_uses_on_demand_dynamic_run_command(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path, "staging")
-    rendered = render_linux_specification(manifest)
+    rendered = render_linux_specification(
+        manifest, environment_manager_root=Path("/opt/panels/environment-manager")
+    )
     assert rendered.required_account == "panels-worker"
     assert rendered.unit_name == "panels-staging.service"
-    assert "panels environment run --kind staging" in rendered.unit_text
+    assert (
+        "/opt/panels/environment-manager/.venv/bin/python -m planner environment run --kind staging"
+        in rendered.unit_text
+    )
     assert "--port" not in rendered.unit_text
 
 
@@ -36,10 +50,33 @@ def test_checked_in_linux_assets_have_no_preview_service_or_account_surface() ->
     assert "preview" not in combined.lower()
 
 
+def test_checked_in_linux_units_use_the_shared_pinned_manager_and_private_accounts() -> None:
+    live = (ASSET_ROOT / "panels-live.service").read_text(encoding="utf-8")
+    staging = (ASSET_ROOT / "panels-staging.service").read_text(encoding="utf-8")
+    manager_launcher = (
+        "/opt/panels/environment-manager/.venv/bin/python -m planner environment run"
+    )
+
+    assert "User=panels-live" in live
+    assert "User=panels-worker" in staging
+    assert manager_launcher in live
+    assert manager_launcher in staging
+    assert "--repository-root /opt/panels/live" in live
+    assert "--repository-root /opt/panels/staging" in staging
+    assert DEFAULT_LINUX_ENVIRONMENT_MANAGER_ROOT == Path(
+        "/opt/panels/environment-manager"
+    )
+
+    setup = (ASSET_ROOT / "setup-accounts.sh").read_text(encoding="utf-8")
+    assert (
+        "install -d -m 0755 -o root -g root /opt/panels/environment-manager" in setup
+    )
+
+
 def _manifest(tmp_path: Path, kind: str) -> EnvironmentManifest:
     repository = tmp_path / f"{kind}-repo"
     repository.mkdir()
-    (repository / ".git").mkdir()
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
     instance = resolve_environment_instance(
         kind=kind,  # type: ignore[arg-type]
         environment_root=Path("/tmp") / f"pe-{tmp_path.parent.name}-{tmp_path.name}",
@@ -55,6 +92,7 @@ def _manifest(tmp_path: Path, kind: str) -> EnvironmentManifest:
         db_path=instance.db_path,
         managed_files_root=instance.managed_files_root,
         hermes_home=instance.hermes_home,
+        runtime_user_home=instance.runtime_user_home,
         logs_dir=instance.logs_dir,
         dispatcher_lock_path=instance.dispatcher_lock_path,
         server_control_socket_path=instance.server_control_socket_path,

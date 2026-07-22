@@ -85,5 +85,5 @@ def _contract_owned_env(
         "PLAN_SERVER_CONTROL_SOCKET": str(instance.server_control_socket_path),
         "PLAN_HERMES_HOME": str(instance.hermes_home),
         "PLAN_HERMES_PYTHON": str(hermes_python),
-        "HOME": str(instance.hermes_home),
+        "HOME": str(instance.runtime_user_home),
     }

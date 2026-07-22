@@ -11,7 +11,9 @@ settings, Hermes home, config, and logs lives under
 
 Prepared runtime environments are now exactly live and staging. Live retains fixed port 8767 and
 has a stopped-only, staged `import-live` path for SQLite/WAL, managed files, Worker settings, and
-Hermes state. Staging keeps a resettable fake database and durable Hermes/files state but no stored
+Hermes, Codex, Claude, and archived-log state. The live import builds one complete generation,
+switches one stable pointer atomically, and treats cleanup after commit as best effort. Staging keeps
+a resettable fake database and durable Hermes/files/private-user-home state but no stored
 runtime port; each launch carries an OS-bound dynamic listener through the supervisor into Uvicorn.
 The prepared preview commands, contracts, registry allocation, Hermes smoke, Linux unit, env input,
 docs, and tests are removed. The coding-worker skill has only the universal lifecycle sentence;
@@ -22,10 +24,14 @@ The persistent runtime root is prepared at
 `/Users/khushaljagota/.hermes/runtime/panels-environments`. Staging inspection reports the dynamic
 policy with no port; prepared live observes the current port-8767 lease and therefore refuses import
 until the operator stops the untouched current server. Combined focused unit/E2E tests, Ruff, strict
-Mypy on the changed source, diff checks, and preview-surface checks pass. Independent implementation
-review is in progress. The canonical `./verify`, branch integration, final quiesced backup/import,
-live start, health checks, push/PR, and Ticket-worktree cleanup remain Closeout work after
-Implementation approval.
+Mypy on the changed source, diff checks, and preview-surface checks passed before corrective review.
+The accepted correction also proves private identity modes/special-file exclusion,
+cross-private-manifest isolation, atomic generation failures, prepared skill-link repair, and a
+root-owned pinned Linux manager which validates and executes each target checkout's own interpreter.
+The settled correction passes 75 focused unit tests plus the staging lifecycle E2E, Ruff, strict
+Mypy over all 14 environment-related source files, and diff checks. The canonical `./verify`, branch
+integration, final quiesced backup/import, live start, health checks, push/PR, and Ticket-worktree
+cleanup remain Closeout work after Implementation approval.
 
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 

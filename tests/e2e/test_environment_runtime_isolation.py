@@ -13,6 +13,7 @@ import httpx
 from conftest import BOOT_BUDGET_S, PLAN_BIN
 
 _STAGING_URL_RE = re.compile(r"staging (?P<url>http://127\.0\.0\.1:\d+)")
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
@@ -20,9 +21,7 @@ def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
 ) -> None:
     environment_root = Path("/tmp") / f"panels-staging-e2e-{os.getpid()}-{tmp_path.name}"
     shutil.rmtree(environment_root, ignore_errors=True)
-    repository = tmp_path / "staging-repo"
-    repository.mkdir()
-    (repository / ".git").mkdir()
+    repository = _REPOSITORY_ROOT
     log_path = tmp_path / "staging.log"
 
     try:
