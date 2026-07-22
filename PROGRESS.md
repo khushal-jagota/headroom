@@ -41,6 +41,12 @@ all frontend checks, and all 120 E2E tests; final `VERIFY: PASS`. Staging remain
 accepted base. Next: operator stop, final quiesced backup/import, separated-live start and health
 checks, staging advance/push/PR, and Ticket-worktree cleanup.
 
+The worker-owned Closeout turn has been automatically redispatched more than three times while the
+operator-owned server continues to answer on port 8767. No migration or integration action has been
+repeated. This is a hard operator checkpoint, not a code failure: continuation begins only after the
+operator presses Ctrl-C in the existing `panels serve` terminal, waits for its shell prompt, and
+confirms the old server is stopped. The worker must not stop, signal, replace, or launch that server.
+
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 
 The Ticket `Adopt staging and separated live operation on the current host` had a missing
