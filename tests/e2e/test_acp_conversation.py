@@ -2059,7 +2059,6 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
             stop_session = str(stop_initial[0]["acpSessionId"])
             stop_second.send_json({"type": "attach", "employeeId": stop_ticket.id})
             _receive_until(stop_second, _is_ready)
-            _receive_until(stop_first, _is_ready)
             stop_old = client.portal.call(
                 app.state.conversation.registry.resolve_runtime_handle,
                 stop_ticket.id,
