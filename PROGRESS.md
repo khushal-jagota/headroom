@@ -4,6 +4,29 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-22): compact Workers Closeout (`t_6v0bjnwh`)
+
+The approved compact Workers implementation and its direct-edit correction are reconciled with
+current ACP-era `main` on `closeout/t_6v0bjnwh-current-main`. The integration preserves main's
+Project v28 and Ticket-conversation projection v29 migrations; captured Stage ownership defaults
+are the additive v30 migration. A backup copy of the live schema-v28 database migrated through
+v29/v30 with 119 Tickets, no missing non-terminal defaults, no terminal defaults, and no foreign-key
+violations.
+
+Focused backend, frontend, environment-isolation, and browser gates pass. The independent full-diff
+review found two Closeout defects: an independent skill-field save could overwrite the other field's
+failed candidate, and environment preparation could materialize specialist settings from the wrong
+parent before replacing its data tree. Both were fixed with RED/GREEN regressions. The final focused
+review reports `NO VIOLATIONS`. The canonical gate also exposed an unrelated racy ACP test assertion:
+a post-fork notification may safely arrive after the next load request once the exact-session private
+epoch is installed. The test still proves exact private/source routing, replay order, and no deadlock,
+but no longer asserts that unsupported wire ordering.
+
+The settled tracked tree is reserved for the repository's one canonical `./verify`; its full output is
+captured as the Ticket's managed `verify-closeout.log`. Only a `VERIFY: PASS` may advance `main`.
+After landing, use the documented Panels restart, verify the Workers API and page, preserve the
+unrelated `composition.py` and nested-worktree edits exactly, then propose Closeout.
+
 ## Current work cycle (2026-07-21): Ticket Workspace dot projection (`t_xb76vw05`)
 
 The one pure `workspace_dot_state` classifier is implemented with exceptional > active > needs_attention

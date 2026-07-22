@@ -288,8 +288,11 @@ def _assert_skill_only_hermes_home(hermes_home: Path) -> None:
     assert not (hermes_home / "auth.json").exists()
     assert not (hermes_home / "config.json").exists()
     assert not (hermes_home / "sessions").exists()
-    for skill_link in (hermes_home / "skills").iterdir():
-        assert skill_link.is_symlink()
+    for skill_path in (hermes_home / "skills").iterdir():
+        if skill_path.is_symlink():
+            continue
+        assert skill_path.is_dir()
+        assert (skill_path / "SKILL.md").is_file()
 
 
 def _remove_instance(instance: RuntimeInstance, environment_root: Path) -> None:
