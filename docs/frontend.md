@@ -20,7 +20,14 @@ One screen per part of the system:
   halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. The
   rail groups tickets by project, then orders rows by Worker type, that type's Stage,
-  and recent activity. It shows one current-stage/status dot per ticket and includes
+  and recent activity. It shows one current-stage dot per ticket. The board card owns
+  one derived Workspace result with the fixed precedence **exceptional**, **active**,
+  **needs attention**, then **quiet**. Active work spins; attention is a filled dot;
+  quiet is a ring; exceptional keeps the error treatment. The result combines Ticket
+  facts with a small durable Ticket-linked ACP projection, so a browser reload or an
+  unopened conversation does not invent or retain stale activity. Initial and repeated
+  idle are quiet until an admitted turn has real activity; a completed response stays
+  attention through reconnect/load until a new turn or explicit reset. It includes
   every Ticket status. Done tickets sit under their own **Done** stage section, which
   is collapsed by default and can be opened to browse like any other section; when a
   group has no done tickets, no Done section appears. **Chief of Staff** sits first in
@@ -48,6 +55,12 @@ One screen per part of the system:
   documents page for the kickoff/mid/review record (see `sprints.md`).
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
+- **Workers** — a compact list of configured Worker types and one detail page per Worker.
+  Worker identity and lifecycle structure stay read-only. Each Stage ownership default
+  saves independently for future Ticket entries. The specialist skill name stays read-only;
+  its description and Markdown body use the standard direct `InlineEdit` behavior and save
+  independently. A failed save keeps the attempted text and a useful error so it can be
+  corrected or retried. The same page collapses cleanly on mobile.
 
 The shell itself carries two separate live signals. Worker presence is the small
 spinner and "N working" readout from the global running-worker count. Server
@@ -64,10 +77,10 @@ share.
   cached server read, its endpoint and type, and the events that affect it. The cache
   engine only manages loaded values, subscribers, and overlapping requests; it knows
   nothing about Tickets or Projects. The event log is a doorbell. Events invalidate
-  catalogue resources such as `ticket:<id>`, `board`, `review`, and `sprint:current`,
-  and successful UI writes apply one named catalogue effect immediately. Only those
-  resources refetch. There is no whole-screen refetch or client-side copy of canonical
-  state — the server remains the source of truth.
+  catalogue resources such as `ticket:<id>`, `board`, `review`, `sprint:current`,
+  `workers`, and `worker:<id>`, and successful UI writes apply one named catalogue
+  effect immediately. Only those resources refetch. There is no whole-screen refetch or
+  client-side copy of canonical state — the server remains the source of truth.
 
   A Project rename refreshes Projects, Board, today's Day, backlog Sprint items,
   Ideas, current Sprint, and an already-opened Ticket when its loaded direct Project

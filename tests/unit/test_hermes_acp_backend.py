@@ -141,12 +141,21 @@ def test_production_hermes_registration_reuses_exact_resolved_installation(
     hermes_executable.write_text("", encoding="utf-8")
     hermes_executable.chmod(0o755)
     planner_home = (tmp_path / "planner-hermes-home").resolve()
-    provisioned: list[Path] = []
+    provisioned: list[tuple[Path, Path | None]] = []
     monkeypatch.setattr(backend_catalog, "resolve_hermes_python", lambda: hermes_python)
     monkeypatch.setattr(
         backend_catalog,
         "provision_planner_home_skills",
-        lambda home: provisioned.append(Path(home)),
+        lambda home, *, configured_database_parent=None: provisioned.append(
+            (
+                Path(home),
+                (
+                    None
+                    if configured_database_parent is None
+                    else Path(configured_database_parent)
+                ),
+            )
+        ),
     )
 
     registration = next(
@@ -171,7 +180,7 @@ def test_production_hermes_registration_reuses_exact_resolved_installation(
     assert adapter._hermes_python == hermes_python  # noqa: SLF001
     assert adapter._hermes_home == planner_home  # noqa: SLF001
     assert adapter._hermes_source_root == source_root  # noqa: SLF001
-    assert provisioned == [planner_home]
+    assert provisioned == [(planner_home, tmp_path)]
 
 
 def test_generic_runtime_has_no_backend_name_conditional() -> None:

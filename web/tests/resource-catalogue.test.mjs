@@ -29,7 +29,9 @@ const expectedMethods = [
   "sprintSummaries",
   "currentSprint",
   "ticket",
-  "workerTypeManifests"
+  "workerTypeManifests",
+  "workers",
+  "worker"
 ];
 const expectedPublicDeclarations = [
   "export type EventEntityPrefix",
@@ -184,7 +186,9 @@ const opens = [
   [() => resourceCatalogue.sprintSummaries(), "sprints", "/api/sprints"],
   [() => resourceCatalogue.currentSprint(), "sprint:current", "/api/sprint/current"],
   [() => resourceCatalogue.ticket("t_a/b"), "ticket:t_a/b", "/api/tickets/t_a%2Fb"],
-  [() => resourceCatalogue.workerTypeManifests(), "worker-types", "/api/worker-types"]
+  [() => resourceCatalogue.workerTypeManifests(), "worker-types", "/api/worker-types"],
+  [() => resourceCatalogue.workers(), "workers", "/api/workers"],
+  [() => resourceCatalogue.worker("coding/a"), "worker:coding/a", "/api/workers/coding%2Fa"]
 ];
 for (const [open, identity, path] of opens) {
   const handle = open();
@@ -210,7 +214,8 @@ const effectCases = [
   [{ kind: "reviewTicketAccepted", ticketId: "t_effect" }, ["ticket:t_effect", "board", "sprint:current"], ["review"]],
   [{ kind: "reviewTicketReturnedForRevision", ticketId: "t_effect" }, ["ticket:t_effect", "board", "sprint:current"], ["review"]],
   [{ kind: "todayDayChanged" }, ["day:today"], []],
-  [{ kind: "currentSprintChanged" }, ["sprint:current", "sprints"], []]
+  [{ kind: "currentSprintChanged" }, ["sprint:current", "sprints"], []],
+  [{ kind: "workerSettingsChanged", workerType: "coding" }, ["workers", "worker:coding"], []]
 ];
 for (const [effect, identities, orderedRefreshes] of effectCases) {
   invalidations.length = 0;
@@ -271,7 +276,7 @@ function exact(actual, expected) {
   assert.deepEqual(sorted(actual), sorted(expected));
 }
 
-assert.deepEqual(knownEntityPrefixes(), ["t", "si", "sp", "day", "idea", "project", "agent"]);
+assert.deepEqual(knownEntityPrefixes(), ["t", "si", "sp", "day", "idea", "project", "agent", "worker"]);
 exact(keysForEvent(event("t_demo")), ["ticket:t_demo", "board", "sprint:current"]);
 exact(keysForEvent(event("si_demo")), ["items:backlog", "board", "sprint:current"]);
 exact(keysForEvent(event("sp_demo")), ["sprints", "sprint:current"]);
@@ -281,6 +286,8 @@ exact(keysForEvent(event("day_cold"), { todayDayId: null }), ["day:today"]);
 exact(keysForEvent(event("idea_demo")), ["ideas"]);
 exact(keysForEvent(event("project_demo")), ["projects"]);
 exact(keysForEvent(event("agent_demo")), []);
+exact(keysForEvent(event("worker_coding")), ["workers", "worker:coding"]);
+exact(keysForEvent(event("worker_new_worker", "worker_settings_changed")), ["workers", "worker:new_worker"]);
 assert.throws(() => keysForEvent(event("bad")), /unknown entity_id prefix/);
 assert.throws(() => keysForEvent(event("x_demo")), /unknown entity_id prefix/);
 
@@ -290,6 +297,11 @@ exact(keysForEvent(event("t_employee", "employee_step_started")), [
   "sprint:current"
 ]);
 exact(keysForEvent(event("t_employee", "employee_session_changed")), ["ticket:t_employee"]);
+exact(keysForEvent(event("t_employee", "ticket_conversation_projection_changed")), [
+  "ticket:t_employee",
+  "board",
+  "sprint:current"
+]);
 exact(
   keysForEvent(event("t_backend", "ticket_updated", { field: "employee_backend" })),
   ["ticket:t_backend", "board", "sprint:current"]
@@ -430,7 +442,9 @@ assert.equal(invalidations.length, invalidationCountBeforeReconciliation);
 const backendKinds = JSON.parse(process.env.PLANNER_EVENT_KINDS || "[]");
 for (const kind of backendKinds) {
   let sample = event("t_backend", kind);
-  if (kind.startsWith("day_")) {
+  if (kind === "worker_settings_changed") {
+    sample = event("worker_backend", kind);
+  } else if (kind.startsWith("day_")) {
     sample = event("day_today", kind, kind === "day_ticket_added" || kind === "day_ticket_removed" ? { ticket_id: "t_backend" } : {});
   } else if (["sprint_created", "sprint_updated"].includes(kind)) {
     sample = event("sp_backend", kind);
@@ -468,7 +482,8 @@ await writeFile(
     `  { kind: "ticketReviewStateChanged", ticketId: "t" },\n` +
     `  { kind: "reviewTicketAccepted", ticketId: "t" },\n` +
     `  { kind: "reviewTicketReturnedForRevision", ticketId: "t" },\n` +
-    `  { kind: "todayDayChanged" }, { kind: "currentSprintChanged" }\n` +
+    `  { kind: "todayDayChanged" }, { kind: "currentSprintChanged" },\n` +
+    `  { kind: "workerSettingsChanged", workerType: "coding" }\n` +
     `];\nvoid all;\n` +
     `// @ts-expect-error unknown effect\nconst unknown: ResourceMutationEffect = { kind: "unknown" };\n` +
     `// @ts-expect-error missing ticket id\nconst missing: ResourceMutationEffect = { kind: "ticketChanged" };\n` +

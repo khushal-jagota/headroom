@@ -36,6 +36,38 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     errored = "errored"
 
 
+class WorkspaceActivityState(StrEnum):
+    """ACP activity facts that may affect a Ticket's Workspace dot."""
+
+    connecting = "connecting"
+    loading = "loading"
+    idle = "idle"
+    thinking = "thinking"
+    working = "working"
+    compacting = "compacting"
+    waiting_for_permission = "waiting_for_permission"
+    interrupted = "interrupted"
+    failed = "failed"
+
+
+class WorkspaceDotState(StrEnum):
+    exceptional = "exceptional"
+    active = "active"
+    needs_attention = "needs_attention"
+    quiet = "quiet"
+
+
+@dataclass(frozen=True)
+class WorkspaceDotFacts:
+    """Factual Ticket and ACP inputs for the one Workspace-dot classifier."""
+
+    ticket_status: TicketStatus
+    has_pending_proposal: bool = False
+    latest_activity_state: WorkspaceActivityState | None = None
+    has_completed_response_awaiting_user: bool = False
+    has_pending_permission: bool = False
+
+
 @dataclass(frozen=True)
 class Proposal:  # §4.2 proposal slot
     body: str

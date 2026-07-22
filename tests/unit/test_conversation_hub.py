@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -10,10 +11,15 @@ from typing import Any
 import pytest
 from acp.schema import (
     AgentMessageChunk,
+    DeniedOutcome,
+    PermissionOption,
     PromptRequest,
     PromptResponse,
+    RequestPermissionRequest,
+    RequestPermissionResponse,
     SessionNotification,
     TextContentBlock,
+    ToolCallUpdate,
 )
 
 from planner.conversation.backend_contracts import (
@@ -25,6 +31,7 @@ from planner.conversation.contracts import (
     ConversationEmployee,
     ConversationSessionBinding,
     QueuedPrompt,
+    TurnDeliveryReceipt,
 )
 from planner.conversation.employee_registry import (
     AcpEmployeeRecord,
@@ -36,16 +43,19 @@ from planner.conversation.hub import (
     BrowserSubscription,
     ConversationHub,
 )
+from planner.conversation.permission_broker import ConversationPermissionBroker
 from planner.conversation.runtime_ports import ConversationRuntimeHandle
 from planner.conversation.sqlite_binding_repository import (
     SqliteConversationBindingRepository,
 )
 from planner.conversation.turn_broker import (
     ConversationTurnAttachState,
+    ConversationTurnBrokerError,
 )
 from planner.conversation.wire_contracts import CancelAction, HumanEcho
 from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
+from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
 
 
@@ -70,6 +80,46 @@ class _MalformedReplayStrategy(_Strategy):
         self, _binding: Any, _replay: tuple[Any, ...], _boundaries: tuple[Any, ...]
     ) -> tuple[Any, ...]:
         raise ValueError("sentinel malformed replay content")
+
+
+class _GatedProjection(TicketConversationProjection):
+    def __init__(self, db_path: str) -> None:
+        super().__init__(db_path, now=lambda: 2)
+        self.activity_started = threading.Event()
+        self.activity_release = threading.Event()
+        self.reset_started = threading.Event()
+        self.reset_release = threading.Event()
+        self.activity_calls = 0
+        self.reset_calls = 0
+
+    def record_activity(self, ticket_id: str, state: str) -> bool:
+        self.activity_calls += 1
+        self.activity_started.set()
+        if not self.activity_release.wait(timeout=5):
+            raise AssertionError("timed out waiting to release activity projection")
+        return super().record_activity(ticket_id, state)
+
+    def reset(self, ticket_id: str) -> bool:
+        self.reset_calls += 1
+        self.reset_started.set()
+        if not self.reset_release.wait(timeout=5):
+            raise AssertionError("timed out waiting to release reset projection")
+        return super().reset(ticket_id)
+
+
+class _TrackingAsyncLock:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self.waiting = asyncio.Event()
+
+    async def __aenter__(self) -> _TrackingAsyncLock:
+        if self._lock.locked():
+            self.waiting.set()
+        await self._lock.acquire()
+        return self
+
+    async def __aexit__(self, *_args: object) -> None:
+        self._lock.release()
 
 
 class _Child:
@@ -121,6 +171,43 @@ class _Registry:
         return self.handle
 
 
+class _ReplacementRegistry(_Registry):
+    def __init__(
+        self,
+        record: AcpEmployeeRecord,
+        handle: ConversationRuntimeHandle,
+        repository: SqliteConversationBindingRepository,
+        replacement_record: AcpEmployeeRecord | None = None,
+        replacement_handle: ConversationRuntimeHandle | None = None,
+        *,
+        fail_new_conversation: bool = False,
+    ) -> None:
+        super().__init__(record, handle)
+        self.repository = repository
+        self.replacement_record = replacement_record
+        self.replacement_handle = replacement_handle
+        self.fail_new_conversation = fail_new_conversation
+
+    async def new_conversation(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
+        if self.fail_new_conversation:
+            raise RuntimeError("replacement failed")
+        assert self.replacement_record is not None
+        assert self.replacement_handle is not None
+        await self.repository.compare_and_swap(
+            self.handle.binding,
+            self.replacement_handle.binding,
+        )
+        self.record = self.replacement_record
+        self.handle = self.replacement_handle
+        assert employee == self.record.employee
+        return self.record
+
+    async def attach(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
+        assert employee == self.record.employee
+        self.attach_calls += 1
+        return self.record
+
+
 class _Broker:
     def __init__(self) -> None:
         self.notifications: list[SessionNotification] = []
@@ -148,6 +235,43 @@ class _Broker:
         error: BaseException | None,
     ) -> None:
         self.deaths.append((employee_id, binding_generation, child_generation, error))
+
+    async def prepare_new_conversation(
+        self, _handle: ConversationRuntimeHandle, _deadline: float
+    ) -> None:
+        return None
+
+
+class _ClosingBroker(_Broker):
+    def __init__(self, permission_broker: Any) -> None:
+        super().__init__()
+        self.permission_broker = permission_broker
+        self.prepare_started = asyncio.Event()
+        self.permission_settled = asyncio.Event()
+
+    async def prepare_new_conversation(
+        self, handle: ConversationRuntimeHandle, deadline: float
+    ) -> None:
+        self.prepare_started.set()
+        await self.permission_broker.cancel_binding(
+            handle.employee.employee_id,
+            handle.binding.binding_generation,
+            "New conversation",
+            deadline=deadline,
+        )
+        self.permission_settled.set()
+
+
+class _PermissionObservedProjection(TicketConversationProjection):
+    def __init__(self, db_path: str) -> None:
+        super().__init__(db_path, now=lambda: 2)
+        self.pending_permission_recorded = threading.Event()
+
+    def record_permission(self, ticket_id: str, pending: bool) -> bool:
+        result = super().record_permission(ticket_id, pending)
+        if pending:
+            self.pending_permission_recorded.set()
+        return result
 
 
 class _Permissions:
@@ -356,6 +480,713 @@ def test_publish_allocates_and_serializes_sequence_once(tmp_path: Path) -> None:
             ("activity", 3),
         ]
         assert envelopes[2]["payload"]["sequence"] == 3
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_ticket_activity_projection_is_committed_before_envelope_is_visible(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        projection = _GatedProjection(db_path)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        subscription = await hub.attach_browser("t_hub", connection_id="browser-a")
+        while not subscription.queue.empty():
+            subscription.queue.get_nowait()
+
+        publication = asyncio.create_task(
+            hub.publish_activity(record.employee, record.binding, "thinking", "Working")
+        )
+        assert await asyncio.to_thread(projection.activity_started.wait, 5)
+        assert subscription.queue.empty()
+        assert projection.activity_calls == 1
+
+        projection.activity_release.set()
+        await publication
+        envelope = json.loads(await asyncio.wait_for(subscription.queue.get(), timeout=1))
+        assert envelope["type"] == "activity"
+        assert envelope["payload"]["state"] == "thinking"
+        assert projection.read("t_hub").latest_activity_state == "thinking"
+        assert subscription.queue.empty()
+        assert projection.activity_calls == 1
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_ticket_activity_and_permission_publication_updates_workspace_projection(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        await hub.publish_delivery_receipt(
+            record.employee,
+            record.binding,
+            TurnDeliveryReceipt(
+                client_message_id="human-prompt",
+                choice="send_now",
+                state="accepted",
+            ),
+        )
+        assert projection.read("t_hub").latest_activity_state == "thinking"
+        await hub.publish_activity(record.employee, record.binding, "thinking", "Working")
+        assert projection.read("t_hub").latest_activity_state == "thinking"
+        await hub.publish_activity(record.employee, record.binding, "idle", "Ready")
+        assert projection.read("t_hub").has_completed_response_awaiting_user is True
+
+        request = RequestPermissionRequest(
+            session_id=record.binding.acp_session_id,
+            tool_call=ToolCallUpdate(
+                session_update="tool_call",
+                tool_call_id="tool-projection",
+                title="Write file",
+                kind="edit",
+                status="pending",
+            ),
+            options=[
+                PermissionOption(
+                    option_id="once", name="Allow once", kind="allow_once"
+                )
+            ],
+        )
+        await hub.publish_permission_request(
+            record.employee,
+            record.binding,
+            "permission-projection",
+            record.employee.backend_key,
+            request,
+            20,
+        )
+        assert projection.read("t_hub").has_pending_permission is True
+        await hub.publish_permission_outcome(
+            record.employee,
+            record.binding,
+            "permission-projection",
+            RequestPermissionResponse(outcome=DeniedOutcome(outcome="cancelled")),
+            "test",
+        )
+        assert projection.read("t_hub").has_pending_permission is False
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_stale_publication_does_not_update_ticket_projection(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        projection.record_activity(record.employee.entity_id, "thinking")
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+        before = projection.read("t_hub")
+
+        stale_binding = record.binding.model_copy(update={"binding_generation": 2})
+        with pytest.raises(RuntimeError, match="stale stream"):
+            await hub.publish_activity(record.employee, stale_binding, "idle", "stale")
+
+        assert projection.read("t_hub") == before
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_new_conversation_keeps_projection_when_replacement_fails(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        projection.record_activity("t_hub", "thinking")
+        projection.record_activity("t_hub", "idle")
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        broker = _Broker()
+        registry = _ReplacementRegistry(
+            record, handle, repository, fail_new_conversation=True
+        )
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=broker,  # type: ignore[arg-type]
+            permission_broker=_Permissions(),
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        with pytest.raises(RuntimeError, match="replacement failed"):
+            await hub.new_conversation("t_hub")
+
+        assert projection.read("t_hub").has_completed_response_awaiting_user is True
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_new_conversation_keeps_projection_when_replay_build_fails_after_binding(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        replacement_binding = record.binding.model_copy(
+            update={
+                "acp_session_id": "session-replacement",
+                "binding_generation": 2,
+            }
+        )
+        replacement_child = _Child()
+        replacement_identity = object()
+        replacement_definition = replace(
+            handle.definition, turn_strategy=_MalformedReplayStrategy()
+        )
+        replacement_record = AcpEmployeeRecord(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            replacement_identity,
+        )
+        replacement_handle = ConversationRuntimeHandle(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            replacement_definition,
+            replacement_identity,
+        )
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        projection.record_activity("t_hub", "thinking")
+        projection.record_activity("t_hub", "idle")
+        registry = _ReplacementRegistry(
+            record,
+            handle,
+            repository,
+            replacement_record,
+            replacement_handle,
+        )
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=_Broker(),  # type: ignore[arg-type]
+            permission_broker=_Permissions(),
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        with pytest.raises(
+            ConversationTurnBrokerError, match=REPLAY_UNAVAILABLE_CLOSE_REASON
+        ):
+            await hub.new_conversation("t_hub")
+
+        assert await repository.resolve("t_hub") == replacement_binding
+        assert hub._streams["t_hub"].binding == replacement_binding  # noqa: SLF001
+        assert projection.read("t_hub").has_completed_response_awaiting_user is True
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_new_conversation_resets_projection_after_new_binding_is_established(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        replacement_binding = record.binding.model_copy(
+            update={
+                "acp_session_id": "session-replacement",
+                "binding_generation": 2,
+            }
+        )
+        replacement_child = _Child()
+        replacement_identity = object()
+        replacement_record = AcpEmployeeRecord(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            replacement_identity,
+        )
+        replacement_handle = ConversationRuntimeHandle(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            handle.definition,
+            replacement_identity,
+        )
+        registry = _ReplacementRegistry(
+            record,
+            handle,
+            repository,
+            replacement_record,
+            replacement_handle,
+        )
+        hub = ConversationHub(repository)
+
+        class _OrderingProjection(TicketConversationProjection):
+            def reset(self, ticket_id: str) -> bool:
+                assert hub._streams["t_hub"].binding == replacement_binding  # noqa: SLF001
+                return super().reset(ticket_id)
+
+        projection = _OrderingProjection(db_path, now=lambda: 2)
+        projection.record_activity("t_hub", "thinking")
+        projection.record_activity("t_hub", "idle")
+        hub._ticket_conversation_projection = projection  # noqa: SLF001
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=_Broker(),  # type: ignore[arg-type]
+            permission_broker=_Permissions(),
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        await hub.new_conversation("t_hub")
+
+        assert hub._streams["t_hub"].binding == replacement_binding  # noqa: SLF001
+        assert projection.read("t_hub").has_completed_response_awaiting_user is False
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_new_conversation_closes_pending_permission_before_projection_cutover(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        replacement_binding = record.binding.model_copy(
+            update={
+                "acp_session_id": "session-replacement",
+                "binding_generation": 2,
+            }
+        )
+        replacement_child = _Child()
+        replacement_identity = object()
+        replacement_record = AcpEmployeeRecord(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            replacement_identity,
+        )
+        replacement_handle = ConversationRuntimeHandle(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            handle.definition,
+            replacement_identity,
+        )
+        projection = _PermissionObservedProjection(db_path)
+        hub = ConversationHub(
+            repository,
+            new_conversation_timeout_seconds=1,
+            ticket_conversation_projection=projection,
+        )
+        permission_broker = ConversationPermissionBroker(
+            hub,
+            request_id_factory=lambda: "permission-close",
+            integer_now=lambda: 2,
+            timeout_seconds=300,
+        )
+        close_broker = _ClosingBroker(permission_broker)
+        registry = _ReplacementRegistry(
+            record,
+            handle,
+            repository,
+            replacement_record,
+            replacement_handle,
+        )
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=close_broker,  # type: ignore[arg-type]
+            permission_broker=permission_broker,
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        pending_permission = asyncio.create_task(
+            permission_broker.request_permission(
+                record.employee,
+                record.binding,
+                handle.child_generation,
+                handle.record_identity,
+                1,
+                RequestPermissionRequest(
+                    session_id=record.binding.acp_session_id,
+                    tool_call=ToolCallUpdate(
+                        session_update="tool_call",
+                        tool_call_id="tool-close",
+                        title="Write file",
+                        kind="edit",
+                        status="pending",
+                    ),
+                    options=[
+                        PermissionOption(
+                            option_id="once", name="Allow once", kind="allow_once"
+                        )
+                    ],
+                ),
+                permission_declared=True,
+            )
+        )
+        assert await asyncio.to_thread(
+            projection.pending_permission_recorded.wait, 5
+        )
+        assert len(await permission_broker.pending_snapshot("t_hub")) == 1
+
+        replacement = asyncio.create_task(hub.new_conversation("t_hub"))
+        await asyncio.wait_for(close_broker.prepare_started.wait(), timeout=1)
+        await asyncio.wait_for(close_broker.permission_settled.wait(), timeout=1)
+        assert await asyncio.wait_for(replacement, timeout=1) == replacement_binding
+        response = await asyncio.wait_for(pending_permission, timeout=1)
+
+        assert response.outcome.outcome == "cancelled"
+        assert projection.read("t_hub").has_pending_permission is False
+        await permission_broker.shutdown(asyncio.get_running_loop().time() + 1)
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_stale_ticket_publication_queued_behind_replacement_cannot_write_projection(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        replacement_binding = record.binding.model_copy(
+            update={
+                "acp_session_id": "session-replacement",
+                "binding_generation": 2,
+            }
+        )
+        replacement_child = _Child()
+        replacement_identity = object()
+        replacement_record = AcpEmployeeRecord(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            replacement_identity,
+        )
+        replacement_handle = ConversationRuntimeHandle(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            handle.definition,
+            replacement_identity,
+        )
+        projection = _GatedProjection(db_path)
+        projection.activity_release.set()
+        projection.record_activity("t_hub", "thinking")
+        projection.activity_release.clear()
+        registry = _ReplacementRegistry(
+            record,
+            handle,
+            repository,
+            replacement_record,
+            replacement_handle,
+        )
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        lock = _TrackingAsyncLock()
+        hub._ticket_projection_locks["t_hub"] = lock  # type: ignore[assignment]  # noqa: SLF001
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=_Broker(),  # type: ignore[arg-type]
+            permission_broker=_Permissions(),
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        replacement = asyncio.create_task(hub.new_conversation("t_hub"))
+        assert await asyncio.to_thread(projection.reset_started.wait, 5)
+        stale = asyncio.create_task(
+            hub.publish_activity(record.employee, record.binding, "idle", "stale")
+        )
+        await lock.waiting.wait()
+        projection.reset_release.set()
+
+        await replacement
+        with pytest.raises(RuntimeError, match="stale stream"):
+            await stale
+        snapshot = projection.read("t_hub")
+        assert snapshot.latest_activity_state is None
+        assert snapshot.has_completed_response_awaiting_user is False
+        assert snapshot.has_pending_permission is False
+        assert projection.activity_calls == 1
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_ticket_publication_winning_lock_is_reset_by_replacement(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        replacement_binding = record.binding.model_copy(
+            update={
+                "acp_session_id": "session-replacement",
+                "binding_generation": 2,
+            }
+        )
+        replacement_child = _Child()
+        replacement_identity = object()
+        replacement_record = AcpEmployeeRecord(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            replacement_identity,
+        )
+        replacement_handle = ConversationRuntimeHandle(
+            record.employee,
+            replacement_binding,
+            2,
+            replacement_child,
+            handle.definition,
+            replacement_identity,
+        )
+        projection = _GatedProjection(db_path)
+        registry = _ReplacementRegistry(
+            record,
+            handle,
+            repository,
+            replacement_record,
+            replacement_handle,
+        )
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        lock = _TrackingAsyncLock()
+        hub._ticket_projection_locks["t_hub"] = lock  # type: ignore[assignment]  # noqa: SLF001
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=_Broker(),  # type: ignore[arg-type]
+            permission_broker=_Permissions(),
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        publication = asyncio.create_task(
+            hub.publish_activity(record.employee, record.binding, "thinking", "old")
+        )
+        assert await asyncio.to_thread(projection.activity_started.wait, 5)
+        replacement = asyncio.create_task(hub.new_conversation("t_hub"))
+        await lock.waiting.wait()
+        projection.activity_release.set()
+
+        await publication
+        assert await asyncio.to_thread(projection.reset_started.wait, 5)
+        projection.reset_release.set()
+        await replacement
+        assert projection.read("t_hub").latest_activity_state is None
+        assert projection.read("t_hub").has_completed_response_awaiting_user is False
+        assert projection.reset_calls == 1
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_compaction_replacement_waits_for_ticket_projection_publication(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        replacement_binding = record.binding.model_copy(
+            update={
+                "acp_session_id": "session-compacted",
+                "binding_generation": 2,
+            }
+        )
+        replacement_handle = ConversationRuntimeHandle(
+            record.employee,
+            replacement_binding,
+            handle.child_generation + 1,
+            _Child(),
+            handle.definition,
+            object(),
+        )
+        projection = _GatedProjection(db_path)
+        projection.activity_release.set()
+        projection.record_activity("t_hub", "thinking")
+        projection.activity_release.clear()
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        lock = _TrackingAsyncLock()
+        hub._ticket_projection_locks["t_hub"] = lock  # type: ignore[assignment]  # noqa: SLF001
+        hub.bind_owners(
+            registry=_Registry(record, handle),  # type: ignore[arg-type]
+            broker=_Broker(),  # type: ignore[arg-type]
+            permission_broker=_Permissions(),  # type: ignore[arg-type]
+        )
+        subscription = await hub.attach_browser("t_hub", connection_id="browser-a")
+        while not subscription.queue.empty():
+            subscription.queue.get_nowait()
+        token = await hub.begin_compaction_transition(
+            handle, asyncio.get_running_loop().time() + 1
+        )
+        await repository.compare_and_swap(handle.binding, replacement_binding)
+
+        publication = asyncio.create_task(
+            hub.publish_activity(record.employee, record.binding, "idle", "Ready")
+        )
+        assert await asyncio.to_thread(projection.activity_started.wait, 5)
+        replacement = asyncio.create_task(
+            hub.commit_compaction_transition(token, replacement_handle, (), ())
+        )
+        await asyncio.wait_for(lock.waiting.wait(), timeout=1)
+        assert hub._streams["t_hub"].binding == record.binding  # noqa: SLF001
+
+        projection.activity_release.set()
+        await publication
+        await replacement
+
+        activity = json.loads(subscription.queue.get_nowait())
+        reset = json.loads(subscription.queue.get_nowait())
+        ready = json.loads(subscription.queue.get_nowait())
+        assert activity["type"] == "activity"
+        assert activity["payload"]["state"] == "idle"
+        assert reset["type"] == "connection"
+        assert reset["payload"]["state"] == "reset"
+        assert ready["payload"]["state"] == "ready"
+        assert projection.read("t_hub").has_completed_response_awaiting_user is True
+        await hub.complete_compaction_transition(token, replacement_handle)
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_requested_cancel_recovery_waits_for_ticket_projection_publication(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        replacement_handle = ConversationRuntimeHandle(
+            record.employee,
+            record.binding,
+            handle.child_generation + 1,
+            _Child(),
+            handle.definition,
+            object(),
+        )
+        projection = _GatedProjection(db_path)
+        projection.activity_release.set()
+        projection.record_activity("t_hub", "thinking")
+        projection.activity_release.clear()
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        lock = _TrackingAsyncLock()
+        hub._ticket_projection_locks["t_hub"] = lock  # type: ignore[assignment]  # noqa: SLF001
+        hub.bind_owners(
+            registry=_Registry(record, handle),  # type: ignore[arg-type]
+            broker=_Broker(),  # type: ignore[arg-type]
+            permission_broker=_Permissions(),  # type: ignore[arg-type]
+        )
+        subscription = await hub.attach_browser("t_hub", connection_id="browser-a")
+        while not subscription.queue.empty():
+            subscription.queue.get_nowait()
+        token = await hub.begin_requested_cancel_recovery_transition(
+            handle, asyncio.get_running_loop().time() + 1
+        )
+
+        publication = asyncio.create_task(
+            hub.publish_activity(record.employee, record.binding, "idle", "Ready")
+        )
+        assert await asyncio.to_thread(projection.activity_started.wait, 5)
+        replacement = asyncio.create_task(
+            hub.commit_requested_cancel_recovery_transition(
+                token, replacement_handle, (), (), None
+            )
+        )
+        await asyncio.wait_for(lock.waiting.wait(), timeout=1)
+        assert hub._streams["t_hub"].runtime_handle is handle  # noqa: SLF001
+
+        projection.activity_release.set()
+        await publication
+        await replacement
+
+        activity = json.loads(subscription.queue.get_nowait())
+        reset = json.loads(subscription.queue.get_nowait())
+        ready = json.loads(subscription.queue.get_nowait())
+        assert activity["type"] == "activity"
+        assert activity["payload"]["state"] == "idle"
+        assert reset["type"] == "connection"
+        assert reset["payload"]["state"] == "reset"
+        assert ready["payload"]["state"] == "ready"
+        assert projection.read("t_hub").has_completed_response_awaiting_user is True
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_permission_request_projection_rolls_back_when_publication_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        projection.record_activity("t_hub", "thinking")
+        projection.record_activity("t_hub", "idle")
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(
+            registry=_Registry(record, handle),  # type: ignore[arg-type]
+            broker=_Broker(),  # type: ignore[arg-type]
+            permission_broker=_Permissions(),  # type: ignore[arg-type]
+        )
+        await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        def fail_publication(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("permission publication failed")
+
+        monkeypatch.setattr(hub, "_publish_envelope_now", fail_publication)
+        request = RequestPermissionRequest(
+            session_id=record.binding.acp_session_id,
+            tool_call=ToolCallUpdate(
+                session_update="tool_call",
+                tool_call_id="tool-failed-publication",
+                title="Write file",
+                kind="edit",
+                status="pending",
+            ),
+            options=[
+                PermissionOption(
+                    option_id="once", name="Allow once", kind="allow_once"
+                )
+            ],
+        )
+        with pytest.raises(RuntimeError, match="permission publication failed"):
+            await hub.publish_permission_request(
+                record.employee,
+                record.binding,
+                "permission-failed-publication",
+                record.employee.backend_key,
+                request,
+                20,
+            )
+
+        snapshot = projection.read("t_hub")
+        assert snapshot.has_pending_permission is False
+        assert snapshot.has_completed_response_awaiting_user is True
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

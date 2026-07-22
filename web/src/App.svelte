@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { fetchJson } from "./lib/api";
   import { resourceCatalogue } from "./lib/resourceCatalogue";
   import { connectionStatus, startEventStream, stopEventStream } from "./lib/ws";
@@ -12,6 +12,7 @@
   import ReviewRoute from "./routes/ReviewRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
+  import WorkersRoute from "./routes/WorkersRoute.svelte";
 
   type Route = {
     name: string;
@@ -25,8 +26,10 @@
     reconnecting: "Reconnecting",
     offline: "Offline"
   };
+  const navStatusClearancePx = 8;
 
   let route = $state<Route>(parseRoute());
+  let shellNavElement: HTMLElement | null = null;
 
   function decodeRouteSegment(segment: string): string {
     try {
@@ -54,6 +57,9 @@
       params.id = segments[1];
     }
     if (name === "workspace" && segments[1]) {
+      params.id = decodeRouteSegment(segments[1]);
+    }
+    if (name === "workers" && segments[1]) {
       params.id = decodeRouteSegment(segments[1]);
     }
     if (name === "sprint" && segments[1]) {
@@ -86,14 +92,56 @@
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "documents";
     }
-    return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
+    return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "workers", "preview"].includes(route.name);
   }
+
+  function scrollActiveNavLinkIntoStatusClearance(): void {
+    if (!shellNavElement) return;
+    const activeLink = shellNavElement.querySelector<HTMLElement>(".shell-links .nav-link.active");
+    const statuses = shellNavElement.querySelector<HTMLElement>(".shell-statuses");
+    if (!activeLink || !statuses) return;
+
+    const navRect = shellNavElement.getBoundingClientRect();
+    const activeRect = activeLink.getBoundingClientRect();
+    const statusRect = statuses.getBoundingClientRect();
+    const clearLeft = navRect.left + navStatusClearancePx;
+    const clearRight = Math.min(navRect.right, statusRect.left) - navStatusClearancePx;
+    const maxScrollLeft = Math.max(0, shellNavElement.scrollWidth - shellNavElement.clientWidth);
+    let nextScrollLeft = shellNavElement.scrollLeft;
+
+    if (activeRect.right > clearRight) {
+      nextScrollLeft += activeRect.right - clearRight;
+    }
+    if (activeRect.left < clearLeft) {
+      nextScrollLeft -= clearLeft - activeRect.left;
+    }
+
+    nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, nextScrollLeft));
+    if (Math.abs(nextScrollLeft - shellNavElement.scrollLeft) > 0.5) {
+      shellNavElement.scrollLeft = nextScrollLeft;
+    }
+  }
+
+  async function alignActiveNavLinkAfterDomUpdate(): Promise<void> {
+    await tick();
+    scrollActiveNavLinkIntoStatusClearance();
+  }
+
+  $effect(() => {
+    route.key;
+    review.data?.running_worker_count;
+    $connectionStatus;
+    void alignActiveNavLinkAfterDomUpdate();
+  });
 
   onMount(() => {
     const onHash = () => {
       route = parseRoute();
     };
+    const onResize = () => scrollActiveNavLinkIntoStatusClearance();
     window.addEventListener("hashchange", onHash);
+    window.addEventListener("resize", onResize);
+    void alignActiveNavLinkAfterDomUpdate();
     fetchJson<{ ui_debounce_ms: number; ws_heartbeat_ms: number }>("/api/meta")
       .then((meta) => {
         startEventStream({
@@ -106,6 +154,7 @@
       });
     return () => {
       window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("resize", onResize);
       stopEventStream();
       review.dispose();
     };
@@ -113,7 +162,7 @@
 </script>
 
 <div class="shell">
-  <header class="shell-nav">
+  <header class="shell-nav" bind:this={shellNavElement}>
     <nav class="shell-links">
       <a class:active={currentNav("day")} class="nav-link" data-screen="day" href="#/day">Day</a>
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
@@ -128,6 +177,7 @@
       <a class:active={currentNav("sprint")} class="nav-link" data-screen="sprint" href="#/sprint">Sprint</a>
       <a class:active={currentNav("backlog")} class="nav-link" data-screen="backlog" href="#/backlog">Backlog</a>
       <a class:active={currentNav("ideas")} class="nav-link" data-screen="ideas" href="#/ideas">Ideas</a>
+      <a class:active={currentNav("workers")} class="nav-link" data-screen="workers" href="#/workers">Workers</a>
     </nav>
     <div class="shell-statuses">
       {#if (review.data?.running_worker_count || 0) > 0}
@@ -169,6 +219,8 @@
             <BacklogRoute />
           {:else if route.name === "ideas"}
             <IdeasRoute />
+          {:else if route.name === "workers"}
+            <WorkersRoute workerType={route.params.id} />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
           {/if}

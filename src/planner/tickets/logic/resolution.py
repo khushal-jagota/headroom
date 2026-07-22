@@ -127,6 +127,7 @@ def decide_file_proposal(
         ticket.stage,
         ticket.stage_ownership_overrides,
         worker_type_definition=worker_type_definition,
+        default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
     if (
         ownership_mode is not None

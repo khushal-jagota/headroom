@@ -14,8 +14,9 @@ from planner.core.legacy_execution_route import (
     LEGACY_EXECUTION_ROUTE_FIELDS,
 )
 from planner.projects import data as projects_data
+from planner.worker_types.configuration import configured_worker_type_registry
 
-SCHEMA_VERSION: Final = 28
+SCHEMA_VERSION: Final = 30
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -81,6 +82,7 @@ CREATE TABLE IF NOT EXISTS tickets (
                                                 'awaiting_approval','user_takeover',
                                                 'paired_work','errored')),
   stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
+  default_stage_ownership_mode TEXT CHECK (default_stage_ownership_mode IN ('worker','user','paired')),
   employee_session_id  TEXT,                         -- the Employee's durable Hermes session id
   alias                TEXT,                         -- migration "Ticket ID:" (seed importer dedup)
   fields               TEXT NOT NULL,
@@ -89,6 +91,14 @@ CREATE TABLE IF NOT EXISTS tickets (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tickets_alias ON tickets(alias) WHERE alias IS NOT NULL;
 -- Stage indexes are created in _create_indexes only after the terminal Ticket migration.
+
+CREATE TABLE IF NOT EXISTS ticket_conversation_projections (
+  ticket_id                              TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,
+  latest_activity_state                  TEXT,
+  has_completed_response_awaiting_user   INTEGER NOT NULL DEFAULT 0 CHECK (has_completed_response_awaiting_user IN (0,1)),
+  has_pending_permission                 INTEGER NOT NULL DEFAULT 0 CHECK (has_pending_permission IN (0,1)),
+  updated_at                             INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS days (
   id               TEXT PRIMARY KEY,                 -- day_YYYY-MM-DD (planning date, §3.4)
@@ -235,6 +245,23 @@ def create_schema(conn: sqlite3.Connection) -> None:
         if conn.in_transaction:
             conn.commit()
         _migrate_to_v28(conn)
+    if incoming_version < 29:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v29(conn)
+    elif not _ticket_conversation_projection_table_is_v29(conn):
+        raise RuntimeError(
+            "v29 schema is missing the valid Ticket conversation projection table"
+        )
+    if incoming_version < 30:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v30(conn)
+    elif not _tickets_table_is_v30(conn):
+        raise RuntimeError(
+            "v30 Ticket schema is missing the nullable captured Stage ownership default "
+            "without a default"
+        )
     _create_indexes(conn)
 
 
@@ -519,6 +546,69 @@ def _migrate_to_v28(conn: sqlite3.Connection) -> None:
         raise
 
 
+def _migrate_to_v29(conn: sqlite3.Connection) -> None:
+    """Add the durable factual ACP projection used by Ticket Workspace cards."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Ticket v29 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ticket_conversation_projections ("
+            "ticket_id TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE, "
+            "latest_activity_state TEXT, "
+            "has_completed_response_awaiting_user INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (has_completed_response_awaiting_user IN (0,1)), "
+            "has_pending_permission INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (has_pending_permission IN (0,1)), "
+            "updated_at INTEGER NOT NULL"
+            ")"
+        )
+        if not _ticket_conversation_projection_table_is_v29(conn):
+            raise RuntimeError(
+                "Ticket v29 migration could not establish the conversation projection table"
+            )
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Ticket v29 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=29")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _ticket_conversation_projection_table_is_v29(conn: sqlite3.Connection) -> bool:
+    columns = tuple(
+        (
+            str(row[1]),
+            str(row[2]),
+            int(row[3]),
+            row[4],
+            int(row[5]),
+        )
+        for row in conn.execute("PRAGMA table_info(ticket_conversation_projections)")
+    )
+    foreign_keys = {
+        (str(row[2]), str(row[3]), str(row[4]), str(row[6]))
+        for row in conn.execute("PRAGMA foreign_key_list(ticket_conversation_projections)")
+    }
+    return (
+        columns
+        == (
+            ("ticket_id", "TEXT", 0, None, 1),
+            ("latest_activity_state", "TEXT", 0, None, 0),
+            ("has_completed_response_awaiting_user", "INTEGER", 1, "0", 0),
+            ("has_pending_permission", "INTEGER", 1, "0", 0),
+            ("updated_at", "INTEGER", 1, None, 0),
+        )
+        and foreign_keys == {("tickets", "ticket_id", "id", "CASCADE")}
+    )
+
+
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
     return (
         conn.execute(
@@ -530,6 +620,85 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _tickets_table_is_v30(conn: sqlite3.Connection) -> bool:
+    columns = {str(row[1]): row for row in conn.execute("PRAGMA table_info(tickets)")}
+    captured_default = columns.get("default_stage_ownership_mode")
+    return (
+        captured_default is not None
+        and int(captured_default[3]) == 0
+        and captured_default[4] is None
+    )
+
+
+def _migrate_to_v30(conn: sqlite3.Connection) -> None:
+    """Capture each existing non-terminal Ticket's current Stage ownership default."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Ticket v30 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if "default_stage_ownership_mode" not in _table_columns(conn, "tickets"):
+            conn.execute(
+                "ALTER TABLE tickets ADD COLUMN default_stage_ownership_mode TEXT "
+                "CHECK (default_stage_ownership_mode IN ('worker','user','paired'))"
+            )
+        registry = configured_worker_type_registry()
+        rows = conn.execute(
+            "SELECT id, worker_type, stage, default_stage_ownership_mode "
+            "FROM tickets ORDER BY id"
+        ).fetchall()
+        for row in rows:
+            ticket_id = str(row["id"])
+            try:
+                definition = registry.require(str(row["worker_type"]))
+                stage = str(row["stage"])
+                if definition.is_terminal(stage):
+                    if row["default_stage_ownership_mode"] is not None:
+                        conn.execute(
+                            "UPDATE tickets SET default_stage_ownership_mode = NULL WHERE id = ?",
+                            (ticket_id,),
+                        )
+                    continue
+                definition.validate_ticket_position(stage, stage)
+                captured_default = definition.stage_definition(stage).default_ownership_mode
+            except Exception as error:
+                raise RuntimeError(
+                    f"Ticket {ticket_id} cannot capture its Stage ownership default"
+                ) from error
+            if captured_default is None:
+                raise RuntimeError(
+                    f"Ticket {ticket_id} non-terminal Stage has no ownership default"
+                )
+            if row["default_stage_ownership_mode"] is None:
+                conn.execute(
+                    "UPDATE tickets SET default_stage_ownership_mode = ? WHERE id = ?",
+                    (captured_default.value, ticket_id),
+                )
+        if not _tickets_table_is_v30(conn):
+            raise RuntimeError(
+                "Ticket v30 migration could not establish captured Stage ownership defaults"
+            )
+        missing = conn.execute(
+            "SELECT id FROM tickets WHERE stage NOT IN ('done','dropped') "
+            "AND default_stage_ownership_mode IS NULL ORDER BY id LIMIT 1"
+        ).fetchone()
+        if missing is not None:
+            raise RuntimeError(
+                f"Ticket {missing['id']} has no captured Stage ownership default"
+            )
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Ticket v30 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=30")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 def _cleanup_legacy_execution_route_records(conn: sqlite3.Connection) -> None:

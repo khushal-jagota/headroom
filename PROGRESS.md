@@ -4,6 +4,58 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-22): compact Workers Closeout (`t_6v0bjnwh`)
+
+The approved compact Workers implementation and its direct-edit correction are reconciled with
+current ACP-era `main` on `closeout/t_6v0bjnwh-current-main`. The integration preserves main's
+Project v28 and Ticket-conversation projection v29 migrations; captured Stage ownership defaults
+are the additive v30 migration. A backup copy of the live schema-v28 database migrated through
+v29/v30 with 119 Tickets, no missing non-terminal defaults, no terminal defaults, and no foreign-key
+violations.
+
+Focused backend, frontend, environment-isolation, and browser gates pass. The independent full-diff
+review found two Closeout defects: an independent skill-field save could overwrite the other field's
+failed candidate, and environment preparation could materialize specialist settings from the wrong
+parent before replacing its data tree. Both were fixed with RED/GREEN regressions. The final focused
+review reports `NO VIOLATIONS`. The canonical gate also exposed an unrelated racy ACP test assertion:
+a post-fork notification may safely arrive after the next load request once the exact-session private
+epoch is installed. The test still proves exact private/source routing, replay order, and no deadlock,
+but no longer asserts that unsupported wire ordering.
+
+The settled tracked tree is reserved for the repository's one canonical `./verify`; its full output is
+captured as the Ticket's managed `verify-closeout.log`. Only a `VERIFY: PASS` may advance `main`.
+After landing, use the documented Panels restart, verify the Workers API and page, preserve the
+unrelated `composition.py` and nested-worktree edits exactly, then propose Closeout.
+
+## Current work cycle (2026-07-21): Ticket Workspace dot projection (`t_xb76vw05`)
+
+The one pure `workspace_dot_state` classifier is implemented with exceptional > active > needs_attention
+> quiet precedence. Board cards now carry its result from Ticket facts plus a durable Ticket-linked ACP
+projection. Accepted delivery or real turn activity clears prior response attention; only a later idle after
+that activity creates response attention. Initial idle, connecting/loading, repeated idle, and re-attach
+preserve quiet or existing response facts. For Ticket activity, accepted delivery, and permission request/outcome,
+Hub now validates the exact current employee+binding under one per-Ticket lock, awaits the SQLite projection write,
+and publishes the ACP envelope as the final awaited operation; non-Ticket paths remain direct. New-conversation
+reset happens only after replacement stream establishment succeeds. Compaction and requested-cancel recovery now
+put their final stream commit/cutover under that same lock, while preparation, settlement, backend I/O, and replay
+construction remain outside the lock. A failed permission-request publication compensates the pending projection
+fact with `record_permission(False)` while preserving response attention. A replay-build failure after replacement
+binding keeps the prior projection and reports a conversation error; stale publications queued behind replacement
+fail validation before writing. The approved review P2 about done/paired/takeover field marks is intentionally
+refuted: the single Workspace dot remains the derived Ticket result and no status mapping is restored.
+
+Implementation commit `71c5971` is on feature branch `ticket/t_xb76vw05-workspace-dot`. The current target base
+`3efab7a` was merged into the feature branch; conflicts preserved both main and ticket behavior, with main
+schema v28 retained and the Ticket projection moved to v29. The merged frontend bundle was regenerated. The
+prospective merged tree's canonical `./verify` passed Ruff, strict Mypy across 148 source files, 1,274 unit
+tests, compile/CSS checks, zero Svelte diagnostics, production frontend build and all frontend tests, and 110
+Playwright E2E tests; final `VERIFY: PASS`. Implementation commit: `71c5971`; base: `3efab7a`; integration
+merge/main revision: `e4c4b07`. Main v28 was preserved and the Ticket projection is v29; the merged bundle was
+regenerated. Main advanced by fast-forward to `e4c4b07`. The pre-existing unrelated uncommitted ingress-capacity
+edit in `composition.py` was removed temporarily and reapplied exactly, and the pre-existing
+nested-worktree/untracked-worktree state was left alone. No deploy or server restart was performed or required.
+Next step: propose Closeout.
+
 ## Current work cycle (2026-07-21): Hide completed chat task lists closeout
 
 Ticket `t_3udvypru` is integrated on `main` at merge commit `2c272c6`. The task strip keeps its

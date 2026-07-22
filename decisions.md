@@ -48,7 +48,52 @@ a fresh child against the same isolated home before printing `stored=`, so authe
 model refusal cannot masquerade as success and persistence is proven. Smoke sessions are
 unrelated durable sessions belonging to those homes, not temporary sessions to delete.
 
+## D-ticket-projection-v29-after-main-v28 — Keep migration numbers forward-only
+
+`main` already consumes schema version 28 for retiring the Learning default project. The Ticket
+conversation projection therefore uses the next forward version, v29, with its own shape validation,
+dispatch, and migration tests. The existing v25 through v28 migrations keep their established behavior.
+
 # Workspace
+
+## D-ticket-projection-cutover-lock-and-permission-compensation — Serialize replacement publication with Ticket facts
+
+Compaction and requested-cancel recovery acquire the existing per-Ticket projection lock only around their final
+sequencer enqueue and stream cutover. Preparation, broker settlement, backend I/O, and replay construction stay
+outside that lock. This gives an old-binding projection publication one indivisible validation/write/envelope
+window against replacement, while Chief and other non-Ticket streams remain unchanged. A permission-request
+projection fact is cleared with `record_permission(False)` if its envelope publication raises; that compensation
+does not clear the separate response-attention fact.
+
+## D-workspace-dot-is-one-derived-ticket-result — Keep ACP facts durable and the visual decision centralized
+
+Workspace owns one pure classifier per Ticket. It accepts factual Ticket status/proposal facts and a minimal
+durable ACP projection (latest activity, completed response awaiting the user, and pending permission), then
+returns exactly `exceptional`, `active`, `needs_attention`, or `quiet` with fixed precedence. ACP and Ticket
+writers do not choose visual states, and the Svelte Workspace route maps only that result to the existing
+StageMark vocabulary. The projection uses ordinary `t_*` event IDs so the existing resource catalogue
+invalidates `ticket:<id>`, Board, and current Sprint without a client canonical store or per-row conversation
+subscription. SQLite writes run in short `to_thread` transactions; a new conversation clears stale facts.
+
+The accepted semantics require admitted prompts to become active before the later ACP activity envelope, and
+permission waiting must remain attention even while the durable Ticket status says `agent_running_step`. A
+completed idle turn remains attention until the next admitted prompt or explicit reset. Initial absence of ACP
+facts falls back to Ticket facts, preserving quiet initial load and truthful status-only behavior.
+
+The projection treats connecting and loading as active activity facts without changing the response fact. An
+idle fact creates response attention only when the previous fact was thinking, working, or compacting; a new
+admitted turn clears that response fact. Permission is cleared only by the published permission outcome. Hub
+Ticket publications synchronously validate the exact current employee and binding while holding the existing
+per-Ticket projection lock, await the SQLite projection write through `asyncio.to_thread`, and only then enqueue
+the ACP envelope as the final awaited operation. This applies to activity, accepted delivery receipts, permission
+requests, and permission outcomes; non-Ticket paths remain direct. A stale publication queued behind New
+Conversation therefore fails validation before writing, while a publication that wins the lock writes first and is
+then cleared by the successful replacement reset.
+
+The implementation-review P2 about restoring done/paired/takeover field marks is refuted by the approved
+ticket: the single Workspace dot is deliberately the derived Ticket result, not a field-stage status mark.
+Field-stage marks elsewhere, grouping, navigation, and interactions remain unchanged, so no Workspace status
+mapping is restored.
 
 ## D-workspace-three-level-grouping — Derive hierarchy from the existing board and manifest
 
@@ -1826,6 +1871,22 @@ therefore one nonempty `message.delta`, the same terminal `interrupted` assertio
 assertion that no shutdown-settlement SQLite lock error was logged. No production change follows
 from this fixture correction; the final canonical `./verify` still remains.
 
+## D-compact-worker-settings — Editable Worker settings are a managed overlay, not structure
+
+Worker identity, Stage order, gated fields, terminality, and specialist-skill identity remain in the
+immutable Python registry. One managed Worker-settings source owns only existing Stage ownership
+defaults and the canonical editable specialist-skill description/body. Ticket rows persist the default
+captured on current-Stage entry before any global default can be changed; explicit per-Ticket overrides
+remain authoritative. The UI reads composed Worker detail through dedicated `workers` resources while
+`/api/worker-types` stays the structural lifecycle manifest. Edited specialist skills are materialized
+into the planner Hermes home without resetting or rewriting existing Employee session ids.
+
+The work is isolated because the main worktree contains unrelated Hermes-relay changes. Implementation
+uses serial contract-bounded agent passes and read-only Codex review; only the final settled tree runs
+canonical `./verify`. A failed event transaction restores the prior managed file and live skill while
+the per-Worker lock is still held. Candidate files remain for repair, and the browser keeps attempted
+edits visible instead of pretending a failed write succeeded.
+
 ## D-exploration-worker — Exploration extracts the transferable problem before it produces work
 
 `exploration` is a first-class Worker type for premises that are not yet understood well enough to
@@ -2957,3 +3018,24 @@ with later live updates behind it. The production live queue remains slow-client
 raised from 128 to 1,024 envelopes for operational headroom. Replay integrity failures and genuine
 live slow-client evictions close through one idempotent permission-detach owner and are logged with
 identity, generation, counts, and limits but no conversation content.
+
+## D-compact-workers-current-main-closeout — preserve current ACP and schema history
+**Context:** The approved compact Workers commits predated the current conversation composition,
+environment isolation, managed-Markdown pipeline, and main's schema v28/v29 migrations. Main also
+advanced again during Closeout.
+
+**Decision:** Replay the approved behavior onto current main rather than restoring retired `minds`
+or gateway-adapter code. Keep main's v28/v29 migrations and add captured ownership defaults as v30.
+Use the configured runtime registry everywhere, materialize managed specialist skills from each
+instance database parent after its canonical data tree is settled, and keep failed description/body
+candidates independent from canonical publication. A successful save of one field updates that field
+in the candidate without publishing or discarding the other field's failed draft.
+
+**Why:** Worker settings belong beside the active database, while Employee sessions and current ACP
+composition remain untouched. Versioned migration order protects live databases, and preserving a
+failed draft across an independent save is required by the approved direct-edit interaction.
+
+The current-main post-fork SDK regression continues to require exact-session routing, source-before-
+replay ordering, and a fully drained healthy ingress. It does not require a candidate notification to
+arrive before the subsequent load request: the private response epoch is installed first, and ACP does
+not guarantee notification/request wire ordering across the prior fork response.

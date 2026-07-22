@@ -60,15 +60,39 @@ def repo_root() -> Path:
 def provision_planner_home_skills(
     home: Path | str,
     skill_names: tuple[str, ...] = PLANNER_SKILL_NAMES,
+    *,
+    configured_database_parent: Path | str | None = None,
 ) -> None:
+    """Expose shared repo skills and managed specialist skills in Hermes home."""
+    from planner.worker_settings.service import materialize_specialist_skill
+    from planner.worker_types.configuration import configured_worker_type_registry
+
     source_root = repo_root() / "skills"
     target_root = Path(home).expanduser() / "skills"
     target_root.mkdir(parents=True, exist_ok=True)
+    registry = configured_worker_type_registry()
+    specialist_skills = {
+        registry.require(worker_type).worker_profile.specialist_skill: worker_type
+        for worker_type in registry.registered_worker_types()
+    }
+    settings_parent = (
+        Path(configured_database_parent).expanduser()
+        if configured_database_parent is not None
+        else Path(home).expanduser().parent
+    )
     for skill_name in skill_names:
         source = source_root / skill_name
         if not source.is_dir():
             raise FileNotFoundError(f"planner skill not found: {source}")
         target = target_root / skill_name
+        if skill_name in specialist_skills:
+            if target.is_symlink():
+                target.unlink()
+            target.mkdir(parents=True, exist_ok=True)
+            materialize_specialist_skill(
+                settings_parent, registry, specialist_skills[skill_name], target_root
+            )
+            continue
         if target.is_symlink():
             if target.resolve() == source.resolve():
                 continue

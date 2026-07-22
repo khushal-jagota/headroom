@@ -17,6 +17,7 @@ from planner.days.data import add_day_ticket
 from planner.projects.data import create_project
 from planner.sprints.data import create_item
 from planner.tickets.contracts import AtCap
+from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.tickets.data import accept_proposal, create_ticket
 from planner.tickets.views import board_view
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -58,6 +59,7 @@ _ENRICHMENT_CARD_KEYS = [
     "gating_field_label",
     "is_done",
     "is_dropped",
+    "workspace_dot_state",
 ]
 
 
@@ -158,6 +160,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connectio
     assert card["gating_field_label"] == "Kickoff"
     assert card["is_done"] is False
     assert card["is_dropped"] is False
+    assert card["workspace_dot_state"] == "needs_attention"
 
 
 def test_board_mixed_coding_probe_does_not_throw(
@@ -207,3 +210,14 @@ def test_board_mixed_coding_probe_does_not_throw(
     assert probe_card["gating_field_label"] == "Alpha"
     assert probe_card["is_done"] is False
     assert probe_card["is_dropped"] is False
+
+
+def test_board_card_uses_the_canonical_workspace_dot_result(tmp_db: Connection) -> None:
+    ticket_id = _ticket(tmp_db, "Active projection", 1)
+    add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 10)
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    TicketConversationProjection(db_path, now=lambda: 2).record_activity(ticket_id, "thinking")
+
+    board = board_view(tmp_db, 20, day_id="day_2026-07-04")
+    card = next(card for column in board["columns"] for card in column["cards"])
+    assert card["workspace_dot_state"] == "active"
