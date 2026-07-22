@@ -42,13 +42,16 @@ frontend suite, and all 119 Playwright tests; final `VERIFY: PASS`. Next: propos
 with the user-level `panels` copy/link replacement named as the remaining Closeout action.
 
 Implementation is approved and Closeout resumed in the same durable generation-1 Codex
-conversation after a Panels restart. Both user-level native roots now expose
-`panels-update-chief-of-staff` as symlinks to the canonical package, and the old discoverable
-`panels` bridge paths are absent. Temporary recoverable backups remain under `/private/tmp` until
-the repository integration commit is verified; then they can be removed because the canonical
-package retains their content. Next: stage and commit only ticket-owned paths, verify the exact
-commit and live links, remove the temporary backups, and propose Closeout. Existing unrelated
-nested-worktree changes remain preserved.
+conversation after a Panels restart. Repository integration landed directly on `main` as
+`8ffb6c65` from base `f9bd107e`; its 43-path staged scope contained only this Ticket's source,
+package, links, docs, tests, decisions, and memory. Both user-level native roots now expose
+`panels-update-chief-of-staff` as direct symlinks to the canonical package, and the old discoverable
+`panels` bridge paths are absent. Project Codex and Claude roots resolve the same canonical tree;
+Hermes shared links resolve it too, while managed `panels-worker-coding` remains a regular runtime
+directory as designed. The old user-level directory and Claude symlink remain only as recoverable
+backups under `/private/tmp/t_hugw8uj1-old-*`, outside every discovery path; permanent deletion was
+not required for correctness and the command guard rejected it. Only the three pre-existing nested
+worktrees remain dirty. Next: commit this final memory update and propose Closeout.
 
 ## Current work cycle (2026-07-22): Workers-page launch-default controls (`t_f0f8pp6y`)
 
