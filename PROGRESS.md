@@ -18,8 +18,9 @@ Focused evidence is green: 68 registry and 51 hub tests; selected cold-load, act
 replacement, real-WebSocket, and slow-browser focused tests pass. Ready reconnect now uses a
 subscriber-local reset-complete-history-one-terminal-ready snapshot without canonical mutation, and
 malformed or noncontiguous snapshots fail closed. All review findings are resolved with a final
-result of `PASS`. Canonical `./verify` remains next; earlier attempts were invalid because of a copied
-venv entrypoint mismatch, then exposed an ordering gap that is now fixed.
+result of `PASS`. Final canonical `./verify` passed Ruff, strict Mypy over 148 source files, 1,306 unit
+tests, compile/CSS checks, zero Svelte diagnostics, frontend build/tests, and 111 e2e tests; final
+VERIFY: PASS. Next step: propose implementation.
 
 ## Current work cycle (2026-07-21): Ticket Workspace dot projection (`t_xb76vw05`)
 
