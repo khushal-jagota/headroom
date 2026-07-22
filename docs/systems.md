@@ -111,9 +111,11 @@ the periodic timer remain canonical.
 
 _Code paths:_ `src/planner/runtime/` and `src/planner/worker_context/`.
 
-Runtime environments let the same foreground server run as separate live, staging, or
-preview instances with distinct databases, managed files, Hermes homes, logs, locks,
-control sockets, ports, and credential references. See [`runtime environments`](environments.md).
+Runtime environments let the same foreground server run against separate prepared live
+and staging state. Live has a fixed ingress port. Staging keeps persistent fake state
+but chooses a port only while it is running. Ticket worktree servers are temporary
+processes with worktree-local state, not prepared environment instances. See
+[`runtime environments`](environments.md).
 
 ### 5. The ACP Conversation System
 

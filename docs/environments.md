@@ -1,88 +1,125 @@
 # Runtime environments
 
-Panels can prepare and run three runtime shapes from one repository contract:
-`live`, `staging`, and disposable `preview` instances. Each prepared instance has its
-own database, managed files, Hermes home, logs, lock, control socket, port, manifest,
-and credential-file reference.
+Panels has two prepared runtime environments: `live` and `staging`. They use separate
+checkouts, databases, managed files, Hermes homes, logs, locks, control sockets, and
+credential-file references.
 
 ```
 environment root
   |
-  +-- live/                 operator-owned state, Linux account panels-live
+  +-- live/       operator-owned state, fixed ingress port
   |
-  +-- staging/              stable fake state, Linux account panels-worker
-  |
-  +-- previews/<id>/        disposable fake state, Linux account panels-worker
+  +-- staging/    persistent fake state, port chosen when started
 ```
 
-The local command proves configuration and process isolation only. It can also render
-Linux intent. The checked-in files under `ops/panels-environments/` are the Linux
-account, systemd, tmpfiles, and environment-file inputs for a later VPS install, but
-they do not install Linux users, permissions, systemd units, networking, or services by
-themselves. The service text calls the ordinary `panels environment run` path, which
-replaces itself with `python -m planner serve`. There is no separate deployment mode.
+Ticket worktree servers are not prepared environments. They are temporary processes
+started from isolated worktrees while active work needs them.
+
+The local commands prepare and inspect runtime state and can render Linux intent. The
+checked-in files under `ops/panels-environments/` are inputs for an operator-owned
+Linux installation. They do not create accounts, install services, change ingress, or
+start a server by themselves.
 
 Code paths: `src/planner/environments/`, `src/planner/cli/main.py`.
 
-## Local commands
+## Live environment
 
-Use an absolute environment root. These examples keep runtime state outside the
-current live instance.
+Live is a prepared external environment attached to a separate `main` checkout. Its
+manifest records the checkout, durable state paths, credential-file reference, and a
+fixed port for known ingress. Live state and credentials remain operator-owned.
+
+Use an absolute environment root and repository root:
 
 ```sh
-ENV_ROOT=/tmp/panels-environments
+ENV_ROOT=/var/lib/panels/environments
 LIVE_REPO_ROOT=/opt/panels/live
-STAGING_REPO_ROOT=/opt/panels/staging
-PREVIEW_REPO_ROOT=/opt/panels/previews/feature-123
-```
 
-Prepare live. This creates an empty layout and records the credential-file reference;
-it does not seed data.
-
-```sh
 panels environment prepare \
   --kind live \
   --environment-root "$ENV_ROOT" \
   --repository-root "$LIVE_REPO_ROOT" \
-  --credentials-env-file ops/panels-environments/live.env.example \
+  --credentials-env-file /etc/panels/environments/live.env \
   --json
 ```
 
-Prepare staging with resettable fake state and a stable port:
+Preparation creates an empty layout. It does not seed fake data or silently copy a
+production database. Inspect the prepared contract without printing credential values:
 
 ```sh
+panels environment inspect \
+  --kind live \
+  --environment-root "$ENV_ROOT" \
+  --json
+```
+
+Import existing state only while both the source server and prepared live environment
+are stopped:
+
+```sh
+panels environment import-live \
+  --environment-root "$ENV_ROOT" \
+  --source-db /path/to/source/data/planning.db \
+  --source-managed-files-root /path/to/source/data/files \
+  --source-hermes-home /path/to/source/data/hermes-home \
+  --json
+```
+
+The command requires an already prepared live environment. It reads the committed
+SQLite state through the backup API, including committed WAL data, and stages the
+database, managed files, worker settings, and complete Hermes home before replacing
+the prepared state. Worker settings must exist at `worker-settings` beside the source
+database; that path is inferred so it cannot be omitted accidentally. A failed swap
+rolls back to the prepared state that existed before the command.
+
+Sources must exist, must not overlap one another, and must remain outside the prepared
+live instance. The same command restores a captured backup: point the three source
+arguments at that backup's database, managed-files directory, and Hermes-home
+directory. Keep any archived logs and the prepared credential/configuration reference
+with the cutover record; they are not database state and are not inferred by this
+command.
+
+Starting and stopping live is an operator action. `run` validates the caller-provided
+checkout against the prepared contract, changes to that checkout, and starts the
+ordinary foreground Panels server:
+
+```sh
+panels environment run \
+  --kind live \
+  --environment-root "$ENV_ROOT" \
+  --repository-root "$LIVE_REPO_ROOT"
+```
+
+Live cannot be reset or removed through the environment CLI.
+
+## Staging environment
+
+Staging is prepared once and attached to the separate `staging` checkout. Its fake
+database, managed files, Hermes home, logs, credentials reference, and testing activity
+persist across runs. Its durable configuration has no server port.
+
+```sh
+STAGING_REPO_ROOT=/opt/panels/staging
+
 panels environment prepare \
   --kind staging \
   --environment-root "$ENV_ROOT" \
   --repository-root "$STAGING_REPO_ROOT" \
-  --credentials-env-file ops/panels-environments/staging.env.example \
+  --credentials-env-file /etc/panels/environments/staging.env \
   --json
 ```
 
-Prepare a disposable preview. The preview id must use lowercase letters, digits, and
-hyphens; the allocated port stays with that preview until removal.
-
-```sh
-panels environment prepare \
-  --kind preview \
-  --instance-id feature-123 \
-  --environment-root "$ENV_ROOT" \
-  --repository-root "$PREVIEW_REPO_ROOT" \
-  --credentials-env-file ops/panels-environments/preview.env.example \
-  --json
-```
-
-Inspect a prepared instance without printing credential values:
+`inspect` reports `runtime_port_policy` as `dynamic` and `bind_attempts` as `10`. It
+does not report a configured `port` or a `running` value.
 
 ```sh
 panels environment inspect \
-  --kind preview \
-  --instance-id feature-123 \
+  --kind staging \
   --environment-root "$ENV_ROOT" \
   --json
 ```
 
-Run a prepared instance:
+Start staging only while testing, browsing, computer use, exploration, or other active
+work needs it:
 
 ```sh
 panels environment run \
@@ -91,16 +128,14 @@ panels environment run \
   --repository-root "$STAGING_REPO_ROOT"
 ```
 
-Render Linux unit and ownership intent:
+Each run asks the operating system for an available loopback port and holds that bound
+listener through server startup. If a bind still reports that its address is in use,
+staging retries up to the prepared policy's bound. The command prints
+`staging http://127.0.0.1:<actual-port>` to standard error. Stop the foreground process
+when the active work is finished; its database and other durable state remain available
+for the next run.
 
-```sh
-panels environment render-linux \
-  --kind staging \
-  --environment-root "$ENV_ROOT" \
-  --json
-```
-
-Reset staging or a preview back to the canonical fake seed:
+Reset staging only when the canonical fake fixture is wanted again:
 
 ```sh
 panels environment reset \
@@ -109,146 +144,103 @@ panels environment reset \
   --json
 ```
 
-Remove a stopped preview:
+Reset rebuilds the fake database and managed files but keeps staging's prepared
+identity and durable paths.
+
+## Ticket worktree servers
+
+Create each Ticket branch and isolated worktree from current `staging`. Set up its
+dependencies and local runtime state, then confirm its source, dependencies,
+configuration, database, files, Hermes state, and logs resolve to that worktree.
+
+Ticket worktree servers use the repository's ordinary server and test tools. They have
+no environment kind, external manifest, registry entry, fixed port, or central port
+allocator. Survey current port use on each start, select an available port, and retry
+with another if startup loses a bind race.
+
+Run services only while active work needs them and stop them afterward. The worktree's
+database and other local state may remain for reuse until Closeout. After the verified
+result reaches `staging`, remove the Ticket services, state, worktree, and branch.
+
+## Credentials and launch isolation
+
+Credential files are references in prepared environment state. Their contents are
+never written to a manifest or printed by `inspect` or `render-linux`.
+
+Use a separate credential file for live and staging. The checked-in examples contain
+only supported names with empty values. Copy them outside Git before filling real
+values.
+
+The parser accepts only the runtime model-provider names allowed by the environment
+policy: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY`. It rejects
+malformed, duplicate, unknown, or contract-owned keys.
+
+`environment run` starts from a scrubbed process environment. It keeps only basic
+locale, terminal, path, and temporary-directory values, adds the validated credential
+values, and supplies the contract-owned database, port, log, lock, socket, Hermes, and
+home values. Other ambient `PLAN_*` values are not forwarded.
+
+The caller must provide exactly one `--repository-root`. The command checks that
+existing checkout against the prepared environment and uses it as the launch working
+directory. Repository roots are working directories, not runtime state directories,
+and live and staging cannot share or nest them.
+
+## Current-host cutover
+
+Moving an existing server into prepared live is an operator checkpoint, not an
+automatic side effect of preparation. Before asking the operator to act, the Ticket
+must record the current revision and launch command, every state and configuration
+path, an online rehearsal backup, the final quiesced backup location, the import or
+restore commands, expected command output, health checks, and the unchanged old
+startup used for fallback.
+
+The operator then stops the old server, takes the final backup, imports the preserved
+database, managed files, worker settings, and Hermes identity and sessions with
+`environment import-live`, confirms the prepared configuration and archived logs, and
+starts live from the accepted `main` checkout. The health check covers the application,
+managed files, durable sessions, and active work.
+
+If any check fails, stop the new process, restore the final backup, and return to the
+recorded old checkout and startup. Do not advance `staging`, change the primary
+checkout, or remove the fallback until live has passed those checks and the worker has
+reconnected.
+
+Recurring backups, automatic deployment, and public ingress changes remain separate
+work.
+
+## Linux intent
+
+Render the account, ownership, and service intent for a prepared environment:
 
 ```sh
-panels environment remove \
-  --kind preview \
-  --instance-id feature-123 \
+panels environment render-linux \
+  --kind live \
   --environment-root "$ENV_ROOT" \
   --json
 ```
 
-Run the opt-in real-Hermes cross-home smoke after staging and one preview are already
-prepared and independently authenticated:
+The rendered live service runs as `panels-live`; staging runs as `panels-worker`. The
+renderer lists each environment's writable state and repository paths. Live ownership
+is intended to keep live state, config, and credentials unreadable and unwritable by
+the staging account.
 
-```sh
-panels environment smoke-hermes \
-  --environment-root "$ENV_ROOT" \
-  --preview-id feature-123 \
-  --hermes-python "$HOME/.hermes/hermes-agent/venv/bin/python" \
-  --json
-```
+The output is render-only and reports `vps_enforcement_verified` as false. Linux
+isolation exists only after an operator has installed and checked the accounts,
+permissions, credential files, services, and ingress on the target host.
 
-## State model
-
-Staging and previews share one canonical versioned fake seed: `fake-fixture-v1`.
-They do not share state. Each materialization runs the current fixture builder
-separately and builds a new SQLite database and managed-file tree, so ids, database
-bytes, managed Markdown, and file placeholders are independent even when the logical
-seed is the same.
-
-Staging is stable. It keeps the same identity, port, Hermes home, and credential-file
-reference across resets. Previews are disposable. A preview id keeps its allocated port
-until removal; removing it deletes only that preview root and releases the allocation.
-
-Live preparation creates an empty layout and manifest. It never imports fake data and
-never accepts a production database as a seed. Live state and credentials remain
-operator-owned.
-
-## Credentials
-
-Credential files are references in the manifest. Their contents are never written to the
-manifest or printed by `inspect` or `render-linux`.
-
-Use a separate credential file for each prepared instance. The checked-in examples
-show only supported names with empty values. Copy them outside git before filling real
-values, then pass that per-instance file through `--credentials-env-file`.
-
-The parser accepts only runtime model-provider names allowed by the environment policy:
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY`. It rejects malformed,
-duplicate, unknown, or forbidden keys. Forbidden keys include contract-owned
-`PLAN_*`, Hermes session/config keys, `PYTHONPATH`, actor/ticket identity, process
-identity, and launch roots.
-
-`panels environment run` resolves the operator's `PLAN_HERMES_PYTHON` selection (or the
-normal Hermes default) before replacing `HOME` with the instance Hermes home. It then
-starts from a scrubbed process environment. It keeps only locale, terminal, `PATH`,
-`TMPDIR`, and `LC_*` basics from the ambient shell, then adds validated credential-file
-values and the contract-owned runtime values:
-`PLAN_DB_PATH`, `PLAN_PORT`, `PLAN_LOGS_DIR`, `PLAN_DISPATCHER_LOCK_PATH`,
-`PLAN_SERVER_CONTROL_SOCKET`, `PLAN_HERMES_HOME`, `PLAN_HERMES_PYTHON`, and `HOME`.
-`HOME` is set to the instance's Hermes home. Other ambient `PLAN_*` values are not
-forwarded.
-
-The real-Hermes smoke creates unrelated durable sessions in the already-authenticated
-staging and preview homes, prompts each one, closes its first ACP child, and loads the
-same session from a fresh child before reporting the ids. It does not delete those
-sessions; the stored sessions belong to the homes used for the smoke and remain there
-for operator inspection or later cleanup.
-
-`run` requires exactly one caller-provided `--repository-root`. The command validates
-that existing worktree against the prepared manifest's allowed repository roots, then
-uses exactly that caller-trusted path as the current working directory before execing
-`python -m planner serve`. The manifest records the allowed roots, but it does not
-choose the launch directory by itself. Repository roots are working directories, not
-runtime state directories.
-
-Repositories cannot be shared across live, staging, or preview instances. They also
-cannot be nested inside one another. Repository roots participate in the same registry
-overlap and live-nesting checks as database paths, managed files, Hermes homes, logs,
-locks, sockets, and credential-file references.
-
-## Local And VPS Guarantees
-
-The rendered live service runs as `panels-live`. Rendered staging and preview services
-run as `panels-worker`. The renderer also lists the writable paths expected for each
-instance: the instance root, database directory, managed files, Hermes home, logs,
-runtime lock/socket directory, and that instance's repository root. The repository is
-writable because Panels workers operate their checked-out repository on the VPS.
-
-Repository roots are working directories only. Runtime writes stay under the prepared
-instance root. Live Linux ownership is meant to keep live state, config, and credentials
-unreadable and unwritable by `panels-worker`; staging and previews are isolated by
-configuration and state paths, not by hostile sandboxing from one another.
-
-The exact guarantee boundary is:
-
-- **Local development:** prepare, inspect, run, reset, remove, render, and fake tests
-  prove separate paths, ports, manifests, process environment values, and foreground
-  server processes. They do not prove Linux account isolation.
-- **VPS operation:** live gets an OS security boundary only after an operator-owned VPS
-  account, filesystem permissions, credentials file, systemd unit, ingress path, and
-  installed service are actually created and checked.
-
-Linux output is render-only with `vps_enforcement_verified` set to `false` until that
-operator-owned VPS account, permissions, and installed service have actually been
-checked. On macOS and other local development machines, the renderer proves text and
-paths only. It does not claim the local OS has enforced Linux accounts or modes.
-
-The checked-in static systemd files use distinct repository conventions:
-`/opt/panels/live`, `/opt/panels/staging`, and `/opt/panels/previews/%i`. In each unit,
-`WorkingDirectory`, the `ExecStart --repository-root` argument, and the repository
+The static units use `/opt/panels/live` and `/opt/panels/staging`. In each unit,
+`WorkingDirectory`, the `environment run --repository-root` value, and the repository
 entry in `ReadWritePaths` must agree.
-
-## Cleanup
-
-Use `reset` for staging or preview fake state. Use `remove` for stopped previews, or
-for staging only when retiring the stable non-production identity. Both commands prove
-the instance is stopped by taking the same port-scoped lifecycle lease used by
-`panels serve`; they do not inspect or signal processes.
-
-Do not remove `live` through this CLI. Live cleanup, promotion, backups, monitoring,
-public ingress, and final VPS installation are separate operator or later-ticket work.
 
 ## Handoffs
 
 - **The command-line tool** (`cli.md`) — the command tree that exposes environment
   lifecycle verbs.
-- **The employee runtime** (`employee-runtime.md`) — the foreground server runtime that
-  `panels environment run` eventually starts.
-- **Hermes gateway** (`systems.md`) — the external worker gateway whose homes are kept
-  separate per instance.
-
-## Deferred
-
-- **Installed Linux service management.** The repo renders units and ownership intent
-  only. Trigger: the final VPS ticket installs accounts, paths, units, ingress, and
-  service policy.
-- **Production operations.** Backups, recovery, monitoring, immutable release layout,
-  and cleanup automation remain outside this environment contract. Trigger: live VPS
-  operation beyond a single prepared service.
+- **The employee runtime** (`employee-runtime.md`) — the foreground server runtime
+  that `environment run` starts.
+- **Hermes gateway** (`systems.md`) — the external worker gateway whose homes stay
+  separate between live, staging, and Ticket worktrees.
 
 ---
 
-_Last verified: 2026-07-19._
+_Last verified: 2026-07-22._

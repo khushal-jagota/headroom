@@ -60,9 +60,8 @@ its old event lines are replaced by one minimal deletion audit.
 - **Conversation** (`chat.md`) — the typed ACP pane shared by Ticket workers and the
   Chief of Staff, including the `hermes`, `codex`, and `claude` backends, live work,
   commands, permissions, and compaction state.
-- **Runtime environments** (`environments.md`) — live, staging, and preview runtime
-  layouts, scrubbed launch, Linux render intent, and the opt-in Hermes cross-home
-  smoke.
+- **Runtime environments** (`environments.md`) — prepared live and staging runtime
+  layouts, Ticket worktree servers, scrubbed launch, and Linux render intent.
 
 **The surfaces you plan on**
 

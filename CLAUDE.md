@@ -44,6 +44,39 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Spot-check the load-bearing code yourself even when reviews pass: the resolution engine, dispatcher claim/reclaim, planning-date math, and the migration parser.
 - A ticket is done when its named gates pass and its independent review reports no unresolved violations. When the program reserves a final canonical `./verify`, that final gate—not repeated per-ticket runs—makes the repository-wide completeness claim.
 
+## Worktree and server flow
+
+- Create the Ticket branch and isolated worktree from current `staging`. Do the work
+  in that worktree.
+- Set up the worktree's dependencies, environment inputs, generated prerequisites,
+  and local runtime state, then verify that its source, dependencies, configuration,
+  and state resolve to that worktree.
+- For a new worktree, run:
+
+  ```sh
+  python3 -m venv .venv
+  .venv/bin/python -m pip install -r requirements.txt
+  .venv/bin/python -m pip install --editable .
+  npm ci --prefix web
+  npm ci --prefix agent_backends
+  ```
+
+  Use `git rev-parse --show-toplevel` and
+  `.venv/bin/python -c 'import planner; print(planner.__file__)'` to confirm the source
+  root. Run `env | rg '^PLAN_(DB_PATH|LOGS_DIR|DISPATCHER_LOCK_PATH|SERVER_CONTROL_SOCKET|HERMES_HOME)='`
+  and confirm any printed path resolves to the worktree before using its runtime.
+- Unchanged dependency trees may be reused when their manifests and locks match.
+  Detach them before installing or changing dependencies.
+- When testing, browsing, computer use, exploration, or other active work needs
+  running services, survey current port use, select available ports, start the
+  services, and stop them when that active work is finished. If a port is taken during
+  startup, select another and retry.
+- The worktree's database and other local state may remain for later use until
+  Closeout.
+- At Closeout, bring current `staging` into the Ticket branch, repair and verify the
+  resulting revision, advance `staging` when it is green, then remove the Ticket's
+  services, local runtime state, worktree, and branch.
+
 ## Conduct
 - Keep `./verify` green; never advance over failing tests.
 - Blocked three attempts on the same problem → log it in PROGRESS.md and change approach materially, not the same idea harder.
