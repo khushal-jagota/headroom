@@ -21,7 +21,11 @@ child retirement, and generation-2 first activation. Final review also proved Ne
 durable binding after a Panels restart without loading it, and that a Chief settings edit after New
 cannot alter the accepted empty conversation's eventual launch setup. Canonical `./verify` passes:
 ruff, mypy over 154 source files, 1,379 unit tests, compile/CSS checks, Svelte check, production
-frontend build and tests, and 118 e2e tests. Remaining: scoped commit and live restart/proof.
+frontend build and tests, and 118 e2e tests. The scoped change is committed. The live supervisor
+restarted onto schema 33 and
+returned HTTP 200. The affected Ticket's poisoned generation-3 Codex binding was advanced to
+generation 4; its first Automatic Employee prompt created the real generation-4 session, which is
+now actively producing ACP updates instead of failing `thread/resume` with `no rollout found`.
 Unrelated dirty nested worktrees remain untouched.
 
 ## Current work cycle (2026-07-22): Paint ACP browser replay atomically
