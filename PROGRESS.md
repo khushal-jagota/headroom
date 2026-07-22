@@ -28,10 +28,12 @@ Mypy on the changed source, diff checks, and preview-surface checks passed befor
 The accepted correction also proves private identity modes/special-file exclusion,
 cross-private-manifest isolation, atomic generation failures, prepared skill-link repair, and a
 root-owned pinned Linux manager which validates and executes each target checkout's own interpreter.
-The settled correction passes 75 focused unit tests plus the staging lifecycle E2E, Ruff, strict
-Mypy over all 14 environment-related source files, and diff checks. The canonical `./verify`, branch
-integration, final quiesced backup/import, live start, health checks, push/PR, and Ticket-worktree
-cleanup remain Closeout work after Implementation approval.
+The settled combined tree passes all 115 focused unit/E2E tests, including the real typed-ACP
+Worker prompt/session proof, plus Ruff over every changed Python file, strict Mypy over the 13
+changed source modules, and diff checks. Fresh independent re-review explicitly dispositioned all
+prior corrective findings and reports no unresolved Implementation blocker. The canonical
+`./verify`, branch integration, final quiesced backup/import, live start, health checks, push/PR,
+and Ticket-worktree cleanup remain Closeout work after Implementation approval.
 
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 
