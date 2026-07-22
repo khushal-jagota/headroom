@@ -98,9 +98,10 @@ The final canonical `./verify` passed Ruff, strict Mypy across 153 source files,
 compile/CSS checks, zero Svelte diagnostics, the production frontend build and frontend tests, and
 all 116 Playwright tests; final `VERIFY: PASS`. A concurrent external change landed during the run;
 the green gate covers that combined current tree, and its unrelated Hermes configuration,
-skill/worktree, and Vite-cache changes remain untouched. Implementation is approved; Closeout will
-commit only this Ticket's backend, frontend, tests, generated bundle, docs, and memory changes on
-current `main` base `553b0a4`, leaving all unrelated worktree state unstaged.
+skill/worktree, and Vite-cache changes remain untouched. Closeout committed exactly this Ticket's
+backend, frontend, tests, generated bundle, docs, and memory changes on `main` as `bf0b219`, from
+base `553b0a4`. All unrelated worktree state remains unstaged. No deployment or restart applies.
+Next: propose Closeout for approval.
 Pre-existing `src/planner/conversation/composition.py`, nested `.claude` worktree, and `.worktrees/`
 changes are unrelated and must remain untouched. No blocker.
 
