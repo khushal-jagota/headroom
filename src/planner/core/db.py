@@ -16,7 +16,7 @@ from planner.core.legacy_execution_route import (
 from planner.projects import data as projects_data
 from planner.worker_types.configuration import configured_worker_type_registry
 
-SCHEMA_VERSION: Final = 32
+SCHEMA_VERSION: Final = 33
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -122,6 +122,20 @@ CREATE TABLE IF NOT EXISTS conversation_session_bindings (
   employee_launch_reasoning_effort TEXT,
   binding_generation INTEGER NOT NULL CHECK (binding_generation > 0),
   compaction_boundaries_json TEXT NOT NULL DEFAULT '[]',
+  created_at         INTEGER NOT NULL,
+  updated_at         INTEGER NOT NULL,
+  UNIQUE (entity_kind, entity_id),
+  CHECK (employee_id = entity_id)
+);
+
+CREATE TABLE IF NOT EXISTS employee_conversations (
+  employee_id        TEXT PRIMARY KEY,
+  entity_kind        TEXT NOT NULL CHECK (entity_kind IN ('ticket','agent')),
+  entity_id          TEXT NOT NULL,
+  backend_key        TEXT NOT NULL,
+  employee_launch_model TEXT,
+  employee_launch_reasoning_effort TEXT,
+  conversation_generation INTEGER NOT NULL CHECK (conversation_generation > 0),
   created_at         INTEGER NOT NULL,
   updated_at         INTEGER NOT NULL,
   UNIQUE (entity_kind, entity_id),
@@ -279,6 +293,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
         raise RuntimeError(
             "v32 Ticket schema is missing the nullable backend_error column without a default"
         )
+    if incoming_version < 33:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v33(conn)
+    elif not _employee_conversations_table_is_v33(conn):
+        raise RuntimeError("v33 schema is missing durable Panels conversation generations")
     _create_indexes(conn)
 
 
@@ -805,6 +825,51 @@ def _migrate_to_v32(conn: sqlite3.Connection) -> None:
                 f"foreign key check failed after Ticket v32 migration: {violations!r}"
             )
         conn.execute("PRAGMA user_version=32")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _employee_conversations_table_is_v33(conn: sqlite3.Connection) -> bool:
+    columns = _table_columns(conn, "employee_conversations")
+    return columns == {
+        "employee_id",
+        "entity_kind",
+        "entity_id",
+        "backend_key",
+        "employee_launch_model",
+        "employee_launch_reasoning_effort",
+        "conversation_generation",
+        "created_at",
+        "updated_at",
+    }
+
+
+def _migrate_to_v33(conn: sqlite3.Connection) -> None:
+    """Separate durable Panels conversation identity from optional ACP binding."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Conversation v33 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO employee_conversations "
+            "(employee_id, entity_kind, entity_id, backend_key, employee_launch_model, "
+            "employee_launch_reasoning_effort, conversation_generation, created_at, updated_at) "
+            "SELECT employee_id, entity_kind, entity_id, backend_key, employee_launch_model, "
+            "employee_launch_reasoning_effort, binding_generation, created_at, updated_at "
+            "FROM conversation_session_bindings"
+        )
+        if not _employee_conversations_table_is_v33(conn):
+            raise RuntimeError("Conversation v33 migration did not establish its table")
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"foreign key check failed after Conversation v33 migration: {violations!r}"
+            )
+        conn.execute("PRAGMA user_version=33")
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:

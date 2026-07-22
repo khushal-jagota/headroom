@@ -130,7 +130,8 @@ Claude Code offer Model plus the Reasoning choices supported by that model. The 
 durable binding, or moving beyond Kickoff, freezes the Ticket's launch setup and removes
 the controls. Gemini is not registered.
 
-For the first unbound session, Panels applies an explicit Model before an explicit
+For the first session bound to an empty Panels conversation, Panels applies an explicit Model
+before an explicit
 Reasoning choice, then writes the binding only if the Ticket still owns the setup used
 to prepare that session. The stored model and reasoning remain after binding as the
 historical Kickoff request, not the worker's current settings. A bound load, child
@@ -139,8 +140,9 @@ them as current. Human prompts and Automatic Employee steps still share the sele
 backend and durable binding.
 
 Chief has managed Backend, Model, and Reasoning defaults. Starting a new Chief conversation
-copies the current trio into that binding; loading an existing Chief conversation keeps its
-stored trio. Permission is not stored configuration. Every actual new Worker or Chief session
+copies the current trio into the durable empty conversation. Its first prompt later creates the
+ACP binding from that snapshot; loading an existing Chief conversation keeps its stored trio.
+Permission is not stored configuration. Every actual new Worker or Chief session
 uses backend-native full access. Codex selects `agent-full-access`, Claude Code selects
 `bypassPermissions`, and Hermes starts in YOLO mode and selects `dont_ask`.
 
@@ -148,6 +150,14 @@ Claude Code runs one initialize-only preflight when Panels starts. That temporar
 child is closed before startup completes and creates no worker session. Codex is lazy:
 its child starts only on first demand. Actual Ticket and Chief sessions for every
 backend still start or resume through the same registry and binding machinery.
+
+A Panels conversation and an ACP backend session are separate things. Opening a Ticket or the
+Chief with no session returns an empty, ready conversation and does not start a backend. **New**
+advances that durable Panels conversation, clears the old transcript and binding, and also starts
+no backend. The first human message or Automatic Employee prompt creates and binds the real ACP
+session. An empty conversation therefore remains writable after Panels restarts even when a
+provider cannot load a session that has never received a turn. A browser cursor from an older
+conversation receives a full current reset instead of being rejected.
 
 ## Employee role skills
 
@@ -162,8 +172,8 @@ through that session. A Ticket adds `panels-worker`; the Chief adds
 `panels-chief-of-staff`. The first prompt may come from the browser or Automatic
 Employee work. Text-only slash commands pass through unchanged and leave the role ready for the
 next ordinary prompt. Later ordinary prompts and a loaded, forked, or replacement child
-do not add the role again. Starting New conversation successfully creates a new session
-and therefore adds the role to that conversation's first ordinary prompt.
+do not add the role again. After **New**, the next ordinary prompt creates the session and adds the
+role to that first prompt.
 
 The role line is ACP delivery context, and it is visible in the transcript as a
 \`System message · role\` entry. Panels does not remove or normalize role echoes from

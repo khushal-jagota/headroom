@@ -9,20 +9,17 @@
     "clientMessageId": "client-message-2",
     "deliveryChoice": "normal",
     "employeeId": "employee-acp-00",
-    "prompt": {
-      "prompt": [
-        {
-          "text": "Please inspect the typed transcript.",
-          "type": "text"
-        },
-        {
-          "data": "aW1hZ2U=",
-          "mimeType": "image/png",
-          "type": "image"
-        }
-      ],
-      "sessionId": "session-acp-00"
-    },
+    "prompt": [
+      {
+        "text": "Please inspect the typed transcript.",
+        "type": "text"
+      },
+      {
+        "data": "aW1hZ2U=",
+        "mimeType": "image/png",
+        "type": "image"
+      }
+    ],
     "type": "prompt"
   },
   {

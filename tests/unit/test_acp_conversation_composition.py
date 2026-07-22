@@ -19,6 +19,7 @@ from acp.schema import (
     NewSessionResponse,
     PromptRequest,
     PromptResponse,
+    TextContentBlock,
 )
 from fastapi.testclient import TestClient
 
@@ -40,7 +41,7 @@ from planner.conversation.composition import (
     _BindOnceAsyncCallback,
 )
 from planner.conversation.configuration import ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
-from planner.conversation.wire_contracts import CancelAction
+from planner.conversation.wire_contracts import CancelAction, PromptAction
 from planner.core import loops as loops_module
 from planner.core.clock import TestClock as MutableTestClock
 from planner.core.config import load_config
@@ -291,7 +292,68 @@ def test_single_conversation_composition_owns_runtime_and_closes_browser_admissi
                 CancelAction(type="cancel", employee_id=ticket_id),
             )
         await composition.shutdown(asyncio.get_running_loop().time() + 1)
-        assert factory.children and all(not child.alive for child in factory.children)
+        assert factory.children == []
+
+    asyncio.run(exercise())
+
+
+def test_real_composition_keeps_new_empty_until_the_first_prompt(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        db_path, clock, ticket_id = _database(tmp_path)
+        definition = _definition()
+        factory = _Factory(definition)
+        composition = ConversationComposition.build(
+            db_path=db_path,
+            busy_timeout_ms=5000,
+            clock=clock,
+            repository_root=tmp_path,
+            loop=asyncio.get_running_loop(),
+            test_options=ConversationTestOptions(
+                employee_runtime_definitions=_runtime_definitions(definition, factory),
+            ),
+        )
+        browser = await composition.hub.attach_browser(ticket_id)
+        assert factory.children == []
+        assert (await composition.hub.repository.resolve(ticket_id)) is None
+        await browser.queue.get()
+        await browser.queue.get()
+
+        await composition.hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id=ticket_id,
+                client_message_id="first-message",
+                prompt=[TextContentBlock(type="text", text="hello")],
+                delivery_choice="normal",
+            ),
+        )
+        first = await composition.hub.repository.resolve(ticket_id)
+        assert first is not None
+        assert first.binding_generation == 1
+        assert len(factory.children) == 1
+
+        empty = await composition.hub.new_conversation(ticket_id)
+        assert empty.conversation_generation == 2
+        assert await composition.hub.repository.resolve(ticket_id) is None
+        assert len(factory.children) == 1
+        assert factory.children[0].alive is False
+
+        await composition.hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id=ticket_id,
+                client_message_id="second-message",
+                prompt=[TextContentBlock(type="text", text="new hello")],
+                delivery_choice="normal",
+            ),
+        )
+        second = await composition.hub.repository.resolve(ticket_id)
+        assert second is not None
+        assert second.binding_generation == 2
+        assert len(factory.children) == 2
+        await composition.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 

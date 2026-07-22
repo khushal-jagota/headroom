@@ -219,10 +219,7 @@ try {
     type: "prompt",
     employeeId: "ticket-deferred-production",
     clientMessageId: "00000000-0000-4000-8000-000000000002",
-    prompt: {
-      sessionId: "session-deferred-production",
-      prompt: [{ type: "text", text: "First demand" }],
-    },
+    prompt: [{ type: "text", text: "First demand" }],
     deliveryChoice: "normal",
   });
   deferredController.dispose();

@@ -21,6 +21,22 @@ exists. They are kept intact here until then so nothing is dropped before it has
 
 ---
 
+## D-empty-panels-conversation — Panels conversation identity precedes provider session identity
+
+- Treat the durable Panels conversation generation as the browser-visible identity. An ACP session
+  binding is optional state inside that generation, not the thing that creates the conversation.
+- Browser attach and **New** must not call `session/new`. They return a ready empty conversation.
+- The first real human or Automatic Employee prompt is the only reason to create an initial backend
+  session. It binds atomically before entering the existing turn broker.
+- Snapshot Chief backend/model/reasoning defaults when **New** advances the Panels generation, so a
+  later settings edit cannot change an already accepted empty conversation.
+- A stale browser generation is a cache miss and receives a full reset; it is not a protocol error.
+- Keep ACP session ids strict everywhere after binding. Browser prompt actions carry content blocks
+  and optional ACP metadata, so the browser never fabricates a provider session id.
+
+This is the narrow correction for the observed reconnect loop. Queueing, replay materialization,
+permissions, compaction, and bound-session delivery remain unchanged.
+
 ## D-isolated-runtime-acp-integration — Keep ACP and adapt environment seams
 
 The isolated-runtime commit is integrated against the current ACP-era main tree. Deleted

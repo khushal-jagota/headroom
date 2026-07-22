@@ -359,7 +359,7 @@ def build_browser_actions() -> list[object]:
             type="prompt",
             employee_id=EMPLOYEE_ID,
             client_message_id="client-message-2",
-            prompt=_prompt(),
+            prompt=_prompt().prompt,
             delivery_choice="normal",
         ),
         CancelAction(

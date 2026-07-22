@@ -892,7 +892,7 @@ def test_browser_action_union_covers_all_actions_and_invalid_action_is_not_agent
             type="prompt",
             employee_id="employee-1",
             client_message_id="client-1",
-            prompt=_prompt(),
+            prompt=_prompt().prompt,
             delivery_choice="normal",
         ),
         CancelAction(type="cancel", employee_id="employee-1"),

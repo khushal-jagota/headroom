@@ -465,6 +465,14 @@ def _receive_until(
     raise AssertionError(f"conversation predicate not reached: {envelopes!r}")
 
 
+def _bound_session_id(envelopes: list[dict[str, Any]]) -> str:
+    for envelope in envelopes:
+        session_id = envelope.get("acpSessionId")
+        if isinstance(session_id, str) and session_id:
+            return session_id
+    raise AssertionError("conversation batch did not contain a bound ACP session")
+
+
 def _is_ready(envelope: dict[str, Any]) -> bool:
     return envelope["type"] == "connection" and envelope["payload"]["state"] == "ready"
 
@@ -540,16 +548,14 @@ def _prompt_action(
     script: str = "default",
     delivery_choice: str = "normal",
 ) -> dict[str, Any]:
+    del session_id
     return {
         "type": "prompt",
         "employeeId": ticket_id,
         "clientMessageId": message_id,
         "deliveryChoice": delivery_choice,
-        "prompt": {
-            "sessionId": session_id,
-            "prompt": [{"type": "text", "text": text}],
-            "_meta": {"script": script},
-        },
+        "prompt": [{"type": "text", "text": text}],
+        "promptMeta": {"script": script},
     }
 
 
@@ -658,7 +664,7 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
         assert binding["acp_session_id"] == mirror["employee_session_id"]
 
 
-def test_ticket_route_kickoff_advance_enables_exactly_one_eager_attach(
+def test_ticket_route_kickoff_advance_keeps_conversation_unbound_until_demand(
     tmp_path: Path,
     browser: Browser,
 ) -> None:
@@ -685,22 +691,7 @@ def test_ticket_route_kickoff_advance_enables_exactly_one_eager_attach(
             page.locator("[data-employee-configuration-setup]").wait_for(
                 state="detached", timeout=10_000
             )
-            # The header is silent at idle, so settle on the thing under test:
-            # wait until the eager attach has committed its session binding.
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                with connect(str(database_path)) as conn:
-                    if (
-                        conn.execute(
-                            "SELECT 1 FROM conversation_session_bindings WHERE employee_id = ?",
-                            (ticket_id,),
-                        ).fetchone()
-                        is not None
-                    ):
-                        break
-                time.sleep(0.05)
-            else:
-                raise AssertionError("eager attach did not create a session binding")
+            time.sleep(0.2)
         finally:
             page.close()
 
@@ -714,10 +705,9 @@ def test_ticket_route_kickoff_advance_enables_exactly_one_eager_attach(
                 "SELECT employee_backend, employee_session_id FROM tickets WHERE id = ?",
                 (ticket_id,),
             ).fetchone()
-        assert binding is not None and mirror is not None
-        assert tuple(binding)[:2] == ("hermes", 1)
-        assert binding["backend_key"] == mirror["employee_backend"]
-        assert binding["acp_session_id"] == mirror["employee_session_id"]
+        assert binding is None and mirror is not None
+        assert mirror["employee_backend"] == "hermes"
+        assert mirror["employee_session_id"] is None
 
 
 def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
@@ -769,7 +759,8 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
             websocket.send_json(
                 _prompt_action(ticket.id, session_id, "probe-human", "probe human prompt")
             )
-            _receive_until(websocket, _is_idle)
+            human_turn = _receive_until(websocket, _is_idle)
+            session_id = _bound_session_id(human_turn)
 
         response = client.post(f"/api/test/run-step/{ticket.id}")
         assert response.status_code == 200, response.text
@@ -896,7 +887,8 @@ def test_employee_configuration_catalog_does_not_bind_and_first_prompt_uses_sele
                     "use configured session",
                 )
             )
-            _receive_until(websocket, _is_idle)
+            configured_turn = _receive_until(websocket, _is_idle)
+            session_id = _bound_session_id(configured_turn)
 
     audit = [
         json.loads(line) for line in configuration_audit_path.read_text().splitlines()
@@ -979,6 +971,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
             assert response.status_code == 200, response.text
             assert ticket_app.state.employee_step_runner.wait_idle(timeout=5)
             automatic_live = _receive_until(ticket_socket, _is_idle)
+            ticket_session_id = _bound_session_id(automatic_live)
             assert "Work ticket" in json.dumps(automatic_live)
             assert "Use the installed" in json.dumps(automatic_live)
             assert '"source": "worker"' in json.dumps(automatic_live)
@@ -1050,6 +1043,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
                 )
             )
             chief_first_live = _receive_until(chief_socket, _is_idle)
+            chief_session_id = _bound_session_id(chief_first_live)
             assert "Use the installed" in json.dumps(chief_first_live)
             chief_socket.send_json(
                 _prompt_action(
@@ -1076,17 +1070,18 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
                 and item["payload"]["state"] == "reset"
                 and item["bindingGeneration"] == 2
             )
-            replacement_session_id = str(replacement_reset["acpSessionId"])
-            assert replacement_session_id != chief_session_id
+            assert replacement_reset["acpSessionId"] is None
             chief_socket.send_json(
                 _prompt_action(
                     CHIEF_OF_STAFF_ENTITY_ID,
-                    replacement_session_id,
+                    chief_session_id,
                     "chief-fresh",
                     "Chief fresh prompt",
                 )
             )
             chief_fresh_live = _receive_until(chief_socket, _is_idle)
+            replacement_session_id = _bound_session_id(chief_fresh_live)
+            assert replacement_session_id != chief_session_id
             assert "Use the installed" in json.dumps(chief_fresh_live)
 
         with client.websocket_connect("/api/conversation") as replay_socket:
@@ -1157,11 +1152,14 @@ def test_fresh_uvicorn_process_resumes_durable_binding(tmp_path: Path) -> None:
             websocket.send(
                 json.dumps(_prompt_action(ticket.id, session_id, "restart-1", "before restart"))
             )
+            turn: list[dict[str, Any]] = []
             while True:
                 envelope = json.loads(websocket.recv())
+                turn.append(envelope)
                 if _is_idle(envelope):
                     last_sequence = int(envelope["sequence"])
                     break
+            session_id = _bound_session_id(turn)
     finally:
         _stop_process(first)
 
@@ -1235,9 +1233,10 @@ def test_cold_attach_batches_durable_history_larger_than_ingress_capacity(
                 "build durable history",
                 script="burst",
             )
-            action["prompt"]["_meta"]["count"] = history_size
+            action["promptMeta"]["count"] = history_size
             websocket.send_json(action)
-            _receive_until(websocket, _is_idle)
+            history_turn = _receive_until(websocket, _is_idle)
+            session_id = _bound_session_id(history_turn)
 
     audited_factory = _LoadAuditedSdkChildFactory(_definition())
     restarted = _application(
@@ -1584,10 +1583,11 @@ def test_automatic_official_fork_retargets_and_runs_queued_successor(
                     script="automatic_compaction",
                 )
             )
-            _receive_until(
+            source_started = _receive_until(
                 websocket,
                 lambda item: item["type"] == "activity" and item["payload"]["state"] == "thinking",
             )
+            original_session_id = _bound_session_id(source_started)
             websocket.send_json(
                 _prompt_action(
                     ticket.id,
@@ -1695,12 +1695,15 @@ def test_missing_fork_capability_retires_source_and_fresh_attach_restores_bindin
                 lambda item: item["type"] == "connection" and item["payload"]["state"] == "error",
                 limit=128,
             )
+            session_id = _bound_session_id(failed)
             assert any(
                 item["type"] == "context_compaction" and item["payload"]["state"] == "failed"
                 for item in failed
             )
             assert not any(
-                item["type"] == "connection" and item["payload"]["state"] == "reset"
+                item["type"] == "connection"
+                and item["payload"]["state"] == "reset"
+                and item["bindingGeneration"] > 1
                 for item in failed
             )
             with connect(db_path) as conn:
@@ -1804,12 +1807,23 @@ def test_browser_and_worker_share_one_real_sdk_session(
                 first_mirror = conn.execute(
                     "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
                 ).fetchone()
-            assert first_binding is not None and first_mirror is not None
-            assert tuple(first_binding) == (session_id, 1)
-            assert first_mirror["employee_session_id"] == session_id
+            assert first_binding is None and first_mirror is not None
+            assert first_mirror["employee_session_id"] is None
 
             websocket.send_json(_prompt_action(ticket.id, session_id, "human-1", "human prompt"))
             human_turn = _receive_until(websocket, _is_idle)
+            session_id = _bound_session_id(human_turn)
+            with connect(db_path) as conn:
+                first_binding = conn.execute(
+                    "SELECT acp_session_id, binding_generation "
+                    "FROM conversation_session_bindings WHERE employee_id = ?",
+                    (ticket.id,),
+                ).fetchone()
+                first_mirror = conn.execute(
+                    "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
+                ).fetchone()
+            assert first_binding is not None and tuple(first_binding) == (session_id, 1)
+            assert first_mirror is not None and first_mirror["employee_session_id"] == session_id
             update_kinds = {
                 item["payload"]["update"]["sessionUpdate"]
                 for item in human_turn
@@ -1963,9 +1977,32 @@ def test_browser_and_worker_share_one_real_sdk_session(
                 )
                 assert replacement_reset == second_reset
                 assert replacement_reset["bindingGeneration"] == 2
-                assert replacement_reset["acpSessionId"] != session_id
-                replacement_session_id = str(replacement_reset["acpSessionId"])
-                replacement_last_sequence = int(replacement[-1]["sequence"])
+                assert replacement_reset["acpSessionId"] is None
+
+                with connect(db_path) as conn:
+                    replacement_binding = conn.execute(
+                        "SELECT acp_session_id, binding_generation "
+                        "FROM conversation_session_bindings WHERE employee_id = ?",
+                        (ticket.id,),
+                    ).fetchone()
+                    replacement_mirror = conn.execute(
+                        "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
+                    ).fetchone()
+                assert replacement_binding is None and replacement_mirror is not None
+                assert replacement_mirror["employee_session_id"] is None
+
+                refreshed.send_json(
+                    _prompt_action(
+                        ticket.id,
+                        session_id,
+                        "replacement-first",
+                        "replacement first prompt",
+                    )
+                )
+                replacement_turn = _receive_until(refreshed, _is_idle)
+                replacement_session_id = _bound_session_id(replacement_turn)
+                replacement_last_sequence = int(replacement_turn[-1]["sequence"])
+                _receive_until(second_browser, _is_idle)
 
                 with connect(db_path) as conn:
                     replacement_binding = conn.execute(
@@ -2009,18 +2046,21 @@ def test_browser_and_worker_share_one_real_sdk_session(
                 ]
                 _receive_until(second_browser, lambda item: item["type"] == "activity")
                 assert stale_barrier["acpSessionId"] == replacement_session_id
-                assert old_handle.child.alive is True
+                assert old_handle.child.alive is False
 
         complete_audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
         assert complete_audit[1] == {"callbackSessionId": session_id}
         audit = [item for item in complete_audit if "sessionId" in item]
-        assert [item["sessionId"] for item in audit] == [session_id] * 5
+        assert [item["sessionId"] for item in audit] == [session_id] * 5 + [
+            replacement_session_id
+        ]
         assert [_audited_prompt_texts(item) for item in audit] == [
             ["Use the installed `panels-worker` skill.", "human prompt"],
             ["worker prompt"],
             ["permission prompt"],
             ["hold prompt"],
             ["queued prompt"],
+            ["Use the installed `panels-worker` skill.", "replacement first prompt"],
         ]
         assert all(
             "DB rows are not ACP delivery" not in json.dumps(item, separators=(",", ":"))
@@ -2109,11 +2149,6 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
             stop_session = str(stop_initial[0]["acpSessionId"])
             stop_second.send_json({"type": "attach", "employeeId": stop_ticket.id})
             _receive_until(stop_second, _is_ready)
-            stop_old = client.portal.call(
-                app.state.conversation.registry.resolve_runtime_handle,
-                stop_ticket.id,
-                1,
-            )
             stop_first.send_json(
                 _prompt_action(
                     stop_ticket.id,
@@ -2123,9 +2158,15 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
                     script="requested_cancel_unwind",
                 )
             )
-            _receive_until(
+            stop_started = _receive_until(
                 stop_first,
                 lambda item: item["type"] == "activity" and item["payload"]["state"] == "thinking",
+            )
+            stop_session = _bound_session_id(stop_started)
+            stop_old = client.portal.call(
+                app.state.conversation.registry.resolve_runtime_handle,
+                stop_ticket.id,
+                1,
             )
             _receive_until(
                 stop_second,
@@ -2182,11 +2223,6 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
             send_now.send_json({"type": "attach", "employeeId": send_now_ticket.id})
             send_now_initial = _receive_until(send_now, _is_ready)
             send_now_session = str(send_now_initial[0]["acpSessionId"])
-            send_now_old = client.portal.call(
-                app.state.conversation.registry.resolve_runtime_handle,
-                send_now_ticket.id,
-                1,
-            )
             send_now.send_json(
                 _prompt_action(
                     send_now_ticket.id,
@@ -2196,9 +2232,15 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
                     script="requested_cancel_unwind",
                 )
             )
-            _receive_until(
+            send_now_started = _receive_until(
                 send_now,
                 lambda item: item["type"] == "activity" and item["payload"]["state"] == "thinking",
+            )
+            send_now_session = _bound_session_id(send_now_started)
+            send_now_old = client.portal.call(
+                app.state.conversation.registry.resolve_runtime_handle,
+                send_now_ticket.id,
+                1,
             )
             send_now.send_json(
                 _prompt_action(
@@ -2589,7 +2631,7 @@ def test_stale_worker_permission_cannot_settle(
                 response = client.post(f"/api/test/run-step/{ticket.id}")
                 assert response.status_code == 200
                 audit = json.loads(audit_receiver.recv(65_536))
-                assert audit["sessionId"] == session_id
+                session_id = str(audit["sessionId"])
                 permission = _receive_until(
                     websocket, lambda item: item["type"] == "permission_request"
                 )[-1]
@@ -2697,7 +2739,7 @@ def test_worker_failure_settles_before_queued_successor(
                 )
                 worker.start()
                 first_audit = json.loads(audit_receiver.recv(65_536))
-                assert first_audit["sessionId"] == session_id
+                session_id = str(first_audit["sessionId"])
                 websocket.send_json(
                     _prompt_action(
                         ticket.id,
@@ -2884,6 +2926,11 @@ def test_real_websocket_replay_larger_than_live_queue_reaches_ready_then_deliver
             live.send_json({"type": "attach", "employeeId": ticket.id})
             initial = _receive_until(live, _is_ready)
             session_id = str(initial[0]["acpSessionId"])
+            live.send_json(
+                _prompt_action(ticket.id, session_id, "replay-warmup", "warm up")
+            )
+            warmup = _receive_until(live, _is_idle)
+            session_id = _bound_session_id(warmup)
             handle = client.portal.call(
                 app.state.conversation.registry.resolve_runtime_handle,
                 ticket.id,
@@ -3019,7 +3066,9 @@ def test_idle_reconnect_reuses_large_snapshot_without_reloading_or_resetting_exi
                         prompt_text,
                     )
                 )
-                _receive_until(history_browser, _is_idle)
+                history_turn = _receive_until(history_browser, _is_idle)
+                if index == 0:
+                    session_id = _bound_session_id(history_turn)
 
     app = _application(
         config,
