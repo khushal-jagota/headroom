@@ -3449,19 +3449,16 @@ select {
   transition: color var(--motion-fast) var(--motion-ease);
 }
 
+.ticket-blocker-link {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
 .ticket-blocker-row:hover .ticket-blocker-title {
   color: var(--text-strong);
-}
-
-.ticket-blocker-state {
-  font-size: var(--type-xs);
-  color: var(--accent-bright);
-  white-space: nowrap;
-}
-
-.ticket-blocker-row--cleared .ticket-blocker-title,
-.ticket-blocker-row--cleared .ticket-blocker-state {
-  color: var(--text-faintest);
 }
 
 /* The blank spacer where the user-note row would carry a stage mark — it keeps the

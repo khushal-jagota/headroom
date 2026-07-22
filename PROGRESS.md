@@ -4,6 +4,36 @@ Read this first after any context compaction. It is the build's memory — a sna
 things stand right now, not a history log. Older cycles collapse into the "Recently landed" ledger at
 bottom; the blow-by-blow is git's.
 
+## Current work cycle (2026-07-22): Coherent blocked-Ticket intake and workspace (`t_np7fjas6`)
+
+Both ordinary and Chief external-work Ticket creators now accept zero or more existing
+blocker Ticket ids through API and repeatable CLI options. Ticket insertion, every canonical
+`blocks` link, and all creation/link events share the creator's one transaction; missing or
+duplicate blockers return structured link errors with no writes, and a successful action
+wakes eligibility once after commit.
+
+The board exposes only the derived active-blocker fact. Workspace presentation keeps blocked
+Kickoff Tickets in Kickoff, then places blocked post-Kickoff Tickets in a synthetic quiet
+Blocked section above Kickoff without changing their real Stage or control state. Ticket
+detail now omits empty blocker context, shows only direct active incoming blockers, and removes
+links during Kickoff or later through the canonical delete route. Cleared and reverse rows are
+removed from Ticket detail and copied Ticket text; Ticket-to-Sprint-item link behavior remains
+unchanged.
+
+The settled focused gates are green: the 141-test backend Ticket/link/Sprint/creator suite,
+strict Mypy across 150 source files, focused Ruff, all frontend tests, zero Svelte diagnostics,
+the production frontend build, and both Chromium blocker scenarios. Independent review found
+indistinguishable blocker-removal accessible names. Exact browser RED proved no `aria-label`;
+dynamic `Remove blocker <title>` labels and assertions are GREEN, and narrow follow-up review
+reports `NO VIOLATIONS`. The first canonical `./verify` run had Ruff, Mypy, build, frontend,
+and 116 Playwright tests green, but unit tests failed only because this isolated worktree lacked
+the ignored locked `agent_backends` packages. `npm ci` from `agent_backends/package-lock.json`
+restored the harness; the unchanged complete 1,297-test unit suite then passed. The unchanged full
+canonical `./verify` then passed Ruff, strict Mypy across 150 source files, 1,297 unit tests,
+compile/CSS checks, zero Svelte diagnostics, the production build and frontend tests, and 116
+Playwright tests; final `VERIFY: PASS`. Next is verified branch commit and Implementation proposal;
+no merge, restart, or deploy.
+
 ## Current work cycle (2026-07-22): Quiet unmatched ACP tool updates (`t_7dr3czcm`)
 
 The browser reducer now ignores a structurally valid `tool_call_update` when its `toolCallId` is

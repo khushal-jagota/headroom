@@ -138,6 +138,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     project_id: str | None
     sprint_id: str | None
     sprint_item_id: str | None
+    blocked_by_ticket_ids: list[str]
 
 
 class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
@@ -164,6 +165,7 @@ class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     project_id: NotRequired[str | None]
     sprint_id: NotRequired[str | None]
     sprint_item_id: NotRequired[str | None]
+    blocked_by_ticket_ids: NotRequired[list[str]]
 
 
 class ProposeBody(TypedDict, total=False):  # POST /tickets/{id}/propose/{field}

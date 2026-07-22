@@ -127,6 +127,22 @@ therefore uses the smaller tag treatment.
 
 # Tickets, gates, and the resolution engine
 
+## D-blockers-derived-intake-and-presentation — Keep one relationship and derive its effects
+
+Both Ticket-creation paths accept `blocked_by_ticket_ids` and add those existing Ticket
+sources through the canonical `blocks` writer inside the creator's one transaction. This
+keeps endpoint, duplicate, and cycle validation plus link events in one engine; the action
+wakes eligibility only after that transaction returns successfully.
+
+Blocked is presentation and scheduling, never stored Ticket position. Kickoff wins first;
+after Kickoff, an active incoming blocker selects a synthetic quiet Workspace section while
+the card retains its real Stage. Ticket detail projects only active direct incoming rows and
+removes them through the existing link-delete route. Reverse and cleared rows remain
+available to internal link readers that need canonical relationship facts, but are not a
+Ticket-detail or copied-Ticket presentation.
+Blocker removal retains visible `Remove` text but uses the blocker title in its accessible
+name so each control is distinguishable.
+
 ## D-lifecycle-gates — Kickoff plus five worker stages are ordinary gated fields
 
 The ticket lifecycle is `needs_kickoff → needs_success → needs_approach → needs_plan →

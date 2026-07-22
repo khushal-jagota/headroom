@@ -12,7 +12,8 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
-from planner.core.contracts import Priority
+from planner.core import links as core_links
+from planner.core.contracts import LinkKind, Priority
 from planner.days.data import add_day_ticket
 from planner.projects.data import create_project
 from planner.sprints.data import create_item
@@ -60,6 +61,7 @@ _ENRICHMENT_CARD_KEYS = [
     "is_done",
     "is_dropped",
     "workspace_dot_state",
+    "blocked",
 ]
 
 
@@ -161,6 +163,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connectio
     assert card["is_done"] is False
     assert card["is_dropped"] is False
     assert card["workspace_dot_state"] == "needs_attention"
+    assert card["blocked"] is False
 
 
 def test_board_mixed_coding_probe_does_not_throw(
@@ -221,3 +224,32 @@ def test_board_card_uses_the_canonical_workspace_dot_result(tmp_db: Connection) 
     board = board_view(tmp_db, 20, day_id="day_2026-07-04")
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["workspace_dot_state"] == "active"
+
+
+def test_board_cards_expose_active_incoming_blocking_without_changing_real_stage(
+    tmp_db: Connection,
+) -> None:
+    blocker = _ticket(tmp_db, "Shared blocker", 1)
+    kickoff_dependent = _ticket(tmp_db, "Kickoff dependent", 2)
+    later_dependent = _ticket(tmp_db, "Later dependent", 3)
+    accept_proposal(
+        tmp_db,
+        later_dependent,
+        field="kickoff",
+        actor="human",
+        now=4,
+        next_ceiling="needs_success",
+        at_cap=AtCap.propose,
+    )
+    core_links.add_link(tmp_db, blocker, kickoff_dependent, LinkKind.blocks, 5)
+    core_links.add_link(tmp_db, blocker, later_dependent, LinkKind.blocks, 5)
+    for ticket_id in (kickoff_dependent, later_dependent):
+        add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 6)
+
+    board = board_view(tmp_db, 20, day_id="day_2026-07-04")
+    cards = {card["id"]: card for column in board["columns"] for card in column["cards"]}
+
+    assert cards[kickoff_dependent]["stage"] == "needs_kickoff"
+    assert cards[kickoff_dependent]["blocked"] is True
+    assert cards[later_dependent]["stage"] == "needs_success"
+    assert cards[later_dependent]["blocked"] is True

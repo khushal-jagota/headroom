@@ -38,22 +38,11 @@ export type BlockedByTicket = {
   ticket_id: string;
   title: string;
   stage: string;
-  active: boolean;
-  href: string;
-};
-
-export type BlocksTarget = {
-  target_id: string;
-  target_kind: "ticket" | "sprint_item";
-  title: string;
-  active: boolean;
   href: string;
 };
 
 export type BlockerSummary = {
-  blocked: boolean;
   blocked_by: BlockedByTicket[];
-  blocks: BlocksTarget[];
 };
 
 export type StageOwnershipMode = "worker" | "user" | "paired";

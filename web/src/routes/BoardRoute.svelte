@@ -104,6 +104,19 @@
     return index !== undefined && index >= 0 ? index : Number.MAX_SAFE_INTEGER;
   }
 
+  function workspaceStage(card: Record<string, any>): string {
+    if (card.stage === "needs_kickoff") return card.stage;
+    return card.blocked ? "blocked" : card.stage;
+  }
+
+  function workspaceStageSortValue(
+    workerTypes: WorkerTypesResponse | undefined,
+    stage: string,
+    card: Record<string, any>
+  ): number {
+    return stage === "blocked" ? -1 : stageSortValue(workerTypes, card);
+  }
+
   function isTerminalStage(
     manifestWorker: WorkerTypeManifest | undefined,
     stage: string
@@ -147,6 +160,7 @@
         groups.get(key)?.cards.push({
           ...card,
           stage: column.stage,
+          workspace_stage: workspaceStage({ ...card, stage: column.stage }),
           boardSequence: sequence
         });
         sequence += 1;
@@ -176,8 +190,8 @@
         .map(([workerType, cards]) => {
           const cardsByStage = new Map<string, Record<string, any>[]>();
           for (const card of cards) {
-            if (!cardsByStage.has(card.stage)) cardsByStage.set(card.stage, []);
-            cardsByStage.get(card.stage)?.push(card);
+            if (!cardsByStage.has(card.workspace_stage)) cardsByStage.set(card.workspace_stage, []);
+            cardsByStage.get(card.workspace_stage)?.push(card);
           }
 
           const manifestWorker = workerTypes?.worker_types.find(
@@ -187,13 +201,14 @@
           const stages = Array.from(cardsByStage.entries())
             .sort(([leftStage, leftCards], [rightStage, rightCards]) => {
               const manifestDelta =
-                stageSortValue(workerTypes, leftCards[0]) - stageSortValue(workerTypes, rightCards[0]);
+                workspaceStageSortValue(workerTypes, leftStage, leftCards[0]) -
+                workspaceStageSortValue(workerTypes, rightStage, rightCards[0]);
               return manifestDelta || leftStage.localeCompare(rightStage);
             })
             .map(([stage, stageCards]) => ({
               key: stage,
-              label: currentStageLabel(stageCards[0]),
-              collapsed: isTerminalStage(manifestWorker, stage),
+              label: stage === "blocked" ? "Blocked" : currentStageLabel(stageCards[0]),
+              collapsed: stage === "blocked" ? false : isTerminalStage(manifestWorker, stage),
               cards: stageCards.sort((left, right) => {
                 const activityDelta = activitySortValue(right) - activitySortValue(left);
                 return activityDelta || left.boardSequence - right.boardSequence;
@@ -280,7 +295,9 @@
                           <div class="board-workspace-stage-tickets">
                             {#each stage.cards as card}
                               {@const stageField = currentStageField(card)}
-                              {@const workspaceDotState = card.workspace_dot_state as WorkspaceDotState}
+                              {@const workspaceDotState = (card.workspace_stage === "blocked"
+                                ? "quiet"
+                                : card.workspace_dot_state) as WorkspaceDotState}
                               {@const workspacePresentation = workspaceDotPresentation[workspaceDotState]}
                               <button
                                 type="button"
@@ -299,7 +316,7 @@
                                   data-stage-field={stageField}
                                   data-stage-state={workspacePresentation.state}
                                   data-marker={workspacePresentation.marker || undefined}
-                                  data-workspace-dot-state={card.workspace_dot_state}
+                                  data-workspace-dot-state={workspaceDotState}
                                   aria-label={workspacePresentation.ariaLabel}
                                 />
                               </button>

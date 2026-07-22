@@ -224,6 +224,138 @@ def test_ticket_create_and_chief_create_wake_after_success_only(tmp_path: Path) 
         assert eligibility_wake.calls == 2
 
 
+@pytest.mark.parametrize(
+    ("path", "headers", "extra_body"),
+    [
+        ("/api/tickets", {}, {}),
+        (
+            "/api/chief/tickets/from-external-work",
+            _CHIEF,
+            _external_body("needs_success"),
+        ),
+    ],
+)
+def test_ticket_creators_atomically_add_all_blockers_and_reject_any_invalid_set(
+    tmp_path: Path,
+    path: str,
+    headers: dict[str, str],
+    extra_body: dict[str, str],
+) -> None:
+    app, db_path, _clock, eligibility_wake = _make_app(tmp_path)
+    first_blocker = _create_direct(db_path, title="First blocker")
+    second_blocker = _create_direct(db_path, title="Second blocker")
+
+    def counts() -> tuple[int, int, int]:
+        conn = connect(str(db_path))
+        try:
+            return tuple(
+                int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                for table in ("tickets", "links", "events")
+            )
+        finally:
+            conn.close()
+
+    base = {
+        "title": "Dependent",
+        "worker_type": "coding",
+        **extra_body,
+    }
+    with TestClient(app) as client:
+        before_missing = counts()
+        missing = client.post(
+            path,
+            json={**base, "title": "Missing rejected", "blocked_by_ticket_ids": ["t_missing"]},
+            headers=headers,
+        )
+        assert missing.status_code == 400
+        assert missing.json()["error"] == {
+            "code": "link_invalid",
+            "message": "from_id must be an existing ticket",
+            "detail": {"from_id": "t_missing"},
+        }
+        assert counts() == before_missing
+        assert eligibility_wake.calls == 0
+
+        before_duplicate = counts()
+        duplicate = client.post(
+            path,
+            json={
+                **base,
+                "title": "Duplicate rejected",
+                "blocked_by_ticket_ids": [first_blocker, first_blocker],
+            },
+            headers=headers,
+        )
+        assert duplicate.status_code == 400
+        assert duplicate.json()["error"]["code"] == "link_invalid"
+        assert duplicate.json()["error"]["detail"]["from_id"] == first_blocker
+        assert counts() == before_duplicate
+        assert eligibility_wake.calls == 0
+
+        created = client.post(
+            path,
+            json={
+                **base,
+                "blocked_by_ticket_ids": [first_blocker, second_blocker],
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200, created.text
+
+    dependent_id = created.json()["id"]
+    assert set(_link_rows(db_path)) == {
+        (first_blocker, dependent_id, "blocks"),
+        (second_blocker, dependent_id, "blocks"),
+    }
+    assert eligibility_wake.calls == 1
+    assert _event_kinds(db_path, first_blocker)[-1] == "link_added"
+    assert _event_kinds(db_path, second_blocker)[-1] == "link_added"
+
+
+def test_creator_blockers_all_must_clear_before_automatic_eligibility_resumes(
+    tmp_path: Path,
+) -> None:
+    app, db_path, _clock, _eligibility_wake = _make_app(
+        tmp_path, fake_now="2099-01-01T12:00:00+00:00"
+    )
+    first_blocker = _create_direct(db_path, title="First prerequisite")
+    second_blocker = _create_direct(db_path, title="Second prerequisite")
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/tickets",
+            json={
+                "title": "Dependent",
+                "worker_type": "coding",
+                "blocked_by_ticket_ids": [first_blocker, second_blocker],
+            },
+        )
+        assert created.status_code == 200, created.text
+        dependent = created.json()["id"]
+        conn = connect(str(db_path))
+        days_data.add_day_ticket(conn, "day_2099-01-01", dependent, 2)
+        conn.close()
+        accepted = client.post(
+            f"/api/tickets/{dependent}/accept/kickoff",
+            json={"next_ceiling": "needs_success", "at_cap": "propose"},
+        )
+        assert accepted.status_code == 200, accepted.text
+        assert not _is_eligible_today(db_path, dependent)
+
+        removed = client.delete(
+            "/api/links",
+            params={"from_id": first_blocker, "to_id": dependent, "kind": "blocks"},
+        )
+        assert removed.status_code == 200, removed.text
+        assert not _is_eligible_today(db_path, dependent)
+
+        completed = client.post(
+            f"/api/tickets/{second_blocker}/stage", json={"to_stage": "done"}
+        )
+        assert completed.status_code == 200, completed.text
+
+    assert _is_eligible_today(db_path, dependent)
+
+
 def test_chief_rejections_do_not_wake_or_change_canonical_records(
     tmp_path: Path,
 ) -> None:
