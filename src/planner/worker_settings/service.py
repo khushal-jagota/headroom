@@ -1,8 +1,8 @@
 """Managed Worker-settings persistence and composition.
 
 Settings live beside the configured database, not inside installed Python code.
-Missing files are bootstrapped from the immutable Worker registry and repo skill
-sources. Published writes are atomic and a hidden last-known-good copy is kept.
+Missing files are bootstrapped from the immutable Worker registry and packaged
+Panels skill sources. Published writes are atomic and a hidden last-known-good copy is kept.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import Any, Final
 import yaml
 
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
+from planner.skill_sources import panels_skill_root
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
@@ -89,10 +90,6 @@ def database_parent_from_connection(conn: sqlite3.Connection) -> Path | None:
     if not path:
         return None
     return Path(path).expanduser().parent
-
-
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
 
 
 def _settings_path(root: Path, worker_type: str) -> Path:
@@ -181,8 +178,8 @@ def _restore_last_known_good(root: Path, worker_type: str) -> bool:
     return True
 
 
-def _repo_skill_source(skill_name: str) -> Path:
-    return _repo_root() / "skills" / skill_name / SKILL_FILE_NAME
+def _panels_skill_source(skill_name: str) -> Path:
+    return panels_skill_root() / skill_name / SKILL_FILE_NAME
 
 
 def _bootstrap_settings_payload(definition: WorkerTypeDefinition) -> JsonDict:
@@ -259,7 +256,7 @@ def _ensure_bootstrapped(root: Path, definition: WorkerTypeDefinition) -> None:
         _atomic_replace_json(settings_path, _bootstrap_settings_payload(definition))
     skill_path = _skill_path(root, worker_type)
     if not skill_path.exists():
-        source = _repo_skill_source(definition.worker_profile.specialist_skill)
+        source = _panels_skill_source(definition.worker_profile.specialist_skill)
         if not source.is_file():
             raise FileNotFoundError(f"specialist skill source not found: {source}")
         _atomic_replace_text(skill_path, source.read_text(encoding="utf-8"))

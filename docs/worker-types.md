@@ -272,7 +272,8 @@ installed `panels-worker` role; the role then finds this Ticket's specialist. A 
 specialist must therefore be known to Worker type configuration and available through
 the backend skill links.
 
-_Code paths:_ `skills/panels-worker/SKILL.md`, the specialist skills under `skills/`,
+_Code paths:_ `src/planner/skills/panels-worker/SKILL.md`, the specialist skills under
+`src/planner/skills/`,
 `src/planner/tickets/api.py`, `src/planner/cli/main.py`, and
 `src/planner/conversation/hermes_backend_configuration.py`.
 
@@ -280,8 +281,8 @@ _Code paths:_ `skills/panels-worker/SKILL.md`, the specialist skills under `skil
 
 One new Worker type needs one definition and one production registration path:
 
-1. Write the specialist `SKILL.md` under `skills/<name>/`, with guidance for each working
-   Stage.
+1. Write the specialist `SKILL.md` under `src/planner/skills/<name>/`, with guidance for
+   each working Stage.
 2. Add one definition module under `src/planner/worker_types/`. Construct an immutable
    `WorkerTypeDefinition` with its ordered Stages, fields, worker profile, starting
    Employee backend/model/reasoning values, and reconciliation support. Give every

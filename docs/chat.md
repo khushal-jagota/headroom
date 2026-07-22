@@ -162,11 +162,17 @@ conversation receives a full current reset instead of being rejected.
 
 ## Employee role skills
 
-Panels keeps one canonical copy of its skills under `skills/`. The repository exposes
-that directory at the backends' native project locations: `.agents/skills` for Codex
-and `.claude/skills` for Claude Code. Hermes startup exposes the same source directories
-under the configured planner Hermes home. These are links, not copied skill files, so
-every installed Panels skill comes from the same source.
+Panels keeps one canonical copy of its skills under `src/planner/skills/`. The repository
+exposes that directory at the backends' native project locations: `.agents/skills` for Codex
+and `.claude/skills` for Claude Code. Hermes startup links shared skills from the same source
+under the configured planner Hermes home. A Worker's editable managed specialist is deliberately
+materialized there as a runtime file instead; its managed settings remain authoritative.
+
+The base `panels` skill is the general guide to the Panels work model, CLI, and workflows.
+`panels-update-chief-of-staff` is separate: Codex and Claude use it to prepare an update,
+ask the user to approve the exact message, and send that message through Hermes to the Chief
+of Staff. Their user-level native skill locations link that bridge back to the same canonical
+Panels source instead of keeping another copy.
 
 A newly created ACP conversation adds its employee role to the first real prompt sent
 through that session. A Ticket adds `panels-worker`; the Chief adds

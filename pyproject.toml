@@ -24,7 +24,12 @@ panels = "planner.cli.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-planner = ["py.typed"]
+planner = [
+  "py.typed",
+  "skills/*/SKILL.md",
+  "skills/*/agents/*.yaml",
+  "skills/*/references/*.md",
+]
 
 [tool.ruff]
 line-length = 100

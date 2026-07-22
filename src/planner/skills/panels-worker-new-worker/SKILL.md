@@ -89,7 +89,7 @@ Point the reviewer at both files and note briefly how they realize the thinking.
 
 The mechanical recipe for adding a worker to the running system:
 
-1. Place the `SKILL.md` under `skills/<name>/`.
+1. Place the `SKILL.md` under `src/planner/skills/<name>/`.
 2. Add the `WorkerTypeDefinition` module under `src/planner/worker_types/`.
 3. Register it once in `src/planner/worker_types/configuration.py`: add its skill to the
    known-skills catalog and its definition to the production configuration tuple.

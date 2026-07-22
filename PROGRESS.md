@@ -18,6 +18,38 @@ work. The orphaned application process was stopped after explicit owner approval
 the normal `panels serve` supervisor. Its application child is healthy on port 8767, the control
 socket exists again, and new ACP children now use the full-access reload invariant.
 
+## Current work cycle (2026-07-22): Panels-owned canonical skill source (`t_hugw8uj1`)
+
+The complete canonical tree now lives under `src/planner/skills/`; the repository base skill remains
+`panels`, and the separate user-level update bridge is imported as
+`panels-update-chief-of-staff`. One resolver now feeds Hermes provisioning and managed Worker
+bootstrap, package metadata includes every skill asset, internal paths and live docs use the new
+source, and managed Worker specialist edits still materialize runtime copies. Independent plan
+review reported no violations. The focused 30-test skill/settings suite and 15 additional
+environment/Hermes checks pass; `git diff --check` is clean.
+
+Both project-native roots resolve the canonical tree, and the package/native-root assertion passes.
+Independent implementation review accepted the indirect protected Codex link and found four
+issues: stale CLAUDE guidance, an over-broad Hermes-link statement, stale memory, and the protected
+user-level bridge migration. The repository findings are corrected. The owner then repeated the
+instruction to propose Implementation after the protected-write blocker was surfaced, so the live
+user-level swap is now an explicit Closeout provisioning action rather than a reason to withhold the
+reviewable repository package.
+
+The settled tree's one canonical `./verify` passed Ruff, strict Mypy over 155 source files, all
+1,383 unit tests, compile/CSS checks, zero Svelte diagnostics, the production build and complete
+frontend suite, and all 119 Playwright tests; final `VERIFY: PASS`. Next: propose Implementation
+with the user-level `panels` copy/link replacement named as the remaining Closeout action.
+
+Implementation is approved and Closeout resumed in the same durable generation-1 Codex
+conversation after a Panels restart. Both user-level native roots now expose
+`panels-update-chief-of-staff` as symlinks to the canonical package, and the old discoverable
+`panels` bridge paths are absent. Temporary recoverable backups remain under `/private/tmp` until
+the repository integration commit is verified; then they can be removed because the canonical
+package retains their content. Next: stage and commit only ticket-owned paths, verify the exact
+commit and live links, remove the temporary backups, and propose Closeout. Existing unrelated
+nested-worktree changes remain preserved.
+
 ## Current work cycle (2026-07-22): Workers-page launch-default controls (`t_f0f8pp6y`)
 
 The existing managed Worker/Chief launch-default authority is now exposed on the Workers page.

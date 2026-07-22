@@ -155,8 +155,8 @@ def test_exploration_specialist_is_known_and_definition_is_public() -> None:
 
 def test_exploration_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
-    worker = (root / "skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
-    chief = (root / "skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
+    worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
+    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
 
     assert "`panels-worker-exploration` — exploration tickets." in worker
     assert (

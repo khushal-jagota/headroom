@@ -3259,3 +3259,34 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Use backend-native unrestricted process defaults where they exist: Codex starts its ACP adapter in
   `agent-full-access`; Hermes keeps `HERMES_YOLO_MODE=1`. The explicit post-load enforcement remains
   the cross-provider invariant and protects child replacement and recovery paths.
+# 2026-07-22 — t_hugw8uj1 canonical Panels skills
+
+- Use `src/planner/skills/` as the one Panels-owned source. Keep the existing repository `panels`
+  guide named `panels`; only the separate user-level update bridge becomes
+  `panels-update-chief-of-staff`.
+- Centralize source resolution and package the complete skill assets so checkout and installed
+  execution cannot diverge. Project Codex/Claude links and Hermes shared-skill provisioning resolve
+  that same tree; editable managed Worker specialist skills continue to materialize from managed
+  settings.
+- Keep verification proportional: update existing path/discovery coverage and add only a missing
+  narrow regression. Reserve one canonical `./verify` for the settled tree after independent diff
+  review.
+- Preserve the current dirty documentation and backend work. Delegate implementation only across
+  clean ticket-owned source, skill, link, packaging, and test paths; integrate overlapping docs and
+  memory files serially.
+- Accept the protected Codex project compatibility chain `.agents/skills -> skills ->
+  src/planner/skills`: it resolves one canonical source and contains no duplicate content. Claude's
+  project link resolves the package tree directly.
+- Do not defer the user-level bridge rename to Closeout. Independent review correctly found it is
+  part of the accepted implementation outcome, because leaving `~/.agents/skills/panels` and its
+  Claude link preserves both the naming collision and a copied second source. Final verification
+  and Implementation proposal wait for that protected live-state migration.
+- Live owner direction supersedes the preceding staging decision: after the protected migration
+  blocker was reported repeatedly, the owner again instructed the worker to propose Implementation.
+  Treat the verified repository package as the Implementation review boundary and move only the
+  protected user-level link/copy replacement into Closeout provisioning. Disclose it in the
+  proposal; Closeout must still perform and verify it before the Ticket can be done.
+- The resumed Closeout has unrestricted filesystem access, so perform the previously protected
+  user-level migration now. Move the old Codex directory and Claude symlink to explicit temporary
+  backups, create direct canonical symlinks under `panels-update-chief-of-staff`, verify the old
+  discovery names are absent, then remove the backups only after repository integration is fixed.
