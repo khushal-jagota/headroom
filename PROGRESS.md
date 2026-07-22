@@ -35,9 +35,11 @@ prior corrective findings and reports no unresolved Implementation blocker. The 
 Closeout gate first passed Ruff, strict Mypy, 1,330 unit tests, and every frontend gate, then exposed
 that the ACP proof's internal `asyncio.run()` collided with Playwright's already-running event loop
 only in the full E2E suite. The proof now runs its real ACP child on an isolated thread; the exact
-browser-then-ACP regression, Ruff, and diff checks pass. One canonical rerun on this settled tree,
-branch integration, final quiesced backup/import, live start, health checks, push/PR, and
-Ticket-worktree cleanup remain Closeout work.
+browser-then-ACP regression, Ruff, and diff checks pass. The one canonical rerun on the settled
+prospective staging result passes Ruff, strict Mypy across 156 source files, all 1,330 unit tests,
+all frontend checks, and all 120 E2E tests; final `VERIFY: PASS`. Staging remains unchanged at the
+accepted base. Next: operator stop, final quiesced backup/import, separated-live start and health
+checks, staging advance/push/PR, and Ticket-worktree cleanup.
 
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 
