@@ -141,7 +141,9 @@ preserves main’s Chief-launch v31 migration and adds backend errors as v32, wh
 Workspace contracts. Independent merge review reported NO VIOLATIONS. The prospective merged
 tree’s canonical `./verify` passed Ruff, strict mypy, the unit suite, build and frontend checks,
 and all 118 E2E tests, ending with VERIFY: PASS. No recovery control or timeout policy changed.
-Next: fast-forward main and propose Closeout.
+Main fast-forwarded from 770c3f9 to 8594f2b. The four pre-existing dirty nested-worktree paths and
+their exact subproject diffs were preserved byte-for-byte. No restart or deploy was performed.
+Next: propose Closeout.
 
 ## Current work cycle (2026-07-22): Atomic ACP session-load replay (t_k431pv7q)
 
