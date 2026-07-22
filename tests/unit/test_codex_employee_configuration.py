@@ -596,7 +596,10 @@ def test_codex_launch_values_are_not_reapplied_after_first_binding(
         replacement_operations = operations[
             operations.index("before_replacement_load") + 1 :
         ]
-        assert any(item.startswith("load_session:") for item in replacement_operations)
+        assert any(
+            item.startswith("capture_load_session:")
+            for item in replacement_operations
+        )
         assert not any(
             item.startswith("set_config_option:") for item in replacement_operations
         )
