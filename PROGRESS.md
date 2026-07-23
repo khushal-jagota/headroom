@@ -6,8 +6,10 @@ The separate `panels-live`/`panels-deploy` design made the one-Mac cutover depen
 state, backend credentials, root LaunchDaemons, and repeated authorization. That did not serve the
 requested outcome. The permanent Mac path is now a user runner plus user LaunchAgent under the
 signed-in operator, using the existing Hermes home and user-owned releases, state, and config.
-Canonical verification passes on the simplified tree. Next: prove the user-owned release and
-runner, perform one bundled cleanup/cutover, and exercise rollback.
+The user-owned service and runner are live; exact-SHA restart, crash recovery, and installed
+candidate-failure rollback are proven. User service controls now load and unload the LaunchAgent
+instead of treating a KeepAlive signal as a stop. Next: run the settled verification and propose
+Closeout.
 
 ## Current work cycle (2026-07-23): Resolve packaged assets from the release root
 

@@ -10,6 +10,10 @@ and code rollback. It does not require separate macOS application and deployment
 runner and LaunchAgent use the signed-in operator's existing Hermes/provider setup and user-owned
 application root; separate identities remain an optional future server hardening step.
 
+The user service control stops the foreground supervisor gracefully before unloading the
+LaunchAgent, then bootstraps it again for a restart. A forced `launchctl kickstart -k` can orphan
+the supervisor's application child, while booting out a KeepAlive job alone is not a truthful stop.
+
 ## 2026-07-23 — The validated launcher supplies the packaged application root
 
 Checkout code can derive assets from `src/planner`, but an installed wheel cannot. The release

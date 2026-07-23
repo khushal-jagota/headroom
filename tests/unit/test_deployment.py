@@ -78,16 +78,59 @@ class FakeHealth:
 
 def test_launchctl_restart_accepts_an_explicit_user_domain(monkeypatch: pytest.MonkeyPatch) -> None:
     commands: list[list[str]] = []
+    print_calls = 0
 
-    def run(command: list[str], *, check: bool, shell: bool) -> None:
-        assert check is True
+    def run(
+        command: list[str], *, check: bool, shell: bool, **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal print_calls
         assert shell is False
         commands.append(command)
+        if command[1] == "print":
+            print_calls += 1
+            stdout = "    pid = 123\n" if print_calls == 1 else "    state = waiting\n"
+            return subprocess.CompletedProcess(command, 0, stdout, "")
+        return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(time, "sleep", lambda _: None)
     SubprocessServiceController("launchctl", "gui/501/com.panels.live").restart()
 
-    assert commands == [["/bin/launchctl", "kickstart", "-k", "gui/501/com.panels.live"]]
+    assert commands == [
+        ["/bin/launchctl", "kill", "SIGTERM", "gui/501/com.panels.live"],
+        ["/bin/launchctl", "print", "gui/501/com.panels.live"],
+        ["/bin/launchctl", "print", "gui/501/com.panels.live"],
+        ["/bin/launchctl", "bootout", "gui/501/com.panels.live"],
+        [
+            "/bin/launchctl",
+            "bootstrap",
+            "gui/501",
+            str(Path.home() / "Library/LaunchAgents/com.panels.live.plist"),
+        ],
+    ]
+
+
+def test_launchctl_restart_does_not_bootout_a_still_running_supervisor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+    clock = iter((0.0, 11.0))
+
+    def run(
+        command: list[str], *, check: bool, shell: bool, **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        if command[1] == "print":
+            return subprocess.CompletedProcess(command, 0, "\tpid = 123\n", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(time, "monotonic", lambda: next(clock))
+
+    with pytest.raises(DeploymentError, match="did not stop cleanly"):
+        SubprocessServiceController("launchctl", "gui/501/com.panels.live").restart()
+
+    assert [command[1] for command in commands] == ["kill", "print"]
 
 
 def test_deploy_backups_prior_manifest_before_switch_and_records_success(tmp_path: Path) -> None:
