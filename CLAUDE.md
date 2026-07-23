@@ -77,6 +77,10 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   resulting revision, advance `staging` when it is green, push that exact revision to
   `origin/staging`, and verify the remote ref matches before removing the Ticket's
   services, local runtime state, worktree, and branch.
+- Always keep a single rolling `staging` → `main` pull request open. After the
+  `origin/staging` push, check whether one already exists; if not, create one. It
+  updates on its own as later Closeouts advance `staging`, so there is nothing to do
+  when one is already open.
 
 ## Conduct
 - Keep `./verify` green; never advance over failing tests.
