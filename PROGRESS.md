@@ -1,5 +1,44 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Simplify fork-session deferral
+
+After three payload-buffer corrections exposed new lifecycle edges, the repair changed approach.
+Fork-session updates now remain in the one bounded raw-order slot queue; a deferred slot pauses the
+single consumer until `capture_load_session` attaches its exact private sink, then the same consumer
+normalizes and delivers every item exactly once. There is no side buffer, extra delivery task, or
+route-completion future. The full ACP child/composition and deployment-asset focused suites pass,
+along with Ruff, strict Mypy, and diff checks. Next: independent review, canonical verification,
+then update verified staging.
+
+## Current work cycle (2026-07-23): Make held replay delivery ordered and exception-safe
+
+Held private payload routing now enters the single ordered consumer through a completion
+barrier, so a blocked held sink cannot overlap or reorder with newer private-epoch slots.
+Normalization remains at private delivery exactly once. `capture_load_session` now aborts its
+epoch for routing, normalization, load, or finish failures. The focused ACP child suite passes;
+Ruff, strict Mypy on the two changed source files, and `git diff --check` pass. Full `./verify`
+was not run by instruction. Next: amend `ccfefe14` and report.
+
+## Current work cycle (2026-07-23): Correct ordered-ingress capacity and normalization
+
+Corrected commit `70df2c65` in place. Deferred payloads now count with live slots against the
+same ingress maximum; held private payloads use the existing normalizer exactly once when routed;
+and the composition capacity regression injects only hermetic runtime definitions while proving
+the production default and explicit capacity 3 override separately. Direct ordered-ingress
+boundedness, ordering, exact-session routing, and normalization regressions pass. Focused
+conversation tests, Ruff, strict Mypy, and `git diff --check` pass. Canonical `./verify` was not
+run per instruction. Next: amend the correction commit and report.
+
+## Current work cycle (2026-07-23): Closeout integration repair for t_2wcx0a55
+
+Repaired the three clean-runner failures reported by GitHub Verify. The composition capacity
+test now uses the existing scripted runtime-definition seam, the ACP child now defers exact fork
+session updates until private capture attaches and drains held payloads in order, and both GitHub
+workflows install Playwright Chromium with the Ticket virtualenv before verification. The forced
+post-fork scheduling regression, full focused conversation/composition/deployment asset suites,
+Ruff, strict Mypy on changed source files, and diff checks pass. Canonical `./verify` was not run
+as instructed. Next: commit and report the root causes and focused evidence.
+
 ## Current work cycle (2026-07-23): Real release proof and verifier repair
 
 A real host-native release for `51c0d256467301304d1966b94018d8747567ef95` built successfully

@@ -45,8 +45,20 @@ def test_github_verify_provisions_fresh_runner_before_verify() -> None:
     assert ".venv/bin/python -m pip install --editable ." in workflow
     assert "npm ci --prefix web" in workflow
     assert "npm ci --prefix agent_backends" in workflow
+    assert ".venv/bin/python -m playwright install --with-deps chromium" in workflow
     assert workflow.index("setup-python") < workflow.index("./verify")
     assert workflow.index("npm ci --prefix agent_backends") < workflow.index("./verify")
+    assert workflow.index(
+        ".venv/bin/python -m playwright install --with-deps chromium"
+    ) < workflow.index("./verify")
+
+
+def test_github_deploy_provisions_playwright_before_release_gate() -> None:
+    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
+    assert ".venv/bin/python -m playwright install --with-deps chromium" in workflow
+    assert workflow.index(
+        ".venv/bin/python -m playwright install --with-deps chromium"
+    ) < workflow.index("./verify")
 
 
 def test_deploy_workflow_preserves_one_runner_and_exact_release_path() -> None:

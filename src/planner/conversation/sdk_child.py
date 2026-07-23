@@ -526,6 +526,7 @@ class SdkAcpEmployeeChild(AcpEmployeeChild):
         )
         if not response.session_id.strip():
             raise AcpChildError("session/fork returned an empty session ID")
+        self._ordered_ingress.defer_session_updates(response.session_id)
         return response
 
     async def prompt(self, request: PromptRequest) -> PromptResponse:
@@ -558,6 +559,9 @@ class SdkAcpEmployeeChild(AcpEmployeeChild):
                 private_session_id=request.session_id,
             )
             try:
+                self._ordered_ingress.route_deferred_session_updates(
+                    request.session_id, private_ingress
+                )
                 response = await self._connection.load_session(
                     cwd=request.cwd,
                     session_id=request.session_id,
@@ -565,10 +569,10 @@ class SdkAcpEmployeeChild(AcpEmployeeChild):
                     additional_directories=request.additional_directories,
                     **(request.field_meta or {}),
                 )
+                await self._ordered_ingress.finish_response_consumption_epoch(epoch)
             except BaseException:
                 self._ordered_ingress.abort_response_consumption_epoch(epoch)
                 raise
-            await self._ordered_ingress.finish_response_consumption_epoch(epoch)
             return response
 
     async def cancel(self, notification: CancelNotification) -> None:

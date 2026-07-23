@@ -27,6 +27,7 @@ jobs:
           .venv/bin/python -m pip install --editable .
           npm ci --prefix web
           npm ci --prefix agent_backends
+          .venv/bin/python -m playwright install --with-deps chromium
       - name: Release gate
         run: ./verify
       - name: Build and validate host-native release

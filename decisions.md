@@ -3,6 +3,14 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-23 — Keep deferred fork updates in the canonical bounded ingress queue
+
+Post-fork updates for the candidate session stay as deferred slots in the existing bounded ordered
+queue until private load capture attaches. This deliberately permits brief head-of-line blocking:
+it preserves one ordering, capacity, normalization, failure, and cleanup mechanism instead of
+creating a second payload store and delivery lifecycle. If private load never attaches, the normal
+ingress limit fails the child closed.
+
 ## D-t_2wcx0a55-review-correction — Build and validate on the host runner
 
 The release-build workflow runs on the production-labelled runner after installing its pinned
@@ -3465,7 +3473,28 @@ not guarantee notification/request wire ordering across the prior fork response.
   custom ownership and launch defaults and leaving general missing-stage validation strict.
 - Drafting changes packaged source and compatibility seams only. Publishing the packaged specialist
   into managed settings, final verification, and restart-backed activation belong to Closeout.
+# 2026-07-23 — Final ordered-ingress correction
+
+- Keep deferred private payloads in a consumer-owned pending route batch with one completion
+  future. This preserves serial sink delivery and lets `capture_load_session` wait for the held
+  prefix without allowing newer private slots to pass it.
+- Treat route normalization or sink failure as the existing generation-fatal ingress failure;
+  retain the accepted batch's fatal signal while ensuring the SDK child aborts and removes its
+  response epoch on every failure path.
+
 # 2026-07-23 — Panels Closeout pushes staging
+
+# 2026-07-23 — t_2wcx0a55 closeout integration repair
+
+- Keep the composition capacity regression hermetic by injecting the existing scripted employee
+  runtime definitions through `ConversationTestOptions`; do not install or invoke Hermes in CI.
+- Treat a fork response's exact session id as temporarily private before post-fork notifications
+  can race ahead of `session/load`. Ordered ingress consumes those notifications into a holding
+  buffer, then `capture_load_session` drains them to the private sink before the load request.
+  This preserves raw-order and exact-session assertions without routing candidate updates through
+  ordinary ingress or blocking the fork response.
+- Provision Chromium through the repository `.venv` in both Verify and Deploy workflows, and test
+  both asset commands occur before their `./verify` gates.
 
 - Panels Closeout must push the exact verified `staging` revision to `origin/staging` and verify the
   remote ref before cleanup.
