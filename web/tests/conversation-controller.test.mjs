@@ -236,6 +236,43 @@ try {
   assert.equal(empty.controller.snapshot().connection.state, "ready");
   empty.controller.dispose();
 
+  // A queued prompt lives only in the queue tray until it is actually sent: it must not echo into
+  // the transcript at submit time, and the server's later human echo is what places it there.
+  const queued = controllerHarness(subject);
+  queued.controller.attach();
+  queued.transports[0].callbacks.onOpen();
+  queued.transports[0].callbacks.onEnvelope(connectionEnvelope(1, "reset"));
+  queued.transports[0].callbacks.onEnvelope(connectionEnvelope(2, "ready"));
+  queued.transports[0].callbacks.onEnvelope({
+    ...connectionEnvelope(3, "ready"),
+    type: "activity",
+    payload: { state: "working", detail: "Working", sequence: 3 },
+  });
+  assert.equal(queued.controller.snapshot().activity?.state, "working", "an active turn is required to queue");
+  const queuedResult = queued.controller.prompt([{ type: "text", text: "Queued line" }], "queue");
+  assert.equal(queuedResult.ok, true);
+  const queuedSend = queued.transports[0].sent.filter((action) => action.type === "prompt").at(-1);
+  assert.equal(queuedSend.deliveryChoice, "queue", "the queue choice reaches transport");
+  assert.equal(
+    queued.controller.snapshot().session.messages.some((message) => message.id === queuedResult.clientMessageId),
+    false,
+    "a queued prompt does not echo into the transcript at submit time",
+  );
+  queued.transports[0].callbacks.onEnvelope({
+    ...connectionEnvelope(4, "ready"),
+    type: "human_echo",
+    payload: {
+      clientMessageId: queuedResult.clientMessageId,
+      prompt: { sessionId: "session-deferred", prompt: [{ type: "text", text: "Queued line" }] },
+    },
+  });
+  assert.equal(
+    queued.controller.snapshot().session.messages.some((message) => message.id === queuedResult.clientMessageId),
+    true,
+    "the server human echo places the sent prompt into the transcript",
+  );
+  queued.controller.dispose();
+
   const reconnecting = controllerHarness(subject);
   reconnecting.controller.attach();
   reconnecting.transports[0].callbacks.onOpen();

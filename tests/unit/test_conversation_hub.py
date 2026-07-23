@@ -604,6 +604,63 @@ def test_empty_conversation_survives_restart_and_first_prompt_activates_it(
     asyncio.run(exercise())
 
 
+def test_queue_choice_withholds_human_echo_at_submit(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        registry = _ActivatingRegistry(record, handle, repository)
+        broker = _DeliveryBroker()
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=registry,
+            broker=broker,
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-queue")
+        await browser.queue.get()  # reset
+        await browser.queue.get()  # ready
+
+        # A normal prompt activates the stream and echoes into the transcript at submit; a queued
+        # prompt that follows is delivered but must NOT echo until it is actually dequeued and sent.
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="normal-1",
+                prompt=[TextContentBlock(type="text", text="hello")],
+                delivery_choice="normal",
+            ),
+        )
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="queued-1",
+                prompt=[TextContentBlock(type="text", text="later")],
+                delivery_choice="queue",
+            ),
+        )
+
+        envelopes = [
+            json.loads(browser.queue.get_nowait())
+            for _ in range(browser.queue.qsize())
+        ]
+        echoes = [
+            item["payload"]["clientMessageId"]
+            for item in envelopes
+            if item["type"] == "human_echo"
+        ]
+        assert echoes == ["normal-1"]
+        assert [
+            (delivery[1], delivery[2]) for delivery in broker.deliveries
+        ] == [("normal-1", "normal"), ("queued-1", "queue")]
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
 def test_stale_browser_generation_receives_current_empty_reset(tmp_path: Path) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
@@ -1739,18 +1796,19 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
         assert not waiting_attach.done()
 
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(8)]
+            # A still-queued prompt is not echoed into the transcript on a compaction replay; it
+            # resurfaces in the queue snapshot alone and echoes only when it is dequeued and sent.
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(7)]
             assert [item["type"] for item in envelopes] == [
                 "connection",
                 "acp_session_update",
                 "acp_session_update",
                 "acp_session_update",
                 "connection",
-                "human_echo",
                 "queue_snapshot",
                 "acp_session_update",
             ]
-            assert [item["sequence"] for item in envelopes] == list(range(1, 9))
+            assert [item["sequence"] for item in envelopes] == list(range(1, 8))
             assert all(item["acpSessionId"] == "session-fork" for item in envelopes)
             assert [
                 envelopes[0]["payload"]["state"],
@@ -1758,15 +1816,14 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
             ] == ["reset", "ready"]
             assert [
                 envelopes[index]["payload"]["update"]["content"]["text"]
-                for index in (1, 2, 3, 7)
+                for index in (1, 2, 3, 6)
             ] == [
                 "durable summary",
                 "source candidate",
                 "fresh candidate",
                 "later N+1",
             ]
-            assert envelopes[5]["payload"]["prompt"]["sessionId"] == "session-fork"
-            assert envelopes[6]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[5]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
         assert not hub._compaction_transitions["t_hub"].quarantined_ingress  # noqa: SLF001
         await hub.complete_compaction_transition(token, replacement_handle)
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
@@ -1932,16 +1989,17 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
         assert attached.connection_id == "browser-after-recovery"
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(6)]
+            # The still-queued prompt is not echoed on recovery; only the send-now successor, which
+            # is being started now, echoes. The queued prompt resurfaces in the queue snapshot only.
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(5)]
             assert [item["type"] for item in envelopes] == [
                 "connection",
                 "acp_session_update",
                 "connection",
                 "human_echo",
-                "human_echo",
                 "queue_snapshot",
             ]
-            assert [item["sequence"] for item in envelopes] == list(range(5, 11))
+            assert [item["sequence"] for item in envelopes] == list(range(5, 10))
             assert [
                 envelopes[0]["payload"]["state"],
                 envelopes[2]["payload"]["state"],
@@ -1950,18 +2008,14 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
             assert envelopes[1]["payload"]["update"]["content"]["text"] == (
                 "durable replay" * 3
             )
-            assert envelopes[3]["payload"]["clientMessageId"] == "queued-1"
-            assert envelopes[3]["payload"]["prompt"] == queued.prompt.model_dump(
-                mode="json", by_alias=True, exclude_none=True
-            )
-            assert envelopes[4]["payload"]["clientMessageId"] == ("send-now-successor")
-            assert envelopes[4]["payload"]["prompt"] == (
+            assert envelopes[3]["payload"]["clientMessageId"] == ("send-now-successor")
+            assert envelopes[3]["payload"]["prompt"] == (
                 successor_echo.prompt.model_dump(mode="json", by_alias=True, exclude_none=True)
             )
-            assert envelopes[5]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[4]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
             assert all(
                 item["clientMessageId"] != "send-now-successor"
-                for item in envelopes[5]["payload"]["items"]
+                for item in envelopes[4]["payload"]["items"]
             )
 
         assert first.queue.empty()

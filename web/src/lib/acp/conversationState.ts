@@ -647,8 +647,9 @@ export function reduceConversationState(
       return withMessageTimeline(next, transition.clientMessageId, existed);
     }
     case 'local_delivery_rejected': {
+      // A queued prompt has no optimistic transcript echo, so surface its local failure from the
+      // receipt alone; an immediately-delivered prompt also marks its optimistic human rejected.
       const optimistic = previous.optimisticHumans[transition.clientMessageId];
-      if (!optimistic) return previous;
       const receipt: TurnDeliveryReceipt = {
         clientMessageId: transition.clientMessageId,
         choice: transition.choice,
@@ -659,14 +660,16 @@ export function reduceConversationState(
         ...previous,
         receipts: { ...previous.receipts, [transition.clientMessageId]: receipt },
         latestReceiptClientMessageId: transition.clientMessageId,
-        optimisticHumans: {
-          ...previous.optimisticHumans,
-          [transition.clientMessageId]: {
-            ...optimistic,
-            deliveryState: 'rejected',
-            reason: transition.reason,
-          },
-        },
+        optimisticHumans: optimistic
+          ? {
+              ...previous.optimisticHumans,
+              [transition.clientMessageId]: {
+                ...optimistic,
+                deliveryState: 'rejected',
+                reason: transition.reason,
+              },
+            }
+          : previous.optimisticHumans,
         timeline: appendTimelineOnce(previous, {
           kind: 'delivery',
           deliveryClientMessageId: transition.clientMessageId,
