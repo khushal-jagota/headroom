@@ -3,6 +3,12 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-23 — GitHub variables enter deployment only through an explicit workflow map
+
+The Mac host paths and service adapter remain operator-owned repository variables. The workflow
+maps those names into its environment explicitly because GitHub does not automatically expose the
+`vars` context as shell variables. No path or host identity is compiled into application code.
+
 ## 2026-07-23 — Keep deferred fork updates in the canonical bounded ingress queue
 
 Post-fork updates for the candidate session stay as deferred slots in the existing bounded ordered

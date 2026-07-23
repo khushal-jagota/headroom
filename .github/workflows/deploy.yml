@@ -5,6 +5,15 @@ on:
 concurrency:
   group: production-deploy
   cancel-in-progress: false
+env:
+  PANELS_RELEASE_ROOT: ${{ vars.PANELS_RELEASE_ROOT }}
+  PANELS_CURRENT_POINTER: ${{ vars.PANELS_CURRENT_POINTER }}
+  PANELS_BACKUP_SOURCE_DB: ${{ vars.PANELS_BACKUP_SOURCE_DB }}
+  PANELS_BACKUP_DIRECTORY: ${{ vars.PANELS_BACKUP_DIRECTORY }}
+  PANELS_DEPLOYMENT_RECORDS: ${{ vars.PANELS_DEPLOYMENT_RECORDS }}
+  PANELS_HEALTH_URL: ${{ vars.PANELS_HEALTH_URL }}
+  PANELS_SERVICE_MANAGER: ${{ vars.PANELS_SERVICE_MANAGER }}
+  PANELS_SERVICE_NAME: ${{ vars.PANELS_SERVICE_NAME }}
 jobs:
   deploy:
     runs-on: [self-hosted, production]

@@ -73,6 +73,21 @@ def test_deploy_workflow_preserves_one_runner_and_exact_release_path() -> None:
     assert ".build-venv" not in workflow
 
 
+def test_deploy_workflow_maps_operator_repository_variables_into_the_job() -> None:
+    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
+    for name in (
+        "PANELS_RELEASE_ROOT",
+        "PANELS_CURRENT_POINTER",
+        "PANELS_BACKUP_SOURCE_DB",
+        "PANELS_BACKUP_DIRECTORY",
+        "PANELS_DEPLOYMENT_RECORDS",
+        "PANELS_HEALTH_URL",
+        "PANELS_SERVICE_MANAGER",
+        "PANELS_SERVICE_NAME",
+    ):
+        assert f"{name}: ${{{{ vars.{name} }}}}" in workflow
+
+
 def test_service_control_uses_real_manager_verbs_and_backup_uses_shared_identity_cli() -> None:
     control = (ASSET_ROOT / "service-control.sh").read_text(encoding="utf-8")
     assert "launchctl kickstart" in control

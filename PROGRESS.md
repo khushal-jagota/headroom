@@ -1,5 +1,12 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Bind production variables explicitly
+
+The installed Mac runner exposed that repository variables are not inherited as shell variables.
+The deploy workflow now maps every operator-owned path, health, and service input from GitHub
+repository variables into its environment, with an asset regression covering the complete set.
+Next: focused gates, canonical verification, then update verified staging.
+
 ## Current work cycle (2026-07-23): Simplify fork-session deferral
 
 After three payload-buffer corrections exposed new lifecycle edges, the repair changed approach.
