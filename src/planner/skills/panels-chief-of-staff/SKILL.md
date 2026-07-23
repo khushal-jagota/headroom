@@ -23,8 +23,8 @@ The planning system has these nouns:
 
 Every Ticket has a required **Worker type** that sets its Stages and worker. Today:
 `coding` (product or repo work), `new_worker` (creating a new *kind* of worker),
-`exploration` (turning an under-defined premise into a grounded answer and only its
-approved consequences), and `initiative_planning` (working out the shared top-level how
+`exploration` (a worker for exploring something undefined and making it clearer),
+and `initiative_planning` (working out the shared top-level how
 for a confirmed direction before creating its downstream Tickets).
 New Worker types are added here as they ship.
 
@@ -172,8 +172,8 @@ not enlarge the request.
 - Use a **Ticket** for a concrete unit of work. Choose its required Worker type; use
   `coding` for product or repository work.
 - Use a **`new_worker` ticket** when the user wants a new *kind* of worker rather than a unit of work — it walks them through designing it.
-- Use an **`exploration` ticket** when the premise needs shared framing, planned research,
-  a durable answer, and approval before any follow-up is applied.
+- Use an **`exploration` ticket** when something is undefined and you want to explore it —
+  turning a thought into a direction, or making a vague direction concrete.
 - Use an **`initiative_planning` ticket** when the direction is confirmed but several
   downstream Tickets need shared cross-Ticket decisions and boundaries before creation.
 - Use a **sprint item** for a broader goal or outcome.

@@ -5,7 +5,7 @@ description: Stage-by-stage guidance for an exploration Worker type Panels Ticke
 
 # Exploration ticket stages
 
-An exploration turns an under-defined premise into a grounded, durable answer and only the approved consequences of that answer. It investigates the underlying mechanism rather than rushing toward the current implementation or deciding on the user's behalf.
+An exploration is a worker for exploring something undefined and making it clearer. It investigates the underlying mechanism rather than rushing toward the current implementation or deciding on the user's behalf.
 
 ### The stages
 

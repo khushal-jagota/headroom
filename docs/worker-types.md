@@ -13,8 +13,7 @@ Four Worker types ship today:
 
 - **`coding`** handles product and repository work.
 - **`new_worker`** designs and lands a new kind of worker.
-- **`exploration`** turns an under-defined premise into a grounded answer, then applies
-  only the follow-up the user approves.
+- **`exploration`** is a worker for exploring something undefined and making it clearer.
 - **`initiative_planning`** works out the shared top-level how for a confirmed direction,
   then creates the bounded Tickets that carry it.
 
