@@ -66,3 +66,24 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(monkeypatch) 
     assert result.exit_code == 0, result.output
     assert requested_paths == ["/api/tickets/t_correct/worker-self"]
     assert "t_correct needs_understanding" in result.output
+
+
+def test_worker_request_user_help_is_a_no_payload_worker_command(monkeypatch) -> None:
+    calls: list[tuple[str, str, Any]] = []
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {"id": "t_help"}
+
+    monkeypatch.setattr(cli_main.http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["worker", "request-user-help"],
+        env={"PLAN_TICKET_ID": "t_help"},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        ("POST", "/api/tickets/t_help/request-user-help", {"as_json": False})
+    ]
+    assert "user help requested on t_help" in result.output

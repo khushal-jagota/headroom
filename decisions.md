@@ -3,6 +3,12 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-t-wrdzb9jn-implementation-slices — Keep backend and frontend work non-overlapping
+
+Implementation is split into a backend/domain/API/CLI slice and a frontend/shared-worker-skill
+slice in the same isolated Ticket worktree. Their file scopes do not overlap, so the slices can
+progress concurrently while the root agent retains serial review and integration responsibility.
+
 ## D-environment-import-one-generation — Live import has one durable commit point
 
 Keep the prepared runtime user home separate from the Hermes home and set it as the launched

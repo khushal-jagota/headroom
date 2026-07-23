@@ -78,7 +78,7 @@ Stage. Paired work receives one automatic opening turn and then continues throug
 same employee conversation.
 
 Ticket status is runtime control state. `empty`, `agent_running_step`,
-`awaiting_approval`, `user_takeover`, and `paired_work` say who may act next; they are
+`awaiting_approval`, `user_takeover`, `needs_user`, and `paired_work` say who may act next; they are
 not conversation transcript states.
 
 The Review screen is the human gate. Approval settles the proposal and records the

@@ -1585,6 +1585,7 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
 
 def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
     """Pause a Worker-owned Ticket for explicit human help."""
+    admission.require_worker_actor(actor, "request user help")
     with _txn(conn):
         ticket, _worker_type_definition = (
             _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
@@ -1593,6 +1594,12 @@ def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, n
             raise PlannerError(
                 ErrorCode.validation,
                 "terminal tickets cannot request user help",
+                {"ticket_id": ticket_id},
+            )
+        if ticket.stage == "needs_kickoff":
+            raise PlannerError(
+                ErrorCode.validation,
+                "kickoff must be settled before requesting user help",
                 {"ticket_id": ticket_id},
             )
         if ticket.ticket_status is not TicketStatus.needs_user:

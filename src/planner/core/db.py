@@ -313,10 +313,15 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _migrate_to_v34(conn)
     elif not _employee_configuration_catalog_cache_table_is_v34(conn):
         raise RuntimeError("v34 schema is missing the employee configuration catalog cache")
-    if incoming_version < 35 and "'needs_user'" not in ticket_sql:
-        if conn.in_transaction:
-            conn.commit()
-        _migrate_to_v35(conn)
+    if incoming_version < 35:
+        if "'needs_user'" not in ticket_sql:
+            if conn.in_transaction:
+                conn.commit()
+            _migrate_to_v35(conn)
+        else:
+            # Fresh databases receive the current DDL before the forward migrations.
+            # They still need the schema marker advanced past v34.
+            conn.execute("PRAGMA user_version=35")
     _create_indexes(conn)
 
 

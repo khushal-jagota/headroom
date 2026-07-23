@@ -12,7 +12,7 @@ One screen per part of the system:
 
 - **Day** — the day overview: focus, brief take, watchout, and what makes the day
   land. Read top to bottom in the serif voice, flat, with no boxes.
-- **Review** — the one-at-a-time chamber for parked Ticket proposals: one centred decision with Skip and
+- **Review** — the human chamber for parked Ticket proposals and Worker help requests: one centred decision with Skip and
   Open-ticket top-right, a labelled recap, the ask surface, and a send-back row.
   Keyboard shortcuts drive it (skip, open, approve) when the cursor is not in a text
   field, and each decision fades in as it arrives. The approve button physically
