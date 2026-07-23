@@ -3360,3 +3360,14 @@ not guarantee notification/request wire ordering across the prior fork response.
   custom ownership and launch defaults and leaving general missing-stage validation strict.
 - Drafting changes packaged source and compatibility seams only. Publishing the packaged specialist
   into managed settings, final verification, and restart-backed activation belong to Closeout.
+# 2026-07-23 — Primary checkout is the staging coding checkout
+
+- Keep two persistent operating roles: `/Users/khushaljagota/Coding/planning-v2` is the
+  coding/integration checkout on `staging`, and
+  `/Users/khushaljagota/.hermes/live/planning-v2` is the detached live checkout.
+- Move the original repository owner into the normal Coding folder rather than hiding the human
+  coding checkout under `.hermes`. Its `.git` directory continues to own the shared repository
+  metadata used by linked Ticket and live worktrees, so repair every registered worktree after the
+  move.
+- Preserve the original checkout's local commit and uncommitted work before conversion, restore that
+  work onto `staging`, and leave live source and process state untouched.

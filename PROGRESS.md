@@ -1,5 +1,19 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Consolidate staging and live checkout roles
+
+The coding/integration checkout now lives at
+`/Users/khushaljagota/Coding/planning-v2` on `staging`; the old
+`/Users/khushaljagota/.hermes/planning-v2` path is absent. The moved repository still owns the shared
+Git metadata, and every registered linked worktree was repaired and validated. The prepared staging
+manifest, canonical staging skill links, virtual-environment wrappers, and editable package link now
+resolve the Coding path. The detached live checkout remains separate and healthy at its accepted
+main revision. Before the conversion, the primary checkout's local authentication commit and
+uncommitted work were preserved under the safety branch
+`safety/pre-topology-consolidation-20260723` and stash entry
+`topology consolidation: primary checkout WIP 2026-07-23`; that work was then restored onto staging.
+The live checkout and process were not modified or restarted.
+
 ## Current work cycle (2026-07-23): Diagnose Claude auth failure in live Panels
 
 The affected Claude worker fails because Panels launches Claude with the isolated live runtime
@@ -17,6 +31,23 @@ MCP configuration, and credentials separate from the operator's personal home an
 preview environments. The current single-user macOS setup exposes a provisioning usability gap:
 the isolated Claude home does not automatically share the interactive Claude login, and copying
 the config file is insufficient because Claude also relies on its native credential/keychain path.
+
+The owner decided the isolation tradeoff is not useful for this single-user local deployment:
+provider CLIs should use the normal operator `HOME` everywhere, while Panels' own Hermes and
+database state remains isolated by its explicit `PLAN_HERMES_HOME` and `PLAN_DB_PATH` values.
+The launch environment helper and detached live checkout now implement that policy, with focused
+environment credential/CLI tests passing. The live process was fully relaunched after repairing
+stale runtime manifest metadata (missing port and symlinked generation paths); it now has the
+operator `HOME`, while live HTTP remains healthy (200) and Panels-owned paths remain generation-
+scoped.
+
+Follow-up diagnosis: durable `conversation_session_bindings` still retain provider ACP session ids
+after a process restart. A browser attach with such a binding first calls the registry's load path;
+if the provider no longer has that session, the attach fails before the browser action loop is
+available. The frontend then stays reconnecting, so it cannot send `new_conversation`. The Hub's
+server-side `new_conversation` path can start empty without loading the old binding when reached,
+but the current wire/attach boundary makes that path unreachable from a failed attach. This is a
+real recovery UX/correctness gap, not evidence that New intrinsically requires the old session.
 
 ## Current work cycle (2026-07-22): Adopt persistent staging and separated live operation (`t_b5ja4rqu`)
 
