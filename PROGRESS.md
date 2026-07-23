@@ -1,5 +1,17 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Implement default Ticket placement (`t_qe1gk3ha`)
+
+Implemented creation-time defaults in the ordinary and Chief external-work API paths. The action
+layer resolves the planning day and current sprint, and the data writers add day membership in the
+same transaction as Ticket creation. Explicit sprint ids, explicit backlog (`sprint_id: null`), and
+parent sprint items remain authoritative. Focused unit and CLI/E2E tests pass, along with Ruff,
+strict Mypy, and diff checks. The first two canonical verify runs found stale Review and Board E2E
+assumptions that a new Ticket is absent from today, plus one independent server-lifecycle timing
+flake; both tests now remove the default membership before exercising explicit membership
+invalidation, and the lifecycle test passes in isolation. Next: rerun the canonical verify, then
+advance staging.
+
 ## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
 
 Current `staging` merged cleanly into the verified backup branch as `f4594bf2`. The first canonical

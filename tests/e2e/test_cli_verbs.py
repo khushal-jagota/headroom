@@ -65,6 +65,7 @@ def test_ticket_list_day_filter(server, cli, api) -> None:
     t_on = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "On today")["id"]
     t_off = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "Off day")["id"]
     cli(server, "day", "add-ticket", t_on, "--date", "today")  # add t_on to today's day
+    cli(server, "day", "remove-ticket", t_off, "--date", "today")
 
     listed = cli(server, "ticket", "list", "--day", "today")
     ids = [t["id"] for t in listed["tickets"]]
