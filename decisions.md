@@ -16,7 +16,9 @@ the supervisor's application child, while booting out a KeepAlive job alone is n
 
 The LaunchAgent derives `USER` and `LOGNAME` from its actual uid because launchd does not supply
 those shell variables. `HOME` alone is insufficient for Claude Code to resolve the operator's
-Keychain-backed login.
+Keychain-backed login. The immutable release launcher preserves `USER`, `LOGNAME`, and `SHELL`
+alongside its existing `HOME`, `PATH`, and terminal locale boundary so the provider child can
+inherit the complete approved user identity.
 
 ## 2026-07-23 — The validated launcher supplies the packaged application root
 

@@ -5,9 +5,9 @@
 The live user LaunchAgent supplied `HOME` but not `USER`; Claude Code uses `USER` to resolve the
 signed-in operator's Keychain-backed login, so Claude Employees failed with `Authentication
 required` despite sharing the correct home. The installed plist and canonical launchd template now
-derive `USER` and `LOGNAME` from `id -un`, with the focused deployment-asset suite passing. The user
-explicitly waived the long canonical verifier for this urgent authentication repair. Ready for
-immediate production promotion; the loaded LaunchAgent must then be replaced out of band.
+derive `USER` and `LOGNAME` from `id -un`; the release launcher preserves those provider identity
+variables through its runtime allowlist. Focused release and deployment-asset tests pass. The user
+explicitly waived the long canonical verifier for this urgent authentication repair.
 
 ## Current work cycle (2026-07-23): Simplify production adoption to the signed-in user
 

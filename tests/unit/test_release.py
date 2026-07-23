@@ -160,8 +160,26 @@ def test_release_launcher_carries_manifest_sha_and_scrubs_unrelated_environment(
         ),
         encoding="utf-8",
     )
-    env = build_release_launch_env(release, ambient={"PATH": "/bin", "SECRET": "no"})
-    assert env == {"PATH": "/bin", "PLAN_RELEASE_SHA": SHA, "PLAN_RELEASE_ROOT": str(release)}
+    env = build_release_launch_env(
+        release,
+        ambient={
+            "HOME": "/Users/operator",
+            "USER": "operator",
+            "LOGNAME": "operator",
+            "SHELL": "/bin/zsh",
+            "PATH": "/bin",
+            "SECRET": "no",
+        },
+    )
+    assert env == {
+        "HOME": "/Users/operator",
+        "USER": "operator",
+        "LOGNAME": "operator",
+        "SHELL": "/bin/zsh",
+        "PATH": "/bin",
+        "PLAN_RELEASE_SHA": SHA,
+        "PLAN_RELEASE_ROOT": str(release),
+    }
 
 
 def test_release_manifest_requires_exact_release_directory_and_artifact_digest(
