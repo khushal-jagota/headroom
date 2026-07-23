@@ -179,6 +179,7 @@ class _Registry:
         self.record = record
         self.handle = handle
         self.attach_calls = 0
+        self.evicted = False
 
     async def attach(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
         assert employee == self.record.employee
@@ -206,14 +207,22 @@ class _Registry:
         )
         return self.handle
 
-    async def retire_conversation(
+    async def evict_conversation(
         self, employee_id: str, binding_generation: int
-    ) -> None:
+    ) -> Any:
         assert (employee_id, binding_generation) == (
             self.record.employee.employee_id,
             self.record.binding.binding_generation,
         )
-        await self.record.child.close()
+        self.evicted = True
+        return self.record.child
+
+    async def retire_conversation(
+        self, employee_id: str, binding_generation: int
+    ) -> None:
+        child = await self.evict_conversation(employee_id, binding_generation)
+        if child is not None:
+            await child.close()
 
 
 class _ReplacementRegistry(_Registry):
@@ -605,6 +614,63 @@ def test_empty_conversation_survives_restart_and_first_prompt_activates_it(
         assert await repository.resolve("t_hub") == record.binding
         assert len(broker.deliveries) == 1
         assert broker.deliveries[0][3].session_id == "session-hub"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_queue_choice_withholds_human_echo_at_submit(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        registry = _ActivatingRegistry(record, handle, repository)
+        broker = _DeliveryBroker()
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=registry,
+            broker=broker,
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-queue")
+        await browser.queue.get()  # reset
+        await browser.queue.get()  # ready
+
+        # A normal prompt activates the stream and echoes into the transcript at submit; a queued
+        # prompt that follows is delivered but must NOT echo until it is actually dequeued and sent.
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="normal-1",
+                prompt=[TextContentBlock(type="text", text="hello")],
+                delivery_choice="normal",
+            ),
+        )
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="queued-1",
+                prompt=[TextContentBlock(type="text", text="later")],
+                delivery_choice="queue",
+            ),
+        )
+
+        envelopes = [
+            json.loads(browser.queue.get_nowait())
+            for _ in range(browser.queue.qsize())
+        ]
+        echoes = [
+            item["payload"]["clientMessageId"]
+            for item in envelopes
+            if item["type"] == "human_echo"
+        ]
+        assert echoes == ["normal-1"]
+        assert [
+            (delivery[1], delivery[2]) for delivery in broker.deliveries
+        ] == [("normal-1", "normal"), ("queued-1", "queue")]
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1515,6 +1581,182 @@ def test_old_binding_cannot_publish_after_new_conversation_becomes_empty(
     asyncio.run(exercise())
 
 
+async def _activate_live_stream(
+    hub: ConversationHub, browser: BrowserSubscription
+) -> None:
+    """Turn the browser's empty conversation into a live stream via a first prompt."""
+    await browser.queue.get()  # empty reset
+    await browser.queue.get()  # empty ready
+    await hub.dispatch_action(
+        browser.connection_id,
+        PromptAction(
+            type="prompt",
+            employee_id="t_hub",
+            client_message_id="message-activate",
+            prompt=[TextContentBlock(type="text", text="hello")],
+            delivery_choice="normal",
+        ),
+    )
+    await browser.queue.get()  # activated reset
+    await browser.queue.get()  # activated ready
+    await browser.queue.get()  # human echo
+    assert "t_hub" in hub._streams  # noqa: SLF001
+
+
+def test_new_conversation_commits_when_old_session_teardown_fails(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path, bound=False)
+        record, handle = _runtime(tmp_path)
+        registry = _ActivatingRegistry(record, handle, repository)
+
+        class _TeardownFailingBroker(_DeliveryBroker):
+            def __init__(self) -> None:
+                super().__init__()
+                self.teardown_attempted = False
+
+            async def prepare_new_conversation(
+                self, _handle: ConversationRuntimeHandle, _deadline: float
+            ) -> None:
+                # Model an unreachable/hung old worker: teardown does not settle.
+                self.teardown_attempted = True
+                raise TimeoutError("old session unreachable")
+
+        broker = _TeardownFailingBroker()
+        hub = ConversationHub(repository)
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=broker,  # type: ignore[arg-type]
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+        await _activate_live_stream(hub, browser)
+
+        conversation = await hub.new_conversation("t_hub")
+
+        # Teardown was attempted but its failure did not abort New.
+        assert broker.teardown_attempted is True
+        # The fresh generation is durably committed and the stream retired.
+        assert conversation.conversation_generation == 2
+        assert await repository.resolve("t_hub") is None
+        assert "t_hub" not in hub._streams  # noqa: SLF001
+        # Success is confirmed to the browser: reset then ready at the new generation.
+        reset = json.loads(await browser.queue.get())
+        ready = json.loads(await browser.queue.get())
+        assert reset["acpSessionId"] is None
+        assert reset["bindingGeneration"] == 2
+        assert ready["payload"]["state"] == "ready"
+        # The old generation-1 binding can no longer publish into the new conversation.
+        with pytest.raises(RuntimeError, match="stale stream"):
+            await hub.publish_activity(record.employee, record.binding, "idle", "old")
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_new_conversation_commits_when_old_child_cleanup_hangs(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path, bound=False)
+        record, handle = _runtime(tmp_path)
+
+        class _HangingCloseChild:
+            def __init__(self) -> None:
+                self.close_started = asyncio.Event()
+
+            async def close(self) -> None:
+                # Model a hung old child whose close never returns.
+                self.close_started.set()
+                await asyncio.Event().wait()
+
+        class _HangingCleanupRegistry(_ActivatingRegistry):
+            def __init__(
+                self,
+                record: AcpEmployeeRecord,
+                handle: ConversationRuntimeHandle,
+                repository: SqliteConversationBindingRepository,
+            ) -> None:
+                super().__init__(record, handle, repository)
+                self.hanging_child = _HangingCloseChild()
+
+            async def evict_conversation(
+                self, employee_id: str, binding_generation: int
+            ) -> Any:
+                self.evicted = True
+                return self.hanging_child
+
+        registry = _HangingCleanupRegistry(record, handle, repository)
+        broker = _DeliveryBroker()
+        # A short deadline bounds the best-effort old-child cleanup.
+        hub = ConversationHub(repository, new_conversation_timeout_seconds=0.1)
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=broker,  # type: ignore[arg-type]
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+        await _activate_live_stream(hub, browser)
+
+        # A hung old-child cleanup must neither fail nor unbound-block New.
+        conversation = await asyncio.wait_for(
+            hub.new_conversation("t_hub"), timeout=5
+        )
+
+        assert registry.hanging_child.close_started.is_set()
+        assert conversation.conversation_generation == 2
+        assert await repository.resolve("t_hub") is None
+        reset = json.loads(await browser.queue.get())
+        ready = json.loads(await browser.queue.get())
+        assert reset["bindingGeneration"] == 2
+        assert ready["payload"]["state"] == "ready"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_new_conversation_evicts_old_record_before_confirming_ready(
+    tmp_path: Path,
+) -> None:
+    # Regression guard: the old registry record must be evicted BEFORE the
+    # reset/ready cutover, otherwise a first prompt on the new conversation could
+    # reuse the old (now-deleted) generation via get_or_spawn.
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path, bound=False)
+        record, handle = _runtime(tmp_path)
+        registry = _ActivatingRegistry(record, handle, repository)
+
+        class _EvictionOrderingProjection(TicketConversationProjection):
+            def reset(self, ticket_id: str) -> bool:
+                # The cutover is published just before this projection reset, so by
+                # now the old record must already be evicted.
+                assert registry.evicted is True
+                return super().reset(ticket_id)
+
+        projection = _EvictionOrderingProjection(db_path, now=lambda: 2)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(
+            registry=registry,  # type: ignore[arg-type]
+            broker=_DeliveryBroker(),  # type: ignore[arg-type]
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+        await _activate_live_stream(hub, browser)
+
+        conversation = await hub.new_conversation("t_hub")
+
+        assert registry.evicted is True
+        assert conversation.conversation_generation == 2
+        reset = json.loads(await browser.queue.get())
+        ready = json.loads(await browser.queue.get())
+        assert reset["bindingGeneration"] == 2
+        assert ready["payload"]["state"] == "ready"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
 def test_compaction_replacement_waits_for_ticket_projection_publication(
     tmp_path: Path,
 ) -> None:
@@ -1872,18 +2114,19 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
         assert not waiting_attach.done()
 
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(8)]
+            # A still-queued prompt is not echoed into the transcript on a compaction replay; it
+            # resurfaces in the queue snapshot alone and echoes only when it is dequeued and sent.
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(7)]
             assert [item["type"] for item in envelopes] == [
                 "connection",
                 "acp_session_update",
                 "acp_session_update",
                 "acp_session_update",
                 "connection",
-                "human_echo",
                 "queue_snapshot",
                 "acp_session_update",
             ]
-            assert [item["sequence"] for item in envelopes] == list(range(1, 9))
+            assert [item["sequence"] for item in envelopes] == list(range(1, 8))
             assert all(item["acpSessionId"] == "session-fork" for item in envelopes)
             assert [
                 envelopes[0]["payload"]["state"],
@@ -1891,15 +2134,14 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
             ] == ["reset", "ready"]
             assert [
                 envelopes[index]["payload"]["update"]["content"]["text"]
-                for index in (1, 2, 3, 7)
+                for index in (1, 2, 3, 6)
             ] == [
                 "durable summary",
                 "source candidate",
                 "fresh candidate",
                 "later N+1",
             ]
-            assert envelopes[5]["payload"]["prompt"]["sessionId"] == "session-fork"
-            assert envelopes[6]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[5]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
         assert not hub._compaction_transitions["t_hub"].quarantined_ingress  # noqa: SLF001
         await hub.complete_compaction_transition(token, replacement_handle)
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
@@ -2065,16 +2307,17 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
         assert attached.connection_id == "browser-after-recovery"
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(6)]
+            # The still-queued prompt is not echoed on recovery; only the send-now successor, which
+            # is being started now, echoes. The queued prompt resurfaces in the queue snapshot only.
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(5)]
             assert [item["type"] for item in envelopes] == [
                 "connection",
                 "acp_session_update",
                 "connection",
                 "human_echo",
-                "human_echo",
                 "queue_snapshot",
             ]
-            assert [item["sequence"] for item in envelopes] == list(range(5, 11))
+            assert [item["sequence"] for item in envelopes] == list(range(5, 10))
             assert [
                 envelopes[0]["payload"]["state"],
                 envelopes[2]["payload"]["state"],
@@ -2083,18 +2326,14 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
             assert envelopes[1]["payload"]["update"]["content"]["text"] == (
                 "durable replay" * 3
             )
-            assert envelopes[3]["payload"]["clientMessageId"] == "queued-1"
-            assert envelopes[3]["payload"]["prompt"] == queued.prompt.model_dump(
-                mode="json", by_alias=True, exclude_none=True
-            )
-            assert envelopes[4]["payload"]["clientMessageId"] == ("send-now-successor")
-            assert envelopes[4]["payload"]["prompt"] == (
+            assert envelopes[3]["payload"]["clientMessageId"] == ("send-now-successor")
+            assert envelopes[3]["payload"]["prompt"] == (
                 successor_echo.prompt.model_dump(mode="json", by_alias=True, exclude_none=True)
             )
-            assert envelopes[5]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[4]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
             assert all(
                 item["clientMessageId"] != "send-now-successor"
-                for item in envelopes[5]["payload"]["items"]
+                for item in envelopes[4]["payload"]["items"]
             )
 
         assert first.queue.empty()

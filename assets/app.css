@@ -2244,7 +2244,7 @@ button.list-row:hover .list-row-title {
 }
 .chat-qrow {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
   color: var(--text-muted);
@@ -2252,7 +2252,16 @@ button.list-row:hover .list-row-title {
 }
 .chat-qrow + .chat-qrow { border-top: var(--border-hairline) solid var(--border-color); }
 .chat-qrow-n { flex: none; font-family: var(--font-mono); color: var(--text-faintest); }
-.chat-qrow-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-qrow-txt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow-wrap: anywhere;
+}
 .chat-qrow-x {
   flex: none;
   background: none;

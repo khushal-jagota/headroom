@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from acp.schema import RequestPermissionRequest, RequestPermissionResponse
+from acp.schema import (
+    PromptRequest,
+    RequestPermissionRequest,
+    RequestPermissionResponse,
+)
 
 from .contracts import (
     ContextCompaction,
@@ -44,6 +48,14 @@ class ConversationRuntimeEventPublisher(Protocol):
         employee: ConversationEmployee,
         binding: ConversationSessionBinding,
         prompt: ProgrammaticPrompt,
+    ) -> None: ...
+
+    async def publish_human_echo(
+        self,
+        employee: ConversationEmployee,
+        binding: ConversationSessionBinding,
+        client_message_id: str,
+        prompt: PromptRequest,
     ) -> None: ...
 
     async def publish_queue_snapshot(

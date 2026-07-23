@@ -12,10 +12,13 @@ from planner.environments.release import validate_release_manifest
 EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
     {
         "HOME",
+        "LOGNAME",
         "PATH",
+        "SHELL",
         "LANG",
         "TERM",
         "TMPDIR",
+        "USER",
         "PLAN_CONFIG_PATH",
         "PLAN_DB_PATH",
         "PLAN_PORT",
