@@ -402,7 +402,9 @@ def test_skill_event_failure_restores_canonical_skill(
         conn.close()
 
 
-def test_skill_patch_preserves_concurrent_other_field_values(tmp_path: Path) -> None:
+def test_skill_patch_preserves_concurrent_other_field_values(
+    tmp_path: Path, canonical_skills_root: Path
+) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.save_specialist_skill(
         tmp_path,
@@ -431,7 +433,9 @@ def test_skill_patch_preserves_concurrent_other_field_values(tmp_path: Path) -> 
     assert saved.specialist_skill.markdown_body == "\n# Body winner\n\nSecond field\n"
 
 
-def test_corrupt_current_settings_restore_exact_prior_good_revision(tmp_path: Path) -> None:
+def test_corrupt_current_settings_restore_exact_prior_good_revision(
+    tmp_path: Path, canonical_skills_root: Path
+) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.save_specialist_skill(
         tmp_path,
@@ -551,7 +555,7 @@ def test_missing_non_new_worker_stage_default_still_fails_validation(tmp_path: P
 
 
 def test_missing_current_settings_restores_exact_edited_last_known_good_revision(
-    tmp_path: Path,
+    tmp_path: Path, canonical_skills_root: Path,
 ) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.update_stage_default_ownership(
