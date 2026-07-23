@@ -478,9 +478,11 @@ async def _ticket_database(
     }
     conn.execute(
         "INSERT INTO tickets "
-        "(id, title, worker_type, employee_backend, stage, ceiling, fields, "
+        "(id, title, worker_type, employee_backend, stage, ceiling, "
+        "default_stage_ownership_mode, fields, "
         "created_at, updated_at) "
-        "VALUES ('t_hub', 'Hub', 'coding', ?, 'needs_kickoff', 'needs_kickoff', ?, 1, 1)",
+        "VALUES ('t_hub', 'Hub', 'coding', ?, 'needs_kickoff', 'needs_kickoff', "
+        "'worker', ?, 1, 1)",
         (backend_key, json.dumps(fields, separators=(",", ":"))),
     )
     conn.close()
