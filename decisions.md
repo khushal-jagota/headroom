@@ -14,6 +14,10 @@ The user service control stops the foreground supervisor gracefully before unloa
 LaunchAgent, then bootstraps it again for a restart. A forced `launchctl kickstart -k` can orphan
 the supervisor's application child, while booting out a KeepAlive job alone is not a truthful stop.
 
+The LaunchAgent derives `USER` and `LOGNAME` from its actual uid because launchd does not supply
+those shell variables. `HOME` alone is insufficient for Claude Code to resolve the operator's
+Keychain-backed login.
+
 ## 2026-07-23 — The validated launcher supplies the packaged application root
 
 Checkout code can derive assets from `src/planner`, but an installed wheel cannot. The release

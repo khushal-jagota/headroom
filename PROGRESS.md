@@ -1,5 +1,14 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Preserve provider authentication in the user LaunchAgent
+
+The live user LaunchAgent supplied `HOME` but not `USER`; Claude Code uses `USER` to resolve the
+signed-in operator's Keychain-backed login, so Claude Employees failed with `Authentication
+required` despite sharing the correct home. The installed plist and canonical launchd template now
+derive `USER` and `LOGNAME` from `id -un`, with the focused deployment-asset suite passing. The user
+explicitly waived the long canonical verifier for this urgent authentication repair. Ready for
+immediate production promotion; the loaded LaunchAgent must then be replaced out of band.
+
 ## Current work cycle (2026-07-23): Simplify production adoption to the signed-in user
 
 The separate `panels-live`/`panels-deploy` design made the one-Mac cutover depend on copied Hermes

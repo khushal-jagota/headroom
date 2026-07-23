@@ -24,6 +24,7 @@ from starlette.websockets import WebSocketDisconnect
 from planner.tickets.conversation_projection import TicketConversationProjection
 
 from .backend_contracts import (
+    AcpEmployeeChild,
     ConversationIngressReplayBatch,
     ConversationIngressTransition,
     SessionNotificationReplayMaterializer,
@@ -55,6 +56,7 @@ from .contracts import (
 from .employee_registry import (
     AcpEmployeeRecord,
     AcpEmployeeRegistry,
+    AcpEmployeeStaleGeneration,
     ConversationIngressSource,
 )
 from .permission_broker import ConversationPermissionBroker
@@ -739,14 +741,31 @@ class ConversationHub:
                 employee_id, binding.binding_generation
             )
             deadline = asyncio.get_running_loop().time() + self._new_conversation_timeout_seconds
-            await self._require_broker().prepare_new_conversation(handle, deadline)
+            try:
+                await self._require_broker().prepare_new_conversation(handle, deadline)
+            except Exception as error:
+                # Old-session teardown is best-effort. The broker force-disposes the
+                # old actor on every failure branch, so an unreachable or hung old
+                # child is left closed and non-accepting regardless. Do not let a
+                # teardown failure gate committing the fresh generation.
+                _LOGGER.warning(
+                    "New conversation old-session teardown for %s did not complete "
+                    "cleanly; committing the fresh generation anyway: %r",
+                    employee_id,
+                    error,
+                )
         conversation = await self.repository.start_new_conversation(employee_id, binding)
         if stream is not None:
             self._streams.pop(employee_id, None)
-        if binding is not None:
-            await self._require_registry().retire_conversation(
-                employee_id, binding.binding_generation
-            )
+        # Evict the old registry record before confirming the fresh conversation
+        # ready. Eviction is synchronous, so a first prompt on the new conversation
+        # spawns a fresh generation instead of reusing the old, now-deleted one. The
+        # slow child teardown is deferred to best-effort cleanup below.
+        old_child = (
+            await self._evict_old_conversation(employee_id, binding.binding_generation)
+            if binding is not None
+            else None
+        )
         self._empty_browsers[employee_id] = browsers
         replay = self._empty_conversation_bootstrap(
             await self.repository.resolve_employee(employee_id),
@@ -755,7 +774,50 @@ class ConversationHub:
         for browser in browsers.values():
             cast(_BrowserOutboundQueue, browser.queue).put_replay_cutover_nowait(replay)
         await self._reset_ticket_conversation_projection(employee)
+        if old_child is not None:
+            await self._close_old_child_best_effort(employee_id, old_child)
         return conversation
+
+    async def _evict_old_conversation(
+        self, employee_id: str, binding_generation: int
+    ) -> AcpEmployeeChild | None:
+        """Evict the pre-New registry record so its generation cannot be reused.
+
+        A stale-generation failure means the record was already advanced or removed,
+        which is exactly the state eviction aims for, so it is safe to continue.
+        """
+        try:
+            return await self._require_registry().evict_conversation(
+                employee_id, binding_generation
+            )
+        except AcpEmployeeStaleGeneration:
+            return None
+
+    async def _close_old_child_best_effort(
+        self, employee_id: str, child: AcpEmployeeChild
+    ) -> None:
+        """Close the evicted old child as best-effort cleanup after New is ready.
+
+        The fresh generation is already committed, its reset/ready cutover already
+        published, and its record already evicted, so an unreachable or hung old
+        child must neither fail nor undo New. Bound the close by the new-conversation
+        deadline and swallow any failure or timeout.
+        """
+        deadline = (
+            asyncio.get_running_loop().time() + self._new_conversation_timeout_seconds
+        )
+        try:
+            await asyncio.wait_for(
+                child.close(),
+                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+            )
+        except Exception as error:
+            _LOGGER.warning(
+                "New conversation old-session cleanup for %s did not complete "
+                "cleanly; continuing best-effort: %r",
+                employee_id,
+                error,
+            )
 
     async def _dispatch_empty_action(
         self,
