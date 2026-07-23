@@ -16,6 +16,17 @@ SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 def _release(root: Path, sha: str, marker: str) -> Path:
     root.mkdir(parents=True)
     (root / marker).write_text(marker, encoding="utf-8")
+    (root / ".venv" / "bin").mkdir(parents=True)
+    python = root / ".venv" / "bin" / "python"
+    python.write_text("python", encoding="utf-8")
+    python.chmod(0o755)
+    (root / "bin").mkdir()
+    launcher = root / "bin" / "panels-launcher"
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    (root / "web" / "dist").mkdir(parents=True)
+    (root / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
+    (root / "agent_backends" / "node_modules").mkdir(parents=True)
     from planner.environments.release import digest_release_artifact, digest_release_source
 
     (root / "manifest.json").write_text(
@@ -132,6 +143,28 @@ def test_same_sha_is_idempotent_without_backup_or_restart(tmp_path: Path) -> Non
     assert events == []
 
 
+def test_same_sha_reuse_rejects_incomplete_release(tmp_path: Path) -> None:
+    release = _runtime_release(tmp_path / SHA_A, SHA_A, "old")
+    (release / ".venv" / "bin" / "python").unlink()
+    from planner.environments.release import digest_release_artifact
+
+    manifest = json.loads((release / "manifest.json").read_text(encoding="utf-8"))
+    manifest["artifact_digest"] = digest_release_artifact(release)
+    (release / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release, target_is_directory=True)
+    with pytest.raises(DeploymentError, match="runtime file is missing"):
+        deploy_release(
+            candidate=release,
+            current_pointer=current,
+            backup=lambda _: None,
+            service=FakeService([]),
+            health=FakeHealth([], {SHA_A}),
+            records_path=tmp_path / "records.jsonl",
+            release_root=tmp_path,
+        )
+
+
 def test_initial_deployment_skips_backup_and_removes_current_after_health_failure(
     tmp_path: Path,
 ) -> None:
@@ -154,6 +187,93 @@ def test_initial_deployment_skips_backup_and_removes_current_after_health_failur
     assert not current.exists()
     assert events[0] == "restart"
     assert json.loads((tmp_path / "records.jsonl").read_text())["result"] == "initial_failed"
+
+
+def test_initial_deployment_backups_existing_database_before_switch(tmp_path: Path) -> None:
+    releases = tmp_path / "releases"
+    candidate = _runtime_release(releases / SHA_B, SHA_B, "new")
+    source_db = tmp_path / "planner.db"
+    source_db.write_text("existing", encoding="utf-8")
+    events: list[str] = []
+    result = deploy_release(
+        candidate=candidate,
+        current_pointer=tmp_path / "current",
+        backup=lambda revision: events.append(f"backup:{revision}"),
+        service=FakeService(events),
+        health=FakeHealth(events, {SHA_B}),
+        records_path=tmp_path / "records.jsonl",
+        release_root=releases,
+        source_db=source_db,
+        baseline_sha=SHA_A,
+    )
+    assert result.status == "succeeded"
+    assert events == [f"backup:{SHA_A}", "restart", f"health:{SHA_B}"]
+
+
+def test_initial_existing_database_without_baseline_does_not_switch(tmp_path: Path) -> None:
+    releases = tmp_path / "releases"
+    candidate = _runtime_release(releases / SHA_B, SHA_B, "new")
+    source_db = tmp_path / "planner.db"
+    source_db.write_text("existing", encoding="utf-8")
+    events: list[str] = []
+    with pytest.raises(DeploymentError, match="baseline"):
+        deploy_release(
+            candidate=candidate,
+            current_pointer=tmp_path / "current",
+            backup=lambda revision: events.append(f"backup:{revision}"),
+            service=FakeService(events),
+            health=FakeHealth(events, {SHA_B}),
+            records_path=tmp_path / "records.jsonl",
+            release_root=releases,
+            source_db=source_db,
+        )
+    assert events == []
+    assert not (tmp_path / "current").exists()
+
+
+def test_initial_backup_failure_leaves_no_pointer_or_restart(tmp_path: Path) -> None:
+    releases = tmp_path / "releases"
+    candidate = _runtime_release(releases / SHA_B, SHA_B, "new")
+    source_db = tmp_path / "planner.db"
+    source_db.write_text("existing", encoding="utf-8")
+    events: list[str] = []
+
+    def fail_backup(_: str) -> None:
+        events.append("backup")
+        raise OSError("backup unavailable")
+
+    result = deploy_release(
+        candidate=candidate,
+        current_pointer=tmp_path / "current",
+        backup=fail_backup,
+        service=FakeService(events),
+        health=FakeHealth(events, {SHA_B}),
+        records_path=tmp_path / "records.jsonl",
+        release_root=releases,
+        source_db=source_db,
+        baseline_sha=SHA_A,
+    )
+    assert result.status == "initial_failed"
+    assert events == ["backup"]
+    assert not (tmp_path / "current").exists()
+
+
+def _runtime_release(root: Path, sha: str, marker: str) -> Path:
+    release = _release(root, sha, marker)
+    from planner.environments.release import digest_release_artifact
+
+    (release / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "panels-release-v1",
+                "release_sha": sha,
+                "source_digest": "a" * 64,
+                "artifact_digest": digest_release_artifact(release),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return release
 
 
 def test_deployment_rejects_candidate_outside_release_root(tmp_path: Path) -> None:

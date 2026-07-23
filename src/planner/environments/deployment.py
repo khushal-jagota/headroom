@@ -104,6 +104,8 @@ def deploy_release(
     health_timeout_seconds: float = 30.0,
     release_root: Path | None = None,
     lock_path: Path | None = None,
+    source_db: Path | None = None,
+    baseline_sha: str | None = None,
 ) -> DeploymentResult:
     if health_timeout_seconds <= 0:
         raise DeploymentError("health timeout must be positive")
@@ -133,7 +135,14 @@ def deploy_release(
             return result
         prior_sha = prior_manifest.release_sha if prior_manifest is not None else None
         if prior_sha is None:
+            if source_db is not None and source_db.exists() and baseline_sha is None:
+                raise DeploymentError(
+                    "existing database requires an operator-established baseline SHA"
+                )
             try:
+                if source_db is not None and source_db.exists():
+                    assert baseline_sha is not None
+                    backup(baseline_sha)
                 _switch_pointer(current_pointer, candidate)
                 service.restart()
                 if not health.wait_for_sha(
@@ -205,7 +214,10 @@ def _validate_candidate(candidate: Path, release_root: Path) -> ReleaseManifest:
         if candidate.is_symlink():
             raise ReleaseValidationError("candidate release must not be a symlink")
         return validate_release_manifest(
-            candidate / "manifest.json", expected_sha=candidate.name, release_root=release_root
+            candidate / "manifest.json",
+            expected_sha=candidate.name,
+            release_root=release_root,
+            require_runtime=True,
         )
     except ReleaseValidationError as exc:
         raise DeploymentError(f"candidate release is invalid: {exc}") from exc
@@ -216,7 +228,7 @@ def _validate_current(current_pointer: Path, release_root: Path) -> ReleaseManif
         return None
     try:
         return validate_release_manifest(
-            current_pointer / "manifest.json", release_root=release_root
+            current_pointer / "manifest.json", release_root=release_root, require_runtime=True
         )
     except ReleaseValidationError as exc:
         raise DeploymentError(f"current release is invalid: {exc}") from exc

@@ -128,6 +128,7 @@ def test_release_launcher_carries_manifest_sha_and_scrubs_unrelated_environment(
 ) -> None:
     release = tmp_path / "release"
     release.mkdir()
+    _add_runtime_files(release)
     (release / "manifest.json").write_text(
         json.dumps(
             {
@@ -177,6 +178,7 @@ def test_release_manifest_requires_exact_release_directory_and_artifact_digest(
 def test_release_launcher_preserves_allowlisted_external_runtime_variables(tmp_path: Path) -> None:
     release = tmp_path / "release"
     release.mkdir()
+    _add_runtime_files(release)
     (release / "manifest.json").write_text(
         json.dumps(
             {
@@ -200,3 +202,45 @@ def test_release_launcher_preserves_allowlisted_external_runtime_variables(tmp_p
 def test_config_keeps_development_identity_explicit() -> None:
     assert load_config(env={"PLAN_TEST_MODE": "1"}).release_sha is None
     assert load_config(env={"PLAN_TEST_MODE": "1", "PLAN_RELEASE_SHA": SHA}).release_sha == SHA
+
+
+def _add_runtime_files(release: Path) -> None:
+    python = release / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("python", encoding="utf-8")
+    python.chmod(0o755)
+    launcher = release / "bin" / "panels-launcher"
+    launcher.parent.mkdir()
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    (release / "web" / "dist").mkdir(parents=True)
+    (release / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
+    (release / "agent_backends" / "node_modules").mkdir(parents=True)
+
+
+def test_runtime_release_validation_requires_runnable_production_tree(tmp_path: Path) -> None:
+    release = tmp_path / SHA
+    release.mkdir()
+    (release / "bin").mkdir()
+    (release / "bin" / "panels-launcher").write_text("#!/bin/sh\n", encoding="utf-8")
+    (release / "web" / "dist").mkdir(parents=True)
+    (release / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
+    (release / "agent_backends" / "node_modules").mkdir(parents=True)
+    (release / ".venv" / "bin").mkdir(parents=True)
+    (release / ".venv" / "bin" / "python").write_text("python", encoding="utf-8")
+    (release / "manifest.json").write_text(
+        json.dumps(
+            {
+                "format": "panels-release-v1",
+                "release_sha": SHA,
+                "source_digest": "a" * 64,
+                "artifact_digest": digest_release_artifact(release),
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReleaseValidationError, match="executable"):
+        validate_release_manifest(release / "manifest.json", require_runtime=True)
+    (release / "bin" / "panels-launcher").chmod(0o755)
+    (release / ".venv" / "bin" / "python").chmod(0o755)
+    validate_release_manifest(release / "manifest.json", require_runtime=True)

@@ -147,13 +147,14 @@ def backup_current(source_db: Path, backup_dir: Path, current_release: Path) -> 
 )
 @click.option("--current", "current_pointer", type=click.Path(path_type=Path), required=True)
 @click.option(
-    "--source-db", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
+    "--source-db", type=click.Path(path_type=Path, dir_okay=False), required=True
 )
 @click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
 @click.option("--records", "records_path", type=click.Path(path_type=Path), required=True)
 @click.option("--health-url", required=True)
 @click.option("--service-manager", type=click.Choice(["systemctl", "launchctl"]), required=True)
 @click.option("--service-name", required=True)
+@click.option("--baseline-release", type=click.Path(path_type=Path, exists=True, file_okay=False))
 def deploy(
     candidate: Path,
     current_pointer: Path,
@@ -163,9 +164,13 @@ def deploy(
     health_url: str,
     service_manager: str,
     service_name: str,
+    baseline_release: Path | None,
 ) -> None:
     """Deploy one already-built release with backup, health proof, and code rollback."""
     try:
+        baseline_sha = None
+        if baseline_release is not None:
+            baseline_sha = validate_release_manifest(baseline_release / "manifest.json").release_sha
         result = deploy_release(
             candidate=candidate,
             current_pointer=current_pointer,
@@ -173,6 +178,8 @@ def deploy(
             service=SubprocessServiceController(service_manager, service_name),
             health=HttpHealthClient(health_url),
             records_path=records_path,
+            source_db=source_db,
+            baseline_sha=baseline_sha,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc

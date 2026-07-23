@@ -45,7 +45,7 @@ EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
 
 def build_release_launch_env(release_root: Path, *, ambient: Mapping[str, str]) -> dict[str, str]:
     root = release_root.expanduser().resolve()
-    manifest = validate_release_manifest(root / "manifest.json")
+    manifest = validate_release_manifest(root / "manifest.json", require_runtime=True)
     allowed = {
         key: value
         for key, value in ambient.items()

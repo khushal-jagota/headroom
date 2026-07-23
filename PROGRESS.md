@@ -1,5 +1,22 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Ticket t_2wcx0a55 focused correction complete
+
+The second correction pass fixes the remaining executable-path blockers. Verify now provisions
+pinned Python/Node runtimes and all editable/npm dependencies before `./verify`. Deploy is one
+serial self-hosted production job that checks out, gates, builds into the exact
+`$PANELS_RELEASE_ROOT/${{ github.sha }}` path, validates, and deploys that same path without
+Actions artifacts. Production runtime validation requires the venv Python, executable launcher,
+built web assets, and agent-backend dependencies; incomplete same-SHA reuse is rejected.
+
+The host intent now provisions a non-root `panels-deploy` identity for release/current/deployment
+controls while `panels-live` remains read-only. Existing databases require an explicit baseline
+SHA and are backed up before the first pointer switch; backup failure leaves no pointer or restart.
+The obsolete repository-root implementation report was removed; the Ticket-scoped report is
+current. Focused tests, Ruff, strict Mypy, shell syntax, and diff checks pass. Canonical
+`./verify` was not run by instruction. Next: commit this correction pass and leave the worktree
+clean.
+
 ## Current work cycle (2026-07-23): Correct exact-commit deployment review findings
 
 Applied the focused P0–P2 correction pass. Release identity now separates exported-source and

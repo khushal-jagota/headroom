@@ -49,6 +49,7 @@ def validate_release_manifest(
     *,
     expected_sha: str | None = None,
     release_root: Path | None = None,
+    require_runtime: bool = False,
 ) -> ReleaseManifest:
     manifest_input = path.expanduser()
     if manifest_input.is_symlink():
@@ -94,6 +95,8 @@ def validate_release_manifest(
         if len(relative.parts) != 1 or relative.name != release_sha:
             raise ReleaseValidationError("release directory must be the exact release SHA")
     _validate_release_tree(manifest_root)
+    if require_runtime:
+        _validate_runtime_tree(manifest_root)
     return ReleaseManifest(
         release_sha=release_sha, source_digest=source_digest, artifact_digest=artifact_digest
     )
@@ -138,6 +141,20 @@ def _validate_release_tree(root: Path) -> None:
             raise ReleaseValidationError("release contains a symlink outside its root")
 
 
+def _validate_runtime_tree(root: Path) -> None:
+    required_files = (root / ".venv" / "bin" / "python", root / "bin" / "panels-launcher")
+    for path in required_files:
+        if not path.is_file():
+            raise ReleaseValidationError(f"runtime file is missing: {path.relative_to(root)}")
+        if not os.access(path, os.X_OK):
+            raise ReleaseValidationError(
+                f"runtime file is not executable: {path.relative_to(root)}"
+            )
+    for path in (root / "web" / "dist", root / "agent_backends" / "node_modules"):
+        if not path.is_dir():
+            raise ReleaseValidationError(f"runtime directory is missing: {path.relative_to(root)}")
+
+
 def build_exported_release(
     source_root: Path,
     *,
@@ -159,6 +176,7 @@ def build_exported_release(
             destination / "manifest.json",
             expected_sha=requested_sha,
             release_root=destination.parent,
+            require_runtime=install_dependencies,
         )
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=str(destination.parent)))
@@ -181,7 +199,11 @@ def build_exported_release(
         )
         os.replace(staging, destination)
         destination.chmod(0o755)
-        validate_release_manifest(destination / "manifest.json", expected_sha=requested_sha)
+        validate_release_manifest(
+            destination / "manifest.json",
+            expected_sha=requested_sha,
+            require_runtime=install_dependencies,
+        )
         return manifest
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

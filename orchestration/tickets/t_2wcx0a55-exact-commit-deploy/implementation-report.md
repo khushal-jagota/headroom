@@ -2,24 +2,25 @@
 
 ## Scope
 
-This pass addresses the independent P0–P2 review findings without deploying, installing host
-services, registering runners, changing GitHub settings, or running canonical `./verify`.
+This second correction pass addresses the remaining executable-path blockers without deploying,
+installing host services, registering runners, changing GitHub settings, or running canonical
+`./verify`.
 
-The release manifest now carries both the digest of the exported tracked-source input and a
-separate final artifact digest. Release validation checks the exact SHA directory, release-root
-containment, regular manifest, and symlink containment. Existing valid same-SHA releases are
-idempotently reused.
+Production release validation now has an explicit runtime mode requiring `.venv/bin/python`, an
+executable `bin/panels-launcher`, built `web/dist`, and `agent_backends/node_modules`; low-level
+fixture-manifest validation remains available without that mode. Build, launcher, deployment,
+and same-SHA reuse use the runtime mode.
 
-Deployment now supports a safe initial deployment, records validation and pointer-switch failures,
-uses an operator-owned `flock` lock across processes, and records the operator state path when an
-initial health proof fails. Candidate/current identity is validated end to end. Production health
-requires the expected SHA; test-mode development health remains explicit.
+Initial deployment now accepts an explicitly absent/new database, but an existing database
+requires an operator-established baseline SHA and is backed up before switching `current`.
+Baseline backup failure leaves no pointer or restart and records `initial_failed`. Existing valid
+same-SHA releases remain idempotent; incomplete same-SHA artifacts are rejected.
 
-The release-build CLI and workflow prepare Python/Node prerequisites on the production runner,
-prove `github.sha`, build and validate the host-native release, publish it, and deploy that exact
-artifact. Third-party actions are pinned to full commit SHAs. The launcher preserves only the
-explicit external runtime allowlist. Linux/macOS service assets use readable release paths and
-valid launchd domain verbs. Backup inputs use the shared validated identity CLI.
+The verify workflow pins setup-python/setup-node and installs Python editable plus both npm trees
+before `./verify`. The deploy workflow is one serial `[self-hosted, production]` job with no
+artifact transfer; it proves `github.sha` and uses the exact release path through deployment.
+Checked-in host setup expresses non-root `panels-deploy` ownership for release controls, while
+`panels-live` only reads and executes releases. `current` remains a deploy-created symlink.
 
 ## Review disposition
 
@@ -37,8 +38,9 @@ valid launchd domain verbs. Backup inputs use the shared validated identity CLI.
 1. RED: after adding release/deployment/runtime/asset regressions, the focused command reported
    8 failures, including missing `digest_release_artifact`, missing `release_root`/lock APIs,
    missing expected health SHA, unpinned workflow/build step, and invalid launchd/backup assets.
-2. GREEN: `.venv/bin/python -m pytest tests/unit/test_release.py tests/unit/test_deployment.py tests/unit/test_server_events.py tests/unit/test_deployment_assets.py tests/unit/test_database_backups.py tests/unit/test_environment_cli.py tests/unit/test_environment_linux.py --tb=no` — `54 passed, 1 warning`.
-3. GREEN: `.venv/bin/ruff check src/planner/environments src/planner/core/server.py tests/unit/test_release.py tests/unit/test_deployment.py tests/unit/test_server_events.py tests/unit/test_deployment_assets.py tests/unit/test_environment_linux.py` — `All checks passed!`.
-4. GREEN: `.venv/bin/mypy --strict src/planner/environments/release.py src/planner/environments/deployment.py src/planner/environments/release_launcher.py src/planner/environments/backup.py src/planner/environments/cli.py src/planner/core/server.py` — `Success: no issues found in 6 source files`.
+2. GREEN: `.venv/bin/pytest -q tests/unit/test_deployment_assets.py tests/unit/test_release.py tests/unit/test_deployment.py tests/unit/test_environment_linux.py tests/unit/test_environment_cli.py` — `41 passed`.
+3. GREEN: `.venv/bin/ruff check src/planner/environments/release.py src/planner/environments/release_launcher.py src/planner/environments/deployment.py src/planner/environments/cli.py tests/unit/test_release.py tests/unit/test_deployment.py tests/unit/test_deployment_assets.py` — `All checks passed!`.
+4. GREEN: `.venv/bin/mypy --strict src/planner/environments/release.py src/planner/environments/release_launcher.py src/planner/environments/deployment.py src/planner/environments/cli.py` — `Success: no issues found in 4 source files`.
+5. GREEN: `sh -n ops/panels-environments/setup-accounts.sh ops/panels-environments/service-control.sh ops/panels-environments/pre-deploy-backup.sh` and `git diff --check` — no output/errors.
 
 Canonical `./verify` remains reserved for the parent/orchestrator.
