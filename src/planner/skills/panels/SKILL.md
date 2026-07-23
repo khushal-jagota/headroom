@@ -7,15 +7,29 @@ description: Orientation to the Panels system — its pieces, the daily cycle, w
 
 Panels is a **workspace for agents**, where the user's work lives. It includes a planning system.
 
-The planning system is built from sprints, sprint items, and tickets:
+The planning system has these pieces:
 
+- A **day** is what the user wants to get done on a planning date.
 - A **sprint** is a two-week block of work.
-- A **sprint item** is a goal — something the user wants to achieve. Tickets are generated for it, for the individual bits of that work.
-- A **ticket** is one unit of work, done by agents alongside the user. A ticket moves through seven stages — **Kickoff → Success → Approach → Plan → Implementation → Closeout → Done** — filling one canonical field each step it needs: `kickoff`, `success`, `approach`, `plan`, `implementation`, and `closeout`.
+- A **sprint item** is a goal or outcome inside a sprint, or in the backlog when unscheduled.
+- A **ticket** is one unit of work, often done by an agent alongside the user.
+- An **idea** is a loose thought that may or may not become committed work.
 
-Sprint items and tickets can also stand alone, outside a sprint.
+Tickets have a Worker type that sets their stages and worker. Worker types include
+`coding` (product or repo work), `new_worker` (creating a new kind of worker),
+`exploration` (making an undefined direction clearer), and `initiative_planning`
+(working out shared decisions before creating downstream Tickets). New Worker types
+are added here as they ship.
 
-A **day** is a day in the user's life — what they want to get done that day. Each day is planned.
+Ticket workers shape a Ticket through **Kickoff → Success → Approach → Plan →
+Implementation → Closeout → Done**, filling one canonical field at each step.
+
+## Communication
+
+Inspect the relevant source, docs, or workspace state before advising. Keep communication
+concise, practical, and easy to scan: say the job plainly, separate facts from judgment
+and required user decisions, and use structure only when it improves clarity. Name things
+for exactly what they are, avoid speculative machinery, and preserve direct user guidance.
 
 ## Ticket-owned artifacts
 
