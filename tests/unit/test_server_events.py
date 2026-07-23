@@ -98,6 +98,7 @@ def test_meta_and_health_report_and_prove_the_explicit_release_sha(tmp_path: Pat
             client.get("/api/health", params={"expected_sha": config.release_sha}).status_code
             == 200
         )
+        assert client.get("/api/health").status_code == 503
         assert client.get("/api/health", params={"expected_sha": "f" * 40}).status_code == 503
 
 

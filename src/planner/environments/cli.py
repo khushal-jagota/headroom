@@ -41,6 +41,7 @@ from planner.environments.materialize import (
     remove_environment_instance,
     reset_environment_instance,
 )
+from planner.environments.release import build_exported_release, validate_release_manifest
 from planner.environments.repository_runtime import resolve_repository_runtime_python
 from planner.environments.runtime_port import reserve_available_tcp_listener
 
@@ -83,6 +84,59 @@ def backup(source_db: Path, backup_dir: Path, deployed_revision: str) -> None:
     try:
         snapshot = create_database_backup(source_db, backup_dir, deployed_revision)
     except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(str(snapshot))
+
+
+@environment.command("release-build")
+@click.option(
+    "--source-root", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+)
+@click.option("--requested-sha", required=True)
+@click.option("--release-root", type=click.Path(path_type=Path, file_okay=False), required=True)
+def release_build(source_root: Path, requested_sha: str, release_root: Path) -> None:
+    """Build and validate one host-native exact-SHA release."""
+    try:
+        manifest = build_exported_release(
+            source_root,
+            requested_sha=requested_sha,
+            release_root=release_root,
+            install_dependencies=True,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(manifest.as_dict(), sort_keys=True))
+
+
+@environment.command("release-identity")
+@click.option(
+    "--release", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+)
+def release_identity(release: Path) -> None:
+    """Print the validated SHA for one release directory."""
+    try:
+        manifest = validate_release_manifest(release / "manifest.json")
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(manifest.release_sha)
+
+
+@environment.command("backup-current")
+@click.option(
+    "--source-db", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
+)
+@click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
+@click.option(
+    "--current-release",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
+def backup_current(source_db: Path, backup_dir: Path, current_release: Path) -> None:
+    """Validate the current release and back up the database with its identity."""
+    try:
+        revision = validate_release_manifest(current_release / "manifest.json").release_sha
+        snapshot = create_database_backup(source_db, backup_dir, revision)
+    except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(str(snapshot))
 

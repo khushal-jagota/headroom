@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TextIO
 
 import httpx
 
@@ -39,9 +39,12 @@ class SubprocessServiceController:
     service_name: str
 
     def restart(self) -> None:
-        if self.manager not in {"systemctl", "launchctl"}:
+        if self.manager == "systemctl":
+            command = ["systemctl", "restart", self.service_name]
+        elif self.manager == "launchctl":
+            command = ["launchctl", "kickstart", "-k", f"system/{self.service_name}"]
+        else:
             raise DeploymentError("unsupported service manager")
-        command = [self.manager, "restart", self.service_name]
         subprocess.run(command, check=True, shell=False)
 
 
@@ -70,7 +73,23 @@ class DeploymentResult:
     detail: str | None
 
 
-_DEPLOYMENT_LOCK = threading.Lock()
+class deployment_lock:
+    """Operator-owned inter-process deployment lock."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path.expanduser().resolve()
+        self._stream: TextIO | None = None
+
+    def __enter__(self) -> deployment_lock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._stream = self.path.open("a+", encoding="utf-8")
+        fcntl.flock(self._stream.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        assert self._stream is not None
+        fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
+        self._stream.close()
 
 
 def deploy_release(
@@ -83,12 +102,26 @@ def deploy_release(
     records_path: Path,
     now: Callable[[], float] = time.monotonic,
     health_timeout_seconds: float = 30.0,
+    release_root: Path | None = None,
+    lock_path: Path | None = None,
 ) -> DeploymentResult:
     if health_timeout_seconds <= 0:
         raise DeploymentError("health timeout must be positive")
-    with _DEPLOYMENT_LOCK:
-        candidate_manifest = _validate_candidate(candidate)
-        prior_manifest = _validate_current(current_pointer)
+    candidate_sha = candidate.name
+    effective_release_root = (
+        release_root.expanduser().resolve()
+        if release_root is not None
+        else candidate.parent.resolve()
+    )
+    effective_lock_path = lock_path or (effective_release_root.parent / ".panels-deploy.lock")
+    with deployment_lock(effective_lock_path):
+        try:
+            candidate_manifest = _validate_candidate(candidate, effective_release_root)
+            prior_manifest = _validate_current(current_pointer, effective_release_root)
+        except DeploymentError as exc:
+            failed = DeploymentResult("failed", candidate_sha, None, str(exc))
+            _record(records_path, failed, now())
+            raise
         if (
             prior_manifest is not None
             and prior_manifest.release_sha == candidate_manifest.release_sha
@@ -100,10 +133,26 @@ def deploy_release(
             return result
         prior_sha = prior_manifest.release_sha if prior_manifest is not None else None
         if prior_sha is None:
-            raise DeploymentError(
-                "current release is missing; an initial deployment needs "
-                "an operator-created baseline"
-            )
+            try:
+                _switch_pointer(current_pointer, candidate)
+                service.restart()
+                if not health.wait_for_sha(
+                    candidate_manifest.release_sha, deadline=now() + health_timeout_seconds
+                ):
+                    raise DeploymentError("initial release did not become healthy before cutoff")
+            except BaseException as exc:
+                current_pointer.unlink(missing_ok=True)
+                result = DeploymentResult(
+                    "initial_failed",
+                    candidate_manifest.release_sha,
+                    None,
+                    f"{exc}; operator state path: {current_pointer}",
+                )
+                _record(records_path, result, now())
+                return result
+            result = DeploymentResult("succeeded", candidate_manifest.release_sha, None, None)
+            _record(records_path, result, now())
+            return result
         try:
             backup(prior_sha)
         except BaseException as exc:
@@ -113,7 +162,12 @@ def deploy_release(
             _record(records_path, result, now())
             raise DeploymentError("database backup failed; current release was unchanged") from exc
         prior_root = current_pointer.resolve()
-        _switch_pointer(current_pointer, candidate)
+        try:
+            _switch_pointer(current_pointer, candidate)
+        except BaseException as exc:
+            result = DeploymentResult("failed", candidate_manifest.release_sha, prior_sha, str(exc))
+            _record(records_path, result, now())
+            raise
         try:
             service.restart()
             if not health.wait_for_sha(
@@ -146,27 +200,31 @@ def deploy_release(
         return result
 
 
-def _validate_candidate(candidate: Path) -> ReleaseManifest:
+def _validate_candidate(candidate: Path, release_root: Path) -> ReleaseManifest:
     try:
-        return validate_release_manifest(candidate.resolve() / "manifest.json")
+        if candidate.is_symlink():
+            raise ReleaseValidationError("candidate release must not be a symlink")
+        return validate_release_manifest(
+            candidate / "manifest.json", expected_sha=candidate.name, release_root=release_root
+        )
     except ReleaseValidationError as exc:
         raise DeploymentError(f"candidate release is invalid: {exc}") from exc
 
 
-def _validate_current(current_pointer: Path) -> ReleaseManifest | None:
+def _validate_current(current_pointer: Path, release_root: Path) -> ReleaseManifest | None:
     if not current_pointer.exists() and not current_pointer.is_symlink():
         return None
     try:
-        return validate_release_manifest(current_pointer / "manifest.json")
+        return validate_release_manifest(
+            current_pointer / "manifest.json", release_root=release_root
+        )
     except ReleaseValidationError as exc:
         raise DeploymentError(f"current release is invalid: {exc}") from exc
 
 
 def _switch_pointer(current_pointer: Path, target: Path) -> None:
     current_pointer.parent.mkdir(parents=True, exist_ok=True)
-    temporary = current_pointer.with_name(
-        f".{current_pointer.name}.next-{os.getpid()}-{threading.get_ident()}"
-    )
+    temporary = current_pointer.with_name(f".{current_pointer.name}.next-{os.getpid()}")
     temporary.unlink(missing_ok=True)
     temporary.symlink_to(target.resolve(), target_is_directory=True)
     os.replace(temporary, current_pointer)

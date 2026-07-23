@@ -77,7 +77,7 @@ def test_backup_inputs_resolve_the_deployed_revision_from_the_current_manifest()
     assert "PANELS_LIVE_REPOSITORY" not in environment
     assert "git -C" not in service
     assert "git -C" not in pre_deploy
-    assert '--deployed-revision "$revision"' in service
+    assert "backup-current" in service
     assert '--deployed-revision "$revision"' in pre_deploy
 
 

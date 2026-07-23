@@ -14,6 +14,7 @@ RestartSec=5
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/panels/environments/live /var/log/panels /etc/panels/environments
+ReadOnlyPaths=/opt/panels/releases /opt/panels/current
 NoNewPrivileges=yes
 
 [Install]

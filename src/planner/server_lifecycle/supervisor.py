@@ -332,7 +332,9 @@ def run_server_supervisor() -> int:
     launch_root = resolve_planner_launch_root()
     interpreter = sys.executable
     environ = dict(os.environ)
-    config = load_config(str(launch_root / "config.yaml"), environ)
+    config = load_config(
+        os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")), environ
+    )
     control_socket_path = resolve_server_control_socket_path(
         config.port,
         environ,

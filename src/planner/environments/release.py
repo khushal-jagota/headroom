@@ -27,12 +27,14 @@ class ReleaseValidationError(ValueError):
 class ReleaseManifest:
     release_sha: str
     source_digest: str
+    artifact_digest: str
 
     def as_dict(self) -> dict[str, str]:
         return {
             "format": RELEASE_FORMAT,
             "release_sha": self.release_sha,
             "source_digest": self.source_digest,
+            "artifact_digest": self.artifact_digest,
         }
 
 
@@ -42,12 +44,20 @@ def validate_release_sha(value: str, *, label: str = "release SHA") -> str:
     return value
 
 
-def validate_release_manifest(path: Path, *, expected_sha: str | None = None) -> ReleaseManifest:
-    manifest_path = path.expanduser().resolve()
+def validate_release_manifest(
+    path: Path,
+    *,
+    expected_sha: str | None = None,
+    release_root: Path | None = None,
+) -> ReleaseManifest:
+    manifest_input = path.expanduser()
+    if manifest_input.is_symlink():
+        raise ReleaseValidationError(f"release manifest must be a regular file: {manifest_input}")
+    manifest_path = manifest_input.resolve()
     if not manifest_path.is_file():
         raise ReleaseValidationError(f"release manifest is missing: {manifest_path}")
-    release_root = manifest_path.parent
-    if (release_root / ".git").exists():
+    manifest_root = manifest_path.parent
+    if (manifest_root / ".git").exists():
         raise ReleaseValidationError("release root must not contain Git metadata")
     try:
         value = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -57,6 +67,7 @@ def validate_release_manifest(path: Path, *, expected_sha: str | None = None) ->
         raise ReleaseValidationError("release manifest has an unsupported format")
     release_sha = value.get("release_sha")
     source_digest = value.get("source_digest")
+    artifact_digest = value.get("artifact_digest")
     if not isinstance(release_sha, str):
         raise ReleaseValidationError("release manifest is missing release SHA")
     validate_release_sha(release_sha)
@@ -66,17 +77,50 @@ def validate_release_manifest(path: Path, *, expected_sha: str | None = None) ->
         raise ReleaseValidationError("release manifest SHA does not match expected SHA")
     if not isinstance(source_digest, str) or fullmatch(HEX_DIGEST_PATTERN, source_digest) is None:
         raise ReleaseValidationError("release manifest has an invalid source digest")
-    actual_digest = digest_release_source(release_root)
-    if source_digest != actual_digest:
-        raise ReleaseValidationError("release source digest does not match its manifest")
-    return ReleaseManifest(release_sha=release_sha, source_digest=source_digest)
+    if (
+        not isinstance(artifact_digest, str)
+        or fullmatch(HEX_DIGEST_PATTERN, artifact_digest) is None
+    ):
+        raise ReleaseValidationError("release manifest has an invalid artifact digest")
+    actual_digest = digest_release_artifact(manifest_root)
+    if artifact_digest != actual_digest:
+        raise ReleaseValidationError("release artifact digest does not match its manifest")
+    if release_root is not None:
+        expected_root = release_root.expanduser().resolve()
+        try:
+            relative = manifest_root.relative_to(expected_root)
+        except ValueError as exc:
+            raise ReleaseValidationError("release is outside the release root") from exc
+        if len(relative.parts) != 1 or relative.name != release_sha:
+            raise ReleaseValidationError("release directory must be the exact release SHA")
+    _validate_release_tree(manifest_root)
+    return ReleaseManifest(
+        release_sha=release_sha, source_digest=source_digest, artifact_digest=artifact_digest
+    )
 
 
 def digest_release_source(release_root: Path) -> str:
+    return _digest_tree(release_root, exclude_manifest=True)
+
+
+def digest_release_artifact(release_root: Path) -> str:
+    return _digest_tree(release_root, exclude_manifest=True)
+
+
+def _digest_tree(release_root: Path, *, exclude_manifest: bool) -> str:
     digest = hashlib.sha256()
     root = release_root.resolve()
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.name == "manifest.json" or ".git" in path.parts:
+        if exclude_manifest and path.name == "manifest.json":
+            continue
+        if path.is_symlink():
+            target = path.resolve()
+            if root not in target.parents:
+                raise ReleaseValidationError("release contains a symlink outside its root")
+            relative = path.relative_to(root).as_posix().encode()
+            digest.update(relative + b"\0SYMLINK\0" + os.readlink(path).encode() + b"\0")
+            continue
+        if not path.is_file() or ".git" in path.parts:
             continue
         relative = path.relative_to(root).as_posix().encode()
         digest.update(relative)
@@ -86,6 +130,12 @@ def digest_release_source(release_root: Path) -> str:
                 digest.update(chunk)
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _validate_release_tree(root: Path) -> None:
+    for path in root.rglob("*"):
+        if path.is_symlink() and root not in path.resolve().parents:
+            raise ReleaseValidationError("release contains a symlink outside its root")
 
 
 def build_exported_release(
@@ -103,7 +153,13 @@ def build_exported_release(
         raise ReleaseValidationError("checkout HEAD does not match requested SHA")
     destination = release_root.expanduser().resolve()
     if destination.exists():
-        raise ReleaseValidationError(f"release root already exists: {destination}")
+        if destination.is_symlink():
+            raise ReleaseValidationError("release root must not be a symlink")
+        return validate_release_manifest(
+            destination / "manifest.json",
+            expected_sha=requested_sha,
+            release_root=destination.parent,
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=str(destination.parent)))
     try:
@@ -114,15 +170,17 @@ def build_exported_release(
         )
         with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:") as tar:
             tar.extractall(staging, filter="data")
+        source_digest = digest_release_source(staging)
         if install_dependencies:
             _install_release_dependencies(staging)
         _write_stable_launcher(staging)
-        source_digest = digest_release_source(staging)
-        manifest = ReleaseManifest(requested_sha, source_digest)
+        artifact_digest = digest_release_artifact(staging)
+        manifest = ReleaseManifest(requested_sha, source_digest, artifact_digest)
         (staging / "manifest.json").write_text(
             json.dumps(manifest.as_dict(), sort_keys=True, indent=2) + "\n", encoding="utf-8"
         )
         os.replace(staging, destination)
+        destination.chmod(0o755)
         validate_release_manifest(destination / "manifest.json", expected_sha=requested_sha)
         return manifest
     except BaseException:
@@ -141,7 +199,7 @@ def _git_output(source: Path, *arguments: str) -> str:
 
 
 def _install_release_dependencies(release_root: Path) -> None:
-    subprocess.run(["python3", "-m", "venv", str(release_root / ".venv")], check=True)
+    subprocess.run(["python3", "-m", "venv", "--copies", str(release_root / ".venv")], check=True)
     python = release_root / ".venv" / "bin" / "python"
     requirements = release_root / "requirements.txt"
     if requirements.is_file():

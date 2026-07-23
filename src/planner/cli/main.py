@@ -314,7 +314,7 @@ def restart() -> None:
     from planner.server_lifecycle.supervisor import resolve_planner_launch_root
 
     launch_root = resolve_planner_launch_root()
-    config = load_config(str(launch_root / "config.yaml"))
+    config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
     control_socket_path = resolve_server_control_socket_path(
         config.port,
         os.environ,

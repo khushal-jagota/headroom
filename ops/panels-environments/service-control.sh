@@ -8,7 +8,12 @@ case "$action" in
 esac
 
 if command -v launchctl >/dev/null 2>&1; then
-  exec launchctl "$action" "com.panels.live"
+  case "$action" in
+    start) exec launchctl kickstart "system/com.panels.live" ;;
+    stop) exec launchctl kill "SIGTERM" "system/com.panels.live" ;;
+    restart) exec launchctl kickstart -k "system/com.panels.live" ;;
+    status) exec launchctl print "system/com.panels.live" ;;
+  esac
 fi
 if command -v systemctl >/dev/null 2>&1; then
   exec systemctl "$action" panels-live.service

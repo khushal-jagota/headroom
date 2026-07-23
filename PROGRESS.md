@@ -1,5 +1,16 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Correct exact-commit deployment review findings
+
+Applied the focused P0–P2 correction pass. Release identity now separates exported-source and
+final-artifact digests, validates exact release-root containment and symlinks, and reuses valid
+same-SHA releases. Deployment now has safe initial deployment, durable validation/switch failure
+records, and an inter-process flock. Production health requires the expected SHA while development
+test mode remains explicit. The workflow builds a host-native release on the production runner
+with immutable action SHAs and the service/backup assets use valid commands and readable release
+paths. Focused unit/integration tests, Ruff, and strict Mypy pass; canonical `./verify` remains
+unrun by instruction. Next: commit this correction pass and leave the branch clean.
+
 ## Current work cycle (2026-07-23): Slice 3 host services and GitHub handoff
 
 Replaced live Linux checkout launch with the stable `current` release launcher, added read-only

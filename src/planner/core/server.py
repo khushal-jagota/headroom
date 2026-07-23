@@ -213,12 +213,14 @@ def create_app(
     async def health(expected_sha: str | None = None) -> JSONResponse:
         release_sha = config.release_sha
         if release_sha is None:
+            if config.test_mode:
+                return JSONResponse(status_code=200, content={"ready": True, "release_sha": None})
             return JSONResponse(
                 status_code=503, content={"ready": False, "error": "missing release SHA"}
             )
-        if expected_sha is not None and expected_sha != release_sha:
+        if expected_sha is None or expected_sha != release_sha:
             return JSONResponse(
-                status_code=503, content={"ready": False, "error": "wrong release SHA"}
+                status_code=503, content={"ready": False, "error": "expected release SHA required"}
             )
         return JSONResponse(status_code=200, content={"ready": True, "release_sha": release_sha})
 

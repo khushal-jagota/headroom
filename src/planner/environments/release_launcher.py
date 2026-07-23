@@ -9,6 +9,39 @@ from pathlib import Path
 
 from planner.environments.release import validate_release_manifest
 
+EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
+    {
+        "HOME",
+        "PATH",
+        "LANG",
+        "TERM",
+        "TMPDIR",
+        "PLAN_CONFIG_PATH",
+        "PLAN_DB_PATH",
+        "PLAN_PORT",
+        "PLAN_BOUNDARY_HOUR",
+        "PLAN_TICK_SECONDS",
+        "PLAN_DISPATCH_ENABLED",
+        "PLAN_WS_POLL_MS",
+        "PLAN_WS_HEARTBEAT_MS",
+        "PLAN_UI_DEBOUNCE_MS",
+        "PLAN_DISPATCHER_LOCK_PATH",
+        "PLAN_LOGS_DIR",
+        "PLAN_EVENTS_READ_LIMIT",
+        "PLAN_DB_BUSY_TIMEOUT_MS",
+        "PLAN_SHUTDOWN_GRACE_SECONDS",
+        "PLAN_TRUSTED_INGRESS_PROVIDER",
+        "PLAN_TRUSTED_INGRESS_ALLOWED_LOGIN",
+        "PLAN_TRUSTED_INGRESS_CANONICAL_ORIGIN",
+        "PLAN_HERMES_HOME",
+        "PLAN_HERMES_PYTHON",
+        "PLAN_SERVER_CONTROL_SOCKET",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GOOGLE_API_KEY",
+    }
+)
+
 
 def build_release_launch_env(release_root: Path, *, ambient: Mapping[str, str]) -> dict[str, str]:
     root = release_root.expanduser().resolve()
@@ -16,7 +49,7 @@ def build_release_launch_env(release_root: Path, *, ambient: Mapping[str, str]) 
     allowed = {
         key: value
         for key, value in ambient.items()
-        if key in {"PATH", "LANG", "TERM", "TMPDIR"} or key.startswith("LC_")
+        if key in EXTERNAL_RUNTIME_ENVIRONMENT_KEYS or key.startswith("LC_")
     }
     allowed.update({"PLAN_RELEASE_SHA": manifest.release_sha, "PLAN_RELEASE_ROOT": str(root)})
     return allowed

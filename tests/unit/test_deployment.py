@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import multiprocessing
+import time
 from pathlib import Path
 
 import pytest
@@ -12,9 +14,9 @@ SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 
 def _release(root: Path, sha: str, marker: str) -> Path:
-    root.mkdir()
+    root.mkdir(parents=True)
     (root / marker).write_text(marker, encoding="utf-8")
-    from planner.environments.release import digest_release_source
+    from planner.environments.release import digest_release_artifact, digest_release_source
 
     (root / "manifest.json").write_text(
         json.dumps(
@@ -22,6 +24,7 @@ def _release(root: Path, sha: str, marker: str) -> Path:
                 "format": "panels-release-v1",
                 "release_sha": sha,
                 "source_digest": digest_release_source(root),
+                "artifact_digest": digest_release_artifact(root),
             }
         ),
         encoding="utf-8",
@@ -69,9 +72,7 @@ def test_deploy_backups_prior_manifest_before_switch_and_records_success(tmp_pat
     assert result == DeploymentResult("succeeded", SHA_B, SHA_A, None)
     assert events == [f"backup:{SHA_A}", "restart", f"health:{SHA_B}"]
     assert current.resolve() == candidate
-    assert json.loads((tmp_path / "records.jsonl").read_text())[
-        "result"
-    ] == "succeeded"
+    assert json.loads((tmp_path / "records.jsonl").read_text())["result"] == "succeeded"
 
 
 def test_failed_candidate_validation_does_not_backup_or_switch(tmp_path: Path) -> None:
@@ -129,3 +130,100 @@ def test_same_sha_is_idempotent_without_backup_or_restart(tmp_path: Path) -> Non
     )
     assert result.status == "unchanged"
     assert events == []
+
+
+def test_initial_deployment_skips_backup_and_removes_current_after_health_failure(
+    tmp_path: Path,
+) -> None:
+    releases = tmp_path / "releases"
+    candidate = _release(releases / SHA_B, SHA_B, "new")
+    current = tmp_path / "current"
+    events: list[str] = []
+    result = deploy_release(
+        candidate=candidate,
+        current_pointer=current,
+        backup=lambda revision: events.append(f"backup:{revision}"),
+        service=FakeService(events),
+        health=FakeHealth(events, set()),
+        records_path=tmp_path / "records.jsonl",
+        release_root=releases,
+        health_timeout_seconds=0.001,
+    )
+    assert result.status == "initial_failed"
+    assert "operator state path" in (result.detail or "")
+    assert not current.exists()
+    assert events[0] == "restart"
+    assert json.loads((tmp_path / "records.jsonl").read_text())["result"] == "initial_failed"
+
+
+def test_deployment_rejects_candidate_outside_release_root(tmp_path: Path) -> None:
+    releases = tmp_path / "releases"
+    releases.mkdir()
+    candidate = _release(tmp_path / SHA_B, SHA_B, "new")
+    with pytest.raises(DeploymentError, match="release root"):
+        deploy_release(
+            candidate=candidate,
+            current_pointer=tmp_path / "current",
+            backup=lambda _: None,
+            service=FakeService([]),
+            health=FakeHealth([], {SHA_B}),
+            records_path=tmp_path / "records.jsonl",
+            release_root=releases,
+        )
+
+
+def test_pointer_switch_failure_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    releases = tmp_path / "releases"
+    prior = _release(releases / SHA_A, SHA_A, "old")
+    candidate = _release(releases / SHA_B, SHA_B, "new")
+    current = tmp_path / "current"
+    current.symlink_to(prior, target_is_directory=True)
+    monkeypatch.setattr(
+        "planner.environments.deployment._switch_pointer",
+        lambda *_: (_ for _ in ()).throw(OSError("pointer denied")),
+    )
+    with pytest.raises(OSError, match="pointer denied"):
+        deploy_release(
+            candidate=candidate,
+            current_pointer=current,
+            backup=lambda _: None,
+            service=FakeService([]),
+            health=FakeHealth([], {SHA_B}),
+            records_path=tmp_path / "records.jsonl",
+            release_root=releases,
+        )
+    assert json.loads((tmp_path / "records.jsonl").read_text())["result"] == "failed"
+
+
+def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> None:
+    lock = tmp_path / "deploy.lock"
+    ready = tmp_path / "ready"
+    release = _release(tmp_path / SHA_B, SHA_B, "new")
+
+    def hold_lock() -> None:
+        from planner.environments.deployment import deployment_lock
+
+        with deployment_lock(lock):
+            ready.write_text("ready", encoding="utf-8")
+            time.sleep(0.35)
+
+    process = multiprocessing.get_context("fork").Process(target=hold_lock)
+    process.start()
+    while not ready.exists():
+        time.sleep(0.01)
+    started = time.monotonic()
+    result = deploy_release(
+        candidate=release,
+        current_pointer=tmp_path / "current",
+        backup=lambda _: None,
+        service=FakeService([]),
+        health=FakeHealth([], {SHA_B}),
+        records_path=tmp_path / "records.jsonl",
+        release_root=tmp_path,
+        lock_path=lock,
+    )
+    assert result.status == "succeeded"
+    assert time.monotonic() - started >= 0.25
+    process.join()

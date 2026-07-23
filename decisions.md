@@ -3,6 +3,13 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-t_2wcx0a55-review-correction — Build and validate on the host runner
+
+The release-build workflow runs on the production-labelled runner after installing its pinned
+Python and Node prerequisites, so the exported virtual environment and frontend are host-native.
+The deploy job consumes that exact published artifact serially. This preserves the single runner
+boundary while avoiding a Linux-built artifact being used by the first macOS production host.
+
 ## D-t_2wcx0a55-release-not-checkout — Git identifies source; live runs an application artifact
 
 After the user merges `staging → main`, deployment uses only the exact resulting `main` SHA.

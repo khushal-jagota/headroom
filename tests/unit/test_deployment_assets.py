@@ -24,5 +24,19 @@ def test_github_deployment_checks_out_and_proves_exact_sha_before_deploy() -> No
     workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
     assert "ref: ${{ github.sha }}" in workflow
     assert 'git rev-parse HEAD)" = "${{ github.sha }}' in workflow
-    assert "run: ./verify" in workflow
+    assert "./verify" in workflow
     assert "PANELS_RELEASE_ROOT/${{ github.sha }}" in workflow
+    assert "release-build" in workflow
+    assert "actions/checkout@" in workflow and "@v4" not in workflow
+
+
+def test_service_control_uses_real_manager_verbs_and_backup_uses_shared_identity_cli() -> None:
+    control = (ASSET_ROOT / "service-control.sh").read_text(encoding="utf-8")
+    assert "launchctl kickstart" in control
+    assert "launchctl kill" in control
+    service = (ASSET_ROOT / "panels-db-backup.service").read_text(encoding="utf-8")
+    pre_deploy = (ASSET_ROOT / "pre-deploy-backup.sh").read_text(encoding="utf-8")
+    assert "json.load" not in service
+    assert "json.load" not in pre_deploy
+    assert "backup-current" in service
+    assert "release-identity" in pre_deploy
