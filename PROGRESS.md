@@ -1,5 +1,13 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Fresh-runner verifier path spot-check
+
+The parent spot-check found that both workflows installed Python packages without creating the
+repository `.venv` that `./verify` executes. This small integration repair now creates `.venv`,
+installs through `.venv/bin/python`, and uses that same interpreter for release construction. The
+asset regression and Ruff pass. Next: independent re-review, real isolated release/deploy/rollback,
+then the one canonical `./verify`.
+
 ## Current work cycle (2026-07-23): Ticket t_2wcx0a55 focused correction complete
 
 The second correction pass fixes the remaining executable-path blockers. Verify now provisions

@@ -40,8 +40,9 @@ def test_github_verify_provisions_fresh_runner_before_verify() -> None:
     workflow = (WORKFLOW_ROOT / "verify.yml").read_text(encoding="utf-8")
     assert "actions/setup-python@" in workflow
     assert "actions/setup-node@" in workflow
-    assert "python -m pip install -r requirements.txt" in workflow
-    assert "python -m pip install --editable ." in workflow
+    assert "python -m venv .venv" in workflow
+    assert ".venv/bin/python -m pip install -r requirements.txt" in workflow
+    assert ".venv/bin/python -m pip install --editable ." in workflow
     assert "npm ci --prefix web" in workflow
     assert "npm ci --prefix agent_backends" in workflow
     assert workflow.index("setup-python") < workflow.index("./verify")
@@ -54,6 +55,9 @@ def test_deploy_workflow_preserves_one_runner_and_exact_release_path() -> None:
     assert 'release/${{ github.sha }}' not in workflow
     assert '"$PANELS_RELEASE_ROOT/${{ github.sha }}"' in workflow
     assert "--candidate \"$PANELS_RELEASE_ROOT/${{ github.sha }}\"" in workflow
+    assert "python -m venv .venv" in workflow
+    assert ".venv/bin/python -m planner environment release-build" in workflow
+    assert ".build-venv" not in workflow
 
 
 def test_service_control_uses_real_manager_verbs_and_backup_uses_shared_identity_cli() -> None:

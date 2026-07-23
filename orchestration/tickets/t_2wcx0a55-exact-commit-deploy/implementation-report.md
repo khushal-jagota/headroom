@@ -42,5 +42,10 @@ Checked-in host setup expresses non-root `panels-deploy` ownership for release c
 3. GREEN: `.venv/bin/ruff check src/planner/environments/release.py src/planner/environments/release_launcher.py src/planner/environments/deployment.py src/planner/environments/cli.py tests/unit/test_release.py tests/unit/test_deployment.py tests/unit/test_deployment_assets.py` — `All checks passed!`.
 4. GREEN: `.venv/bin/mypy --strict src/planner/environments/release.py src/planner/environments/release_launcher.py src/planner/environments/deployment.py src/planner/environments/cli.py` — `Success: no issues found in 4 source files`.
 5. GREEN: `sh -n ops/panels-environments/setup-accounts.sh ops/panels-environments/service-control.sh ops/panels-environments/pre-deploy-backup.sh` and `git diff --check` — no output/errors.
+6. Parent spot-check correction: both workflows now create the repository `.venv`, install with
+   `.venv/bin/python`, and use that interpreter for `./verify` and release construction. GREEN:
+   `.venv/bin/pytest -q tests/unit/test_deployment_assets.py && .venv/bin/ruff check
+   tests/unit/test_deployment_assets.py && git diff --check` — `7 passed`; Ruff passed; diff check
+   emitted no errors.
 
 Canonical `./verify` remains reserved for the parent/orchestrator.

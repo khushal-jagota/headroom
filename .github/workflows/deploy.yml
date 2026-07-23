@@ -22,16 +22,16 @@ jobs:
       - name: Prove exact source commit and install prerequisites
         run: |
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
-          python -m venv .build-venv
-          .build-venv/bin/python -m pip install -r requirements.txt
-          .build-venv/bin/python -m pip install --editable .
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m pip install --editable .
           npm ci --prefix web
           npm ci --prefix agent_backends
       - name: Release gate
         run: ./verify
       - name: Build and validate host-native release
         run: |
-          .build-venv/bin/python -m planner environment release-build \
+          .venv/bin/python -m planner environment release-build \
             --source-root . --requested-sha "${{ github.sha }}" \
             --release-root "$PANELS_RELEASE_ROOT/${{ github.sha }}"
       - name: Deploy exact SHA
