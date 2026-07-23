@@ -3,6 +3,25 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-t_fvrfhk2k-agents-route-and-chief-resource — Make role kind explicit without inventing a registry
+
+Use `#/agents/chief-of-staff` for the standalone Agent and `#/agents/workers/<worker-type>` for
+Ticket Worker details. Both detail kinds share the launch-default and skill-editor components, but
+only Workers load a parameterized Worker resource and lifecycle manifest. Chief reads from the
+existing `WorkersResponse.chief_of_staff` and writes through its existing Chief endpoints. Chief
+events therefore refresh `workers`, never a fabricated `worker:chief_of_staff` identity. Keep the
+old Workers hashes as redirects so existing links remain usable, and remove Skills home from the
+index because the approved model has exactly Agents and Workers as peer sections.
+
+## D-t_fvrfhk2k-shared-worker-skill-is-configurable-not-launchable — Honor the owner override without inventing a runtime
+
+The owner added the packaged `panels-worker` skill to the Agents section before Closeout. Present it
+as a second Agent-like configuration card at `#/agents/worker-skill`, but do not give it backend,
+model, reasoning, or Stage controls: every Ticket Worker reads this shared role guidance, while no
+independent `panels-worker` employee is launched. Read it through the existing skills-home resource,
+edit it through `PATCH /api/skills/panels-worker`, and reuse the skills-home invalidation path. This
+keeps the new card truthful without adding an agent registry or another backend contract.
+
 ## D-t_qe1gk3ha-creation-placement — Preserve explicit backlog selection
 
 Treat an omitted `sprint_id` as eligible for the current-sprint default, but treat an explicitly
@@ -184,6 +203,14 @@ locations, terminal exit, and unrelated metadata. The rule is backend-independen
 frontend does not present `rawOutput` from Hermes, Claude, or Codex.
 
 # Workspace
+
+## D-blocked-workspace-sections-use-existing-disclosure-state — Collapse only the synthetic Blocked group
+
+Workspace will mark its synthetic `blocked` stage group as default-collapsed in the
+existing stage-section model. It will not change canonical Ticket stages or the shared
+Disclosure component. Browser coverage will wait for a visible Workspace element,
+assert the Blocked section starts closed, open it to prove its cards remain available,
+and confirm an ordinary active stage keeps its current open default.
 
 ## D-ticket-error-requires-explicit-backend-provenance — Correctness failures are not Ticket failures
 

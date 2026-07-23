@@ -30,8 +30,12 @@ from .backend_contracts import (
 )
 from .contracts import ConversationEmployee
 
-_TICKET_ROLE_DIRECTIVE: Final = "Use the installed `panels-worker` skill."
-_CHIEF_ROLE_DIRECTIVE: Final = "Use the installed `panels-chief-of-staff` skill."
+_ROLE_DIRECTIVE_PREFIX: Final = (
+    "Start with the `panels` skill. It explains the system and is necessary, "
+    "then drill through to your identity through the skills layers."
+)
+_TICKET_ROLE_DIRECTIVE: Final = f"{_ROLE_DIRECTIVE_PREFIX} You are a ticket worker."
+_CHIEF_ROLE_DIRECTIVE: Final = f"{_ROLE_DIRECTIVE_PREFIX} You are a chief of staff."
 
 
 def _role_directive(employee: ConversationEmployee) -> str:

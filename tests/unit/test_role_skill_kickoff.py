@@ -27,6 +27,17 @@ from planner.conversation.role_skill_kickoff import (
     RoleSkillKickoffAcpEmployeeChildFactory,
 )
 
+_TICKET_ROLE_DIRECTIVE = (
+    "Start with the `panels` skill. It explains the system and is necessary, "
+    "then drill through to your identity through the skills layers. "
+    "You are a ticket worker."
+)
+_CHIEF_ROLE_DIRECTIVE = (
+    "Start with the `panels` skill. It explains the system and is necessary, "
+    "then drill through to your identity through the skills layers. "
+    "You are a chief of staff."
+)
+
 
 class _FakeChild:
     def __init__(self, generation: int, normal_ingress: Any) -> None:
@@ -175,7 +186,7 @@ def test_ticket_new_session_decorates_only_its_first_prompt_delivery() -> None:
 
         first, second = delegate.children[0].prompt_requests
         assert [block.text for block in first.prompt if isinstance(block, TextContentBlock)] == [
-            "Use the installed `panels-worker` skill.",
+            _TICKET_ROLE_DIRECTIVE,
             "First real work",
         ]
         assert first.field_meta == {"trace": "preserved"}
@@ -227,12 +238,12 @@ def test_chief_new_conversation_rearms_the_same_child_once() -> None:
             for request in raw_child.prompt_requests
         ] == [
             [
-                "Use the installed `panels-chief-of-staff` skill.",
+                _CHIEF_ROLE_DIRECTIVE,
                 "Plan this sprint",
             ],
             ["Continue planning"],
             [
-                "Use the installed `panels-chief-of-staff` skill.",
+                _CHIEF_ROLE_DIRECTIVE,
                 "Start fresh",
             ],
         ]
@@ -262,7 +273,7 @@ def test_failed_replacement_new_session_preserves_the_prior_role_arm() -> None:
             for block in raw_child.prompt_requests[0].prompt
             if isinstance(block, TextContentBlock)
         ] == [
-            "Use the installed `panels-worker` skill.",
+            _TICKET_ROLE_DIRECTIVE,
             "First real work",
         ]
 
@@ -286,7 +297,7 @@ def test_command_shaped_first_prompt_does_not_consume_the_role_arm() -> None:
         assert [
             block.text for block in delivered_ordinary.prompt if isinstance(block, TextContentBlock)
         ] == [
-            "Use the installed `panels-worker` skill.",
+            _TICKET_ROLE_DIRECTIVE,
             "Start the Ticket",
         ]
 
@@ -345,7 +356,7 @@ def test_live_role_echoes_are_visible_without_filtering_or_collision_suppression
 
         child = await factory.create(_employee(), 1, ingress, None, None)
         raw_child = delegate.children[0]
-        directive = "Use the installed `panels-worker` skill."
+        directive = _TICKET_ROLE_DIRECTIVE
         raw_child.prompt_updates = [
             _user_chunk("session-new", directive),
             _user_chunk("session-new", directive),
@@ -376,7 +387,7 @@ def test_load_and_capture_replay_forwards_role_echoes_unchanged() -> None:
 
         child = await factory.create(_employee(), 2, ingress, None, None)
         raw_child = delegate.children[0]
-        directive = "Use the installed `panels-worker` skill."
+        directive = _TICKET_ROLE_DIRECTIVE
         load_request = LoadSessionRequest(
             cwd="/workspace",
             session_id="session-existing",

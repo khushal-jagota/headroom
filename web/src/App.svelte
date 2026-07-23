@@ -12,7 +12,7 @@
   import ReviewRoute from "./routes/ReviewRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
-  import WorkersRoute from "./routes/WorkersRoute.svelte";
+  import AgentsRoute from "./routes/AgentsRoute.svelte";
 
   type Route = {
     name: string;
@@ -59,8 +59,34 @@
     if (name === "workspace" && segments[1]) {
       params.id = decodeRouteSegment(segments[1]);
     }
-    if (name === "workers" && segments[1]) {
-      params.id = decodeRouteSegment(segments[1]);
+    if (name === "workers") {
+      const legacyDetail = segments[1]
+        ? `/workers/${encodeURIComponent(decodeRouteSegment(segments[1]))}`
+        : "";
+      window.location.replace(`#/agents${legacyDetail}`);
+      return {
+        name: "agents",
+        params: segments[1]
+          ? { roleKind: "worker", id: decodeRouteSegment(segments[1]) }
+          : { roleKind: "index" },
+        key: segments[1] ? `agents/workers/${segments[1]}` : "agents"
+      };
+    }
+    if (name === "agents") {
+      if (segments[1] === "chief-of-staff" && segments.length === 2) {
+        params.roleKind = "agent";
+        params.id = "chief_of_staff";
+      } else if (segments[1] === "worker-skill" && segments.length === 2) {
+        params.roleKind = "skill";
+        params.id = "panels-worker";
+      } else if (segments[1] === "workers" && segments[2] && segments.length === 3) {
+        params.roleKind = "worker";
+        params.id = decodeRouteSegment(segments[2]);
+      } else if (segments.length === 1) {
+        params.roleKind = "index";
+      } else {
+        params.roleKind = "unknown";
+      }
     }
     if (name === "sprint" && segments[1]) {
       // Legacy sub-routes redirect to the new split: the old two-tab page became a
@@ -92,7 +118,8 @@
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "documents";
     }
-    return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "workers", "preview"].includes(route.name);
+    if (route.name === "agents") return route.params.roleKind !== "unknown";
+    return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
   }
 
   function scrollActiveNavLinkIntoStatusClearance(): void {
@@ -177,7 +204,7 @@
       <a class:active={currentNav("sprint")} class="nav-link" data-screen="sprint" href="#/sprint">Sprint</a>
       <a class:active={currentNav("backlog")} class="nav-link" data-screen="backlog" href="#/backlog">Backlog</a>
       <a class:active={currentNav("ideas")} class="nav-link" data-screen="ideas" href="#/ideas">Ideas</a>
-      <a class:active={currentNav("workers")} class="nav-link" data-screen="workers" href="#/workers">Workers</a>
+      <a class:active={currentNav("agents")} class="nav-link" data-screen="agents" href="#/agents">Agents</a>
     </nav>
     <div class="shell-statuses">
       {#if (review.data?.running_worker_count || 0) > 0}
@@ -219,8 +246,11 @@
             <BacklogRoute />
           {:else if route.name === "ideas"}
             <IdeasRoute />
-          {:else if route.name === "workers"}
-            <WorkersRoute workerType={route.params.id} />
+          {:else if route.name === "agents"}
+            <AgentsRoute
+              roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"}
+              roleId={route.params.id}
+            />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
           {/if}

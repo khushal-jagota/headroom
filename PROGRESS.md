@@ -1,5 +1,36 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Close out `t_7fefjrze`
+
+Ticket `t_7fefjrze` makes Workspace Blocked sections start collapsed while remaining
+expandable and leaving ordinary active sections open. The implementation at `133f9fcd`
+passed its focused browser proof, Svelte diagnostics, independent reviews, and canonical
+`./verify`. Current `staging` revision `b1e91c55` is now merged into the Ticket branch;
+the only integration repairs preserve both PROGRESS histories and rebuild the generated
+Vite bundle from the combined source. Next: review and commit that prospective result,
+run one canonical `./verify`, then advance and push `staging` if green.
+
+## Current work cycle (2026-07-23): Agents page implementation (`t_fvrfhk2k`)
+
+The browser-facing Workers route is now the Agents page at `#/agents`, with exactly two stacked
+sections: Agent-like configurable roles and the existing Worker roster. The Agents section contains
+Chief of Staff plus the owner-requested shared `panels-worker` role skill. Chief has launch defaults;
+the shared Worker skill deliberately has none because it is not an independently launched runtime.
+Both use the shared skill editor and neither has a Ticket Stage table, while Worker lifecycle
+ownership, manifests, candidate skills, and independent field-save behavior remain intact. Chief
+edits refresh the Workers response that actually carries Chief state; shared Worker-skill edits use
+the existing skills-home resource and invalidation path. Legacy `#/workers` hashes redirect to the
+exact Agents routes. Svelte check, production build, all frontend unit tests, and the 13 focused Agents/
+Workers and resource-catalogue Playwright tests pass. Review follow-up directly covers both legacy
+canonicalizations, unknown Agents subroutes, the visible and active Agents navigation, and 390px
+index/Chief controls without horizontal overflow. Desktop and mobile screenshots are in the Ticket
+artifact directory, with the desktop image refreshed to show both Agent cards. Closeout merged
+current `staging` revision `08642474` into the Ticket branch as `0c76f6ea` and corrected
+`docs/frontend.md` plus the managed-settings section of `docs/worker-types.md` in `2b3c3a56`.
+The combined-diff review found no code, generated-build, test, route, merge-interaction, or
+documentation-content violation; its one stale-memory finding is corrected here. Next: run the one
+canonical `./verify`, then advance and push the exact verified revision before proposing Closeout.
+
 ## Current work cycle (2026-07-23): Use the user's normal Hermes installation and home (`t_pw264y71`)
 
 Hermes-backed Panels runtime now defaults to the operator's normal `~/.hermes` home instead of the
