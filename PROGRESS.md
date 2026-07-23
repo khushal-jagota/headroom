@@ -8,10 +8,12 @@ screens use the same launch-default and skill-editing components; Chief has no T
 while Worker lifecycle ownership, manifests, candidate skills, and independent field-save behavior
 remain intact. Chief edits refresh the Workers response that actually carries Chief state instead
 of opening or invalidating a fake Worker detail. Legacy `#/workers` hashes redirect to the exact
-Agents routes. Svelte check, production build, all frontend unit tests, and the 11 focused Agents/
-Workers and resource-catalogue Playwright tests pass. Desktop and 390px mobile screenshots are in
-the Ticket artifact directory. Next: independent implementation review and Implementation proposal;
-the canonical `./verify` and documentation remain reserved for Closeout.
+Agents routes. Svelte check, production build, all frontend unit tests, and the 12 focused Agents/
+Workers and resource-catalogue Playwright tests pass. Review follow-up directly covers both legacy
+canonicalizations, unknown Agents subroutes, the visible and active Agents navigation, and 390px
+index/Chief controls without horizontal overflow. Desktop and mobile screenshots are in the Ticket
+artifact directory. Next: Implementation proposal; the canonical `./verify` and documentation
+remain reserved for Closeout.
 
 ## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
 

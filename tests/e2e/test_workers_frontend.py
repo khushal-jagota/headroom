@@ -92,6 +92,74 @@ def _editable_text(page, selector: str) -> str:
     return page.locator(selector).evaluate("(node) => node.textContent")
 
 
+def _assert_agents_nav_active_and_clear(page) -> None:
+    nav = page.locator('.shell-links .nav-link[data-screen="agents"]')
+    assert nav.inner_text() == "Agents"
+    assert nav.get_attribute("href") == "#/agents"
+    assert "active" in (nav.get_attribute("class") or "").split()
+    page.wait_for_function(
+        """() => {
+          const active = document.querySelector(
+            '.shell-links .nav-link.active[data-screen="agents"]'
+          );
+          const statuses = document.querySelector('.shell-statuses');
+          if (!active || !statuses) return false;
+          const activeRect = active.getBoundingClientRect();
+          const statusRect = statuses.getBoundingClientRect();
+          return activeRect.width > 0 && activeRect.right <= statusRect.left - 4;
+        }""",
+        timeout=WAIT_MS,
+    )
+
+
+def _assert_no_horizontal_overflow(page) -> None:
+    overflow = page.evaluate(
+        "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
+    )
+    assert overflow <= 0
+
+
+def test_agents_routes_navigation_and_mobile_controls(server, context_factory) -> None:
+    legacy_index = context_factory().new_page()
+    legacy_index.goto(server.base + "/#/workers")
+    legacy_index.wait_for_url(server.base + "/#/agents", timeout=WAIT_MS)
+    legacy_index.wait_for_selector('[data-screen="agents"] [data-agents-section]', timeout=WAIT_MS)
+    _assert_agents_nav_active_and_clear(legacy_index)
+
+    legacy_worker = context_factory().new_page()
+    legacy_worker.goto(server.base + "/#/workers/coding")
+    legacy_worker.wait_for_url(server.base + "/#/agents/workers/coding", timeout=WAIT_MS)
+    legacy_worker.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
+    _assert_agents_nav_active_and_clear(legacy_worker)
+
+    for invalid_hash in ("#/agents/not-a-role", "#/agents/workers"):
+        invalid = context_factory().new_page()
+        invalid.goto(server.base + f"/{invalid_hash}")
+        invalid.wait_for_selector(".quiet-line", timeout=WAIT_MS)
+        assert invalid.locator(".quiet-line").inner_text() == "no such screen"
+
+    mobile_index = context_factory().new_page()
+    mobile_index.set_viewport_size({"width": 390, "height": 844})
+    mobile_index.goto(server.base + "/#/agents")
+    mobile_index.wait_for_selector("[data-agent-configure]", timeout=WAIT_MS)
+    _assert_agents_nav_active_and_clear(mobile_index)
+    _assert_no_horizontal_overflow(mobile_index)
+    assert mobile_index.locator("[data-agent-configure]").is_visible()
+    assert mobile_index.locator("[data-agent-configure]").get_attribute("href") == (
+        "#/agents/chief-of-staff"
+    )
+    assert mobile_index.locator('[data-worker-row][data-worker-id="coding"]').is_visible()
+
+    mobile_index.locator("[data-agent-configure]").click()
+    mobile_index.wait_for_url(server.base + "/#/agents/chief-of-staff", timeout=WAIT_MS)
+    mobile_index.wait_for_selector("[data-agent-detail]", timeout=WAIT_MS)
+    _assert_agents_nav_active_and_clear(mobile_index)
+    _assert_no_horizontal_overflow(mobile_index)
+    assert mobile_index.get_by_label("Chief of Staff backend").is_visible()
+    assert mobile_index.locator(DESCRIPTION_EDIT).is_editable()
+    assert mobile_index.locator(BODY_EDIT).is_editable()
+
+
 def test_agents_index_worker_detail_and_mobile_layout(server, context_factory, open_page) -> None:
     page = open_page(
         context_factory(),
@@ -141,24 +209,8 @@ def test_agents_index_worker_detail_and_mobile_layout(server, context_factory, o
     assert mobile.locator("[data-stage-label]").first.is_visible()
     assert mobile.locator("[data-stage-owner-select]").first.is_visible()
     assert not mobile.locator("[data-gated-field]").first.is_visible()
-    mobile.wait_for_function(
-        """() => {
-          const active = document.querySelector(
-            '.shell-links .nav-link.active' +
-            '[data-screen="agents"]'
-          );
-          const statuses = document.querySelector('.shell-statuses');
-          if (!active || !statuses) return false;
-          const activeRect = active.getBoundingClientRect();
-          const statusRect = statuses.getBoundingClientRect();
-          return activeRect.width > 0 && activeRect.right <= statusRect.left - 4;
-        }""",
-        timeout=WAIT_MS,
-    )
-    overflow = mobile.evaluate(
-        "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
-    )
-    assert overflow <= 0
+    _assert_agents_nav_active_and_clear(mobile)
+    _assert_no_horizontal_overflow(mobile)
     mobile.screenshot(path=ARTIFACT_DIR / "agents-worker-detail-mobile.png", full_page=True)
 
 
