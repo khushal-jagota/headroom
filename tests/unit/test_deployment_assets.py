@@ -56,13 +56,24 @@ def test_github_deploy_does_not_run_source_verification_dependencies() -> None:
     assert "npm ci --prefix agent_backends" not in workflow
 
 
+def test_github_deploy_uses_the_self_hosted_runner_toolchain() -> None:
+    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
+    assert "actions/setup-python@" not in workflow
+    assert "actions/setup-node@" not in workflow
+    assert "sys.version_info >= (3, 12)" in workflow
+    assert 'process.versions.node.split(".")[0]' in workflow
+    assert "Node 22 is required" in workflow
+    assert workflow.index("sys.version_info") < workflow.index("python3 -m venv .venv")
+    assert workflow.index("process.versions.node") < workflow.index("python3 -m venv .venv")
+
+
 def test_deploy_workflow_preserves_one_runner_and_exact_release_path() -> None:
     workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
     assert workflow.count("runs-on: [self-hosted, production]") == 1
     assert 'release/${{ github.sha }}' not in workflow
     assert '"$PANELS_RELEASE_ROOT/${{ github.sha }}"' in workflow
     assert "--candidate \"$PANELS_RELEASE_ROOT/${{ github.sha }}\"" in workflow
-    assert "python -m venv .venv" in workflow
+    assert "python3 -m venv .venv" in workflow
     assert ".venv/bin/python -m planner environment release-build" in workflow
     assert ".venv/bin/python -m planner environment deploy" in workflow
     assert ".build-venv" not in workflow

@@ -3944,3 +3944,18 @@ authorized completing Closeout. Current `staging` was already the verified branc
 local `staging` fast-forwarded to the implementation and the exact revision was pushed and confirmed
 on `origin/staging`; the rolling `staging` → `main` PR remains open. The temporary Ticket branch was
 removed after integration. Closeout is complete. Blockers: none.
+
+# Current work cycle (2026-07-23): Repair host-native deploy setup
+
+Stage: implementation in progress as a direct integration repair. PR #3 merged at `5c75562c`, but
+Deploy failed before Panels code ran because `actions/setup-python` attempted to create
+`/Users/runner/hostedtoolcache` on the self-hosted Mac and received permission denied. Live correctly
+remained on `a5aa422f`. The runner already exposes Python 3.13 and Node 22.22 through its service
+`PATH`. Current hypothesis: remove both setup actions and make their supported versions explicit,
+fast prerequisites before release construction. The new workflow contract failed against the old
+workflow as expected and now passes with the focused deployment/release slice (22 tests);
+`git diff --check` also passes. Independent Standards and Spec reviews reported no findings.
+The canonical `./verify` passed every gate: Ruff, strict Mypy over 160 source files, 1,406
+unit tests, compile/CSS, Svelte diagnostics, production frontend build and contracts, and 126
+Playwright E2E tests (`VERIFY: PASS`). Next: publish `staging`, land the repair through the rolling
+PR, monitor Deploy, and prove the new live SHA. Blockers: none.
