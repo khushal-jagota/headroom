@@ -254,9 +254,7 @@ def _install_release_dependencies(release_root: Path) -> None:
     requirements = release_root / "requirements.txt"
     if requirements.is_file():
         subprocess.run([str(python), "-m", "pip", "install", "-r", str(requirements)], check=True)
-    subprocess.run(
-        [str(python), "-m", "pip", "install", "--editable", str(release_root)], check=True
-    )
+    subprocess.run([str(python), "-m", "pip", "install", str(release_root)], check=True)
     for directory in (release_root / "web", release_root / "agent_backends"):
         if (directory / "package-lock.json").is_file():
             subprocess.run(["npm", "ci", "--prefix", str(directory)], check=True)
