@@ -1,5 +1,40 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Preserve provider authentication in the user LaunchAgent
+
+The live user LaunchAgent supplied `HOME` but not `USER`; Claude Code uses `USER` to resolve the
+signed-in operator's Keychain-backed login, so Claude Employees failed with `Authentication
+required` despite sharing the correct home. The installed plist and canonical launchd template now
+derive `USER` and `LOGNAME` from `id -un`; the release launcher preserves those provider identity
+variables through its runtime allowlist. Focused release and deployment-asset tests pass. The user
+explicitly waived the long canonical verifier for this urgent authentication repair.
+
+## Current work cycle (2026-07-23): Simplify production adoption to the signed-in user
+
+The separate `panels-live`/`panels-deploy` design made the one-Mac cutover depend on copied Hermes
+state, backend credentials, root LaunchDaemons, and repeated authorization. That did not serve the
+requested outcome. The permanent Mac path is now a user runner plus user LaunchAgent under the
+signed-in operator, using the existing Hermes home and user-owned releases, state, and config.
+The user-owned service and runner are live; exact-SHA restart, crash recovery, and installed
+candidate-failure rollback are proven. User service controls now load and unload the LaunchAgent
+instead of treating a KeepAlive signal as a stop. Next: run the settled verification and propose
+Closeout.
+
+## Current work cycle (2026-07-23): Resolve packaged assets from the release root
+
+The first installed-account smoke exposed that an installed wheel derived assets from
+`site-packages` rather than the immutable release root. Server composition now honors the validated
+launcher-provided `PLAN_RELEASE_ROOT`, while checkout mode keeps its source-tree fallback. Focused
+regressions cover both resolutions. Next: rebuild and re-run the installed baseline smoke, then the
+canonical verifier and verified-staging update.
+
+## Current work cycle (2026-07-23): Bind production variables explicitly
+
+The installed Mac runner exposed that repository variables are not inherited as shell variables.
+The deploy workflow now maps every operator-owned path, health, and service input from GitHub
+repository variables into its environment, with an asset regression covering the complete set.
+Next: focused gates, canonical verification, then update verified staging.
+
 ## Current work cycle (2026-07-23): Simplify fork-session deferral
 
 After three payload-buffer corrections exposed new lifecycle edges, the repair changed approach.
@@ -3899,3 +3934,37 @@ reported no violations. The canonical `./verify` passed all gates: 1,341 unit te
 checks/build/contracts, and 123 Playwright e2e tests (`VERIFY: PASS`). The branch is clean.
 Next: propose the Implementation field for approval; Closeout will handle staging integration.
 Blockers: none.
+
+# Current work cycle (2026-07-23): Simplify GitHub CI (`t_8dkhr2f7`)
+
+Stage: Implementation built on the Ticket branch. The standalone GitHub Verify workflow is deleted;
+Deploy no longer installs source-tree Node or Playwright dependencies or invokes `./verify`, while
+exact-SHA proof, the Python release-builder environment, Node availability, release validation, and
+deployment remain. Contract tests and live release documentation describe the new boundary. Focused
+deployment/release tests passed (21 tests), and `git diff --check` passed. Next: commit the review
+candidate, obtain independent review, address any findings, then run the one canonical local
+`./verify`. The committed candidate received independent Standards and Spec reviews with no
+findings. The canonical `./verify` then passed every gate: Ruff, strict Mypy over 160 source files,
+1,405 unit tests, compile/CSS, Svelte diagnostics, production frontend build and contracts, and 126
+Playwright E2E tests (`VERIFY: PASS`). The delegated implementation agent submitted the
+Implementation field before returning; the orchestrator's subsequent proposal therefore landed as
+Closeout and advanced the Ticket to Done before repository integration. The owner then explicitly
+authorized completing Closeout. Current `staging` was already the verified branch's ancestor, so
+local `staging` fast-forwarded to the implementation and the exact revision was pushed and confirmed
+on `origin/staging`; the rolling `staging` → `main` PR remains open. The temporary Ticket branch was
+removed after integration. Closeout is complete. Blockers: none.
+
+# Current work cycle (2026-07-23): Repair host-native deploy setup
+
+Stage: implementation in progress as a direct integration repair. PR #3 merged at `5c75562c`, but
+Deploy failed before Panels code ran because `actions/setup-python` attempted to create
+`/Users/runner/hostedtoolcache` on the self-hosted Mac and received permission denied. Live correctly
+remained on `a5aa422f`. The runner already exposes Python 3.13 and Node 22.22 through its service
+`PATH`. Current hypothesis: remove both setup actions and make their supported versions explicit,
+fast prerequisites before release construction. The new workflow contract failed against the old
+workflow as expected and now passes with the focused deployment/release slice (22 tests);
+`git diff --check` also passes. Independent Standards and Spec reviews reported no findings.
+The canonical `./verify` passed every gate: Ruff, strict Mypy over 160 source files, 1,406
+unit tests, compile/CSS, Svelte diagnostics, production frontend build and contracts, and 126
+Playwright E2E tests (`VERIFY: PASS`). Next: publish `staging`, land the repair through the rolling
+PR, monitor Deploy, and prove the new live SHA. Blockers: none.
