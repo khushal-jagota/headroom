@@ -745,21 +745,21 @@ def save_chief_skill(
     if "name" in payload and payload["name"] != CHIEF_SKILL_NAME:
         raise PlannerError(ErrorCode.validation, "Chief skill name is immutable", {})
     current_path = _panels_skill_source(CHIEF_SKILL_NAME)
-    current = _parse_skill(current_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
-    description = payload.get("description", current.description)
-    body = payload.get("markdown_body", payload.get("body", current.markdown_body))
-    if not isinstance(description, str) or not description:
-        raise PlannerError(ErrorCode.validation, "Chief skill description is required", {})
-    if not isinstance(body, str) or not body.strip():
-        raise PlannerError(ErrorCode.validation, "Chief skill body is required", {})
-    rendered = _render_skill_from_existing_frontmatter(
-        current.source_text,
-        expected_skill_name=CHIEF_SKILL_NAME,
-        description=description,
-        markdown_body=body,
-    )
-    _parse_skill(rendered, CHIEF_SKILL_NAME)
     with _worker_settings_lock(managed_worker_settings_root(configured_database_parent), CHIEF_SETTINGS_KEY):
+        current = _parse_skill(current_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
+        description = payload.get("description", current.description)
+        body = payload.get("markdown_body", payload.get("body", current.markdown_body))
+        if not isinstance(description, str) or not description:
+            raise PlannerError(ErrorCode.validation, "Chief skill description is required", {})
+        if not isinstance(body, str) or not body.strip():
+            raise PlannerError(ErrorCode.validation, "Chief skill body is required", {})
+        rendered = _render_skill_from_existing_frontmatter(
+            current.source_text,
+            expected_skill_name=CHIEF_SKILL_NAME,
+            description=description,
+            markdown_body=body,
+        )
+        _parse_skill(rendered, CHIEF_SKILL_NAME)
         snapshot = _PathSnapshot(current_path)
         try:
             _atomic_replace_text(current_path, rendered)
