@@ -1,5 +1,13 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Slice 1 release identity and runtime proof
+
+Added typed full-SHA release manifests, Git-free tracked-source export with source digests,
+scrubbed stable-launch environment construction, explicit `PLAN_RELEASE_SHA` config identity,
+`/api/meta` reporting, bounded health proof, and an application-runtime resolver that preserves
+the staging checkout wrapper. Focused release/environment tests pass, Ruff passes on the changed
+surface, and strict Mypy passes on five changed source files. Next: deployment transaction.
+
 ## Current work cycle (2026-07-23): Implement exact-commit production deployment (`t_2wcx0a55`)
 
 Implementation is isolated on `ticket/t_2wcx0a55-exact-commit-deploy` from current

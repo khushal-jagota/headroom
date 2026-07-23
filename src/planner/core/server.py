@@ -206,7 +206,21 @@ def create_app(
             "ws_poll_ms": config.ws_poll_ms,
             "ws_heartbeat_ms": config.ws_heartbeat_ms,
             "test_mode": config.test_mode,
+            "release_sha": config.release_sha,
         }
+
+    @app.get("/api/health")
+    async def health(expected_sha: str | None = None) -> JSONResponse:
+        release_sha = config.release_sha
+        if release_sha is None:
+            return JSONResponse(
+                status_code=503, content={"ready": False, "error": "missing release SHA"}
+            )
+        if expected_sha is not None and expected_sha != release_sha:
+            return JSONResponse(
+                status_code=503, content={"ready": False, "error": "wrong release SHA"}
+            )
+        return JSONResponse(status_code=200, content={"ready": True, "release_sha": release_sha})
 
     @app.get("/api/worker-types")
     async def worker_types() -> dict[str, Any]:
