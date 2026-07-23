@@ -76,7 +76,7 @@ class ConversationTestOptions:
 
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions
     ingress_capacity: int = 256
-    browser_capacity: int = 128
+    browser_capacity: int | None = None
     # Temporary live ceiling while the imported durable replay is measured.
     reset_buffer_byte_limit: int = 6 * 1024 * 1024
     connection_id_factory: Callable[[], str] | None = None
@@ -131,7 +131,11 @@ class ConversationComposition:
         else:
             employee_runtime_definitions = test_options.employee_runtime_definitions
             ingress_capacity = test_options.ingress_capacity
-            browser_capacity = test_options.browser_capacity
+            browser_capacity = (
+                test_options.browser_capacity
+                if test_options.browser_capacity is not None
+                else ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
+            )
             reset_buffer_byte_limit = test_options.reset_buffer_byte_limit
             connection_id_factory = test_options.connection_id_factory
             worker_client_message_id_factory = test_options.worker_client_message_id_factory

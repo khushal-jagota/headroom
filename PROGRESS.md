@@ -30,6 +30,79 @@ generated application file changed after the run. The verified implementation is
 `staging` (`07acb456`): merge that base into this branch, resolve any combined-tree interaction,
 obtain a fresh combined-diff review, run one canonical `./verify`, then advance and push the exact
 green `staging` revision. The live release and its server remain untouched.
+## Current work cycle (2026-07-23): Preserve provider authentication in the user LaunchAgent
+
+The live user LaunchAgent supplied `HOME` but not `USER`; Claude Code uses `USER` to resolve the
+signed-in operator's Keychain-backed login, so Claude Employees failed with `Authentication
+required` despite sharing the correct home. The installed plist and canonical launchd template now
+derive `USER` and `LOGNAME` from `id -un`; the release launcher preserves those provider identity
+variables through its runtime allowlist. Focused release and deployment-asset tests pass. The user
+explicitly waived the long canonical verifier for this urgent authentication repair.
+
+## Current work cycle (2026-07-23): Simplify production adoption to the signed-in user
+
+The separate `panels-live`/`panels-deploy` design made the one-Mac cutover depend on copied Hermes
+state, backend credentials, root LaunchDaemons, and repeated authorization. That did not serve the
+requested outcome. The permanent Mac path is now a user runner plus user LaunchAgent under the
+signed-in operator, using the existing Hermes home and user-owned releases, state, and config.
+The user-owned service and runner are live; exact-SHA restart, crash recovery, and installed
+candidate-failure rollback are proven. User service controls now load and unload the LaunchAgent
+instead of treating a KeepAlive signal as a stop. Next: run the settled verification and propose
+Closeout.
+
+## Current work cycle (2026-07-23): Resolve packaged assets from the release root
+
+The first installed-account smoke exposed that an installed wheel derived assets from
+`site-packages` rather than the immutable release root. Server composition now honors the validated
+launcher-provided `PLAN_RELEASE_ROOT`, while checkout mode keeps its source-tree fallback. Focused
+regressions cover both resolutions. Next: rebuild and re-run the installed baseline smoke, then the
+canonical verifier and verified-staging update.
+
+## Current work cycle (2026-07-23): Bind production variables explicitly
+
+The installed Mac runner exposed that repository variables are not inherited as shell variables.
+The deploy workflow now maps every operator-owned path, health, and service input from GitHub
+repository variables into its environment, with an asset regression covering the complete set.
+Next: focused gates, canonical verification, then update verified staging.
+
+## Current work cycle (2026-07-23): Simplify fork-session deferral
+
+After three payload-buffer corrections exposed new lifecycle edges, the repair changed approach.
+Fork-session updates now remain in the one bounded raw-order slot queue; a deferred slot pauses the
+single consumer until `capture_load_session` attaches its exact private sink, then the same consumer
+normalizes and delivers every item exactly once. There is no side buffer, extra delivery task, or
+route-completion future. The full ACP child/composition and deployment-asset focused suites pass,
+along with Ruff, strict Mypy, and diff checks. Next: independent review, canonical verification,
+then update verified staging.
+
+## Current work cycle (2026-07-23): Make held replay delivery ordered and exception-safe
+
+Held private payload routing now enters the single ordered consumer through a completion
+barrier, so a blocked held sink cannot overlap or reorder with newer private-epoch slots.
+Normalization remains at private delivery exactly once. `capture_load_session` now aborts its
+epoch for routing, normalization, load, or finish failures. The focused ACP child suite passes;
+Ruff, strict Mypy on the two changed source files, and `git diff --check` pass. Full `./verify`
+was not run by instruction. Next: amend `ccfefe14` and report.
+
+## Current work cycle (2026-07-23): Correct ordered-ingress capacity and normalization
+
+Corrected commit `70df2c65` in place. Deferred payloads now count with live slots against the
+same ingress maximum; held private payloads use the existing normalizer exactly once when routed;
+and the composition capacity regression injects only hermetic runtime definitions while proving
+the production default and explicit capacity 3 override separately. Direct ordered-ingress
+boundedness, ordering, exact-session routing, and normalization regressions pass. Focused
+conversation tests, Ruff, strict Mypy, and `git diff --check` pass. Canonical `./verify` was not
+run per instruction. Next: amend the correction commit and report.
+
+## Current work cycle (2026-07-23): Closeout integration repair for t_2wcx0a55
+
+Repaired the three clean-runner failures reported by GitHub Verify. The composition capacity
+test now uses the existing scripted runtime-definition seam, the ACP child now defers exact fork
+session updates until private capture attaches and drains held payloads in order, and both GitHub
+workflows install Playwright Chromium with the Ticket virtualenv before verification. The forced
+post-fork scheduling regression, full focused conversation/composition/deployment asset suites,
+Ruff, strict Mypy on changed source files, and diff checks pass. Canonical `./verify` was not run
+as instructed. Next: commit and report the root causes and focused evidence.
 
 ## Current work cycle (2026-07-23): Real release proof and verifier repair
 
@@ -3891,3 +3964,37 @@ reported no violations. The canonical `./verify` passed all gates: 1,341 unit te
 checks/build/contracts, and 123 Playwright e2e tests (`VERIFY: PASS`). The branch is clean.
 Next: propose the Implementation field for approval; Closeout will handle staging integration.
 Blockers: none.
+
+# Current work cycle (2026-07-23): Simplify GitHub CI (`t_8dkhr2f7`)
+
+Stage: Implementation built on the Ticket branch. The standalone GitHub Verify workflow is deleted;
+Deploy no longer installs source-tree Node or Playwright dependencies or invokes `./verify`, while
+exact-SHA proof, the Python release-builder environment, Node availability, release validation, and
+deployment remain. Contract tests and live release documentation describe the new boundary. Focused
+deployment/release tests passed (21 tests), and `git diff --check` passed. Next: commit the review
+candidate, obtain independent review, address any findings, then run the one canonical local
+`./verify`. The committed candidate received independent Standards and Spec reviews with no
+findings. The canonical `./verify` then passed every gate: Ruff, strict Mypy over 160 source files,
+1,405 unit tests, compile/CSS, Svelte diagnostics, production frontend build and contracts, and 126
+Playwright E2E tests (`VERIFY: PASS`). The delegated implementation agent submitted the
+Implementation field before returning; the orchestrator's subsequent proposal therefore landed as
+Closeout and advanced the Ticket to Done before repository integration. The owner then explicitly
+authorized completing Closeout. Current `staging` was already the verified branch's ancestor, so
+local `staging` fast-forwarded to the implementation and the exact revision was pushed and confirmed
+on `origin/staging`; the rolling `staging` → `main` PR remains open. The temporary Ticket branch was
+removed after integration. Closeout is complete. Blockers: none.
+
+# Current work cycle (2026-07-23): Repair host-native deploy setup
+
+Stage: implementation in progress as a direct integration repair. PR #3 merged at `5c75562c`, but
+Deploy failed before Panels code ran because `actions/setup-python` attempted to create
+`/Users/runner/hostedtoolcache` on the self-hosted Mac and received permission denied. Live correctly
+remained on `a5aa422f`. The runner already exposes Python 3.13 and Node 22.22 through its service
+`PATH`. Current hypothesis: remove both setup actions and make their supported versions explicit,
+fast prerequisites before release construction. The new workflow contract failed against the old
+workflow as expected and now passes with the focused deployment/release slice (22 tests);
+`git diff --check` also passes. Independent Standards and Spec reviews reported no findings.
+The canonical `./verify` passed every gate: Ruff, strict Mypy over 160 source files, 1,406
+unit tests, compile/CSS, Svelte diagnostics, production frontend build and contracts, and 126
+Playwright E2E tests (`VERIFY: PASS`). Next: publish `staging`, land the repair through the rolling
+PR, monitor Deploy, and prove the new live SHA. Blockers: none.

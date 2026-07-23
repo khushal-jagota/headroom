@@ -249,6 +249,11 @@ class _Acp02Publisher:
     async def publish_queue_snapshot(self, employee: Any, binding: Any, prompts: Any) -> None:
         del employee, binding, prompts
 
+    async def publish_human_echo(
+        self, employee: Any, binding: Any, client_message_id: str, prompt: Any
+    ) -> None:
+        del employee, binding, client_message_id, prompt
+
     async def publish_compaction(
         self, employee: Any, binding: Any, compaction: ContextCompaction
     ) -> None:

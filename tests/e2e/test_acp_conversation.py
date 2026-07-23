@@ -2382,13 +2382,6 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
                 and item["payload"]["clientMessageId"] == "send-now-successor"
                 and item["payload"]["state"] == "started"
             )
-            fifo_human_echo_index = next(
-                index
-                for index, item in enumerate(send_now_recovery)
-                if index > ready_index
-                and item["type"] == "human_echo"
-                and item["payload"]["clientMessageId"] == "send-now-fifo"
-            )
             successor_human_echo_index = next(
                 index
                 for index, item in enumerate(send_now_recovery)
@@ -2401,13 +2394,25 @@ def test_official_requested_cancel_exception_recovers_same_session_for_stop_and_
                 for index, item in enumerate(send_now_recovery)
                 if index > ready_index and item["type"] == "queue_snapshot"
             )
+            # The still-queued fifo is not echoed on recovery; it echoes only once it is dequeued
+            # and sent, after the successor has run.
+            fifo_human_echo_index = next(
+                index
+                for index, item in enumerate(send_now_recovery)
+                if index > ready_index
+                and item["type"] == "human_echo"
+                and item["payload"]["clientMessageId"] == "send-now-fifo"
+            )
+            # The successor is started now, so it echoes on recovery before its queue snapshot and
+            # its started receipt. The queued fifo surfaces in that snapshot and echoes only later,
+            # when it is dequeued and sent.
             assert (
                 reset_index
                 < ready_index
-                < fifo_human_echo_index
                 < successor_human_echo_index
                 < queue_snapshot_index
                 < successor_started_index
+                < fifo_human_echo_index
             )
             post_reset = send_now_recovery[reset_index:]
             assert (

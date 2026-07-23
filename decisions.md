@@ -3,6 +3,44 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-23 — The single-user Mac uses the signed-in operator identity
+
+Exact-commit deployment needs immutable non-Git releases, backup-before-switch, exact-SHA health,
+and code rollback. It does not require separate macOS application and deployment accounts. The Mac
+runner and LaunchAgent use the signed-in operator's existing Hermes/provider setup and user-owned
+application root; separate identities remain an optional future server hardening step.
+
+The user service control stops the foreground supervisor gracefully before unloading the
+LaunchAgent, then bootstraps it again for a restart. A forced `launchctl kickstart -k` can orphan
+the supervisor's application child, while booting out a KeepAlive job alone is not a truthful stop.
+
+The LaunchAgent derives `USER` and `LOGNAME` from its actual uid because launchd does not supply
+those shell variables. `HOME` alone is insufficient for Claude Code to resolve the operator's
+Keychain-backed login. The immutable release launcher preserves `USER`, `LOGNAME`, and `SHELL`
+alongside its existing `HOME`, `PATH`, and terminal locale boundary so the provider child can
+inherit the complete approved user identity.
+
+## 2026-07-23 — The validated launcher supplies the packaged application root
+
+Checkout code can derive assets from `src/planner`, but an installed wheel cannot. The release
+launcher already validates the manifest and sets `PLAN_RELEASE_ROOT`; server composition uses that
+root for web, asset, and static paths, preserving the checkout fallback only when no release is
+active.
+
+## 2026-07-23 — GitHub variables enter deployment only through an explicit workflow map
+
+The Mac host paths and service adapter remain operator-owned repository variables. The workflow
+maps those names into its environment explicitly because GitHub does not automatically expose the
+`vars` context as shell variables. No path or host identity is compiled into application code.
+
+## 2026-07-23 — Keep deferred fork updates in the canonical bounded ingress queue
+
+Post-fork updates for the candidate session stay as deferred slots in the existing bounded ordered
+queue until private load capture attaches. This deliberately permits brief head-of-line blocking:
+it preserves one ordering, capacity, normalization, failure, and cleanup mechanism instead of
+creating a second payload store and delivery lifecycle. If private load never attaches, the normal
+ingress limit fails the child closed.
+
 ## D-t_2wcx0a55-review-correction — Build and validate on the host runner
 
 The release-build workflow runs on the production-labelled runner after installing its pinned
@@ -3465,7 +3503,28 @@ not guarantee notification/request wire ordering across the prior fork response.
   custom ownership and launch defaults and leaving general missing-stage validation strict.
 - Drafting changes packaged source and compatibility seams only. Publishing the packaged specialist
   into managed settings, final verification, and restart-backed activation belong to Closeout.
+# 2026-07-23 — Final ordered-ingress correction
+
+- Keep deferred private payloads in a consumer-owned pending route batch with one completion
+  future. This preserves serial sink delivery and lets `capture_load_session` wait for the held
+  prefix without allowing newer private slots to pass it.
+- Treat route normalization or sink failure as the existing generation-fatal ingress failure;
+  retain the accepted batch's fatal signal while ensuring the SDK child aborts and removes its
+  response epoch on every failure path.
+
 # 2026-07-23 — Panels Closeout pushes staging
+
+# 2026-07-23 — t_2wcx0a55 closeout integration repair
+
+- Keep the composition capacity regression hermetic by injecting the existing scripted employee
+  runtime definitions through `ConversationTestOptions`; do not install or invoke Hermes in CI.
+- Treat a fork response's exact session id as temporarily private before post-fork notifications
+  can race ahead of `session/load`. Ordered ingress consumes those notifications into a holding
+  buffer, then `capture_load_session` drains them to the private sink before the load request.
+  This preserves raw-order and exact-session assertions without routing candidate updates through
+  ordinary ingress or blocking the fork response.
+- Provision Chromium through the repository `.venv` in both Verify and Deploy workflows, and test
+  both asset commands occur before their `./verify` gates.
 
 - Panels Closeout must push the exact verified `staging` revision to `origin/staging` and verify the
   remote ref before cleanup.
@@ -3517,3 +3576,20 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Close out only through the normal serial path: merge current `staging` into the ticket branch,
   review and verify that combined revision, then advance and push the exact verified `staging` ref.
   Do not alter the installed release or its user-owned running service in this ticket.
+# 2026-07-23 — t_8dkhr2f7 direct Ticket branch and compact pipeline
+
+- Honor the Ticket kickoff's explicit decision that this small repository/GitHub operation does not
+  need an isolated worktree. Create a Ticket branch directly from the clean tracked `staging`
+  checkout and leave its pre-existing untracked nested worktree directories untouched.
+- Treat the user-approved Success, Approach, and Plan as the planning review boundary. Delegate the
+  contract-scoped implementation, then obtain one independent diff review before the final canonical
+  `./verify`; a separate plan-review round would add no new seam for this four-file workflow change.
+
+# 2026-07-23 — Production deploy uses the runner's host-native toolchain
+
+- Do not use `actions/setup-python` or `actions/setup-node` on the production Mac. The runner is
+  intentionally host-native, already publishes Python and Node through its service `PATH`, and the
+  Python action's hosted-runner cache path is not writable by the production runner account.
+- Fail fast unless the host provides Python 3.12 or newer and Node 22. Release construction still
+  installs all Python and Node dependencies into the exported exact-SHA release; these checks only
+make the operator-owned host prerequisite explicit.

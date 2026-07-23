@@ -245,6 +245,8 @@ def test_production_browser_capacity_is_1024_and_test_options_can_override(
 ) -> None:
     async def exercise() -> None:
         db_path, clock, _ticket_id = _database(tmp_path)
+        definition = _definition()
+        factory = _Factory(definition)
         production = ConversationComposition.build(
             db_path=db_path,
             busy_timeout_ms=5000,
@@ -252,7 +254,9 @@ def test_production_browser_capacity_is_1024_and_test_options_can_override(
             repository_root=Path.cwd(),
             employee_workspace_root=Path.cwd(),
             loop=asyncio.get_running_loop(),
-            test_options=None,
+            test_options=ConversationTestOptions(
+                employee_runtime_definitions=_runtime_definitions(definition, factory),
+            ),
         )
         assert ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES == 1_024
         assert production.hub._browser_capacity == 1_024  # noqa: SLF001
