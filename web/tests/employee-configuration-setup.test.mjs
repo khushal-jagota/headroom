@@ -415,6 +415,40 @@ with sync_playwright() as playwright:
         "options => options.map(option => option.value)"
     ) == ["hermes-a"]
     assert defaults_model.input_value() == ""
+
+    page.locator("[data-launch-defaults-refresh]").click()
+    page.wait_for_function("window.__requests().length === 13")
+    assert "force_refresh=true" in page.evaluate("window.__requests()[12].url")
+    page.evaluate("payload => window.__respond(12, payload)", catalog(
+        "hermes", None, "hermes-a", [("hermes-a", "Hermes A")]
+    ))
+    page.evaluate(
+        'window.__setLaunchDefaults({ employee_backend: "codex",'
+        ' employee_launch_model: "codex-deep", employee_launch_reasoning_effort: "high" })'
+    )
+    page.wait_for_function("window.__requests().length === 14")
+    page.evaluate("payload => window.__respond(13, payload)", catalog(
+        "codex", "codex-deep", "codex-native", [("codex-native", "Codex native")],
+        True, (("low", "Low"),)
+    ))
+    unavailable_model = defaults_model.locator('option[value="codex-deep"]')
+    unavailable_reasoning = defaults_reasoning.locator('option[value="high"]')
+    unavailable_model.wait_for(state="attached")
+    unavailable_reasoning.wait_for(state="attached")
+    assert unavailable_model.get_attribute("disabled") is not None
+    assert unavailable_model.inner_text().endswith("unavailable")
+    assert unavailable_reasoning.get_attribute("disabled") is not None
+    assert unavailable_reasoning.inner_text().endswith("unavailable")
+
+    page.locator("[data-launch-defaults-refresh]").click()
+    page.wait_for_function("window.__requests().length === 15")
+    assert "force_refresh=true" in page.evaluate("window.__requests()[14].url")
+    page.evaluate("payload => window.__respond(14, payload)", catalog(
+        "codex", "codex-deep", "codex-native", [("codex-native", "Codex native")],
+        True, (("low", "Low"),)
+    ))
+    assert unavailable_model.get_attribute("disabled") is not None
+    assert unavailable_reasoning.get_attribute("disabled") is not None
     browser.close()
 
 print("employee configuration component assertions passed")

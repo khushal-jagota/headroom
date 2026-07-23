@@ -1,5 +1,20 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Durable Worker launch catalog cache (`t_nvv1550r`)
+
+Backend/model-scoped Worker launch catalogs now persist in SQLite under a NULL-safe identity,
+survive a server restart, and expire exactly 24 hours after discovery according to the injected
+clock. Stored JSON is parsed and checked against its backend/model key before it is served.
+Normal reads never force rediscovery; the two shared setup components offer a deliberate Refresh
+which uses the existing abort and request-generation guards. One per-key in-process refresh task
+coalesces concurrent discovery, and successful results atomically replace the durable row. A failed
+refresh reports an error while leaving a stale row intact. Independent implementation review found
+that the shared Worker/Chief defaults control initially hid saved values removed by a refreshed
+catalog; it now renders those values as disabled unavailable options, matching Ticket setup, and a
+second independent review confirmed the correction. Focused DB/catalog/API tests, Ruff, strict
+Mypy, Svelte check, and diff check pass. Next: canonical `./verify` and Ticket Implementation
+approval.
+
 ## Current work cycle (2026-07-23): Operator cutover for separated live operation
 
 The old foreground `panels serve` launcher and its stale detached application process were

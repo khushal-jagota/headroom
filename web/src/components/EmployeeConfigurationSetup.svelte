@@ -96,7 +96,7 @@
     ];
   }
 
-  async function loadCatalog(backend: string, model: string | null): Promise<void> {
+  async function loadCatalog(backend: string, model: string | null, forceRefresh = false): Promise<void> {
     requestController?.abort();
     const controller = new AbortController();
     requestController = controller;
@@ -106,6 +106,7 @@
     catalogLoading = true;
     const query = new URLSearchParams({ employee_backend: backend });
     if (model !== null) query.set("candidate_model", model);
+    if (forceRefresh) query.set("force_refresh", "true");
     try {
       const response = await fetchJson<EmployeeConfigurationCatalog>(
         `/api/employee-configuration-catalog?${query.toString()}`,
@@ -270,9 +271,18 @@
         variant="quiet"
         data-employee-configuration-retry
         disabled={catalogLoading}
-        onclick={() => void loadCatalog(selectedBackend, selectedModel)}
+        onclick={() => void loadCatalog(selectedBackend, selectedModel, true)}
       >Retry</Button>
     </div>
+  {/if}
+
+  {#if catalog}
+    <Button
+      variant="quiet"
+      data-employee-configuration-refresh
+      disabled={catalogLoading}
+      onclick={() => void loadCatalog(selectedBackend, selectedModel, true)}
+    >Refresh</Button>
   {/if}
 
   {#if saveError}

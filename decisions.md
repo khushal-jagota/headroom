@@ -72,6 +72,16 @@ dispatch, and migration tests. The existing v25 through v28 migrations keep thei
 
 # Conversation
 
+## D-employee-configuration-catalog-is-durable-and-explicitly-refreshed — Cache discovery without hiding a failed refresh
+
+- Catalog identity is the backend plus the exact candidate model, including a distinct NULL value.
+- Persist successful typed catalog discovery for 24 hours. A restart must therefore not create
+  temporary provider sessions simply to redraw a launch menu.
+- Normal reads use a fresh matching row. The user-facing Refresh action is the sole force path;
+  it coalesces concurrent work for the same key and atomically replaces the row only on success.
+- A malformed or mismatched stored row is not trusted. A discovery failure remains visible to the
+  caller and never deletes a previously known-good row.
+
 ## D-acp-session-load-atomic-replay — Admit a complete private load as one replay transition
 
 A private complete session load is captured and admitted as one sequenced replay transition. A
