@@ -189,6 +189,24 @@ async def put_chief_skill(
     return _chief_json(settings)
 
 
+@router.patch("/workers/chief-of-staff/skill")
+async def patch_chief_skill(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
+) -> JsonDict:
+    require_direct_write(ctx)
+    if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
+        raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
+    registry = configured_employee_runtime_definitions().worker_type_registry
+    now = clock.now_unix()
+    settings = service.save_chief_skill(
+        _database_parent(config), registry, raw,
+        after_publish=lambda: _worker_settings_changed_callback(
+            conn, "chief_of_staff", changed="skill", now=now
+        ),
+    )
+    return _chief_json(settings)
+
+
 @router.put("/workers/{worker_type}/launch-defaults")
 async def put_worker_launch_defaults(
     worker_type: str,
