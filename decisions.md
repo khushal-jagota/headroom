@@ -3,6 +3,22 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-t_12sap6vx-sqlite-only-backups — Keep recovery small and explicit
+
+Use SQLite's online backup API into a temporary snapshot directory, verify integrity and checksum,
+then atomically publish the directory. Metadata records only the format, revision, timestamp,
+checksum, and verified state. Retention runs after publication and keeps seven verified snapshots;
+the design does not attempt managed files, Hermes state, off-host storage, or automatic restore
+rollback.
+
+Restore requires an explicit stopped-live flag and stages existing `-wal`/`-shm` before atomic
+replacement, restoring them if replacement fails and removing them after success. Reapplying stale
+sidecars is less safe than a simple stopped restore. Verified snapshots sort by creation metadata;
+because the writer adds one snapshot at a time to its seven-snapshot set, retention removes only the
+single oldest recovery point and never duplicates a database merely to delete it. Operational paths
+are environment inputs, and nightly plus pre-deployment runs resolve the revision from the configured
+live checkout so the repository does not encode a future VPS layout or stale revision value.
+
 ## D-t-wrdzb9jn-implementation-slices — Keep backend and frontend work non-overlapping
 
 Implementation is split into a backend/domain/API/CLI slice and a frontend/shared-worker-skill

@@ -73,6 +73,19 @@ def test_checked_in_linux_units_use_the_shared_pinned_manager_and_private_accoun
     )
 
 
+def test_backup_inputs_resolve_the_deployed_revision_from_the_live_checkout() -> None:
+    service = (ASSET_ROOT / "panels-db-backup.service").read_text(encoding="utf-8")
+    pre_deploy = (ASSET_ROOT / "pre-deploy-backup.sh").read_text(encoding="utf-8")
+    environment = (ASSET_ROOT / "backup.env.example").read_text(encoding="utf-8")
+
+    assert "PANELS_LIVE_REPOSITORY=" in environment
+    assert "PANELS_BACKUP_DEPLOYED_REVISION" not in environment
+    assert 'git -C "$PANELS_LIVE_REPOSITORY" rev-parse HEAD' in service
+    assert 'git -C "$PANELS_LIVE_REPOSITORY" rev-parse HEAD' in pre_deploy
+    assert '--deployed-revision "$revision"' in service
+    assert '--deployed-revision "$revision"' in pre_deploy
+
+
 def _manifest(tmp_path: Path, kind: str) -> EnvironmentManifest:
     repository = tmp_path / f"{kind}-repo"
     repository.mkdir()

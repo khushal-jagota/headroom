@@ -214,8 +214,8 @@ recorded old checkout and startup. Do not advance `staging`, change the primary
 checkout, or remove the fallback until live has passed those checks and the worker has
 reconnected.
 
-Recurring backups, automatic deployment, and public ingress changes remain separate
-work.
+Nightly SQLite backups and operator restore are described in [database backups](backups.md).
+Automatic deployment and public ingress changes remain separate work.
 
 ## Linux intent
 
@@ -257,4 +257,4 @@ target, and then executes the target interpreter. In each unit, `WorkingDirector
 
 ---
 
-_Last verified: 2026-07-22._
+_Last verified: 2026-07-23._

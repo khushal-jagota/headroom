@@ -1,5 +1,21 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): SQLite backup and operator restore (`t_12sap6vx`)
+
+Implemented the narrow SQLite-only backup/restore slice. The repository environment CLI now creates
+online, temporary, integrity-checked snapshots with checksum/revision metadata, atomically publishes
+them, and retains the seven newest verified snapshots without duplicating database files for rotation.
+Restore requires an explicit stopped-live acknowledgement,
+rechecks verification, stages old SQLite sidecars for rollback, and atomically replaces the
+destination while leaving stale canonical sidecars absent after success. Added
+nightly/pre-deployment ops inputs resolve the current revision from the configurable live checkout.
+First-class backup documentation and the separate operator runbook are current. Corrective review
+also added clean malformed-metadata rejection, replacement-failure safety, deterministic retention,
+and a real v34-to-v35 migration recovery proof. Independent re-review has no unresolved finding.
+The canonical `./verify` passes Ruff, strict Mypy, all 1,358 unit tests, compile/CSS checks, every
+frontend check/build/test, and all 123 Playwright tests; final `VERIFY: PASS`. Next: commit and
+Implementation proposal.
+
 ## Current work cycle (2026-07-23): Make the Panels staging push explicit
 
 Panels repository guidance now requires Closeout to push the exact verified staging revision to

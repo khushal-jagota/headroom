@@ -39,3 +39,5 @@ The repository path is the caller-trusted working directory and is writable beca
 Panels workers operate that checkout on the VPS. Runtime writes belong under
 `/var/lib/panels/environments`, and credential files belong under
 `/etc/panels/environments`. Repositories cannot be shared across live and staging.
+
+SQLite backup and restore setup is in [backup-restore.md](backup-restore.md).

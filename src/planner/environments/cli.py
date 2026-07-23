@@ -11,6 +11,7 @@ from pathlib import Path
 import click
 
 from planner.conversation.hermes_backend_configuration import resolve_hermes_python
+from planner.environments.backup import create_database_backup, restore_database_snapshot
 from planner.environments.contracts import (
     DynamicEnvironmentPort,
     EnvironmentKind,
@@ -64,6 +65,36 @@ class EnvironmentCliDependencies:
 @click.group("environment")
 def environment() -> None:
     """Prepare and run isolated Panels environments."""
+
+
+@environment.command("backup")
+@click.option(
+    "--source-db", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
+)
+@click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
+@click.option("--deployed-revision", required=True)
+def backup(source_db: Path, backup_dir: Path, deployed_revision: str) -> None:
+    """Create one verified online SQLite snapshot."""
+    try:
+        snapshot = create_database_backup(source_db, backup_dir, deployed_revision)
+    except (OSError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(str(snapshot))
+
+
+@environment.command("restore")
+@click.option(
+    "--snapshot", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+)
+@click.option("--destination-db", type=click.Path(path_type=Path, dir_okay=False), required=True)
+@click.option("--live-stopped", is_flag=True, required=True)
+def restore(snapshot: Path, destination_db: Path, live_stopped: bool) -> None:
+    """Restore a verified snapshot into a stopped live database."""
+    try:
+        restore_database_snapshot(snapshot, destination_db, live_stopped=live_stopped)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(str(destination_db))
 
 
 @environment.command("prepare")
