@@ -1,5 +1,16 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Real release proof and verifier repair
+
+A real host-native release for `51c0d256467301304d1966b94018d8747567ef95` built successfully
+without Git metadata. Its installed `planner` imported from inside the release, its manifest proved
+the exact SHA, and an isolated deployment exercise backed up the prior manifest SHA, selected the
+candidate, detected failed health, restored the prior code pointer, restarted, and recorded
+`rolled_back`. The first canonical verifier then found one unrelated stale e2e assertion: the
+reconciled coding Worker skill still requires a worktree and branch but no longer uses the old
+`## Worktree lifecycle` heading. The proof fixture now asserts the current exact guidance; its
+focused e2e and Ruff pass. Next: commit the integration repair and run one clean canonical verifier.
+
 ## Current work cycle (2026-07-23): Exact-commit deployment review clear
 
 The final focused re-review found three remaining executable-path issues: bare `panels` on the

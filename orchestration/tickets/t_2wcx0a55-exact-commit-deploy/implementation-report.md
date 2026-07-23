@@ -54,4 +54,15 @@ Checked-in host setup expresses non-root `panels-deploy` ownership for release c
    `initial_failed`. GREEN: focused pytest — `29 passed`; Ruff — `All checks passed!`; strict Mypy —
    `Success: no issues found in 2 source files`; diff check emitted no errors.
 
+8. Real release proof: built exact SHA `51c0d256467301304d1966b94018d8747567ef95` with its own
+   Python environment, built frontend, and agent-backend dependencies. The release contained no
+   `.git`; its `planner` imported from its own `.venv`; its manifest returned that exact SHA. An
+   isolated fake-service exercise returned `rolled_back` after the exact event order `backup prior →
+   restart → candidate health failure → restart → prior health success`, and `current` resolved to
+   the prior SHA.
+9. The first canonical `./verify` passed Ruff, strict Mypy, 1,395 unit tests, compile/CSS/frontend
+   gates, and 125 e2e tests, then failed one stale base-branch e2e assertion for the retired coding
+   Worker heading. The assertion and scripted ACP fixture now prove the current exact worktree-and-
+   branch guidance. Focused rerun: `1 passed`; Ruff passed.
+
 Canonical `./verify` remains reserved for the parent/orchestrator.
