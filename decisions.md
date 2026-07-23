@@ -3548,3 +3548,12 @@ not guarantee notification/request wire ordering across the prior fork response.
   move.
 - Preserve the original checkout's local commit and uncommitted work before conversion, restore that
   work onto `staging`, and leave live source and process state untouched.
+
+# 2026-07-23 — t_8dkhr2f7 direct Ticket branch and compact pipeline
+
+- Honor the Ticket kickoff's explicit decision that this small repository/GitHub operation does not
+  need an isolated worktree. Create a Ticket branch directly from the clean tracked `staging`
+  checkout and leave its pre-existing untracked nested worktree directories untouched.
+- Treat the user-approved Success, Approach, and Plan as the planning review boundary. Delegate the
+  contract-scoped implementation, then obtain one independent diff review before the final canonical
+  `./verify`; a separate plan-review round would add no new seam for this four-file workflow change.

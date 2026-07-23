@@ -33,41 +33,27 @@ def test_github_deployment_checks_out_and_proves_exact_sha_before_deploy() -> No
     workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
     assert "ref: ${{ github.sha }}" in workflow
     assert 'git rev-parse HEAD)" = "${{ github.sha }}' in workflow
-    assert "./verify" in workflow
     assert "PANELS_RELEASE_ROOT/${{ github.sha }}" in workflow
     assert "release-build" in workflow
     assert "upload-artifact" not in workflow
     assert "download-artifact" not in workflow
     assert "jobs:\n  deploy:" in workflow
-    assert workflow.index("./verify") < workflow.index("release-build") < workflow.index(
-        "environment deploy"
-    )
+    assert workflow.index("git rev-parse HEAD") < workflow.index(
+        "release-build"
+    ) < workflow.index("environment deploy")
     assert "actions/checkout@" in workflow and "@v4" not in workflow
 
 
-def test_github_verify_provisions_fresh_runner_before_verify() -> None:
-    workflow = (WORKFLOW_ROOT / "verify.yml").read_text(encoding="utf-8")
-    assert "actions/setup-python@" in workflow
-    assert "actions/setup-node@" in workflow
-    assert "python -m venv .venv" in workflow
-    assert ".venv/bin/python -m pip install -r requirements.txt" in workflow
-    assert ".venv/bin/python -m pip install --editable ." in workflow
-    assert "npm ci --prefix web" in workflow
-    assert "npm ci --prefix agent_backends" in workflow
-    assert ".venv/bin/python -m playwright install --with-deps chromium" in workflow
-    assert workflow.index("setup-python") < workflow.index("./verify")
-    assert workflow.index("npm ci --prefix agent_backends") < workflow.index("./verify")
-    assert workflow.index(
-        ".venv/bin/python -m playwright install --with-deps chromium"
-    ) < workflow.index("./verify")
+def test_github_does_not_have_a_standalone_verify_workflow() -> None:
+    assert not (WORKFLOW_ROOT / "verify.yml").exists()
 
 
-def test_github_deploy_provisions_playwright_before_release_gate() -> None:
+def test_github_deploy_does_not_run_source_verification_dependencies() -> None:
     workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
-    assert ".venv/bin/python -m playwright install --with-deps chromium" in workflow
-    assert workflow.index(
-        ".venv/bin/python -m playwright install --with-deps chromium"
-    ) < workflow.index("./verify")
+    assert "./verify" not in workflow
+    assert "playwright install" not in workflow
+    assert "npm ci --prefix web" not in workflow
+    assert "npm ci --prefix agent_backends" not in workflow
 
 
 def test_deploy_workflow_preserves_one_runner_and_exact_release_path() -> None:

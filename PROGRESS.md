@@ -3925,3 +3925,21 @@ reported no violations. The canonical `./verify` passed all gates: 1,341 unit te
 checks/build/contracts, and 123 Playwright e2e tests (`VERIFY: PASS`). The branch is clean.
 Next: propose the Implementation field for approval; Closeout will handle staging integration.
 Blockers: none.
+
+# Current work cycle (2026-07-23): Simplify GitHub CI (`t_8dkhr2f7`)
+
+Stage: Implementation built on the Ticket branch. The standalone GitHub Verify workflow is deleted;
+Deploy no longer installs source-tree Node or Playwright dependencies or invokes `./verify`, while
+exact-SHA proof, the Python release-builder environment, Node availability, release validation, and
+deployment remain. Contract tests and live release documentation describe the new boundary. Focused
+deployment/release tests passed (21 tests), and `git diff --check` passed. Next: commit the review
+candidate, obtain independent review, address any findings, then run the one canonical local
+`./verify`. The committed candidate received independent Standards and Spec reviews with no
+findings. The canonical `./verify` then passed every gate: Ruff, strict Mypy over 160 source files,
+1,405 unit tests, compile/CSS, Svelte diagnostics, production frontend build and contracts, and 126
+Playwright E2E tests (`VERIFY: PASS`). The delegated implementation agent submitted the
+Implementation field before returning; the orchestrator's subsequent proposal therefore landed as
+Closeout and advanced the Ticket to Done. No Closeout integration occurred: `staging` and
+`origin/staging` remain unchanged, and the verified implementation remains on the Ticket branch.
+Next: owner direction is required before any merge or push because the supported Ticket APIs do not
+rewind a completed Ticket. Blocker: Ticket state is ahead of repository integration.
