@@ -23,6 +23,8 @@ def test_macos_input_is_supervised_and_uses_current_launcher() -> None:
     assert "com.panels.live" in plist
     assert "$root/current/bin/panels-launcher" in plist
     assert 'PLAN_CONFIG_PATH="$root/config.yaml"' in plist
+    assert 'USER="$(id -un)"' in plist
+    assert 'LOGNAME="$(id -un)"' in plist
     assert "<key>UserName</key>" not in plist
     assert "Library/Application Support/Panels" in plist
     assert "RunAtLoad" in plist and "KeepAlive" in plist
