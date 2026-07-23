@@ -70,6 +70,7 @@ export type WorkersResponse = {
 export type ChiefManagementSettings = {
   employee_id: string;
   label: string;
+  skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
 };
 

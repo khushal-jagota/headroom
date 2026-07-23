@@ -92,6 +92,7 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
     return {
         "employee_id": settings.employee_id,
         "label": settings.label,
+        "skill": _skill_json(settings.skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
 
@@ -165,6 +166,24 @@ async def put_chief_launch_defaults(
         raw,
         after_publish=lambda: _worker_settings_changed_callback(
             conn, "chief_of_staff", changed="launch_defaults", now=now
+        ),
+    )
+    return _chief_json(settings)
+
+
+@router.put("/workers/chief-of-staff/skill")
+async def put_chief_skill(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
+) -> JsonDict:
+    require_direct_write(ctx)
+    registry = configured_employee_runtime_definitions().worker_type_registry
+    now = clock.now_unix()
+    settings = service.save_chief_skill(
+        _database_parent(config),
+        registry,
+        raw,
+        after_publish=lambda: _worker_settings_changed_callback(
+            conn, "chief_of_staff", changed="skill", now=now
         ),
     )
     return _chief_json(settings)

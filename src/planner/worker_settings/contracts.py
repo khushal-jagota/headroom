@@ -47,6 +47,7 @@ class ManagedWorkerSettings:
 class ManagedChiefSettings:
     employee_id: str
     label: str
+    skill: ManagedSkill
     launch_defaults: ManagedEmployeeLaunchDefaults
 
 

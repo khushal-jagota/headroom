@@ -1,8 +1,9 @@
 """Managed Worker-settings persistence and composition.
 
-Settings live beside the configured database, not inside installed Python code.
-Missing files are bootstrapped from the immutable Worker registry and packaged
-Panels skill sources. Published writes are atomic and a hidden last-known-good copy is kept.
+Settings live beside the configured database.  Skill markdown is deliberately
+different: the packaged ``src/planner/skills`` tree is the one canonical file
+every backend reads and edits.  The database-side directory stores settings
+only; it never contains a skill overlay or recovery copy.
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ LAST_KNOWN_GOOD_DIR_NAME: Final = ".last-known-good"
 CANDIDATES_DIR_NAME: Final = ".candidates"
 CHIEF_SETTINGS_KEY: Final = "chief_of_staff"
 CHIEF_LABEL: Final = "Chief of Staff"
+CHIEF_SKILL_NAME: Final = "panels-chief-of-staff"
 DEFAULT_CHIEF_BACKEND: Final = "codex"
 DEFAULT_CHIEF_MODEL: Final = "gpt-5.6-sol"
 DEFAULT_CHIEF_REASONING_EFFORT: Final = "medium"
@@ -155,7 +157,7 @@ def _backup_last_known_good(root: Path, worker_type: str) -> None:
         return
     target_dir = _last_good_worker_dir(root, worker_type)
     target_dir.mkdir(parents=True, exist_ok=True)
-    for name in (SETTINGS_FILE_NAME, SKILL_FILE_NAME):
+    for name in (SETTINGS_FILE_NAME,):
         source = source_dir / name
         if source.is_file():
             shutil.copy2(source, target_dir / name)
@@ -163,7 +165,7 @@ def _backup_last_known_good(root: Path, worker_type: str) -> None:
 
 def _last_known_good_revision_is_complete(root: Path, worker_type: str) -> bool:
     source_dir = _last_good_worker_dir(root, worker_type)
-    return all((source_dir / name).is_file() for name in (SETTINGS_FILE_NAME, SKILL_FILE_NAME))
+    return (source_dir / SETTINGS_FILE_NAME).is_file()
 
 
 def _restore_last_known_good(root: Path, worker_type: str) -> bool:
@@ -172,7 +174,7 @@ def _restore_last_known_good(root: Path, worker_type: str) -> bool:
     source_dir = _last_good_worker_dir(root, worker_type)
     target_dir = root / worker_type
     target_dir.mkdir(parents=True, exist_ok=True)
-    for name in (SETTINGS_FILE_NAME, SKILL_FILE_NAME):
+    for name in (SETTINGS_FILE_NAME,):
         source = source_dir / name
         shutil.copy2(source, target_dir / name)
     return True
@@ -254,18 +256,11 @@ def _ensure_bootstrapped(root: Path, definition: WorkerTypeDefinition) -> None:
     settings_path = _settings_path(root, worker_type)
     if not settings_path.exists():
         _atomic_replace_json(settings_path, _bootstrap_settings_payload(definition))
-    skill_path = _skill_path(root, worker_type)
-    if not skill_path.exists():
-        source = _panels_skill_source(definition.worker_profile.specialist_skill)
-        if not source.is_file():
-            raise FileNotFoundError(f"specialist skill source not found: {source}")
-        _atomic_replace_text(skill_path, source.read_text(encoding="utf-8"))
 
 
 def _current_revision_is_missing(root: Path, worker_type: str) -> bool:
     return (
         not _settings_path(root, worker_type).is_file()
-        or not _skill_path(root, worker_type).is_file()
     )
 
 
@@ -530,7 +525,10 @@ def _read_settings_with_recovery(
         if "launch_defaults" not in settings_payload:
             settings_payload["launch_defaults"] = _launch_defaults_payload(launch_defaults)
             _atomic_replace_json(_settings_path(root, definition.worker_type), settings_payload)
-        skill_text = _skill_path(root, definition.worker_type).read_text(encoding="utf-8")
+        skill_path = _panels_skill_source(definition.worker_profile.specialist_skill)
+        if not skill_path.is_file():
+            raise FileNotFoundError(f"specialist skill source not found: {skill_path}")
+        skill_text = skill_path.read_text(encoding="utf-8")
         skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
     except PlannerError:
         if not _restore_last_known_good(root, definition.worker_type):
@@ -555,26 +553,17 @@ def _read_settings_with_recovery(
         if "launch_defaults" not in settings_payload:
             settings_payload["launch_defaults"] = _launch_defaults_payload(launch_defaults)
             _atomic_replace_json(_settings_path(root, definition.worker_type), settings_payload)
-        skill_text = _skill_path(root, definition.worker_type).read_text(encoding="utf-8")
+        skill_path = _panels_skill_source(definition.worker_profile.specialist_skill)
+        skill_text = skill_path.read_text(encoding="utf-8")
         skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
     _backup_last_known_good(root, definition.worker_type)
 
-    candidate_skill_path = _candidate_skill_path(root, definition.worker_type)
-    candidate_skill: ManagedSkill | None = None
-    if candidate_skill_path.is_file():
-        try:
-            candidate_skill = _parse_skill(
-                candidate_skill_path.read_text(encoding="utf-8"),
-                definition.worker_profile.specialist_skill,
-            )
-        except PlannerError:
-            candidate_skill = None
     return ManagedWorkerSettings(
         worker_type=definition.worker_type,
         stage_ownership_defaults=defaults,
         specialist_skill=skill,
         launch_defaults=launch_defaults,
-        candidate_specialist_skill=candidate_skill,
+        candidate_specialist_skill=None,
     )
 
 
@@ -668,9 +657,12 @@ def read_chief_settings(
         payload = _load_json_object(path)
         if payload.get("employee_id") != CHIEF_SETTINGS_KEY or payload.get("label") != CHIEF_LABEL:
             raise PlannerError(ErrorCode.validation, "managed Chief settings are invalid", {})
+        skill_path = _panels_skill_source(CHIEF_SKILL_NAME)
+        skill = _parse_skill(skill_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
         return ManagedChiefSettings(
             employee_id=CHIEF_SETTINGS_KEY,
             label=CHIEF_LABEL,
+            skill=skill,
             launch_defaults=_validate_launch_defaults(
                 payload.get("launch_defaults"), registry=registry
             ),
@@ -734,7 +726,49 @@ def update_chief_launch_defaults(
         except Exception:
             snapshot.restore()
             raise
-        return ManagedChiefSettings(CHIEF_SETTINGS_KEY, CHIEF_LABEL, launch_defaults)
+        skill = _parse_skill(_panels_skill_source(CHIEF_SKILL_NAME).read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
+        return ManagedChiefSettings(CHIEF_SETTINGS_KEY, CHIEF_LABEL, skill, launch_defaults)
+
+
+def save_chief_skill(
+    configured_database_parent: Path | str,
+    registry: WorkerTypeRegistry,
+    payload: dict[str, Any],
+    *,
+    after_publish: Callable[[], None] | None = None,
+) -> ManagedChiefSettings:
+    """Atomically edit the canonical Chief skill file."""
+    allowed = {"name", "description", "markdown_body", "body"}
+    unexpected = sorted(set(payload) - allowed)
+    if unexpected:
+        raise PlannerError(ErrorCode.validation, "unknown Chief skill field", {"field": unexpected[0]})
+    if "name" in payload and payload["name"] != CHIEF_SKILL_NAME:
+        raise PlannerError(ErrorCode.validation, "Chief skill name is immutable", {})
+    current_path = _panels_skill_source(CHIEF_SKILL_NAME)
+    current = _parse_skill(current_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
+    description = payload.get("description", current.description)
+    body = payload.get("markdown_body", payload.get("body", current.markdown_body))
+    if not isinstance(description, str) or not description:
+        raise PlannerError(ErrorCode.validation, "Chief skill description is required", {})
+    if not isinstance(body, str) or not body.strip():
+        raise PlannerError(ErrorCode.validation, "Chief skill body is required", {})
+    rendered = _render_skill_from_existing_frontmatter(
+        current.source_text,
+        expected_skill_name=CHIEF_SKILL_NAME,
+        description=description,
+        markdown_body=body,
+    )
+    _parse_skill(rendered, CHIEF_SKILL_NAME)
+    with _worker_settings_lock(managed_worker_settings_root(configured_database_parent), CHIEF_SETTINGS_KEY):
+        snapshot = _PathSnapshot(current_path)
+        try:
+            _atomic_replace_text(current_path, rendered)
+            if after_publish is not None:
+                after_publish()
+        except Exception:
+            snapshot.restore()
+            raise
+    return read_chief_settings(configured_database_parent, registry)
 
 
 def read_worker_launch_defaults_for_ticket_creation(
@@ -840,8 +874,6 @@ def save_specialist_skill(
             description=description,
             markdown_body=markdown_body,
         )
-        candidate_path = _candidate_skill_path(root, worker_type)
-        _atomic_replace_text(candidate_path, rendered)
         _parse_skill(rendered, definition.worker_profile.specialist_skill)
         if "name" in payload and payload["name"] != definition.worker_profile.specialist_skill:
             raise PlannerError(
@@ -852,30 +884,14 @@ def save_specialist_skill(
                     "expected": definition.worker_profile.specialist_skill,
                 },
             )
-        _backup_last_known_good(root, worker_type)
-        skill_snapshot = _PathSnapshot(_skill_path(root, worker_type))
-        runtime_skill_snapshot: _PathSnapshot | None = None
+        canonical_skill_path = _panels_skill_source(definition.worker_profile.specialist_skill)
+        skill_snapshot = _PathSnapshot(canonical_skill_path)
         try:
-            _atomic_replace_text(_skill_path(root, worker_type), rendered)
-            if runtime_skills_root is not None:
-                runtime_skill = (
-                    runtime_skills_root
-                    / definition.worker_profile.specialist_skill
-                    / SKILL_FILE_NAME
-                )
-                runtime_skill_snapshot = _PathSnapshot(runtime_skill)
-                materialize_specialist_skill(
-                    configured_database_parent,
-                    registry,
-                    worker_type,
-                    runtime_skills_root,
-                )
+            _atomic_replace_text(canonical_skill_path, rendered)
             if after_publish is not None:
                 after_publish()
         except Exception:
             skill_snapshot.restore()
-            if runtime_skill_snapshot is not None:
-                runtime_skill_snapshot.restore()
             raise
         return _read_settings_with_recovery(root, definition, registry)
 
@@ -912,30 +928,14 @@ def patch_specialist_skill(
             "markdown_body": current.specialist_skill.markdown_body,
         }
         canonical_payload.update(patch)
-        candidate = current.candidate_specialist_skill or current.specialist_skill
-        candidate_payload: dict[str, Any] = {
-            "description": candidate.description,
-            "markdown_body": candidate.markdown_body,
-        }
-        candidate_payload.update(patch)
-        candidate_rendered = _render_skill_from_existing_frontmatter(
-            candidate.source_text,
-            expected_skill_name=definition.worker_profile.specialist_skill,
-            description=candidate_payload["description"],
-            markdown_body=candidate_payload["markdown_body"],
+        return save_specialist_skill(
+            configured_database_parent,
+            registry,
+            worker_type,
+            canonical_payload,
+            after_publish=after_publish,
+            runtime_skills_root=runtime_skills_root,
         )
-        try:
-            save_specialist_skill(
-                configured_database_parent,
-                registry,
-                worker_type,
-                canonical_payload,
-                after_publish=after_publish,
-                runtime_skills_root=runtime_skills_root,
-            )
-        finally:
-            _atomic_replace_text(_candidate_skill_path(root, worker_type), candidate_rendered)
-        return _read_settings_with_recovery(root, definition, registry)
 
 
 def materialize_specialist_skill(
@@ -945,10 +945,14 @@ def materialize_specialist_skill(
     target_skills_root: Path,
 ) -> None:
     definition = registry.require(worker_type)
-    settings = read_worker_settings(configured_database_parent, registry, worker_type)
     target_dir = target_skills_root / definition.worker_profile.specialist_skill
     target_dir.mkdir(parents=True, exist_ok=True)
     target_skill = target_dir / SKILL_FILE_NAME
-    if target_skill.is_symlink():
+    source_skill = _panels_skill_source(definition.worker_profile.specialist_skill)
+    if not source_skill.is_file():
+        raise FileNotFoundError(f"specialist skill source not found: {source_skill}")
+    if target_skill.is_symlink() and target_skill.resolve() == source_skill.resolve():
+        return
+    if target_skill.exists() or target_skill.is_symlink():
         target_skill.unlink()
-    _atomic_replace_text(target_skill, settings.specialist_skill.source_text)
+    target_skill.symlink_to(source_skill)
