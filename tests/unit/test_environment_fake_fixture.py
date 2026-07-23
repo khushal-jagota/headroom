@@ -183,48 +183,6 @@ def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Pat
     assert reset.db_path.is_file()
 
 
-def test_reset_materializes_specialists_after_replacing_managed_settings(
-    tmp_path: Path,
-) -> None:
-    repository_root = _repository_root()
-    staging = prepare_environment_instance(
-        kind="staging",
-        environment_root=_short_environment_root(tmp_path),
-        repository_roots=(repository_root,),
-    )
-    registry = configured_worker_type_registry()
-    worker_settings_service.save_specialist_skill(
-        staging.db_path.parent,
-        registry,
-        "coding",
-        {
-            "description": "Old environment-specific specialist",
-            "markdown_body": "# Old environment specialist\n",
-        },
-    )
-    provision_planner_home_skills(
-        staging.hermes_home,
-        configured_database_parent=staging.db_path.parent,
-    )
-
-    reset = reset_environment_instance(
-        kind="staging",
-        environment_root=staging.environment_root,
-        repository_roots=(repository_root,),
-    )
-
-    canonical = worker_settings_service.read_worker_settings(
-        reset.db_path.parent,
-        registry,
-        "coding",
-    ).specialist_skill.source_text
-    materialized = (reset.hermes_home / "skills" / "panels-worker-coding" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    assert "Old environment-specific specialist" not in canonical
-    assert materialized == canonical
-
-
 def test_failed_reset_keeps_prior_data_tree(tmp_path: Path, monkeypatch) -> None:
     repository_root = _repository_root()
     staging = prepare_environment_instance(

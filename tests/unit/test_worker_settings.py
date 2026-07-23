@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import shutil
 import sqlite3
 import threading
 from pathlib import Path
@@ -20,6 +21,16 @@ from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode
 from planner.worker_settings import api as worker_settings_api
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
+
+
+@pytest.fixture
+def canonical_skills_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Give skill-edit tests an isolated copy of the versioned canonical tree."""
+    source = worker_settings_service.panels_skill_root()
+    target = tmp_path / "canonical-skills"
+    shutil.copytree(source, target)
+    monkeypatch.setattr(worker_settings_service, "panels_skill_root", lambda: target)
+    return target
 
 
 def _app(tmp_path: Path, *, raise_server_exceptions: bool = True) -> tuple[TestClient, Path]:
@@ -156,8 +167,8 @@ def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
         conn.close()
 
 
-def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_api_skill_patch_updates_canonical_skill_without_touching_ticket_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, canonical_skills_root: Path
 ) -> None:
     planner_home = tmp_path / "explicit-hermes-home"
     monkeypatch.setenv("PLAN_HERMES_HOME", str(planner_home))
@@ -223,8 +234,9 @@ def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_sess
         )
         assert rejected_both.status_code == 400
 
-    materialized = planner_home / "skills" / "panels-worker-coding" / "SKILL.md"
-    skill_text = materialized.read_text(encoding="utf-8")
+    skill_text = (canonical_skills_root / "panels-worker-coding" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     assert 'description: "API materialized description"' in skill_text
     assert "# API materialized" in skill_text
 
@@ -248,17 +260,13 @@ def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_sess
 
 
 def test_skill_save_preserves_unknown_frontmatter_and_rejects_name_changes(
-    tmp_path: Path,
+    tmp_path: Path, canonical_skills_root: Path,
 ) -> None:
     client, db_path = _app(tmp_path)
     settings_parent = db_path.parent
     registry = configured_worker_type_registry()
     worker_settings_service.read_worker_settings(settings_parent, registry, "coding")
-    skill_path = (
-        worker_settings_service.managed_worker_settings_root(settings_parent)
-        / "coding"
-        / "SKILL.md"
-    )
+    skill_path = canonical_skills_root / "panels-worker-coding" / "SKILL.md"
     original = skill_path.read_text(encoding="utf-8")
     skill_path.write_text(original.replace("---\n", "---\nunknown-key: keep-me\n", 1))
 
@@ -274,10 +282,6 @@ def test_skill_save_preserves_unknown_frontmatter_and_rejects_name_changes(
         assert rejected.status_code == 400
         assert rejected.json()["error"]["message"] == "specialist skill name is immutable"
         after_reject = client.get("/api/workers/coding").json()
-        assert (
-            after_reject["settings"]["candidate_specialist_skill"]["description"]
-            == "Edited description"
-        )
         assert after_reject["settings"]["specialist_skill"]["description"] != "Edited description"
 
         saved = client.put(
@@ -353,11 +357,9 @@ def test_stage_default_event_failure_restores_canonical_settings_and_api_read(
         conn.close()
 
 
-def test_skill_event_failure_restores_canonical_and_runtime_skill(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_skill_event_failure_restores_canonical_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, canonical_skills_root: Path
 ) -> None:
-    planner_home = tmp_path / "explicit-hermes-home"
-    monkeypatch.setenv("PLAN_HERMES_HOME", str(planner_home))
     client, db_path = _app(tmp_path, raise_server_exceptions=False)
     settings_parent = db_path.parent
     registry = configured_worker_type_registry()
@@ -370,18 +372,8 @@ def test_skill_event_failure_restores_canonical_and_runtime_skill(
             "markdown_body": "# Old runtime\n\nBody\n",
         },
     )
-    runtime_root = planner_home / "skills"
-    worker_settings_service.materialize_specialist_skill(
-        settings_parent,
-        registry,
-        "coding",
-        runtime_root,
-    )
-    root = worker_settings_service.managed_worker_settings_root(settings_parent)
-    skill_path = root / "coding" / "SKILL.md"
-    runtime_skill_path = runtime_root / "panels-worker-coding" / "SKILL.md"
+    skill_path = canonical_skills_root / "panels-worker-coding" / "SKILL.md"
     original_skill_bytes = skill_path.read_bytes()
-    original_runtime_bytes = runtime_skill_path.read_bytes()
 
     def fail_event(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("forced event failure")
@@ -396,7 +388,6 @@ def test_skill_event_failure_restores_canonical_and_runtime_skill(
         detail = client.get("/api/workers/coding").json()
 
     assert skill_path.read_bytes() == original_skill_bytes
-    assert runtime_skill_path.read_bytes() == original_runtime_bytes
     assert detail["settings"]["specialist_skill"]["description"] == "Old runtime description"
     conn = connect(str(db_path))
     try:
@@ -440,45 +431,7 @@ def test_skill_patch_preserves_concurrent_other_field_values(tmp_path: Path) -> 
     assert saved.specialist_skill.markdown_body == "\n# Body winner\n\nSecond field\n"
 
 
-def test_independent_skill_patch_preserves_failed_other_field_candidate(tmp_path: Path) -> None:
-    registry = configured_worker_type_registry()
-    worker_settings_service.save_specialist_skill(
-        tmp_path,
-        registry,
-        "coding",
-        {
-            "description": "Original description",
-            "markdown_body": "# Original\n\nBody\n",
-        },
-    )
-
-    def fail_publish() -> None:
-        raise RuntimeError("forced publish failure")
-
-    with pytest.raises(RuntimeError, match="forced publish failure"):
-        worker_settings_service.patch_specialist_skill(
-            tmp_path,
-            registry,
-            "coding",
-            {"markdown_body": "# Failed body\n\nKeep for retry\n"},
-            after_publish=fail_publish,
-        )
-
-    saved = worker_settings_service.patch_specialist_skill(
-        tmp_path,
-        registry,
-        "coding",
-        {"description": "Description winner"},
-    )
-
-    assert saved.specialist_skill.description == "Description winner"
-    assert saved.specialist_skill.markdown_body == "\n# Original\n\nBody\n"
-    assert saved.candidate_specialist_skill is not None
-    assert saved.candidate_specialist_skill.description == "Description winner"
-    assert saved.candidate_specialist_skill.markdown_body == "\n# Failed body\n\nKeep for retry\n"
-
-
-def test_corrupt_current_files_restore_exact_prior_good_revision(tmp_path: Path) -> None:
+def test_corrupt_current_settings_restore_exact_prior_good_revision(tmp_path: Path) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.save_specialist_skill(
         tmp_path,
@@ -491,21 +444,14 @@ def test_corrupt_current_files_restore_exact_prior_good_revision(tmp_path: Path)
     )
     root = worker_settings_service.managed_worker_settings_root(tmp_path)
     settings_path = root / "coding" / "settings.json"
-    skill_path = root / "coding" / "SKILL.md"
     prior_good_settings = settings_path.read_text(encoding="utf-8")
-    prior_good_skill = skill_path.read_text(encoding="utf-8")
 
     settings_path.write_text("{not-json", encoding="utf-8")
-    skill_path.write_text(
-        "---\nname: other-skill\ndescription: corrupt\n---\n# Bad\n",
-        encoding="utf-8",
-    )
 
     recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
 
     assert recovered.specialist_skill.description == "Prior good description"
     assert settings_path.read_text(encoding="utf-8") == prior_good_settings
-    assert skill_path.read_text(encoding="utf-8") == prior_good_skill
 
 
 def test_corrupt_current_files_restore_custom_launch_defaults_on_first_read(
@@ -604,9 +550,8 @@ def test_missing_non_new_worker_stage_default_still_fails_validation(tmp_path: P
         worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
 
 
-@pytest.mark.parametrize("missing_file_name", ["settings.json", "SKILL.md"])
-def test_missing_current_file_restores_exact_edited_last_known_good_revision(
-    tmp_path: Path, missing_file_name: str
+def test_missing_current_settings_restores_exact_edited_last_known_good_revision(
+    tmp_path: Path,
 ) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.update_stage_default_ownership(
@@ -627,18 +572,15 @@ def test_missing_current_file_restores_exact_edited_last_known_good_revision(
     )
     root = worker_settings_service.managed_worker_settings_root(tmp_path)
     settings_path = root / "coding" / "settings.json"
-    skill_path = root / "coding" / "SKILL.md"
     edited_settings = settings_path.read_text(encoding="utf-8")
-    edited_skill = skill_path.read_text(encoding="utf-8")
 
-    (root / "coding" / missing_file_name).unlink()
+    settings_path.unlink()
 
     recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
 
     assert recovered.stage_ownership_defaults["needs_plan"] == StageOwnershipMode.user
     assert recovered.specialist_skill.description == "Edited last known good description"
     assert settings_path.read_text(encoding="utf-8") == edited_settings
-    assert skill_path.read_text(encoding="utf-8") == edited_skill
 
 
 def test_concurrent_stage_updates_keep_both_values_and_leave_no_temp_files(
@@ -679,12 +621,11 @@ def test_concurrent_stage_updates_keep_both_values_and_leave_no_temp_files(
 
 
 def test_skill_parse_and_save_preserve_unrelated_multiline_frontmatter_segments(
-    tmp_path: Path,
+    tmp_path: Path, canonical_skills_root: Path,
 ) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
-    root = worker_settings_service.managed_worker_settings_root(tmp_path)
-    skill_path = root / "coding" / "SKILL.md"
+    skill_path = canonical_skills_root / "panels-worker-coding" / "SKILL.md"
     unknown_before_description = (
         "# leading comment stays byte-for-byte\n"
         "unknown-map:\n"
@@ -738,12 +679,11 @@ def test_skill_parse_and_save_preserve_unrelated_multiline_frontmatter_segments(
 
 
 def test_skill_save_replaces_quoted_multiline_description_and_preserves_unrelated_bytes(
-    tmp_path: Path,
+    tmp_path: Path, canonical_skills_root: Path,
 ) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
-    root = worker_settings_service.managed_worker_settings_root(tmp_path)
-    skill_path = root / "coding" / "SKILL.md"
+    skill_path = canonical_skills_root / "panels-worker-coding" / "SKILL.md"
     old_description = (
         'description: "First line with colon: yes\n'
         "  second line # still scalar\n"
@@ -783,8 +723,8 @@ def test_skill_save_replaces_quoted_multiline_description_and_preserves_unrelate
     )
 
 
-def test_provisioning_materializes_managed_specialist_skill_without_touching_sessions(
-    tmp_path: Path,
+def test_provisioning_links_canonical_specialist_skill_without_touching_sessions(
+    tmp_path: Path, canonical_skills_root: Path,
 ) -> None:
     db_path = tmp_path / "provision.db"
     conn = connect(str(db_path))
@@ -816,12 +756,17 @@ def test_provisioning_materializes_managed_specialist_skill_without_touching_ses
     )
 
     home = tmp_path / "hermes-home"
-    provision_planner_home_skills(home, configured_database_parent=db_path.parent)
+    provision_planner_home_skills(
+        home,
+        configured_database_parent=db_path.parent,
+        panels_skills_source_root=canonical_skills_root,
+    )
 
     shared = home / "skills" / "panels-worker"
     specialist = home / "skills" / "panels-worker-coding"
     assert shared.is_symlink()
-    assert not specialist.is_symlink()
+    assert specialist.is_symlink()
+    assert specialist.resolve() == (canonical_skills_root / "panels-worker-coding").resolve()
     skill_text = (specialist / "SKILL.md").read_text(encoding="utf-8")
     assert 'description: "Materialized description"' in skill_text
     assert "# Materialized" in skill_text
