@@ -34,9 +34,12 @@ unit tests, compile and CSS checks, zero Svelte diagnostics, the production fron
 frontend test suite, and all 126 Playwright tests; final `VERIFY: PASS`. While that gate ran,
 `staging` advanced to `337511f5`; that newer base is now merged as `f815d4bb`. Focused final
 integration review found the second merge changes only shared memory files and leaves the workspace
-split, release-root behavior, documentation, and test surface unchanged. Next: run the final
-canonical `./verify` on `f815d4bb`, then fast-forward and push the exact green `staging` revision.
-The live release and its server remain untouched.
+split, release-root behavior, documentation, and test surface unchanged. The final canonical
+`./verify` passed Ruff, strict Mypy across 160 source files, all 1,435 unit tests, compile and CSS
+checks, zero Svelte diagnostics, the production frontend build and frontend test suite, and all 126
+Playwright tests; final `VERIFY: PASS`. `staging` remained at the merged base throughout this final
+gate. Next: fast-forward and push the exact green `staging` revision, verify the remote ref and
+rolling pull-request state, then propose Closeout. The live release and its server remain untouched.
 ## Current work cycle (2026-07-23): t_2dm6mn08 — proposal_discussion status (Implementation)
 
 Build stage of ticket t_2dm6mn08 on branch `ticket/t_2dm6mn08-proposal-discussion` (off
