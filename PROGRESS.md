@@ -10,8 +10,11 @@ The staging checkout committed its New Conversation recovery tests, checkout and
 bookkeeping, visual exploration, and the reviewed nested shared-frontend result. Generated Vite
 cache churn in two completed Ticket worktrees was removed. `main` was then merged into `staging`
 as `db93830c`; staging retains its newer dynamic-port environment contract and uses a frontend build
-from the merged source. Next: run the one canonical `./verify` on this settled staging tree, record
-the result, and confirm both role checkouts are clean with `main` an ancestor of `staging`.
+from the merged source. The one canonical `./verify` passed Ruff, strict Mypy across 156 source
+files, all 1,335 unit tests, compile/CSS checks, zero Svelte diagnostics, the production build and
+complete frontend suite, and all 122 Playwright tests; final `VERIFY: PASS`. No source or generated
+application file changed after that run. Both role checkouts are clean and `main` is an ancestor of
+`staging`.
 
 ## Current work cycle (2026-07-23): Consolidate staging and live checkout roles
 
