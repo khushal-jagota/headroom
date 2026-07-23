@@ -202,6 +202,7 @@ def test_zero_arg_codex_registration_materializes_sdk_factory_and_exact_probe(
         EmployeeBackendBuildContext(
             repository_root=REPOSITORY_ROOT,
             data_directory=tmp_path,
+            employee_workspace_root=REPOSITORY_ROOT,
         )
     )
     assert materialized.definition.backend_key == CODEX_BACKEND_KEY

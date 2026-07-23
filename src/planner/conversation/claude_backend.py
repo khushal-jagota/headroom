@@ -202,13 +202,13 @@ def build_claude_employee_backend_registration() -> EmployeeBackendRegistration:
         employee_configuration_adapter = StableAcpEmployeeSessionConfigurationAdapter(
             definition=definition,
             child_factory=child_factory,
-            workspace_root=context.repository_root,
+            workspace_root=context.employee_workspace_root,
             full_access_mode="bypassPermissions",
         )
         preflight = ClaudeBackendStartupPreflight(
             definition=definition,
             child_factory=child_factory,
-            repository_root=context.repository_root,
+            employee_workspace_root=context.employee_workspace_root,
         )
         return MaterializedEmployeeBackendRegistration(
             definition=definition,
@@ -363,17 +363,19 @@ class ClaudeBackendStartupPreflight:
         *,
         definition: AgentBackendDefinition,
         child_factory: AcpEmployeeChildFactory,
-        repository_root: Path,
+        employee_workspace_root: Path,
         timeout_seconds: float = CLAUDE_STARTUP_PREFLIGHT_TIMEOUT_SECONDS,
     ) -> None:
         if definition.backend_key != CLAUDE_BACKEND_KEY:
             raise ValueError("Claude preflight requires the Claude backend definition")
-        _require_absolute_path(repository_root, field_name="repository_root")
+        _require_absolute_path(
+            employee_workspace_root, field_name="employee_workspace_root"
+        )
         if timeout_seconds <= 0:
             raise ValueError("Claude preflight timeout must be positive")
         self._definition = definition
         self._child_factory = child_factory
-        self._repository_root = repository_root
+        self._employee_workspace_root = employee_workspace_root
         self._timeout_seconds = timeout_seconds
         self._state: str = "pending"
 
@@ -396,7 +398,7 @@ class ClaudeBackendStartupPreflight:
                             employee_id="claude-startup-preflight",
                             entity_kind="ticket",
                             entity_id="claude-startup-preflight",
-                            workspace_roots=(self._repository_root,),
+                            workspace_roots=(self._employee_workspace_root,),
                             backend_key=CLAUDE_BACKEND_KEY,
                         ),
                         1,

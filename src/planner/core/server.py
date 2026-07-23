@@ -45,10 +45,17 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
 }
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+_PREFERRED_EMPLOYEE_WORKSPACE_ROOT = Path.home() / "Coding"
 _WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_INDEX = _WEB_DIST / "index.html"
 _ASSETS_DIR = _REPO_ROOT / "assets"
 _STATIC_DIR = _REPO_ROOT / "static"
+
+
+def resolve_employee_workspace_root() -> Path:
+    if _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.is_dir():
+        return _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.resolve(strict=False)
+    return _REPO_ROOT.resolve(strict=False)
 
 
 def svelte_index_html() -> str:
@@ -102,6 +109,7 @@ def create_app(
                 busy_timeout_ms=config.db_busy_timeout_ms,
                 clock=clock,
                 repository_root=_REPO_ROOT,
+                employee_workspace_root=resolve_employee_workspace_root(),
                 loop=asyncio.get_running_loop(),
                 test_options=conversation_test_options,
             )
@@ -125,6 +133,7 @@ def create_app(
                 busy_timeout_ms=config.db_busy_timeout_ms,
                 clock=clock,
                 repository_root=_REPO_ROOT,
+                employee_workspace_root=resolve_employee_workspace_root(),
                 loop=asyncio.get_running_loop(),
             )
             try:

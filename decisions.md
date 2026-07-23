@@ -3495,3 +3495,22 @@ not guarantee notification/request wire ordering across the prior fork response.
   move.
 - Preserve the original checkout's local commit and uncommitted work before conversion, restore that
   work onto `staging`, and leave live source and process state untouched.
+
+# 2026-07-23 — t_hkrhftnr Employee workspace-root split
+
+- Implement on an isolated Ticket branch from `staging`; do not modify or restart the live checkout
+  or its operator-owned server.
+- Keep `repository_root` as the deployed-checkout infrastructure root. Add one distinct
+  `employee_workspace_root` for bindings, backend configuration discovery, and Claude startup
+  preflight.
+- Resolve the workspace from one `server.py` constant pointing at `~/Coding`; use it only when the
+  path is a directory, otherwise fall back to `repository_root`. An absent path or same-named file
+  is not a valid workspace. Do not create or persist the path.
+- Make the composition and backend-context workspace arguments explicit and absolute; do not add a
+  default that can silently recombine workspace and infrastructure roots.
+- Keep per-project routing, settings, and migration out of scope. Reserve one canonical `./verify`
+  for the settled tree after focused tests and independent implementation review.
+- Close the review-found test seam at the production composition boundary: capture `create_app`'s
+  build arguments and prove the resolver-selected Employee workspace remains distinct from the
+  checkout root. Separate resolver and composition unit tests alone would not catch recombining the
+  roots in server wiring.

@@ -141,7 +141,10 @@ class ProductionAcp01ConformanceSubject:
         registry = AcpEmployeeRegistry(
             backend_catalog=catalog,
             materialized_backends=catalog.materialize(
-                EmployeeBackendBuildContext(data_directory=REPOSITORY_ROOT)
+                EmployeeBackendBuildContext(
+                    data_directory=REPOSITORY_ROOT,
+                    employee_workspace_root=REPOSITORY_ROOT,
+                )
             ),
             resolve_binding=repository.resolve,
             compare_and_swap_binding=repository.compare_and_swap,

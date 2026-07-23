@@ -1,5 +1,33 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Employee workspace-root split (`t_hkrhftnr`)
+
+Implementation is isolated on `ticket/t_hkrhftnr-workspace-root` from current `staging`
+(`eea28ad9`). The approved contract moves the global Employee workspace to `~/Coding` when that
+folder exists, falls back to the deployed checkout without creating the folder, and leaves adapter,
+skill, and served-asset infrastructure on the checkout. The worktree has independent Python,
+frontend, and agent-backend dependencies, and its editable `planner` import resolves to this exact
+source root. Current live source and its operator-owned server remain untouched. The independent
+plan review found no blocking overreach and tightened one boundary: only a real Coding directory is
+eligible, so an absent path or same-named file falls back to the checkout. Both new boundary
+arguments are explicit so tests cannot silently recombine the roots.
+
+The implementation now carries the resolved workspace through server composition, durable
+bindings, Codex and Claude configuration discovery, and Claude startup preflight while leaving
+adapter entrypoints and served infrastructure on `repository_root`. Focused coverage includes the
+preferred directory, absent and non-directory fallbacks, no directory creation, distinct-root
+propagation, and checkout-bound infrastructure. All 170 focused tests pass, along with Ruff, strict
+Mypy across 160 source files, and `git diff --check`. Independent implementation review found one
+P2 coverage gap: the resolver and composition split were proved separately, but no production test
+connected them. The existing production lifecycle test now captures the real composition arguments
+and proves `repository_root` remains the checkout while `employee_workspace_root` is the distinct
+resolved Coding directory. Its focused test and independent re-review pass; no unresolved review
+finding remains. The one canonical `./verify` passed Ruff, strict Mypy across 160 source files,
+all 1,401 unit tests, compile and CSS checks, zero Svelte diagnostics, the production frontend
+build and frontend test suite, and all 126 Playwright tests; final `VERIFY: PASS`. No source or
+generated application file changed after the run. Next: commit this exact verified implementation
+and propose it for approval.
+
 ## Current work cycle (2026-07-23): Real release proof and verifier repair
 
 A real host-native release for `51c0d256467301304d1966b94018d8747567ef95` built successfully

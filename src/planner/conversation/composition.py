@@ -107,13 +107,17 @@ class ConversationComposition:
         busy_timeout_ms: int,
         clock: Clock,
         repository_root: Path,
+        employee_workspace_root: Path,
         loop: asyncio.AbstractEventLoop,
         test_options: ConversationTestOptions | None = None,
         planner_home_default: Path | None = None,
     ) -> ConversationComposition:
-        repository_root = repository_root.resolve(strict=False)
         if not repository_root.is_absolute():
             raise ValueError("conversation repository root must be absolute")
+        if not employee_workspace_root.is_absolute():
+            raise ValueError("conversation employee workspace root must be absolute")
+        repository_root = repository_root.resolve(strict=False)
+        employee_workspace_root = employee_workspace_root.resolve(strict=False)
 
         if test_options is None:
             employee_runtime_definitions = configured_employee_runtime_definitions()
@@ -149,6 +153,7 @@ class ConversationComposition:
                     ),
                     planner_home_default=planner_home_default,
                     repository_root=repository_root,
+                    employee_workspace_root=employee_workspace_root,
                 )
             )
         )
@@ -160,7 +165,7 @@ class ConversationComposition:
 
         repository = SqliteConversationBindingRepository(
             db_path,
-            workspace_root=repository_root,
+            workspace_root=employee_workspace_root,
             integer_now=clock.now_unix,
             busy_timeout_ms=busy_timeout_ms,
             employee_backend_catalog=catalog,
