@@ -1,9 +1,74 @@
-"""Locate the Panels-owned skill packages shipped with planner."""
+"""Manage the packaged seed skills and the durable Panels skills home."""
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+
+SKILL_FILE_NAME = "SKILL.md"
+SKILLS_DIR_NAME = "skills"
+LEGACY_WORKER_SETTINGS_DIR_NAME = "worker-settings"
 
 
 def panels_skill_root() -> Path:
+    """Return packaged defaults.  This tree is never a live authority."""
     return Path(__file__).resolve().parent / "skills"
+
+
+def managed_panels_skill_root(configured_database_parent: Path | str) -> Path:
+    return Path(configured_database_parent).expanduser() / SKILLS_DIR_NAME
+
+
+def ensure_managed_panels_skills(
+    configured_database_parent: Path | str,
+    *,
+    packaged_skill_root: Path | str | None = None,
+) -> Path:
+    """Seed missing managed skills once, preferring legacy in-product edits.
+
+    Existing managed files are deliberately untouched: after first materialization,
+    ``data/skills`` is the authority and package changes are only defaults for new
+    homes.  A legacy worker-settings skill is copied only when its named managed
+    target does not already exist.
+    """
+    target_root = managed_panels_skill_root(configured_database_parent)
+    source_root = Path(packaged_skill_root or panels_skill_root()).expanduser()
+    if not source_root.is_dir():
+        raise FileNotFoundError(f"packaged Panels skills not found: {source_root}")
+    target_root.mkdir(parents=True, exist_ok=True)
+    legacy_by_name = _legacy_skills_by_name(
+        Path(configured_database_parent).expanduser() / LEGACY_WORKER_SETTINGS_DIR_NAME
+    )
+    for source_dir in sorted(source_root.iterdir(), key=lambda path: path.name):
+        if not source_dir.is_dir() or not (source_dir / SKILL_FILE_NAME).is_file():
+            continue
+        target_dir = target_root / source_dir.name
+        if target_dir.exists() or target_dir.is_symlink():
+            continue
+        legacy = legacy_by_name.get(source_dir.name)
+        if legacy is not None:
+            target_dir.mkdir(parents=True)
+            shutil.copy2(legacy, target_dir / SKILL_FILE_NAME)
+        else:
+            shutil.copytree(source_dir, target_dir)
+    return target_root
+
+
+def _legacy_skills_by_name(legacy_root: Path) -> dict[str, Path]:
+    if not legacy_root.is_dir():
+        return {}
+    found: dict[str, Path] = {}
+    for path in legacy_root.glob(f"*/{SKILL_FILE_NAME}"):
+        name = _skill_name(path)
+        if name is not None:
+            found.setdefault(name, path)
+    return found
+
+
+def _skill_name(path: Path) -> str | None:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line == "---":
+            continue
+        if line.startswith("name:"):
+            return line.partition(":")[2].strip().strip("\"'") or None
+    return None

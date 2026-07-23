@@ -16,6 +16,7 @@ from planner.core.config import load_config
 from planner.core.contracts import EventKind, PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.skill_sources import ensure_managed_panels_skills
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode
 from planner.worker_settings import api as worker_settings_api
@@ -25,12 +26,12 @@ from planner.worker_types.configuration import configured_worker_type_registry
 
 @pytest.fixture
 def canonical_skills_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Give skill-edit tests an isolated copy of the versioned canonical tree."""
+    """Give skill-edit tests an isolated managed home seeded from package defaults."""
     source = worker_settings_service.panels_skill_root()
     target = tmp_path / "canonical-skills"
     shutil.copytree(source, target)
     monkeypatch.setattr(worker_settings_service, "panels_skill_root", lambda: target)
-    return target
+    return ensure_managed_panels_skills(tmp_path, packaged_skill_root=target)
 
 
 def _app(tmp_path: Path, *, raise_server_exceptions: bool = True) -> tuple[TestClient, Path]:

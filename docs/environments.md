@@ -69,14 +69,14 @@ panels environment import-live \
 
 The command requires an already prepared live environment. It reads the committed
 SQLite state through the backup API, including committed WAL data, and stages the
-database, managed files, worker settings, complete Hermes home, Codex and Claude
+database, managed files, worker settings, managed skills, complete Hermes home, Codex and Claude
 identity/configuration/session trees, and an archive of the source logs. Worker
 settings must exist at `worker-settings` beside the source database; that path is
 inferred so it cannot be omitted accidentally. The runtime user home locates its
 `.codex` and `.claude` children. Database, Hermes, managed-file, and log sources may
 otherwise live below that home. Sockets and other special files are skipped; private
 directory and file modes and ordinary symlinks are preserved. Panels-owned Hermes
-skill links are repaired to the repository recorded in the prepared live manifest.
+skill links are repaired to the managed skills home in the imported generation.
 
 All source paths must exist and remain outside the prepared live instance. Durable
 state is built as one new generation and made current with one atomic stable-pointer
