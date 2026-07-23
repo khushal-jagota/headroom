@@ -726,7 +726,10 @@ def update_chief_launch_defaults(
         except Exception:
             snapshot.restore()
             raise
-        skill = _parse_skill(_panels_skill_source(CHIEF_SKILL_NAME).read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
+        skill = _parse_skill(
+            _panels_skill_source(CHIEF_SKILL_NAME).read_text(encoding="utf-8"),
+            CHIEF_SKILL_NAME,
+        )
         return ManagedChiefSettings(CHIEF_SETTINGS_KEY, CHIEF_LABEL, skill, launch_defaults)
 
 
@@ -741,11 +744,17 @@ def save_chief_skill(
     allowed = {"name", "description", "markdown_body", "body"}
     unexpected = sorted(set(payload) - allowed)
     if unexpected:
-        raise PlannerError(ErrorCode.validation, "unknown Chief skill field", {"field": unexpected[0]})
+        raise PlannerError(
+            ErrorCode.validation,
+            "unknown Chief skill field",
+            {"field": unexpected[0]},
+        )
     if "name" in payload and payload["name"] != CHIEF_SKILL_NAME:
         raise PlannerError(ErrorCode.validation, "Chief skill name is immutable", {})
     current_path = _panels_skill_source(CHIEF_SKILL_NAME)
-    with _worker_settings_lock(managed_worker_settings_root(configured_database_parent), CHIEF_SETTINGS_KEY):
+    with _worker_settings_lock(
+        managed_worker_settings_root(configured_database_parent), CHIEF_SETTINGS_KEY
+    ):
         current = _parse_skill(current_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
         description = payload.get("description", current.description)
         body = payload.get("markdown_body", payload.get("body", current.markdown_body))

@@ -8,7 +8,6 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.environments import materialize as environment_materialize
 from planner.environments.fake_fixture import (
     FAKE_FIXTURE_VERSION,
