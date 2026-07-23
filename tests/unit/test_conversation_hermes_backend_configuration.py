@@ -32,7 +32,7 @@ def test_hermes_src_root() -> None:
 
 
 def test_resolve_planner_home_precedence() -> None:
-    assert resolve_planner_home(None, env={}) == Path("data/hermes-home")
+    assert resolve_planner_home(None, env={}) == Path("~/.hermes").expanduser()
     assert resolve_planner_home(None, env={}, default="/database/home") == Path("/database/home")
     assert resolve_planner_home(
         None, env={"PLAN_HERMES_HOME": "/env"}, default="/database/home"

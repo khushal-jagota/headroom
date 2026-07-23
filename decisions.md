@@ -3,6 +3,13 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-t_qe1gk3ha-creation-placement — Preserve explicit backlog selection
+
+Treat an omitted `sprint_id` as eligible for the current-sprint default, but treat an explicitly
+provided `sprint_id: null` as an intentional backlog placement. The existing CLI exposes
+`--sprint none`; collapsing that choice into the new default would silently change an established
+creation contract.
+
 ## D-t_12sap6vx-sqlite-only-backups — Keep recovery small and explicit
 
 Use SQLite's online backup API into a temporary snapshot directory, verify integrity and checksum,
@@ -42,6 +49,19 @@ A root-owned, shared-read manager checkout launches `environment run`, but the l
 that the selected target checkout's `.venv` imports `planner` from that exact target and then execs
 that interpreter. This lets current environment-management code launch accepted-old-main live code
 without allowing the staging service account to write or read private live paths.
+
+## D-t_pw264y71-default-hermes-home-with-explicit-override — Default to the real Hermes home, keep the override seam
+
+The owner-approved direction is that Hermes-backed Panels runs use the normal installed Hermes home
+by default, just as Codex and Claude already use their normal homes. The runtime therefore stops
+injecting a database-adjacent `data/hermes-home` as the default `HERMES_HOME`, and prepared
+environment launches stop exporting `PLAN_HERMES_HOME`.
+
+Keep the explicit override seam: `resolve_planner_home()` still honors `PLAN_HERMES_HOME`, and the
+legacy live-import Hermes-home copy path remains available for deployments that intentionally opt
+into a non-default Hermes home. Prepared environment materialization no longer provisions a
+separate per-environment Hermes skill home as part of the default runtime path because that state
+is no longer the canonical home Panels launches against.
 
 ## How this file is organised
 
