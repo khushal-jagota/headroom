@@ -7,6 +7,7 @@ import sys
 import threading
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -66,7 +67,12 @@ from planner.conversation.sqlite_binding_repository import (
 from planner.conversation.turn_broker import (
     ConversationTurnAttachState,
 )
-from planner.conversation.wire_contracts import CancelAction, HumanEcho, PromptAction
+from planner.conversation.wire_contracts import (
+    CancelAction,
+    HumanEcho,
+    PermissionResponseAction,
+    PromptAction,
+)
 from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.tickets.conversation_projection import TicketConversationProjection
@@ -1128,6 +1134,133 @@ def test_ticket_activity_and_permission_publication_updates_workspace_projection
             "test",
         )
         assert projection.read("t_hub").has_pending_permission is False
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def _set_ticket_status(db_path: str, ticket_status: str) -> None:
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = ?, "
+            "default_stage_ownership_mode = 'worker' WHERE id = 't_hub'",
+            (ticket_status,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _read_ticket_status(db_path: str) -> str:
+    conn = connect(db_path)
+    try:
+        return str(
+            conn.execute(
+                "SELECT ticket_status FROM tickets WHERE id = 't_hub'"
+            ).fetchone()["ticket_status"]
+        )
+    finally:
+        conn.close()
+
+
+class _AcceptingPermissions(_Permissions):
+    async def respond_to_permission(
+        self, connection_id: str, request_id: str, option_id: str
+    ) -> Any:
+        del connection_id, request_id, option_id
+        return SimpleNamespace(disposition="accepted")
+
+
+def test_prompt_action_on_ticket_flips_awaiting_approval_to_proposal_discussion(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        _set_ticket_status(db_path, "awaiting_approval")
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_DeliveryBroker(),
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="message-flip",
+                prompt=[TextContentBlock(type="text", text="a question")],
+                delivery_choice="normal",
+            ),
+        )
+
+        assert _read_ticket_status(db_path) == "proposal_discussion"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_permission_response_action_does_not_flip_ticket_status(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        _set_ticket_status(db_path, "awaiting_approval")
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_DeliveryBroker(),
+            permission_broker=_AcceptingPermissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        await hub.dispatch_action(
+            browser.connection_id,
+            PermissionResponseAction(
+                type="permission_response",
+                employee_id="t_hub",
+                request_id="permission-1",
+                option_id="once",
+            ),
+        )
+
+        assert _read_ticket_status(db_path) == "awaiting_approval"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_agent_reply_still_delivers_on_a_proposal_discussion_ticket(
+    tmp_path: Path,
+) -> None:
+    # The conversation reply path reads no ticket_status: an agent reply reaches the
+    # browser unchanged even while the ticket is parked in proposal_discussion.
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        _set_ticket_status(db_path, "proposal_discussion")
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        subscription = await hub.attach_browser("t_hub", connection_id="browser-a")
+        while not subscription.queue.empty():
+            subscription.queue.get_nowait()
+
+        await hub.publish_activity(record.employee, record.binding, "thinking", "Working")
+
+        envelope = json.loads(await asyncio.wait_for(subscription.queue.get(), timeout=1))
+        assert envelope["type"] == "activity"
+        assert envelope["payload"]["state"] == "thinking"
+        assert _read_ticket_status(db_path) == "proposal_discussion"
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

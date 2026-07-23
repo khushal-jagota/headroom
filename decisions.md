@@ -3524,3 +3524,31 @@ not guarantee notification/request wire ordering across the prior fork response.
   move.
 - Preserve the original checkout's local commit and uncommitted work before conversion, restore that
   work onto `staging`, and leave live source and process state untouched.
+
+# 2026-07-23 — t_2dm6mn08: proposal_discussion status representation
+
+- Represent "user messaged during an open approval" as ONE stored fact: a new
+  `ticket_status = proposal_discussion`. Deliberately did NOT add a separate stored
+  state field to `Proposal`. Reason: the proposal's "in discussion" state is the same
+  fact seen at the field; a duplicate field would need every exit to clear a second
+  thing. Because only `ticket_status` changes, the three existing exits (re-propose →
+  `awaiting_approval`, approve, send-back → `agent_running_step`) already overwrite it,
+  so no new exit machinery exists.
+- The message→flip crosses the conversation→tickets boundary through the existing
+  `TicketConversationProjection` courier (the object the hub already calls by
+  `entity_id` for ACP facts), not a direct hub→`tickets.data` call. Keeps the
+  conversation hub decoupled from ticket status, matching how activity/permission facts
+  already flow. The canonical transition (`enter_proposal_discussion`) still lives in
+  `tickets/data.py`; the courier is a thin connection-owning delegate.
+- `proposal_discussion` is protected from ownership-change overwrite exactly like
+  `awaiting_approval` (added to the guard tuples in `set_stage_ownership`,
+  `take_over_ticket`, `release_ticket`) — a deliberate divergence from `needs_user`,
+  which yields to takeover. Rationale: the proposal stays filed and approvable, so it
+  must survive Take over / Release the same way a pending approval does.
+- Reconciliation: staging had already shipped a sibling `needs_user` status after this
+  ticket's code maps were taken against `main`. Mirrored `needs_user`'s integration at
+  every consumer, with two intentional differences unique to this ticket: the review
+  queue EXCLUDES `proposal_discussion` (clean queue only), and it is overwrite-protected.
+  Independent review caught one missed consumer — `employee_configuration_editable`
+  (a kickoff-proposal-in-discussion must stay config-editable like `awaiting_approval`);
+  fixed with a covering test.

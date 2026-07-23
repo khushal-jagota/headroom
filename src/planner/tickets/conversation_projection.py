@@ -67,6 +67,20 @@ class TicketConversationProjection:
         """Mark only the latest completed Worker response as seen."""
         return self._write(ticket_id, has_completed_response_awaiting_user=False)
 
+    def enter_proposal_discussion_on_human_prompt(self, ticket_id: str) -> None:
+        """Courier a human typed message into the tickets domain's proposal-discussion flip.
+
+        A no-op unless the Ticket is parked at awaiting_approval; the tickets-domain
+        transition owns that guard.
+        """
+        import planner.tickets.data as tickets_data
+
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            tickets_data.enter_proposal_discussion(conn, ticket_id, now=self._now())
+        finally:
+            conn.close()
+
     def reset(self, ticket_id: str) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
         try:

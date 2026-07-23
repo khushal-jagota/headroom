@@ -1,5 +1,22 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): t_2dm6mn08 — proposal_discussion status (Implementation)
+
+Build stage of ticket t_2dm6mn08 on branch `ticket/t_2dm6mn08-proposal-discussion` (off
+`staging`). A typed human message on an `awaiting_approval` ticket now flips it to a new
+`ticket_status = proposal_discussion`: the proposal stays filed and approvable, the ticket
+reads as conversation-in-flight, and it drops out of the clean review queue. Represented as
+one stored fact so the existing exits (re-propose / approve / send-back) already clear it;
+the flip crosses the conversation→tickets boundary via the existing
+`TicketConversationProjection` courier. New DB v36 rebuild migration adds the value. Every
+status consumer decides explicitly, mirroring the sibling `needs_user` shipped on staging,
+plus a `list(TicketStatus)` completeness gate.
+
+Independent review found one missed consumer (`employee_configuration_editable` diverging
+from `awaiting_approval`); fixed with a covering test. Final canonical `./verify` over the
+settled tree is green — all six gates (ruff, mypy, unit 1418, build, frontend, e2e 126).
+Next: propose the implementation package for approval, then Closeout.
+
 ## Current work cycle (2026-07-23): Simplify fork-session deferral
 
 After three payload-buffer corrections exposed new lifecycle edges, the repair changed approach.
