@@ -1523,6 +1523,17 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
                 "kickoff must be settled before release",
                 {"ticket_id": ticket_id},
             )
+        if (
+            ticket.ticket_status is TicketStatus.needs_user
+            and ticket.stage not in ticket.stage_ownership_overrides
+        ):
+            _write_entered_stage_ticket_status(
+                conn,
+                ticket,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+            return _load_ticket_for_write(conn, ticket_id)
         if ticket.stage not in ticket.stage_ownership_overrides:
             return ticket
         effective_before = ticket.effective_stage_ownership_mode
@@ -1570,6 +1581,30 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             )
             updated = _load_ticket_for_write(conn, ticket_id)
         return updated
+
+
+def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
+    """Pause a Worker-owned Ticket for explicit human help."""
+    admission.require_worker_actor(actor, "request user help")
+    with _txn(conn):
+        ticket, _worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
+        )
+        if ticket.stage in ("done", "dropped"):
+            raise PlannerError(
+                ErrorCode.validation,
+                "terminal tickets cannot request user help",
+                {"ticket_id": ticket_id},
+            )
+        if ticket.stage == "needs_kickoff":
+            raise PlannerError(
+                ErrorCode.validation,
+                "kickoff must be settled before requesting user help",
+                {"ticket_id": ticket_id},
+            )
+        if ticket.ticket_status is not TicketStatus.needs_user:
+            _write_ticket_status(conn, ticket_id, TicketStatus.needs_user, now)
+        return _load_ticket_for_write(conn, ticket_id)
 
 
 def edit_field_value(

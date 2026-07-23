@@ -167,6 +167,8 @@ def is_eligible_for_automatic_employee_step(
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
+    if ticket.ticket_status is TicketStatus.needs_user:
+        return False
     if ownership_mode is StageOwnershipMode.worker:
         if ticket.ticket_status is not TicketStatus.empty:
             return False

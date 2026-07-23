@@ -1088,6 +1088,22 @@ async def release_ticket(
     return tickets_views.ticket_json(ticket, now)
 
 
+@router.post("/tickets/{ticket_id}/request-user-help")
+async def request_user_help(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
+) -> JsonDict:
+    now = clk.now_unix()
+    ticket = tickets_actions.request_user_help(
+        conn, ticket_id, actor=ctx.actor, now=now,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
+    )
+    return tickets_views.ticket_json(ticket, now)
+
+
 @router.put("/tickets/{ticket_id}/stage-ownership/{stage}")
 async def put_stage_ownership(
     ticket_id: str,

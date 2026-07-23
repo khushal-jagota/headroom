@@ -56,7 +56,7 @@ from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.days.logic.dates import resolve_day_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER, AtCap, TicketStatus
 from planner.worker_context import data as worker_context_data
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -787,6 +787,78 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
     assert binding is not None and mirror is not None
     assert tuple(binding) == ("probe-backend", session_id)
     assert tuple(mirror) == ("probe-backend", session_id)
+
+
+def test_user_reply_reaches_same_acp_session_while_worker_help_waits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = str(tmp_path / "worker-help.db")
+    audit_path = tmp_path / "worker-help-audit.jsonl"
+    monkeypatch.setenv("ACP_TEST_PROMPT_AUDIT_PATH", str(audit_path))
+    config = load_config(
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": db_path,
+            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+            "PLAN_FAKE_NOW": "2026-07-20T12:00:00+00:00",
+            "PLAN_DISPATCH_ENABLED": "0",
+        }
+    )
+    clock = build_clock(config)
+    hermes = _definition()
+    definition = _definition(backend_key="probe-backend")
+    backends = (
+        (hermes, SdkAcpEmployeeChildFactory(hermes)),
+        (definition, SdkAcpEmployeeChildFactory(definition)),
+    )
+    catalog = EmployeeBackendCatalog(
+        tuple(
+            static_employee_backend_registration(item_definition, item_factory)
+            for item_definition, item_factory in backends
+        )
+    )
+    with connect(db_path) as conn:
+        create_schema(conn)
+        ticket = _seed_eligible_ticket(
+            conn,
+            clock,
+            config.boundary_hour,
+            employee_backend="probe-backend",
+            employee_runtime_definitions=_scripted_runtime_definitions(catalog),
+        )
+
+    app = _application_with_backends(config, clock, backends)
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/conversation") as websocket:
+            websocket.send_json({"type": "attach", "employeeId": ticket.id})
+            initial = _receive_until(websocket, _is_ready)
+            session_id = str(initial[0]["acpSessionId"])
+            websocket.send_json(
+                _prompt_action(ticket.id, session_id, "help-request", "I need user help")
+            )
+            first_turn = _receive_until(websocket, _is_idle)
+            session_id = _bound_session_id(first_turn)
+
+            with connect(db_path) as conn:
+                tickets_data.request_user_help(conn, ticket.id, actor="agent", now=4)
+
+            websocket.send_json(
+                _prompt_action(ticket.id, session_id, "human-answer", "Here is the answer")
+            )
+            _receive_until(websocket, _is_idle)
+
+        with connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT ticket_status, employee_session_id FROM tickets WHERE id = ?",
+                (ticket.id,),
+            ).fetchone()
+        assert row is not None
+        assert tuple(row) == (TicketStatus.needs_user.value, session_id)
+
+    audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
+    assert [item["sessionId"] for item in audit] == [session_id, session_id]
+    assert "Here is the answer" in " ".join(_audited_prompt_texts(audit[-1]))
 
 
 def test_employee_configuration_catalog_does_not_bind_and_first_prompt_uses_selection(

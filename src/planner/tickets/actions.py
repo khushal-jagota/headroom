@@ -277,6 +277,19 @@ def release_ticket(
     return ticket
 
 
+def request_user_help(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    actor: str,
+    now: int,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
+) -> Ticket:
+    ticket = tickets_data.request_user_help(conn, ticket_id, actor=actor, now=now)
+    automatic_employee_step_eligibility_wake.wake()
+    return ticket
+
+
 def set_stage_ownership(
     conn: sqlite3.Connection,
     ticket_id: str,

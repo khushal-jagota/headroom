@@ -394,7 +394,24 @@ def review_view(
     running_workers = conn.execute(
         "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent_running_step'"
     ).fetchone()
+    user_help_requests = [
+        {
+            "ticket_id": str(row["id"]),
+            "title": str(row["title"]),
+            "waiting_since": int(row["waiting_since"]),
+        }
+        for row in conn.execute(
+            "SELECT t.id, t.title, MAX(e.created_at) AS waiting_since FROM tickets t "
+            "JOIN events e ON e.entity_id = t.id "
+            "WHERE t.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) "
+            "AND t.ticket_status = 'needs_user' AND e.kind = 'ticket_status_changed' "
+            "AND json_extract(e.payload, '$.ticket_status') = 'needs_user' "
+            "GROUP BY t.id, t.title ORDER BY t.id",
+            (day_id,),
+        ).fetchall()
+    ]
     return {
         "ticket_decisions": _ticket_decisions(conn, day_id=day_id),
+        "user_help_requests": user_help_requests,
         "running_worker_count": int(running_workers["count"] if running_workers is not None else 0),
     }

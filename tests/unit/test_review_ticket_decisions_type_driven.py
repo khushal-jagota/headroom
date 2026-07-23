@@ -104,7 +104,8 @@ def test_review_uses_each_shipped_worker_types_stored_stage_field(tmp_db: Connec
 
     response = _review(tmp_db)
 
-    assert set(response) == {"ticket_decisions", "running_worker_count"}
+    assert set(response) == {"ticket_decisions", "user_help_requests", "running_worker_count"}
+    assert response["user_help_requests"] == []
     assert response["ticket_decisions"] == [
         {
             "ticket_id": new_worker_id,
@@ -245,7 +246,11 @@ def test_overdue_ticket_and_sprint_item_do_not_create_review_output(
     tmp_db.execute("UPDATE tickets SET deadline = '2020-01-01' WHERE id = ?", (ticket.id,))
     tmp_db.execute("UPDATE sprint_items SET deadline = '2020-01-01' WHERE id = ?", (item.id,))
 
-    assert _review(tmp_db) == {"ticket_decisions": [], "running_worker_count": 0}
+    assert _review(tmp_db) == {
+        "ticket_decisions": [],
+        "user_help_requests": [],
+        "running_worker_count": 0,
+    }
 
 
 def test_review_http_contract_and_old_route_absence(tmp_path: Path) -> None:
@@ -271,7 +276,11 @@ def test_review_http_contract_and_old_route_absence(tmp_path: Path) -> None:
         old_route = client.get("/api/queues")
 
     assert review.status_code == 200
-    assert review.json() == {"ticket_decisions": [], "running_worker_count": 0}
+    assert review.json() == {
+        "ticket_decisions": [],
+        "user_help_requests": [],
+        "running_worker_count": 0,
+    }
     assert old_route.status_code == 404
 
 

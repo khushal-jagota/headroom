@@ -167,8 +167,8 @@
       <a class:active={currentNav("day")} class="nav-link" data-screen="day" href="#/day">Day</a>
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
         Review
-        {#if (review.data?.ticket_decisions || []).length > 0}
-          <span class="nav-badge">{(review.data?.ticket_decisions || []).length}</span>
+        {#if ((review.data?.ticket_decisions || []).length + (review.data?.user_help_requests || []).length) > 0}
+          <span class="nav-badge">{(review.data?.ticket_decisions || []).length + (review.data?.user_help_requests || []).length}</span>
         {:else}
           <span class="nav-badge hidden"></span>
         {/if}

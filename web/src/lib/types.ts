@@ -166,8 +166,15 @@ export type ReviewTicketDecision = {
   waiting_since: number;
 };
 
+export type ReviewUserHelpRequest = {
+  ticket_id: string;
+  title: string;
+  waiting_since: number;
+};
+
 export type ReviewResponse = {
   ticket_decisions: ReviewTicketDecision[];
+  user_help_requests: ReviewUserHelpRequest[];
   running_worker_count: number;
 };
 
