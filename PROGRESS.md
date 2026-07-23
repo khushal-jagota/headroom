@@ -3939,7 +3939,8 @@ findings. The canonical `./verify` then passed every gate: Ruff, strict Mypy ove
 1,405 unit tests, compile/CSS, Svelte diagnostics, production frontend build and contracts, and 126
 Playwright E2E tests (`VERIFY: PASS`). The delegated implementation agent submitted the
 Implementation field before returning; the orchestrator's subsequent proposal therefore landed as
-Closeout and advanced the Ticket to Done. No Closeout integration occurred: `staging` and
-`origin/staging` remain unchanged, and the verified implementation remains on the Ticket branch.
-Next: owner direction is required before any merge or push because the supported Ticket APIs do not
-rewind a completed Ticket. Blocker: Ticket state is ahead of repository integration.
+Closeout and advanced the Ticket to Done before repository integration. The owner then explicitly
+authorized completing Closeout. Current `staging` was already the verified branch's ancestor, so
+local `staging` fast-forwarded to the implementation and the exact revision was pushed and confirmed
+on `origin/staging`; the rolling `staging` → `main` PR remains open. The temporary Ticket branch was
+removed after integration. Closeout is complete. Blockers: none.
