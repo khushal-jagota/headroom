@@ -65,7 +65,6 @@ def test_codex_definition_is_locked_confined_and_permission_only() -> None:
     assert definition.expected_agent_version == CODEX_ACP_AGENT_VERSION == "1.1.4"
     assert definition.inherited_environment_names == CODEX_INHERITED_ENVIRONMENT_NAMES
     assert definition.environment_overrides == (
-        ("CODEX_HOME", "/srv/panels/codex-home"),
         ("APP_SERVER_LOGS", "/srv/panels/codex-acp-logs"),
         ("DEFAULT_AUTH_REQUEST", '{"methodId":"api-key"}'),
         ("INITIAL_AGENT_MODE", "agent-full-access"),
@@ -86,7 +85,7 @@ def test_codex_definition_is_locked_confined_and_permission_only() -> None:
 def test_codex_environment_keeps_only_declared_auth_and_panels_identity() -> None:
     ambient = {
         **default_environment(),
-        "CODEX_HOME": "/srv/panels/codex-home",
+        "CODEX_HOME": "/srv/codex-home",
         "CODEX_API_KEY": "codex-key",
         "OPENAI_API_KEY": "openai-key",
         "CODEX_CONFIG": "/ambient/config",
@@ -106,7 +105,7 @@ def test_codex_environment_keeps_only_declared_auth_and_panels_identity() -> Non
 
     assert environment == {
         **default_environment(),
-        "CODEX_HOME": "/srv/panels/codex-home",
+        "CODEX_HOME": "/srv/codex-home",
         "CODEX_API_KEY": "codex-key",
         "OPENAI_API_KEY": "openai-key",
         "APP_SERVER_LOGS": "/srv/panels/codex-acp-logs",
@@ -194,8 +193,13 @@ def test_codex_definition_rejects_missing_or_wrong_adapter_version(
 
 
 def test_zero_arg_codex_registration_materializes_sdk_factory_and_exact_probe(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    native_home = tmp_path / "user-home" / ".codex"
+    (native_home / "sessions").mkdir(parents=True)
+    (native_home / "auth.json").write_text("auth", encoding="utf-8")
+    (native_home / "sessions" / "current.json").write_text("session", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(native_home.parent))
     registration = build_codex_employee_backend_registration()
     assert registration.backend_key == CODEX_BACKEND_KEY
 
@@ -208,11 +212,13 @@ def test_zero_arg_codex_registration_materializes_sdk_factory_and_exact_probe(
     assert materialized.definition.backend_key == CODEX_BACKEND_KEY
     assert isinstance(materialized.child_factory, SdkAcpEmployeeChildFactory)
     assert materialized.child_factory.definition is materialized.definition
-    assert materialized.definition.environment_overrides[:2] == (
-        ("CODEX_HOME", str(tmp_path / "codex-home")),
-        ("APP_SERVER_LOGS", str(tmp_path / "codex-acp-logs")),
+    assert materialized.definition.environment_overrides[0] == (
+        "APP_SERVER_LOGS",
+        str(tmp_path / "codex-acp-logs"),
     )
-    assert (tmp_path / "codex-home" / "skills").resolve() == (tmp_path / "skills").resolve()
+    assert (native_home / "skills").resolve() == (tmp_path / "skills").resolve()
+    assert (native_home / "auth.json").read_text() == "auth"
+    assert (native_home / "sessions" / "current.json").read_text() == "session"
     assert materialized.is_executable() is True
     assert materialized.startup_preflight is None
 

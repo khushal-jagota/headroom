@@ -234,9 +234,7 @@ def test_claude_definition_freezes_locked_runtime_and_truthful_capabilities() ->
     assert definition.expected_agent_name == "@agentclientprotocol/claude-agent-acp"
     assert definition.expected_agent_version == CLAUDE_ACP_AGENT_VERSION == "0.60.0"
     assert definition.inherited_environment_names == CLAUDE_INHERITED_ENVIRONMENT_NAMES
-    assert definition.environment_overrides == (
-        ("CLAUDE_CONFIG_DIR", str(REPOSITORY_ROOT / ".claude-managed")),
-    )
+    assert definition.environment_overrides == ()
     assert definition.turn_capabilities.supports_steer is False
     assert definition.turn_capabilities.observes_compaction is True
     assert (
@@ -275,14 +273,19 @@ def test_claude_environment_is_confined_and_keeps_only_panels_worker_identity() 
     }
     assert "ANTHROPIC_API_KEY" not in environment
     assert "CLAUDE_CODE_EXECUTABLE" not in environment
-    assert environment["CLAUDE_CONFIG_DIR"] == str(REPOSITORY_ROOT / ".claude-managed")
+    assert environment["CLAUDE_CONFIG_DIR"] == "/custom/config"
     assert "HERMES_HOME" not in environment
     assert "OPENAI_API_KEY" not in environment
 
 
 def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    native_home = tmp_path / "user-home" / ".claude"
+    (native_home / "projects").mkdir(parents=True)
+    (native_home / "settings.json").write_text("settings", encoding="utf-8")
+    (native_home / "projects" / "session.json").write_text("session", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(native_home.parent))
     from planner.conversation.backend_catalog import EmployeeBackendBuildContext
 
     registration = build_claude_employee_backend_registration()
@@ -299,10 +302,10 @@ def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
     assert materialized.child_factory.definition is materialized.definition
     assert materialized.startup_preflight is not None
     assert materialized.is_executable() is False
-    assert materialized.definition.environment_overrides == (
-        ("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config")),
-    )
-    assert (tmp_path / "claude-config" / "skills").resolve() == (tmp_path / "skills").resolve()
+    assert materialized.definition.environment_overrides == ()
+    assert (native_home / "skills").resolve() == (tmp_path / "skills").resolve()
+    assert (native_home / "settings.json").read_text() == "settings"
+    assert (native_home / "projects" / "session.json").read_text() == "session"
 
 
 @pytest.mark.parametrize(
