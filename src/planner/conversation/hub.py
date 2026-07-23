@@ -312,7 +312,8 @@ class ConversationHub:
         *,
         ingress_capacity: int = 256,
         browser_capacity: int = ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES,
-        reset_buffer_byte_limit: int = 1_048_576,
+        # Temporary live ceiling while the imported durable replay is measured.
+        reset_buffer_byte_limit: int = 6 * 1024 * 1024,
         new_conversation_timeout_seconds: float = ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
         connection_id_factory: Callable[[], str] | None = None,
         worker_client_message_id_factory: Callable[[], str] | None = None,
@@ -1691,14 +1692,24 @@ class ConversationHub:
         requested_employee_id: str | None = None
         try:
             first = await self._receive_action(websocket)
-            if not isinstance(first, AttachAction):
+            if not isinstance(first, (AttachAction, NewConversationAction)):
                 await websocket.close(code=1008, reason=INVALID_ACTION_CLOSE_REASON)
                 return
             requested_employee_id = first.employee_id
+            if isinstance(first, NewConversationAction):
+                await self.new_conversation(first.employee_id)
             subscription = await self.attach_browser(
                 first.employee_id,
-                last_seen_binding_generation=first.last_seen_binding_generation,
-                last_seen_sequence=first.last_seen_sequence,
+                last_seen_binding_generation=(
+                    first.last_seen_binding_generation
+                    if isinstance(first, AttachAction)
+                    else None
+                ),
+                last_seen_sequence=(
+                    first.last_seen_sequence
+                    if isinstance(first, AttachAction)
+                    else None
+                ),
             )
             if subscription.close_reason is not None:
                 await websocket.close(code=1013, reason=subscription.close_reason)
