@@ -43,6 +43,19 @@ that the selected target checkout's `.venv` imports `planner` from that exact ta
 that interpreter. This lets current environment-management code launch accepted-old-main live code
 without allowing the staging service account to write or read private live paths.
 
+## D-t_pw264y71-default-hermes-home-with-explicit-override — Default to the real Hermes home, keep the override seam
+
+The owner-approved direction is that Hermes-backed Panels runs use the normal installed Hermes home
+by default, just as Codex and Claude already use their normal homes. The runtime therefore stops
+injecting a database-adjacent `data/hermes-home` as the default `HERMES_HOME`, and prepared
+environment launches stop exporting `PLAN_HERMES_HOME`.
+
+Keep the explicit override seam: `resolve_planner_home()` still honors `PLAN_HERMES_HOME`, and the
+legacy live-import Hermes-home copy path remains available for deployments that intentionally opt
+into a non-default Hermes home. Prepared environment materialization no longer provisions a
+separate per-environment Hermes skill home as part of the default runtime path because that state
+is no longer the canonical home Panels launches against.
+
 ## How this file is organised
 
 Entries are grouped **by system/topic**, and each carries a **stable slug ID** (e.g.

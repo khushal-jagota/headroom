@@ -85,9 +85,9 @@ def _contract_owned_env(
         "PLAN_LOGS_DIR": str(instance.logs_dir),
         "PLAN_DISPATCHER_LOCK_PATH": str(instance.dispatcher_lock_path),
         "PLAN_SERVER_CONTROL_SOCKET": str(instance.server_control_socket_path),
-        "PLAN_HERMES_HOME": str(instance.hermes_home),
         "PLAN_HERMES_PYTHON": str(hermes_python),
-        # Panels keeps its own Hermes state via PLAN_HERMES_HOME, while provider
-        # CLIs use the operator's normal home and native login/keychain state.
+        # Hermes-backed Panels runs now use the operator's normal Hermes home
+        # by default, while provider CLIs use that same native login/keychain
+        # state through the ambient HOME.
         "HOME": ambient_home or str(instance.runtime_user_home),
     }

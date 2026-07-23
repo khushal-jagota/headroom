@@ -1,8 +1,9 @@
 # Runtime environments
 
 Panels has two prepared runtime environments: `live` and `staging`. They use separate
-checkouts, databases, managed files, Hermes homes, logs, locks, control sockets, and
-credential-file references.
+checkouts, databases, managed files, logs, locks, control sockets, and credential-file
+references. Hermes-backed Panels runs use the operator's normal Hermes home by default
+unless `PLAN_HERMES_HOME` is explicitly overridden.
 
 ```
 environment root
@@ -101,8 +102,8 @@ Live cannot be reset or removed through the environment CLI.
 ## Staging environment
 
 Staging is prepared once and attached to the separate `staging` checkout. Its fake
-database, managed files, Hermes home, logs, credentials reference, and testing activity
-persist across runs. Its durable configuration has no server port.
+database, managed files, logs, credentials reference, and testing activity persist
+across runs. Its durable configuration has no server port.
 
 ```sh
 STAGING_REPO_ROOT=/opt/panels/staging
@@ -183,11 +184,10 @@ policy: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY`. It rejects
 malformed, duplicate, unknown, or contract-owned keys.
 
 `environment run` starts from a scrubbed process environment. It keeps the operator's
-normal `HOME` for provider CLIs such as Claude and Codex, plus basic locale, terminal,
-path, and temporary-directory values. It adds the validated credential values and
-supplies the contract-owned database, port, log, lock, socket, and Hermes values.
-Panels' Hermes state remains isolated through `PLAN_HERMES_HOME`; other ambient
-`PLAN_*` values are not forwarded.
+normal `HOME` for Hermes and provider CLIs such as Claude and Codex, plus basic locale,
+terminal, path, and temporary-directory values. It adds the validated credential values
+and supplies the contract-owned database, port, log, lock, socket, and Hermes executable
+values. Other ambient `PLAN_*` values are not forwarded.
 
 The caller must provide exactly one `--repository-root`. The command checks that
 existing checkout against the prepared environment and uses it as the launch working

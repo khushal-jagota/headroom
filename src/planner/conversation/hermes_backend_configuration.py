@@ -1,4 +1,4 @@
-"""Resolve the Hermes ACP interpreter and Panels-owned Hermes home."""
+"""Resolve the Hermes ACP interpreter and the default Hermes home."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Final
 from planner.skill_sources import panels_skill_root
 
 DEFAULT_HERMES_PYTHON: Final = "~/.hermes/hermes-agent/venv/bin/python"
-DEFAULT_PLANNER_HOME: Final = "data/hermes-home"
+DEFAULT_PLANNER_HOME: Final = "~/.hermes"
 PLANNER_SKILL_NAMES: Final = (
     "panels",
     "panels-ticket-management",
@@ -63,7 +63,7 @@ def provision_planner_home_skills(
     configured_database_parent: Path | str | None = None,
     panels_skills_source_root: Path | str | None = None,
 ) -> None:
-    """Expose the canonical packaged Panels skills in Hermes home.
+    """Expose the canonical packaged Panels skills in a Hermes home.
 
     Every backend receives a symlink to the version-controlled source file.  No
     database-side or Hermes-owned copy is materialized.

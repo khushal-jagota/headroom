@@ -1,5 +1,30 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Use the user's normal Hermes installation and home (`t_pw264y71`)
+
+Hermes-backed Panels runtime now defaults to the operator's normal `~/.hermes` home instead of the
+database-adjacent `data/hermes-home`. Production server startup no longer injects a
+Panels-managed home, prepared-environment launches no longer export `PLAN_HERMES_HOME`, and the
+worker-settings API now resolves the active runtime skills root from the same default home. The
+prepared live/staging environment materializer no longer pre-provisions a separate per-environment
+Hermes skill home as part of default prepare/reset, while the explicit `PLAN_HERMES_HOME`
+override path and the legacy live-import Hermes-home copy path remain intact.
+
+What passed: focused Ruff on the changed source/tests, focused Mypy on the five changed source
+files, `git diff --check`, and the focused unit suite covering Hermes home resolution, environment
+run-env injection, environment CLI/materialization, worker settings, and Hermes backend
+materialization:
+`tests/unit/test_conversation_hermes_backend_configuration.py`,
+`tests/unit/test_environment_credentials.py`,
+`tests/unit/test_environment_cli.py`,
+`tests/unit/test_environment_fake_fixture.py`,
+`tests/unit/test_environment_lifecycle.py`,
+`tests/unit/test_worker_settings.py`,
+`tests/unit/test_hermes_acp_backend.py`.
+
+Next: propose Implementation for approval. No canonical `./verify` yet; that remains for later
+integration/closeout, per the accepted ticket shape.
+
 ## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
 
 Current `staging` merged cleanly into the verified backup branch as `f4594bf2`. The first canonical

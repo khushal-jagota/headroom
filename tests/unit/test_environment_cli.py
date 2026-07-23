@@ -88,7 +88,6 @@ def test_staging_run_selects_runtime_port_and_passes_reserved_listener(
     )
     assert run_env["PLAN_DB_PATH"] == str(instance.db_path)
     assert run_env["HOME"] == "/operator-home"
-    assert run_env["PLAN_HERMES_HOME"] == str(instance.hermes_home)
     assert exec_calls[0][0] == str(repository / ".venv/bin/python")
     assert exec_calls[0][1] == [
         str(repository / ".venv/bin/python"),
@@ -97,6 +96,7 @@ def test_staging_run_selects_runtime_port_and_passes_reserved_listener(
         "serve",
     ]
     assert listener.closed is True
+    assert "PLAN_HERMES_HOME" not in run_env
 
 
 def test_live_run_uses_manifest_fixed_port_without_dynamic_listener(tmp_path: Path) -> None:

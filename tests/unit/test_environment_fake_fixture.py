@@ -88,38 +88,23 @@ def test_fake_fixture_is_same_logical_seed_but_independent_ids_and_database_byte
     assert _sha256(first_db_path) != _sha256(second_db_path)
 
 
-def test_instance_skill_materialization_links_canonical_source(
+def test_prepare_common_layout_does_not_materialize_a_panels_managed_hermes_home(
     tmp_path: Path,
 ) -> None:
-    data_root = tmp_path / "instance-data"
-    hermes_home = tmp_path / "separate-hermes-home"
     instance = SimpleNamespace(
         instance_root=tmp_path / "instance",
         logs_dir=tmp_path / "logs",
         dispatcher_lock_path=tmp_path / "locks" / "dispatcher.lock",
         server_control_socket_path=tmp_path / "run" / "server.sock",
-        hermes_home=hermes_home,
+        hermes_home=tmp_path / "separate-hermes-home",
         runtime_user_home=tmp_path / "runtime-user-home",
-        db_path=data_root / "planning.db",
+        db_path=(tmp_path / "instance-data" / "planning.db"),
         allowed_repository_roots=(Path(__file__).resolve().parents[2],),
     )
 
     environment_materialize._prepare_common_layout(instance)
-    environment_materialize._materialize_instance_skills(instance)
 
-    materialized = (hermes_home / "skills" / "panels-worker-coding" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    canonical = (
-        Path(__file__).resolve().parents[2]
-        / "src"
-        / "planner"
-        / "skills"
-        / "panels-worker-coding"
-        / "SKILL.md"
-    ).read_text(encoding="utf-8")
-    assert (hermes_home / "skills" / "panels-worker-coding").is_symlink()
-    assert materialized == canonical
+    assert not instance.hermes_home.exists()
 
 
 def test_live_prepare_creates_empty_layout_without_fake_fixture(
@@ -145,7 +130,7 @@ def test_live_prepare_creates_empty_layout_without_fake_fixture(
     assert live.fixture_version is None
     assert not live.db_path.exists()
     assert live.managed_files_root.is_dir()
-    _assert_skill_only_hermes_home(live.hermes_home)
+    assert not live.hermes_home.exists()
 
 
 def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Path) -> None:
@@ -177,6 +162,7 @@ def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Pat
     assert inspected.prepared_at == reset.prepared_at
     assert not marker.exists()
     assert reset.db_path.is_file()
+    assert not reset.hermes_home.exists()
 
 
 def test_failed_reset_keeps_prior_data_tree(tmp_path: Path, monkeypatch) -> None:
@@ -232,16 +218,3 @@ def _repository_root(tmp_path: Path | None = None, name: str = "repo") -> Path:
 def _short_environment_root(tmp_path: Path) -> Path:
     digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
     return Path("/tmp") / f"pe-fixture-{os.getpid()}-{digest}"
-
-
-def _assert_skill_only_hermes_home(hermes_home: Path) -> None:
-    entries = {path.name for path in hermes_home.iterdir()}
-    assert entries == {"skills"}
-    assert not (hermes_home / "auth.json").exists()
-    assert not (hermes_home / "config.json").exists()
-    assert not (hermes_home / "sessions").exists()
-    for skill_path in (hermes_home / "skills").iterdir():
-        if skill_path.is_symlink():
-            continue
-        assert skill_path.is_dir()
-        assert (skill_path / "SKILL.md").is_file()
