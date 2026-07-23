@@ -1,9 +1,11 @@
+import concurrent.futures
 import shutil
 from pathlib import Path
 
 import pytest
 
 from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
+from planner.core.contracts import PlannerError
 from planner.worker_settings import service
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -67,3 +69,25 @@ def test_every_skill_in_home_can_be_edited_and_is_catalogued(
     assert 'description: "edited"' in (
         canonical_skills_root / "panels" / "SKILL.md"
     ).read_text(encoding="utf-8")
+
+
+def test_skill_edit_rejects_path_traversal(canonical_skills_root: Path) -> None:
+    with pytest.raises(PlannerError):
+        service.save_skill("..", {"description": "bad"})
+
+
+def test_concurrent_skill_field_edits_preserve_both_fields(canonical_skills_root: Path) -> None:
+    current = next(skill for skill in service.read_skills_home().skills if skill.name == "panels")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(service.save_skill, "panels", {"description": "parallel"}),
+            executor.submit(
+                service.save_skill,
+                "panels",
+                {"markdown_body": current.markdown_body + "\nparallel\n"},
+            ),
+        ]
+        [future.result() for future in futures]
+    final = next(skill for skill in service.read_skills_home().skills if skill.name == "panels")
+    assert final.description == "parallel"
+    assert final.markdown_body.endswith("parallel\n")

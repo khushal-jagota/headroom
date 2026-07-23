@@ -203,29 +203,31 @@ def save_skill(
     *,
     after_publish: Callable[[], None] | None = None,
 ) -> ManagedSkill:
-    root = panels_skill_root()
-    path = root / skill_name / SKILL_FILE_NAME
-    if not path.is_file() or Path(skill_name).name != skill_name:
+    root = panels_skill_root().resolve()
+    if not skill_name or skill_name in {".", ".."} or Path(skill_name).name != skill_name:
+        raise PlannerError(ErrorCode.not_found, "skill not found", {"skill_name": skill_name})
+    path = (root / skill_name / SKILL_FILE_NAME).resolve()
+    if root not in path.parents or not path.is_file():
         raise PlannerError(ErrorCode.not_found, "skill not found", {"skill_name": skill_name})
     allowed = {"name", "description", "markdown_body", "body"}
     unexpected = sorted(set(payload) - allowed)
     if unexpected:
         raise PlannerError(ErrorCode.validation, "unknown skill field", {"field": unexpected[0]})
-    current = _parse_skill(path.read_text(encoding="utf-8"), skill_name)
-    if "name" in payload and payload["name"] != skill_name:
-        raise PlannerError(ErrorCode.validation, "skill name is immutable", {})
-    description = payload.get("description", current.description)
-    body = payload.get("markdown_body", payload.get("body", current.markdown_body))
-    if not isinstance(description, str) or not description:
-        raise PlannerError(ErrorCode.validation, "skill description is required", {})
-    if not isinstance(body, str) or not body.strip():
-        raise PlannerError(ErrorCode.validation, "skill body is required", {})
-    rendered = _render_skill_from_existing_frontmatter(
-        current.source_text, expected_skill_name=skill_name,
-        description=description, markdown_body=body,
-    )
-    _parse_skill(rendered, skill_name)
     with _worker_settings_lock(root, f"skill:{skill_name}"):
+        current = _parse_skill(path.read_text(encoding="utf-8"), skill_name)
+        if "name" in payload and payload["name"] != skill_name:
+            raise PlannerError(ErrorCode.validation, "skill name is immutable", {})
+        description = payload.get("description", current.description)
+        body = payload.get("markdown_body", payload.get("body", current.markdown_body))
+        if not isinstance(description, str) or not description:
+            raise PlannerError(ErrorCode.validation, "skill description is required", {})
+        if not isinstance(body, str) or not body.strip():
+            raise PlannerError(ErrorCode.validation, "skill body is required", {})
+        rendered = _render_skill_from_existing_frontmatter(
+            current.source_text, expected_skill_name=skill_name,
+            description=description, markdown_body=body,
+        )
+        _parse_skill(rendered, skill_name)
         snapshot = _PathSnapshot(path)
         try:
             _atomic_replace_text(path, rendered)
