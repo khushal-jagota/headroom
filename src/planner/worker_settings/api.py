@@ -23,6 +23,7 @@ from planner.worker_settings.contracts import (
     ManagedEmployeeLaunchDefaults,
     ManagedSkill,
     ManagedWorkerSettings,
+    SkillsHome,
     SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
@@ -52,6 +53,10 @@ def _skill_json(skill: ManagedSkill) -> JsonDict:
         "description": skill.description,
         "markdown_body": skill.markdown_body,
     }
+
+
+def _skills_home_json(home: SkillsHome) -> JsonDict:
+    return {"skills": [_skill_json(skill) for skill in home.skills]}
 
 
 def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
@@ -92,6 +97,7 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
     return {
         "employee_id": settings.employee_id,
         "label": settings.label,
+        "skill": _skill_json(settings.skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
 
@@ -146,6 +152,37 @@ async def list_workers(config: Cfg) -> JsonDict:
     }
 
 
+@router.get("/skills")
+async def list_skills() -> JsonDict:
+    return _skills_home_json(service.read_skills_home())
+
+
+@router.get("/skills/{skill_name}")
+async def get_skill(skill_name: str) -> JsonDict:
+    home = service.read_skills_home()
+    for skill in home.skills:
+        if skill.name == skill_name:
+            return _skill_json(skill)
+    raise PlannerError(ErrorCode.not_found, "skill not found", {"skill_name": skill_name})
+
+
+@router.patch("/skills/{skill_name}")
+async def patch_skill(
+    skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clock: Clk
+) -> JsonDict:
+    require_direct_write(ctx)
+    if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
+        raise PlannerError(ErrorCode.validation, "skill patch requires exactly one field", {})
+    now = clock.now_unix()
+    skill = service.save_skill(
+        skill_name, raw,
+        after_publish=lambda: _worker_settings_changed_callback(
+            conn, "skills_home", changed="skill", now=now
+        ),
+    )
+    return _skill_json(skill)
+
+
 @router.get("/workers/chief-of-staff/settings")
 async def get_chief_settings(config: Cfg) -> JsonDict:
     registry = configured_employee_runtime_definitions().worker_type_registry
@@ -165,6 +202,42 @@ async def put_chief_launch_defaults(
         raw,
         after_publish=lambda: _worker_settings_changed_callback(
             conn, "chief_of_staff", changed="launch_defaults", now=now
+        ),
+    )
+    return _chief_json(settings)
+
+
+@router.put("/workers/chief-of-staff/skill")
+async def put_chief_skill(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
+) -> JsonDict:
+    require_direct_write(ctx)
+    registry = configured_employee_runtime_definitions().worker_type_registry
+    now = clock.now_unix()
+    settings = service.save_chief_skill(
+        _database_parent(config),
+        registry,
+        raw,
+        after_publish=lambda: _worker_settings_changed_callback(
+            conn, "chief_of_staff", changed="skill", now=now
+        ),
+    )
+    return _chief_json(settings)
+
+
+@router.patch("/workers/chief-of-staff/skill")
+async def patch_chief_skill(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
+) -> JsonDict:
+    require_direct_write(ctx)
+    if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
+        raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
+    registry = configured_employee_runtime_definitions().worker_type_registry
+    now = clock.now_unix()
+    settings = service.save_chief_skill(
+        _database_parent(config), registry, raw,
+        after_publish=lambda: _worker_settings_changed_callback(
+            conn, "chief_of_staff", changed="skill", now=now
         ),
     )
     return _chief_json(settings)

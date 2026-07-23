@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
@@ -62,10 +63,11 @@ def provision_planner_home_skills(
     configured_database_parent: Path | str | None = None,
     panels_skills_source_root: Path | str | None = None,
 ) -> None:
-    """Expose packaged Panels skills and managed specialist skills in Hermes home."""
-    from planner.worker_settings.service import materialize_specialist_skill
-    from planner.worker_types.configuration import configured_worker_type_registry
+    """Expose the canonical packaged Panels skills in Hermes home.
 
+    Every backend receives a symlink to the version-controlled source file.  No
+    database-side or Hermes-owned copy is materialized.
+    """
     source_root = (
         Path(panels_skills_source_root).resolve()
         if panels_skills_source_root is not None
@@ -73,33 +75,18 @@ def provision_planner_home_skills(
     )
     target_root = Path(home).expanduser() / "skills"
     target_root.mkdir(parents=True, exist_ok=True)
-    registry = configured_worker_type_registry()
-    specialist_skills = {
-        registry.require(worker_type).worker_profile.specialist_skill: worker_type
-        for worker_type in registry.registered_worker_types()
-    }
-    settings_parent = (
-        Path(configured_database_parent).expanduser()
-        if configured_database_parent is not None
-        else Path(home).expanduser().parent
-    )
     for skill_name in skill_names:
         source = source_root / skill_name
         if not source.is_dir():
             raise FileNotFoundError(f"planner skill not found: {source}")
         target = target_root / skill_name
-        if skill_name in specialist_skills:
-            if target.is_symlink():
-                target.unlink()
-            target.mkdir(parents=True, exist_ok=True)
-            materialize_specialist_skill(
-                settings_parent, registry, specialist_skills[skill_name], target_root
-            )
-            continue
         if target.is_symlink():
             if target.resolve() == source.resolve():
                 continue
             target.unlink()
         if target.exists():
-            continue
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
         target.symlink_to(source, target_is_directory=True)

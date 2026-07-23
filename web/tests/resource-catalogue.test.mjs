@@ -31,7 +31,8 @@ const expectedMethods = [
   "ticket",
   "workerTypeManifests",
   "workers",
-  "worker"
+  "worker",
+  "skillsHome"
 ];
 const expectedPublicDeclarations = [
   "export type EventEntityPrefix",
@@ -215,7 +216,7 @@ const effectCases = [
   [{ kind: "reviewTicketReturnedForRevision", ticketId: "t_effect" }, ["ticket:t_effect", "board", "sprint:current"], ["review"]],
   [{ kind: "todayDayChanged" }, ["day:today"], []],
   [{ kind: "currentSprintChanged" }, ["sprint:current", "sprints"], []],
-  [{ kind: "workerSettingsChanged", workerType: "coding" }, ["workers", "worker:coding"], []]
+  [{ kind: "workerSettingsChanged", workerType: "coding" }, ["workers", "worker:coding", "skills-home"], []]
 ];
 for (const [effect, identities, orderedRefreshes] of effectCases) {
   invalidations.length = 0;

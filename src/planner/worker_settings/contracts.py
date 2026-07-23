@@ -22,6 +22,11 @@ class ManagedSkill:
     source_text: str
 
 
+@dataclass(frozen=True, slots=True)
+class SkillsHome:
+    skills: tuple[ManagedSkill, ...]
+
+
 class SpecialistSkillPatch(TypedDict, total=False):
     description: str
     markdown_body: str
@@ -47,6 +52,7 @@ class ManagedWorkerSettings:
 class ManagedChiefSettings:
     employee_id: str
     label: str
+    skill: ManagedSkill
     launch_defaults: ManagedEmployeeLaunchDefaults
 
 

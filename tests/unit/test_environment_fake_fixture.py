@@ -8,7 +8,6 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.environments import materialize as environment_materialize
 from planner.environments.fake_fixture import (
     FAKE_FIXTURE_VERSION,
@@ -19,7 +18,6 @@ from planner.environments.materialize import (
     prepare_environment_instance,
     reset_environment_instance,
 )
-from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -90,21 +88,11 @@ def test_fake_fixture_is_same_logical_seed_but_independent_ids_and_database_byte
     assert _sha256(first_db_path) != _sha256(second_db_path)
 
 
-def test_instance_skill_materialization_uses_database_parent(
+def test_instance_skill_materialization_links_canonical_source(
     tmp_path: Path,
 ) -> None:
-    registry = configured_worker_type_registry()
     data_root = tmp_path / "instance-data"
     hermes_home = tmp_path / "separate-hermes-home"
-    worker_settings_service.save_specialist_skill(
-        data_root,
-        registry,
-        "coding",
-        {
-            "description": "Environment-specific specialist",
-            "markdown_body": "# Environment specialist\n",
-        },
-    )
     instance = SimpleNamespace(
         instance_root=tmp_path / "instance",
         logs_dir=tmp_path / "logs",
@@ -122,8 +110,16 @@ def test_instance_skill_materialization_uses_database_parent(
     materialized = (hermes_home / "skills" / "panels-worker-coding" / "SKILL.md").read_text(
         encoding="utf-8"
     )
-    assert 'description: "Environment-specific specialist"' in materialized
-    assert "# Environment specialist" in materialized
+    canonical = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "planner"
+        / "skills"
+        / "panels-worker-coding"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert (hermes_home / "skills" / "panels-worker-coding").is_symlink()
+    assert materialized == canonical
 
 
 def test_live_prepare_creates_empty_layout_without_fake_fixture(
@@ -181,48 +177,6 @@ def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Pat
     assert inspected.prepared_at == reset.prepared_at
     assert not marker.exists()
     assert reset.db_path.is_file()
-
-
-def test_reset_materializes_specialists_after_replacing_managed_settings(
-    tmp_path: Path,
-) -> None:
-    repository_root = _repository_root()
-    staging = prepare_environment_instance(
-        kind="staging",
-        environment_root=_short_environment_root(tmp_path),
-        repository_roots=(repository_root,),
-    )
-    registry = configured_worker_type_registry()
-    worker_settings_service.save_specialist_skill(
-        staging.db_path.parent,
-        registry,
-        "coding",
-        {
-            "description": "Old environment-specific specialist",
-            "markdown_body": "# Old environment specialist\n",
-        },
-    )
-    provision_planner_home_skills(
-        staging.hermes_home,
-        configured_database_parent=staging.db_path.parent,
-    )
-
-    reset = reset_environment_instance(
-        kind="staging",
-        environment_root=staging.environment_root,
-        repository_roots=(repository_root,),
-    )
-
-    canonical = worker_settings_service.read_worker_settings(
-        reset.db_path.parent,
-        registry,
-        "coding",
-    ).specialist_skill.source_text
-    materialized = (reset.hermes_home / "skills" / "panels-worker-coding" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    assert "Old environment-specific specialist" not in canonical
-    assert materialized == canonical
 
 
 def test_failed_reset_keeps_prior_data_tree(tmp_path: Path, monkeypatch) -> None:

@@ -168,9 +168,9 @@ conversation receives a full current reset instead of being rejected.
 
 Panels keeps one canonical copy of its skills under `src/planner/skills/`. The repository
 exposes that directory at the backends' native project locations: `.agents/skills` for Codex
-and `.claude/skills` for Claude Code. Hermes startup links shared skills from the same source
-under the configured planner Hermes home. A Worker's editable managed specialist is deliberately
-materialized there as a runtime file instead; its managed settings remain authoritative.
+and `.claude/skills` for Claude Code. Hermes startup links every skill, including editable Worker
+and Chief skills, from the same source under the configured planner Hermes home. No backend-specific
+materialized copy exists; edits replace the canonical version-controlled file atomically.
 
 The base `panels` skill is the general guide to the Panels work model, CLI, and workflows.
 `panels-update-chief-of-staff` is separate: Codex and Claude use it to prepare an update,

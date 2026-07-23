@@ -179,23 +179,25 @@ _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 ## Managed settings and the Workers screen
 
 The registry remains the immutable workflow definition. A managed source beside the database owns
-only the ownership default for each existing non-terminal Stage and the existing specialist skill's
-description and Markdown body. The Workers screen exposes those settings without allowing Worker
-identity, Stage structure, fields, or skill identity to change.
+only the ownership default for each existing non-terminal Stage. Every editable skill, including
+Chief of Staff, has exactly one canonical version-controlled `SKILL.md` under `src/planner/skills`.
+All backends read that file; the Hermes home contains a symlink, never a copied overlay. The Workers
+screen exposes skill description and Markdown body edits without allowing skill identity to change.
 
 A Ticket captures the managed ownership default when it enters a Stage. Later global changes affect
-only future entries; the Ticket's explicit Stage override still wins. Settings writes use validated
-candidates, atomic replacement, one writer lock per Worker, and a last-known-good revision. A failed
-event write restores both the managed source and the live Hermes materialization.
+only future entries; the Ticket's explicit Stage override still wins. Settings writes use atomic
+replacement and one writer lock per Worker or Chief. A failed event write restores the canonical
+file, so every backend continues to see the prior revision.
 
 The skill name is read-only. Description and Markdown body are ordinary direct edits that save, fail,
 and retry independently. Successful skill edits refresh the configured planner Hermes home without
 changing existing Employee session ids. Codex and Claude Code continue to use the repository skill
 source exposed through their native project links.
 
-`GET /api/workers` serves the compact index and Chief settings. `GET /api/workers/{id}`
-composes registry structure with managed settings. Worker and Chief launch-default endpoints
-edit Backend, Model, and Reasoning only. `worker_settings_changed` invalidates only `workers`
+`GET /api/workers` serves the compact index and Chief settings, including the Chief skill.
+`GET /api/workers/{id}` composes registry structure with managed settings. Worker and Chief skill
+endpoints edit description/body while launch-default endpoints edit Backend, Model, and Reasoning.
+`worker_settings_changed` invalidates only `workers`
 and the matching `worker:<id>` browser resource.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
