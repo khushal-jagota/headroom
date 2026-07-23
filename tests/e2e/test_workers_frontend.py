@@ -36,6 +36,14 @@ def _put_stage_owner(server, ticket_id: str, stage: str, mode: str | None) -> di
 
 DESCRIPTION_EDIT = '[data-skill-description] [contenteditable="true"]'
 BODY_EDIT = '[data-skill-body] [contenteditable="true"]'
+ARTIFACT_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "files"
+    / "tickets"
+    / "t_fvrfhk2k"
+    / "artifacts"
+)
 
 
 def _replace_inline_edit_text(page, selector: str, text: str) -> None:
@@ -51,7 +59,7 @@ def _replace_inline_edit_text(page, selector: str, text: str) -> None:
         }""",
         text,
     )
-    page.locator("[data-worker-name]").click()
+    page.locator("[data-role-name]").click()
 
 
 def _replace_inline_edit_markdown(page, selector: str, source: str) -> None:
@@ -77,22 +85,31 @@ def _replace_inline_edit_markdown(page, selector: str, source: str) -> None:
         }""",
         source,
     )
-    page.locator("[data-worker-name]").click()
+    page.locator("[data-role-name]").click()
 
 
 def _editable_text(page, selector: str) -> str:
     return page.locator(selector).evaluate("(node) => node.textContent")
 
 
-def test_workers_index_detail_and_mobile_layout(server, context_factory, open_page) -> None:
+def test_agents_index_worker_detail_and_mobile_layout(server, context_factory, open_page) -> None:
     page = open_page(
         context_factory(),
         server,
-        "#/workers",
-        'section[data-screen="workers"] [data-workers-list]',
+        "#/agents",
+        'section[data-screen="agents"] [data-workers-list]',
         settled=False,
     )
-    assert page.locator('[data-screen="workers"] [data-worker-row]').count() >= 3
+    assert page.locator('[data-screen="agents"] [data-agents-section]').count() == 1
+    assert page.locator('[data-screen="agents"] [data-workers-section]').count() == 1
+    assert page.locator('[data-screen="agents"] [data-worker-row]').count() >= 3
+    assert page.locator("[data-skills-home]").count() == 0
+    chief = page.locator('[data-agent-card][data-agent-id="chief_of_staff"]')
+    assert chief.locator("[data-agent-label]").inner_text() == "Chief of Staff"
+    assert chief.locator("[data-agent-purpose]").inner_text().strip()
+    assert chief.locator("[data-agent-skill-name]").inner_text() == "panels-chief-of-staff"
+    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=ARTIFACT_DIR / "agents-page-desktop.png", full_page=True)
     coding = page.locator('[data-worker-row][data-worker-id="coding"]')
     assert coding.locator("[data-worker-label]").inner_text() == "Coding"
     assert coding.locator("[data-worker-skill-name]").inner_text() == "panels-worker-coding"
@@ -100,7 +117,8 @@ def test_workers_index_detail_and_mobile_layout(server, context_factory, open_pa
 
     page.click('[data-worker-row][data-worker-id="coding"]')
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
-    assert page.locator("[data-worker-name]").inner_text() == "Coding"
+    assert page.locator("[data-role-name]").inner_text() == "Coding"
+    assert page.url.endswith("#/agents/workers/coding")
     assert page.locator("[data-worker-stage-table] [data-worker-stage-row]").count() == 7
     terminal = page.locator('[data-worker-stage-row][data-stage="done"]')
     assert terminal.get_attribute("data-terminal") == "true"
@@ -118,7 +136,7 @@ def test_workers_index_detail_and_mobile_layout(server, context_factory, open_pa
 
     mobile = context_factory().new_page()
     mobile.set_viewport_size({"width": 390, "height": 844})
-    mobile.goto(server.base + "/#/workers/coding")
+    mobile.goto(server.base + "/#/agents/workers/coding")
     mobile.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
     assert mobile.locator("[data-stage-label]").first.is_visible()
     assert mobile.locator("[data-stage-owner-select]").first.is_visible()
@@ -127,7 +145,7 @@ def test_workers_index_detail_and_mobile_layout(server, context_factory, open_pa
         """() => {
           const active = document.querySelector(
             '.shell-links .nav-link.active' +
-            '[data-screen="workers"]'
+            '[data-screen="agents"]'
           );
           const statuses = document.querySelector('.shell-statuses');
           if (!active || !statuses) return false;
@@ -141,6 +159,81 @@ def test_workers_index_detail_and_mobile_layout(server, context_factory, open_pa
         "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
     )
     assert overflow <= 0
+    mobile.screenshot(path=ARTIFACT_DIR / "agents-worker-detail-mobile.png", full_page=True)
+
+
+def test_chief_detail_edits_skill_independently_and_retries_failure(
+    server, context_factory, api
+) -> None:
+    page = context_factory().new_page()
+    requests: list[tuple[str, str]] = []
+    page.on("request", lambda request: requests.append((request.method, request.url)))
+    page.goto(server.base + "/#/agents/chief-of-staff")
+    page.wait_for_selector('[data-agent-detail]', timeout=WAIT_MS)
+
+    assert page.locator("[data-role-name]").inner_text() == "Chief of Staff"
+    assert page.locator("[data-role-purpose]").inner_text().strip()
+    assert page.locator("[data-worker-stage-table]").count() == 0
+    assert page.locator("[data-skill-name]").inner_text() == "panels-chief-of-staff"
+    assert page.locator("[data-skill-name]").get_attribute("contenteditable") != "true"
+    assert page.locator(DESCRIPTION_EDIT).get_attribute("contenteditable") == "true"
+    assert page.locator(BODY_EDIT).get_attribute("contenteditable") == "true"
+    assert ("GET", server.base + "/api/workers") in requests
+    assert not any(
+        method == "GET" and "/api/workers/chief_of_staff" in url
+        for method, url in requests
+    )
+
+    original = api.get(server, "/api/workers")["chief_of_staff"]["skill"]
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/workers/chief-of-staff/skill")
+        and response.status < 300
+    ):
+        _replace_inline_edit_text(page, DESCRIPTION_EDIT, "Chief purpose saved independently")
+    after_description = api.get(server, "/api/workers")["chief_of_staff"]["skill"]
+    assert after_description["description"] == "Chief purpose saved independently"
+    assert after_description["markdown_body"] == original["markdown_body"]
+
+    failed_once = True
+    body_patch_payloads: list[dict] = []
+
+    def fail_chief_skill(route) -> None:
+        nonlocal failed_once
+        if route.request.method == "PATCH":
+            body_patch_payloads.append(route.request.post_data_json)
+        if route.request.method == "PATCH" and failed_once:
+            failed_once = False
+            route.fulfill(
+                status=500,
+                content_type="application/json",
+                body='{"error":{"code":"test","message":"Chief skill save failed"}}',
+            )
+            return
+        route.continue_()
+
+    page.route("**/api/workers/chief-of-staff/skill", fail_chief_skill)
+    attempted_body = "# Chief retry\n\nPreserve this exact draft"
+    _replace_inline_edit_markdown(page, BODY_EDIT, attempted_body)
+    page.locator("[data-skill-body] .error-line", has_text="Chief skill save failed").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert body_patch_payloads == [{"markdown_body": attempted_body}]
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/workers/chief-of-staff/skill")
+        and response.status < 300
+    ):
+        page.locator(BODY_EDIT).click()
+        page.locator("[data-role-name]").click()
+    assert body_patch_payloads == [
+        {"markdown_body": attempted_body},
+        {"markdown_body": attempted_body},
+    ]
+    saved = api.get(server, "/api/workers")["chief_of_staff"]["skill"]
+    assert saved["description"] == "Chief purpose saved independently"
+    assert saved["markdown_body"] == f"\n{attempted_body}\n"
 
 
 def test_worker_selection_persists_from_kickoff_card_context_row(
@@ -203,7 +296,7 @@ def test_worker_stage_default_save_refreshes_without_socket_and_ticket_defaults_
     requests: list[tuple[str, str]] = []
     page.route_web_socket("**/api/events*", lambda _socket: None)
     page.on("request", lambda request: requests.append((request.method, request.url)))
-    page.goto(server.base + "/#/workers/coding")
+    page.goto(server.base + "/#/agents/workers/coding")
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
     requests.clear()
 
@@ -263,7 +356,7 @@ def test_worker_stage_failed_save_keeps_chosen_row_value(server, context_factory
         route.continue_()
 
     page.route("**/api/workers/coding/stages/needs_success/default-ownership", fail_stage)
-    page.goto(server.base + "/#/workers/coding")
+    page.goto(server.base + "/#/agents/workers/coding")
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
     selector = '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]'
     page.select_option(selector, "paired")
@@ -309,7 +402,7 @@ def test_worker_skill_edit_save_failure_and_session_stability(
         )
 
     page = context_factory().new_page()
-    page.goto(server.base + "/#/workers/coding")
+    page.goto(server.base + "/#/agents/workers/coding")
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
     assert page.locator("[data-skill-edit-button]").count() == 0
     assert page.locator("[data-skill-save-button]").count() == 0
@@ -365,7 +458,7 @@ def test_worker_skill_edit_save_failure_and_session_stability(
         and response.status < 300
     ):
         page.locator(BODY_EDIT).click()
-        page.locator("[data-worker-name]").click()
+        page.locator("[data-role-name]").click()
     assert body_patch_payloads == [
         {"markdown_body": attempted_body},
         {"markdown_body": attempted_body},

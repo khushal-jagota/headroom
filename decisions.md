@@ -3,6 +3,16 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-t_fvrfhk2k-agents-route-and-chief-resource — Make role kind explicit without inventing a registry
+
+Use `#/agents/chief-of-staff` for the standalone Agent and `#/agents/workers/<worker-type>` for
+Ticket Worker details. Both detail kinds share the launch-default and skill-editor components, but
+only Workers load a parameterized Worker resource and lifecycle manifest. Chief reads from the
+existing `WorkersResponse.chief_of_staff` and writes through its existing Chief endpoints. Chief
+events therefore refresh `workers`, never a fabricated `worker:chief_of_staff` identity. Keep the
+old Workers hashes as redirects so existing links remain usable, and remove Skills home from the
+index because the approved model has exactly Agents and Workers as peer sections.
+
 ## D-t_12sap6vx-sqlite-only-backups — Keep recovery small and explicit
 
 Use SQLite's online backup API into a temporary snapshot directory, verify integrity and checksum,

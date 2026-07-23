@@ -1,5 +1,18 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Agents page implementation (`t_fvrfhk2k`)
+
+The browser-facing Workers route is now the Agents page at `#/agents`, with exactly two stacked
+sections: a Chief of Staff Agent card and the existing Worker roster. Chief and Worker detail
+screens use the same launch-default and skill-editing components; Chief has no Ticket Stage table,
+while Worker lifecycle ownership, manifests, candidate skills, and independent field-save behavior
+remain intact. Chief edits refresh the Workers response that actually carries Chief state instead
+of opening or invalidating a fake Worker detail. Legacy `#/workers` hashes redirect to the exact
+Agents routes. Svelte check, production build, all frontend unit tests, and the 11 focused Agents/
+Workers and resource-catalogue Playwright tests pass. Desktop and 390px mobile screenshots are in
+the Ticket artifact directory. Next: independent implementation review and Implementation proposal;
+the canonical `./verify` and documentation remain reserved for Closeout.
+
 ## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
 
 Current `staging` merged cleanly into the verified backup branch as `f4594bf2`. The first canonical

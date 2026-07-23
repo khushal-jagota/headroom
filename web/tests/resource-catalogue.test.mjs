@@ -216,7 +216,8 @@ const effectCases = [
   [{ kind: "reviewTicketReturnedForRevision", ticketId: "t_effect" }, ["ticket:t_effect", "board", "sprint:current"], ["review"]],
   [{ kind: "todayDayChanged" }, ["day:today"], []],
   [{ kind: "currentSprintChanged" }, ["sprint:current", "sprints"], []],
-  [{ kind: "workerSettingsChanged", workerType: "coding" }, ["workers", "worker:coding", "skills-home"], []]
+  [{ kind: "workerSettingsChanged", workerType: "coding" }, ["workers", "worker:coding", "skills-home"], []],
+  [{ kind: "workerSettingsChanged", workerType: "chief_of_staff" }, ["workers"], []]
 ];
 for (const [effect, identities, orderedRefreshes] of effectCases) {
   invalidations.length = 0;
@@ -289,6 +290,7 @@ exact(keysForEvent(event("project_demo")), ["projects"]);
 exact(keysForEvent(event("agent_demo")), []);
 exact(keysForEvent(event("worker_coding")), ["workers", "worker:coding"]);
 exact(keysForEvent(event("worker_new_worker", "worker_settings_changed")), ["workers", "worker:new_worker"]);
+exact(keysForEvent(event("worker_chief_of_staff", "worker_settings_changed")), ["workers"]);
 assert.throws(() => keysForEvent(event("bad")), /unknown entity_id prefix/);
 assert.throws(() => keysForEvent(event("x_demo")), /unknown entity_id prefix/);
 
