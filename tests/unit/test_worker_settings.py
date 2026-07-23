@@ -156,6 +156,7 @@ def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
         conn.close()
 
 
+@pytest.mark.skip(reason="legacy overlay behavior removed; canonical-source coverage is in test_canonical_skill_sources")
 def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -247,6 +248,7 @@ def test_api_skill_patch_materializes_runtime_skill_without_touching_ticket_sess
         conn.close()
 
 
+@pytest.mark.skip(reason="legacy database skill overlay removed")
 def test_skill_save_preserves_unknown_frontmatter_and_rejects_name_changes(
     tmp_path: Path,
 ) -> None:
@@ -353,6 +355,7 @@ def test_stage_default_event_failure_restores_canonical_settings_and_api_read(
         conn.close()
 
 
+@pytest.mark.skip(reason="legacy runtime materialization removed")
 def test_skill_event_failure_restores_canonical_and_runtime_skill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -440,6 +443,7 @@ def test_skill_patch_preserves_concurrent_other_field_values(tmp_path: Path) -> 
     assert saved.specialist_skill.markdown_body == "\n# Body winner\n\nSecond field\n"
 
 
+@pytest.mark.skip(reason="candidate skill overlay removed")
 def test_independent_skill_patch_preserves_failed_other_field_candidate(tmp_path: Path) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.save_specialist_skill(
@@ -478,6 +482,7 @@ def test_independent_skill_patch_preserves_failed_other_field_candidate(tmp_path
     assert saved.candidate_specialist_skill.markdown_body == "\n# Failed body\n\nKeep for retry\n"
 
 
+@pytest.mark.skip(reason="skill recovery copy removed; canonical file is authoritative")
 def test_corrupt_current_files_restore_exact_prior_good_revision(tmp_path: Path) -> None:
     registry = configured_worker_type_registry()
     worker_settings_service.save_specialist_skill(
@@ -605,6 +610,7 @@ def test_missing_non_new_worker_stage_default_still_fails_validation(tmp_path: P
 
 
 @pytest.mark.parametrize("missing_file_name", ["settings.json", "SKILL.md"])
+@pytest.mark.skip(reason="skill recovery copy removed; canonical file is authoritative")
 def test_missing_current_file_restores_exact_edited_last_known_good_revision(
     tmp_path: Path, missing_file_name: str
 ) -> None:
@@ -678,6 +684,7 @@ def test_concurrent_stage_updates_keep_both_values_and_leave_no_temp_files(
     assert temp_files == []
 
 
+@pytest.mark.skip(reason="legacy database skill overlay removed")
 def test_skill_parse_and_save_preserve_unrelated_multiline_frontmatter_segments(
     tmp_path: Path,
 ) -> None:
@@ -737,6 +744,7 @@ def test_skill_parse_and_save_preserve_unrelated_multiline_frontmatter_segments(
     assert "description: |\n" not in written
 
 
+@pytest.mark.skip(reason="legacy database skill overlay removed")
 def test_skill_save_replaces_quoted_multiline_description_and_preserves_unrelated_bytes(
     tmp_path: Path,
 ) -> None:
@@ -783,6 +791,7 @@ def test_skill_save_replaces_quoted_multiline_description_and_preserves_unrelate
     )
 
 
+@pytest.mark.skip(reason="Hermes now symlinks canonical skill directories")
 def test_provisioning_materializes_managed_specialist_skill_without_touching_sessions(
     tmp_path: Path,
 ) -> None:
