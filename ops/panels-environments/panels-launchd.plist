@@ -7,7 +7,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>root="$HOME/Library/Application Support/Panels"; export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" PLAN_CONFIG_PATH="$HOME/.hermes/live/planning-v2/config.yaml" PLAN_DB_PATH="$root/state/planner.db" PLAN_DISPATCHER_LOCK_PATH="$root/state/dispatcher.lock" PLAN_HERMES_HOME="$HOME/.hermes" PLAN_LOGS_DIR="$root/logs" PLAN_SERVER_CONTROL_SOCKET="$root/state/server-control.sock"; exec "$root/current/bin/panels-launcher" serve</string>
+    <string>root="$HOME/Library/Application Support/Panels"; export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" PLAN_CONFIG_PATH="$root/config.yaml" PLAN_DB_PATH="$root/state/planner.db" PLAN_DISPATCHER_LOCK_PATH="$root/state/dispatcher.lock" PLAN_HERMES_HOME="$HOME/.hermes" PLAN_LOGS_DIR="$root/logs" PLAN_SERVER_CONTROL_SOCKET="$root/state/server-control.sock"; exec "$root/current/bin/panels-launcher" serve</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>

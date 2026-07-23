@@ -5,8 +5,9 @@
 The separate `panels-live`/`panels-deploy` design made the one-Mac cutover depend on copied Hermes
 state, backend credentials, root LaunchDaemons, and repeated authorization. That did not serve the
 requested outcome. The permanent Mac path is now a user runner plus user LaunchAgent under the
-signed-in operator, using the existing Hermes home and user-owned releases/state. Next: prove the
-user-owned release and runner, perform one bundled cleanup/cutover, and exercise rollback.
+signed-in operator, using the existing Hermes home and user-owned releases, state, and config.
+Canonical verification passes on the simplified tree. Next: prove the user-owned release and
+runner, perform one bundled cleanup/cutover, and exercise rollback.
 
 ## Current work cycle (2026-07-23): Resolve packaged assets from the release root
 
