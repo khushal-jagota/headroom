@@ -15,6 +15,24 @@ second independent review confirmed the correction. Focused DB/catalog/API tests
 Mypy, Svelte check, and diff check pass. Next: canonical `./verify` and Ticket Implementation
 approval.
 
+## Current work cycle (2026-07-23): Diagnose Claude auth failure in live Panels
+
+The affected Claude worker fails because Panels launches Claude with the isolated live runtime
+home `/Users/khushaljagota/.hermes/runtime/panels-environments/live/current/user-home`, not the
+interactive shell home. `claude auth status` is logged-in for the normal home
+(`khushaljagota@gmail.com`, Claude Max) but reports `loggedIn: false` and `authMethod: none` for
+the Panels home. The managed `.claude/daemon.log` records a refresh failure on 2026-07-16 and
+explicitly says `headless daemon cannot complete OAuth — run claude auth login`; its auth status is
+still `auth_required`. No files or credentials were changed. Next: user runs login against the
+managed HOME, then the live Panels process must be restarted so newly launched Claude children
+inherit the refreshed state.
+
+The isolated `HOME` is intentional: it keeps worker/Chief sessions, provider settings, plugins,
+MCP configuration, and credentials separate from the operator's personal home and from staging or
+preview environments. The current single-user macOS setup exposes a provisioning usability gap:
+the isolated Claude home does not automatically share the interactive Claude login, and copying
+the config file is insufficient because Claude also relies on its native credential/keychain path.
+
 ## Current work cycle (2026-07-23): Operator cutover for separated live operation
 
 The old foreground `panels serve` launcher and its stale detached application process were
