@@ -27,9 +27,14 @@ all 1,401 unit tests, compile and CSS checks, zero Svelte diagnostics, the produ
 build and frontend test suite, and all 126 Playwright tests; final `VERIFY: PASS`. No source or
 generated application file changed after the run. The verified implementation is committed as
 `e111307d` and its Implementation proposal was approved. Closeout now begins from later current
-`staging` (`07acb456`): merge that base into this branch, resolve any combined-tree interaction,
-obtain a fresh combined-diff review, run one canonical `./verify`, then advance and push the exact
-green `staging` revision. The live release and its server remain untouched.
+`staging` (`07acb456`). The merge commit `e7dded8e` keeps both the release-aware application root
+and the separate Employee workspace resolver. Independent combined-diff review found no unresolved
+violation. The canonical `./verify` passed Ruff, strict Mypy across 160 source files, all 1,416
+unit tests, compile and CSS checks, zero Svelte diagnostics, the production frontend build and
+frontend test suite, and all 126 Playwright tests; final `VERIFY: PASS`. While that gate ran,
+`staging` advanced to `337511f5`, so this branch must merge that newer base and re-verify the final
+combined revision before it can advance and push `staging`. The live release and its server remain
+untouched.
 ## Current work cycle (2026-07-23): Preserve provider authentication in the user LaunchAgent
 
 The live user LaunchAgent supplied `HOME` but not `USER`; Claude Code uses `USER` to resolve the
