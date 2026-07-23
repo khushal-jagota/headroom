@@ -32,9 +32,11 @@ and the separate Employee workspace resolver. Independent combined-diff review f
 violation. The canonical `./verify` passed Ruff, strict Mypy across 160 source files, all 1,416
 unit tests, compile and CSS checks, zero Svelte diagnostics, the production frontend build and
 frontend test suite, and all 126 Playwright tests; final `VERIFY: PASS`. While that gate ran,
-`staging` advanced to `337511f5`, so this branch must merge that newer base and re-verify the final
-combined revision before it can advance and push `staging`. The live release and its server remain
-untouched.
+`staging` advanced to `337511f5`; that newer base is now merged as `f815d4bb`. Focused final
+integration review found the second merge changes only shared memory files and leaves the workspace
+split, release-root behavior, documentation, and test surface unchanged. Next: run the final
+canonical `./verify` on `f815d4bb`, then fast-forward and push the exact green `staging` revision.
+The live release and its server remain untouched.
 ## Current work cycle (2026-07-23): t_2dm6mn08 — proposal_discussion status (Implementation)
 
 Build stage of ticket t_2dm6mn08 on branch `ticket/t_2dm6mn08-proposal-discussion` (off
