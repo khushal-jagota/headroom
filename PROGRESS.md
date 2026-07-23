@@ -14,8 +14,12 @@ exact Agents routes. Svelte check, production build, all frontend unit tests, an
 Workers and resource-catalogue Playwright tests pass. Review follow-up directly covers both legacy
 canonicalizations, unknown Agents subroutes, the visible and active Agents navigation, and 390px
 index/Chief controls without horizontal overflow. Desktop and mobile screenshots are in the Ticket
-artifact directory, with the desktop image refreshed to show both Agent cards. Next: Implementation
-proposal; the canonical `./verify` and documentation remain reserved for Closeout.
+artifact directory, with the desktop image refreshed to show both Agent cards. Closeout merged
+current `staging` revision `08642474` into the Ticket branch as `0c76f6ea` and corrected
+`docs/frontend.md` plus the managed-settings section of `docs/worker-types.md` in `2b3c3a56`.
+The combined-diff review found no code, generated-build, test, route, merge-interaction, or
+documentation-content violation; its one stale-memory finding is corrected here. Next: run the one
+canonical `./verify`, then advance and push the exact verified revision before proposing Closeout.
 
 ## Current work cycle (2026-07-23): Use the user's normal Hermes installation and home (`t_pw264y71`)
 
