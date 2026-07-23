@@ -162,14 +162,14 @@ duplicate, unknown, or forbidden keys. Forbidden keys include contract-owned
 identity, and launch roots.
 
 `panels environment run` resolves the operator's `PLAN_HERMES_PYTHON` selection (or the
-normal Hermes default) before replacing `HOME` with the instance Hermes home. It then
-starts from a scrubbed process environment. It keeps only locale, terminal, `PATH`,
-`TMPDIR`, and `LC_*` basics from the ambient shell, then adds validated credential-file
-values and the contract-owned runtime values:
+normal Hermes default) before starting from a scrubbed process environment. It keeps the
+operator's normal `HOME` for provider CLIs such as Claude and Codex, plus locale, terminal,
+`PATH`, `TMPDIR`, and `LC_*` basics from the ambient shell. It then adds validated
+credential-file values and the contract-owned runtime values:
 `PLAN_DB_PATH`, `PLAN_PORT`, `PLAN_LOGS_DIR`, `PLAN_DISPATCHER_LOCK_PATH`,
-`PLAN_SERVER_CONTROL_SOCKET`, `PLAN_HERMES_HOME`, `PLAN_HERMES_PYTHON`, and `HOME`.
-`HOME` is set to the instance's Hermes home. Other ambient `PLAN_*` values are not
-forwarded.
+`PLAN_SERVER_CONTROL_SOCKET`, `PLAN_HERMES_HOME`, and `PLAN_HERMES_PYTHON`. Panels' own
+Hermes state remains isolated through `PLAN_HERMES_HOME`; other ambient `PLAN_*` values are
+not forwarded.
 
 The real-Hermes smoke creates unrelated durable sessions in the already-authenticated
 staging and preview homes, prompts each one, closes its first ACP child, and loads the
