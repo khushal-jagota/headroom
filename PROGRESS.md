@@ -25,8 +25,11 @@ resolved Coding directory. Its focused test and independent re-review pass; no u
 finding remains. The one canonical `./verify` passed Ruff, strict Mypy across 160 source files,
 all 1,401 unit tests, compile and CSS checks, zero Svelte diagnostics, the production frontend
 build and frontend test suite, and all 126 Playwright tests; final `VERIFY: PASS`. No source or
-generated application file changed after the run. Next: commit this exact verified implementation
-and propose it for approval.
+generated application file changed after the run. The verified implementation is committed as
+`e111307d` and its Implementation proposal was approved. Closeout now begins from later current
+`staging` (`07acb456`): merge that base into this branch, resolve any combined-tree interaction,
+obtain a fresh combined-diff review, run one canonical `./verify`, then advance and push the exact
+green `staging` revision. The live release and its server remain untouched.
 
 ## Current work cycle (2026-07-23): Real release proof and verifier repair
 

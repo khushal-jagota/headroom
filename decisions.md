@@ -3514,3 +3514,6 @@ not guarantee notification/request wire ordering across the prior fork response.
   build arguments and prove the resolver-selected Employee workspace remains distinct from the
   checkout root. Separate resolver and composition unit tests alone would not catch recombining the
   roots in server wiring.
+- Close out only through the normal serial path: merge current `staging` into the ticket branch,
+  review and verify that combined revision, then advance and push the exact verified `staging` ref.
+  Do not alter the installed release or its user-owned running service in this ticket.
