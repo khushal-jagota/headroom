@@ -60,6 +60,8 @@ class AcpConversationIngressFailure(AcpOrderedIngressError):
 class _ReservedSlot:
     ordinal: int
     fingerprint: str | None
+    session_id: str | None = None
+    deferred: bool = False
     payload: SessionNotification | ProtocolUpdateRejectedPayload | None = None
     downstream: AcpConversationIngress | None = None
 
@@ -130,6 +132,7 @@ class OrderedAcpConversationIngress:
         self._fatal_callback = fatal_callback
         self._session_notification_normalizer = session_notification_normalizer
         self._slots: deque[_ReservedSlot] = deque()
+        self._deferred_session_ids: set[str] = set()
         self._next_ordinal = 1
         self._last_consumed_ordinal = 0
         self._changed = asyncio.Event()
@@ -209,6 +212,29 @@ class OrderedAcpConversationIngress:
         if not token.response_target.done():
             token.response_target.cancel()
 
+    def route_deferred_session_updates(
+        self, session_id: str, private_ingress: AcpConversationIngress
+    ) -> None:
+        """Release deferred slots for one session to a private sink."""
+        if not session_id.strip():
+            raise ValueError("ACP private session ID must not be blank")
+        self._deferred_session_ids.discard(session_id)
+        for slot in self._slots:
+            if slot.session_id == session_id and slot.deferred:
+                slot.downstream = private_ingress
+                slot.deferred = False
+        self._changed.set()
+
+    def defer_session_updates(self, session_id: str) -> None:
+        """Hold one forked session's updates until its private load is attached."""
+        if not session_id.strip():
+            raise ValueError("ACP private session ID must not be blank")
+        self._deferred_session_ids.add(session_id)
+        for slot in self._slots:
+            if slot.session_id == session_id:
+                slot.deferred = True
+        self._changed.set()
+
     async def finish_load_epoch(self) -> None:
         token = self._compat_load_epoch
         if token is None:
@@ -269,7 +295,7 @@ class OrderedAcpConversationIngress:
     def _reserve(self, params: Any) -> None:
         if self._closed or self._fatal_error is not None:
             return
-        if len(self._slots) >= self._max_items:
+        if self._pending_item_count() >= self._max_items:
             self._fail(
                 AcpSessionUpdateIngressOverflow(
                     self._max_items, _rejected_discriminator(params)
@@ -294,6 +320,9 @@ class OrderedAcpConversationIngress:
             if private_epoch is not None
             else self._downstream
         )
+        deferred = session_id in self._deferred_session_ids and private_epoch is None
+        if deferred:
+            selected_downstream = None
         try:
             notification = SessionNotification.model_validate(
                 params,
@@ -308,6 +337,8 @@ class OrderedAcpConversationIngress:
             slot = _ReservedSlot(
                 ordinal=ordinal,
                 fingerprint=None,
+                session_id=session_id,
+                deferred=deferred,
                 payload=ProtocolUpdateRejectedPayload(
                     rejected_session_update=discriminator,
                     reason="ACP session update did not match the pinned protocol",
@@ -319,6 +350,8 @@ class OrderedAcpConversationIngress:
             slot = _ReservedSlot(
                 ordinal=ordinal,
                 fingerprint=_canonical_notification_fingerprint(notification),
+                session_id=session_id,
+                deferred=deferred,
                 downstream=selected_downstream,
             )
         self._slots.append(slot)
@@ -380,14 +413,17 @@ class OrderedAcpConversationIngress:
 
     async def _consume(self) -> None:
         while True:
-            while self._slots and self._slots[0].payload is not None:
+            while (
+                self._slots
+                and self._slots[0].payload is not None
+            ):
                 slot = self._slots[0]
                 assert slot.payload is not None
+                if slot.deferred:
+                    break
                 try:
                     downstream = slot.downstream or self._downstream
-                    payload = slot.payload
-                    if isinstance(payload, SessionNotification):
-                        payload = self._session_notification_normalizer(payload)
+                    payload = self._normalize_payload(slot.payload)
                     await downstream(payload)
                 except asyncio.CancelledError:
                     raise
@@ -412,9 +448,20 @@ class OrderedAcpConversationIngress:
                 self._changed.set()
                 return
             self._changed.clear()
-            if self._slots and self._slots[0].payload is not None:
+            if self._slots and self._slots[0].payload is not None and not self._slots[0].deferred:
                 continue
             await self._changed.wait()
+
+    def _pending_item_count(self) -> int:
+        return len(self._slots)
+
+    def _normalize_payload(
+        self,
+        payload: SessionNotification | ProtocolUpdateRejectedPayload,
+    ) -> SessionNotification | ProtocolUpdateRejectedPayload:
+        if isinstance(payload, SessionNotification):
+            return self._session_notification_normalizer(payload)
+        return payload
 
     def _fail(self, error: BaseException) -> None:
         if self._fatal_error is not None:

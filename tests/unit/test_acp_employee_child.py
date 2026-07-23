@@ -133,6 +133,120 @@ def test_ordered_ingress_reserves_raw_order_and_uses_typed_payloads() -> None:
     asyncio.run(exercise())
 
 
+def test_ordered_ingress_capacity_includes_held_deferred_payloads() -> None:
+    async def exercise() -> None:
+        private: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
+        ingress = OrderedAcpConversationIngress(_discard, max_items=2)
+        ingress.start()
+        ingress.defer_session_updates("candidate-session")
+        first = _thought("first").model_copy(update={"session_id": "candidate-session"})
+        second = _thought("second").model_copy(update={"session_id": "candidate-session"})
+        ingress.observe_stream(_raw_event(first))
+        ingress.observe_stream(_raw_event(second))
+        ingress.fulfill_typed(first)
+        ingress.fulfill_typed(second)
+        await asyncio.sleep(0)
+        assert ingress.last_consumed_ordinal == 0
+
+        ingress.observe_stream(
+            _raw_event(
+                _thought("overflow").model_copy(update={"session_id": "candidate-session"})
+            )
+        )
+
+        assert isinstance(ingress.fatal_error, AcpSessionUpdateIngressOverflow)
+        assert ingress.last_reserved_ordinal == 2
+        assert private == []
+        await ingress.close(drain=False)
+
+    asyncio.run(exercise())
+
+
+def test_ordered_ingress_normalizes_held_payloads_once_at_private_delivery() -> None:
+    async def exercise() -> None:
+        private: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
+        calls = 0
+
+        def normalize(notification: SessionNotification) -> SessionNotification:
+            nonlocal calls
+            calls += 1
+            return notification.model_copy(update={"field_meta": {"normalized": calls}})
+
+        ingress = OrderedAcpConversationIngress(
+            _discard,
+            session_notification_normalizer=normalize,
+        )
+        ingress.start()
+        ingress.defer_session_updates("candidate-session")
+        first = _thought("first").model_copy(update={"session_id": "candidate-session"})
+        second = _thought("second").model_copy(update={"session_id": "candidate-session"})
+        ingress.observe_stream(_raw_event(first))
+        ingress.observe_stream(_raw_event(second))
+        ingress.fulfill_typed(first)
+        ingress.fulfill_typed(second)
+
+        ingress.route_deferred_session_updates("candidate-session", _append_async(private))
+        await ingress.wait_until_consumed(2)
+
+        assert calls == 2
+        assert [
+            (item.update.content.text, item.field_meta)
+            for item in private
+            if isinstance(item, SessionNotification)
+        ] == [("first", {"normalized": 1}), ("second", {"normalized": 2})]
+        await ingress.close()
+
+    asyncio.run(exercise())
+
+
+def test_ordered_ingress_serializes_held_route_before_newer_private_updates() -> None:
+    async def exercise() -> None:
+        received: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        active = 0
+        max_active = 0
+
+        async def private_sink(
+            item: SessionNotification | ProtocolUpdateRejectedPayload,
+        ) -> None:
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            entered.set()
+            await release.wait()
+            received.append(item)
+            active -= 1
+
+        ingress = OrderedAcpConversationIngress(_discard)
+        ingress.start()
+        ingress.defer_session_updates("candidate-session")
+        held = _thought("held").model_copy(update={"session_id": "candidate-session"})
+        ingress.observe_stream(_raw_event(held))
+        ingress.fulfill_typed(held)
+        epoch = ingress.begin_response_consumption_epoch(
+            "session/load",
+            private_ingress=private_sink,
+            private_session_id="candidate-session",
+        )
+        ingress.route_deferred_session_updates("candidate-session", private_sink)
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        newer = _thought("newer").model_copy(update={"session_id": "candidate-session"})
+        ingress.observe_stream(_raw_event(newer))
+        ingress.fulfill_typed(newer)
+        await asyncio.sleep(0)
+        assert [item.update.content.text for item in received] == []
+
+        release.set()
+        await asyncio.wait_for(ingress.wait_until_consumed(2), timeout=1)
+        assert [item.update.content.text for item in received] == ["held", "newer"]
+        assert max_active == 1
+        ingress.abort_response_consumption_epoch(epoch)
+        await ingress.close()
+
+    asyncio.run(exercise())
+
+
 def test_private_epoch_routes_matching_pre_request_update_by_exact_session_id() -> None:
     async def exercise() -> None:
         ordinary: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
@@ -1026,6 +1140,10 @@ def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock(
                     mcp_servers=[],
                 )
             )
+            # Let the scripted post-fork task emit before the caller installs
+            # the private load epoch.  Those exact-session updates must still
+            # be routed to the load's private ingress.
+            await asyncio.sleep(0.01)
             load = asyncio.create_task(
                 child.capture_load_session(
                     LoadSessionRequest(
@@ -1036,7 +1154,6 @@ def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock(
                     _append_async(private),
                 )
             )
-
             await asyncio.wait_for(source_update_entered.wait(), timeout=2)
             assert not load.done()
             release_source_update.set()
