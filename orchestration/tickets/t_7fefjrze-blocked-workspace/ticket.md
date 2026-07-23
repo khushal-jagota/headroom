@@ -11,4 +11,3 @@
 - Every Blocked section starts closed.
 - Opening a Blocked section reveals its Tickets normally.
 - An ordinary active stage remains open by default.
-

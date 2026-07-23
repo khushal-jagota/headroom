@@ -6,4 +6,3 @@
    unchanged open default of an ordinary active stage.
 3. Run the focused browser gate, obtain an independent diff review, resolve findings,
    and run the single canonical `./verify` on the settled tree.
-
