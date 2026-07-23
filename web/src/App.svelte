@@ -76,6 +76,9 @@
       if (segments[1] === "chief-of-staff" && segments.length === 2) {
         params.roleKind = "agent";
         params.id = "chief_of_staff";
+      } else if (segments[1] === "worker-skill" && segments.length === 2) {
+        params.roleKind = "skill";
+        params.id = "panels-worker";
       } else if (segments[1] === "workers" && segments[2] && segments.length === 3) {
         params.roleKind = "worker";
         params.id = decodeRouteSegment(segments[2]);
@@ -245,7 +248,7 @@
             <IdeasRoute />
           {:else if route.name === "agents"}
             <AgentsRoute
-              roleKind={route.params.roleKind as "index" | "agent" | "worker"}
+              roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"}
               roleId={route.params.id}
             />
           {:else if route.name === "preview"}

@@ -16,7 +16,7 @@
     WorkerManagementSummary
   } from "../lib/types";
 
-  type RoleKind = "index" | "agent" | "worker";
+  type RoleKind = "index" | "agent" | "skill" | "worker";
 
   let { roleKind, roleId }: { roleKind: RoleKind; roleId?: string } = $props();
   const stableRoleKind = untrack(() => roleKind);
@@ -26,6 +26,9 @@
     ? resourceCatalogue.workers()
     : null;
   const manifests = stableRoleKind === "index" ? resourceCatalogue.workerTypeManifests() : null;
+  const skillsHome = stableRoleKind === "index" || stableRoleKind === "skill"
+    ? resourceCatalogue.skillsHome()
+    : null;
   const worker = stableRoleKind === "worker" && stableRoleId
     ? resourceCatalogue.worker(stableRoleId)
     : null;
@@ -43,6 +46,9 @@
 
   let indexedManifests = $derived(
     new Map((manifests?.data?.worker_types || []).map((item) => [item.worker_type, item]))
+  );
+  let sharedWorkerSkill = $derived(
+    skillsHome?.data?.skills.find((skill) => skill.name === "panels-worker")
   );
 
   function stageCount(workerSummary: WorkerManagementSummary): number {
@@ -73,6 +79,17 @@
       "/api/workers/chief-of-staff/skill",
       { method: "PATCH", body: { [field]: raw } },
       { kind: "workerSettingsChanged", workerType: "chief_of_staff" }
+    );
+  }
+
+  async function saveSharedWorkerSkillField(
+    field: "description" | "markdown_body",
+    raw: string
+  ): Promise<void> {
+    await mutateJsonWithResourceEffect<ManagedSkill>(
+      "/api/skills/panels-worker",
+      { method: "PATCH", body: { [field]: raw } },
+      { kind: "workerSettingsChanged", workerType: "skills_home" }
     );
   }
 
@@ -162,6 +179,7 @@
   onDestroy(() => {
     workers?.dispose();
     manifests?.dispose();
+    skillsHome?.dispose();
     worker?.dispose();
   });
 </script>
@@ -179,9 +197,9 @@
         <p>Every configurable role. Agents run at the top level; Workers run one Ticket at a time.</p>
       </header>
       <ResourceState
-        error={workers?.error || manifests?.error}
-        loading={workers?.loading || manifests?.loading}
-        hasData={Boolean(workers?.data && manifests?.data)}
+        error={workers?.error || manifests?.error || skillsHome?.error}
+        loading={workers?.loading || manifests?.loading || skillsHome?.loading}
+        hasData={Boolean(workers?.data && manifests?.data && skillsHome?.data)}
         loadingText="Loading agents..."
       >
         {#if workers?.data}
@@ -190,22 +208,39 @@
               <h2>Agents</h2>
               <span>top-level · no ticket lifecycle</span>
             </header>
-            <article class="agent-card" data-agent-card data-agent-id="chief_of_staff">
-              <div class="agent-card-head">
-                <h3 data-agent-label>{workers.data.chief_of_staff.label}</h3>
-                <span>Agent</span>
-              </div>
-              <p data-agent-purpose>{workers.data.chief_of_staff.skill.description}</p>
-              <div class="agent-card-foot">
-                <span class="agent-chip">backend <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_backend)}</b></span>
-                <span class="agent-chip">model <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_launch_model)}</b></span>
-                <span class="agent-chip">reasoning <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_launch_reasoning_effort)}</b></span>
-                <span class="agent-chip">skill <b data-agent-skill-name>{workers.data.chief_of_staff.skill.name}</b></span>
-                <a class="agent-configure-link" href="#/agents/chief-of-staff" data-agent-configure>
-                  Configure &amp; edit skill →
-                </a>
-              </div>
-            </article>
+            <div class="agent-card-list">
+              <article class="agent-card" data-agent-card data-agent-id="chief_of_staff">
+                <div class="agent-card-head">
+                  <h3 data-agent-label>{workers.data.chief_of_staff.label}</h3>
+                  <span>Agent</span>
+                </div>
+                <p data-agent-purpose>{workers.data.chief_of_staff.skill.description}</p>
+                <div class="agent-card-foot">
+                  <span class="agent-chip">backend <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_backend)}</b></span>
+                  <span class="agent-chip">model <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_launch_model)}</b></span>
+                  <span class="agent-chip">reasoning <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_launch_reasoning_effort)}</b></span>
+                  <span class="agent-chip">skill <b data-agent-skill-name>{workers.data.chief_of_staff.skill.name}</b></span>
+                  <a class="agent-configure-link" href="#/agents/chief-of-staff" data-agent-configure>
+                    Configure &amp; edit skill →
+                  </a>
+                </div>
+              </article>
+              {#if sharedWorkerSkill}
+                <article class="agent-card" data-agent-card data-agent-id="panels-worker">
+                  <div class="agent-card-head">
+                    <h3 data-agent-label>Worker skill</h3>
+                    <span>Shared role skill</span>
+                  </div>
+                  <p data-agent-purpose>{sharedWorkerSkill.description}</p>
+                  <div class="agent-card-foot">
+                    <span class="agent-chip">skill <b data-agent-skill-name>{sharedWorkerSkill.name}</b></span>
+                    <a class="agent-configure-link" href="#/agents/worker-skill" data-worker-skill-configure>
+                      Configure &amp; edit skill →
+                    </a>
+                  </div>
+                </article>
+              {/if}
+            </div>
           </section>
 
           <section class="agents-index-section" data-workers-section>
@@ -271,6 +306,40 @@
                 bodyAriaLabel="Chief skill Markdown body"
                 bodyPlaceholder="Write the complete Chief skill body..."
                 onSave={saveChiefSkillField}
+              />
+            </div>
+          </article>
+        {/if}
+      </ResourceState>
+    </div>
+  {:else if stableRoleKind === "skill"}
+    <div class="agents-page agents-page--detail">
+      <a class="agents-back" href="#/agents" data-agents-back>← Back to Agents</a>
+      <ResourceState
+        error={skillsHome?.error}
+        loading={skillsHome?.loading}
+        hasData={Boolean(sharedWorkerSkill)}
+        loadingText="Loading Worker skill..."
+      >
+        {#if sharedWorkerSkill}
+          <article class="role-detail" data-agent-detail data-agent-id="panels-worker">
+            <header class="agents-detail-head">
+              <h1 data-role-name>Worker skill</h1>
+              <div class="role-detail-facts">
+                <span data-role-structural-id>{sharedWorkerSkill.name}</span>
+                <span>Shared role skill · no independent runtime</span>
+              </div>
+              <p data-role-purpose>{sharedWorkerSkill.description}</p>
+            </header>
+
+            <div data-shared-worker-skill>
+              <RoleSkillEditor
+                heading="Skill"
+                skill={sharedWorkerSkill}
+                descriptionAriaLabel="Worker skill description"
+                bodyAriaLabel="Worker skill Markdown body"
+                bodyPlaceholder="Write the complete shared Worker skill body..."
+                onSave={saveSharedWorkerSkillField}
               />
             </div>
           </article>

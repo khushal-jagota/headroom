@@ -13,6 +13,15 @@ events therefore refresh `workers`, never a fabricated `worker:chief_of_staff` i
 old Workers hashes as redirects so existing links remain usable, and remove Skills home from the
 index because the approved model has exactly Agents and Workers as peer sections.
 
+## D-t_fvrfhk2k-shared-worker-skill-is-configurable-not-launchable — Honor the owner override without inventing a runtime
+
+The owner added the packaged `panels-worker` skill to the Agents section before Closeout. Present it
+as a second Agent-like configuration card at `#/agents/worker-skill`, but do not give it backend,
+model, reasoning, or Stage controls: every Ticket Worker reads this shared role guidance, while no
+independent `panels-worker` employee is launched. Read it through the existing skills-home resource,
+edit it through `PATCH /api/skills/panels-worker`, and reuse the skills-home invalidation path. This
+keeps the new card truthful without adding an agent registry or another backend contract.
+
 ## D-t_12sap6vx-sqlite-only-backups — Keep recovery small and explicit
 
 Use SQLite's online backup API into a temporary snapshot directory, verify integrity and checksum,

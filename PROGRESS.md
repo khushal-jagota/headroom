@@ -3,17 +3,19 @@
 ## Current work cycle (2026-07-23): Agents page implementation (`t_fvrfhk2k`)
 
 The browser-facing Workers route is now the Agents page at `#/agents`, with exactly two stacked
-sections: a Chief of Staff Agent card and the existing Worker roster. Chief and Worker detail
-screens use the same launch-default and skill-editing components; Chief has no Ticket Stage table,
-while Worker lifecycle ownership, manifests, candidate skills, and independent field-save behavior
-remain intact. Chief edits refresh the Workers response that actually carries Chief state instead
-of opening or invalidating a fake Worker detail. Legacy `#/workers` hashes redirect to the exact
-Agents routes. Svelte check, production build, all frontend unit tests, and the 12 focused Agents/
+sections: Agent-like configurable roles and the existing Worker roster. The Agents section contains
+Chief of Staff plus the owner-requested shared `panels-worker` role skill. Chief has launch defaults;
+the shared Worker skill deliberately has none because it is not an independently launched runtime.
+Both use the shared skill editor and neither has a Ticket Stage table, while Worker lifecycle
+ownership, manifests, candidate skills, and independent field-save behavior remain intact. Chief
+edits refresh the Workers response that actually carries Chief state; shared Worker-skill edits use
+the existing skills-home resource and invalidation path. Legacy `#/workers` hashes redirect to the
+exact Agents routes. Svelte check, production build, all frontend unit tests, and the 13 focused Agents/
 Workers and resource-catalogue Playwright tests pass. Review follow-up directly covers both legacy
 canonicalizations, unknown Agents subroutes, the visible and active Agents navigation, and 390px
 index/Chief controls without horizontal overflow. Desktop and mobile screenshots are in the Ticket
-artifact directory. Next: Implementation proposal; the canonical `./verify` and documentation
-remain reserved for Closeout.
+artifact directory, with the desktop image refreshed to show both Agent cards. Next: Implementation
+proposal; the canonical `./verify` and documentation remain reserved for Closeout.
 
 ## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
 

@@ -431,6 +431,11 @@ textarea {
   border-radius: var(--radius-md);
 }
 
+.agent-card-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
 .agent-card-head {
   display: flex;
   align-items: baseline;

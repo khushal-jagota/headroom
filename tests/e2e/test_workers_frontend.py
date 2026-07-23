@@ -129,7 +129,9 @@ def test_agents_routes_navigation_and_mobile_controls(server, context_factory) -
     legacy_worker = context_factory().new_page()
     legacy_worker.goto(server.base + "/#/workers/coding")
     legacy_worker.wait_for_url(server.base + "/#/agents/workers/coding", timeout=WAIT_MS)
-    legacy_worker.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
+    legacy_worker.wait_for_selector(
+        '[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS
+    )
     _assert_agents_nav_active_and_clear(legacy_worker)
 
     for invalid_hash in ("#/agents/not-a-role", "#/agents/workers"):
@@ -170,12 +172,26 @@ def test_agents_index_worker_detail_and_mobile_layout(server, context_factory, o
     )
     assert page.locator('[data-screen="agents"] [data-agents-section]').count() == 1
     assert page.locator('[data-screen="agents"] [data-workers-section]').count() == 1
+    assert page.locator('[data-screen="agents"] [data-agent-card]').count() == 2
     assert page.locator('[data-screen="agents"] [data-worker-row]').count() >= 3
     assert page.locator("[data-skills-home]").count() == 0
     chief = page.locator('[data-agent-card][data-agent-id="chief_of_staff"]')
     assert chief.locator("[data-agent-label]").inner_text() == "Chief of Staff"
     assert chief.locator("[data-agent-purpose]").inner_text().strip()
     assert chief.locator("[data-agent-skill-name]").inner_text() == "panels-chief-of-staff"
+    shared_worker_skill = page.locator(
+        '[data-agent-card][data-agent-id="panels-worker"]'
+    )
+    assert shared_worker_skill.locator("[data-agent-label]").inner_text() == "Worker skill"
+    assert shared_worker_skill.locator("[data-agent-purpose]").inner_text().strip()
+    assert (
+        shared_worker_skill.locator("[data-agent-skill-name]").inner_text()
+        == "panels-worker"
+    )
+    assert shared_worker_skill.locator("[data-worker-skill-configure]").get_attribute(
+        "href"
+    ) == "#/agents/worker-skill"
+    assert shared_worker_skill.locator("[data-launch-defaults]").count() == 0
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=ARTIFACT_DIR / "agents-page-desktop.png", full_page=True)
     coding = page.locator('[data-worker-row][data-worker-id="coding"]')
@@ -286,6 +302,104 @@ def test_chief_detail_edits_skill_independently_and_retries_failure(
     saved = api.get(server, "/api/workers")["chief_of_staff"]["skill"]
     assert saved["description"] == "Chief purpose saved independently"
     assert saved["markdown_body"] == f"\n{attempted_body}\n"
+
+
+def test_shared_worker_skill_detail_edits_independently_and_retries_failure(
+    server, context_factory, api
+) -> None:
+    page = context_factory().new_page()
+    requests: list[tuple[str, str]] = []
+    page.on("request", lambda request: requests.append((request.method, request.url)))
+    page.goto(server.base + "/#/agents/worker-skill")
+    page.wait_for_selector(
+        '[data-agent-detail][data-agent-id="panels-worker"]', timeout=WAIT_MS
+    )
+
+    assert page.url.endswith("#/agents/worker-skill")
+    assert page.locator("[data-role-name]").inner_text() == "Worker skill"
+    assert page.locator("[data-role-purpose]").inner_text().strip()
+    assert page.locator("[data-launch-defaults]").count() == 0
+    assert page.locator("[data-worker-stage-table]").count() == 0
+    assert page.locator("[data-skill-name]").inner_text() == "panels-worker"
+    assert page.locator("[data-skill-name]").get_attribute("contenteditable") != "true"
+    assert page.locator(DESCRIPTION_EDIT).get_attribute("contenteditable") == "true"
+    assert page.locator(BODY_EDIT).get_attribute("contenteditable") == "true"
+    assert ("GET", server.base + "/api/skills") in requests
+    assert not any("/api/workers/panels-worker" in url for _method, url in requests)
+
+    original = next(
+        skill
+        for skill in api.get(server, "/api/skills")["skills"]
+        if skill["name"] == "panels-worker"
+    )
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/skills/panels-worker")
+        and response.status < 300
+    ):
+        _replace_inline_edit_text(
+            page, DESCRIPTION_EDIT, "Shared Worker purpose saved independently"
+        )
+    after_description = next(
+        skill
+        for skill in api.get(server, "/api/skills")["skills"]
+        if skill["name"] == "panels-worker"
+    )
+    assert after_description["description"] == "Shared Worker purpose saved independently"
+    assert after_description["markdown_body"] == original["markdown_body"]
+
+    failed_once = True
+    body_patch_payloads: list[dict] = []
+
+    def fail_shared_worker_skill(route) -> None:
+        nonlocal failed_once
+        if route.request.method == "PATCH":
+            body_patch_payloads.append(route.request.post_data_json)
+        if route.request.method == "PATCH" and failed_once:
+            failed_once = False
+            route.fulfill(
+                status=500,
+                content_type="application/json",
+                body='{"error":{"code":"test","message":"Worker skill save failed"}}',
+            )
+            return
+        route.continue_()
+
+    page.route("**/api/skills/panels-worker", fail_shared_worker_skill)
+    attempted_body = "# Shared Worker retry\n\nPreserve this exact draft"
+    _replace_inline_edit_markdown(page, BODY_EDIT, attempted_body)
+    page.locator("[data-skill-body] .error-line", has_text="Worker skill save failed").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    assert body_patch_payloads == [{"markdown_body": attempted_body}]
+
+    with page.expect_response(
+        lambda response: response.request.method == "PATCH"
+        and response.url.endswith("/api/skills/panels-worker")
+        and response.status < 300
+    ):
+        page.locator(BODY_EDIT).click()
+        page.locator("[data-role-name]").click()
+    assert body_patch_payloads == [
+        {"markdown_body": attempted_body},
+        {"markdown_body": attempted_body},
+    ]
+    saved = next(
+        skill
+        for skill in api.get(server, "/api/skills")["skills"]
+        if skill["name"] == "panels-worker"
+    )
+    assert saved["description"] == "Shared Worker purpose saved independently"
+    assert saved["markdown_body"] == f"\n{attempted_body}\n"
+
+    mobile = context_factory().new_page()
+    mobile.set_viewport_size({"width": 390, "height": 844})
+    mobile.goto(server.base + "/#/agents/worker-skill")
+    mobile.wait_for_selector("[data-shared-worker-skill]", timeout=WAIT_MS)
+    _assert_agents_nav_active_and_clear(mobile)
+    _assert_no_horizontal_overflow(mobile)
+    assert mobile.locator(DESCRIPTION_EDIT).is_editable()
+    assert mobile.locator(BODY_EDIT).is_editable()
 
 
 def test_worker_selection_persists_from_kickoff_card_context_row(
