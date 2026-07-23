@@ -3,6 +3,13 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-t_qe1gk3ha-creation-placement — Preserve explicit backlog selection
+
+Treat an omitted `sprint_id` as eligible for the current-sprint default, but treat an explicitly
+provided `sprint_id: null` as an intentional backlog placement. The existing CLI exposes
+`--sprint none`; collapsing that choice into the new default would silently change an established
+creation contract.
+
 ## D-t_12sap6vx-sqlite-only-backups — Keep recovery small and explicit
 
 Use SQLite's online backup API into a temporary snapshot directory, verify integrity and checksum,

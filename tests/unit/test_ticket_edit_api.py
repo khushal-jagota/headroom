@@ -232,6 +232,42 @@ def test_ticket_creation_copies_worker_type_configuration_once(
         check.close()
 
 
+def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_explicit_backlog(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        _seed_sprint(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        defaulted = client.post(
+            "/api/tickets", json={"title": "Default placement", "worker_type": "coding"}
+        )
+        explicit_backlog = client.post(
+            "/api/tickets",
+            json={
+                "title": "Explicit backlog",
+                "worker_type": "coding",
+                "sprint_id": None,
+            },
+        )
+
+    assert defaulted.status_code == explicit_backlog.status_code == 200
+    assert defaulted.json()["sprint_id"] == "sp_edit"
+    assert explicit_backlog.json()["sprint_id"] is None
+    with TestClient(app) as client:
+        assert client.get(f"/api/tickets/{defaulted.json()['id']}").json()["day_ids"] == [
+            "day_2026-07-10"
+        ]
+        assert client.get(f"/api/tickets/{explicit_backlog.json()['id']}").json()["day_ids"] == [
+            "day_2026-07-10"
+        ]
+
+
 def test_employee_configuration_endpoint_allows_pristine_statuses_and_emits_exact_event(
     tmp_path: Path,
     probe_runtime: None,
