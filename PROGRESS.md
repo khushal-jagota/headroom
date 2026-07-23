@@ -1,5 +1,13 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Slice 2 deployment transaction and recovery
+
+Added serialized deployment with validated candidate/current manifests, backup-before-switch,
+atomic `current` replacement, bounded candidate health, code-only rollback and prior-SHA proof,
+durable JSONL result records, same-SHA idempotence, and a narrow non-shell operator CLI using the
+existing SQLite backup operation. Deployment tests, environment CLI tests, Ruff, and strict Mypy
+pass. Next: host service assets and GitHub handoff.
+
 ## Current work cycle (2026-07-23): Slice 1 release identity and runtime proof
 
 Added typed full-SHA release manifests, Git-free tracked-source export with source digests,

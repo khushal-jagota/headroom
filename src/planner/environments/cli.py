@@ -20,6 +20,11 @@ from planner.environments.contracts import (
     FixedEnvironmentPort,
     ResolvedEnvironmentInstance,
 )
+from planner.environments.deployment import (
+    HttpHealthClient,
+    SubprocessServiceController,
+    deploy_release,
+)
 from planner.environments.linux import render_linux_specification
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (
@@ -80,6 +85,44 @@ def backup(source_db: Path, backup_dir: Path, deployed_revision: str) -> None:
     except (OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(str(snapshot))
+
+
+@environment.command("deploy")
+@click.option(
+    "--candidate", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+)
+@click.option("--current", "current_pointer", type=click.Path(path_type=Path), required=True)
+@click.option(
+    "--source-db", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
+)
+@click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
+@click.option("--records", "records_path", type=click.Path(path_type=Path), required=True)
+@click.option("--health-url", required=True)
+@click.option("--service-manager", type=click.Choice(["systemctl", "launchctl"]), required=True)
+@click.option("--service-name", required=True)
+def deploy(
+    candidate: Path,
+    current_pointer: Path,
+    source_db: Path,
+    backup_dir: Path,
+    records_path: Path,
+    health_url: str,
+    service_manager: str,
+    service_name: str,
+) -> None:
+    """Deploy one already-built release with backup, health proof, and code rollback."""
+    try:
+        result = deploy_release(
+            candidate=candidate,
+            current_pointer=current_pointer,
+            backup=lambda revision: create_database_backup(source_db, backup_dir, revision),
+            service=SubprocessServiceController(service_manager, service_name),
+            health=HttpHealthClient(health_url),
+            records_path=records_path,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result.__dict__, sort_keys=True))
 
 
 @environment.command("restore")
