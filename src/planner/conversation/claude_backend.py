@@ -33,6 +33,8 @@ from acp.schema import (
     TextContentBlock,
 )
 
+from planner.skill_sources import provision_native_backend_skills
+
 from .backend_contracts import (
     AcpConversationIngress,
     AcpEmployeeChild,
@@ -73,6 +75,7 @@ CLAUDE_INHERITED_ENVIRONMENT_NAMES: Final = (
     "SHELL",
     "TERM",
     "USER",
+    "CLAUDE_CONFIG_DIR",
 )
 CLAUDE_ADAPTER_RELATIVE_ENTRYPOINT: Final = Path(
     "agent_backends/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"
@@ -145,16 +148,21 @@ def build_claude_acp_backend_definition(
     repository_root: Path,
     node_executable: Path,
     turn_strategy: BackendTurnStrategy,
+    claude_config_dir: Path | None = None,
 ) -> AgentBackendDefinition:
     """Resolve one immutable definition from the project-local locked package."""
 
     _validate_node_executable(node_executable)
     adapter_entrypoint = _validate_locked_adapter(repository_root)
+    resolved_config_dir = claude_config_dir or repository_root / ".claude-managed"
+    _require_absolute_path(resolved_config_dir, field_name="claude_config_dir")
     return AgentBackendDefinition(
         backend_key=CLAUDE_BACKEND_KEY,
         argv=(str(node_executable), str(adapter_entrypoint)),
         inherited_environment_names=CLAUDE_INHERITED_ENVIRONMENT_NAMES,
-        environment_overrides=(),
+        environment_overrides=(
+            ("CLAUDE_CONFIG_DIR", str(resolved_config_dir.resolve(strict=False))),
+        ),
         expected_agent_name=CLAUDE_ACP_AGENT_NAME,
         expected_agent_version=CLAUDE_ACP_AGENT_VERSION,
         turn_capabilities=BackendTurnCapabilities(
@@ -195,6 +203,10 @@ def build_claude_employee_backend_registration() -> EmployeeBackendRegistration:
             repository_root=context.repository_root,
             node_executable=_resolve_node_executable(),
             turn_strategy=strategy,
+            claude_config_dir=context.data_directory / "claude-config",
+        )
+        provision_native_backend_skills(
+            context.data_directory / "claude-config", context.data_directory
         )
         child_factory = ClaudeAcpEmployeeChildFactory(
             definition,

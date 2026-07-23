@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from planner.skill_sources import provision_native_backend_skills
+
 from .backend_contracts import (
     AgentBackendDefinition,
     BackendTurnCapabilities,
@@ -131,6 +133,7 @@ def build_codex_acp_backend_definition(
     node_executable: Path,
     app_server_logs: Path,
     turn_strategy: BackendTurnStrategy,
+    codex_home: Path | None = None,
 ) -> AgentBackendDefinition:
     """Build the exact confined Codex adapter process definition."""
 
@@ -138,11 +141,15 @@ def build_codex_acp_backend_definition(
     entrypoint = resolve_codex_acp_entrypoint(repository_root)
     _require_absolute_path(app_server_logs, field_name="app_server_logs")
     logs = app_server_logs.resolve(strict=False)
+    resolved_codex_home = _require_absolute_path(
+        codex_home or logs.parent / "codex-home", field_name="codex_home"
+    )
     return AgentBackendDefinition(
         backend_key=CODEX_BACKEND_KEY,
         argv=(str(node), str(entrypoint)),
         inherited_environment_names=CODEX_INHERITED_ENVIRONMENT_NAMES,
         environment_overrides=(
+            ("CODEX_HOME", str(resolved_codex_home.resolve(strict=False))),
             ("APP_SERVER_LOGS", str(logs)),
             ("DEFAULT_AUTH_REQUEST", '{"methodId":"api-key"}'),
             ("INITIAL_AGENT_MODE", "agent-full-access"),
@@ -188,6 +195,10 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
             node_executable=node,
             app_server_logs=context.data_directory / "codex-acp-logs",
             turn_strategy=strategy,
+            codex_home=context.data_directory / "codex-home",
+        )
+        provision_native_backend_skills(
+            context.data_directory / "codex-home", context.data_directory
         )
         entrypoint = Path(definition.argv[1])
         child_factory = SdkAcpEmployeeChildFactory(definition)

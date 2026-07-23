@@ -180,7 +180,7 @@ def test_live_import_copies_committed_wal_files_settings_and_hermes(tmp_path: Pa
     assert (imported.hermes_home / "sessions" / "current.json").read_text() == "session"
     assert (imported.hermes_home / "skills" / "panels").resolve() == (
         imported.db_path.parent / "skills" / "panels"
-    )
+    ).resolve()
     assert (imported.runtime_user_home / ".codex" / "auth.json").read_text() == "codex"
     assert (imported.runtime_user_home / ".codex" / "config.toml").read_text() == "model='x'"
     assert (

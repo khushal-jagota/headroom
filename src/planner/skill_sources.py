@@ -54,6 +54,28 @@ def ensure_managed_panels_skills(
     return target_root
 
 
+def provision_native_backend_skills(
+    native_home: Path | str,
+    configured_database_parent: Path | str,
+    *,
+    packaged_skill_root: Path | str | None = None,
+) -> Path:
+    """Point one backend's native ``skills`` reader at the managed home."""
+    source_root = ensure_managed_panels_skills(
+        configured_database_parent, packaged_skill_root=packaged_skill_root
+    ).resolve()
+    target = Path(native_home).expanduser() / SKILLS_DIR_NAME
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink():
+        if target.resolve() == source_root:
+            return source_root
+        target.unlink()
+    elif target.exists():
+        raise FileExistsError(f"native backend skills path is not a managed symlink: {target}")
+    target.symlink_to(source_root, target_is_directory=True)
+    return source_root
+
+
 def _legacy_skills_by_name(legacy_root: Path) -> dict[str, Path]:
     if not legacy_root.is_dir():
         return {}

@@ -234,7 +234,9 @@ def test_claude_definition_freezes_locked_runtime_and_truthful_capabilities() ->
     assert definition.expected_agent_name == "@agentclientprotocol/claude-agent-acp"
     assert definition.expected_agent_version == CLAUDE_ACP_AGENT_VERSION == "0.60.0"
     assert definition.inherited_environment_names == CLAUDE_INHERITED_ENVIRONMENT_NAMES
-    assert definition.environment_overrides == ()
+    assert definition.environment_overrides == (
+        ("CLAUDE_CONFIG_DIR", str(REPOSITORY_ROOT / ".claude-managed")),
+    )
     assert definition.turn_capabilities.supports_steer is False
     assert definition.turn_capabilities.observes_compaction is True
     assert (
@@ -267,12 +269,13 @@ def test_claude_environment_is_confined_and_keeps_only_panels_worker_identity() 
     assert environment["PLAN_TICKET_ID"] == "ticket-claude"
     assert set(environment) == {
         *default_environment(),
+        "CLAUDE_CONFIG_DIR",
         "PLAN_ACTOR",
         "PLAN_TICKET_ID",
     }
     assert "ANTHROPIC_API_KEY" not in environment
     assert "CLAUDE_CODE_EXECUTABLE" not in environment
-    assert "CLAUDE_CONFIG_DIR" not in environment
+    assert environment["CLAUDE_CONFIG_DIR"] == str(REPOSITORY_ROOT / ".claude-managed")
     assert "HERMES_HOME" not in environment
     assert "OPENAI_API_KEY" not in environment
 
@@ -296,6 +299,10 @@ def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
     assert materialized.child_factory.definition is materialized.definition
     assert materialized.startup_preflight is not None
     assert materialized.is_executable() is False
+    assert materialized.definition.environment_overrides == (
+        ("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-config")),
+    )
+    assert (tmp_path / "claude-config" / "skills").resolve() == (tmp_path / "skills").resolve()
 
 
 @pytest.mark.parametrize(
