@@ -263,7 +263,7 @@ def test_worker_stage_failed_save_keeps_chosen_row_value(server, context_factory
     )
 
 
-def test_worker_skill_edit_candidate_save_failure_retention_and_session_stability(
+def test_worker_skill_edit_save_failure_and_session_stability(
     server, context_factory, cli, api
 ) -> None:
     rejected = httpx.put(
@@ -302,10 +302,12 @@ def test_worker_skill_edit_candidate_save_failure_retention_and_session_stabilit
     assert page.locator(BODY_EDIT).get_attribute("contenteditable") == "true"
     assert page.locator("[data-skill-name]").inner_text() == "panels-worker-coding"
     assert page.locator("[data-skill-name]").get_attribute("contenteditable") != "true"
-    assert _editable_text(page, DESCRIPTION_EDIT) == "Candidate description"
-    assert "Candidate body" in _editable_text(page, BODY_EDIT)
+    canonical = api.get(server, "/api/workers/coding")["settings"]["specialist_skill"]
+    assert _editable_text(page, DESCRIPTION_EDIT) == canonical["description"]
+    assert "Candidate description" not in _editable_text(page, DESCRIPTION_EDIT)
+    assert "Candidate body" not in _editable_text(page, BODY_EDIT)
 
-    original = api.get(server, "/api/workers/coding")["settings"]["specialist_skill"]
+    original = canonical
     with page.expect_response(
         lambda response: response.request.method == "PATCH"
         and response.url.endswith("/api/workers/coding/skill")

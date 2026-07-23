@@ -25,15 +25,17 @@ When a Panels role skill appears missing from slash commands or unavailable to a
 4. If the skill exists in Hermes but not in the web menu, check the shared gateway catalog path (`commands.catalog`) and the Panels command-catalog cache before changing UI code.
 5. If the skill is discoverable but not automatically used, distinguish discovery from role preloading: worker/Chief role selection comes from launch/session environment such as `HERMES_TUI_SKILLS`, not merely from skill existence.
 
-## Promote a managed skill into Panels-owned source
+## Edit the canonical skill source
 
-A skill under `data/hermes-home/skills/<category>/...` may be runtime-only procedural memory rather than a repo-owned Panels skill. When the user chooses to make one durable and shared:
+Worker and Chief skill edits always write the version-controlled package under
+`src/planner/skills/<skill-name>/`. The database-side `worker-settings` directory
+stores launch and ownership settings only; any legacy `SKILL.md` or `.candidates`
+files there are not authoritative and are never read by a backend.
 
-1. Confirm its provenance first: inspect whether it is tracked, a symlink, or a regular managed directory. Do not imply the user authored it when history proves only that agents used it.
-2. Copy the complete skill package—`SKILL.md` plus `references/`, `templates/`, and `scripts/`—into the Panels package source at `src/planner/skills/<skill-name>/`.
-3. Add the name to Panels' canonical provisioning/discovery list so future homes receive it. A source directory alone is not proof that startup exposes it.
-4. Verify the repo package is complete before deleting the managed copy. Then remove the old regular directory and run the normal provisioner so the Hermes-home target becomes a symlink to repo source. Provisioning may deliberately leave an existing regular directory untouched, so replacement order matters.
-5. Verify both layers: source and former managed package have identical contents, the runtime target is a symlink to the canonical package directory, and focused provisioning tests pass.
+Provisioning links each Hermes-home skill directory to that canonical source. To
+add a new skill, add its complete package to `src/planner/skills/`, register its
+name in the canonical provisioning list, and verify the provisioned target is a
+symlink to the source package.
 
 When scripting several file writes, inspect every tool result for an `error` and verify the resulting paths. A wrapper process exiting successfully does not prove its nested writes succeeded.
 
