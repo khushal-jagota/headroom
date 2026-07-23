@@ -42,7 +42,12 @@ class SubprocessServiceController:
         if self.manager == "systemctl":
             command = ["systemctl", "restart", self.service_name]
         elif self.manager == "launchctl":
-            command = ["launchctl", "kickstart", "-k", f"system/{self.service_name}"]
+            target = (
+                self.service_name
+                if "/" in self.service_name
+                else f"system/{self.service_name}"
+            )
+            command = ["/bin/launchctl", "kickstart", "-k", target]
         else:
             raise DeploymentError("unsupported service manager")
         subprocess.run(command, check=True, shell=False)

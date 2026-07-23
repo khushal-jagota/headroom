@@ -11,6 +11,7 @@ and passes the same SHA to deployment. Deployment backs up using the current man
 failed proof rolls back code only and proves the previous release; it never restores application
 state automatically.
 
-The checked-in launchd and systemd files are install intent. Closeout must establish and verify
-host ownership and permissions: the deploy identity writes releases and controls, while the live
-service writes only the external persistent paths named by host configuration.
+The checked-in launchd and systemd files are install intent. The single-user Mac uses a user
+LaunchAgent and a runner under the same operator account, with releases and state under
+`~/Library/Application Support/Panels`. A future multi-user server may add separate service and
+deployment identities without changing the release transaction.

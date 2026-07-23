@@ -8,11 +8,12 @@ case "$action" in
 esac
 
 if command -v launchctl >/dev/null 2>&1; then
+  target=${PANELS_LAUNCHD_TARGET:-"gui/$(id -u)/com.panels.live"}
   case "$action" in
-    start) exec launchctl kickstart "system/com.panels.live" ;;
-    stop) exec launchctl kill "SIGTERM" "system/com.panels.live" ;;
-    restart) exec launchctl kickstart -k "system/com.panels.live" ;;
-    status) exec launchctl print "system/com.panels.live" ;;
+    start) exec /bin/launchctl kickstart "$target" ;;
+    stop) exec /bin/launchctl kill "SIGTERM" "$target" ;;
+    restart) exec /bin/launchctl kickstart -k "$target" ;;
+    status) exec /bin/launchctl print "$target" ;;
   esac
 fi
 if command -v systemctl >/dev/null 2>&1; then

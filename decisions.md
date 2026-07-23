@@ -3,6 +3,13 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-23 — The single-user Mac uses the signed-in operator identity
+
+Exact-commit deployment needs immutable non-Git releases, backup-before-switch, exact-SHA health,
+and code rollback. It does not require separate macOS application and deployment accounts. The Mac
+runner and LaunchAgent use the signed-in operator's existing Hermes/provider setup and user-owned
+application root; separate identities remain an optional future server hardening step.
+
 ## 2026-07-23 — The validated launcher supplies the packaged application root
 
 Checkout code can derive assets from `src/planner`, but an installed wheel cannot. The release

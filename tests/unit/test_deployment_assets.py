@@ -16,7 +16,9 @@ def test_linux_live_service_uses_current_launcher_and_external_state() -> None:
 def test_macos_input_is_supervised_and_uses_current_launcher() -> None:
     plist = (ASSET_ROOT / "panels-launchd.plist").read_text(encoding="utf-8")
     assert "com.panels.live" in plist
-    assert "/opt/panels/current/bin/panels-launcher" in plist
+    assert "$root/current/bin/panels-launcher" in plist
+    assert "<key>UserName</key>" not in plist
+    assert "Library/Application Support/Panels" in plist
     assert "RunAtLoad" in plist and "KeepAlive" in plist
 
 
@@ -90,8 +92,9 @@ def test_deploy_workflow_maps_operator_repository_variables_into_the_job() -> No
 
 def test_service_control_uses_real_manager_verbs_and_backup_uses_shared_identity_cli() -> None:
     control = (ASSET_ROOT / "service-control.sh").read_text(encoding="utf-8")
-    assert "launchctl kickstart" in control
-    assert "launchctl kill" in control
+    assert "/bin/launchctl kickstart" in control
+    assert "/bin/launchctl kill" in control
+    assert 'gui/$(id -u)/com.panels.live' in control
     service = (ASSET_ROOT / "panels-db-backup.service").read_text(encoding="utf-8")
     pre_deploy = (ASSET_ROOT / "pre-deploy-backup.sh").read_text(encoding="utf-8")
     assert "json.load" not in service
@@ -100,7 +103,7 @@ def test_service_control_uses_real_manager_verbs_and_backup_uses_shared_identity
     assert "release-identity" in pre_deploy
 
 
-def test_deploy_identity_owns_release_controls_and_live_is_read_only() -> None:
+def test_linux_deploy_identity_owns_release_controls_and_live_is_read_only() -> None:
     setup = (ASSET_ROOT / "setup-accounts.sh").read_text(encoding="utf-8")
     tmpfiles = (ASSET_ROOT / "panels-environments.tmpfiles").read_text(encoding="utf-8")
     live = (ASSET_ROOT / "panels-live.service").read_text(encoding="utf-8")
@@ -114,4 +117,5 @@ def test_deploy_identity_owns_release_controls_and_live_is_read_only() -> None:
     assert "install -d -m 0755 -o panels-deploy -g panels-deploy /opt/panels/current" not in setup
     assert "d /opt/panels/current" not in tmpfiles
     assert "ReadOnlyPaths=/opt/panels/releases /opt/panels/current" in live
-    assert "never as root" in docs
+    assert "signed-in" in docs and "operator" in docs
+    assert "does not require root access" in docs

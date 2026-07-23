@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import subprocess
 import time
 from pathlib import Path
 
 import pytest
 
-from planner.environments.deployment import DeploymentError, DeploymentResult, deploy_release
+from planner.environments.deployment import (
+    DeploymentError,
+    DeploymentResult,
+    SubprocessServiceController,
+    deploy_release,
+)
 
 SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -68,6 +74,20 @@ class FakeHealth:
     def wait_for_sha(self, sha: str, *, deadline: float) -> bool:
         self.events.append(f"health:{sha}")
         return sha in self.healthy
+
+
+def test_launchctl_restart_accepts_an_explicit_user_domain(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+
+    def run(command: list[str], *, check: bool, shell: bool) -> None:
+        assert check is True
+        assert shell is False
+        commands.append(command)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    SubprocessServiceController("launchctl", "gui/501/com.panels.live").restart()
+
+    assert commands == [["/bin/launchctl", "kickstart", "-k", "gui/501/com.panels.live"]]
 
 
 def test_deploy_backups_prior_manifest_before_switch_and_records_success(tmp_path: Path) -> None:

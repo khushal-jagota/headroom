@@ -3,17 +3,12 @@
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.panels.live</string>
-  <key>UserName</key><string>panels-live</string>
   <key>ProgramArguments</key>
-  <array><string>/opt/panels/current/bin/panels-launcher</string><string>serve</string></array>
-  <key>WorkingDirectory</key><string>/var/lib/panels/environments/live</string>
-  <key>EnvironmentVariables</key>
-  <dict><key>PLAN_CONFIG_PATH</key><string>/etc/panels/environments/config.yaml</string>
-    <key>PLAN_DB_PATH</key><string>/var/lib/panels/environments/live/planning.db</string>
-    <key>PLAN_DISPATCHER_LOCK_PATH</key><string>/var/lib/panels/environments/live/dispatcher.lock</string>
-    <key>PLAN_HERMES_HOME</key><string>/var/lib/panels/environments/live/hermes-home</string>
-    <key>PLAN_LOGS_DIR</key><string>/var/log/panels</string>
-    <key>PLAN_SERVER_CONTROL_SOCKET</key><string>/var/lib/panels/environments/live/run/server-control.sock</string></dict>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>root="$HOME/Library/Application Support/Panels"; export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" PLAN_CONFIG_PATH="$HOME/.hermes/live/planning-v2/config.yaml" PLAN_DB_PATH="$root/state/planner.db" PLAN_DISPATCHER_LOCK_PATH="$root/state/dispatcher.lock" PLAN_HERMES_HOME="$HOME/.hermes" PLAN_LOGS_DIR="$root/logs" PLAN_SERVER_CONTROL_SOCKET="$root/state/server-control.sock"; exec "$root/current/bin/panels-launcher" serve</string>
+  </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
 </dict>
