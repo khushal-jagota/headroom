@@ -76,23 +76,34 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
             "UPDATE tickets SET stage = 'needs_approach', ticket_status = 'empty' WHERE id = ?",
             (shared_dependent,),
         )
-    for ticket_id in (kickoff_dependent, later_dependent, shared_dependent):
+    for ticket_id in (blocker, kickoff_dependent, later_dependent, shared_dependent):
         api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
     page = open_page(
         context_factory(),
         server,
         "#/workspace",
-        f'[data-card][data-ticket-id="{later_dependent}"]',
+        f'[data-card][data-ticket-id="{kickoff_dependent}"]',
         settled=True,
     )
     coding = '[data-worker-type="coding"]'
     blocked = f'{coding} [data-stage-key="blocked"]'
+    active = f'{coding} [data-stage-key="needs_success"]'
     kickoff = f'{coding} [data-stage-key="needs_kickoff"]'
+    active_card = f'[data-card][data-ticket-id="{blocker}"]'
     later_card = f'[data-card][data-ticket-id="{later_dependent}"]'
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
+    assert page.locator(blocked).get_attribute("open") is None
+    assert page.locator(active).get_attribute("open") is not None
+    assert page.locator(f"{active} {active_card}").is_visible()
+    assert page.locator(kickoff).get_attribute("open") is not None
+    assert not page.locator(f"{blocked} {later_card}").is_visible()
+    page.locator(f"{blocked} > summary").click()
+    assert page.locator(blocked).get_attribute("open") is not None
+    page.wait_for_selector(f"{blocked} {later_card}", state="visible", timeout=WAIT_MS)
+    assert page.locator(f"{blocked} {shared_card}").is_visible()
     assert page.locator(f"{blocked} {later_card}").count() == 1
     assert page.locator(f"{blocked} {shared_card}").count() == 1
     assert page.locator(f"{kickoff} {kickoff_card}").count() == 1

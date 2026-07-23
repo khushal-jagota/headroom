@@ -1,5 +1,16 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Implement `t_7fefjrze`
+
+Ticket `t_7fefjrze` is implementing the approved behavior that Workspace Blocked
+sections start collapsed while remaining expandable and leaving ordinary active
+sections open. The isolated branch `ticket/t_7fefjrze-blocked-collapsed` starts from
+`staging` revision `ebf5f64d`. The route now derives Blocked as collapsed through the
+existing section model, and its browser regression proves initial closure, normal
+expansion, and unchanged active-stage defaults. The focused Playwright test and Svelte
+diagnostics pass. Independent plan and implementation reviews report no unresolved
+findings. Next: run one canonical `./verify`, then propose Implementation if it passes.
+
 ## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
 
 Current `staging` merged cleanly into the verified backup branch as `f4594bf2`. The first canonical

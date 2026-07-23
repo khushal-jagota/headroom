@@ -165,6 +165,14 @@ frontend does not present `rawOutput` from Hermes, Claude, or Codex.
 
 # Workspace
 
+## D-blocked-workspace-sections-use-existing-disclosure-state — Collapse only the synthetic Blocked group
+
+Workspace will mark its synthetic `blocked` stage group as default-collapsed in the
+existing stage-section model. It will not change canonical Ticket stages or the shared
+Disclosure component. Browser coverage will wait for a visible Workspace element,
+assert the Blocked section starts closed, open it to prove its cards remain available,
+and confirm an ordinary active stage keeps its current open default.
+
 ## D-ticket-error-requires-explicit-backend-provenance — Correctness failures are not Ticket failures
 
 `employee_step_runs` remains the broad execution-correctness record, so it may settle
