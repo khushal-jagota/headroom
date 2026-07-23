@@ -3557,3 +3557,12 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Treat the user-approved Success, Approach, and Plan as the planning review boundary. Delegate the
   contract-scoped implementation, then obtain one independent diff review before the final canonical
   `./verify`; a separate plan-review round would add no new seam for this four-file workflow change.
+
+# 2026-07-23 — Production deploy uses the runner's host-native toolchain
+
+- Do not use `actions/setup-python` or `actions/setup-node` on the production Mac. The runner is
+  intentionally host-native, already publishes Python and Node through its service `PATH`, and the
+  Python action's hosted-runner cache path is not writable by the production runner account.
+- Fail fast unless the host provides Python 3.12 or newer and Node 22. Release construction still
+  installs all Python and Node dependencies into the exported exact-SHA release; these checks only
+  make the operator-owned host prerequisite explicit.
