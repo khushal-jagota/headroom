@@ -175,33 +175,55 @@ move into the header or become a display of the worker's current settings.
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
 
-## Managed settings and the Workers screen
+## Managed settings and the Agents page
 
-The registry remains the immutable workflow definition. A managed source beside the database owns
-only the ownership default for each existing non-terminal Stage. Every editable skill, including
-Chief of Staff, has exactly one canonical version-controlled `SKILL.md` under `src/planner/skills`.
-All backends read that file; the Hermes home contains a symlink, never a copied overlay. The Workers
-screen exposes skill description and Markdown body edits without allowing skill identity to change.
+The registry remains the immutable workflow definition. A managed source beside the
+database owns only the ownership default for each existing non-terminal Stage. Every
+editable skill has exactly one canonical version-controlled `SKILL.md` under
+`src/planner/skills`. All backends read that file; the Hermes home contains a symlink,
+never a copied overlay.
 
-A Ticket captures the managed ownership default when it enters a Stage. Later global changes affect
-only future entries; the Ticket's explicit Stage override still wins. Settings writes use atomic
-replacement and one writer lock per Worker or Chief. A failed event write restores the canonical
-file, so every backend continues to see the prior revision.
+The browser navigation and settings page is **Agents** at `#/agents`. It has exactly two
+stacked sections:
 
-The skill name is read-only. Description and Markdown body are ordinary direct edits that save, fail,
-and retry independently. Successful skill edits refresh the configured planner Hermes home without
-changing existing Employee session ids. Codex and Claude Code continue to use the repository skill
-source exposed through their native project links.
+- **Agents** contains Chief of Staff and the shared `panels-worker` role skill. Chief
+  opens at `#/agents/chief-of-staff` with Backend, Model, and Reasoning launch defaults
+  and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
+  skill opens at `#/agents/worker-skill`. It is shown as an Agent-like configurable
+  role because it guides every Ticket worker, although it is not an independent
+  runtime. Its name is read-only; its description and Markdown body edit the canonical
+  skill through the shared skills home. It has no independent launch, model, reasoning,
+  or Stage controls.
+- **Workers** lists the configured Worker types. A Worker opens at
+  `#/agents/workers/<worker-type>` with its launch defaults, Stage ownership table, and
+  specialist skill editor. Worker identity and lifecycle structure stay read-only.
 
-`GET /api/workers` serves the compact index and Chief settings, including the Chief skill.
-`GET /api/workers/{id}` composes registry structure with managed settings. Worker and Chief skill
-endpoints edit description/body while launch-default endpoints edit Backend, Model, and Reasoning.
-`worker_settings_changed` invalidates only `workers`
-and the matching `worker:<id>` browser resource.
+Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/agents` and
+`#/agents/workers/<worker-type>`.
+
+A Ticket captures the managed ownership default when it enters a Stage. Later global
+changes affect only future entries; the Ticket's explicit Stage override still wins.
+Settings writes use atomic replacement and one writer lock per Worker or Chief. A failed
+event write restores the canonical file, so every backend continues to see the prior
+revision.
+
+Every editable skill name is read-only. Description and Markdown body are ordinary
+direct edits that save, fail, and retry independently. Successful skill edits refresh
+the configured planner Hermes home without changing existing Employee session ids.
+Codex and Claude Code continue to use the repository skill source exposed through their
+native project links.
+
+`GET /api/workers` serves the Agents-page index data, including Chief settings.
+`GET /api/workers/{id}` composes Worker registry structure with managed settings.
+`GET /api/skills` serves the shared skills home used for `panels-worker`. Worker and
+Chief endpoints edit skill description and body or launch defaults; the shared
+`PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill.
+`worker_settings_changed` invalidates `workers`, the matching `worker:<id>`, or
+`skills-home` according to the changed role.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
 `src/planner/conversation/hermes_backend_configuration.py`, and
-`web/src/routes/WorkersRoute.svelte`.
+`web/src/routes/AgentsRoute.svelte`.
 
 ## The Ticket owns its Employee launch setup
 
