@@ -50,6 +50,7 @@ class _Hub(ConversationHub):
         self.actions: list[str] = []
         self.detached: list[str] = []
         self.dispatch_active = False
+        self.new_conversation_calls: list[str] = []
 
     async def attach_browser(self, employee_id: str, **kwargs: Any) -> BrowserSubscription:
         self.attach_calls.append((employee_id, kwargs))
@@ -63,6 +64,10 @@ class _Hub(ConversationHub):
         self.dispatch_active = True
         self.actions.append(action.type)
         self.dispatch_active = False
+
+    async def new_conversation(self, employee_id: str) -> Any:
+        self.new_conversation_calls.append(employee_id)
+        return None
 
     async def detach_browser(self, connection_id: str) -> None:
         self.detached.append(connection_id)
@@ -129,6 +134,31 @@ def test_websocket_actions_are_serial_and_normal_disconnect_is_quiet() -> None:
         assert hub.actions == ["cancel", "new_conversation"]
         assert socket.closed == []
         assert hub.detached == ["browser-1"]
+
+    asyncio.run(exercise())
+
+
+def test_websocket_can_start_new_conversation_before_attaching_old_binding() -> None:
+    async def exercise() -> None:
+        hub = _Hub()
+        socket = _Socket(
+            [
+                _text_action(
+                    {
+                        "type": "new_conversation",
+                        "employeeId": "t_employee",
+                    }
+                ),
+                {"type": "websocket.disconnect", "code": 1000},
+            ]
+        )
+        await hub.websocket(socket)  # type: ignore[arg-type]
+        assert hub.new_conversation_calls == ["t_employee"]
+        assert hub.attach_calls == [("t_employee", {
+            "last_seen_binding_generation": None,
+            "last_seen_sequence": None,
+        })]
+        assert socket.closed == []
 
     asyncio.run(exercise())
 
