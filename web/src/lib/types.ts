@@ -52,6 +52,7 @@ export type ManagedSkill = {
   description: string;
   markdown_body: string;
 };
+export type SkillsHomeResponse = { skills: ManagedSkill[] };
 
 export type WorkerManagementSummary = {
   worker_type: string;

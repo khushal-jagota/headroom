@@ -22,6 +22,7 @@
 
   const workers = stableWorkerType === null ? resourceCatalogue.workers() : null;
   const manifests = stableWorkerType === null ? resourceCatalogue.workerTypeManifests() : null;
+  const skillsHome = stableWorkerType === null ? resourceCatalogue.skillsHome() : null;
   const worker = stableWorkerType ? resourceCatalogue.worker(stableWorkerType) : null;
 
   const ownerOptions: Array<{ value: StageOwnershipMode; label: string }> = [
@@ -61,6 +62,14 @@
         body: { [field]: raw }
       },
       { kind: "workerSettingsChanged", workerType: settings.worker_type }
+    );
+  }
+
+  async function saveHomeSkillField(skill: ManagedSkill, field: "description" | "markdown_body", raw: string): Promise<void> {
+    await mutateJsonWithResourceEffect<ManagedSkill>(
+      `/api/skills/${encodeURIComponent(skill.name)}`,
+      { method: "PATCH", body: { [field]: raw } },
+      { kind: "workerSettingsChanged", workerType: "skills_home" }
     );
   }
 
@@ -142,6 +151,7 @@
   onDestroy(() => {
     workers?.dispose();
     manifests?.dispose();
+    skillsHome?.dispose();
     worker?.dispose();
   });
 </script>
@@ -156,7 +166,7 @@
       <header class="workers-head">
         <h1>Workers</h1>
       </header>
-      <ResourceState error={workers?.error || manifests?.error} loading={workers?.loading || manifests?.loading} hasData={Boolean(workers?.data && manifests?.data)} loadingText="Loading workers...">
+      <ResourceState error={workers?.error || manifests?.error || skillsHome?.error} loading={workers?.loading || manifests?.loading || skillsHome?.loading} hasData={Boolean(workers?.data && manifests?.data && skillsHome?.data)} loadingText="Loading workers...">
         {#if workers?.data}
           <ManagedLaunchDefaults
             label="Chief of Staff"
@@ -181,6 +191,19 @@
               </a>
             {/each}
           </div>
+          {#if skillsHome?.data}
+            <section class="worker-skill" data-skills-home>
+              <header class="workers-head"><h2>Skills home</h2></header>
+              <p>All packaged skills are editable from this canonical home.</p>
+              {#each skillsHome.data.skills as skill}
+                <article class="worker-skill-content" data-skill-name={skill.name}>
+                  <h3>{skill.name}</h3>
+                  <InlineEdit value={skill.description} multiline ariaLabel={`${skill.name} description`} onSave={(raw) => saveHomeSkillField(skill, "description", raw)} />
+                  <InlineEdit value={skill.markdown_body} markdown multiline ariaLabel={`${skill.name} body`} onSave={(raw) => saveHomeSkillField(skill, "markdown_body", raw)} />
+                </article>
+              {/each}
+            </section>
+          {/if}
         {/if}
       </ResourceState>
     </div>

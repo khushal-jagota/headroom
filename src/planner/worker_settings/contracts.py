@@ -22,6 +22,11 @@ class ManagedSkill:
     source_text: str
 
 
+@dataclass(frozen=True, slots=True)
+class SkillsHome:
+    skills: tuple[ManagedSkill, ...]
+
+
 class SpecialistSkillPatch(TypedDict, total=False):
     description: str
     markdown_body: str

@@ -52,3 +52,18 @@ def test_chief_skill_uses_same_canonical_source(
     )
     assert saved.skill.description == "chief canonical test"
     assert saved.skill.name == "panels-chief-of-staff"
+
+
+def test_every_skill_in_home_can_be_edited_and_is_catalogued(
+    canonical_skills_root: Path,
+) -> None:
+    home = service.read_skills_home()
+    assert len(home.skills) >= 3
+    target = next(skill for skill in home.skills if skill.name == "panels")
+    saved = service.save_skill(
+        target.name, {"description": "edited", "markdown_body": target.markdown_body}
+    )
+    assert saved.description == "edited"
+    assert 'description: "edited"' in (
+        canonical_skills_root / "panels" / "SKILL.md"
+    ).read_text(encoding="utf-8")

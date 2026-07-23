@@ -28,6 +28,7 @@ from planner.worker_settings.contracts import (
     ManagedEmployeeLaunchDefaults,
     ManagedSkill,
     ManagedWorkerSettings,
+    SkillsHome,
     SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
@@ -182,6 +183,58 @@ def _restore_last_known_good(root: Path, worker_type: str) -> bool:
 
 def _panels_skill_source(skill_name: str) -> Path:
     return panels_skill_root() / skill_name / SKILL_FILE_NAME
+
+
+def read_skills_home() -> SkillsHome:
+    root = panels_skill_root()
+    skills: list[ManagedSkill] = []
+    for directory in sorted(root.iterdir(), key=lambda path: path.name):
+        if not directory.is_dir() or directory.name.startswith("."):
+            continue
+        path = directory / SKILL_FILE_NAME
+        if path.is_file():
+            skills.append(_parse_skill(path.read_text(encoding="utf-8"), directory.name))
+    return SkillsHome(tuple(skills))
+
+
+def save_skill(
+    skill_name: str,
+    payload: dict[str, Any],
+    *,
+    after_publish: Callable[[], None] | None = None,
+) -> ManagedSkill:
+    root = panels_skill_root()
+    path = root / skill_name / SKILL_FILE_NAME
+    if not path.is_file() or Path(skill_name).name != skill_name:
+        raise PlannerError(ErrorCode.not_found, "skill not found", {"skill_name": skill_name})
+    allowed = {"name", "description", "markdown_body", "body"}
+    unexpected = sorted(set(payload) - allowed)
+    if unexpected:
+        raise PlannerError(ErrorCode.validation, "unknown skill field", {"field": unexpected[0]})
+    current = _parse_skill(path.read_text(encoding="utf-8"), skill_name)
+    if "name" in payload and payload["name"] != skill_name:
+        raise PlannerError(ErrorCode.validation, "skill name is immutable", {})
+    description = payload.get("description", current.description)
+    body = payload.get("markdown_body", payload.get("body", current.markdown_body))
+    if not isinstance(description, str) or not description:
+        raise PlannerError(ErrorCode.validation, "skill description is required", {})
+    if not isinstance(body, str) or not body.strip():
+        raise PlannerError(ErrorCode.validation, "skill body is required", {})
+    rendered = _render_skill_from_existing_frontmatter(
+        current.source_text, expected_skill_name=skill_name,
+        description=description, markdown_body=body,
+    )
+    _parse_skill(rendered, skill_name)
+    with _worker_settings_lock(root, f"skill:{skill_name}"):
+        snapshot = _PathSnapshot(path)
+        try:
+            _atomic_replace_text(path, rendered)
+            if after_publish is not None:
+                after_publish()
+        except Exception:
+            snapshot.restore()
+            raise
+    return _parse_skill(path.read_text(encoding="utf-8"), skill_name)
 
 
 def _bootstrap_settings_payload(definition: WorkerTypeDefinition) -> JsonDict:

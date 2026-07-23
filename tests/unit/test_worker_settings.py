@@ -79,6 +79,7 @@ def test_workers_api_composes_registry_with_managed_settings_and_emits_event(
             json={"ownership_mode": "worker"},
         )
         assert terminal.status_code == 400
+
         assert terminal.json()["error"]["message"] == "terminal stage cannot have ownership"
 
         missing = client.get("/api/workers/not_a_worker")
@@ -98,6 +99,25 @@ def test_workers_api_composes_registry_with_managed_settings_and_emits_event(
         }
     finally:
         conn.close()
+
+
+def test_skills_home_api_lists_and_edits_any_packaged_skill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = worker_settings_service.panels_skill_root()
+    target = tmp_path / "skills"
+    shutil.copytree(source, target)
+    monkeypatch.setattr(worker_settings_service, "panels_skill_root", lambda: target)
+    client, _ = _app(tmp_path)
+    with client:
+        listed = client.get("/api/skills")
+        assert listed.status_code == 200
+        assert any(skill["name"] == "panels" for skill in listed.json()["skills"])
+        edited = client.patch("/api/skills/panels", json={"description": "edited from home"})
+        assert edited.status_code == 200
+        assert edited.json()["description"] == "edited from home"
+        assert "edited from home" in (target / "panels" / "SKILL.md").read_text(encoding="utf-8")
+        assert client.patch("/api/skills/panels", json={"name": "other"}).status_code == 400
 
 
 def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
