@@ -57,6 +57,7 @@ def test_deploy_workflow_preserves_one_runner_and_exact_release_path() -> None:
     assert "--candidate \"$PANELS_RELEASE_ROOT/${{ github.sha }}\"" in workflow
     assert "python -m venv .venv" in workflow
     assert ".venv/bin/python -m planner environment release-build" in workflow
+    assert ".venv/bin/python -m planner environment deploy" in workflow
     assert ".build-venv" not in workflow
 
 

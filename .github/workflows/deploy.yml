@@ -36,7 +36,7 @@ jobs:
             --release-root "$PANELS_RELEASE_ROOT/${{ github.sha }}"
       - name: Deploy exact SHA
         run: |
-          panels environment deploy \
+          .venv/bin/python -m planner environment deploy \
             --candidate "$PANELS_RELEASE_ROOT/${{ github.sha }}" \
             --current "$PANELS_CURRENT_POINTER" \
             --source-db "$PANELS_BACKUP_SOURCE_DB" \

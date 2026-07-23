@@ -207,7 +207,13 @@ def test_config_keeps_development_identity_explicit() -> None:
 def _add_runtime_files(release: Path) -> None:
     python = release / ".venv" / "bin" / "python"
     python.parent.mkdir(parents=True)
-    python.write_text("python", encoding="utf-8")
+    planner_file = release / "src" / "planner" / "__init__.py"
+    planner_file.parent.mkdir(parents=True)
+    planner_file.write_text("", encoding="utf-8")
+    python.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' '{planner_file}'\n",
+        encoding="utf-8",
+    )
     python.chmod(0o755)
     launcher = release / "bin" / "panels-launcher"
     launcher.parent.mkdir()
@@ -216,18 +222,17 @@ def _add_runtime_files(release: Path) -> None:
     (release / "web" / "dist").mkdir(parents=True)
     (release / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
     (release / "agent_backends" / "node_modules").mkdir(parents=True)
+    (release / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
 
 
 def test_runtime_release_validation_requires_runnable_production_tree(tmp_path: Path) -> None:
     release = tmp_path / SHA
     release.mkdir()
-    (release / "bin").mkdir()
-    (release / "bin" / "panels-launcher").write_text("#!/bin/sh\n", encoding="utf-8")
-    (release / "web" / "dist").mkdir(parents=True)
-    (release / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
-    (release / "agent_backends" / "node_modules").mkdir(parents=True)
-    (release / ".venv" / "bin").mkdir(parents=True)
-    (release / ".venv" / "bin" / "python").write_text("python", encoding="utf-8")
+    _add_runtime_files(release)
+    (release / "bin" / "panels-launcher").chmod(0o644)
+    (release / ".venv" / "bin" / "python").chmod(0o644)
     (release / "manifest.json").write_text(
         json.dumps(
             {

@@ -142,7 +142,8 @@ def _validate_release_tree(root: Path) -> None:
 
 
 def _validate_runtime_tree(root: Path) -> None:
-    required_files = (root / ".venv" / "bin" / "python", root / "bin" / "panels-launcher")
+    python = root / ".venv" / "bin" / "python"
+    required_files = (python, root / "bin" / "panels-launcher")
     for path in required_files:
         if not path.is_file():
             raise ReleaseValidationError(f"runtime file is missing: {path.relative_to(root)}")
@@ -150,9 +151,36 @@ def _validate_runtime_tree(root: Path) -> None:
             raise ReleaseValidationError(
                 f"runtime file is not executable: {path.relative_to(root)}"
             )
-    for path in (root / "web" / "dist", root / "agent_backends" / "node_modules"):
-        if not path.is_dir():
-            raise ReleaseValidationError(f"runtime directory is missing: {path.relative_to(root)}")
+    required_runtime_files = (
+        root / "web" / "dist" / "index.html",
+        root / "agent_backends" / "node_modules" / ".package-lock.json",
+    )
+    for path in required_runtime_files:
+        if not path.is_file():
+            raise ReleaseValidationError(f"runtime file is missing: {path.relative_to(root)}")
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    try:
+        imported = subprocess.run(
+            [
+                str(python),
+                "-c",
+                "import pathlib, planner; print(pathlib.Path(planner.__file__).resolve())",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=root,
+            env=environment,
+        ).stdout.strip()
+        imported_path = Path(imported).resolve()
+        imported_path.relative_to(root.resolve())
+    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+        raise ReleaseValidationError(
+            "release interpreter does not import planner from its release"
+        ) from exc
+    if not imported_path.is_file():
+        raise ReleaseValidationError("release interpreter resolved a missing planner package")
 
 
 def build_exported_release(

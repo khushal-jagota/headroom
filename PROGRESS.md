@@ -1,5 +1,15 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Exact-commit deployment review clear
+
+The final focused re-review found three remaining executable-path issues: bare `panels` on the
+runner, runtime validation that did not prove non-empty built assets or in-release imports, and an
+unrecorded missing-baseline rejection. They are fixed with regressions. The workflow now invokes
+the Ticket `.venv`; runtime validation requires the frontend entrypoint, npm install marker, and
+an interpreter import rooted in the release; baseline rejection records `initial_failed`.
+Twenty-nine focused tests, Ruff, strict Mypy, and diff checks pass. No P0/P1 review finding remains.
+Next: real isolated release/deploy/rollback evidence and canonical `./verify`.
+
 ## Current work cycle (2026-07-23): Fresh-runner verifier path spot-check
 
 The parent spot-check found that both workflows installed Python packages without creating the

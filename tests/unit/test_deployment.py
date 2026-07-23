@@ -18,7 +18,13 @@ def _release(root: Path, sha: str, marker: str) -> Path:
     (root / marker).write_text(marker, encoding="utf-8")
     (root / ".venv" / "bin").mkdir(parents=True)
     python = root / ".venv" / "bin" / "python"
-    python.write_text("python", encoding="utf-8")
+    planner_file = root / "src" / "planner" / "__init__.py"
+    planner_file.parent.mkdir(parents=True)
+    planner_file.write_text("", encoding="utf-8")
+    python.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' '{planner_file}'\n",
+        encoding="utf-8",
+    )
     python.chmod(0o755)
     (root / "bin").mkdir()
     launcher = root / "bin" / "panels-launcher"
@@ -27,6 +33,9 @@ def _release(root: Path, sha: str, marker: str) -> Path:
     (root / "web" / "dist").mkdir(parents=True)
     (root / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
     (root / "agent_backends" / "node_modules").mkdir(parents=True)
+    (root / "agent_backends" / "node_modules" / ".package-lock.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
     from planner.environments.release import digest_release_artifact, digest_release_source
 
     (root / "manifest.json").write_text(
@@ -229,6 +238,28 @@ def test_initial_existing_database_without_baseline_does_not_switch(tmp_path: Pa
         )
     assert events == []
     assert not (tmp_path / "current").exists()
+
+
+def test_missing_initial_baseline_records_the_failed_attempt(tmp_path: Path) -> None:
+    releases = tmp_path / "releases"
+    candidate = _runtime_release(releases / SHA_B, SHA_B, "new")
+    source_db = tmp_path / "planner.db"
+    source_db.write_text("existing", encoding="utf-8")
+    records = tmp_path / "records.jsonl"
+
+    with pytest.raises(DeploymentError, match="baseline"):
+        deploy_release(
+            candidate=candidate,
+            current_pointer=tmp_path / "current",
+            backup=lambda _: None,
+            service=FakeService([]),
+            health=FakeHealth([], {SHA_B}),
+            records_path=records,
+            release_root=releases,
+            source_db=source_db,
+        )
+
+    assert json.loads(records.read_text())["result"] == "initial_failed"
 
 
 def test_initial_backup_failure_leaves_no_pointer_or_restart(tmp_path: Path) -> None:

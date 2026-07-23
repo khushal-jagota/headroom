@@ -48,4 +48,10 @@ Checked-in host setup expresses non-root `panels-deploy` ownership for release c
    tests/unit/test_deployment_assets.py && git diff --check` — `7 passed`; Ruff passed; diff check
    emitted no errors.
 
+7. Final re-review corrections: the deploy workflow invokes `.venv/bin/python -m planner`; runtime
+   validation requires `web/dist/index.html`, the agent-backend npm installation marker, and a
+   successful `planner` import from inside the release; missing initial baseline records
+   `initial_failed`. GREEN: focused pytest — `29 passed`; Ruff — `All checks passed!`; strict Mypy —
+   `Success: no issues found in 2 source files`; diff check emitted no errors.
+
 Canonical `./verify` remains reserved for the parent/orchestrator.

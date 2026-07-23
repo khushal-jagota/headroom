@@ -136,9 +136,15 @@ def deploy_release(
         prior_sha = prior_manifest.release_sha if prior_manifest is not None else None
         if prior_sha is None:
             if source_db is not None and source_db.exists() and baseline_sha is None:
-                raise DeploymentError(
-                    "existing database requires an operator-established baseline SHA"
+                detail = "existing database requires an operator-established baseline SHA"
+                _record(
+                    records_path,
+                    DeploymentResult(
+                        "initial_failed", candidate_manifest.release_sha, None, detail
+                    ),
+                    now(),
                 )
+                raise DeploymentError(detail)
             try:
                 if source_db is not None and source_db.exists():
                     assert baseline_sha is not None
