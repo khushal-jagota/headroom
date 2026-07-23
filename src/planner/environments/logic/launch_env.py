@@ -33,6 +33,7 @@ def build_environment_run_env(
             instance,
             hermes_python=hermes_python,
             runtime_port=runtime_port,
+            ambient_home=ambient.get("HOME"),
         )
     )
     return run_env
@@ -76,6 +77,7 @@ def _contract_owned_env(
     *,
     hermes_python: Path,
     runtime_port: int,
+    ambient_home: str | None,
 ) -> dict[str, str]:
     return {
         "PLAN_DB_PATH": str(instance.db_path),
@@ -85,5 +87,7 @@ def _contract_owned_env(
         "PLAN_SERVER_CONTROL_SOCKET": str(instance.server_control_socket_path),
         "PLAN_HERMES_HOME": str(instance.hermes_home),
         "PLAN_HERMES_PYTHON": str(hermes_python),
-        "HOME": str(instance.runtime_user_home),
+        # Panels keeps its own Hermes state via PLAN_HERMES_HOME, while provider
+        # CLIs use the operator's normal home and native login/keychain state.
+        "HOME": ambient_home or str(instance.runtime_user_home),
     }

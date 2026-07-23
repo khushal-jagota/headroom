@@ -131,7 +131,7 @@ def test_launch_environment_scrubs_ambient_and_adds_contract_values(
     assert run_env["PATH"] == "/usr/bin:/bin"
     assert run_env["TERM"] == "xterm-256color"
     assert run_env["TMPDIR"] == str(tmp_path / "tmp")
-    assert run_env["HOME"] == str(instance.runtime_user_home)
+    assert run_env["HOME"] == str(tmp_path / "ambient-home")
     assert run_env["ANTHROPIC_API_KEY"] == "file-secret"
     assert run_env["PLAN_DB_PATH"] == str(instance.db_path)
     assert run_env["PLAN_PORT"] == "43123"
