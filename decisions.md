@@ -3,6 +3,24 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-environment-import-one-generation — Live import has one durable commit point
+
+Keep the prepared runtime user home separate from the Hermes home and set it as the launched
+process `HOME`. Live import copies complete `.codex` and `.claude` trees, preserving private modes
+and ordinary symlinks while excluding sockets and other special files. The source user home is a
+locator, so the other explicit state sources may live below it.
+
+Build imported live state as one generation behind an atomic `current` symlink. A failure before
+the pointer switch leaves the former generation current. Removing that former generation is best
+effort after commit and cannot turn a successful switch into a reported rollback.
+
+## D-environment-manager-execs-target — Management code does not become live application code
+
+A root-owned, shared-read manager checkout launches `environment run`, but the launcher validates
+that the selected target checkout's `.venv` imports `planner` from that exact target and then execs
+that interpreter. This lets current environment-management code launch accepted-old-main live code
+without allowing the staging service account to write or read private live paths.
+
 ## How this file is organised
 
 Entries are grouped **by system/topic**, and each carries a **stable slug ID** (e.g.
@@ -609,6 +627,26 @@ The repository checks path/resource collisions, fake-state independence, and thr
 server processes locally. Checked-in systemd/account assets are render/install inputs, not proof that
 Linux ownership exists: VPS enforcement remains false until an operator installs and verifies the
 accounts, permissions, credentials, units, and ingress on the target host.
+
+## D-staging-dynamic-live-fixed-adoption — Persist state, not a staging port
+
+This supersedes the prepared-instance shape in `D-isolated-runtime-environments`; its credential,
+repository-root, and Linux-account boundaries still apply to the two remaining roles.
+
+- Keep prepared runtime environments to the two host roles that persist beyond one Ticket: live and
+  staging. Ticket worktree servers remain temporary worktree processes, so the prepared preview
+  registry, commands, smoke, and Linux assets have no role and are removed.
+- Live owns a known fixed ingress port. Staging owns persistent fake database, managed-file, Worker
+  settings, and Hermes state, but selects an OS-bound loopback listener only when active work starts
+  it. Carry that listener through the supervisor and application child so discovery and bind are one
+  operation and controlled restart retains the same listener.
+- Use the existing lifecycle lease as the stopped proof for reset, removal, and live import. A live
+  import stages SQLite backup output, managed files, Worker settings, and Hermes home before swapping
+  them together; the same command is the restore path.
+- Adopt the current host from accepted `main` through a local staging branch and persistent checkout,
+  an isolated Ticket worktree, and a detached prepared-live checkout. Actual server stop, final
+  quiesced backup, import, start, health checks, branch advance, and cleanup remain the explicit
+  operator-owned Closeout checkpoint after Implementation approval.
 
 ## D-automatic-employee-step-eligibility — One complete automatic-start decision
 

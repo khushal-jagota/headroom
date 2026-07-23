@@ -17,6 +17,13 @@ Each stage is named for what the ticket needs next; your step is to give it that
 - **done** — finished.
 - **dropped** — abandoned.
 
+## Worktree lifecycle
+
+Implementation work happens in an isolated worktree created from the repository's
+integration branch. Follow the repository's guidance to set up and verify the
+worktree, run temporary services only while active work needs them, integrate the
+verified result, and clean up the worktree and its local state at Closeout.
+
 ### How to complete ticket stages effectively
 
 - **needs_success** — a good **success** says plainly what "done" means for this ticket, grounded in the real work. Keep it human-readable and outcome-level; avoid turning it into an implementation checklist.

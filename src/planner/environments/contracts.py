@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
-EnvironmentKind = Literal["live", "staging", "preview"]
+EnvironmentKind = Literal["live", "staging"]
 ExpectedLinuxAccount = Literal["panels-live", "panels-worker"]
 MIN_TCP_PORT: Final = 1
 MAX_TCP_PORT: Final = 65535
@@ -25,40 +25,33 @@ def validate_tcp_port(port: int, *, label: str = "port") -> int:
 
 
 @dataclass(frozen=True)
-class EnvironmentPortRange:
-    start: int
-    end: int
+class FixedEnvironmentPort:
+    port: int
 
     def __post_init__(self) -> None:
-        validate_tcp_port(self.start, label="preview port range start")
-        validate_tcp_port(self.end, label="preview port range end")
-        if self.start > self.end:
-            raise EnvironmentValidationError("preview port range start must be before end")
+        validate_tcp_port(self.port, label="fixed environment port")
+
+
+@dataclass(frozen=True)
+class DynamicEnvironmentPort:
+    bind_attempts: int = 10
+
+    def __post_init__(self) -> None:
+        if self.bind_attempts < 1:
+            raise EnvironmentValidationError("dynamic port bind attempts must be positive")
+
+
+EnvironmentPortPolicy = FixedEnvironmentPort | DynamicEnvironmentPort
 
 
 @dataclass(frozen=True)
 class EnvironmentDefaults:
     live_port: int = 8767
-    staging_port: int = 8768
-    preview_ports: EnvironmentPortRange = field(
-        default_factory=lambda: EnvironmentPortRange(9000, 9999)
-    )
+    staging_bind_attempts: int = 10
 
     def __post_init__(self) -> None:
         validate_tcp_port(self.live_port, label="live default port")
-        validate_tcp_port(self.staging_port, label="staging default port")
-        if self.live_port == self.staging_port:
-            raise EnvironmentValidationError(
-                "default live and staging ports must be different"
-            )
-        if self.preview_ports.start <= self.live_port <= self.preview_ports.end:
-            raise EnvironmentValidationError(
-                "default live port must not overlap preview port range"
-            )
-        if self.preview_ports.start <= self.staging_port <= self.preview_ports.end:
-            raise EnvironmentValidationError(
-                "default staging port must not overlap preview port range"
-            )
+        DynamicEnvironmentPort(self.staging_bind_attempts)
 
 
 @dataclass(frozen=True)
@@ -87,10 +80,11 @@ class ResolvedEnvironmentInstance:
     db_path: Path
     managed_files_root: Path
     hermes_home: Path
+    runtime_user_home: Path
     logs_dir: Path
     dispatcher_lock_path: Path
     server_control_socket_path: Path
-    port: int
+    port_policy: EnvironmentPortPolicy
     credentials_env_file: Path | None
     allowed_repository_roots: tuple[Path, ...]
     expected_linux_account: ExpectedLinuxAccount
@@ -108,10 +102,11 @@ class EnvironmentManifest:
     db_path: Path
     managed_files_root: Path
     hermes_home: Path
+    runtime_user_home: Path
     logs_dir: Path
     dispatcher_lock_path: Path
     server_control_socket_path: Path
-    port: int
+    port_policy: EnvironmentPortPolicy
     credentials_env_file: Path | None
     expected_linux_account: ExpectedLinuxAccount
     fixture_version: str | None

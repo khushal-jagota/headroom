@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,14 +12,12 @@ import click
 
 from planner.conversation.hermes_backend_configuration import resolve_hermes_python
 from planner.environments.contracts import (
+    DynamicEnvironmentPort,
     EnvironmentKind,
     EnvironmentManifest,
     EnvironmentValidationError,
+    FixedEnvironmentPort,
     ResolvedEnvironmentInstance,
-)
-from planner.environments.hermes_smoke import (
-    HermesSmokeReport,
-    smoke_prepared_nonproduction_instances,
 )
 from planner.environments.linux import render_linux_specification
 from planner.environments.logic.credentials import parse_environment_file
@@ -31,18 +28,22 @@ from planner.environments.logic.launch_env import (
 from planner.environments.logic.registry import resolve_environment_instance
 from planner.environments.logic.validation import validate_repository_roots
 from planner.environments.materialize import (
+    import_live_environment_state,
     inspect_environment_instance,
     manifest_to_json,
     prepare_environment_instance,
     remove_environment_instance,
     reset_environment_instance,
 )
+from planner.environments.repository_runtime import resolve_repository_runtime_python
+from planner.environments.runtime_port import reserve_available_tcp_listener
 
 ExecFn = Callable[[str, list[str], Mapping[str, str]], object]
 ResolveInstanceFn = Callable[..., ResolvedEnvironmentInstance]
 MaterializeFn = Callable[..., EnvironmentManifest]
 InspectInstanceFn = Callable[..., EnvironmentManifest]
-SmokeInstancesFn = Callable[..., HermesSmokeReport]
+ImportLiveFn = Callable[..., EnvironmentManifest]
+ResolveRepositoryRuntimePythonFn = Callable[[Path], Path]
 
 
 @dataclass(frozen=True)
@@ -50,12 +51,14 @@ class EnvironmentCliDependencies:
     resolve_instance: ResolveInstanceFn = resolve_environment_instance
     prepare_instance: MaterializeFn = prepare_environment_instance
     inspect_instance: InspectInstanceFn = inspect_environment_instance
+    import_live_state: ImportLiveFn = import_live_environment_state
     reset_instance: MaterializeFn = reset_environment_instance
     remove_instance: MaterializeFn = remove_environment_instance
-    smoke_instances: SmokeInstancesFn = smoke_prepared_nonproduction_instances
     exec_fn: ExecFn = os.execvpe
     ambient_env: Mapping[str, str] | None = None
-    executable: str = sys.executable
+    resolve_repository_runtime_python: ResolveRepositoryRuntimePythonFn = (
+        resolve_repository_runtime_python
+    )
 
 
 @click.group("environment")
@@ -64,7 +67,7 @@ def environment() -> None:
 
 
 @environment.command("prepare")
-@click.option("--kind", type=click.Choice(["live", "staging", "preview"]), required=True)
+@click.option("--kind", type=click.Choice(["live", "staging"]), required=True)
 @click.option("--instance-id")
 @click.option("--environment-root", type=click.Path(path_type=Path), required=True)
 @click.option("--port", type=int)
@@ -107,7 +110,7 @@ def prepare(
 
 
 @environment.command("inspect")
-@click.option("--kind", type=click.Choice(["live", "staging", "preview"]), required=True)
+@click.option("--kind", type=click.Choice(["live", "staging"]), required=True)
 @click.option("--instance-id")
 @click.option("--environment-root", type=click.Path(path_type=Path), required=True)
 @click.option("--port", type=int)
@@ -149,8 +152,64 @@ def inspect(
     _emit_manifest(manifest, json_output=json_output)
 
 
+@environment.command("import-live")
+@click.option("--environment-root", type=click.Path(path_type=Path), required=True)
+@click.option(
+    "--source-db",
+    type=click.Path(path_type=Path, exists=True, dir_okay=False),
+    required=True,
+)
+@click.option(
+    "--source-managed-files-root",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
+@click.option(
+    "--source-hermes-home",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
+@click.option(
+    "--source-runtime-user-home",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
+@click.option(
+    "--source-logs-root",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
+@click.option("--json", "json_output", is_flag=True)
+@click.pass_context
+def import_live(
+    ctx: click.Context,
+    *,
+    environment_root: Path,
+    source_db: Path,
+    source_managed_files_root: Path,
+    source_hermes_home: Path,
+    source_runtime_user_home: Path,
+    source_logs_root: Path,
+    json_output: bool,
+) -> None:
+    """Import or restore durable state into a prepared, stopped live environment."""
+    deps = _dependencies_from_context(ctx)
+    try:
+        manifest = deps.import_live_state(
+            environment_root=environment_root,
+            source_db_path=source_db,
+            source_managed_files_root=source_managed_files_root,
+            source_hermes_home=source_hermes_home,
+            source_runtime_user_home=source_runtime_user_home,
+            source_logs_root=source_logs_root,
+        )
+    except EnvironmentValidationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    _emit_manifest(manifest, json_output=json_output, running=False)
+
+
 @environment.command("reset")
-@click.option("--kind", type=click.Choice(["staging", "preview"]), required=True)
+@click.option("--kind", type=click.Choice(["staging"]), required=True)
 @click.option("--instance-id")
 @click.option("--environment-root", type=click.Path(path_type=Path), required=True)
 @click.option("--port", type=int)
@@ -174,7 +233,7 @@ def reset(
     repository_roots: tuple[Path, ...],
     json_output: bool,
 ) -> None:
-    """Rebuild staging or preview fake state while preserving instance identity."""
+    """Rebuild staging fake state while preserving its prepared identity."""
     deps = _dependencies_from_context(ctx)
     try:
         manifest = deps.reset_instance(
@@ -193,7 +252,7 @@ def reset(
 
 
 @environment.command("remove")
-@click.option("--kind", type=click.Choice(["staging", "preview"]), required=True)
+@click.option("--kind", type=click.Choice(["staging"]), required=True)
 @click.option("--instance-id")
 @click.option("--environment-root", type=click.Path(path_type=Path), required=True)
 @click.option("--port", type=int)
@@ -217,7 +276,7 @@ def remove(
     repository_roots: tuple[Path, ...],
     json_output: bool,
 ) -> None:
-    """Remove one stopped staging or preview environment."""
+    """Remove the stopped staging environment."""
     deps = _dependencies_from_context(ctx)
     try:
         manifest = deps.remove_instance(
@@ -236,9 +295,14 @@ def remove(
 
 
 @environment.command("render-linux")
-@click.option("--kind", type=click.Choice(["live", "staging", "preview"]), required=True)
+@click.option("--kind", type=click.Choice(["live", "staging"]), required=True)
 @click.option("--instance-id")
 @click.option("--environment-root", type=click.Path(path_type=Path), required=True)
+@click.option(
+    "--environment-manager-root",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
 @click.option("--json", "json_output", is_flag=True)
 @click.pass_context
 def render_linux(
@@ -247,6 +311,7 @@ def render_linux(
     kind: EnvironmentKind,
     instance_id: str | None,
     environment_root: Path,
+    environment_manager_root: Path,
     json_output: bool,
 ) -> None:
     """Render Linux unit and ownership intent without installing it."""
@@ -260,7 +325,10 @@ def render_linux(
             credentials_env_file=None,
             repository_roots=(),
         )
-        rendered = render_linux_specification(manifest)
+        rendered = render_linux_specification(
+            manifest,
+            environment_manager_root=environment_manager_root,
+        )
     except EnvironmentValidationError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -273,9 +341,7 @@ def render_linux(
                     "unit_text": rendered.unit_text,
                     "tmpfiles_text": rendered.tmpfiles_text,
                     "ownership_text": rendered.ownership_text,
-                    "strict_writable_paths": [
-                        str(path) for path in rendered.strict_writable_paths
-                    ],
+                    "strict_writable_paths": [str(path) for path in rendered.strict_writable_paths],
                     "repository_path_policy": rendered.repository_path_policy,
                     "credential_file_reference": (
                         str(rendered.credential_file_reference)
@@ -300,63 +366,8 @@ def render_linux(
     click.echo("\n[ownership]\n" + rendered.ownership_text)
 
 
-@environment.command("smoke-hermes")
-@click.option("--environment-root", type=click.Path(path_type=Path), required=True)
-@click.option("--preview-id", required=True)
-@click.option("--hermes-python", type=click.Path(path_type=Path), required=True)
-@click.option("--json", "json_output", is_flag=True)
-@click.pass_context
-def smoke_hermes(
-    ctx: click.Context,
-    *,
-    environment_root: Path,
-    preview_id: str,
-    hermes_python: Path,
-    json_output: bool,
-) -> None:
-    """Opt in to a real Hermes cross-home smoke for staging and one preview."""
-    deps = _dependencies_from_context(ctx)
-    try:
-        staging = deps.inspect_instance(
-            kind="staging",
-            instance_id=None,
-            environment_root=environment_root,
-            port=None,
-            credentials_env_file=None,
-            repository_roots=(),
-        )
-        preview = deps.inspect_instance(
-            kind="preview",
-            instance_id=preview_id,
-            environment_root=environment_root,
-            port=None,
-            credentials_env_file=None,
-            repository_roots=(),
-        )
-        report = deps.smoke_instances(
-            staging=staging,
-            preview=preview,
-            hermes_python=hermes_python,
-            ambient_env=deps.ambient_env,
-        )
-    except EnvironmentValidationError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    payload = {
-        "preview_home": str(report.preview_home),
-        "preview_stored_session_id": report.preview_stored_session_id,
-        "staging_home": str(report.staging_home),
-        "staging_stored_session_id": report.staging_stored_session_id,
-    }
-    if json_output:
-        click.echo(json.dumps(payload, sort_keys=True))
-        return
-    click.echo(f"staging {payload['staging_home']} {payload['staging_stored_session_id']}")
-    click.echo(f"preview {payload['preview_home']} {payload['preview_stored_session_id']}")
-
-
 @environment.command("run")
-@click.option("--kind", type=click.Choice(["live", "staging", "preview"]), required=True)
+@click.option("--kind", type=click.Choice(["live", "staging"]), required=True)
 @click.option("--instance-id")
 @click.option("--environment-root", type=click.Path(path_type=Path), required=True)
 @click.option("--port", type=int)
@@ -422,39 +433,50 @@ def run_environment_instance(
     )
     ambient = deps.ambient_env if deps.ambient_env is not None else os.environ
     hermes_python = resolve_hermes_python(env=ambient)
-    if test_mode:
-        run_env = build_test_environment_run_env(
-            instance,
-            credentials=credentials,
-            ambient=ambient,
-            hermes_python=hermes_python,
+    listener = None
+    if isinstance(instance.port_policy, FixedEnvironmentPort):
+        runtime_port = instance.port_policy.port
+    elif isinstance(instance.port_policy, DynamicEnvironmentPort):
+        listener, runtime_port = reserve_available_tcp_listener(
+            bind_attempts=instance.port_policy.bind_attempts
         )
-    else:
-        run_env = build_environment_run_env(
-            instance,
-            credentials=credentials,
-            ambient=ambient,
-            hermes_python=hermes_python,
+    else:  # pragma: no cover - union exhaustiveness
+        raise EnvironmentValidationError("unknown environment runtime port policy")
+
+    environment_builder = build_test_environment_run_env if test_mode else build_environment_run_env
+    run_env = environment_builder(
+        instance,
+        credentials=credentials,
+        ambient=ambient,
+        hermes_python=hermes_python,
+        runtime_port=runtime_port,
+    )
+    if listener is not None:
+        run_env["PLAN_SERVER_LISTENER_FD"] = str(listener.fileno())
+        run_env["PLAN_SERVER_LIFECYCLE_LEASE_PATH"] = str(
+            instance.instance_root / "run" / "server-lifecycle.lock"
         )
-    argv = [deps.executable, "-m", "planner", "serve"]
+        click.echo(f"staging http://127.0.0.1:{runtime_port}", err=True)
     launch_root = _validated_launch_repository_root(
         launch_repository_root,
         allowed_repository_roots=instance.allowed_repository_roots,
     )
+    launch_interpreter = deps.resolve_repository_runtime_python(launch_root)
+    argv = [str(launch_interpreter), "-m", "planner", "serve"]
     previous_cwd = Path.cwd()
     os.chdir(launch_root)
     try:
-        deps.exec_fn(deps.executable, argv, run_env)
+        deps.exec_fn(str(launch_interpreter), argv, run_env)
     finally:
+        if listener is not None:
+            listener.close()
         if Path.cwd() == launch_root:
             os.chdir(previous_cwd)
 
 
 def _one_caller_trusted_repository_root(repository_roots: tuple[Path, ...]) -> Path:
     if len(repository_roots) != 1:
-        raise EnvironmentValidationError(
-            "environment run requires exactly one repository root"
-        )
+        raise EnvironmentValidationError("environment run requires exactly one repository root")
     return repository_roots[0]
 
 
@@ -499,10 +521,11 @@ def _resolved_instance_from_manifest(manifest: EnvironmentManifest) -> ResolvedE
         db_path=manifest.db_path,
         managed_files_root=manifest.managed_files_root,
         hermes_home=manifest.hermes_home,
+        runtime_user_home=manifest.runtime_user_home,
         logs_dir=manifest.logs_dir,
         dispatcher_lock_path=manifest.dispatcher_lock_path,
         server_control_socket_path=manifest.server_control_socket_path,
-        port=manifest.port,
+        port_policy=manifest.port_policy,
         credentials_env_file=manifest.credentials_env_file,
         allowed_repository_roots=manifest.repository_roots,
         expected_linux_account=manifest.expected_linux_account,

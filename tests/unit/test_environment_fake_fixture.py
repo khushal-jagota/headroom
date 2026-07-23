@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -88,80 +90,6 @@ def test_fake_fixture_is_same_logical_seed_but_independent_ids_and_database_byte
     assert _sha256(first_db_path) != _sha256(second_db_path)
 
 
-def test_prepare_materializes_staging_and_previews_as_independent_instances(
-    tmp_path: Path,
-) -> None:
-    staging_repository_root = _repository_root(tmp_path, "staging-repo")
-    first_preview_repository_root = _repository_root(tmp_path, "feature-one-repo")
-    second_preview_repository_root = _repository_root(tmp_path, "feature-two-repo")
-    environment_root = _short_environment_root(tmp_path)
-
-    staging = prepare_environment_instance(
-        kind="staging",
-        environment_root=environment_root,
-        repository_roots=(staging_repository_root,),
-    )
-    first_preview = prepare_environment_instance(
-        kind="preview",
-        instance_id="feature-one",
-        environment_root=environment_root,
-        port=9011,
-        repository_roots=(first_preview_repository_root,),
-    )
-    second_preview = prepare_environment_instance(
-        kind="preview",
-        instance_id="feature-two",
-        environment_root=environment_root,
-        port=9012,
-        repository_roots=(second_preview_repository_root,),
-    )
-
-    assert staging.fixture_version == FAKE_FIXTURE_VERSION
-    assert first_preview.fixture_version == FAKE_FIXTURE_VERSION
-    assert second_preview.fixture_version == FAKE_FIXTURE_VERSION
-    assert len({staging.db_path, first_preview.db_path, second_preview.db_path}) == 3
-    assert len(
-        {
-            staging.managed_files_root,
-            first_preview.managed_files_root,
-            second_preview.managed_files_root,
-        }
-    ) == 3
-    assert len({staging.hermes_home, first_preview.hermes_home, second_preview.hermes_home}) == 3
-    assert len({staging.logs_dir, first_preview.logs_dir, second_preview.logs_dir}) == 3
-    assert (
-        len(
-            {
-                staging.dispatcher_lock_path,
-                first_preview.dispatcher_lock_path,
-                second_preview.dispatcher_lock_path,
-            }
-        )
-        == 3
-    )
-    assert (
-        len(
-            {
-                staging.server_control_socket_path,
-                first_preview.server_control_socket_path,
-                second_preview.server_control_socket_path,
-            }
-        )
-        == 3
-    )
-    assert staging.db_path.is_file()
-    assert first_preview.db_path.is_file()
-    assert second_preview.db_path.is_file()
-    assert _sha256(staging.db_path) != _sha256(first_preview.db_path)
-    assert _sha256(first_preview.db_path) != _sha256(second_preview.db_path)
-    _assert_skill_only_hermes_home(staging.hermes_home)
-    _assert_skill_only_hermes_home(first_preview.hermes_home)
-    _assert_skill_only_hermes_home(second_preview.hermes_home)
-    assert (staging.instance_root / "manifest.json").is_file()
-    assert (first_preview.instance_root / "manifest.json").is_file()
-    assert (second_preview.instance_root / "manifest.json").is_file()
-
-
 def test_instance_skill_materialization_uses_database_parent(
     tmp_path: Path,
 ) -> None:
@@ -183,15 +111,17 @@ def test_instance_skill_materialization_uses_database_parent(
         dispatcher_lock_path=tmp_path / "locks" / "dispatcher.lock",
         server_control_socket_path=tmp_path / "run" / "server.sock",
         hermes_home=hermes_home,
+        runtime_user_home=tmp_path / "runtime-user-home",
         db_path=data_root / "planning.db",
+        allowed_repository_roots=(Path(__file__).resolve().parents[2],),
     )
 
     environment_materialize._prepare_common_layout(instance)
     environment_materialize._materialize_instance_skills(instance)
 
-    materialized = (
-        hermes_home / "skills" / "panels-worker-coding" / "SKILL.md"
-    ).read_text(encoding="utf-8")
+    materialized = (hermes_home / "skills" / "panels-worker-coding" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     assert 'description: "Environment-specific specialist"' in materialized
     assert "# Environment specialist" in materialized
 
@@ -244,7 +174,7 @@ def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Pat
     )
 
     assert reset.instance_id == staging.instance_id
-    assert reset.port == staging.port
+    assert reset.port_policy == staging.port_policy
     assert reset.hermes_home == staging.hermes_home
     assert reset.credentials_env_file == staging.credentials_env_file
     assert reset.fixture_version == FAKE_FIXTURE_VERSION
@@ -288,9 +218,9 @@ def test_reset_materializes_specialists_after_replacing_managed_settings(
         registry,
         "coding",
     ).specialist_skill.source_text
-    materialized = (
-        reset.hermes_home / "skills" / "panels-worker-coding" / "SKILL.md"
-    ).read_text(encoding="utf-8")
+    materialized = (reset.hermes_home / "skills" / "panels-worker-coding" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     assert "Old environment-specific specialist" not in canonical
     assert materialized == canonical
 
@@ -337,7 +267,11 @@ def _repository_root(tmp_path: Path | None = None, name: str = "repo") -> Path:
         return Path(__file__).resolve().parents[2]
     repository_root = tmp_path / name
     repository_root.mkdir()
-    (repository_root / ".git").mkdir()
+    subprocess.run(["git", "init", "-q", str(repository_root)], check=True)
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "src" / "planner" / "skills",
+        repository_root / "src" / "planner" / "skills",
+    )
     return repository_root
 
 

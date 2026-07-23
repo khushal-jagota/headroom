@@ -7,6 +7,8 @@ from pathlib import Path
 
 from planner.environments.contracts import EnvironmentManifest, EnvironmentValidationError
 
+DEFAULT_LINUX_ENVIRONMENT_MANAGER_ROOT = Path("/opt/panels/environment-manager")
+
 
 @dataclass(frozen=True)
 class LinuxEnvironmentSpecification:
@@ -24,6 +26,8 @@ class LinuxEnvironmentSpecification:
 
 def render_linux_specification(
     manifest: EnvironmentManifest,
+    *,
+    environment_manager_root: Path | None = None,
 ) -> LinuxEnvironmentSpecification:
     """Return the Linux account/unit/tmpfiles intent without changing local state."""
     if manifest.prepared_at is None:
@@ -54,7 +58,15 @@ def render_linux_specification(
     return LinuxEnvironmentSpecification(
         required_account=manifest.expected_linux_account,
         unit_name=unit_name,
-        unit_text=_unit_text(manifest, unit_name),
+        unit_text=_unit_text(
+            manifest,
+            unit_name,
+            environment_manager_root=(
+                environment_manager_root.resolve()
+                if environment_manager_root is not None
+                else DEFAULT_LINUX_ENVIRONMENT_MANAGER_ROOT
+            ),
+        ),
         tmpfiles_text=tmpfiles_text,
         ownership_text=ownership_text,
         strict_writable_paths=writable_paths,
@@ -76,23 +88,27 @@ def _unit_name(manifest: EnvironmentManifest) -> str:
         return "panels-live.service"
     if manifest.kind == "staging":
         return "panels-staging.service"
-    return f"panels-preview-{manifest.instance_id}.service"
+    raise EnvironmentValidationError(f"unknown environment kind: {manifest.kind}")
 
 
-def _unit_text(manifest: EnvironmentManifest, unit_name: str) -> str:
+def _unit_text(
+    manifest: EnvironmentManifest,
+    unit_name: str,
+    *,
+    environment_manager_root: Path,
+) -> str:
     read_write_paths = " ".join(
         (str(manifest.instance_root), *(str(root) for root in manifest.repository_roots))
     )
     command = [
-        "/usr/bin/env",
-        "panels",
+        str(environment_manager_root / ".venv" / "bin" / "python"),
+        "-m",
+        "planner",
         "environment",
         "run",
         "--kind",
         manifest.kind,
     ]
-    if manifest.kind == "preview":
-        command.extend(["--instance-id", manifest.instance_id])
     command.extend(
         [
             "--environment-root",

@@ -1,5 +1,56 @@
 # PROGRESS
 
+## Current work cycle (2026-07-22): Adopt persistent staging and separated live operation (`t_b5ja4rqu`)
+
+The accepted `main` revision `279cb972` now anchors a local `staging` branch, a persistent staging
+checkout, an isolated Ticket worktree, and a detached live checkout. Each checkout has its own
+Python and Node dependencies, and the private `khushal-jagota/panels` origin is configured without
+an initial push. A SQLite-consistent pre-adoption database backup plus managed files, Worker
+settings, Hermes home, config, and logs lives under
+`/Users/khushaljagota/.hermes/backups/planning-v2/t_b5ja4rqu-pre-adoption-20260722-1430`.
+
+Prepared runtime environments are now exactly live and staging. Live retains fixed port 8767 and
+has a stopped-only, staged `import-live` path for SQLite/WAL, managed files, Worker settings, and
+Hermes, Codex, Claude, and archived-log state. The live import builds one complete generation,
+switches one stable pointer atomically, and treats cleanup after commit as best effort. Staging keeps
+a resettable fake database and durable Hermes/files/private-user-home state but no stored
+runtime port; each launch carries an OS-bound dynamic listener through the supervisor into Uvicorn.
+The prepared preview commands, contracts, registry allocation, Hermes smoke, Linux unit, env input,
+docs, and tests are removed. The coding-worker skill has only the universal lifecycle sentence;
+repository-specific setup, server use, integration, and cleanup guidance lives in `AGENTS.md` and
+`CLAUDE.md`.
+
+The persistent runtime root is prepared at
+`/Users/khushaljagota/.hermes/runtime/panels-environments`. Staging inspection reports the dynamic
+policy with no port; prepared live observes the current port-8767 lease and therefore refuses import
+until the operator stops the untouched current server. Combined focused unit/E2E tests, Ruff, strict
+Mypy on the changed source, diff checks, and preview-surface checks passed before corrective review.
+The accepted correction also proves private identity modes/special-file exclusion,
+cross-private-manifest isolation, atomic generation failures, prepared skill-link repair, and a
+root-owned pinned Linux manager which validates and executes each target checkout's own interpreter.
+The settled combined tree passes all 115 focused unit/E2E tests, including the real typed-ACP
+Worker prompt/session proof, plus Ruff over every changed Python file, strict Mypy over the 13
+changed source modules, and diff checks. Fresh independent re-review explicitly dispositioned all
+prior corrective findings and reports no unresolved Implementation blocker. The canonical
+Closeout gate first passed Ruff, strict Mypy, 1,330 unit tests, and every frontend gate, then exposed
+that the ACP proof's internal `asyncio.run()` collided with Playwright's already-running event loop
+only in the full E2E suite. The proof now runs its real ACP child on an isolated thread; the exact
+browser-then-ACP regression, Ruff, and diff checks pass. The one canonical rerun on the settled
+prospective staging result passes Ruff, strict Mypy across 156 source files, all 1,330 unit tests,
+all frontend checks, and all 120 E2E tests; final `VERIFY: PASS`. Staging remains unchanged at the
+accepted base. Next: operator stop, final quiesced backup/import, separated-live start and health
+checks, staging advance/push/PR, and Ticket-worktree cleanup.
+
+The worker-owned Closeout turn was automatically redispatched more than three times while the
+operator-owned server continued to answer on port 8767. No migration or integration action was
+repeated. The original checkpoint deadlocked because stopping the foreground server also stops the
+Employee turn, so the operator could not confirm the stop before receiving the import/start command.
+The durable implementation report now gives one complete stop -> atomic import -> normalized final
+backup -> inspect -> separated-live run sequence. The verified Ticket launcher invokes the detached
+accepted-main checkout's own interpreter. After Panels reconnects, continue with health/state/session
+proof before advancing staging or cleaning anything up. The worker must not stop, signal, replace,
+or launch the operator-owned server.
+
 ## Current work cycle (2026-07-23): Operator cutover for separated live operation
 
 The old foreground `panels serve` launcher and its stale detached application process were
@@ -77,7 +128,6 @@ results, although terminal metadata is ignored by its tool reducer. Separately, 
 and ignored provider traffic are logged verbatim. Hermes `data/hermes-home/state.db` is 1.2 GB,
 with 142 MB of messages and roughly 938 MB of regular/trigram FTS structures. Next: report the
 direct failure, retention/serving problems, and separate disk cleanup opportunities; no fix made.
-
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 
 The Ticket `Adopt staging and separated live operation on the current host` had a missing

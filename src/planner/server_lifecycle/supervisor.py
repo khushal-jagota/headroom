@@ -193,11 +193,14 @@ class ServerSupervisor:
         )
         environment["PLAN_SERVER_CONTROL_SOCKET"] = str(self._control_socket_path)
         try:
+            listener_fd = environment.get("PLAN_SERVER_LISTENER_FD")
+            pass_fds = (int(listener_fd),) if listener_fd is not None else ()
             self._application_child = subprocess.Popen(
                 [self._interpreter, "-m", "planner.server_lifecycle.application"],
                 cwd=self._launch_root,
                 env=environment,
                 start_new_session=True,
+                pass_fds=pass_fds,
             )
         except OSError as exc:
             raise ServerLifecycleError(f"Could not start the Panels application: {exc}") from exc
@@ -335,8 +338,11 @@ def run_server_supervisor() -> int:
         environ,
         launch_root,
     )
+    explicit_lease_path = environ.get("PLAN_SERVER_LIFECYCLE_LEASE_PATH")
     lease = PortScopedServerLifecycleLease(
-        resolve_server_lifecycle_lease_path(config.port),
+        Path(explicit_lease_path).resolve()
+        if explicit_lease_path
+        else resolve_server_lifecycle_lease_path(config.port),
         config.port,
     )
     supervisor = ServerSupervisor(

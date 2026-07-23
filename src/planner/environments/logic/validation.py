@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 
 from planner.environments.contracts import (
     EnvironmentKind,
     EnvironmentValidationError,
+    FixedEnvironmentPort,
     ResolvedEnvironmentInstance,
-    validate_tcp_port,
 )
 
-_PREVIEW_INSTANCE_ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 MAX_AF_UNIX_SOCKET_PATH_BYTES = 103
 
 
@@ -26,15 +24,7 @@ def validate_instance_id(kind: EnvironmentKind, instance_id: str | None) -> str:
         if instance_id not in (None, "staging"):
             raise EnvironmentValidationError("staging instance id must be 'staging'")
         return "staging"
-    if kind != "preview":
-        raise EnvironmentValidationError(f"unknown environment kind: {kind}")
-    if instance_id is None or _PREVIEW_INSTANCE_ID_RE.fullmatch(instance_id) is None:
-        raise EnvironmentValidationError(
-            "preview instance id must use lowercase letters, digits, and hyphens"
-        )
-    if instance_id in {"live", "staging"}:
-        raise EnvironmentValidationError("preview instance id must not use a stable instance name")
-    return instance_id
+    raise EnvironmentValidationError(f"unknown environment kind: {kind}")
 
 
 def validate_absolute_environment_root(environment_root: Path) -> Path:
@@ -89,7 +79,7 @@ def validate_nonproduction_credential_reference_outside_live_root(
         or live_root in resolved_credentials_env_file.parents
     ):
         raise EnvironmentValidationError(
-            "staging and preview credential references must not be equal to "
+            "staging credential references must not be equal to "
             f"or nested under the live environment root: {resolved_credentials_env_file}"
         )
     return resolved_credentials_env_file
@@ -114,13 +104,15 @@ def validate_resolved_registry(instances: tuple[ResolvedEnvironmentInstance, ...
 def reject_duplicate_ports(instances: tuple[ResolvedEnvironmentInstance, ...]) -> None:
     ports_by_value: dict[int, str] = {}
     for instance in instances:
-        validate_tcp_port(instance.port)
-        previous_label = ports_by_value.get(instance.port)
+        if not isinstance(instance.port_policy, FixedEnvironmentPort):
+            continue
+        port = instance.port_policy.port
+        previous_label = ports_by_value.get(port)
         if previous_label is not None:
             raise EnvironmentValidationError(
-                f"duplicate port {instance.port}: {previous_label} and {instance.instance_id}"
+                f"duplicate port {port}: {previous_label} and {instance.instance_id}"
             )
-        ports_by_value[instance.port] = instance.instance_id
+        ports_by_value[port] = instance.instance_id
 
 
 def reject_overlapping_paths(paths_by_label: dict[str, Path]) -> None:
@@ -183,6 +175,7 @@ def _isolation_paths(instance: ResolvedEnvironmentInstance) -> dict[str, Path]:
         "db_path": instance.db_path,
         "managed_files_root": instance.managed_files_root,
         "hermes_home": instance.hermes_home,
+        "runtime_user_home": instance.runtime_user_home,
         "logs_dir": instance.logs_dir,
         "dispatcher_lock_path": instance.dispatcher_lock_path,
         "server_control_socket_path": instance.server_control_socket_path,
@@ -198,9 +191,27 @@ def _validate_existing_repository_root(root: Path) -> Path:
     resolved_root = root.resolve()
     if not resolved_root.exists() or not resolved_root.is_dir():
         raise EnvironmentValidationError(f"repository root does not exist: {resolved_root}")
-    if not (resolved_root / ".git").exists():
+    git_marker = resolved_root / ".git"
+    if not _is_git_worktree_marker(git_marker):
         raise EnvironmentValidationError(f"repository root is not a worktree: {resolved_root}")
     return resolved_root
+
+
+def _is_git_worktree_marker(git_marker: Path) -> bool:
+    if git_marker.is_dir():
+        return (git_marker / "HEAD").is_file() and (git_marker / "objects").is_dir()
+    if not git_marker.is_file():
+        return False
+    try:
+        prefix, raw_git_directory = git_marker.read_text(encoding="utf-8").strip().split(":", 1)
+    except (OSError, ValueError):
+        return False
+    if prefix != "gitdir":
+        return False
+    git_directory = Path(raw_git_directory.strip())
+    if not git_directory.is_absolute():
+        git_directory = git_marker.parent / git_directory
+    return git_directory.resolve().is_dir() and (git_directory.resolve() / "HEAD").is_file()
 
 
 def _resolve_for_contract(path: Path) -> Path:

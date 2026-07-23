@@ -60,12 +60,17 @@ def provision_planner_home_skills(
     skill_names: tuple[str, ...] = PLANNER_SKILL_NAMES,
     *,
     configured_database_parent: Path | str | None = None,
+    panels_skills_source_root: Path | str | None = None,
 ) -> None:
     """Expose packaged Panels skills and managed specialist skills in Hermes home."""
     from planner.worker_settings.service import materialize_specialist_skill
     from planner.worker_types.configuration import configured_worker_type_registry
 
-    source_root = panels_skill_root()
+    source_root = (
+        Path(panels_skills_source_root).resolve()
+        if panels_skills_source_root is not None
+        else panels_skill_root()
+    )
     target_root = Path(home).expanduser() / "skills"
     target_root.mkdir(parents=True, exist_ok=True)
     registry = configured_worker_type_registry()
