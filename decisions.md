@@ -90,6 +90,16 @@ dispatch, and migration tests. The existing v25 through v28 migrations keep thei
 
 # Conversation
 
+## D-employee-configuration-catalog-is-durable-and-explicitly-refreshed — Cache discovery without hiding a failed refresh
+
+- Catalog identity is the backend plus the exact candidate model, including a distinct NULL value.
+- Persist successful typed catalog discovery for 24 hours. A restart must therefore not create
+  temporary provider sessions simply to redraw a launch menu.
+- Normal reads use a fresh matching row. The user-facing Refresh action is the sole force path;
+  it coalesces concurrent work for the same key and atomically replaces the row only on success.
+- A malformed or mismatched stored row is not trusted. A discovery failure remains visible to the
+  caller and never deletes a previously known-good row.
+
 ## D-acp-session-load-atomic-replay — Admit a complete private load as one replay transition
 
 A private complete session load is captured and admitted as one sequenced replay transition. A
@@ -3360,3 +3370,33 @@ not guarantee notification/request wire ordering across the prior fork response.
   custom ownership and launch defaults and leaving general missing-stage validation strict.
 - Drafting changes packaged source and compatibility seams only. Publishing the packaged specialist
   into managed settings, final verification, and restart-backed activation belong to Closeout.
+# 2026-07-23 — Panels Closeout pushes staging
+
+- Panels Closeout must push the exact verified `staging` revision to `origin/staging` and verify the
+  remote ref before cleanup.
+- Keep this in Panels repository guidance rather than the generic coding-worker skill, because other
+  repositories may publish feature branches or use a different integration target.
+
+# 2026-07-23 — Live main flows into staging
+
+- Commit the live checkout's current runtime changes onto local `main`, preserving separate commits
+  for durable catalog caching, conversation recovery, generated frontend output, and authentication
+  reconciliation.
+- Commit staging-owned work before integration, including its recovery regressions, Coding-path
+  bookkeeping, design exploration, and the independently tested nested shared-frontend result.
+- Integrate only in the requested direction: merge `main` into `staging`. Do not merge or
+  fast-forward `staging` into `main`.
+- Keep staging's newer dynamic-port environment contract during conflict resolution and rebuild
+  `web/dist` from the merged source rather than selecting either branch's stale bundle.
+
+# 2026-07-23 — Primary checkout is the staging coding checkout
+
+- Keep two persistent operating roles: `/Users/khushaljagota/Coding/planning-v2` is the
+  coding/integration checkout on `staging`, and
+  `/Users/khushaljagota/.hermes/live/planning-v2` is the detached live checkout.
+- Move the original repository owner into the normal Coding folder rather than hiding the human
+  coding checkout under `.hermes`. Its `.git` directory continues to own the shared repository
+  metadata used by linked Ticket and live worktrees, so repair every registered worktree after the
+  move.
+- Preserve the original checkout's local commit and uncommitted work before conversion, restore that
+  work onto `staging`, and leave live source and process state untouched.

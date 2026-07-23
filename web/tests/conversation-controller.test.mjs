@@ -236,6 +236,22 @@ try {
   assert.equal(empty.controller.snapshot().connection.state, "ready");
   empty.controller.dispose();
 
+  const reconnecting = controllerHarness(subject);
+  reconnecting.controller.attach();
+  reconnecting.transports[0].callbacks.onOpen();
+  reconnecting.transports[0].callbacks.onClose(null);
+  assert.deepEqual(
+    reconnecting.controller.newConversation(),
+    { ok: true },
+    "New remains available while the old conversation is reconnecting",
+  );
+  assert.equal(reconnecting.transports.length, 2);
+  reconnecting.transports[1].callbacks.onOpen();
+  assert.deepEqual(reconnecting.transports[1].sent, [
+    { type: "new_conversation", employeeId: "ticket-deferred" },
+  ]);
+  reconnecting.controller.dispose();
+
   const disposed = controllerHarness(subject, { deferInitialAttach: true });
   assert.equal(disposed.controller.prompt([{ type: "text", text: "Drop me" }], "normal").ok, true);
   const staleTransport = disposed.transports[0];

@@ -16,7 +16,7 @@ from planner.core.legacy_execution_route import (
 from planner.projects import data as projects_data
 from planner.worker_types.configuration import configured_worker_type_registry
 
-SCHEMA_VERSION: Final = 33
+SCHEMA_VERSION: Final = 34
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -99,6 +99,14 @@ CREATE TABLE IF NOT EXISTS ticket_conversation_projections (
   has_completed_response_awaiting_user   INTEGER NOT NULL DEFAULT 0 CHECK (has_completed_response_awaiting_user IN (0,1)),
   has_pending_permission                 INTEGER NOT NULL DEFAULT 0 CHECK (has_pending_permission IN (0,1)),
   updated_at                             INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS employee_configuration_catalog_cache (
+  employee_backend          TEXT NOT NULL,
+  candidate_model_identity  TEXT NOT NULL,
+  catalog_json              TEXT NOT NULL,
+  discovered_at             INTEGER NOT NULL,
+  PRIMARY KEY (employee_backend, candidate_model_identity)
 );
 
 CREATE TABLE IF NOT EXISTS days (
@@ -299,6 +307,12 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _migrate_to_v33(conn)
     elif not _employee_conversations_table_is_v33(conn):
         raise RuntimeError("v33 schema is missing durable Panels conversation generations")
+    if incoming_version < 34:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v34(conn)
+    elif not _employee_configuration_catalog_cache_table_is_v34(conn):
+        raise RuntimeError("v34 schema is missing the employee configuration catalog cache")
     _create_indexes(conn)
 
 
@@ -870,6 +884,54 @@ def _migrate_to_v33(conn: sqlite3.Connection) -> None:
                 f"foreign key check failed after Conversation v33 migration: {violations!r}"
             )
         conn.execute("PRAGMA user_version=33")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def _employee_configuration_catalog_cache_table_is_v34(
+    conn: sqlite3.Connection,
+) -> bool:
+    columns = {
+        str(row["name"]): row
+        for row in conn.execute("PRAGMA table_info(employee_configuration_catalog_cache)")
+    }
+    return set(columns) == {
+        "employee_backend",
+        "candidate_model_identity",
+        "catalog_json",
+        "discovered_at",
+    } and (
+        int(columns["employee_backend"]["pk"]) == 1
+        and int(columns["candidate_model_identity"]["pk"]) == 2
+        and int(columns["catalog_json"]["notnull"]) == 1
+        and int(columns["discovered_at"]["notnull"]) == 1
+    )
+
+
+def _migrate_to_v34(conn: sqlite3.Connection) -> None:
+    """Add the durable, NULL-safe backend configuration catalog cache."""
+
+    if conn.in_transaction:
+        raise RuntimeError("Employee configuration catalog v34 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS employee_configuration_catalog_cache ("
+            "employee_backend TEXT NOT NULL, "
+            "candidate_model_identity TEXT NOT NULL, "
+            "catalog_json TEXT NOT NULL, "
+            "discovered_at INTEGER NOT NULL, "
+            "PRIMARY KEY (employee_backend, candidate_model_identity)"
+            ")"
+        )
+        if not _employee_configuration_catalog_cache_table_is_v34(conn):
+            raise RuntimeError(
+                "Employee configuration catalog v34 migration did not establish its table"
+            )
+        conn.execute("PRAGMA user_version=34")
         conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:

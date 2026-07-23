@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plate — The Day Table</title>
+<style>
+  :root {
+    /* warm charcoal, carved into levels */
+    --recess:   #1b1713;
+    --ground:   #221e19;
+    --raised:   #292420;
+    --hairline: #3a332b;
+    /* second material */
+    --blue:          #16233d;
+    --blue-hairline: #263a5e;
+    /* matte slate denim */
+    --denim:        #8fa6c2;
+    --denim-bright: #c6d4e6;
+    /* type */
+    --bone:        #e9dfcd;
+    --bone-bright: #f7f1e4;
+    --ash:         #93897a;
+    --ash-deep:    #6d655a;
+    /* semantic, mineral */
+    --moss:    #90a67f;
+    --mineral: #c67f6d;
+
+    --serif: "Bodoni 72", "Didot", "Playfair Display", Georgia, serif;
+    --sans: "Avenir Next", "Avenir", "Helvetica Neue", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background:
+      radial-gradient(120% 90% at 30% 0%, rgba(247,241,228,.045), transparent 60%),
+      linear-gradient(180deg, #242019 0%, #201c17 55%, #1d1914 100%);
+    background-color: var(--ground);
+    color: var(--bone);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* grain — the human hand */
+  body::after {
+    content: '';
+    position: fixed; inset: 0; z-index: 40;
+    pointer-events: none;
+    opacity: .5;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.07 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .caps {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .32em;
+    text-transform: uppercase;
+    color: var(--ash);
+  }
+
+  /* ── chrome: three words and a wordmark ─────────────── */
+  nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 30px 72px 0;
+  }
+  nav .left { display: flex; gap: 44px; }
+  nav a { text-decoration: none; color: var(--ash-deep); transition: color .2s; }
+  nav a:hover { color: var(--bone); }
+  nav a.here {
+    color: var(--bone-bright);
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--denim);
+  }
+
+  main {
+    flex: 1;
+    width: 100%;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 72px;
+  }
+
+  /* ── dateline under a slab rule ─────────────────────── */
+  header.dateline {
+    margin-top: 68px;
+    border-top: 4px solid var(--bone);
+    padding: 18px 0 46px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    animation: settle .7s cubic-bezier(.2,.7,.2,1) both;
+  }
+  header.dateline .day {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 27px;
+    letter-spacing: .01em;
+    color: var(--bone-bright);
+  }
+  header.dateline .day em {
+    font-style: normal;
+    color: var(--ash);
+    font-weight: 400;
+  }
+
+  /* ── the program ────────────────────────────────────── */
+  .row {
+    display: grid;
+    grid-template-columns: 108px 1fr auto;
+    align-items: baseline;
+    column-gap: 40px;
+    padding: 26px 0;
+    border-bottom: 1px solid var(--hairline);
+    animation: settle .7s cubic-bezier(.2,.7,.2,1) both;
+    transition: background .18s;
+  }
+  .row:first-of-type { border-top: 1px solid var(--hairline); }
+  .row:hover { background: rgba(247,241,228,.022); }
+
+  .row .when {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: .14em;
+    color: var(--ash);
+    font-variant-numeric: tabular-nums;
+  }
+  .row .title {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 27px;
+    line-height: 1.15;
+    letter-spacing: .012em;
+    color: var(--bone-bright);
+  }
+  .row .tags { display: flex; gap: 34px; align-items: baseline; }
+  .row .proj { color: var(--ash-deep); }
+  .row .state { min-width: 76px; text-align: right; }
+  .state.pending { color: var(--ash); }
+  .state.done    { color: var(--moss); }
+  .state.blocked { color: var(--mineral); }
+
+  /* done — settled into the stone */
+  .row.done .title { color: var(--ash); font-weight: 400; }
+  .row.done .when  { color: var(--ash-deep); }
+
+  /* active — a full-bleed course of blue stone */
+  .band-row {
+    animation: settle .7s cubic-bezier(.2,.7,.2,1) both;
+    margin: 0 calc(-50vw + 50%);
+    background: var(--blue);
+    border-top: 1px solid var(--blue-hairline);
+    border-bottom: 1px solid var(--blue-hairline);
+  }
+  .band-row .row {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 34px 72px;
+    border: 0;
+    animation: none;
+  }
+  .band-row .row:hover { background: transparent; }
+  .band-row .when  { color: var(--denim); }
+  .band-row .title { color: var(--bone-bright); }
+  .band-row .proj  { color: var(--denim); }
+  .band-row .state { color: var(--denim-bright); }
+  .band-row + .row { border-top: 0; }
+
+  /* ── anchor band ────────────────────────────────────── */
+  footer.band {
+    margin-top: 84px;
+    background: var(--blue);
+    border-top: 1px solid var(--blue-hairline);
+    animation: settle .9s .35s cubic-bezier(.2,.7,.2,1) both;
+  }
+  footer.band .inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 30px 72px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 48px;
+  }
+  footer.band .caps { color: var(--denim-bright); }
+  .meter {
+    flex: 1; max-width: 420px; height: 2px;
+    background: var(--blue-hairline);
+  }
+  .meter i {
+    display: block; height: 100%;
+    background: var(--denim);
+    width: 33.3%;
+    animation: fill 1.1s .5s cubic-bezier(.2,.7,.2,1) both;
+  }
+  @keyframes fill { from { width: 0 } }
+
+  @keyframes settle {
+    from { opacity: 0; transform: translateY(14px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .row:nth-of-type(2)  { animation-delay: .05s }
+  .row:nth-of-type(3)  { animation-delay: .10s }
+  .band-row            { animation-delay: .15s }
+  .band-row ~ .row:nth-of-type(5) { animation-delay: .20s }
+  .band-row ~ .row:nth-of-type(6) { animation-delay: .25s }
+  .band-row ~ .row:nth-of-type(7) { animation-delay: .30s }
+  .band-row ~ .row:nth-of-type(8) { animation-delay: .35s }
+  .band-row ~ .row:nth-of-type(9) { animation-delay: .40s }
+
+  @media (prefers-reduced-motion: reduce) {
+    .row, .band-row, footer.band, header.dateline, .meter i { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+  <nav>
+    <div class="left">
+      <a class="caps here" href="#">Today</a>
+      <a class="caps" href="#">Sprint</a>
+      <a class="caps" href="#">Workspace</a>
+    </div>
+    <span class="caps">Panels</span>
+  </nav>
+
+  <main>
+    <header class="dateline">
+      <div class="day">Thursday <em>· July 23</em></div>
+      <span class="caps" style="color:var(--denim)">Three of nine complete</span>
+    </header>
+
+    <div class="row done">
+      <span class="when">08:00</span>
+      <span class="title">Review overnight worker runs</span>
+      <span class="tags"><span class="caps proj">Planner</span><span class="caps state done">Done</span></span>
+    </div>
+    <div class="row done">
+      <span class="when">09:00</span>
+      <span class="title">Approve sprint reconciliation</span>
+      <span class="tags"><span class="caps proj">Sprints</span><span class="caps state done">Done</span></span>
+    </div>
+    <div class="row done">
+      <span class="when">09:30</span>
+      <span class="title">Ticket triage — inbound ideas</span>
+      <span class="tags"><span class="caps proj">Workspace</span><span class="caps state done">Done</span></span>
+    </div>
+
+    <div class="band-row">
+      <div class="row">
+        <span class="when">11:00</span>
+        <span class="title">Replay redesign — kickoff review</span>
+        <span class="tags"><span class="caps proj">Redesign</span><span class="caps state">Active</span></span>
+      </div>
+    </div>
+
+    <div class="row">
+      <span class="when">13:00</span>
+      <span class="title">Environment defaults follow-up</span>
+      <span class="tags"><span class="caps proj">Runtime</span><span class="caps state pending">Pending</span></span>
+    </div>
+    <div class="row">
+      <span class="when">14:30</span>
+      <span class="title">Worker skill — coding stages pass</span>
+      <span class="tags"><span class="caps proj">Skills</span><span class="caps state pending">Pending</span></span>
+    </div>
+    <div class="row">
+      <span class="when">16:00</span>
+      <span class="title">Migration parser spot-check</span>
+      <span class="tags"><span class="caps proj">Planner</span><span class="caps state blocked">Blocked</span></span>
+    </div>
+    <div class="row">
+      <span class="when">17:00</span>
+      <span class="title">Docs — conversation boundary</span>
+      <span class="tags"><span class="caps proj">Docs</span><span class="caps state pending">Pending</span></span>
+    </div>
+    <div class="row">
+      <span class="when">18:00</span>
+      <span class="title">Plan tomorrow</span>
+      <span class="tags"><span class="caps proj">Planner</span><span class="caps state pending">Pending</span></span>
+    </div>
+  </main>
+
+  <footer class="band">
+    <div class="inner">
+      <span class="caps">Three of nine complete</span>
+      <div class="meter"><i></i></div>
+    </div>
+  </footer>
+
+</body>
+</html>

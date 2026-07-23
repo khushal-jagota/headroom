@@ -1,5 +1,92 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Make the Panels staging push explicit
+
+Panels repository guidance now requires Closeout to push the exact verified staging revision to
+`origin/staging` and confirm the remote ref matches before removing Ticket worktrees and state. The
+Panels-specific wording is mirrored in `AGENTS.md` and `CLAUDE.md`; the generic coding-worker skill
+continues to defer repository-specific integration and publication policy to each repository.
+
+## Current work cycle (2026-07-23): Commit live and align staging from main
+
+The live checkout is clean and attached to local `main` at `869619ca`. Its runtime work is committed
+as separate catalog-cache, conversation-recovery, frontend-build, authentication-merge, and
+documentation commits. Focused backend tests and the complete frontend test/check gates pass.
+
+The staging checkout committed its New Conversation recovery tests, checkout and provider-home
+bookkeeping, visual exploration, and the reviewed nested shared-frontend result. Generated Vite
+cache churn in two completed Ticket worktrees was removed. `main` was then merged into `staging`
+as `db93830c`; staging retains its newer dynamic-port environment contract and uses a frontend build
+from the merged source. The one canonical `./verify` passed Ruff, strict Mypy across 156 source
+files, all 1,335 unit tests, compile/CSS checks, zero Svelte diagnostics, the production build and
+complete frontend suite, and all 122 Playwright tests; final `VERIFY: PASS`. No source or generated
+application file changed after that run. Both role checkouts are clean and `main` is an ancestor of
+`staging`.
+
+## Current work cycle (2026-07-23): Consolidate staging and live checkout roles
+
+The coding/integration checkout now lives at
+`/Users/khushaljagota/Coding/planning-v2` on `staging`; the old
+`/Users/khushaljagota/.hermes/planning-v2` path is absent. The moved repository still owns the shared
+Git metadata, and every registered linked worktree was repaired and validated. The prepared staging
+manifest, canonical staging skill links, virtual-environment wrappers, and editable package link now
+resolve the Coding path. The detached live checkout remains separate and healthy at its accepted
+main revision. Before the conversion, the primary checkout's local authentication commit and
+uncommitted work were preserved under the safety branch
+`safety/pre-topology-consolidation-20260723` and stash entry
+`topology consolidation: primary checkout WIP 2026-07-23`; that work was then restored onto staging.
+The live checkout and process were not modified or restarted.
+
+## Current work cycle (2026-07-23): Durable Worker launch catalog cache (`t_nvv1550r`)
+
+Backend/model-scoped Worker launch catalogs now persist in SQLite under a NULL-safe identity,
+survive a server restart, and expire exactly 24 hours after discovery according to the injected
+clock. Stored JSON is parsed and checked against its backend/model key before it is served.
+Normal reads never force rediscovery; the two shared setup components offer a deliberate Refresh
+which uses the existing abort and request-generation guards. One per-key in-process refresh task
+coalesces concurrent discovery, and successful results atomically replace the durable row. A failed
+refresh reports an error while leaving a stale row intact. Independent implementation review found
+that the shared Worker/Chief defaults control initially hid saved values removed by a refreshed
+catalog; it now renders those values as disabled unavailable options, matching Ticket setup, and a
+second independent review confirmed the correction. Focused DB/catalog/API tests, Ruff, strict
+Mypy, Svelte check, and diff check pass. Next: canonical `./verify` and Ticket Implementation
+approval.
+
+## Current work cycle (2026-07-23): Diagnose Claude auth failure in live Panels
+
+The affected Claude worker fails because Panels launches Claude with the isolated live runtime
+home `/Users/khushaljagota/.hermes/runtime/panels-environments/live/current/user-home`, not the
+interactive shell home. `claude auth status` is logged-in for the normal home
+(`khushaljagota@gmail.com`, Claude Max) but reports `loggedIn: false` and `authMethod: none` for
+the Panels home. The managed `.claude/daemon.log` records a refresh failure on 2026-07-16 and
+explicitly says `headless daemon cannot complete OAuth — run claude auth login`; its auth status is
+still `auth_required`. No files or credentials were changed. Next: user runs login against the
+managed HOME, then the live Panels process must be restarted so newly launched Claude children
+inherit the refreshed state.
+
+The isolated `HOME` is intentional: it keeps worker/Chief sessions, provider settings, plugins,
+MCP configuration, and credentials separate from the operator's personal home and from staging or
+preview environments. The current single-user macOS setup exposes a provisioning usability gap:
+the isolated Claude home does not automatically share the interactive Claude login, and copying
+the config file is insufficient because Claude also relies on its native credential/keychain path.
+
+The owner decided the isolation tradeoff is not useful for this single-user local deployment:
+provider CLIs should use the normal operator `HOME` everywhere, while Panels' own Hermes and
+database state remains isolated by its explicit `PLAN_HERMES_HOME` and `PLAN_DB_PATH` values.
+The launch environment helper and detached live checkout now implement that policy, with focused
+environment credential/CLI tests passing. The live process was fully relaunched after repairing
+stale runtime manifest metadata (missing port and symlinked generation paths); it now has the
+operator `HOME`, while live HTTP remains healthy (200) and Panels-owned paths remain generation-
+scoped.
+
+Follow-up diagnosis: durable `conversation_session_bindings` still retain provider ACP session ids
+after a process restart. A browser attach with such a binding first calls the registry's load path;
+if the provider no longer has that session, the attach fails before the browser action loop is
+available. The frontend then stays reconnecting, so it cannot send `new_conversation`. The Hub's
+server-side `new_conversation` path can start empty without loading the old binding when reached,
+but the current wire/attach boundary makes that path unreachable from a failed attach. This is a
+real recovery UX/correctness gap, not evidence that New intrinsically requires the old session.
+
 ## Current work cycle (2026-07-22): Adopt persistent staging and separated live operation (`t_b5ja4rqu`)
 
 The accepted `main` revision `279cb972` now anchors a local `staging` branch, a persistent staging

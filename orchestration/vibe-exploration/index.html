@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vibe Exploration — Ancient Mass, Modern Light</title>
+<style>
+  :root {
+    --ground: #211e1b;        /* warm charcoal ground */
+    --ground-raised: #282420; /* raised surface */
+    --hairline: #3a3530;
+    --bone: #d8cfc0;          /* warm off-white */
+    --ash: #8a827a;           /* muted warm grey */
+    --cobalt: #2244cc;
+    --slate-blue: #5a7dff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--bone);
+    font-family: Georgia, 'Times New Roman', serif;
+    line-height: 1.5;
+  }
+  /* grain */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    pointer-events: none;
+    opacity: .5;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 48px 120px; }
+  header { padding: 96px 0 64px; border-bottom: 1px solid var(--hairline); }
+  .kicker {
+    font-family: Georgia, serif;
+    font-size: 12px;
+    letter-spacing: .45em;
+    text-transform: uppercase;
+    color: var(--slate-blue);
+    margin-bottom: 28px;
+  }
+  h1 {
+    font-size: clamp(48px, 7vw, 88px);
+    font-weight: 400;
+    letter-spacing: .02em;
+    line-height: 1.05;
+  }
+  .statement {
+    margin-top: 32px;
+    max-width: 62ch;
+    color: var(--ash);
+    font-size: 17px;
+  }
+  .statement em { color: var(--bone); font-style: normal; }
+  section { padding-top: 88px; }
+  .plate-head { display: flex; align-items: baseline; gap: 24px; margin-bottom: 20px; }
+  .num {
+    font-size: 13px; letter-spacing: .35em; color: var(--slate-blue);
+  }
+  .plate-head h2 {
+    font-size: 15px; font-weight: 400;
+    letter-spacing: .35em; text-transform: uppercase; color: var(--bone);
+  }
+  .plate-head .rule { flex: 1; height: 1px; background: var(--hairline); }
+  figure {
+    background: var(--ground-raised);
+    border: 1px solid var(--hairline);
+    border-top: 3px solid var(--cobalt);
+    padding: 12px;
+  }
+  figure img { display: block; width: 100%; height: auto; }
+  figcaption {
+    padding: 18px 8px 8px;
+    color: var(--ash);
+    font-size: 14.5px;
+    max-width: 78ch;
+  }
+  footer {
+    margin-top: 120px; padding-top: 32px;
+    border-top: 1px solid var(--hairline);
+    font-size: 11px; letter-spacing: .4em; text-transform: uppercase; color: var(--ash);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="kicker">Panels · Vibe Exploration</div>
+    <h1>Ancient mass,<br>modern light</h1>
+    <p class="statement">
+      Opposing forces held in strict composition — <em>massive against fine, rough against precise,
+      warm stone against cold light</em> — where everything present is necessary.
+      Ground: warm charcoal at surface levels, never black. Voice: cobalt as the event,
+      slate blue as the light that cuts. Grain as the human hand. Scale contrast as power.
+      These plates are generated impressions, not mockups — instruments for agreeing on the vibe.
+    </p>
+  </header>
+
+  <section>
+    <div class="plate-head"><span class="num">I</span><h2>Ceremonial — the approval</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/01-ceremonial-approval.png" alt="Ceremonial approval screen">
+      <figcaption>The monumental register: an inscription-scale headline, one halftone bust on deep cobalt,
+      inscriptional caps for metadata, a single lit action. Scale contrast doing the power.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">II</span><h2>Dense — the working list</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/02-dense-worklist.png" alt="Dense work list screen">
+      <figcaption>Density without mush: strict row rhythm, carved hairlines, tracked caps —
+      and one row lit in slate blue as the only color. Trevi logic: full, but nothing arbitrary.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">III</span><h2>Tension — the dashboard</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/03-dashboard-tension.png" alt="Dashboard with unequal masses">
+      <figcaption>Unequal masses in balance: one dominant cobalt figure opposed by an ordered grid of
+      numbers. Enormous serif figures against tiny labels; blue as a streak of light through the chart.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">IV</span><h2>Material — the components</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/04-component-sheet.png" alt="Component specimen sheet">
+      <figcaption>The system as material: slab buttons, carved inputs, extremes of weight with no middle,
+      the cobalt modal as the foreign object. Where the vibe either survives contact with controls or dies.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">V</span><h2>Voice — the conversation</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/05-conversation.png" alt="Conversation screen">
+      <figcaption>The worker as figure: halftone bust avatar, agent turns as lit-edged panels on stone,
+      human turns bare on the ground. The input bar as a line of light.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">SERIES TWO</span><h2>Allusion, not costume</h2><div class="rule"></div></div>
+    <p class="statement" style="margin-bottom:48px">
+      Same base, different balances of the tension. The classical enters only by allusion —
+      a stippled fragment, tracked caps, symmetry, mass — while type, layout, and finish stay modern.
+    </p>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="plate-head"><span class="num">A</span><h2>Modernity dominant</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/v2-a-modern-dominant.png" alt="Variant A — modernity dominant">
+      <figcaption>A shipping 2026 tool; the ancient present only as a halftone fragment entering from the edge.
+      The echo, not the subject.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">B</span><h2>Equal tension</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/v2-b-equal-tension.png" alt="Variant B — equal tension split">
+      <figcaption>Ancient and modern side by side at equal weight — the editorial crop makes the bust modern,
+      the interface stays strict and plain.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">C</span><h2>Structural allusion</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/v2-c-structural-allusion.png" alt="Variant C — structure only">
+      <figcaption>No imagery at all: antiquity carried purely by symmetry, column rhythm, slab weight,
+      and scale contrast. The deep cobalt band as the anchoring mass.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">D</span><h2>Human grain</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/v2-d-human-grain.png" alt="Variant D — grain forward">
+      <figcaption>The imperfect layer pushed hard: printed, eroded texture; a ghosted figure in the stone
+      behind a crisp working list.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">E</span><h2>Alive — light and contrast</h2><div class="rule"></div></div>
+    <figure>
+      <img src="images/v2-e-alive-contrast.png" alt="Variant E — alive, high contrast">
+      <figcaption>Chiaroscuro pushed: elements at different intensities, the active row burning,
+      the figure lit like sculpture at night. Energy without ornament.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="plate-head"><span class="num">SERIES THREE</span><h2>The real medium</h2><div class="rule"></div></div>
+    <p class="statement">
+      The agreed basis, pinned in <a href="CHARTER.md" style="color:var(--slate-blue)">CHARTER.md</a>,
+      rendered in actual HTML/CSS with exact tokens:
+      <a href="plate-day-table.html" style="color:var(--slate-blue)">Plate — The Day Table</a>.
+    </p>
+  </section>
+
+  <footer>Generated plates · gpt-image-2 · for vibe alignment only</footer>
+</div>
+</body>
+</html>

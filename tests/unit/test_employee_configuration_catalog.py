@@ -28,6 +28,7 @@ from planner.conversation.employee_configuration import (
     EmployeeConfigurationError,
     StableAcpEmployeeSessionConfigurationAdapter,
 )
+from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
 
 
@@ -281,6 +282,98 @@ def test_catalog_failure_is_not_cached_and_retry_can_succeed() -> None:
             await service.catalog("scripted", None)
         result = await service.catalog("scripted", None)
         assert result.employee_backend == "scripted"
+        assert adapter.calls == 2
+
+    asyncio.run(exercise())
+
+
+def test_catalog_is_durable_null_safe_and_expires_at_exactly_24_hours(
+    tmp_path: Path,
+) -> None:
+    class Adapter:
+        backend_key = "scripted"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def discover_catalog(
+            self, candidate_model: str | None
+        ) -> EmployeeConfigurationCatalog:
+            self.calls += 1
+            return EmployeeConfigurationCatalog(
+                employee_backend="scripted",
+                candidate_model=candidate_model,
+                native_model=None,
+                models=(),
+                reasoning_supported=False,
+                native_reasoning_effort=None,
+                reasoning_efforts=(),
+            )
+
+    async def exercise() -> None:
+        db_path = str(tmp_path / "catalog.db")
+        connection = connect(db_path)
+        create_schema(connection)
+        connection.close()
+        now = 1_000_000
+        adapter = Adapter()
+        first = EmployeeConfigurationCatalogService(
+            {"scripted": adapter}, database_path=db_path, now_unix=lambda: now
+        )
+        await first.catalog("scripted", None)
+        restarted = EmployeeConfigurationCatalogService(
+            {"scripted": adapter}, database_path=db_path, now_unix=lambda: now + 86_399
+        )
+        await restarted.catalog("scripted", None)
+        assert adapter.calls == 1
+        expired = EmployeeConfigurationCatalogService(
+            {"scripted": adapter}, database_path=db_path, now_unix=lambda: now + 86_400
+        )
+        await expired.catalog("scripted", None)
+        assert adapter.calls == 2
+
+    asyncio.run(exercise())
+
+
+def test_failed_durable_refresh_preserves_stale_catalog_and_force_refreshes(
+    tmp_path: Path,
+) -> None:
+    class Adapter:
+        backend_key = "scripted"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def discover_catalog(
+            self, candidate_model: str | None
+        ) -> EmployeeConfigurationCatalog:
+            self.calls += 1
+            if self.calls == 2:
+                raise EmployeeConfigurationError("unavailable")
+            return EmployeeConfigurationCatalog(
+                employee_backend="scripted",
+                candidate_model=candidate_model,
+                native_model=None,
+                models=(),
+                reasoning_supported=False,
+                native_reasoning_effort=None,
+                reasoning_efforts=(),
+            )
+
+    async def exercise() -> None:
+        db_path = str(tmp_path / "catalog.db")
+        connection = connect(db_path)
+        create_schema(connection)
+        connection.close()
+        adapter = Adapter()
+        service = EmployeeConfigurationCatalogService(
+            {"scripted": adapter}, database_path=db_path, now_unix=lambda: 1
+        )
+        await service.catalog("scripted", None)
+        with pytest.raises(EmployeeConfigurationError, match="unavailable"):
+            await service.catalog("scripted", None, force_refresh=True)
+        # The failed replacement never deleted the known-good row.
+        assert await service.catalog("scripted", None) == await service.catalog("scripted", None)
         assert adapter.calls == 2
 
     asyncio.run(exercise())

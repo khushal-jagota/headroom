@@ -572,9 +572,14 @@ async def _load_employee_configuration_catalog(
     request: Request,
     employee_backend: str,
     candidate_model: str | None,
+    force_refresh: bool = False,
 ) -> EmployeeConfigurationCatalog:
     service = _employee_configuration_catalog_service(request)
     try:
+        if force_refresh:
+            return await service.catalog(
+                employee_backend, candidate_model, force_refresh=True
+            )
         return await service.catalog(employee_backend, candidate_model)
     except PlannerError:
         raise
@@ -591,11 +596,12 @@ async def get_employee_configuration_catalog(
     request: Request,
     employee_backend: str,
     candidate_model: str | None = None,
+    force_refresh: bool = False,
 ) -> JsonDict:
     definitions = configured_employee_runtime_definitions()
     registered_backend = definitions.employee_backend_catalog.require_registered(employee_backend)
     catalog = await _load_employee_configuration_catalog(
-        request, registered_backend, candidate_model
+        request, registered_backend, candidate_model, force_refresh
     )
     return catalog.model_dump(mode="json")
 

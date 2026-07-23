@@ -100,6 +100,7 @@ export function createConversationController(options: ConversationControllerOpti
   let reconnectTimer: unknown | null = null;
   let attached = false;
   let disposed = false;
+  let pendingNewConversation = false;
   let pendingInitialPrompt: PendingInitialPrompt | null = null;
   const subscribers = new Set<(snapshot: ConversationSnapshot) => void>();
 
@@ -321,7 +322,9 @@ export function createConversationController(options: ConversationControllerOpti
         if (disposed || epoch.blocked || currentEpoch?.epoch !== epochNumber) return;
         transition({ kind: 'local_connection', state: 'open', detail: 'Connected' });
         const cursor = committedState.cursor;
-        const action: BrowserAction = cursor
+        const action: BrowserAction = pendingNewConversation
+          ? { type: 'new_conversation', employeeId: options.employeeId }
+          : cursor
           ? {
               type: 'attach',
               employeeId: options.employeeId,
@@ -331,6 +334,7 @@ export function createConversationController(options: ConversationControllerOpti
           : { type: 'attach', employeeId: options.employeeId };
         const result = epoch.transport.send(action);
         if (!result.ok) closeEpochForRecovery(epoch, INVALID_ERROR);
+        else if (pendingNewConversation) pendingNewConversation = false;
       },
       onEnvelope: (envelope) => admitEnvelope(epoch, envelope),
       onInvalidEnvelope: () => closeEpochForRecovery(epoch, INVALID_ERROR),
@@ -398,7 +402,19 @@ export function createConversationController(options: ConversationControllerOpti
       });
     },
     newConversation(): ConversationActionResult {
-      return send({ type: 'new_conversation', employeeId: options.employeeId });
+      if (disposed) return { ok: false, reason: 'Conversation has been disposed' };
+      pendingNewConversation = true;
+      if (!attached) attached = true;
+      if (reconnectTimer !== null) {
+        options.clearTimer(reconnectTimer);
+        reconnectTimer = null;
+      }
+      if (currentEpoch === null) openSocket();
+      else if (currentEpoch.transport.send({
+        type: 'new_conversation',
+        employeeId: options.employeeId,
+      }).ok) pendingNewConversation = false;
+      return { ok: true };
     },
     respondToPermission(requestId, optionId): ConversationActionResult {
       const permission = committedState.permissions[requestId];
@@ -429,6 +445,7 @@ export function createConversationController(options: ConversationControllerOpti
       if (disposed) return;
       disposed = true;
       pendingInitialPrompt = null;
+      pendingNewConversation = false;
       subscribers.clear();
       if (reconnectTimer !== null) {
         options.clearTimer(reconnectTimer);

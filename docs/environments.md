@@ -182,10 +182,12 @@ The parser accepts only the runtime model-provider names allowed by the environm
 policy: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY`. It rejects
 malformed, duplicate, unknown, or contract-owned keys.
 
-`environment run` starts from a scrubbed process environment. It keeps only basic
-locale, terminal, path, and temporary-directory values, adds the validated credential
-values, and supplies the contract-owned database, port, log, lock, socket, Hermes, and
-home values. Other ambient `PLAN_*` values are not forwarded.
+`environment run` starts from a scrubbed process environment. It keeps the operator's
+normal `HOME` for provider CLIs such as Claude and Codex, plus basic locale, terminal,
+path, and temporary-directory values. It adds the validated credential values and
+supplies the contract-owned database, port, log, lock, socket, and Hermes values.
+Panels' Hermes state remains isolated through `PLAN_HERMES_HOME`; other ambient
+`PLAN_*` values are not forwarded.
 
 The caller must provide exactly one `--repository-root`. The command checks that
 existing checkout against the prepared environment and uses it as the launch working

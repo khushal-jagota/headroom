@@ -70,7 +70,11 @@ def test_staging_run_selects_runtime_port_and_passes_reserved_listener(
             inspect_instance=lambda **_: _manifest(instance),
             exec_fn=lambda file, argv, env: exec_calls.append((file, argv, dict(env))),
             resolve_repository_runtime_python=lambda root: root / ".venv/bin/python",
-            ambient_env={"PATH": "/usr/bin", "PLAN_DB_PATH": "/poison"},
+            ambient_env={
+                "PATH": "/usr/bin",
+                "HOME": "/operator-home",
+                "PLAN_DB_PATH": "/poison",
+            },
         ),
     )
 
@@ -83,7 +87,7 @@ def test_staging_run_selects_runtime_port_and_passes_reserved_listener(
         "/staging/run/server-lifecycle.lock"
     )
     assert run_env["PLAN_DB_PATH"] == str(instance.db_path)
-    assert run_env["HOME"] == str(instance.runtime_user_home)
+    assert run_env["HOME"] == "/operator-home"
     assert run_env["PLAN_HERMES_HOME"] == str(instance.hermes_home)
     assert exec_calls[0][0] == str(repository / ".venv/bin/python")
     assert exec_calls[0][1] == [

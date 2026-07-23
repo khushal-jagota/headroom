@@ -220,6 +220,12 @@ Reasoning choices depend on the selected model. Leaving Model or Reasoning at it
 value means the backend chooses its own default. A missing or unavailable explicit value
 fails visibly instead of silently selecting something else.
 
+The Backend, Model, and Reasoning menus use a durable catalog for that backend and candidate
+model. A catalog stays fresh for 24 hours across a server restart. The user can choose
+**Refresh** in either shared setup surface to rediscover it immediately. A failed rediscovery
+keeps the last catalog in the database but reports the failure instead of presenting stale
+choices as a successful refresh.
+
 The stored model and reasoning are requests for the first session, not a live settings
 mirror. After the Ticket binds a session they remain only as the historical Kickoff
 request, while human conversation and Automatic Employee work use the same stored

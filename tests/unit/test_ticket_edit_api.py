@@ -414,6 +414,46 @@ def test_employee_configuration_catalog_endpoint_serves_the_exact_product_shape(
     assert response.json() == expected.model_dump(mode="json")
 
 
+def test_employee_configuration_catalog_endpoint_forwards_deliberate_refresh(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    class CatalogService:
+        async def catalog(
+            self,
+            employee_backend: str,
+            candidate_model: str | None,
+            *,
+            force_refresh: bool = False,
+        ) -> EmployeeConfigurationCatalog:
+            assert (employee_backend, candidate_model, force_refresh) == (
+                "probe-backend",
+                None,
+                True,
+            )
+            return EmployeeConfigurationCatalog(
+                employee_backend=employee_backend,
+                candidate_model=candidate_model,
+                native_model=None,
+                models=(),
+                reasoning_supported=False,
+                native_reasoning_effort=None,
+                reasoning_efforts=(),
+            )
+
+    app, _db_path = _make_app(tmp_path)
+    app.state.conversation = SimpleNamespace(
+        employee_configuration_catalog=CatalogService()
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/employee-configuration-catalog",
+            params={"employee_backend": "probe-backend", "force_refresh": "true"},
+        )
+
+    assert response.status_code == 200
+
+
 def test_employee_configuration_noop_after_freeze_emits_nothing(
     tmp_path: Path,
     probe_runtime: None,

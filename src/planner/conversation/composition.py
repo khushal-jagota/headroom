@@ -77,7 +77,8 @@ class ConversationTestOptions:
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions
     ingress_capacity: int = 256
     browser_capacity: int = 128
-    reset_buffer_byte_limit: int = 1_048_576
+    # Temporary live ceiling while the imported durable replay is measured.
+    reset_buffer_byte_limit: int = 6 * 1024 * 1024
     connection_id_factory: Callable[[], str] | None = None
     worker_client_message_id_factory: Callable[[], str] | None = None
     permission_request_id_factory: Callable[[], str] | None = None
@@ -118,7 +119,8 @@ class ConversationComposition:
             employee_runtime_definitions = configured_employee_runtime_definitions()
             ingress_capacity = 2_048
             browser_capacity = ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
-            reset_buffer_byte_limit = 1_048_576
+            # Temporary live ceiling while the imported durable replay is measured.
+            reset_buffer_byte_limit = 6 * 1024 * 1024
             connection_id_factory = None
             worker_client_message_id_factory = None
             permission_request_id_factory: Callable[[], str] = cls._new_identifier
@@ -262,7 +264,10 @@ class ConversationComposition:
                     backend.resolved_employee_configuration_adapter()
                 )
                 for backend in materialized_backends
-            }
+            },
+            database_path=db_path,
+            busy_timeout_ms=busy_timeout_ms,
+            now_unix=clock.now_unix,
         )
         return cls(
             hub=hub,

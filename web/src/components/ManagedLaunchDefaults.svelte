@@ -7,6 +7,7 @@
     EmployeeConfigurationSnapshot
   } from "../lib/types";
   import ErrorLine from "./ErrorLine.svelte";
+  import Button from "./Button.svelte";
 
   let {
     label,
@@ -38,11 +39,22 @@
   let modelOptions = $derived(catalog?.models ?? []);
   let reasoningOptions = $derived(catalog?.reasoning_efforts ?? []);
 
+  function withSavedUnavailable(
+    options: Array<{ value: string; label: string; description?: string | null; unavailable?: boolean }>,
+    savedValue: string | null
+  ): Array<{ value: string; label: string; description?: string | null; unavailable?: boolean }> {
+    if (savedValue === null || options.some((option) => option.value === savedValue)) return options;
+    return [
+      ...options,
+      { value: savedValue, label: `${savedValue} · unavailable`, unavailable: true }
+    ];
+  }
+
   function selectedSignature(): string {
     return JSON.stringify([selected.employee_backend, selected.employee_launch_model, selected.employee_launch_reasoning_effort]);
   }
 
-  async function loadCatalog(): Promise<void> {
+  async function loadCatalog(forceRefresh = false): Promise<void> {
     requestController?.abort();
     const controller = new AbortController();
     requestController = controller;
@@ -52,6 +64,7 @@
     loading = true;
     const query = new URLSearchParams({ employee_backend: selected.employee_backend });
     if (selected.employee_launch_model !== null) query.set("candidate_model", selected.employee_launch_model);
+    if (forceRefresh) query.set("force_refresh", "true");
     try {
       const response = await fetchJson<EmployeeConfigurationCatalog>(
         `/api/employee-configuration-catalog?${query.toString()}`,
@@ -136,18 +149,26 @@
       <label>
         <span>Model</span>
         <select aria-label={`${label} model`} value={selected.employee_launch_model ?? catalog.native_model ?? ""} disabled={saving} onchange={selectModel}>
-          {#each modelOptions as option}<option value={option.value}>{option.label}</option>{/each}
+          {#each withSavedUnavailable(modelOptions, selected.employee_launch_model) as option}<option value={option.value} disabled={option.unavailable}>{option.label}</option>{/each}
         </select>
       </label>
       {#if catalog.reasoning_supported}
         <label>
           <span>Reasoning</span>
           <select aria-label={`${label} reasoning`} value={selected.employee_launch_reasoning_effort ?? catalog.native_reasoning_effort ?? ""} disabled={saving} onchange={selectReasoning}>
-            {#each reasoningOptions as option}<option value={option.value}>{option.label}</option>{/each}
+          {#each withSavedUnavailable(reasoningOptions, selected.employee_launch_reasoning_effort) as option}<option value={option.value} disabled={option.unavailable}>{option.label}</option>{/each}
           </select>
         </label>
       {/if}
     {:else if catalogError}<ErrorLine error={catalogError} />{/if}
+    {#if catalog}
+      <Button
+        variant="quiet"
+        data-launch-defaults-refresh
+        disabled={loading || saving}
+        onclick={() => void loadCatalog(true)}
+      >Refresh</Button>
+    {/if}
   </div>
   {#if saveError}<div class="worker-row-error" data-launch-defaults-error><ErrorLine error={saveError} /></div>{/if}
 </section>
