@@ -66,10 +66,24 @@ def provision_native_backend_skills(
     ).resolve()
     target = Path(native_home).expanduser() / SKILLS_DIR_NAME
     target.parent.mkdir(parents=True, exist_ok=True)
+    panels_skill_names = {
+        path.name
+        for path in source_root.iterdir()
+        if path.is_dir() and (path / SKILL_FILE_NAME).is_file()
+    }
     if target.is_symlink():
         if target.resolve() == source_root:
             return source_root
+        legacy_root = target.resolve(strict=False)
         target.unlink()
+        target.mkdir()
+        if legacy_root.is_dir():
+            for legacy_skill in legacy_root.iterdir():
+                if legacy_skill.name in panels_skill_names:
+                    continue
+                (target / legacy_skill.name).symlink_to(
+                    legacy_skill, target_is_directory=legacy_skill.is_dir()
+                )
     if not target.exists():
         target.symlink_to(source_root, target_is_directory=True)
         return source_root
@@ -77,12 +91,16 @@ def provision_native_backend_skills(
         raise FileExistsError(f"native backend skills path is not a directory: {target}")
     # Provider homes can already contain user-owned skills. Preserve them and
     # expose each missing Panels skill directly from the managed authority.
-    for source_skill in source_root.iterdir():
-        if not source_skill.is_dir() or not (source_skill / SKILL_FILE_NAME).is_file():
-            continue
+    for skill_name in panels_skill_names:
+        source_skill = source_root / skill_name
         target_skill = target / source_skill.name
         if target_skill.exists() or target_skill.is_symlink():
-            continue
+            if target_skill.is_symlink() and target_skill.resolve() == source_skill:
+                continue
+            if target_skill.is_dir() and not target_skill.is_symlink():
+                shutil.rmtree(target_skill)
+            else:
+                target_skill.unlink()
         target_skill.symlink_to(source_skill, target_is_directory=True)
     return source_root
 

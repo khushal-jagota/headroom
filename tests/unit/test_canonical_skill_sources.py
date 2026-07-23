@@ -6,7 +6,7 @@ import pytest
 
 from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.core.contracts import PlannerError
-from planner.skill_sources import ensure_managed_panels_skills
+from planner.skill_sources import ensure_managed_panels_skills, provision_native_backend_skills
 from planner.worker_settings import service
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -60,6 +60,46 @@ def test_seed_prefers_legacy_live_edit_and_never_clobbers_managed_file(tmp_path:
     )
     ensure_managed_panels_skills(tmp_path)
     assert 'description: "managed edit"' in managed.read_text(encoding="utf-8")
+
+
+def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_collision(
+    tmp_path: Path,
+) -> None:
+    managed = ensure_managed_panels_skills(tmp_path)
+    native_skills = tmp_path / "provider" / "skills"
+    (native_skills / "custom").mkdir(parents=True)
+    (native_skills / "custom" / "SKILL.md").write_text("custom", encoding="utf-8")
+    (native_skills / "panels-worker-coding").mkdir()
+    (native_skills / "panels-worker-coding" / "SKILL.md").write_text("stale", encoding="utf-8")
+
+    provision_native_backend_skills(tmp_path / "provider", tmp_path)
+
+    assert (native_skills / "custom" / "SKILL.md").read_text(encoding="utf-8") == "custom"
+    assert (native_skills / "panels-worker-coding").resolve() == (
+        managed / "panels-worker-coding"
+    ).resolve()
+
+
+def test_native_skills_root_symlink_merges_custom_entries_and_replaces_panels_collision(
+    tmp_path: Path,
+) -> None:
+    managed = ensure_managed_panels_skills(tmp_path)
+    legacy = tmp_path / "legacy-skills"
+    (legacy / "custom").mkdir(parents=True)
+    (legacy / "custom" / "SKILL.md").write_text("custom", encoding="utf-8")
+    (legacy / "panels-worker-coding").mkdir()
+    (legacy / "panels-worker-coding" / "SKILL.md").write_text("stale", encoding="utf-8")
+    native_home = tmp_path / "provider"
+    native_home.mkdir()
+    (native_home / "skills").symlink_to(legacy, target_is_directory=True)
+
+    provision_native_backend_skills(native_home, tmp_path)
+
+    assert not (native_home / "skills").is_symlink()
+    assert (native_home / "skills" / "custom").resolve() == (legacy / "custom").resolve()
+    assert (native_home / "skills" / "panels-worker-coding").resolve() == (
+        managed / "panels-worker-coding"
+    ).resolve()
 
 
 def test_chief_skill_uses_same_canonical_source(
