@@ -3,9 +3,25 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import httpx
+import pytest
 from tests.e2e.conftest import WAIT_MS
+
+
+@pytest.fixture(autouse=True)
+def restore_canonical_skill_sources():
+    """Keep browser skill-edit tests from leaking edits into the repository tree."""
+    root = Path(__file__).resolve().parents[2] / "src" / "planner" / "skills"
+    snapshots = {
+        path: path.read_bytes()
+        for path in root.glob("*/SKILL.md")
+        if path.is_file()
+    }
+    yield
+    for path, contents in snapshots.items():
+        path.write_bytes(contents)
 
 
 def _put_stage_owner(server, ticket_id: str, stage: str, mode: str | None) -> dict:
