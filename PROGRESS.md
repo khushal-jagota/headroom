@@ -1,5 +1,17 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Implement exact-commit production deployment (`t_2wcx0a55`)
+
+Implementation is isolated on `ticket/t_2wcx0a55-exact-commit-deploy` from current
+`origin/staging` (`55b2e237`). The accepted contract now has three TDD slices: a Git-free,
+host-native release with exact-main-SHA runtime proof; a backup-before-switch deployment
+transaction with bounded health and code rollback; and matching launchd/systemd plus GitHub
+verification/deployment inputs. The local worktree has independent Python, frontend, and agent-
+backend dependencies and imports `planner` from this exact source root. Current live remains
+untouched. Next: independent plan review, delegated implementation, focused review, one canonical
+`./verify`, and a verified Implementation commit; Closeout retains service installation, runner
+registration, GitHub-side changes, and live cutover.
+
 ## Current work cycle (2026-07-23): Close out `t_7fefjrze`
 
 Ticket `t_7fefjrze` makes Workspace Blocked sections start collapsed while remaining
