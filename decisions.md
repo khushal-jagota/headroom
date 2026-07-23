@@ -3370,6 +3370,13 @@ not guarantee notification/request wire ordering across the prior fork response.
   custom ownership and launch defaults and leaving general missing-stage validation strict.
 - Drafting changes packaged source and compatibility seams only. Publishing the packaged specialist
   into managed settings, final verification, and restart-backed activation belong to Closeout.
+# 2026-07-23 — Panels Closeout pushes staging
+
+- Panels Closeout must push the exact verified `staging` revision to `origin/staging` and verify the
+  remote ref before cleanup.
+- Keep this in Panels repository guidance rather than the generic coding-worker skill, because other
+  repositories may publish feature branches or use a different integration target.
+
 # 2026-07-23 — Live main flows into staging
 
 - Commit the live checkout's current runtime changes onto local `main`, preserving separate commits

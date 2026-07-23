@@ -1,5 +1,12 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Make the Panels staging push explicit
+
+Panels repository guidance now requires Closeout to push the exact verified staging revision to
+`origin/staging` and confirm the remote ref matches before removing Ticket worktrees and state. The
+Panels-specific wording is mirrored in `AGENTS.md` and `CLAUDE.md`; the generic coding-worker skill
+continues to defer repository-specific integration and publication policy to each repository.
+
 ## Current work cycle (2026-07-23): Commit live and align staging from main
 
 The live checkout is clean and attached to local `main` at `869619ca`. Its runtime work is committed
