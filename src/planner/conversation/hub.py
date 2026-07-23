@@ -312,7 +312,8 @@ class ConversationHub:
         *,
         ingress_capacity: int = 256,
         browser_capacity: int = ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES,
-        reset_buffer_byte_limit: int = 1_048_576,
+        # Temporary live ceiling while the imported durable replay is measured.
+        reset_buffer_byte_limit: int = 6 * 1024 * 1024,
         new_conversation_timeout_seconds: float = ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
         connection_id_factory: Callable[[], str] | None = None,
         worker_client_message_id_factory: Callable[[], str] | None = None,

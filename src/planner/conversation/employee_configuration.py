@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -376,10 +378,17 @@ class StableAcpEmployeeSessionConfigurationAdapter:
 
 
 class EmployeeConfigurationCatalogService:
-    """Cache truthful backend catalogs for one server process."""
+    """Serve truthful backend catalogs from a durable, bounded-freshness cache."""
+
+    _FRESHNESS_SECONDS = 24 * 60 * 60
 
     def __init__(
-        self, adapters: Mapping[str, EmployeeSessionConfigurationAdapter]
+        self,
+        adapters: Mapping[str, EmployeeSessionConfigurationAdapter],
+        *,
+        database_path: str | None = None,
+        busy_timeout_ms: int = 5_000,
+        now_unix: Callable[[], int] | None = None,
     ) -> None:
         self._adapters = dict(adapters)
         if not self._adapters:
@@ -389,36 +398,174 @@ class EmployeeConfigurationCatalogService:
                 raise ValueError(
                     "employee configuration adapter key does not match its backend"
                 )
-        self._cache: dict[tuple[str, str | None], EmployeeConfigurationCatalog] = {}
-        self._lock = asyncio.Lock()
+        self._database_path = database_path
+        self._busy_timeout_ms = busy_timeout_ms
+        self._now_unix = now_unix
+        # The no-database form is an isolated adapter-test seam. Production always
+        # supplies SQLite through ConversationComposition.
+        self._memory_cache: dict[tuple[str, str | None], EmployeeConfigurationCatalog] = {}
+        self._refresh_locks: dict[tuple[str, str | None], asyncio.Lock] = {}
+        self._durable_refresh_tasks: dict[
+            tuple[str, str | None], asyncio.Task[EmployeeConfigurationCatalog]
+        ] = {}
 
     async def catalog(
-        self, employee_backend: str, candidate_model: str | None
+        self,
+        employee_backend: str,
+        candidate_model: str | None,
+        *,
+        force_refresh: bool = False,
     ) -> EmployeeConfigurationCatalog:
         key = (employee_backend, candidate_model)
-        cached = self._cache.get(key)
-        if cached is not None:
-            return cached
         try:
             adapter = self._adapters[employee_backend]
         except KeyError:
             raise EmployeeConfigurationError(
                 f"unknown employee backend {employee_backend!r}"
             ) from None
-        async with self._lock:
-            cached = self._cache.get(key)
+        if self._database_path is None:
+            cached = self._memory_cache.get(key)
+            if cached is not None and not force_refresh:
+                return cached
+            lock = self._refresh_locks.setdefault(key, asyncio.Lock())
+            async with lock:
+                cached = self._memory_cache.get(key)
+                if cached is not None and not force_refresh:
+                    return cached
+                discovered = await self._discover(adapter, employee_backend, candidate_model)
+                self._memory_cache[key] = discovered
+                return discovered
+
+        now = self._integer_now()
+        if not force_refresh:
+            cached = await asyncio.to_thread(self._read_fresh, key, now)
             if cached is not None:
                 return cached
-            discovered = await adapter.discover_catalog(candidate_model)
-            if (
-                discovered.employee_backend != employee_backend
-                or discovered.candidate_model != candidate_model
-            ):
-                raise EmployeeConfigurationError(
-                    "employee configuration adapter returned a mismatched catalog"
+        refresh = self._durable_refresh_tasks.get(key)
+        if refresh is None:
+            refresh = asyncio.create_task(
+                self._refresh_durable(
+                    key, adapter, employee_backend, candidate_model, force_refresh
                 )
-            self._cache[key] = discovered
-            return discovered
+            )
+            self._durable_refresh_tasks[key] = refresh
+            refresh.add_done_callback(
+                lambda completed: self._clear_durable_refresh_task(key, completed)
+            )
+        # Shield makes a caller disconnect harmless to the shared per-key refresh.
+        return await asyncio.shield(refresh)
+
+    def _clear_durable_refresh_task(
+        self,
+        key: tuple[str, str | None],
+        completed: asyncio.Task[EmployeeConfigurationCatalog],
+    ) -> None:
+        if self._durable_refresh_tasks.get(key) is completed:
+            del self._durable_refresh_tasks[key]
+
+    async def _refresh_durable(
+        self,
+        key: tuple[str, str | None],
+        adapter: EmployeeSessionConfigurationAdapter,
+        employee_backend: str,
+        candidate_model: str | None,
+        force_refresh: bool,
+    ) -> EmployeeConfigurationCatalog:
+        now = self._integer_now()
+        if not force_refresh:
+            cached = await asyncio.to_thread(self._read_fresh, key, now)
+            if cached is not None:
+                return cached
+        discovered = await self._discover(adapter, employee_backend, candidate_model)
+        await asyncio.to_thread(self._replace, key, discovered, self._integer_now())
+        return discovered
+
+    async def _discover(
+        self,
+        adapter: EmployeeSessionConfigurationAdapter,
+        employee_backend: str,
+        candidate_model: str | None,
+    ) -> EmployeeConfigurationCatalog:
+        discovered = await adapter.discover_catalog(candidate_model)
+        if (
+            discovered.employee_backend != employee_backend
+            or discovered.candidate_model != candidate_model
+        ):
+            raise EmployeeConfigurationError(
+                "employee configuration adapter returned a mismatched catalog"
+            )
+        return discovered
+
+    def _integer_now(self) -> int:
+        if self._now_unix is None:
+            raise RuntimeError("durable employee configuration catalog requires an injected clock")
+        return self._now_unix()
+
+    @staticmethod
+    def _candidate_model_identity(candidate_model: str | None) -> str:
+        return json.dumps(candidate_model, separators=(",", ":"))
+
+    def _read_fresh(
+        self, key: tuple[str, str | None], now: int
+    ) -> EmployeeConfigurationCatalog | None:
+        assert self._database_path is not None
+        connection = sqlite3.connect(
+            self._database_path, timeout=self._busy_timeout_ms / 1000
+        )
+        try:
+            row = connection.execute(
+                "SELECT catalog_json, discovered_at FROM employee_configuration_catalog_cache "
+                "WHERE employee_backend = ? AND candidate_model_identity = ?",
+                (key[0], self._candidate_model_identity(key[1])),
+            ).fetchone()
+        finally:
+            connection.close()
+        if (
+            row is None
+            or not isinstance(row[1], int)
+            or now >= row[1] + self._FRESHNESS_SECONDS
+        ):
+            return None
+        try:
+            catalog = EmployeeConfigurationCatalog.model_validate_json(row[0])
+        except (TypeError, ValueError):
+            return None
+        if catalog.employee_backend != key[0] or catalog.candidate_model != key[1]:
+            return None
+        return catalog
+
+    def _replace(
+        self,
+        key: tuple[str, str | None],
+        catalog: EmployeeConfigurationCatalog,
+        discovered_at: int,
+    ) -> None:
+        assert self._database_path is not None
+        connection = sqlite3.connect(
+            self._database_path, isolation_level=None, timeout=self._busy_timeout_ms / 1000
+        )
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO employee_configuration_catalog_cache "
+                "(employee_backend, candidate_model_identity, catalog_json, discovered_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(employee_backend, candidate_model_identity) DO UPDATE SET "
+                "catalog_json = excluded.catalog_json, discovered_at = excluded.discovered_at",
+                (
+                    key[0],
+                    self._candidate_model_identity(key[1]),
+                    catalog.model_dump_json(),
+                    discovered_at,
+                ),
+            )
+            connection.execute("COMMIT")
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
 
 
 def _require_matching_backend(
