@@ -126,9 +126,6 @@ def create_app(
                 clock=clock,
                 repository_root=_REPO_ROOT,
                 loop=asyncio.get_running_loop(),
-                planner_home_default=(
-                    Path(config.db_path).expanduser().parent / "hermes-home"
-                ).resolve(strict=False),
             )
             try:
                 await conversation.run_employee_backend_startup_preflights()

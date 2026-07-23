@@ -17,6 +17,43 @@ index/Chief controls without horizontal overflow. Desktop and mobile screenshots
 artifact directory, with the desktop image refreshed to show both Agent cards. Next: Implementation
 proposal; the canonical `./verify` and documentation remain reserved for Closeout.
 
+## Current work cycle (2026-07-23): Use the user's normal Hermes installation and home (`t_pw264y71`)
+
+Hermes-backed Panels runtime now defaults to the operator's normal `~/.hermes` home instead of the
+database-adjacent `data/hermes-home`. Production server startup no longer injects a
+Panels-managed home, prepared-environment launches no longer export `PLAN_HERMES_HOME`, and the
+worker-settings API now resolves the active runtime skills root from the same default home. The
+prepared live/staging environment materializer no longer pre-provisions a separate per-environment
+Hermes skill home as part of default prepare/reset, while the explicit `PLAN_HERMES_HOME`
+override path and the legacy live-import Hermes-home copy path remain intact.
+
+What passed: focused Ruff on the changed source/tests, focused Mypy on the five changed source
+files, `git diff --check`, and the focused unit suite covering Hermes home resolution, environment
+run-env injection, environment CLI/materialization, worker settings, and Hermes backend
+materialization:
+`tests/unit/test_conversation_hermes_backend_configuration.py`,
+`tests/unit/test_environment_credentials.py`,
+`tests/unit/test_environment_cli.py`,
+`tests/unit/test_environment_fake_fixture.py`,
+`tests/unit/test_environment_lifecycle.py`,
+`tests/unit/test_worker_settings.py`,
+`tests/unit/test_hermes_acp_backend.py`.
+
+Next: propose Implementation for approval. No canonical `./verify` yet; that remains for later
+integration/closeout, per the accepted ticket shape.
+
+## Current work cycle (2026-07-23): Implement default Ticket placement (`t_qe1gk3ha`)
+
+Implemented creation-time defaults in the ordinary and Chief external-work API paths. The action
+layer resolves the planning day and current sprint, and the data writers add day membership in the
+same transaction as Ticket creation. Explicit sprint ids, explicit backlog (`sprint_id: null`), and
+parent sprint items remain authoritative. Focused unit and CLI/E2E tests pass, along with Ruff,
+strict Mypy, and diff checks. The first two canonical verify runs found stale Review and Board E2E
+assumptions that a new Ticket is absent from today, plus one independent server-lifecycle timing
+flake; both tests now remove the default membership before exercising explicit membership
+invalidation, and the lifecycle test passes in isolation. Next: rerun the canonical verify, then
+advance staging.
+
 ## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
 
 Current `staging` merged cleanly into the verified backup branch as `f4594bf2`. The first canonical

@@ -617,6 +617,7 @@ def create_ticket(
     employee_backend: str | None = None,
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
+    day_id: str | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -749,6 +750,8 @@ def create_ticket(
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        if day_id is not None:
+            days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
         return _load_ticket_for_write(conn, ticket_id)
@@ -774,6 +777,7 @@ def create_ticket_from_external_work(
     employee_backend: str | None = None,
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
+    day_id: str | None = None,
 ) -> Ticket:
     if kickoff_note is None:
         kickoff_note = ""
@@ -902,6 +906,8 @@ def create_ticket_from_external_work(
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        if day_id is not None:
+            days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(

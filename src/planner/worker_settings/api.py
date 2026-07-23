@@ -43,8 +43,8 @@ def _database_parent(config: Config) -> Path:
 
 
 def _planner_home(config: Config) -> Path:
-    default = _database_parent(config) / "hermes-home"
-    return resolve_planner_home(default=default)
+    del config
+    return resolve_planner_home()
 
 
 def _skill_json(skill: ManagedSkill) -> JsonDict:

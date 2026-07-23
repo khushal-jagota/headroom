@@ -95,23 +95,38 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
 
     created = cli(
-        server, "ticket", "create", "--worker-type", "coding", "--title", "T18 board ticket"
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--sprint",
+        "none",
+        "--title",
+        "T18 board ticket",
     )
     tid = created["id"]
     assert created["stage"] == "needs_success", created
 
     card = f'[data-card][data-ticket-stage="needs_success"][data-ticket-id="{tid}"]'
+    # New Tickets now default onto today; remove it first so this test still
+    # isolates the explicit live-board add below.
+    cli(server, "day", "remove-ticket", tid, "--date", "today")
     page_b.wait_for_function(
         "f => window.__plannerDebug.flushes > f", arg=flushes_b, timeout=WAIT_MS
     )
-    assert page_b.query_selector(card) is None
-    assert page_a.query_selector(card) is None
+    page_b.wait_for_function(
+        "selector => document.querySelector(selector) === null", arg=card, timeout=WAIT_MS
+    )
+    page_a.wait_for_function(
+        "selector => document.querySelector(selector) === null", arg=card, timeout=WAIT_MS
+    )
 
     flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": tid})
 
     # No reload, no goto: the card can only arrive via a WS-flush re-render after
-    # the ticket is explicitly added to today's board.
+    # the ticket is explicitly added back to today's board.
     _wait_present(page_b, card)
     assert "T18 board ticket" in page_b.inner_text(card)
     assert page_b.evaluate("window.__plannerDebug.flushes") > flushes_b
@@ -193,6 +208,9 @@ def test_review_tracks_today_membership_without_reload(
         "--kickoff-note",
         "Review this premise",
     )["id"]
+    # New Tickets now default onto today; remove it first so this test still starts
+    # from the empty state and exercises the live membership invalidation.
+    cli(server, "day", "remove-ticket", tid, "--date", "today")
     card = f'[data-review-card][data-ticket-id="{tid}"]'
     page = open_page(context_factory(), server, "#/review", "[data-review-empty]", settled=True)
     badge = page.locator('a[data-screen="review"] .nav-badge')

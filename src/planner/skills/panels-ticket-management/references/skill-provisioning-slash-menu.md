@@ -6,11 +6,12 @@ Panels role skills are intended to be native Hermes skills, not hardcoded slash-
 
 ## Current architecture
 
-- Panels uses a Panels-specific Hermes home, normally `data/hermes-home`.
+- Panels uses the active Hermes home, normally the user's `~/.hermes` unless
+  `PLAN_HERMES_HOME` is explicitly set.
 - Server startup provisions Panels-owned role skills from `src/planner/skills/` into that home as symlinks:
-  - `data/hermes-home/skills/panels -> src/planner/skills/panels`
-  - `data/hermes-home/skills/panels-worker -> src/planner/skills/panels-worker`
-  - `data/hermes-home/skills/panels-chief-of-staff -> src/planner/skills/panels-chief-of-staff`
+  - `~/.hermes/skills/panels -> src/planner/skills/panels`
+  - `~/.hermes/skills/panels-worker -> src/planner/skills/panels-worker`
+  - `~/.hermes/skills/panels-chief-of-staff -> src/planner/skills/panels-chief-of-staff`
 - Hermes discovers those symlinked directories as normal local skills.
 - Panels' web `/` menu is a UI bridge over Hermes discovery: the backend asks the shared gateway for `commands.catalog`, then the web composer renders the returned slash commands and skills.
 - Running a slash skill from Panels uses Hermes command dispatch into the target session; it is not a separate Panels-only skill execution path.
@@ -19,9 +20,11 @@ Panels role skills are intended to be native Hermes skills, not hardcoded slash-
 
 When a Panels role skill appears missing from slash commands or unavailable to a worker/Chief session:
 
-1. Check the active home: `HERMES_HOME` may be `data/hermes-home`, not the user's default `~/.hermes`.
+1. Check the active home: by default `HERMES_HOME` is the user's `~/.hermes`, but an
+   explicit `PLAN_HERMES_HOME` override can point elsewhere.
 2. Run `hermes skills list` under that home and look for `panels`, `panels-worker`, and `panels-chief-of-staff`.
-3. Check symlinks under `data/hermes-home/skills/` and their targets under `src/planner/skills/`.
+3. Check symlinks under that home's `skills/` directory and their targets under
+   `src/planner/skills/`.
 4. If the skill exists in Hermes but not in the web menu, check the shared gateway catalog path (`commands.catalog`) and the Panels command-catalog cache before changing UI code.
 5. If the skill is discoverable but not automatically used, distinguish discovery from role preloading: worker/Chief role selection comes from launch/session environment such as `HERMES_TUI_SKILLS`, not merely from skill existence.
 

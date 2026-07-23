@@ -16,7 +16,8 @@ Do not immediately release/retry an errored ticket if its `chat_session_key` sti
    - check `active_turn` and recent messages.
 3. Inspect the underlying Hermes session/process before release:
    - `pgrep -fl 'slash_worker --session-key <chat_session_key>|tui_gateway.entry|panels serve'`
-   - `tail data/hermes-home/logs/agent.log` filtered by the session key.
+   - `tail ~/.hermes/logs/agent.log` filtered by the session key, unless
+     `PLAN_HERMES_HOME` is explicitly overriding the runtime home.
 4. If the raw Hermes session is making API calls, tool calls, patches, tests, or compression progress, **do not release the ticket**. Wait for the turn to settle and monitor the canonical ticket fields instead.
 5. If the user has already sent `/compress` or `continue` to the worker session, verify that those messages reached the real Hermes session via logs before retrying. They may be enough to unblock the worker.
 6. When the raw turn ends, re-read the ticket. The canonical `state` or gated field may have advanced even if `ticket_status` remains stale as `errored`.
