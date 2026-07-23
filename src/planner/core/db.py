@@ -16,7 +16,7 @@ from planner.core.legacy_execution_route import (
 from planner.projects import data as projects_data
 from planner.worker_types.configuration import configured_worker_type_registry
 
-SCHEMA_VERSION: Final = 34
+SCHEMA_VERSION: Final = 35
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS tickets (
   ticket_status        TEXT NOT NULL DEFAULT 'empty'  -- durable ticket state-of-control
                        CHECK (ticket_status IN ('empty','agent_running_step',
                                                 'awaiting_approval','user_takeover',
-                                                'paired_work','errored')),
+                                                'needs_user','paired_work','errored')),
   backend_error        TEXT,                         -- confirmed concrete backend Worker failure
   stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
   default_stage_ownership_mode TEXT CHECK (default_stage_ownership_mode IN ('worker','user','paired')),
@@ -313,7 +313,39 @@ def create_schema(conn: sqlite3.Connection) -> None:
         _migrate_to_v34(conn)
     elif not _employee_configuration_catalog_cache_table_is_v34(conn):
         raise RuntimeError("v34 schema is missing the employee configuration catalog cache")
+    if incoming_version < 35 and "'needs_user'" not in ticket_sql:
+        if conn.in_transaction:
+            conn.commit()
+        _migrate_to_v35(conn)
     _create_indexes(conn)
+
+
+def _migrate_to_v35(conn: sqlite3.Connection) -> None:
+    """Allow the durable needs_user Worker-help status."""
+    if conn.in_transaction:
+        raise RuntimeError("Ticket v35 migration requires an autocommit connection")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("ALTER TABLE tickets RENAME TO tickets_v34")
+        conn.execute("""CREATE TABLE tickets (
+          id TEXT PRIMARY KEY, title TEXT NOT NULL CHECK (length(title) <= 200),
+          worker_type TEXT NOT NULL, employee_backend TEXT NOT NULL,
+          employee_launch_model TEXT, employee_launch_reasoning_effort TEXT,
+          stage TEXT NOT NULL DEFAULT 'needs_kickoff', priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+          deadline TEXT, project_id TEXT REFERENCES projects(id), sprint_item_id TEXT REFERENCES sprint_items(id), sprint_id TEXT REFERENCES sprints(id),
+          recap TEXT NOT NULL DEFAULT '', ceiling TEXT NOT NULL, at_cap TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+          ticket_status TEXT NOT NULL DEFAULT 'empty' CHECK (ticket_status IN ('empty','agent_running_step','awaiting_approval','user_takeover','needs_user','paired_work','errored')),
+          backend_error TEXT, stage_ownership_overrides TEXT NOT NULL DEFAULT '{}', default_stage_ownership_mode TEXT CHECK (default_stage_ownership_mode IN ('worker','user','paired')),
+          employee_session_id TEXT, alias TEXT, fields TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        )""")
+        conn.execute("INSERT INTO tickets SELECT * FROM tickets_v34")
+        conn.execute("DROP TABLE tickets_v34")
+        conn.execute("PRAGMA user_version=35")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 def _chief_launch_snapshot_schema_is_v31(conn: sqlite3.Connection) -> bool:

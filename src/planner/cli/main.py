@@ -1403,6 +1403,15 @@ def worker_propose(
     http.emit(data, as_json, f"proposed on {data['id']}")
 
 
+@worker.command("request-user-help")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@json_option
+def worker_request_user_help(ticket_id: str | None, as_json: bool) -> None:
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send("POST", f"/api/tickets/{tid}/request-user-help", as_json=as_json)
+    http.emit(data, as_json, f"user help requested on {data['id']}")
+
+
 @worker.command("recap")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--body-file", default=None, help="Read recap text from this file, or -.")
