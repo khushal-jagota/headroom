@@ -103,6 +103,21 @@ def test_derive_sprint_item_status_coding_buckets_golden() -> None:
         assert derive_sprint_item_status(directly_blocked=False, children=[_child(stage)]) is status
 
 
+def test_proposal_discussion_child_rolls_up_in_progress() -> None:
+    # A child parked at a non-in-progress stage still rolls up in_progress when its
+    # ticket_status is proposal_discussion (an in-flight proposal conversation).
+    child = SprintItemChildStatus(
+        stage="needs_success",
+        ticket_status="proposal_discussion",
+        blocked=False,
+        stage_in_progress=False,
+    )
+    assert (
+        derive_sprint_item_status(directly_blocked=False, children=[child])
+        is ItemStatus.in_progress
+    )
+
+
 def test_probe_midstage_rolls_up(probe_registry: WorkerTypeDefinition) -> None:
     # needs_beta is strictly past probe's default ceiling (needs_alpha) -> in progress;
     # needs_alpha (== the ceiling) and needs_kickoff are not.

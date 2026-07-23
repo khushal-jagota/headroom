@@ -226,6 +226,26 @@ def test_running_ticket_is_not_a_decision_and_global_count_includes_off_day(
     assert response["running_worker_count"] == 2
 
 
+def test_proposal_discussion_ticket_is_excluded_from_decisions(tmp_db: Connection) -> None:
+    # A filed proposal that flipped to proposal_discussion (a typed message landed) drops
+    # out of the clean review queue even though the proposal is still on file.
+    discussing_id = _park_after_kickoff(
+        tmp_db,
+        worker_type="coding",
+        title="In discussion",
+        next_ceiling="needs_success",
+        field="success",
+        proposal_at=3,
+    )
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, discussing_id, 4)
+    tmp_db.execute(
+        "UPDATE tickets SET ticket_status = 'proposal_discussion' WHERE id = ?",
+        (discussing_id,),
+    )
+
+    assert _review(tmp_db)["ticket_decisions"] == []
+
+
 def test_overdue_ticket_and_sprint_item_do_not_create_review_output(
     tmp_db: Connection, fake_clock: PlannerTestClock
 ) -> None:

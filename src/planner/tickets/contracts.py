@@ -31,6 +31,7 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     empty = "empty"
     agent_running_step = "agent_running_step"
     awaiting_approval = "awaiting_approval"
+    proposal_discussion = "proposal_discussion"
     user_takeover = "user_takeover"
     needs_user = "needs_user"
     paired_work = "paired_work"

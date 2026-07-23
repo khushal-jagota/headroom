@@ -218,6 +218,7 @@
     empty: "empty",
     agent_running_step: "running step",
     awaiting_approval: "awaiting approval",
+    proposal_discussion: "in discussion",
     paired_work: "paired work",
     user_takeover: "user takeover",
     needs_user: "needs user",
@@ -311,7 +312,7 @@
             <span
               class="ticket-status-display"
               class:ticket-status-display--attention={
-                ["awaiting_approval", "needs_user"].includes(detail.ticket_status || "empty")
+                ["awaiting_approval", "proposal_discussion", "needs_user"].includes(detail.ticket_status || "empty")
               }
               data-ticket-status={detail.ticket_status || "empty"}
             >

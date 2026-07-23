@@ -399,6 +399,7 @@ def test_paired_stage_preserves_every_non_ownership_eligibility_factor(
     [
         TicketStatus.agent_running_step,
         TicketStatus.awaiting_approval,
+        TicketStatus.proposal_discussion,
         TicketStatus.user_takeover,
         TicketStatus.errored,
     ],
@@ -414,6 +415,36 @@ def test_every_non_empty_control_status_is_ineligible(
             (ticket_status.value, ticket.id),
         )
         assert not _eligible(conn, ticket)
+    finally:
+        conn.close()
+
+
+# Under the default worker-owned first stage, only `empty` is auto-runnable; every other
+# control status is a deliberate "not eligible" decision. This partitions the full
+# TicketStatus set so a future status cannot silently become auto-runnable.
+_AUTO_ELIGIBLE_UNDER_WORKER_OWNERSHIP: dict[TicketStatus, bool] = {
+    TicketStatus.empty: True,
+    TicketStatus.agent_running_step: False,
+    TicketStatus.awaiting_approval: False,
+    TicketStatus.proposal_discussion: False,
+    TicketStatus.user_takeover: False,
+    TicketStatus.needs_user: False,
+    TicketStatus.paired_work: False,
+    TicketStatus.errored: False,
+}
+
+
+def test_every_ticket_status_has_an_explicit_auto_eligibility_decision(tmp_path: Path) -> None:
+    assert set(_AUTO_ELIGIBLE_UNDER_WORKER_OWNERSHIP) == set(TicketStatus)
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn)
+        for status, expected in _AUTO_ELIGIBLE_UNDER_WORKER_OWNERSHIP.items():
+            conn.execute(
+                "UPDATE tickets SET ticket_status = ? WHERE id = ?",
+                (status.value, ticket.id),
+            )
+            assert _eligible(conn, ticket) is expected, status
     finally:
         conn.close()
 

@@ -42,7 +42,7 @@ def _ticket(conn: Connection):
 
 
 def test_fresh_schema_is_marked_at_current_version(tmp_db: Connection) -> None:
-    assert int(tmp_db.execute("PRAGMA user_version").fetchone()[0]) == 35
+    assert int(tmp_db.execute("PRAGMA user_version").fetchone()[0]) == 36
 
 
 def test_worker_help_pauses_dispatch_and_requires_explicit_release(tmp_db: Connection) -> None:
