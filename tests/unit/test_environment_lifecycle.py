@@ -82,7 +82,9 @@ def test_staging_reset_replaces_fake_state_but_preserves_prepared_identity(
     assert reset.runtime_user_home.stat().st_mode & 0o777 == 0o700
 
 
-def test_staging_skills_are_linked_to_the_prepared_repository(tmp_path: Path) -> None:
+def test_staging_prepare_does_not_materialize_a_panels_managed_hermes_home(
+    tmp_path: Path,
+) -> None:
     repository = _repository(tmp_path, "staging-repo")
     unrelated_ticket_checkout = tmp_path / "unrelated-ticket-checkout"
     unrelated_ticket_checkout.mkdir()
@@ -92,11 +94,10 @@ def test_staging_skills_are_linked_to_the_prepared_repository(tmp_path: Path) ->
         repository_roots=(repository,),
     )
 
-    panels_skill = prepared.hermes_home / "skills" / "panels"
-    assert panels_skill.resolve() == repository / "src" / "planner" / "skills" / "panels"
+    assert not prepared.hermes_home.exists()
 
     shutil.rmtree(unrelated_ticket_checkout)
-    assert panels_skill.resolve().is_dir()
+    assert not prepared.hermes_home.exists()
 
 
 def test_staging_reset_refuses_while_instance_lifecycle_is_owned(tmp_path: Path) -> None:
@@ -283,6 +284,7 @@ def test_live_import_pointer_failure_keeps_the_complete_previous_generation(
         repository_roots=(repository,),
     )
     prepared.db_path.write_bytes(b"old-db")
+    prepared.hermes_home.mkdir(parents=True, exist_ok=True)
     (prepared.hermes_home / "old-session").write_text("old", encoding="utf-8")
     (prepared.runtime_user_home / "old-identity").write_text("old", encoding="utf-8")
     (prepared.logs_dir / "old.log").write_text("old", encoding="utf-8")
@@ -399,6 +401,7 @@ def test_live_import_rejects_sources_inside_live_root(tmp_path: Path) -> None:
     prepared.db_path.parent.mkdir(parents=True, exist_ok=True)
     sqlite3.connect(prepared.db_path).close()
     prepared.managed_files_root.mkdir(parents=True, exist_ok=True)
+    prepared.hermes_home.mkdir(parents=True, exist_ok=True)
     (prepared.db_path.parent / "worker-settings").mkdir(exist_ok=True)
     (prepared.runtime_user_home / ".codex").mkdir()
     (prepared.runtime_user_home / ".claude").mkdir()

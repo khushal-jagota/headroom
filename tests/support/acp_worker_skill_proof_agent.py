@@ -15,7 +15,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tests.support.acp_scripted_agent import ScriptedAcpAgent
 
-ROLE_DIRECTIVE = "Use the installed `panels-worker` skill."
+ROLE_DIRECTIVE = (
+    "Start with the `panels` skill. It explains the system and is necessary, "
+    "then drill through to your identity through the skills layers. "
+    "You are a ticket worker."
+)
 WORKTREE_HEADING = "## Worktree lifecycle"
 WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed Worktree lifecycle guidance."
 

@@ -313,7 +313,9 @@ const RESOURCE_DEFINITIONS = {
     {
       eventInvalidated: true,
       affectedByEvent: (facts) =>
-        eventEntityId(facts, "worker")
+        eventEntityId(facts, "worker") &&
+        facts.event.entity_id !== "worker_chief_of_staff" &&
+        facts.event.entity_id !== "worker_skills_home"
           ? [`worker:${facts.event.entity_id.slice("worker_".length)}`]
           : []
     }
@@ -535,12 +537,17 @@ function mutationEffectPlan(effect: ResourceMutationEffect): MutationEffectPlan 
       };
     case "workerSettingsChanged": {
       const workerType = requireId(effect.workerType, "workerType");
+      const identities: CatalogueResourceIdentity[] = [
+        RESOURCE_DEFINITIONS.workers.identity()
+      ];
+      if (workerType !== "chief_of_staff" && workerType !== "skills_home") {
+        identities.push(RESOURCE_DEFINITIONS.worker.identity(workerType));
+      }
+      if (workerType !== "chief_of_staff") {
+        identities.push(RESOURCE_DEFINITIONS.skillsHome.identity());
+      }
       return {
-        identities: [
-          RESOURCE_DEFINITIONS.workers.identity(),
-          RESOURCE_DEFINITIONS.worker.identity(workerType),
-          RESOURCE_DEFINITIONS.skillsHome.identity()
-        ],
+        identities,
         refreshReview: false
       };
     }

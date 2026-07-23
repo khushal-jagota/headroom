@@ -63,12 +63,22 @@ One screen per part of the system:
   documents page for the kickoff/mid/review record (see `sprints.md`).
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
-- **Workers** — a compact list of configured Worker types and one detail page per Worker.
-  Worker identity and lifecycle structure stay read-only. Each Stage ownership default
-  saves independently for future Ticket entries. The specialist skill name stays read-only;
-  its description and Markdown body use the standard direct `InlineEdit` behavior and save
-  independently. A failed save keeps the attempted text and a useful error so it can be
-  corrected or retried. The same page collapses cleanly on mobile.
+- **Agents** — the browser navigation and page at `#/agents`. The page has exactly two
+  stacked sections: **Agents**, then **Workers**. Agents contains **Chief of Staff** and
+  the shared **Worker skill** (`panels-worker`). Chief of Staff opens at
+  `#/agents/chief-of-staff`; it has launch defaults and its canonical editable skill,
+  but no Ticket Stage table. Worker skill opens at `#/agents/worker-skill`; its name is
+  read-only and its description and Markdown body edit the canonical shared role skill.
+  It is presented as an Agent-like configurable role, but it has no independent launch,
+  model, or Stage controls.
+
+  Workers remains a compact list of configured Worker types. A Worker opens at
+  `#/agents/workers/<worker-type>` with the same launch defaults, Stage ownership
+  controls, and specialist skill editor as before. Worker and skill identities and
+  lifecycle structure stay read-only. Each editable value saves independently; a failed
+  save keeps the attempted value and a useful error so it can be corrected or retried.
+  The layout collapses cleanly on mobile. Legacy `#/workers` and
+  `#/workers/<worker-type>` addresses redirect to their Agents-page equivalents.
 
 The shell itself carries two separate live signals. Worker presence is the small
 spinner and "N working" readout from the global running-worker count. Server
@@ -86,9 +96,10 @@ share.
   engine only manages loaded values, subscribers, and overlapping requests; it knows
   nothing about Tickets or Projects. The event log is a doorbell. Events invalidate
   catalogue resources such as `ticket:<id>`, `board`, `review`, `sprint:current`,
-  `workers`, and `worker:<id>`, and successful UI writes apply one named catalogue
-  effect immediately. Only those resources refetch. There is no whole-screen refetch or
-  client-side copy of canonical state — the server remains the source of truth.
+  `workers`, `worker:<id>`, and `skills-home`, and successful UI writes apply one named
+  catalogue effect immediately. Only those resources refetch. There is no whole-screen
+  refetch or client-side copy of canonical state — the server remains the source of
+  truth.
 
   A Project rename refreshes Projects, Board, today's Day, backlog Sprint items,
   Ideas, current Sprint, and an already-opened Ticket when its loaded direct Project
@@ -257,4 +268,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-21 (single ACP conversation pane, GFM rendering, Resource Catalogue, and shared file previews)._
+_Last verified: 2026-07-23 (Agents page, single ACP conversation pane, GFM rendering, Resource Catalogue, and shared file previews)._

@@ -296,21 +296,21 @@ def test_worker_settings_event_refetches_workers_and_matching_detail_only(
     index = open_page(
         context_factory(),
         server,
-        "#/workers",
-        'section[data-screen="workers"] [data-workers-list]',
+        "#/agents",
+        'section[data-screen="agents"] [data-workers-list]',
         settled=False,
     )
     coding = open_page(
         context_factory(),
         server,
-        "#/workers/coding",
+        "#/agents/workers/coding",
         '[data-worker-detail][data-worker-id="coding"]',
         settled=False,
     )
     new_worker = open_page(
         context_factory(),
         server,
-        "#/workers/new_worker",
+        "#/agents/workers/new_worker",
         '[data-worker-detail][data-worker-id="new_worker"]',
         settled=False,
     )

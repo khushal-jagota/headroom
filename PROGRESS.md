@@ -1,15 +1,72 @@
 # PROGRESS
 
-## Current work cycle (2026-07-23): Implement `t_7fefjrze`
+## Current work cycle (2026-07-23): Close out `t_7fefjrze`
 
-Ticket `t_7fefjrze` is implementing the approved behavior that Workspace Blocked
-sections start collapsed while remaining expandable and leaving ordinary active
-sections open. The isolated branch `ticket/t_7fefjrze-blocked-collapsed` starts from
-`staging` revision `ebf5f64d`. The route now derives Blocked as collapsed through the
-existing section model, and its browser regression proves initial closure, normal
-expansion, and unchanged active-stage defaults. The focused Playwright test and Svelte
-diagnostics pass. Independent plan and implementation reviews report no unresolved
-findings. Next: run one canonical `./verify`, then propose Implementation if it passes.
+Ticket `t_7fefjrze` makes Workspace Blocked sections start collapsed while remaining
+expandable and leaving ordinary active sections open. The implementation at `133f9fcd`
+passed its focused browser proof, Svelte diagnostics, independent reviews, and canonical
+`./verify`. Current `staging` revision `b1e91c55` is now merged into the Ticket branch;
+the only integration repairs preserve both PROGRESS histories and rebuild the generated
+Vite bundle from the combined source. Next: review and commit that prospective result,
+run one canonical `./verify`, then advance and push `staging` if green.
+
+## Current work cycle (2026-07-23): Agents page implementation (`t_fvrfhk2k`)
+
+The browser-facing Workers route is now the Agents page at `#/agents`, with exactly two stacked
+sections: Agent-like configurable roles and the existing Worker roster. The Agents section contains
+Chief of Staff plus the owner-requested shared `panels-worker` role skill. Chief has launch defaults;
+the shared Worker skill deliberately has none because it is not an independently launched runtime.
+Both use the shared skill editor and neither has a Ticket Stage table, while Worker lifecycle
+ownership, manifests, candidate skills, and independent field-save behavior remain intact. Chief
+edits refresh the Workers response that actually carries Chief state; shared Worker-skill edits use
+the existing skills-home resource and invalidation path. Legacy `#/workers` hashes redirect to the
+exact Agents routes. Svelte check, production build, all frontend unit tests, and the 13 focused Agents/
+Workers and resource-catalogue Playwright tests pass. Review follow-up directly covers both legacy
+canonicalizations, unknown Agents subroutes, the visible and active Agents navigation, and 390px
+index/Chief controls without horizontal overflow. Desktop and mobile screenshots are in the Ticket
+artifact directory, with the desktop image refreshed to show both Agent cards. Closeout merged
+current `staging` revision `08642474` into the Ticket branch as `0c76f6ea` and corrected
+`docs/frontend.md` plus the managed-settings section of `docs/worker-types.md` in `2b3c3a56`.
+The combined-diff review found no code, generated-build, test, route, merge-interaction, or
+documentation-content violation; its one stale-memory finding is corrected here. Next: run the one
+canonical `./verify`, then advance and push the exact verified revision before proposing Closeout.
+
+## Current work cycle (2026-07-23): Use the user's normal Hermes installation and home (`t_pw264y71`)
+
+Hermes-backed Panels runtime now defaults to the operator's normal `~/.hermes` home instead of the
+database-adjacent `data/hermes-home`. Production server startup no longer injects a
+Panels-managed home, prepared-environment launches no longer export `PLAN_HERMES_HOME`, and the
+worker-settings API now resolves the active runtime skills root from the same default home. The
+prepared live/staging environment materializer no longer pre-provisions a separate per-environment
+Hermes skill home as part of default prepare/reset, while the explicit `PLAN_HERMES_HOME`
+override path and the legacy live-import Hermes-home copy path remain intact.
+
+What passed: focused Ruff on the changed source/tests, focused Mypy on the five changed source
+files, `git diff --check`, and the focused unit suite covering Hermes home resolution, environment
+run-env injection, environment CLI/materialization, worker settings, and Hermes backend
+materialization:
+`tests/unit/test_conversation_hermes_backend_configuration.py`,
+`tests/unit/test_environment_credentials.py`,
+`tests/unit/test_environment_cli.py`,
+`tests/unit/test_environment_fake_fixture.py`,
+`tests/unit/test_environment_lifecycle.py`,
+`tests/unit/test_worker_settings.py`,
+`tests/unit/test_hermes_acp_backend.py`.
+
+Next: propose Implementation for approval. No canonical `./verify` yet; that remains for later
+integration/closeout, per the accepted ticket shape.
+
+## Current work cycle (2026-07-23): Implement default Ticket placement (`t_qe1gk3ha`)
+
+Implemented creation-time defaults in the ordinary and Chief external-work API paths. The action
+layer resolves the planning day and current sprint, and the data writers add day membership in the
+same transaction as Ticket creation. Explicit sprint ids, explicit backlog (`sprint_id: null`), and
+parent sprint items remain authoritative. Focused unit and CLI/E2E tests pass, along with Ruff,
+strict Mypy, and diff checks. The first two canonical verify runs found stale Review and Board E2E
+assumptions that a new Ticket is absent from today, plus one independent server-lifecycle timing
+flake; both tests now remove the default membership before exercising explicit membership
+invalidation, and the lifecycle test passes in isolation. Next: rerun the canonical verify, then
+advance staging.
 
 ## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
 

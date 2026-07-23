@@ -361,32 +361,134 @@ textarea {
   display: flex;
 }
 
-/* --- Workers ------------------------------------------------------------- */
+/* --- Agents and Workers -------------------------------------------------- */
 
-.workers-page {
+.agents-page {
   max-width: var(--measure-index);
   margin: 0 auto;
   padding: var(--space-6) var(--space-4) var(--space-page-tail);
 }
 
-.workers-page--detail {
+.agents-page--detail {
   max-width: calc(var(--measure-index) + var(--space-7) + var(--space-7));
 }
 
-.workers-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-4);
+.agents-page-head,
+.agents-detail-head {
   margin-bottom: var(--space-5);
 }
 
-.workers-head h1,
-.worker-skill-head h2 {
+.agents-page-head h1,
+.agents-detail-head h1 {
   margin: 0;
   color: var(--text-strong);
   font-size: var(--type-lg);
   line-height: 1.2;
+}
+
+.agents-page-head p,
+.agents-detail-head p {
+  margin: var(--space-2) 0 0;
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+}
+
+.agents-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-6) 0 var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+}
+
+.agents-index-section:first-of-type .agents-section-head {
+  margin-top: 0;
+}
+
+.agents-section-head h2,
+.worker-skill-head h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-md);
+  line-height: 1.2;
+}
+
+.agents-section-head > span {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.agent-card {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.agent-card-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.agent-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.agent-card-head h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-md);
+}
+
+.agent-card-head > span {
+  color: var(--accent-bright);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.agent-card > p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+}
+
+.agent-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.agent-chip {
+  padding: 2px var(--space-2);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-pill);
+}
+
+.agent-chip b {
+  color: var(--text-default);
+  font-weight: 600;
+}
+
+.agent-configure-link {
+  margin-left: auto;
+  color: var(--accent-bright);
+  font-size: var(--type-sm);
+  text-decoration: none;
 }
 
 .workers-list {
@@ -504,7 +606,7 @@ textarea {
   padding: var(--space-1) var(--space-2);
 }
 
-.workers-back {
+.agents-back {
   display: inline-block;
   margin-bottom: var(--space-4);
   color: var(--text-faint);
@@ -512,12 +614,21 @@ textarea {
   text-decoration: none;
 }
 
-.workers-back:hover {
+.agents-back:hover {
   color: var(--text-default);
 }
 
-.worker-detail-facts {
+.role-detail-facts {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
   justify-content: flex-end;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
 }
 
 .worker-stage-table-shell {
@@ -649,13 +760,16 @@ textarea {
 }
 
 @media (max-width: 720px) {
-  .workers-page {
+  .agents-page {
     max-width: none;
     padding: var(--space-4) 0 var(--space-page-tail);
   }
 
-  .workers-head,
-  .workers-back,
+  .agents-page-head,
+  .agents-section-head,
+  .agent-card,
+  .agents-detail-head,
+  .agents-back,
   .worker-skill,
   .worker-launch-defaults {
     padding-left: var(--space-3);
@@ -672,11 +786,11 @@ textarea {
     grid-column: 1 / -1;
   }
 
-  .worker-detail-head {
+  .agents-detail-head {
     display: grid;
   }
 
-  .worker-detail-facts {
+  .role-detail-facts {
     justify-content: flex-start;
   }
 
