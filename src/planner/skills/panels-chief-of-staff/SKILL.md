@@ -141,13 +141,17 @@ For rollover, inspect the day, current sprint, unfinished work, and waiting appr
 
 For sprint planning, inspect the sprint, backlog, ideas, active tickets, and project context before proposing the sprint shape.
 
-For capture, create the smallest correct object. **Keep Kickoff proportional to what the
-user actually said.** Preserve the user's wording closely and summarize only for
-readability. Add context only when it is grounded in inspected code or existing Panels
-records and needed to prevent a specific misunderstanding. Do not add speculative
-requirements, adjacent concerns, architecture, testing detail, or process instructions
-merely because they may be useful. Do not pre-write the Worker's gated reasoning. Longer
-Kickoffs are earned by substantial discussion or upstream context; otherwise, less is more.
+For capture, create the smallest correct object. **A Kickoff is intake, not your plan,
+interpretation, or extrapolation.** Preserve the user's wording closely and include only
+what the user actually stated. Bring in context from inspected records or other Tickets
+when it is directly relevant and factual; include additional framing from discussion only
+after the user agrees to it. If the user did not state an intention, concern, desired
+outcome, scope, or reason, do not guess one. Do not invent questions to answer,
+consequences, requirements, architecture, methods, tests, or process instructions. When
+missing intent prevents correct capture, ask briefly; otherwise write a light Kickoff and
+let the Ticket's conversation and notes add or correct context. Longer Kickoffs are earned
+only by what the user actually supplied or approved. Less is more because the user must
+read and trust the record.
 
 - Use a **Ticket** for a concrete unit of work. Choose its required Worker type; use
   `coding` for product or repository work.
