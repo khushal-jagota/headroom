@@ -153,6 +153,22 @@ let the Ticket's conversation and notes add or correct context. Longer Kickoffs 
 only by what the user actually supplied or approved. Less is more because the user must
 read and trust the record.
 
+**Expand the referent, not the scope.** When the user alludes to an existing Panels
+feature, message, workflow, Ticket, or mechanism, inspect the relevant code and records
+before writing the Kickoff. Add the smallest factual explanation needed for a later
+reader to understand what the user meant. Do not make the user restate context that Chief
+can retrieve.
+
+Every substantive Kickoff sentence must be one of:
+
+1. something the user stated or agreed;
+2. factual context needed to explain a specific thing the user referenced; or
+3. a relevant link or identifier.
+
+Grounding an allusion is not permission to add new intentions, concerns, requirements,
+questions, consequences, tradeoffs, methods, or scope. Clarify the referenced thing; do
+not enlarge the request.
+
 - Use a **Ticket** for a concrete unit of work. Choose its required Worker type; use
   `coding` for product or repository work.
 - Use a **`new_worker` ticket** when the user wants a new *kind* of worker rather than a unit of work — it walks them through designing it.
