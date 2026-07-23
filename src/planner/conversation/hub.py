@@ -28,6 +28,9 @@ from .backend_contracts import (
     ConversationIngressTransition,
     SessionNotificationReplayMaterializer,
 )
+from .browser_session_notification_replay_materializer import (
+    BrowserSessionNotificationReplayMaterializer,
+)
 from .configuration import (
     ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES,
     ACP_NEW_CONVERSATION_TIMEOUT_SECONDS,
@@ -203,7 +206,8 @@ class _OrdinaryReplayEntryKey:
 
 @dataclass(frozen=True, slots=True)
 class _MaterializedReplayEntryKey:
-    backend_slot_key: Hashable
+    slot_key: Hashable
+    segment_sequence: int | None = None
 
 
 @dataclass(slots=True)
@@ -216,6 +220,7 @@ class _OrdinaryReplayEntry:
 @dataclass(slots=True)
 class _MaterializedReplayEntry:
     sequence: int
+    slot_key: Hashable
     envelope: AcpSessionUpdateEnvelope
     notifications: list[SessionNotification]
     accumulated_serialized_value_bytes: int
@@ -233,12 +238,13 @@ class _StreamState:
     runtime_handle: ConversationRuntimeHandle | None = None
     sequence: int = 0
     ready: bool = False
-    reset_buffer: list[str] = field(default_factory=list)
     reset_buffer_bytes: int = 0
     reset_buffer_envelope_count: int = 0
     reset_buffer_attempted_bytes: int = 0
     reset_buffer_available: bool = True
-    replay_materializer: SessionNotificationReplayMaterializer | None = None
+    replay_materializer: SessionNotificationReplayMaterializer = field(
+        default_factory=BrowserSessionNotificationReplayMaterializer
+    )
     replay_entries: dict[
         _OrdinaryReplayEntryKey | _MaterializedReplayEntryKey, _ReplayEntry
     ] = field(default_factory=dict)
@@ -1026,9 +1032,6 @@ class ConversationHub:
                     id(replacement_handle.record_identity),
                 ),
                 runtime_handle=replacement_handle,
-                replay_materializer=(
-                    replacement_handle.definition.session_notification_replay_materializer
-                ),
                 supports_steer=(
                     replacement_handle.definition.turn_capabilities.supports_steer
                 ),
@@ -1279,9 +1282,6 @@ class ConversationHub:
                     id(replacement_handle.record_identity),
                 ),
                 runtime_handle=replacement_handle,
-                replay_materializer=(
-                    replacement_handle.definition.session_notification_replay_materializer
-                ),
                 sequence=old_stream.sequence,
                 persistent_rejection=old_stream.persistent_rejection,
                 supports_steer=(
@@ -1839,9 +1839,6 @@ class ConversationHub:
             binding=binding,
             source_key=self._source_key(source),
             runtime_handle=runtime_handle,
-            replay_materializer=(
-                runtime_handle.definition.session_notification_replay_materializer
-            ),
             sequence=sequence,
             persistent_rejection=persistent,
             browsers={},
@@ -1880,7 +1877,6 @@ class ConversationHub:
             build_replay()
         except Exception:
             stream.reset_buffer_available = False
-            stream.reset_buffer = []
             stream.reset_buffer_bytes = 0
         stream.browsers = dict(existing_browsers)
         if initial_subscription is not None:
@@ -2011,16 +2007,6 @@ class ConversationHub:
                 for current, following in zip(decoded, decoded[1:], strict=False)
             )
             or decoded[-1].sequence != stream.sequence
-            or (
-                stream.replay_materializer is None
-                and tuple(envelope.sequence for envelope in decoded)
-                != tuple(
-                    range(
-                        stream.sequence - len(decoded) + 1,
-                        stream.sequence + 1,
-                    )
-                )
-            )
         ):
             return None
         ready_envelopes = tuple(
@@ -2075,8 +2061,6 @@ class ConversationHub:
 
     def _materialized_replay_snapshot(self, stream: _StreamState) -> tuple[str, ...]:
         materializer = stream.replay_materializer
-        if materializer is None:
-            return tuple(stream.reset_buffer)
         snapshot: list[str] = []
         for entry in stream.replay_entries.values():
             if isinstance(entry, _OrdinaryReplayEntry):
@@ -2364,7 +2348,6 @@ class ConversationHub:
         serialized = validated.model_dump_json(by_alias=True, exclude_none=True)
         stream.sequence = validated.sequence
         if validated.type == "connection" and validated.payload.state == "reset":
-            stream.reset_buffer = []
             stream.reset_buffer_bytes = 0
             stream.reset_buffer_envelope_count = 0
             stream.reset_buffer_attempted_bytes = 0
@@ -2373,16 +2356,7 @@ class ConversationHub:
         encoded_size = len(serialized.encode("utf-8"))
         stream.reset_buffer_envelope_count += 1
         stream.reset_buffer_attempted_bytes += encoded_size
-        if stream.replay_materializer is not None:
-            self._admit_materialized_replay_envelope(stream, validated, serialized)
-        elif stream.reset_buffer_available:
-            if stream.reset_buffer_bytes + encoded_size <= self._reset_buffer_byte_limit:
-                stream.reset_buffer.append(serialized)
-                stream.reset_buffer_bytes += encoded_size
-            else:
-                stream.reset_buffer_available = False
-                stream.reset_buffer = []
-                stream.reset_buffer_bytes = 0
+        self._admit_materialized_replay_envelope(stream, validated, serialized)
         for browser in tuple(stream.browsers.values()):
             try:
                 browser.queue.put_nowait(serialized)
@@ -2398,12 +2372,26 @@ class ConversationHub:
         serialized: str,
     ) -> None:
         materializer = stream.replay_materializer
-        assert materializer is not None
         admission = None
         if isinstance(envelope, AcpSessionUpdateEnvelope) and isinstance(
             envelope.payload, SessionNotification
         ):
             admission = materializer.classify(envelope.payload)
+            if admission is not None and admission.disposition == "discard":
+                return
+            replay_notification = materializer.project_for_replay(envelope.payload)
+            if replay_notification is not envelope.payload:
+                envelope = SERVER_ENVELOPE_ADAPTER.validate_python(
+                    envelope.model_copy(update={"payload": replay_notification}).model_dump(
+                        by_alias=True, exclude_none=True
+                    ),
+                    strict=True,
+                    by_alias=True,
+                    by_name=False,
+                )
+                serialized = envelope.model_dump_json(
+                    by_alias=True, exclude_none=True
+                )
         if admission is None:
             ordinary_key = _OrdinaryReplayEntryKey(envelope.sequence)
             stored_bytes = len(serialized.encode("utf-8"))
@@ -2420,6 +2408,22 @@ class ConversationHub:
         materialized_envelope = cast(AcpSessionUpdateEnvelope, envelope)
         notification = materialized_envelope.payload
         materialized_key = _MaterializedReplayEntryKey(admission.slot_key)
+        if admission.requires_contiguous_predecessor:
+            latest_key = next(reversed(stream.replay_entries), None)
+            latest_entry = (
+                stream.replay_entries.get(latest_key) if latest_key is not None else None
+            )
+            if (
+                isinstance(latest_key, _MaterializedReplayEntryKey)
+                and isinstance(latest_entry, _MaterializedReplayEntry)
+                and latest_entry.slot_key == admission.slot_key
+                and latest_entry.sequence == envelope.sequence - 1
+            ):
+                materialized_key = latest_key
+            else:
+                materialized_key = _MaterializedReplayEntryKey(
+                    admission.slot_key, envelope.sequence
+                )
         existing = stream.replay_entries.pop(materialized_key, None)
         if isinstance(existing, _MaterializedReplayEntry):
             stream.reset_buffer_bytes -= existing.stored_bytes
@@ -2450,6 +2454,7 @@ class ConversationHub:
             )
         stream.replay_entries[materialized_key] = _MaterializedReplayEntry(
             sequence=envelope.sequence,
+            slot_key=admission.slot_key,
             envelope=materialized_envelope,
             notifications=notifications,
             accumulated_serialized_value_bytes=accumulated_serialized_value_bytes,

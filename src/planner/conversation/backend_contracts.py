@@ -100,13 +100,18 @@ SessionNotificationNormalizer = Callable[[SessionNotification], SessionNotificat
 @dataclass(frozen=True, slots=True)
 class SessionNotificationReplaySlotAdmission:
     slot_key: Hashable
-    disposition: Literal["accumulate", "replace"]
+    disposition: Literal["accumulate", "replace", "discard"]
+    requires_contiguous_predecessor: bool
     serialized_notification_bytes: int
     serialized_materialized_base_bytes: int
     serialized_accumulation_fragment_bytes: int
 
 
 class SessionNotificationReplayMaterializer(Protocol):
+    def project_for_replay(
+        self, notification: SessionNotification
+    ) -> SessionNotification: ...
+
     def classify(
         self, notification: SessionNotification
     ) -> SessionNotificationReplaySlotAdmission | None: ...
@@ -140,9 +145,6 @@ class AgentBackendDefinition:
     employee_environment_overrides: Callable[
         [ConversationEmployee], tuple[tuple[str, str], ...]
     ] | None = None
-    session_notification_replay_materializer: (
-        SessionNotificationReplayMaterializer | None
-    ) = None
 
     def __post_init__(self) -> None:
         _require_non_empty_text(self.backend_key, field_name="backend_key")

@@ -36,9 +36,6 @@ from planner.conversation.backend_contracts import (
 from planner.conversation.codex_session_notification_normalizer import (
     normalize_codex_session_notification,
 )
-from planner.conversation.codex_session_notification_replay_materializer import (
-    CodexSessionNotificationReplayMaterializer,
-)
 from planner.conversation.contracts import (
     ConversationEmployee,
     ConversationSessionBinding,
@@ -54,6 +51,8 @@ from planner.conversation.hub import (
     SLOW_CONSUMER_CLOSE_REASON,
     BrowserSubscription,
     ConversationHub,
+    _OrdinaryReplayEntry,
+    _OrdinaryReplayEntryKey,
 )
 from planner.conversation.permission_broker import ConversationPermissionBroker
 from planner.conversation.runtime_ports import ConversationRuntimeHandle
@@ -74,6 +73,20 @@ from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
 
 SCRIPTED_AGENT = Path(__file__).resolve().parents[1] / "support" / "acp_scripted_agent.py"
+
+
+def _set_replay_snapshot(stream: Any, snapshot: list[str] | tuple[str, ...]) -> None:
+    stream.replay_entries = {
+        _OrdinaryReplayEntryKey(index): _OrdinaryReplayEntry(
+            sequence=json.loads(serialized)["sequence"],
+            serialized=serialized,
+            stored_bytes=len(serialized.encode("utf-8")),
+        )
+        for index, serialized in enumerate(snapshot)
+    }
+    stream.reset_buffer_bytes = sum(
+        len(serialized.encode("utf-8")) for serialized in snapshot
+    )
 
 
 class _Strategy:
@@ -1919,36 +1932,36 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
         assert attached.connection_id == "browser-after-recovery"
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(8)]
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(6)]
             assert [item["type"] for item in envelopes] == [
                 "connection",
-                "acp_session_update",
-                "acp_session_update",
                 "acp_session_update",
                 "connection",
                 "human_echo",
                 "human_echo",
                 "queue_snapshot",
             ]
-            assert [item["sequence"] for item in envelopes] == list(range(3, 11))
+            assert [item["sequence"] for item in envelopes] == list(range(5, 11))
             assert [
                 envelopes[0]["payload"]["state"],
-                envelopes[4]["payload"]["state"],
+                envelopes[2]["payload"]["state"],
             ] == ["reset", "ready"]
             assert envelopes[0]["payload"]["detail"] == ("Conversation runtime recovered")
-            assert envelopes[1]["payload"]["update"]["content"]["text"] == ("durable replay")
-            assert envelopes[5]["payload"]["clientMessageId"] == "queued-1"
-            assert envelopes[5]["payload"]["prompt"] == queued.prompt.model_dump(
+            assert envelopes[1]["payload"]["update"]["content"]["text"] == (
+                "durable replay" * 3
+            )
+            assert envelopes[3]["payload"]["clientMessageId"] == "queued-1"
+            assert envelopes[3]["payload"]["prompt"] == queued.prompt.model_dump(
                 mode="json", by_alias=True, exclude_none=True
             )
-            assert envelopes[6]["payload"]["clientMessageId"] == ("send-now-successor")
-            assert envelopes[6]["payload"]["prompt"] == (
+            assert envelopes[4]["payload"]["clientMessageId"] == ("send-now-successor")
+            assert envelopes[4]["payload"]["prompt"] == (
                 successor_echo.prompt.model_dump(mode="json", by_alias=True, exclude_none=True)
             )
-            assert envelopes[7]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[5]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
             assert all(
                 item["clientMessageId"] != "send-now-successor"
-                for item in envelopes[7]["payload"]["items"]
+                for item in envelopes[5]["payload"]["items"]
             )
 
         assert first.queue.empty()
@@ -2335,7 +2348,7 @@ def test_idle_refresh_bootstrap_survives_one_live_update_before_writer_starts(
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        snapshot_before_attach = tuple(stream.reset_buffer)
+        snapshot_before_attach = hub._materialized_replay_snapshot(stream)  # noqa: SLF001
 
         refreshing = await hub.attach_browser("t_hub", connection_id="browser-refreshing")
         await hub.publish_activity(record.employee, record.binding, "thinking", "after refresh")
@@ -2383,12 +2396,12 @@ def test_idle_same_binding_attach_uses_ready_stream_snapshot_without_session_loa
         attach_calls = registry.attach_calls
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
         sequence_before_attach = stream.sequence
-        reset_buffer_before_attach = tuple(stream.reset_buffer)
+        reset_buffer_before_attach = hub._materialized_replay_snapshot(stream)  # noqa: SLF001
 
         browser_b = await hub.attach_browser("t_hub", connection_id="browser-b")
         assert registry.attach_calls == attach_calls
         assert stream.sequence == sequence_before_attach
-        assert tuple(stream.reset_buffer) == reset_buffer_before_attach
+        assert hub._materialized_replay_snapshot(stream) == reset_buffer_before_attach  # noqa: SLF001
         assert browser_a.queue.empty()
         await hub.publish_activity(record.employee, record.binding, "thinking", "live")
         browser_b_envelopes = [
@@ -2415,7 +2428,7 @@ def test_idle_same_binding_attach_uses_ready_stream_snapshot_without_session_loa
         assert live_for_a["payload"]["detail"] == "live"
 
         stream.reset_buffer_available = False
-        stream.reset_buffer = []
+        stream.replay_entries = {}
         unavailable = await hub.attach_browser(
             "t_hub", connection_id="browser-unavailable"
         )
@@ -2441,7 +2454,7 @@ def test_same_binding_attach_fails_closed_for_empty_snapshot(tmp_path: Path) -> 
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        stream.reset_buffer = []
+        stream.replay_entries = {}
         stream.reset_buffer_bytes = 0
 
         malformed = await hub.attach_browser(
@@ -2473,10 +2486,8 @@ def test_same_binding_attach_fails_closed_for_snapshot_without_ready(
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        stream.reset_buffer = stream.reset_buffer[:1]
-        stream.reset_buffer_bytes = sum(
-            len(item.encode("utf-8")) for item in stream.reset_buffer
-        )
+        snapshot = hub._materialized_replay_snapshot(stream)  # noqa: SLF001
+        _set_replay_snapshot(stream, snapshot[:1])
 
         malformed = await hub.attach_browser(
             "t_hub", connection_id="browser-no-ready"
@@ -2507,10 +2518,8 @@ def test_same_binding_attach_fails_closed_for_snapshot_without_reset(
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        stream.reset_buffer = stream.reset_buffer[-1:]
-        stream.reset_buffer_bytes = sum(
-            len(item.encode("utf-8")) for item in stream.reset_buffer
-        )
+        snapshot = hub._materialized_replay_snapshot(stream)  # noqa: SLF001
+        _set_replay_snapshot(stream, snapshot[-1:])
 
         malformed = await hub.attach_browser(
             "t_hub", connection_id="browser-no-reset"
@@ -2541,12 +2550,11 @@ def test_same_binding_attach_fails_closed_for_malformed_envelope(
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        malformed_reset = json.loads(stream.reset_buffer[0])
+        snapshot = list(hub._materialized_replay_snapshot(stream))  # noqa: SLF001
+        malformed_reset = json.loads(snapshot[0])
         malformed_reset["unexpected"] = True
-        stream.reset_buffer[0] = json.dumps(malformed_reset, separators=(",", ":"))
-        stream.reset_buffer_bytes = sum(
-            len(item.encode("utf-8")) for item in stream.reset_buffer
-        )
+        snapshot[0] = json.dumps(malformed_reset, separators=(",", ":"))
+        _set_replay_snapshot(stream, snapshot)
 
         malformed = await hub.attach_browser(
             "t_hub", connection_id="browser-malformed-envelope"
@@ -2581,7 +2589,7 @@ def test_same_binding_attach_fails_closed_when_normalized_snapshot_exceeds_limit
         )
         await asyncio.wait_for(existing.queue.get(), timeout=1)
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        snapshot_before_attach = tuple(stream.reset_buffer)
+        snapshot_before_attach = hub._materialized_replay_snapshot(stream)  # noqa: SLF001
         raw_snapshot_bytes = sum(
             len(item.encode("utf-8")) for item in snapshot_before_attach
         )
@@ -2597,7 +2605,7 @@ def test_same_binding_attach_fails_closed_when_normalized_snapshot_exceeds_limit
         assert unavailable.queue.empty()
         assert unavailable.connection_id not in stream.browsers
         assert stream.sequence == 1_000
-        assert tuple(stream.reset_buffer) == snapshot_before_attach
+        assert hub._materialized_replay_snapshot(stream) == snapshot_before_attach  # noqa: SLF001
         assert existing.queue.empty()
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
@@ -2627,10 +2635,9 @@ def test_same_binding_attach_collapses_multiple_ready_markers_to_latest(
         latest_ready = json.loads(first_ready_serialized)
         latest_ready["sequence"] = 4
         latest_ready["payload"]["detail"] = "Latest ready"
-        stream.reset_buffer.append(json.dumps(latest_ready, separators=(",", ":")))
-        stream.reset_buffer_bytes = sum(
-            len(item.encode("utf-8")) for item in stream.reset_buffer
-        )
+        snapshot = list(hub._materialized_replay_snapshot(stream))  # noqa: SLF001
+        snapshot.append(json.dumps(latest_ready, separators=(",", ":")))
+        _set_replay_snapshot(stream, snapshot)
         stream.sequence = 4
 
         reconnect = await hub.attach_browser(
@@ -2683,13 +2690,11 @@ def test_same_binding_attach_fails_closed_for_history_before_reset(
         reset["sequence"] = 2
         ready["sequence"] = 3
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        stream.reset_buffer = [
+        snapshot = [
             json.dumps(item, separators=(",", ":"))
             for item in (activity, reset, ready)
         ]
-        stream.reset_buffer_bytes = sum(
-            len(item.encode("utf-8")) for item in stream.reset_buffer
-        )
+        _set_replay_snapshot(stream, snapshot)
 
         unavailable = await hub.attach_browser(
             "t_hub", connection_id="browser-history-before-reset"
@@ -2724,13 +2729,11 @@ def test_same_binding_attach_fails_closed_for_repeated_reset(tmp_path: Path) -> 
         ready["sequence"] = 3
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
         stream.sequence = 3
-        stream.reset_buffer = [
+        snapshot = [
             json.dumps(item, separators=(",", ":"))
             for item in (first_reset, repeated_reset, ready)
         ]
-        stream.reset_buffer_bytes = sum(
-            len(item.encode("utf-8")) for item in stream.reset_buffer
-        )
+        _set_replay_snapshot(stream, snapshot)
 
         unavailable = await hub.attach_browser(
             "t_hub", connection_id="browser-repeated-reset"
@@ -2747,8 +2750,8 @@ def test_same_binding_attach_fails_closed_for_repeated_reset(tmp_path: Path) -> 
 
 @pytest.mark.parametrize(
     ("ready_sequence", "current_sequence"),
-    ((3, 3), (2, 3)),
-    ids=("sequence-gap", "does-not-end-at-current"),
+    ((2, 3),),
+    ids=("does-not-end-at-current",),
 )
 def test_same_binding_attach_fails_closed_for_noncontiguous_or_stale_snapshot(
     tmp_path: Path,
@@ -2769,10 +2772,9 @@ def test_same_binding_attach_fails_closed_for_noncontiguous_or_stale_snapshot(
         ready = json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
         ready["sequence"] = ready_sequence
-        stream.reset_buffer[-1] = json.dumps(ready, separators=(",", ":"))
-        stream.reset_buffer_bytes = sum(
-            len(item.encode("utf-8")) for item in stream.reset_buffer
-        )
+        snapshot = list(hub._materialized_replay_snapshot(stream))  # noqa: SLF001
+        snapshot[-1] = json.dumps(ready, separators=(",", ":"))
+        _set_replay_snapshot(stream, snapshot)
         stream.sequence = current_sequence
 
         unavailable = await hub.attach_browser(
@@ -2857,11 +2859,10 @@ def test_same_binding_attach_fails_closed_for_nested_sequence_mismatch(
         ready["sequence"] = published["sequence"] + 1
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
         stream.sequence = ready["sequence"]
-        stream.reset_buffer[-1] = json.dumps(published, separators=(",", ":"))
-        stream.reset_buffer.append(json.dumps(ready, separators=(",", ":")))
-        stream.reset_buffer_bytes = sum(
-            len(item.encode("utf-8")) for item in stream.reset_buffer
-        )
+        snapshot = list(hub._materialized_replay_snapshot(stream))  # noqa: SLF001
+        snapshot[-1] = json.dumps(published, separators=(",", ":"))
+        snapshot.append(json.dumps(ready, separators=(",", ":")))
+        _set_replay_snapshot(stream, snapshot)
 
         unavailable = await hub.attach_browser(
             "t_hub", connection_id=f"browser-nested-mismatch-{envelope_type}"
@@ -3023,7 +3024,7 @@ def test_active_turn_attach_orders_replay_larger_than_live_queue_before_ready_an
         broker.phase = "running"
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
         sequence_before_attach = stream.sequence
-        reset_buffer_before_attach = tuple(stream.reset_buffer)
+        reset_buffer_before_attach = hub._materialized_replay_snapshot(stream)  # noqa: SLF001
 
         active = await hub.attach_browser(
             "t_hub",
@@ -3033,7 +3034,7 @@ def test_active_turn_attach_orders_replay_larger_than_live_queue_before_ready_an
         )
         assert active.close_reason is None
         assert stream.sequence == sequence_before_attach
-        assert tuple(stream.reset_buffer) == reset_buffer_before_attach
+        assert hub._materialized_replay_snapshot(stream) == reset_buffer_before_attach  # noqa: SLF001
         assert original.queue.empty()
         await hub.publish_activity(record.employee, record.binding, "thinking", "live")
         envelopes = [
@@ -3167,21 +3168,14 @@ def test_normalized_codex_edit_over_one_megabyte_replays_through_ready(
     asyncio.run(exercise())
 
 
-def test_codex_live_terminal_deltas_materialize_for_cursor_reconnect(
+def test_live_fragments_are_exact_while_shared_reconnect_replay_is_semantic(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
-        record, original_handle = _runtime(tmp_path)
-        definition = replace(
-            original_handle.definition,
-            session_notification_replay_materializer=(
-                CodexSessionNotificationReplayMaterializer()
-            ),
-        )
-        handle = replace(original_handle, definition=definition)
+        record, handle = _runtime(tmp_path)
         registry = _Registry(record, handle)
-        hub = ConversationHub(repository, reset_buffer_byte_limit=10_000)
+        hub = ConversationHub(repository, reset_buffer_byte_limit=15_000)
         hub.bind_owners(  # type: ignore[arg-type]
             registry=registry,
             broker=_Broker(),
@@ -3189,15 +3183,26 @@ def test_codex_live_terminal_deltas_materialize_for_cursor_reconnect(
         )
         source = ConversationIngressSource(record.employee, 1, record.record_identity)
         existing = await hub.attach_browser("t_hub", connection_id="browser-existing")
-        initial = [
-            json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
-            for _ in range(2)
-        ]
+        initial = [json.loads(await existing.queue.get()) for _ in range(2)]
         assert [item["payload"]["state"] for item in initial] == ["reset", "ready"]
 
-        fragments = [f"fragment-{index:03d}-" + ("x" * 100) for index in range(50)]
+        message_fragments = [f"message-{index:03d}-" + ("m" * 100) for index in range(50)]
+        terminal_fragments = [f"terminal-{index:03d}-" + ("t" * 100) for index in range(50)]
         live = []
-        for fragment in fragments:
+        for fragment in message_fragments:
+            notification = SessionNotification.model_validate(
+                {
+                    "sessionId": record.binding.acp_session_id,
+                    "update": {
+                        "sessionUpdate": "agent_message_chunk",
+                        "messageId": "message-1",
+                        "content": {"type": "text", "text": fragment},
+                    },
+                }
+            )
+            await hub.registry_conversation_ingress(source, notification)
+            live.append(json.loads(await existing.queue.get()))
+        for fragment in terminal_fragments:
             notification = SessionNotification.model_validate(
                 {
                     "sessionId": record.binding.acp_session_id,
@@ -3214,15 +3219,44 @@ def test_codex_live_terminal_deltas_materialize_for_cursor_reconnect(
                 }
             )
             await hub.registry_conversation_ingress(source, notification)
-            live.append(
-                json.loads(await asyncio.wait_for(existing.queue.get(), timeout=1))
-            )
+            live.append(json.loads(await existing.queue.get()))
+        final = SessionNotification.model_validate(
+            {
+                "sessionId": record.binding.acp_session_id,
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "terminal-1",
+                    "status": "completed",
+                    "rawOutput": {
+                        "formatted_output": "".join(terminal_fragments),
+                        "exit_code": 0,
+                    },
+                    "_meta": {
+                        "terminal_output_delta": {
+                            "data": "".join(terminal_fragments),
+                            "terminal_id": "terminal-1",
+                        },
+                        "terminal_exit": {
+                            "terminal_id": "terminal-1",
+                            "exit_code": 0,
+                            "signal": None,
+                        }
+                    },
+                },
+            }
+        )
+        await hub.registry_conversation_ingress(source, final)
+        live.append(json.loads(await existing.queue.get()))
 
-        assert [item["sequence"] for item in live] == list(range(3, 53))
+        assert [item["sequence"] for item in live] == list(range(3, 104))
+        assert [
+            item["payload"]["update"]["content"]["text"] for item in live[:50]
+        ] == message_fragments
         assert [
             item["payload"]["update"]["_meta"]["terminal_output_delta"]["data"]
-            for item in live
-        ] == fragments
+            for item in live[50:100]
+        ] == terminal_fragments
+        assert live[-1]["payload"] == final.model_dump(by_alias=True, exclude_none=True)
         assert not existing.closed.is_set()
         attach_calls = registry.attach_calls
 
@@ -3235,23 +3269,40 @@ def test_codex_live_terminal_deltas_materialize_for_cursor_reconnect(
 
         assert reconnect.close_reason is None
         assert registry.attach_calls == attach_calls
-        replay = [
-            json.loads(await asyncio.wait_for(reconnect.queue.get(), timeout=1))
-            for _ in range(3)
-        ]
+        replay = [json.loads(await reconnect.queue.get()) for _ in range(4)]
         assert [item["type"] for item in replay] == [
             "connection",
             "acp_session_update",
+            "acp_session_update",
             "connection",
         ]
-        assert [item["sequence"] for item in replay] == [50, 51, 52]
-        assert replay[1]["payload"]["update"]["_meta"]["terminal_output_delta"] == {
-            "data": "".join(fragments),
-            "terminal_id": "terminal-1",
+        assert [item["sequence"] for item in replay] == [100, 101, 102, 103]
+        assert replay[1]["payload"]["update"]["content"]["text"] == "".join(
+            message_fragments
+        )
+        assert replay[2]["payload"] == {
+            "sessionId": record.binding.acp_session_id,
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "terminal-1",
+                "status": "completed",
+                "_meta": {
+                    "terminal_exit": {
+                        "terminal_id": "terminal-1",
+                        "exit_code": 0,
+                        "signal": None,
+                    }
+                },
+            },
         }
+        assert all(
+            "terminal_output_delta"
+            not in item.get("payload", {}).get("update", {}).get("_meta", {})
+            for item in replay
+        )
         assert replay[-1]["payload"]["state"] == "ready"
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        assert stream.reset_buffer_envelope_count == 52
+        assert stream.reset_buffer_envelope_count == 103
         assert stream.reset_buffer_attempted_bytes > hub._reset_buffer_byte_limit  # noqa: SLF001
         assert stream.reset_buffer_bytes == sum(
             len(item.encode("utf-8"))
@@ -3260,34 +3311,22 @@ def test_codex_live_terminal_deltas_materialize_for_cursor_reconnect(
         assert stream.reset_buffer_bytes < hub._reset_buffer_byte_limit  # noqa: SLF001
 
         await hub.publish_activity(record.employee, record.binding, "thinking", "next")
-        next_live = json.loads(
-            await asyncio.wait_for(reconnect.queue.get(), timeout=1)
-        )
-        assert next_live["sequence"] == 53
+        next_live = json.loads(await reconnect.queue.get())
+        assert next_live["sequence"] == 104
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 
 
-def test_codex_terminal_slots_follow_latest_delta_position_and_final_replaces(
+def test_message_replay_coalescing_does_not_cross_an_intervening_envelope(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
-        record, original_handle = _runtime(tmp_path)
-        handle = replace(
-            original_handle,
-            definition=replace(
-                original_handle.definition,
-                session_notification_replay_materializer=(
-                    CodexSessionNotificationReplayMaterializer()
-                ),
-            ),
-        )
-        registry = _Registry(record, handle)
+        record, handle = _runtime(tmp_path)
         hub = ConversationHub(repository)
         hub.bind_owners(  # type: ignore[arg-type]
-            registry=registry,
+            registry=_Registry(record, handle),
             broker=_Broker(),
             permission_broker=_Permissions(),
         )
@@ -3296,131 +3335,63 @@ def test_codex_terminal_slots_follow_latest_delta_position_and_final_replaces(
         await existing.queue.get()
         source = ConversationIngressSource(record.employee, 1, record.record_identity)
 
-        def terminal(
-            tool_call_id: str,
-            data: str,
-            *,
-            status: str | None = None,
-            terminal_exit: dict[str, object] | None = None,
-        ) -> SessionNotification:
-            metadata: dict[str, object] = {
-                "terminal_output_delta": {
-                    "data": data,
-                    "terminal_id": tool_call_id,
-                }
-            }
-            if terminal_exit is not None:
-                metadata["terminal_exit"] = terminal_exit
-            update: dict[str, object] = {
-                "sessionUpdate": "tool_call_update",
-                "toolCallId": tool_call_id,
-                "_meta": metadata,
-            }
-            if status is not None:
-                update["status"] = status
-                update["rawOutput"] = {
-                    "formatted_output": data,
-                    "exit_code": terminal_exit["exit_code"] if terminal_exit else None,
-                }
+        def message(text: str, *, kind: str = "agent_message_chunk") -> SessionNotification:
             return SessionNotification.model_validate(
-                {"sessionId": record.binding.acp_session_id, "update": update}
+                {
+                    "sessionId": record.binding.acp_session_id,
+                    "update": {
+                        "sessionUpdate": kind,
+                        "messageId": "message-1",
+                        "content": {"type": "text", "text": text},
+                    },
+                }
             )
 
-        await hub.registry_conversation_ingress(source, terminal("terminal-1", "A"))
+        await hub.registry_conversation_ingress(source, message("A"))
         await existing.queue.get()
         await hub.publish_activity(record.employee, record.binding, "thinking", "between")
         await existing.queue.get()
-        await hub.registry_conversation_ingress(source, terminal("terminal-2", "C"))
+        await hub.registry_conversation_ingress(source, message("B"))
         await existing.queue.get()
-        await hub.registry_conversation_ingress(source, terminal("terminal-1", "B"))
-        await existing.queue.get()
-        final = terminal(
-            "terminal-2",
-            "COMPLETE",
-            status="completed",
-            terminal_exit={
-                "terminal_id": "terminal-2",
-                "exit_code": 0,
-                "signal": None,
-            },
+        await hub.registry_conversation_ingress(
+            source, message("C", kind="agent_thought_chunk")
         )
-        await hub.registry_conversation_ingress(source, final)
+        await existing.queue.get()
+        await hub.registry_conversation_ingress(
+            source, message("D", kind="agent_thought_chunk")
+        )
         await existing.queue.get()
 
-        for _ in range(93):
-            await hub.registry_conversation_ingress(
-                source, terminal("terminal-1", "x")
-            )
-            await existing.queue.get()
         stream = hub._streams[record.employee.employee_id]  # noqa: SLF001
-        assert stream.sequence == 100
+        assert stream.sequence == 7
         canonical_bytes_before_reconnect = stream.reset_buffer_bytes
-        assert canonical_bytes_before_reconnect == sum(
-            len(item.encode("utf-8"))
-            for item in hub._materialized_replay_snapshot(stream)  # noqa: SLF001
-        )
-
-        reconnect = await hub.attach_browser(
-            "t_hub", connection_id="reconnect"
-        )
-        replay = [
-            json.loads(await asyncio.wait_for(reconnect.queue.get(), timeout=1))
-            for _ in range(5)
-        ]
+        reconnect = await hub.attach_browser("t_hub", connection_id="reconnect")
+        replay = [json.loads(await reconnect.queue.get()) for _ in range(6)]
         assert [item["type"] for item in replay] == [
             "connection",
+            "acp_session_update",
             "activity",
             "acp_session_update",
             "acp_session_update",
             "connection",
         ]
-        assert replay[1]["payload"]["detail"] == "between"
-        assert replay[2]["payload"] == final.model_dump(
-            by_alias=True, exclude_none=True
-        )
-        assert replay[3]["payload"]["update"]["toolCallId"] == "terminal-1"
-        assert replay[3]["payload"]["update"]["_meta"]["terminal_output_delta"][
-            "data"
-        ] == "AB" + "x" * 93
-        assert [item["sequence"] for item in replay] == [96, 97, 98, 99, 100]
+        assert replay[1]["payload"]["update"]["content"]["text"] == "A"
+        assert replay[2]["payload"]["detail"] == "between"
+        assert replay[3]["payload"]["update"]["content"]["text"] == "B"
+        assert replay[4]["payload"]["update"]["content"]["text"] == "CD"
+        assert [item["sequence"] for item in replay] == [2, 3, 4, 5, 6, 7]
         assert stream.reset_buffer_bytes == canonical_bytes_before_reconnect
-        replacement = terminal(
-            "terminal-1",
-            "FINAL-ONE",
-            status="completed",
-            terminal_exit={
-                "terminal_id": "terminal-1",
-                "exit_code": 0,
-                "signal": None,
-            },
-        )
-        await hub.registry_conversation_ingress(source, replacement)
-        await existing.queue.get()
-        assert stream.sequence == 101
-        assert stream.reset_buffer_bytes == sum(
-            len(item.encode("utf-8"))
-            for item in hub._materialized_replay_snapshot(stream)  # noqa: SLF001
-        )
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
 
 
-def test_genuinely_oversized_materialized_terminal_snapshot_fails_closed(
+def test_genuinely_oversized_semantic_message_snapshot_fails_closed(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         _db_path, repository = await _ticket_database(tmp_path)
-        record, original_handle = _runtime(tmp_path)
-        handle = replace(
-            original_handle,
-            definition=replace(
-                original_handle.definition,
-                session_notification_replay_materializer=(
-                    CodexSessionNotificationReplayMaterializer()
-                ),
-            ),
-        )
+        record, handle = _runtime(tmp_path)
         hub = ConversationHub(repository, reset_buffer_byte_limit=1_000)
         hub.bind_owners(  # type: ignore[arg-type]
             registry=_Registry(record, handle),
@@ -3435,22 +3406,15 @@ def test_genuinely_oversized_materialized_terminal_snapshot_fails_closed(
             {
                 "sessionId": record.binding.acp_session_id,
                 "update": {
-                    "sessionUpdate": "tool_call_update",
-                    "toolCallId": "terminal-1",
-                    "_meta": {
-                        "terminal_output_delta": {
-                            "data": "x" * 2_000,
-                            "terminal_id": "terminal-1",
-                        }
-                    },
+                    "sessionUpdate": "agent_message_chunk",
+                    "messageId": "message-1",
+                    "content": {"type": "text", "text": "x" * 2_000},
                 },
             }
         )
         await hub.registry_conversation_ingress(source, notification)
         delivered = json.loads(await existing.queue.get())
-        assert delivered["payload"]["update"]["_meta"]["terminal_output_delta"][
-            "data"
-        ] == "x" * 2_000
+        assert delivered["payload"]["update"]["content"]["text"] == "x" * 2_000
 
         reconnect = await hub.attach_browser("t_hub", connection_id="reconnect")
         assert reconnect.close_reason == REPLAY_UNAVAILABLE_CLOSE_REASON
