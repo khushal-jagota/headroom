@@ -5,8 +5,10 @@
 Current `staging` merged cleanly into the verified backup branch as `f4594bf2`. The first canonical
 closeout run exposed one stale exploration wording assertion introduced by current staging's
 `db560c78` documentation/skill change; the assertion now follows that accepted simple definition.
-The backup implementation itself required no integration repair. Next: rerun the canonical gate on
-the repaired prospective staging revision, advance and push `staging`, then clean up the Ticket branch.
+The backup implementation itself required no integration repair. The repaired prospective staging
+revision `0271df5d` passes the canonical gate: Ruff, strict Mypy, all 1,362 unit tests, compile/CSS
+checks, every frontend check/build/test, and all 123 Playwright tests; final `VERIFY: PASS`. Next:
+advance and push `staging`, then clean up the Ticket branch.
 
 ## Current work cycle (2026-07-23): SQLite backup and operator restore (`t_12sap6vx`)
 
