@@ -3370,6 +3370,18 @@ not guarantee notification/request wire ordering across the prior fork response.
   custom ownership and launch defaults and leaving general missing-stage validation strict.
 - Drafting changes packaged source and compatibility seams only. Publishing the packaged specialist
   into managed settings, final verification, and restart-backed activation belong to Closeout.
+# 2026-07-23 — Live main flows into staging
+
+- Commit the live checkout's current runtime changes onto local `main`, preserving separate commits
+  for durable catalog caching, conversation recovery, generated frontend output, and authentication
+  reconciliation.
+- Commit staging-owned work before integration, including its recovery regressions, Coding-path
+  bookkeeping, design exploration, and the independently tested nested shared-frontend result.
+- Integrate only in the requested direction: merge `main` into `staging`. Do not merge or
+  fast-forward `staging` into `main`.
+- Keep staging's newer dynamic-port environment contract during conflict resolution and rebuild
+  `web/dist` from the merged source rather than selecting either branch's stale bundle.
+
 # 2026-07-23 — Primary checkout is the staging coding checkout
 
 - Keep two persistent operating roles: `/Users/khushaljagota/Coding/planning-v2` is the

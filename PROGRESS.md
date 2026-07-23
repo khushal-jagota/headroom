@@ -1,5 +1,18 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Commit live and align staging from main
+
+The live checkout is clean and attached to local `main` at `869619ca`. Its runtime work is committed
+as separate catalog-cache, conversation-recovery, frontend-build, authentication-merge, and
+documentation commits. Focused backend tests and the complete frontend test/check gates pass.
+
+The staging checkout committed its New Conversation recovery tests, checkout and provider-home
+bookkeeping, visual exploration, and the reviewed nested shared-frontend result. Generated Vite
+cache churn in two completed Ticket worktrees was removed. `main` was then merged into `staging`
+as `db93830c`; staging retains its newer dynamic-port environment contract and uses a frontend build
+from the merged source. Next: run the one canonical `./verify` on this settled staging tree, record
+the result, and confirm both role checkouts are clean with `main` an ancestor of `staging`.
+
 ## Current work cycle (2026-07-23): Consolidate staging and live checkout roles
 
 The coding/integration checkout now lives at
