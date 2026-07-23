@@ -169,18 +169,22 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
     ready = f'section[data-screen="ticket"][data-ticket-id="{blocked_ticket}"]'
     page = open_page(context_factory(), server, f"#/ticket/{blocked_ticket}", ready, settled=True)
 
-    summary = page.locator("[data-blocker-summary]")
-    summary.wait_for(timeout=WAIT_MS)
-    assert summary.locator('[data-blocker-group="blocked-by"]').inner_text() == (
-        "BLOCKED BY\nActive blocker\nRemove\nShared blocker\nRemove"
+    # At needs_kickoff the direct blockers render as chips inside the Kickoff
+    # approval card's context row; the standalone section is suppressed.
+    row = page.locator(
+        '[data-approval-block][data-field="kickoff"] [data-approval-context-row]'
     )
-    assert summary.locator('[data-blocker-group="blocks"]').count() == 0
-    assert "Cleared blocker" not in summary.inner_text()
-    assert summary.locator(f'a[href="#/ticket/{active_blocker}"]').count() == 1
-    assert summary.locator(
+    row.wait_for(timeout=WAIT_MS)
+    assert page.locator("[data-blocker-summary]").count() == 0
+    assert row.locator("[data-blocker-chip]").count() == 2
+    assert "Cleared blocker" not in row.inner_text()
+    active_chip = row.locator(f'[data-blocker-chip="{active_blocker}"]')
+    assert "Active blocker" in active_chip.inner_text()
+    assert active_chip.locator(f'a[href="#/ticket/{active_blocker}"]').count() == 1
+    assert row.locator(
         f'[data-remove-blocker="{active_blocker}"]'
     ).get_attribute("aria-label") == "Remove blocker Active blocker"
-    assert summary.locator(
+    assert row.locator(
         f'[data-remove-blocker="{shared_blocker}"]'
     ).get_attribute("aria-label") == "Remove blocker Shared blocker"
 
@@ -190,10 +194,11 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
         arg=active_blocker,
         timeout=WAIT_MS,
     )
-    assert "Shared blocker" in summary.inner_text()
+    assert "Shared blocker" in row.inner_text()
 
-    summary.locator(f'[data-remove-blocker="{shared_blocker}"]').click()
-    page.wait_for_selector("[data-blocker-summary]", state="detached", timeout=WAIT_MS)
+    row.locator(f'[data-remove-blocker="{shared_blocker}"]').click()
+    page.wait_for_selector("[data-blocker-chip]", state="detached", timeout=WAIT_MS)
+    assert page.locator("[data-blocker-summary]").count() == 0
     detail = _get_ticket(server, blocked_ticket)
     assert detail["stage"] == "needs_kickoff"
     assert detail["blocked"] is False
@@ -230,3 +235,71 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
     page.locator(f'[data-remove-blocker="{later_blocker}"]').click()
     page.wait_for_selector("[data-blocker-summary]", state="detached", timeout=WAIT_MS)
     assert _get_ticket(server, later_ticket)["stage"] == "needs_plan"
+
+
+def test_kickoff_card_context_row_approves_and_standalone_blockers_return(
+    server, context_factory, open_page, cli
+) -> None:
+    blocker = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "Standing blocker"
+    )["id"]
+    ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Kickoff card ticket",
+        "--kickoff-note",
+        "Ready to start",
+        "--blocked-by",
+        blocker,
+    )["id"]
+    ready = f'section[data-screen="ticket"][data-ticket-id="{ticket}"]'
+    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready, settled=True)
+
+    # Structure: worker pills and blocker chips inside the approval card, in one
+    # context row directly above the Approve/ceiling action row.
+    card = '[data-approval-block][data-mode="gating-pending"][data-field="kickoff"]'
+    page.wait_for_selector(f"{card} [data-approval-context-row]", timeout=WAIT_MS)
+    assert page.locator(
+        f"{card} .approval-proposal-shell > [data-approval-context-row] + .approval-actions"
+    ).count() == 1
+    row = f"{card} [data-approval-context-row]"
+    assert page.locator(f"{row} [data-employee-configuration-setup]").count() == 1
+    assert page.locator(f'{row} [data-blocker-chip="{blocker}"]').count() == 1
+    assert page.locator("[data-blocker-summary]").count() == 0
+
+    # Kickoff approval with an explicit ceiling/at-cap still works from the card.
+    page.select_option(f"{card} [data-scope-ceiling]", "none")
+    page.select_option(f"{card} [data-scope-atcap] select", "propose")
+    page.click(f"{card} [data-accept]")
+
+    # After Kickoff is approved the standalone blocker section is back and the
+    # context row is gone.
+    page.wait_for_selector("[data-blocker-summary]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-approval-context-row]", state="detached", timeout=WAIT_MS)
+    assert page.locator(f'[data-blocker-summary] a[href="#/ticket/{blocker}"]').count() == 1
+    detail = _get_ticket(server, ticket)
+    assert detail["stage"] == "needs_success"
+    assert detail["ceiling"] == "needs_success"
+    assert detail["at_cap"] == "propose"
+
+    # A later-stage approval card carries no context row; blockers stay standalone.
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Success ready for review.",
+        ticket_id=ticket,
+        stdin="Success proposal body",
+    )
+    later_card = '[data-approval-block][data-mode="gating-pending"][data-field="success"]'
+    page.wait_for_selector(later_card, state="attached", timeout=WAIT_MS)
+    assert page.locator(f"{later_card} [data-approval-context-row]").count() == 0
+    assert page.locator("[data-approval-context-row]").count() == 0
+    assert page.locator("[data-blocker-summary]").count() == 1

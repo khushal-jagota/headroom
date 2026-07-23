@@ -3208,6 +3208,53 @@ select {
   transform: translateY(1px);
 }
 
+/* The Kickoff card's context row — the Worker configuration pills and the
+ * blocker chips on one wrapping line directly above the action row. */
+.approval-context-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-family: var(--font-ui);
+}
+
+.approval-context-row .employee-configuration-setup {
+  margin-bottom: 0;
+  gap: var(--space-2);
+}
+
+/* In the card the pills are the size you actually read and click: one rung up
+ * the type scale with a 32px hit height. Still the same pill. */
+.approval-context-row .pill {
+  font-size: var(--type-sm);
+  min-height: var(--space-6);
+  padding: var(--space-2) var(--space-3);
+}
+
+.approval-context-row .pill-key {
+  font-size: var(--type-xs);
+  margin-right: var(--space-2);
+}
+
+/* A blocker chip is the existing pill in the error colour. The doubled class
+ * outweighs the later base .pill and .pill:hover colour rules. */
+.pill.pill--blocker,
+.pill.pill--blocker:hover,
+.pill--blocker .pill-key {
+  color: var(--accent-error);
+}
+
+.pill--blocker a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.pill--blocker .button--quiet {
+  font-size: var(--type-xs);
+  padding: 0 var(--space-2);
+  margin-left: var(--space-2);
+}
+
 /* Collapsible field sections (--stage) — hairline seam ONLY between rows; body not inset. */
 .disclosure--stage + .disclosure--stage {
   border-top: var(--border-hairline) solid var(--border-color);

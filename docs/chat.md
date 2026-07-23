@@ -31,13 +31,17 @@ attach) until `ready`, when the controller commits and publishes the complete re
 once. An interrupted replay is discarded rather than shown partially. Updates after
 `ready` keep publishing incrementally as they arrive.
 
-Attached browsers receive every live ACP notification in its original order. The
-reconnect snapshot may consolidate backend-owned transient progress that would otherwise
-grow without adding durable conversation meaning. For Codex, Panels recognizes only the
-exact terminal-output extension and combines its active output chunks by tool call; an
-exact completed or failed aggregate replaces those chunks. Malformed, mixed, and unrelated
-notifications remain ordinary append-only replay. This changes only what a reconnect must
-download, not what a browser sees while the command is running.
+Attached browsers receive every live ACP notification in its original order. Reconnect uses
+one shared semantic projection for Hermes, Claude, and Codex. Consecutive text chunks for the
+same user message, agent message, or thought become one typed chunk with their text joined in
+wire order. A metadata change or any intervening envelope starts a new chunk, so replay does
+not reorder messages around tools, plans, or activity.
+
+Terminal output is live-only. Reconnect retains each tool's identity, title, kind, status, content,
+locations, terminal exit, and unrelated provider metadata, but omits `rawOutput` and embedded
+terminal-output metadata from completed or failed updates. The browser progress view does not
+present those output fields. These rules live in the Hub rather than a provider definition, apply
+to every backend, and change only what reconnect must download.
 
 The pinned Codex adapter can describe one file edit by sending complete before-and-after
 file snapshots. Panels normalizes those Codex diff entries after the raw ACP notification
@@ -251,4 +255,4 @@ mode and no runtime code reads the removed tables.
 
 ---
 
-_Last verified: 2026-07-22 (single ACP conversation with bounded Codex file-edit and terminal replay)._
+_Last verified: 2026-07-22 (single ACP conversation with shared semantic browser replay)._

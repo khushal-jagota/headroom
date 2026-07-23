@@ -26,7 +26,7 @@
     showRecap = false,
     emptyText = "Not written yet.",
     editableValue = true,
-    beforeApproval,
+    contextRow,
     onAccept,
     onSaveNote,
     onSaveValue
@@ -42,7 +42,7 @@
     showRecap?: boolean;
     emptyText?: string;
     editableValue?: boolean;
-    beforeApproval?: Snippet;
+    contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
     onSaveNote?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
@@ -78,10 +78,6 @@
     </Disclosure>
   {/if}
 
-  {#if beforeApproval}
-    {@render beforeApproval()}
-  {/if}
-
   {#if isDropped}
     <MarkdownBlock text={slot.value} quiet={emptyText} />
     {#if slot.proposal}
@@ -103,6 +99,7 @@
       proposedBy={slot.proposal?.proposed_by || ""}
       newStage={nextStage}
       {lifecycle}
+      {contextRow}
       onApprove={onAccept}
     />
   {:else}

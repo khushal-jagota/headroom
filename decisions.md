@@ -110,6 +110,27 @@ state, existing browsers, or the backend; the next live event remains current se
 Snapshots are strictly typed, contain exactly one reset as the first event, are contiguous and end at
 the current sequence, and remain within the byte bound. Invalid snapshots fail as replay unavailable.
 
+## D-browser-replay-retains-semantics-not-stream-fragments — Keep transient streaming out of reconnect
+
+Live ACP publication remains exact, but browser reconnect is a backend-independent semantic
+projection owned by the Hub. Consecutive text chunks with the same complete non-text shape are stored
+as one typed message or thought chunk. Coalescing is contiguous so it cannot move text across tools,
+plans, activity, or other events. Exact active terminal-output deltas are live-only; final tool status,
+content, `rawOutput`, and exit metadata remain replayable. Ambiguous shapes stay ordinary typed replay.
+
+This supersedes the Codex-only terminal replay materializer. The provider generated the observed
+traffic, but retaining transport fragments as browser history was a shared system policy defect.
+
+## D-browser-replay-omits-unpresented-tool-output — Keep progress, not command results
+
+The owner clarified that the conversation pane is a progress view: it needs conversation text,
+thinking, and a rough tool title/type/status, not command output. This supersedes the preceding
+decision's retention of final `rawOutput`. Live ACP delivery remains exact, but the shared reconnect
+projection omits `rawOutput` plus embedded `terminal_output` and `terminal_output_delta` metadata
+from completed or failed tool updates. It preserves tool identity, title, kind, status, content,
+locations, terminal exit, and unrelated metadata. The rule is backend-independent because the
+frontend does not present `rawOutput` from Hermes, Claude, or Codex.
+
 # Workspace
 
 ## D-ticket-error-requires-explicit-backend-provenance — Correctness failures are not Ticket failures

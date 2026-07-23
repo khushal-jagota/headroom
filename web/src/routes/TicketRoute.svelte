@@ -9,6 +9,7 @@
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
+    gatingFieldFor,
     lifecycleFor,
     recapVisibleFor
   } from "../lib/lifecycle";
@@ -18,6 +19,7 @@
     TicketDetail
   } from "../lib/types";
   import AcpConversation from "../components/AcpConversation.svelte";
+  import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import EmployeeConfigurationSetup from "../components/EmployeeConfigurationSetup.svelte";
@@ -229,6 +231,23 @@
     return Boolean(summary?.blocked_by.length);
   }
 
+  // The Kickoff approval card carries a context row (Worker configuration and
+  // direct blockers) while kickoff is the gating approval. The blocker entries
+  // then live in the card, and only then is the standalone section suppressed —
+  // both sites share kickoffCardShowsBlockers, so blockers always render in
+  // exactly one place.
+  let kickoffCardShowsContextRow = $derived(
+    gatingFieldFor(lc, ticket.data?.stage ?? "") === "kickoff" &&
+      Boolean(ticket.data?.fields.kickoff.proposal) &&
+      Boolean(
+        ticket.data?.employee_configuration_editable ||
+          ticket.data?.blocker_summary?.blocked_by.length
+      )
+  );
+  let kickoffCardShowsBlockers = $derived(
+    kickoffCardShowsContextRow && Boolean(ticket.data?.blocker_summary?.blocked_by.length)
+  );
+
   async function removeBlocker(blockerTicketId: string): Promise<void> {
     headerError = null;
     const query = new URLSearchParams({
@@ -409,7 +428,7 @@
             </Disclosure>
           </div>
 
-          {#if hasBlockerRows(detail)}
+          {#if hasBlockerRows(detail) && !kickoffCardShowsBlockers}
             {@const blockerSummary = detail.blocker_summary}
             <section class="ticket-blockers" data-blocker-summary>
               <div class="ticket-blocker-group" data-blocker-group="blocked-by">
@@ -433,15 +452,31 @@
           {/if}
 
           <div class="fields">
-            {#snippet employeeConfigurationSetup()}
-              <EmployeeConfigurationSetup
-                ticketId={stableId}
-                employeeBackends={manifest.data?.employee_backends ?? []}
-                employeeBackend={detail.employee_backend}
-                employeeLaunchModel={detail.employee_launch_model}
-                employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
-                onSave={saveEmployeeConfiguration}
-              />
+            {#snippet kickoffContextRow()}
+              {#if detail.employee_configuration_editable}
+                <EmployeeConfigurationSetup
+                  ticketId={stableId}
+                  employeeBackends={manifest.data?.employee_backends ?? []}
+                  employeeBackend={detail.employee_backend}
+                  employeeLaunchModel={detail.employee_launch_model}
+                  employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
+                  onSave={saveEmployeeConfiguration}
+                />
+              {/if}
+              {#if kickoffCardShowsBlockers}
+                {#each detail.blocker_summary?.blocked_by || [] as blocker}
+                  <span class="pill pill--blocker" data-blocker-chip={blocker.ticket_id}>
+                    <span class="pill-key">blocked by</span>
+                    <a href={blocker.href}>{blocker.title}</a>
+                    <Button
+                      variant="quiet"
+                      data-remove-blocker={blocker.ticket_id}
+                      aria-label={`Remove blocker ${blocker.title}`}
+                      onclick={() => void removeBlocker(blocker.ticket_id)}
+                    >Remove</Button>
+                  </span>
+                {/each}
+              {/if}
             {/snippet}
             {#each lc?.fieldIds ?? [] as name}
               {@const slot = fieldSlot(detail, name)}
@@ -454,8 +489,8 @@
                 ticketStage={detail.stage}
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}
-                beforeApproval={name === "kickoff" && detail.employee_configuration_editable
-                  ? employeeConfigurationSetup
+                contextRow={name === "kickoff" && kickoffCardShowsContextRow
+                  ? kickoffContextRow
                   : undefined}
                 onAccept={(payload) => acceptField(name, payload)}
                 onSaveNote={(raw) => saveNote(name, raw)}

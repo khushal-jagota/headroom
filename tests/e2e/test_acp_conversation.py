@@ -1257,7 +1257,9 @@ def test_cold_attach_batches_durable_history_larger_than_ingress_capacity(
             if item["type"] == "acp_session_update"
             and item["payload"]["update"]["sessionUpdate"] == "agent_thought_chunk"
         ]
-        assert replay_texts == [f"burst-{index}" for index in range(history_size)]
+        assert replay_texts == [
+            "".join(f"burst-{index}" for index in range(history_size))
+        ]
         assert audited_factory.calls == {
             "create": 1,
             "new_session": 0,
@@ -2557,13 +2559,16 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
                     if item["type"] == "acp_session_update"
                     and item["payload"]["update"]["sessionUpdate"] == "user_message_chunk"
                 ]
-                assert len(worker_user_updates) == 2
-                assert worker_user_updates[0]["acpSessionId"] == session_id
-                assert any(
-                    "Use the installed `panels-worker` skill."
-                    in item["payload"]["update"]["content"]["text"]
+                assert worker_user_updates
+                assert all(
+                    item["acpSessionId"] == session_id for item in worker_user_updates
+                )
+                worker_prompt_text = "".join(
+                    item["payload"]["update"]["content"]["text"]
                     for item in worker_user_updates
                 )
+                assert "Use the installed `panels-worker` skill." in worker_prompt_text
+                assert "[ACP_TEST_WAIT_FOR_CANCEL]" in worker_prompt_text
 
                 app.state.conversation.step_gateway.interrupt(
                     session_id,
@@ -3092,7 +3097,10 @@ def test_idle_reconnect_reuses_large_snapshot_without_reloading_or_resetting_exi
                 assert refresher_replay[-1]["type"] == "connection"
                 assert refresher_replay[-1]["payload"]["state"] == "ready"
                 assert [item["sequence"] for item in refresher_replay] == list(
-                    range(1, last_sequence + 1)
+                    range(
+                        last_sequence - len(refresher_replay) + 1,
+                        last_sequence + 1,
+                    )
                 )
                 assert all(
                     item["acpSessionId"] == session_id

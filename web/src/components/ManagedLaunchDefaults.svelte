@@ -4,7 +4,6 @@
   import { labelize } from "../lib/ui";
   import type {
     EmployeeConfigurationCatalog,
-    EmployeeConfigurationOption,
     EmployeeConfigurationSnapshot
   } from "../lib/types";
   import ErrorLine from "./ErrorLine.svelte";
@@ -36,29 +35,8 @@
   let requestGeneration = 0;
   let requestController: AbortController | null = null;
 
-  let modelOptions = $derived(
-    catalog ? optionsWithNativeDefault(catalog.models, catalog.native_model, "backend default") : []
-  );
-  let reasoningOptions = $derived(
-    catalog
-      ? optionsWithNativeDefault(
-          catalog.reasoning_efforts,
-          catalog.native_reasoning_effort,
-          "backend default"
-        )
-      : []
-  );
-
-  function optionsWithNativeDefault(
-    options: EmployeeConfigurationOption[],
-    nativeValue: string | null,
-    fallback: string
-  ): Array<{ value: string; label: string }> {
-    const nativeLabel = nativeValue
-      ? options.find((option) => option.value === nativeValue)?.label ?? nativeValue
-      : fallback;
-    return [{ value: "", label: nativeValue ? `${fallback} · ${nativeLabel}` : fallback }, ...options];
-  }
+  let modelOptions = $derived(catalog?.models ?? []);
+  let reasoningOptions = $derived(catalog?.reasoning_efforts ?? []);
 
   function selectedSignature(): string {
     return JSON.stringify([selected.employee_backend, selected.employee_launch_model, selected.employee_launch_reasoning_effort]);
@@ -107,13 +85,16 @@
   }
 
   function selectModel(event: Event): void {
-    const model = (event.currentTarget as HTMLSelectElement).value || null;
+    const raw = (event.currentTarget as HTMLSelectElement).value;
+    // Choosing the native value stores null ("not pinned"); anything else pins.
+    const model = raw === (catalog?.native_model ?? "") ? null : raw || null;
     if (model === selected.employee_launch_model || saving) return;
     void persist({ ...selected, employee_launch_model: model });
   }
 
   function selectReasoning(event: Event): void {
-    const reasoning = (event.currentTarget as HTMLSelectElement).value || null;
+    const raw = (event.currentTarget as HTMLSelectElement).value;
+    const reasoning = raw === (catalog?.native_reasoning_effort ?? "") ? null : raw || null;
     if (reasoning === selected.employee_launch_reasoning_effort || saving) return;
     void persist({ ...selected, employee_launch_reasoning_effort: reasoning });
   }
@@ -154,14 +135,14 @@
     {#if loading}<span class="worker-launch-defaults-state">loading models…</span>{:else if catalog}
       <label>
         <span>Model</span>
-        <select aria-label={`${label} model`} value={selected.employee_launch_model ?? ""} disabled={saving} onchange={selectModel}>
+        <select aria-label={`${label} model`} value={selected.employee_launch_model ?? catalog.native_model ?? ""} disabled={saving} onchange={selectModel}>
           {#each modelOptions as option}<option value={option.value}>{option.label}</option>{/each}
         </select>
       </label>
       {#if catalog.reasoning_supported}
         <label>
           <span>Reasoning</span>
-          <select aria-label={`${label} reasoning`} value={selected.employee_launch_reasoning_effort ?? ""} disabled={saving} onchange={selectReasoning}>
+          <select aria-label={`${label} reasoning`} value={selected.employee_launch_reasoning_effort ?? catalog.native_reasoning_effort ?? ""} disabled={saving} onchange={selectReasoning}>
             {#each reasoningOptions as option}<option value={option.value}>{option.label}</option>{/each}
           </select>
         </label>

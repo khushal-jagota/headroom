@@ -51,6 +51,83 @@ accepted-main checkout's own interpreter. After Panels reconnects, continue with
 proof before advancing staging or cleaning anything up. The worker must not stop, signal, replace,
 or launch the operator-owned server.
 
+## Current work cycle (2026-07-23): Operator cutover for separated live operation
+
+The old foreground `panels serve` launcher and its stale detached application process were
+stopped after owner approval. The stopped-only live importer copied the source database, managed
+files, Hermes state, runtime home, and logs into a complete atomic generation and advanced the
+stable live pointer to `generations/generation-b_x625dv`. A recoverable final-cutover copy was
+written under `/Users/khushaljagota/.hermes/backups/planning-v2/t_b5ja4rqu-final-cutover/`.
+
+The detached live checkout at `/Users/khushaljagota/.hermes/live/planning-v2` is running on fixed
+port 8767 through `panels environment run`. HTTP health and the Day/Review/Workspace/Board/Sprint/
+Ticket endpoints returned 200, and environment inspection reports prepared and running. The
+affected Ticket `t_b5ja4rqu` still cannot load its conversation replay: the imported replay is
+4,433,710 bytes against the 1 MiB serving limit, so browser reconnects receive `conversation replay
+unavailable; retry`. The process remains up for owner inspection; no repository code changes or
+canonical `./verify` run was needed for this operator-only cutover.
+
+The live-only temporary mitigation then raised the conversation replay limit from 1 MiB to 6 MiB
+in the detached live checkout's conversation composition and Hub, with comments marking it for
+removal after replay retention is fixed. Live was restarted successfully; HTTP returned 200 and
+the affected Ticket replay connected without the previous replay-limit error.
+
+## Current work cycle (2026-07-22): Materialize semantic browser replay for `t_b5ja4rqu`
+
+The owner approved the two minimal shared replay changes: coalesce streamed message/thought text
+for reconnect, and omit terminal-output deltas from reconnect while retaining final tool state.
+The Hub now owns that backend-independent policy for Hermes, Claude, and Codex; backend definitions
+no longer select replay retention. Live delivery remains exact. The focused regression delivers 101
+original message/terminal/final envelopes to the attached browser, then reconnects without another
+backend attach and receives only reset, one complete message, the final tool result, and ready. Text
+coalescing is metadata-exact and contiguous, and genuinely oversized semantic state still fails
+closed. The old orphan application was stopped after owner approval and `panels serve` now supervises
+the healthy application on port 8767. The real `t_b5ja4rqu` WebSocket reaches ready with a contiguous
+244-frame, 223,530-byte snapshot and zero terminal-delta frames, down from the prior 1+ MiB failure.
+The same live stream later crossed the limit again during a long active turn. A fresh durable load is
+only 359,561 bytes, proving the database and completed transcript are not the overflow. Since restart,
+73 command completions carried 439,976 JSON bytes of final `rawOutput`; for 43 commands without a
+separate streamed output event, the Codex adapter also embedded 344,942 bytes of the same output in
+completion metadata. Panels retains both fields even though the frontend renderer reads neither.
+Thus about 784,918 bytes of retained, invisible command output is the direct live-cache bottleneck.
+The 657 standalone terminal deltas are being discarded correctly. Repeated provider diff snapshots
+are ignored before browser replay but still inflate the unrotated adapter log. The owner approved
+the minimal correction. The shared replay projection now omits `rawOutput` and embedded
+`terminal_output` / `terminal_output_delta` metadata from completed or failed tool updates while
+preserving exact live delivery and compact tool identity, title, kind, status, content, locations,
+terminal exit, and unrelated metadata. The focused materializer and Hub regressions, Ruff, strict
+Mypy, and diff checks pass. Canonical `./verify` passes Ruff, strict Mypy, 1,386 unit tests, all
+frontend checks, and 119 Playwright tests. The supervised application restarted successfully. The
+real Ticket first loaded a contiguous 421,115-byte snapshot through `ready`; a second warm attach
+reached `ready` with 586 frames / 426,184 bytes and about 622 KiB of headroom. Both snapshots contain
+zero `rawOutput` or terminal-output metadata updates. The 1 MiB value itself is a hard-coded
+per-employee replay policy introduced with the ACP migration, not a WebSocket limit or a measured
+browser threshold. It
+bounds retained server memory and reconnect transfer/parse work and fails closed instead of serving
+partial history. Raising it to 3 MiB would be a viable temporary availability measure after restart,
+but would only postpone the same dead-output accumulation; a semantic progress-view snapshot should
+remain comfortably below 1 MiB once unused output and superseded state are removed.
+The settled tree's canonical `./verify` passes Ruff, strict Mypy, 1,386 unit tests, all frontend gates,
+and 119 Playwright tests; final `VERIFY: PASS`. Final standards and spec reviews found one contract
+edge case: malformed active terminal updates were projected as though they were completed. Replay
+projection is now limited to completed or failed tool updates, and the focused materializer/Hub,
+Ruff, and strict Mypy gates pass with an explicit malformed-active regression. Next: commit and
+advance separated live after owner approval.
+
+## Previous work cycle (2026-07-22): Diagnose replay and runtime size for `t_b5ja4rqu`
+
+The Ticket's current Codex session remains unattachable with `1013 conversation replay unavailable`.
+Its Ticket fields are only 11.5 KB and its event payloads are 67.7 KB, so SQLite Ticket data is not
+the source of the megabyte replay. The current session has 4,713 agent-message deltas, 60 completed
+command executions, 44 command-output deltas, and 21 turns; Panels retains ordinary replay envelopes
+individually against a 1 MiB limit. Codex terminal output is also duplicated in the common streamed
+output plus final `rawOutput` path because the adapter's completion metadata does not match the
+materializer's exact terminal-final predicate. The frontend state keeps the full transcript and tool
+results, although terminal metadata is ignored by its tool reducer. Separately, the unrotated
+`data/codex-acp-logs/app-server.log` is 555 MB in about 39 hours; repeated skills/config responses
+and ignored provider traffic are logged verbatim. Hermes `data/hermes-home/state.db` is 1.2 GB,
+with 142 MB of messages and roughly 938 MB of regular/trigram FTS structures. Next: report the
+direct failure, retention/serving problems, and separate disk cleanup opportunities; no fix made.
 ## Current work cycle (2026-07-22): Pause stale Codex thread for `t_b5ja4rqu`
 
 The Ticket `Adopt staging and separated live operation on the current host` had a missing

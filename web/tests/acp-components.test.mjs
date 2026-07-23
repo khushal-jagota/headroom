@@ -24,7 +24,7 @@ const employeeConfigurationSource = await readFile(
   "utf8",
 );
 assert.match(ticketRouteSource, /<EmployeeConfigurationSetup/);
-assert.match(ticketRouteSource, /beforeApproval=\{name === "kickoff" && detail\.employee_configuration_editable/);
+assert.match(ticketRouteSource, /contextRow=\{name === "kickoff" && kickoffCardShowsContextRow/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-configuration/);
 assert.match(ticketRouteSource, /kind: "ticketChanged", ticketId: stableId/);
 assert.match(ticketRouteSource, /\/acknowledge-completed-response/);

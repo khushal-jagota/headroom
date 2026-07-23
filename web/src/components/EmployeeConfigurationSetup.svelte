@@ -4,7 +4,6 @@
   import { labelize } from "../lib/ui";
   import type {
     EmployeeConfigurationCatalog,
-    EmployeeConfigurationOption,
     EmployeeConfigurationSnapshot,
     TicketDetail
   } from "../lib/types";
@@ -44,16 +43,13 @@
     employeeBackends.map((backend) => ({ value: backend, label: labelize(backend) }))
   );
   let modelOptions = $derived(
-    catalog ? optionsWithNativeDefault(catalog.models, catalog.native_model, "backend default") : []
+    (catalog?.models ?? []).map((option) => ({ value: option.value, label: option.label }))
   );
   let reasoningOptions = $derived(
-    catalog
-      ? optionsWithNativeDefault(
-          catalog.reasoning_efforts,
-          catalog.native_reasoning_effort,
-          "backend default"
-        )
-      : []
+    (catalog?.reasoning_efforts ?? []).map((option) => ({
+      value: option.value,
+      label: option.label
+    }))
   );
 
   function incomingSignature(): string {
@@ -77,25 +73,16 @@
     return options.find((option) => option.value === encoded)?.label ?? value ?? fallback;
   }
 
-  function nativeDefaultLabel(
-    options: EmployeeConfigurationOption[],
-    nativeValue: string | null,
-    fallback: string
+  // When nothing is pinned (value null) the control shows the backend's concrete
+  // native value — the real name, never the word "default". No native value → empty.
+  function displayValue(
+    options: Array<{ value: string; label: string }>,
+    value: string | null,
+    nativeValue: string | null
   ): string {
-    if (nativeValue === null) return fallback;
-    const nativeLabel = options.find((option) => option.value === nativeValue)?.label ?? nativeValue;
-    return `${fallback} · ${nativeLabel}`;
-  }
-
-  function optionsWithNativeDefault(
-    options: EmployeeConfigurationOption[],
-    nativeValue: string | null,
-    fallback: string
-  ): Array<{ value: string; label: string; unavailable?: boolean }> {
-    return [
-      { value: "", label: nativeDefaultLabel(options, nativeValue, fallback) },
-      ...options.map((option) => ({ value: option.value, label: option.label }))
-    ];
+    const effective = value ?? nativeValue;
+    if (effective === null) return "";
+    return options.find((option) => option.value === effective)?.label ?? effective;
   }
 
   function withSavedUnavailable(
@@ -164,8 +151,9 @@
 
   function selectModel(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
-    const nextModel = target.value || null;
-    target.value = selectedModel ?? "";
+    // Choosing the native value stores null ("not pinned"); anything else pins.
+    const nextModel = target.value === (catalog?.native_model ?? "") ? null : target.value || null;
+    target.value = selectedModel ?? catalog?.native_model ?? "";
     if (nextModel === selectedModel || saving) return;
     void persist({
       employee_backend: selectedBackend,
@@ -176,8 +164,9 @@
 
   function selectReasoning(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
-    const nextReasoning = target.value || null;
-    target.value = selectedReasoning ?? "";
+    const nextReasoning =
+      target.value === (catalog?.native_reasoning_effort ?? "") ? null : target.value || null;
+    target.value = selectedReasoning ?? catalog?.native_reasoning_effort ?? "";
     if (nextReasoning === selectedReasoning || saving) return;
     void persist({
       employee_backend: selectedBackend,
@@ -234,8 +223,13 @@
   {:else if catalog}
     <span class="pill" data-employee-configuration-model-control>
       <span class="pill-key">model</span>
-      {displayLabel(modelOptions, selectedModel, "backend default")}
-      <select value={selectedModel ?? ""} disabled={saving} onchange={selectModel} aria-label="Model">
+      {displayValue(modelOptions, selectedModel, catalog.native_model)}
+      <select
+        value={selectedModel ?? catalog.native_model ?? ""}
+        disabled={saving}
+        onchange={selectModel}
+        aria-label="Model"
+      >
         {#each withSavedUnavailable(modelOptions, selectedModel) as option}
           <option value={option.value} disabled={option.unavailable}>{option.label}</option>
         {/each}
@@ -245,8 +239,13 @@
     {#if catalog.reasoning_supported}
       <span class="pill" data-employee-configuration-reasoning-control>
         <span class="pill-key">reasoning</span>
-        {displayLabel(reasoningOptions, selectedReasoning, "backend default")}
-        <select value={selectedReasoning ?? ""} disabled={saving} onchange={selectReasoning} aria-label="Reasoning">
+        {displayValue(reasoningOptions, selectedReasoning, catalog.native_reasoning_effort)}
+        <select
+          value={selectedReasoning ?? catalog.native_reasoning_effort ?? ""}
+          disabled={saving}
+          onchange={selectReasoning}
+          aria-label="Reasoning"
+        >
           {#each withSavedUnavailable(reasoningOptions, selectedReasoning) as option}
             <option value={option.value} disabled={option.unavailable}>{option.label}</option>
           {/each}
@@ -255,7 +254,7 @@
     {/if}
   {:else if catalogError}
     <span class="pill" data-employee-configuration-saved-model>
-      <span class="pill-key">model</span>{selectedModel ?? "backend default"}
+      <span class="pill-key">model</span>{selectedModel ?? ""}
     </span>
     {#if selectedReasoning !== null}
       <span class="pill" data-employee-configuration-saved-reasoning>
