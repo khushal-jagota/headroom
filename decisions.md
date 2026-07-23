@@ -3,6 +3,13 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-23 — The validated launcher supplies the packaged application root
+
+Checkout code can derive assets from `src/planner`, but an installed wheel cannot. The release
+launcher already validates the manifest and sets `PLAN_RELEASE_ROOT`; server composition uses that
+root for web, asset, and static paths, preserving the checkout fallback only when no release is
+active.
+
 ## 2026-07-23 — GitHub variables enter deployment only through an explicit workflow map
 
 The Mac host paths and service adapter remain operator-owned repository variables. The workflow

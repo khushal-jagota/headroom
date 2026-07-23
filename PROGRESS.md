@@ -1,5 +1,13 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Resolve packaged assets from the release root
+
+The first installed-account smoke exposed that an installed wheel derived assets from
+`site-packages` rather than the immutable release root. Server composition now honors the validated
+launcher-provided `PLAN_RELEASE_ROOT`, while checkout mode keeps its source-tree fallback. Focused
+regressions cover both resolutions. Next: rebuild and re-run the installed baseline smoke, then the
+canonical verifier and verified-staging update.
+
 ## Current work cycle (2026-07-23): Bind production variables explicitly
 
 The installed Mac runner exposed that repository variables are not inherited as shell variables.
