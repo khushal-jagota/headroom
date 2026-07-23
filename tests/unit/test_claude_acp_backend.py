@@ -285,6 +285,8 @@ def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
     (native_home / "projects").mkdir(parents=True)
     (native_home / "settings.json").write_text("settings", encoding="utf-8")
     (native_home / "projects" / "session.json").write_text("session", encoding="utf-8")
+    (native_home / "skills" / "user-skill").mkdir(parents=True)
+    (native_home / "skills" / "user-skill" / "SKILL.md").write_text("user", encoding="utf-8")
     monkeypatch.setenv("HOME", str(native_home.parent))
     from planner.conversation.backend_catalog import EmployeeBackendBuildContext
 
@@ -303,7 +305,10 @@ def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
     assert materialized.startup_preflight is not None
     assert materialized.is_executable() is False
     assert materialized.definition.environment_overrides == ()
-    assert (native_home / "skills").resolve() == (tmp_path / "skills").resolve()
+    assert (native_home / "skills" / "user-skill" / "SKILL.md").read_text() == "user"
+    assert (native_home / "skills" / "panels-worker-coding").resolve() == (
+        tmp_path / "skills" / "panels-worker-coding"
+    ).resolve()
     assert (native_home / "settings.json").read_text() == "settings"
     assert (native_home / "projects" / "session.json").read_text() == "session"
 

@@ -70,9 +70,20 @@ def provision_native_backend_skills(
         if target.resolve() == source_root:
             return source_root
         target.unlink()
-    elif target.exists():
-        raise FileExistsError(f"native backend skills path is not a managed symlink: {target}")
-    target.symlink_to(source_root, target_is_directory=True)
+    if not target.exists():
+        target.symlink_to(source_root, target_is_directory=True)
+        return source_root
+    if not target.is_dir():
+        raise FileExistsError(f"native backend skills path is not a directory: {target}")
+    # Provider homes can already contain user-owned skills. Preserve them and
+    # expose each missing Panels skill directly from the managed authority.
+    for source_skill in source_root.iterdir():
+        if not source_skill.is_dir() or not (source_skill / SKILL_FILE_NAME).is_file():
+            continue
+        target_skill = target / source_skill.name
+        if target_skill.exists() or target_skill.is_symlink():
+            continue
+        target_skill.symlink_to(source_skill, target_is_directory=True)
     return source_root
 
 
