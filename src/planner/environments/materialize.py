@@ -111,7 +111,6 @@ def prepare_environment_instance(
             _replace_data_tree_from_fixture(instance.db_path, now=effective_now)
         else:
             instance.managed_files_root.mkdir(parents=True, exist_ok=True)
-        _materialize_instance_skills(instance)
         _write_manifest(manifest)
         return manifest
 
@@ -154,7 +153,6 @@ def reset_environment_instance(
         with _stopped_environment_lifecycle_lease(current):
             _prepare_common_layout(instance)
             _replace_data_tree_from_fixture(instance.db_path, now=now)
-            _materialize_instance_skills(instance)
             manifest = _manifest_from_instance(instance, prepared_at=now)
             _write_manifest(manifest)
             return manifest
@@ -558,14 +556,6 @@ def _prepare_common_layout(instance) -> None:  # type: ignore[no-untyped-def]
     instance.server_control_socket_path.parent.mkdir(parents=True, exist_ok=True)
     instance.runtime_user_home.mkdir(mode=0o700, parents=True, exist_ok=True)
     instance.runtime_user_home.chmod(0o700)
-
-
-def _materialize_instance_skills(instance) -> None:  # type: ignore[no-untyped-def]
-    provision_planner_home_skills(
-        instance.hermes_home,
-        configured_database_parent=instance.db_path.parent,
-        panels_skills_source_root=_repository_skill_root(instance.allowed_repository_roots[0]),
-    )
 
 
 def _repository_skill_root(repository_root: Path) -> Path:

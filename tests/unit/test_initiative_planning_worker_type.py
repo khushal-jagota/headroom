@@ -151,14 +151,14 @@ def test_initiative_planning_specialist_is_known_public_and_provisioned() -> Non
 
 def test_initiative_planning_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
+    shared = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
-    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
 
     assert "`panels-worker-initiative-planning` — initiative_planning tickets" in worker
     assert (
         "`initiative_planning` (working out the shared top-level how for a confirmed "
         "direction before creating its downstream Tickets)"
-    ) in " ".join(chief.split())
+    ) in " ".join(shared.split())
 
 
 def test_live_worker_type_docs_include_initiative_planning() -> None:

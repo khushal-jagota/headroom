@@ -15,9 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tests.support.acp_scripted_agent import ScriptedAcpAgent
 
-ROLE_DIRECTIVE = "Use the installed `panels-worker` skill."
-WORKTREE_HEADING = "## Worktree lifecycle"
-WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed Worktree lifecycle guidance."
+ROLE_DIRECTIVE = (
+    "Start with the `panels` skill. It explains the system and is necessary, "
+    "then drill through to your identity through the skills layers. "
+    "You are a ticket worker."
+)
+WORKTREE_GUIDANCE = "Always do your work on a worktree and a branch."
+WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed worktree and branch guidance."
 
 
 class WorkerSkillProofAgent(ScriptedAcpAgent):
@@ -37,8 +41,8 @@ class WorkerSkillProofAgent(ScriptedAcpAgent):
         hermes_home = Path(os.environ["HERMES_HOME"])
         installed_skill = hermes_home / "skills" / "panels-worker-coding" / "SKILL.md"
         skill_text = installed_skill.read_text(encoding="utf-8")
-        if WORKTREE_HEADING not in skill_text:
-            raise RuntimeError("installed coding Worker skill lacks Worktree lifecycle guidance")
+        if WORKTREE_GUIDANCE not in skill_text:
+            raise RuntimeError("installed coding Worker skill lacks worktree and branch guidance")
 
         await self._emit(  # noqa: SLF001 - this fixture specializes the scripted ACP agent.
             session_id,

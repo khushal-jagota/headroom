@@ -20,11 +20,8 @@ def test_live_linux_render_keeps_fixed_external_service_contract(tmp_path: Path)
     )
     assert rendered.required_account == "panels-live"
     assert rendered.unit_name == "panels-live.service"
-    assert (
-        "/opt/panels/environment-manager/.venv/bin/python -m planner environment run --kind live"
-        in rendered.unit_text
-    )
-    assert str(manifest.repository_roots[0]) in rendered.unit_text
+    assert "/opt/panels/current/bin/panels-launcher serve" in rendered.unit_text
+    assert str(manifest.repository_roots[0]) not in rendered.unit_text
 
 
 def test_staging_linux_render_uses_on_demand_dynamic_run_command(tmp_path: Path) -> None:
@@ -53,15 +50,13 @@ def test_checked_in_linux_assets_have_no_preview_service_or_account_surface() ->
 def test_checked_in_linux_units_use_the_shared_pinned_manager_and_private_accounts() -> None:
     live = (ASSET_ROOT / "panels-live.service").read_text(encoding="utf-8")
     staging = (ASSET_ROOT / "panels-staging.service").read_text(encoding="utf-8")
-    manager_launcher = (
-        "/opt/panels/environment-manager/.venv/bin/python -m planner environment run"
-    )
+    manager_launcher = "/opt/panels/environment-manager/.venv/bin/python -m planner environment run"
 
     assert "User=panels-live" in live
     assert "User=panels-worker" in staging
-    assert manager_launcher in live
+    assert "/opt/panels/current/bin/panels-launcher serve" in live
     assert manager_launcher in staging
-    assert "--repository-root /opt/panels/live" in live
+    assert "/opt/panels/current" in live
     assert "--repository-root /opt/panels/staging" in staging
     assert DEFAULT_LINUX_ENVIRONMENT_MANAGER_ROOT == Path(
         "/opt/panels/environment-manager"
@@ -71,6 +66,19 @@ def test_checked_in_linux_units_use_the_shared_pinned_manager_and_private_accoun
     assert (
         "install -d -m 0755 -o root -g root /opt/panels/environment-manager" in setup
     )
+
+
+def test_backup_inputs_resolve_the_deployed_revision_from_the_current_manifest() -> None:
+    service = (ASSET_ROOT / "panels-db-backup.service").read_text(encoding="utf-8")
+    pre_deploy = (ASSET_ROOT / "pre-deploy-backup.sh").read_text(encoding="utf-8")
+    environment = (ASSET_ROOT / "backup.env.example").read_text(encoding="utf-8")
+
+    assert "PANELS_CURRENT_RELEASE=" in environment
+    assert "PANELS_LIVE_REPOSITORY" not in environment
+    assert "git -C" not in service
+    assert "git -C" not in pre_deploy
+    assert "backup-current" in service
+    assert '--deployed-revision "$revision"' in pre_deploy
 
 
 def _manifest(tmp_path: Path, kind: str) -> EnvironmentManifest:

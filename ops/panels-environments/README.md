@@ -14,28 +14,25 @@ so each unit can open its own credential file. The live credential file remains
 read or write live credential content. The staging credential file is
 `0640 panels-worker:panels-worker`.
 
-All services call the environment command from the pinned, root-owned manager
-checkout, then select an environment-specific target checkout:
+Staging calls the environment command from the pinned, root-owned manager checkout. Live calls the
+stable operator-owned `current` release launcher:
 
 ```sh
 /opt/panels/environment-manager/.venv/bin/python -m planner environment run \
   --repository-root /opt/panels/<environment>
 ```
 
-The manager checkout is readable and executable by both service accounts but writable
-only by root. The launcher validates the target checkout's own `.venv` and then replaces
-itself with that target interpreter. This lets new environment-management code launch an
-accepted older live revision without importing the application from the manager checkout.
+The release root and deployment controls are writable only by the operator/deploy identity. The
+live service receives external state paths and cannot modify the selected release.
 
 Live uses the fixed port in its prepared contract. Start the staging unit only while
 active work needs it and stop it afterward; each start chooses an available loopback
 port and reports the actual URL in the service log. Staging's prepared state remains
 between starts.
 
-The static units use distinct repository root conventions: live uses
-`/opt/panels/live` and staging uses `/opt/panels/staging`. A unit's `WorkingDirectory`, `ExecStart`
-`--repository-root`, and `ReadWritePaths` repository entry must name the same path.
-The repository path is the caller-trusted working directory and is writable because
-Panels workers operate that checkout on the VPS. Runtime writes belong under
+The static units use a stable release launcher for live and `/opt/panels/staging` for staging.
+Runtime writes belong under
 `/var/lib/panels/environments`, and credential files belong under
 `/etc/panels/environments`. Repositories cannot be shared across live and staging.
+
+SQLite backup and restore setup is in [backup-restore.md](backup-restore.md).

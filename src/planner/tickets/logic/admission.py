@@ -27,6 +27,16 @@ def require_direct_actor(actor: str, action: str) -> None:
         )
 
 
+def require_worker_actor(actor: str, action: str) -> None:
+    """Require an attributed non-Chief Worker identity for Worker-only writes."""
+    if is_direct_actor(actor):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            f"{action} is only available to a Worker",
+            {"action": action, "actor": actor},
+        )
+
+
 def check_agent_proposal(
     stage: str,
     ceiling: str,

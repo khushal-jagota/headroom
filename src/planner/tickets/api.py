@@ -439,6 +439,9 @@ async def create_ticket(
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
+        planning_now=clk.now(),
+        boundary_hour=cfg.boundary_hour,
+        sprint_id_explicit="sprint_id" in raw,
         automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -449,6 +452,7 @@ async def create_ticket_from_external_work(
     raw: dict[str, Any],
     conn: DbConn,
     ctx: Ctx,
+    cfg: Cfg,
     clk: Clk,
     automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
@@ -485,6 +489,9 @@ async def create_ticket_from_external_work(
         worker_type=worker_type,
         employee_backend=body.get("employee_backend"),
         blocked_by_ticket_ids=body.get("blocked_by_ticket_ids", []),
+        planning_now=clk.now(),
+        boundary_hour=cfg.boundary_hour,
+        sprint_id_explicit="sprint_id" in raw,
         automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
@@ -1083,6 +1090,22 @@ async def release_ticket(
         conn,
         ticket_id,
         now=now,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
+    )
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/request-user-help")
+async def request_user_help(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
+) -> JsonDict:
+    now = clk.now_unix()
+    ticket = tickets_actions.request_user_help(
+        conn, ticket_id, actor=ctx.actor, now=now,
         automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)

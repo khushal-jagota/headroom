@@ -107,6 +107,10 @@
     return currentStageOwnershipOverride(detail) === "user";
   }
 
+  function isWaitingForUser(detail: TicketDetail): boolean {
+    return detail.ticket_status === "needs_user";
+  }
+
   function canEditCurrentStageOwner(detail: TicketDetail): boolean {
     return detail.default_stage_ownership_mode !== null && detail.effective_stage_ownership_mode !== null;
   }
@@ -180,7 +184,9 @@
   }
 
   async function takeover(detail: TicketDetail): Promise<void> {
-    const action = hasExplicitCurrentStageUserOverride(detail) ? "release" : "takeover";
+    const action = hasExplicitCurrentStageUserOverride(detail) || isWaitingForUser(detail)
+      ? "release"
+      : "takeover";
     try {
       await mutateJsonWithResourceEffect(
         `/api/tickets/${stableId}/${action}`,
@@ -214,6 +220,7 @@
     awaiting_approval: "awaiting approval",
     paired_work: "paired work",
     user_takeover: "user takeover",
+    needs_user: "needs user",
     errored: "errored"
   };
 
@@ -303,7 +310,9 @@
           <div class="ticket-facts">
             <span
               class="ticket-status-display"
-              class:ticket-status-display--attention={(detail.ticket_status || "empty") === "awaiting_approval"}
+              class:ticket-status-display--attention={
+                ["awaiting_approval", "needs_user"].includes(detail.ticket_status || "empty")
+              }
               data-ticket-status={detail.ticket_status || "empty"}
             >
               <span class="ticket-status-dot"></span>{statusDisplay(detail.ticket_status || "empty")}
@@ -371,7 +380,7 @@
             <span class="ticket-facts-gap"></span>
             {#if detail.stage !== "needs_kickoff" && canEditCurrentStageOwner(detail)}
               <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
-                {hasExplicitCurrentStageUserOverride(detail) ? "Release" : "Take over"}
+                {hasExplicitCurrentStageUserOverride(detail) || isWaitingForUser(detail) ? "Release" : "Take over"}
               </button>
             {/if}
             <button class="ticket-act" data-copy="" onclick={() => void copyTicket()}>

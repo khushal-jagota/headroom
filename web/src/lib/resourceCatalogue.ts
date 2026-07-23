@@ -19,6 +19,7 @@ import type {
   SprintsResponse,
   TicketDetail,
   WorkerManagementDetail,
+  SkillsHomeResponse,
   WorkersResponse
 } from "./types";
 
@@ -43,6 +44,7 @@ export type CatalogueResourceIdentity =
   | "sprint:current"
   | "worker-types"
   | "workers"
+  | "skills-home"
   | `ticket:${string}`
   | `worker:${string}`;
 
@@ -83,6 +85,7 @@ export interface ResourceCatalogue {
   workerTypeManifests(): ResourceHandle<WorkerTypesResponse>;
   workers(): ResourceHandle<WorkersResponse>;
   worker(workerType: string): ResourceHandle<WorkerManagementDetail>;
+  skillsHome(): ResourceHandle<SkillsHomeResponse>;
 }
 
 type EventFacts = Readonly<{
@@ -310,11 +313,17 @@ const RESOURCE_DEFINITIONS = {
     {
       eventInvalidated: true,
       affectedByEvent: (facts) =>
-        eventEntityId(facts, "worker")
+        eventEntityId(facts, "worker") &&
+        facts.event.entity_id !== "worker_chief_of_staff" &&
+        facts.event.entity_id !== "worker_skills_home"
           ? [`worker:${facts.event.entity_id.slice("worker_".length)}`]
           : []
     }
-  )
+  ),
+  skillsHome: staticDefinition<SkillsHomeResponse>("skills-home", "/api/skills", {
+    eventInvalidated: true,
+    affectedByEvent: (facts) => (facts.event.entity_id === "worker_skills_home" ? ["skills-home"] : [])
+  })
 } as const;
 
 function requireId(value: unknown, name: string): string {
@@ -355,7 +364,8 @@ export const resourceCatalogue: ResourceCatalogue = {
   worker: (workerType) => {
     const id = requireId(workerType, "workerType");
     return openResource(RESOURCE_DEFINITIONS.worker, id);
-  }
+  },
+  skillsHome: () => openResource(RESOURCE_DEFINITIONS.skillsHome)
 };
 
 function entityPrefix(entityId: unknown): EventEntityPrefix {
@@ -527,11 +537,17 @@ function mutationEffectPlan(effect: ResourceMutationEffect): MutationEffectPlan 
       };
     case "workerSettingsChanged": {
       const workerType = requireId(effect.workerType, "workerType");
+      const identities: CatalogueResourceIdentity[] = [
+        RESOURCE_DEFINITIONS.workers.identity()
+      ];
+      if (workerType !== "chief_of_staff" && workerType !== "skills_home") {
+        identities.push(RESOURCE_DEFINITIONS.worker.identity(workerType));
+      }
+      if (workerType !== "chief_of_staff") {
+        identities.push(RESOURCE_DEFINITIONS.skillsHome.identity());
+      }
       return {
-        identities: [
-          RESOURCE_DEFINITIONS.workers.identity(),
-          RESOURCE_DEFINITIONS.worker.identity(workerType)
-        ],
+        identities,
         refreshReview: false
       };
     }

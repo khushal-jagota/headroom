@@ -88,7 +88,6 @@ def test_staging_run_selects_runtime_port_and_passes_reserved_listener(
     )
     assert run_env["PLAN_DB_PATH"] == str(instance.db_path)
     assert run_env["HOME"] == "/operator-home"
-    assert run_env["PLAN_HERMES_HOME"] == str(instance.hermes_home)
     assert exec_calls[0][0] == str(repository / ".venv/bin/python")
     assert exec_calls[0][1] == [
         str(repository / ".venv/bin/python"),
@@ -97,6 +96,7 @@ def test_staging_run_selects_runtime_port_and_passes_reserved_listener(
         "serve",
     ]
     assert listener.closed is True
+    assert "PLAN_HERMES_HOME" not in run_env
 
 
 def test_live_run_uses_manifest_fixed_port_without_dynamic_listener(tmp_path: Path) -> None:
@@ -286,10 +286,7 @@ def test_render_linux_uses_the_explicit_pinned_manager_checkout(tmp_path: Path) 
 
     assert result.exit_code == 0, result.output
     unit_text = json.loads(result.output)["unit_text"]
-    assert (
-        f"ExecStart={manager}/.venv/bin/python -m planner environment run --kind live"
-        in unit_text
-    )
+    assert "ExecStart=/opt/panels/current/bin/panels-launcher serve" in unit_text
 
 
 def test_import_live_cli_has_one_explicit_state_source_contract(tmp_path: Path) -> None:

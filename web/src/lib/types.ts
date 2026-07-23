@@ -52,6 +52,7 @@ export type ManagedSkill = {
   description: string;
   markdown_body: string;
 };
+export type SkillsHomeResponse = { skills: ManagedSkill[] };
 
 export type WorkerManagementSummary = {
   worker_type: string;
@@ -70,6 +71,7 @@ export type WorkersResponse = {
 export type ChiefManagementSettings = {
   employee_id: string;
   label: string;
+  skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
 };
 
@@ -164,8 +166,15 @@ export type ReviewTicketDecision = {
   waiting_since: number;
 };
 
+export type ReviewUserHelpRequest = {
+  ticket_id: string;
+  title: string;
+  waiting_since: number;
+};
+
 export type ReviewResponse = {
   ticket_decisions: ReviewTicketDecision[];
+  user_help_requests: ReviewUserHelpRequest[];
   running_worker_count: number;
 };
 

@@ -155,14 +155,13 @@ def test_exploration_specialist_is_known_and_definition_is_public() -> None:
 
 def test_exploration_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
+    shared = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
-    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
 
     assert "`panels-worker-exploration` — exploration tickets." in worker
     assert (
-        "`exploration` (turning an under-defined premise into a grounded answer and only "
-        "its approved consequences)"
-    ) in " ".join(chief.split())
+        "`exploration` (a worker for exploring something undefined and making it clearer)"
+    ) in " ".join(shared.split())
 
 
 def test_live_worker_type_docs_include_shipped_exploration_paths_and_guidance() -> None:

@@ -6,14 +6,15 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=panels-live
-WorkingDirectory=/opt/panels/live
+WorkingDirectory=/var/lib/panels/environments/live
 EnvironmentFile=/etc/panels/environments/live.env
-ExecStart=/opt/panels/environment-manager/.venv/bin/python -m planner environment run --kind live --environment-root /var/lib/panels/environments --repository-root /opt/panels/live
+ExecStart=/opt/panels/current/bin/panels-launcher serve
 Restart=on-failure
 RestartSec=5
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/panels/environments/live /opt/panels/live
+ReadWritePaths=/var/lib/panels/environments/live /var/log/panels /etc/panels/environments
+ReadOnlyPaths=/opt/panels/releases /opt/panels/current
 NoNewPrivileges=yes
 
 [Install]

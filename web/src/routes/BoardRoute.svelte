@@ -132,8 +132,8 @@
   type StageSection = {
     key: string;
     label: string;
-    // Terminal (Done) stages render collapsed by default; every other stage is open.
-    // Keyed off the served manifest's is_terminal so it generalizes across worker types.
+    // Blocked and terminal (Done) stages render collapsed by default; active stages are open.
+    // Terminal state is keyed off the served manifest so it generalizes across worker types.
     collapsed: boolean;
     cards: Record<string, any>[];
   };
@@ -213,7 +213,7 @@
             .map(([stage, stageCards]) => ({
               key: stage,
               label: stage === "blocked" ? "Blocked" : currentStageLabel(stageCards[0]),
-              collapsed: stage === "blocked" ? false : isTerminalStage(manifestWorker, stage),
+              collapsed: stage === "blocked" || isTerminalStage(manifestWorker, stage),
               cards: stageCards.sort((left, right) => {
                 const activityDelta = activitySortValue(right) - activitySortValue(left);
                 return activityDelta || left.boardSequence - right.boardSequence;

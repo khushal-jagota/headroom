@@ -32,7 +32,7 @@ def test_hermes_src_root() -> None:
 
 
 def test_resolve_planner_home_precedence() -> None:
-    assert resolve_planner_home(None, env={}) == Path("data/hermes-home")
+    assert resolve_planner_home(None, env={}) == Path("~/.hermes").expanduser()
     assert resolve_planner_home(None, env={}, default="/database/home") == Path("/database/home")
     assert resolve_planner_home(
         None, env={"PLAN_HERMES_HOME": "/env"}, default="/database/home"
@@ -58,3 +58,18 @@ def test_provision_planner_home_skills_symlinks_packaged_skills_idempotently(
         target = tmp_path / "skills" / name
         assert target.is_symlink()
         assert (target / "SKILL.md").is_file()
+
+
+def test_panels_owns_shared_system_and_communication_guidance() -> None:
+    root = panels_skill_root()
+    shared = (root / "panels" / "SKILL.md").read_text(encoding="utf-8")
+    worker = (root / "panels-worker" / "SKILL.md").read_text(encoding="utf-8")
+    chief = (root / "panels-chief-of-staff" / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "panels" in PLANNER_SKILL_NAMES
+    assert "## Communication" in shared
+    assert "Inspect the relevant source, docs, or workspace state before advising." in shared
+    assert "## The system" not in worker
+    assert "## The system" not in chief
+    assert "Ground before you opine." not in worker
+    assert "Keep your responses practical and grounded in the actual workspace." not in chief

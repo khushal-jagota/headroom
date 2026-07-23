@@ -5,13 +5,16 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import datetime
 
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
+from planner.days.logic.dates import resolve_day_id
 from planner.runtime.automatic_employee_step_eligibility_wake import (
     AutomaticEmployeeStepEligibilityWake,
 )
 from planner.runtime.contracts import EmployeeRevisionRunner
+from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
@@ -21,6 +24,31 @@ from planner.tickets.contracts import (
     TicketDeletion,
 )
 from planner.tickets.logic import admission
+
+
+def resolve_creation_placement(
+    conn: sqlite3.Connection,
+    *,
+    planning_now: datetime,
+    boundary_hour: int,
+    sprint_id: str | None,
+    sprint_item_id: str | None,
+    sprint_id_explicit: bool = False,
+) -> tuple[str, str | None]:
+    """Resolve defaults for a newly created Ticket without overriding placement intent."""
+    day_id = resolve_day_id("today", planning_now, boundary_hour)
+    if sprint_item_id is not None or sprint_id_explicit or sprint_id is not None:
+        return day_id, sprint_id
+    planning_day = day_id.removeprefix("day_")
+    ranges = [
+        DateRange(
+            id=str(row["id"]),
+            date_start=str(row["date_start"]),
+            date_end=str(row["date_end"]),
+        )
+        for row in conn.execute("SELECT id, date_start, date_end FROM sprints").fetchall()
+    ]
+    return day_id, current_sprint_id(planning_day, ranges)
 
 
 def create_ticket(
@@ -40,7 +68,21 @@ def create_ticket(
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
+    planning_now: datetime | None = None,
+    boundary_hour: int = 5,
+    sprint_id_explicit: bool = False,
 ) -> Ticket:
+    if planning_now is None:
+        day_id, resolved_sprint_id = None, sprint_id
+    else:
+        day_id, resolved_sprint_id = resolve_creation_placement(
+            conn,
+            planning_now=planning_now,
+            boundary_hour=boundary_hour,
+            sprint_id=sprint_id,
+            sprint_item_id=sprint_item_id,
+            sprint_id_explicit=sprint_id_explicit,
+        )
     ticket = tickets_data.create_ticket(
         conn,
         title=title,
@@ -51,8 +93,9 @@ def create_ticket(
         project_id=project_id,
         priority=priority,
         deadline=deadline,
-        sprint_id=sprint_id,
+        sprint_id=resolved_sprint_id,
         sprint_item_id=sprint_item_id,
+        day_id=day_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
@@ -81,7 +124,21 @@ def create_ticket_from_external_work(
     sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
+    planning_now: datetime | None = None,
+    boundary_hour: int = 5,
+    sprint_id_explicit: bool = False,
 ) -> Ticket:
+    if planning_now is None:
+        day_id, resolved_sprint_id = None, sprint_id
+    else:
+        day_id, resolved_sprint_id = resolve_creation_placement(
+            conn,
+            planning_now=planning_now,
+            boundary_hour=boundary_hour,
+            sprint_id=sprint_id,
+            sprint_item_id=sprint_item_id,
+            sprint_id_explicit=sprint_id_explicit,
+        )
     ticket = tickets_data.create_ticket_from_external_work(
         conn,
         title=title,
@@ -95,8 +152,9 @@ def create_ticket_from_external_work(
         project_id=project_id,
         priority=priority,
         deadline=deadline,
-        sprint_id=sprint_id,
+        sprint_id=resolved_sprint_id,
         sprint_item_id=sprint_item_id,
+        day_id=day_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
@@ -274,6 +332,19 @@ def release_ticket(
     ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
     if replace(before, updated_at=ticket.updated_at) != ticket:
         automatic_employee_step_eligibility_wake.wake()
+    return ticket
+
+
+def request_user_help(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    actor: str,
+    now: int,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
+) -> Ticket:
+    ticket = tickets_data.request_user_help(conn, ticket_id, actor=actor, now=now)
+    automatic_employee_step_eligibility_wake.wake()
     return ticket
 
 

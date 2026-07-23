@@ -1,5 +1,257 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Simplify production adoption to the signed-in user
+
+The separate `panels-live`/`panels-deploy` design made the one-Mac cutover depend on copied Hermes
+state, backend credentials, root LaunchDaemons, and repeated authorization. That did not serve the
+requested outcome. The permanent Mac path is now a user runner plus user LaunchAgent under the
+signed-in operator, using the existing Hermes home and user-owned releases, state, and config.
+The user-owned service and runner are live; exact-SHA restart, crash recovery, and installed
+candidate-failure rollback are proven. User service controls now load and unload the LaunchAgent
+instead of treating a KeepAlive signal as a stop. Next: run the settled verification and propose
+Closeout.
+
+## Current work cycle (2026-07-23): Resolve packaged assets from the release root
+
+The first installed-account smoke exposed that an installed wheel derived assets from
+`site-packages` rather than the immutable release root. Server composition now honors the validated
+launcher-provided `PLAN_RELEASE_ROOT`, while checkout mode keeps its source-tree fallback. Focused
+regressions cover both resolutions. Next: rebuild and re-run the installed baseline smoke, then the
+canonical verifier and verified-staging update.
+
+## Current work cycle (2026-07-23): Bind production variables explicitly
+
+The installed Mac runner exposed that repository variables are not inherited as shell variables.
+The deploy workflow now maps every operator-owned path, health, and service input from GitHub
+repository variables into its environment, with an asset regression covering the complete set.
+Next: focused gates, canonical verification, then update verified staging.
+
+## Current work cycle (2026-07-23): Simplify fork-session deferral
+
+After three payload-buffer corrections exposed new lifecycle edges, the repair changed approach.
+Fork-session updates now remain in the one bounded raw-order slot queue; a deferred slot pauses the
+single consumer until `capture_load_session` attaches its exact private sink, then the same consumer
+normalizes and delivers every item exactly once. There is no side buffer, extra delivery task, or
+route-completion future. The full ACP child/composition and deployment-asset focused suites pass,
+along with Ruff, strict Mypy, and diff checks. Next: independent review, canonical verification,
+then update verified staging.
+
+## Current work cycle (2026-07-23): Make held replay delivery ordered and exception-safe
+
+Held private payload routing now enters the single ordered consumer through a completion
+barrier, so a blocked held sink cannot overlap or reorder with newer private-epoch slots.
+Normalization remains at private delivery exactly once. `capture_load_session` now aborts its
+epoch for routing, normalization, load, or finish failures. The focused ACP child suite passes;
+Ruff, strict Mypy on the two changed source files, and `git diff --check` pass. Full `./verify`
+was not run by instruction. Next: amend `ccfefe14` and report.
+
+## Current work cycle (2026-07-23): Correct ordered-ingress capacity and normalization
+
+Corrected commit `70df2c65` in place. Deferred payloads now count with live slots against the
+same ingress maximum; held private payloads use the existing normalizer exactly once when routed;
+and the composition capacity regression injects only hermetic runtime definitions while proving
+the production default and explicit capacity 3 override separately. Direct ordered-ingress
+boundedness, ordering, exact-session routing, and normalization regressions pass. Focused
+conversation tests, Ruff, strict Mypy, and `git diff --check` pass. Canonical `./verify` was not
+run per instruction. Next: amend the correction commit and report.
+
+## Current work cycle (2026-07-23): Closeout integration repair for t_2wcx0a55
+
+Repaired the three clean-runner failures reported by GitHub Verify. The composition capacity
+test now uses the existing scripted runtime-definition seam, the ACP child now defers exact fork
+session updates until private capture attaches and drains held payloads in order, and both GitHub
+workflows install Playwright Chromium with the Ticket virtualenv before verification. The forced
+post-fork scheduling regression, full focused conversation/composition/deployment asset suites,
+Ruff, strict Mypy on changed source files, and diff checks pass. Canonical `./verify` was not run
+as instructed. Next: commit and report the root causes and focused evidence.
+
+## Current work cycle (2026-07-23): Real release proof and verifier repair
+
+A real host-native release for `51c0d256467301304d1966b94018d8747567ef95` built successfully
+without Git metadata. Its installed `planner` imported from inside the release, its manifest proved
+the exact SHA, and an isolated deployment exercise backed up the prior manifest SHA, selected the
+candidate, detected failed health, restored the prior code pointer, restarted, and recorded
+`rolled_back`. The first canonical verifier then found one unrelated stale e2e assertion: the
+reconciled coding Worker skill still requires a worktree and branch but no longer uses the old
+`## Worktree lifecycle` heading. The proof fixture now asserts the current exact guidance; its
+focused e2e and Ruff pass. Next: commit the integration repair and run one clean canonical verifier.
+
+## Current work cycle (2026-07-23): Exact-commit deployment review clear
+
+The final focused re-review found three remaining executable-path issues: bare `panels` on the
+runner, runtime validation that did not prove non-empty built assets or in-release imports, and an
+unrecorded missing-baseline rejection. They are fixed with regressions. The workflow now invokes
+the Ticket `.venv`; runtime validation requires the frontend entrypoint, npm install marker, and
+an interpreter import rooted in the release; baseline rejection records `initial_failed`.
+Twenty-nine focused tests, Ruff, strict Mypy, and diff checks pass. No P0/P1 review finding remains.
+Next: real isolated release/deploy/rollback evidence and canonical `./verify`.
+
+## Current work cycle (2026-07-23): Fresh-runner verifier path spot-check
+
+The parent spot-check found that both workflows installed Python packages without creating the
+repository `.venv` that `./verify` executes. This small integration repair now creates `.venv`,
+installs through `.venv/bin/python`, and uses that same interpreter for release construction. The
+asset regression and Ruff pass. Next: independent re-review, real isolated release/deploy/rollback,
+then the one canonical `./verify`.
+
+## Current work cycle (2026-07-23): Ticket t_2wcx0a55 focused correction complete
+
+The second correction pass fixes the remaining executable-path blockers. Verify now provisions
+pinned Python/Node runtimes and all editable/npm dependencies before `./verify`. Deploy is one
+serial self-hosted production job that checks out, gates, builds into the exact
+`$PANELS_RELEASE_ROOT/${{ github.sha }}` path, validates, and deploys that same path without
+Actions artifacts. Production runtime validation requires the venv Python, executable launcher,
+built web assets, and agent-backend dependencies; incomplete same-SHA reuse is rejected.
+
+The host intent now provisions a non-root `panels-deploy` identity for release/current/deployment
+controls while `panels-live` remains read-only. Existing databases require an explicit baseline
+SHA and are backed up before the first pointer switch; backup failure leaves no pointer or restart.
+The obsolete repository-root implementation report was removed; the Ticket-scoped report is
+current. Focused tests, Ruff, strict Mypy, shell syntax, and diff checks pass. Canonical
+`./verify` was not run by instruction. Next: commit this correction pass and leave the worktree
+clean.
+
+## Current work cycle (2026-07-23): Correct exact-commit deployment review findings
+
+Applied the focused P0–P2 correction pass. Release identity now separates exported-source and
+final-artifact digests, validates exact release-root containment and symlinks, and reuses valid
+same-SHA releases. Deployment now has safe initial deployment, durable validation/switch failure
+records, and an inter-process flock. Production health requires the expected SHA while development
+test mode remains explicit. The workflow builds a host-native release on the production runner
+with immutable action SHAs and the service/backup assets use valid commands and readable release
+paths. Focused unit/integration tests, Ruff, and strict Mypy pass; canonical `./verify` remains
+unrun by instruction. Next: commit this correction pass and leave the branch clean.
+
+## Current work cycle (2026-07-23): Slice 3 host services and GitHub handoff
+
+Replaced live Linux checkout launch with the stable `current` release launcher, added read-only
+release/external-state service intent, checked-in macOS launchd and operator service control,
+updated backup inputs to read validated release manifests, and added exact-SHA GitHub verify/deploy
+workflows. Added release/deployment docs and asset/runtime tests. Focused combined gates pass; the
+canonical `./verify` remains intentionally unrun for the parent.
+
+## Current work cycle (2026-07-23): Slice 2 deployment transaction and recovery
+
+Added serialized deployment with validated candidate/current manifests, backup-before-switch,
+atomic `current` replacement, bounded candidate health, code-only rollback and prior-SHA proof,
+durable JSONL result records, same-SHA idempotence, and a narrow non-shell operator CLI using the
+existing SQLite backup operation. Deployment tests, environment CLI tests, Ruff, and strict Mypy
+pass. Next: host service assets and GitHub handoff.
+
+## Current work cycle (2026-07-23): Slice 1 release identity and runtime proof
+
+Added typed full-SHA release manifests, Git-free tracked-source export with source digests,
+scrubbed stable-launch environment construction, explicit `PLAN_RELEASE_SHA` config identity,
+`/api/meta` reporting, bounded health proof, and an application-runtime resolver that preserves
+the staging checkout wrapper. Focused release/environment tests pass, Ruff passes on the changed
+surface, and strict Mypy passes on five changed source files. Next: deployment transaction.
+
+## Current work cycle (2026-07-23): Implement exact-commit production deployment (`t_2wcx0a55`)
+
+Implementation is isolated on `ticket/t_2wcx0a55-exact-commit-deploy` from current
+`origin/staging` (`55b2e237`). The accepted contract now has three TDD slices: a Git-free,
+host-native release with exact-main-SHA runtime proof; a backup-before-switch deployment
+transaction with bounded health and code rollback; and matching launchd/systemd plus GitHub
+verification/deployment inputs. The local worktree has independent Python, frontend, and agent-
+backend dependencies and imports `planner` from this exact source root. Current live remains
+untouched. Next: independent plan review, delegated implementation, focused review, one canonical
+`./verify`, and a verified Implementation commit; Closeout retains service installation, runner
+registration, GitHub-side changes, and live cutover.
+
+## Current work cycle (2026-07-23): Close out `t_7fefjrze`
+
+Ticket `t_7fefjrze` makes Workspace Blocked sections start collapsed while remaining
+expandable and leaving ordinary active sections open. The implementation at `133f9fcd`
+passed its focused browser proof, Svelte diagnostics, independent reviews, and canonical
+`./verify`. Current `staging` revision `b1e91c55` is now merged into the Ticket branch;
+the only integration repairs preserve both PROGRESS histories and rebuild the generated
+Vite bundle from the combined source. Next: review and commit that prospective result,
+run one canonical `./verify`, then advance and push `staging` if green.
+
+## Current work cycle (2026-07-23): Agents page implementation (`t_fvrfhk2k`)
+
+The browser-facing Workers route is now the Agents page at `#/agents`, with exactly two stacked
+sections: Agent-like configurable roles and the existing Worker roster. The Agents section contains
+Chief of Staff plus the owner-requested shared `panels-worker` role skill. Chief has launch defaults;
+the shared Worker skill deliberately has none because it is not an independently launched runtime.
+Both use the shared skill editor and neither has a Ticket Stage table, while Worker lifecycle
+ownership, manifests, candidate skills, and independent field-save behavior remain intact. Chief
+edits refresh the Workers response that actually carries Chief state; shared Worker-skill edits use
+the existing skills-home resource and invalidation path. Legacy `#/workers` hashes redirect to the
+exact Agents routes. Svelte check, production build, all frontend unit tests, and the 13 focused Agents/
+Workers and resource-catalogue Playwright tests pass. Review follow-up directly covers both legacy
+canonicalizations, unknown Agents subroutes, the visible and active Agents navigation, and 390px
+index/Chief controls without horizontal overflow. Desktop and mobile screenshots are in the Ticket
+artifact directory, with the desktop image refreshed to show both Agent cards. Closeout merged
+current `staging` revision `08642474` into the Ticket branch as `0c76f6ea` and corrected
+`docs/frontend.md` plus the managed-settings section of `docs/worker-types.md` in `2b3c3a56`.
+The combined-diff review found no code, generated-build, test, route, merge-interaction, or
+documentation-content violation; its one stale-memory finding is corrected here. Next: run the one
+canonical `./verify`, then advance and push the exact verified revision before proposing Closeout.
+
+## Current work cycle (2026-07-23): Use the user's normal Hermes installation and home (`t_pw264y71`)
+
+Hermes-backed Panels runtime now defaults to the operator's normal `~/.hermes` home instead of the
+database-adjacent `data/hermes-home`. Production server startup no longer injects a
+Panels-managed home, prepared-environment launches no longer export `PLAN_HERMES_HOME`, and the
+worker-settings API now resolves the active runtime skills root from the same default home. The
+prepared live/staging environment materializer no longer pre-provisions a separate per-environment
+Hermes skill home as part of default prepare/reset, while the explicit `PLAN_HERMES_HOME`
+override path and the legacy live-import Hermes-home copy path remain intact.
+
+What passed: focused Ruff on the changed source/tests, focused Mypy on the five changed source
+files, `git diff --check`, and the focused unit suite covering Hermes home resolution, environment
+run-env injection, environment CLI/materialization, worker settings, and Hermes backend
+materialization:
+`tests/unit/test_conversation_hermes_backend_configuration.py`,
+`tests/unit/test_environment_credentials.py`,
+`tests/unit/test_environment_cli.py`,
+`tests/unit/test_environment_fake_fixture.py`,
+`tests/unit/test_environment_lifecycle.py`,
+`tests/unit/test_worker_settings.py`,
+`tests/unit/test_hermes_acp_backend.py`.
+
+Next: propose Implementation for approval. No canonical `./verify` yet; that remains for later
+integration/closeout, per the accepted ticket shape.
+
+## Current work cycle (2026-07-23): Implement default Ticket placement (`t_qe1gk3ha`)
+
+Implemented creation-time defaults in the ordinary and Chief external-work API paths. The action
+layer resolves the planning day and current sprint, and the data writers add day membership in the
+same transaction as Ticket creation. Explicit sprint ids, explicit backlog (`sprint_id: null`), and
+parent sprint items remain authoritative. Focused unit and CLI/E2E tests pass, along with Ruff,
+strict Mypy, and diff checks. The first two canonical verify runs found stale Review and Board E2E
+assumptions that a new Ticket is absent from today, plus one independent server-lifecycle timing
+flake; both tests now remove the default membership before exercising explicit membership
+invalidation, and the lifecycle test passes in isolation. Next: rerun the canonical verify, then
+advance staging.
+
+## Current work cycle (2026-07-23): Close rolling backup into staging (`t_12sap6vx`)
+
+Current `staging` merged cleanly into the verified backup branch as `f4594bf2`. The first canonical
+closeout run exposed one stale exploration wording assertion introduced by current staging's
+`db560c78` documentation/skill change; the assertion now follows that accepted simple definition.
+The backup implementation itself required no integration repair. The repaired prospective staging
+revision `0271df5d` passes the canonical gate: Ruff, strict Mypy, all 1,362 unit tests, compile/CSS
+checks, every frontend check/build/test, and all 123 Playwright tests; final `VERIFY: PASS`. Next:
+advance and push `staging`, then clean up the Ticket branch.
+
+## Current work cycle (2026-07-23): SQLite backup and operator restore (`t_12sap6vx`)
+
+Implemented the narrow SQLite-only backup/restore slice. The repository environment CLI now creates
+online, temporary, integrity-checked snapshots with checksum/revision metadata, atomically publishes
+them, and retains the seven newest verified snapshots without duplicating database files for rotation.
+Restore requires an explicit stopped-live acknowledgement,
+rechecks verification, stages old SQLite sidecars for rollback, and atomically replaces the
+destination while leaving stale canonical sidecars absent after success. Added
+nightly/pre-deployment ops inputs resolve the current revision from the configurable live checkout.
+First-class backup documentation and the separate operator runbook are current. Corrective review
+also added clean malformed-metadata rejection, replacement-failure safety, deterministic retention,
+and a real v34-to-v35 migration recovery proof. Independent re-review has no unresolved finding.
+The canonical `./verify` passes Ruff, strict Mypy, all 1,358 unit tests, compile/CSS checks, every
+frontend check/build/test, and all 123 Playwright tests; final `VERIFY: PASS`. Next: commit and
+Implementation proposal.
+
 ## Current work cycle (2026-07-23): Make the Panels staging push explicit
 
 Panels repository guidance now requires Closeout to push the exact verified staging revision to
@@ -3664,3 +3916,31 @@ Stage: complete, awaiting commit. `web/node_modules/` is now ignored and its 3,9
 
 ## t_pz271435 — New Worker Runtime Defaults (2026-07-22)
 Stage: Closeout ready for approval. Main contains the implementation and verification record through `0e7369d1`; unrelated nested worktrees remain untouched. The packaged specialist was published to the managed, runtime, and last-known-good New Worker sources, which agree semantically. Managed defaults remain Codex / `gpt-5.6-sol` / `medium`, with Runtime Defaults paired. Prospective commit `c7c56b49` passed the canonical `./verify`: Ruff, strict Mypy across 155 source files, 1,386 unit tests, compile/CSS, Svelte and production frontend gates, and 119 E2E tests (`VERIFY: PASS`). After the documented restart, the live manifest and Workers endpoint confirmed the new field, paired Stage, advance path, managed defaults, and updated specialist are active.
+# Current work cycle (2026-07-23): Worker help request implementation (`t_wrdzb9jn`)
+
+Implementation is complete in the isolated Ticket worktree
+`/Users/khushaljagota/.hermes/worktrees/planning-v2-t_wrdzb9jn`, branched from current
+`staging`. Backend and frontend/skill slices were integrated serially. Independent review
+reported no violations. The canonical `./verify` passed all gates: 1,341 unit tests, frontend
+checks/build/contracts, and 123 Playwright e2e tests (`VERIFY: PASS`). The branch is clean.
+Next: propose the Implementation field for approval; Closeout will handle staging integration.
+Blockers: none.
+
+# Current work cycle (2026-07-23): Simplify GitHub CI (`t_8dkhr2f7`)
+
+Stage: Implementation built on the Ticket branch. The standalone GitHub Verify workflow is deleted;
+Deploy no longer installs source-tree Node or Playwright dependencies or invokes `./verify`, while
+exact-SHA proof, the Python release-builder environment, Node availability, release validation, and
+deployment remain. Contract tests and live release documentation describe the new boundary. Focused
+deployment/release tests passed (21 tests), and `git diff --check` passed. Next: commit the review
+candidate, obtain independent review, address any findings, then run the one canonical local
+`./verify`. The committed candidate received independent Standards and Spec reviews with no
+findings. The canonical `./verify` then passed every gate: Ruff, strict Mypy over 160 source files,
+1,405 unit tests, compile/CSS, Svelte diagnostics, production frontend build and contracts, and 126
+Playwright E2E tests (`VERIFY: PASS`). The delegated implementation agent submitted the
+Implementation field before returning; the orchestrator's subsequent proposal therefore landed as
+Closeout and advanced the Ticket to Done before repository integration. The owner then explicitly
+authorized completing Closeout. Current `staging` was already the verified branch's ancestor, so
+local `staging` fast-forwarded to the implementation and the exact revision was pushed and confirmed
+on `origin/staging`; the rolling `staging` → `main` PR remains open. The temporary Ticket branch was
+removed after integration. Closeout is complete. Blockers: none.

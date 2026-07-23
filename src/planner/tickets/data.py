@@ -617,6 +617,7 @@ def create_ticket(
     employee_backend: str | None = None,
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
+    day_id: str | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
@@ -749,6 +750,8 @@ def create_ticket(
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        if day_id is not None:
+            days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
         return _load_ticket_for_write(conn, ticket_id)
@@ -774,6 +777,7 @@ def create_ticket_from_external_work(
     employee_backend: str | None = None,
     employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
+    day_id: str | None = None,
 ) -> Ticket:
     if kickoff_note is None:
         kickoff_note = ""
@@ -902,6 +906,8 @@ def create_ticket_from_external_work(
             now,
         )
         _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
+        if day_id is not None:
+            days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
             core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
@@ -1523,6 +1529,17 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
                 "kickoff must be settled before release",
                 {"ticket_id": ticket_id},
             )
+        if (
+            ticket.ticket_status is TicketStatus.needs_user
+            and ticket.stage not in ticket.stage_ownership_overrides
+        ):
+            _write_entered_stage_ticket_status(
+                conn,
+                ticket,
+                worker_type_definition=worker_type_definition,
+                now=now,
+            )
+            return _load_ticket_for_write(conn, ticket_id)
         if ticket.stage not in ticket.stage_ownership_overrides:
             return ticket
         effective_before = ticket.effective_stage_ownership_mode
@@ -1570,6 +1587,30 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             )
             updated = _load_ticket_for_write(conn, ticket_id)
         return updated
+
+
+def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
+    """Pause a Worker-owned Ticket for explicit human help."""
+    admission.require_worker_actor(actor, "request user help")
+    with _txn(conn):
+        ticket, _worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
+        )
+        if ticket.stage in ("done", "dropped"):
+            raise PlannerError(
+                ErrorCode.validation,
+                "terminal tickets cannot request user help",
+                {"ticket_id": ticket_id},
+            )
+        if ticket.stage == "needs_kickoff":
+            raise PlannerError(
+                ErrorCode.validation,
+                "kickoff must be settled before requesting user help",
+                {"ticket_id": ticket_id},
+            )
+        if ticket.ticket_status is not TicketStatus.needs_user:
+            _write_ticket_status(conn, ticket_id, TicketStatus.needs_user, now)
+        return _load_ticket_for_write(conn, ticket_id)
 
 
 def edit_field_value(

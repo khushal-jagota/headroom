@@ -56,7 +56,7 @@ from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.days.logic.dates import resolve_day_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap
+from planner.tickets.contracts import NO_FURTHER, AtCap, TicketStatus
 from planner.worker_context import data as worker_context_data
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -71,6 +71,16 @@ from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTED_AGENT = REPOSITORY_ROOT / "tests/support/acp_scripted_agent.py"
 E2E_SERVER = REPOSITORY_ROOT / "tests/support/acp_e2e_server.py"
+_TICKET_ROLE_DIRECTIVE = (
+    "Start with the `panels` skill. It explains the system and is necessary, "
+    "then drill through to your identity through the skills layers. "
+    "You are a ticket worker."
+)
+_CHIEF_ROLE_DIRECTIVE = (
+    "Start with the `panels` skill. It explains the system and is necessary, "
+    "then drill through to your identity through the skills layers. "
+    "You are a chief of staff."
+)
 
 _SCRIPTED_WORKER_TYPE_DEFINITIONS = tuple(
     replace(
@@ -646,7 +656,7 @@ def test_ticket_route_worker_selector_is_preselected_catalog_only_and_first_prom
 
         audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
         assert _audited_prompt_texts(audit[-1]) == [
-            "Use the installed `panels-worker` skill.",
+            _TICKET_ROLE_DIRECTIVE,
             "browser through Vite",
         ]
         with connect(str(database_path)) as conn:
@@ -769,7 +779,7 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
     audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
     assert [item["sessionId"] for item in audit] == [session_id, session_id]
     assert _audited_prompt_texts(audit[0]) == [
-        "Use the installed `panels-worker` skill.",
+        _TICKET_ROLE_DIRECTIVE,
         "probe human prompt",
     ]
     assert len(_audited_prompt_texts(audit[1])) == 1
@@ -787,6 +797,78 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
     assert binding is not None and mirror is not None
     assert tuple(binding) == ("probe-backend", session_id)
     assert tuple(mirror) == ("probe-backend", session_id)
+
+
+def test_user_reply_reaches_same_acp_session_while_worker_help_waits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = str(tmp_path / "worker-help.db")
+    audit_path = tmp_path / "worker-help-audit.jsonl"
+    monkeypatch.setenv("ACP_TEST_PROMPT_AUDIT_PATH", str(audit_path))
+    config = load_config(
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": db_path,
+            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+            "PLAN_FAKE_NOW": "2026-07-20T12:00:00+00:00",
+            "PLAN_DISPATCH_ENABLED": "0",
+        }
+    )
+    clock = build_clock(config)
+    hermes = _definition()
+    definition = _definition(backend_key="probe-backend")
+    backends = (
+        (hermes, SdkAcpEmployeeChildFactory(hermes)),
+        (definition, SdkAcpEmployeeChildFactory(definition)),
+    )
+    catalog = EmployeeBackendCatalog(
+        tuple(
+            static_employee_backend_registration(item_definition, item_factory)
+            for item_definition, item_factory in backends
+        )
+    )
+    with connect(db_path) as conn:
+        create_schema(conn)
+        ticket = _seed_eligible_ticket(
+            conn,
+            clock,
+            config.boundary_hour,
+            employee_backend="probe-backend",
+            employee_runtime_definitions=_scripted_runtime_definitions(catalog),
+        )
+
+    app = _application_with_backends(config, clock, backends)
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/conversation") as websocket:
+            websocket.send_json({"type": "attach", "employeeId": ticket.id})
+            initial = _receive_until(websocket, _is_ready)
+            session_id = str(initial[0]["acpSessionId"])
+            websocket.send_json(
+                _prompt_action(ticket.id, session_id, "help-request", "I need user help")
+            )
+            first_turn = _receive_until(websocket, _is_idle)
+            session_id = _bound_session_id(first_turn)
+
+            with connect(db_path) as conn:
+                tickets_data.request_user_help(conn, ticket.id, actor="agent", now=4)
+
+            websocket.send_json(
+                _prompt_action(ticket.id, session_id, "human-answer", "Here is the answer")
+            )
+            _receive_until(websocket, _is_idle)
+
+        with connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT ticket_status, employee_session_id FROM tickets WHERE id = ?",
+                (ticket.id,),
+            ).fetchone()
+        assert row is not None
+        assert tuple(row) == (TicketStatus.needs_user.value, session_id)
+
+    audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
+    assert [item["sessionId"] for item in audit] == [session_id, session_id]
+    assert "Here is the answer" in " ".join(_audited_prompt_texts(audit[-1]))
 
 
 def test_employee_configuration_catalog_does_not_bind_and_first_prompt_uses_selection(
@@ -973,7 +1055,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
             automatic_live = _receive_until(ticket_socket, _is_idle)
             ticket_session_id = _bound_session_id(automatic_live)
             assert "Work ticket" in json.dumps(automatic_live)
-            assert "Use the installed" in json.dumps(automatic_live)
+            assert "Start with the `panels` skill." in json.dumps(automatic_live)
             assert '"source": "worker"' in json.dumps(automatic_live)
 
             ticket_socket.send_json(
@@ -985,7 +1067,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
                 )
             )
             ticket_later_live = _receive_until(ticket_socket, _is_idle)
-            assert "Use the installed" not in json.dumps(ticket_later_live)
+            assert "Start with the `panels` skill." not in json.dumps(ticket_later_live)
 
         with client.websocket_connect("/api/conversation") as ticket_replay_socket:
             ticket_replay_socket.send_json(
@@ -993,7 +1075,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
             )
             ticket_replay = _receive_until(ticket_replay_socket, _is_ready)
             assert "Work ticket" in json.dumps(ticket_replay)
-            assert "Use the installed" in json.dumps(ticket_replay)
+            assert "Start with the `panels` skill." in json.dumps(ticket_replay)
 
     ticket_audit = [
         json.loads(line) for line in ticket_audit_path.read_text().splitlines()
@@ -1002,7 +1084,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
         [block["text"] for block in item["prompt"] if block["type"] == "text"]
         for item in ticket_audit
     ]
-    assert ticket_deliveries[0][0] == "Use the installed `panels-worker` skill."
+    assert ticket_deliveries[0][0] == _TICKET_ROLE_DIRECTIVE
     assert "Work ticket" in ticket_deliveries[0][1]
     assert ticket_deliveries[1:] == [["Ticket later prompt"]]
 
@@ -1044,7 +1126,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
             )
             chief_first_live = _receive_until(chief_socket, _is_idle)
             chief_session_id = _bound_session_id(chief_first_live)
-            assert "Use the installed" in json.dumps(chief_first_live)
+            assert "Start with the `panels` skill." in json.dumps(chief_first_live)
             chief_socket.send_json(
                 _prompt_action(
                     CHIEF_OF_STAFF_ENTITY_ID,
@@ -1054,7 +1136,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
                 )
             )
             chief_later_live = _receive_until(chief_socket, _is_idle)
-            assert "Use the installed" not in json.dumps(chief_later_live)
+            assert "Start with the `panels` skill." not in json.dumps(chief_later_live)
 
             chief_socket.send_json(
                 {"type": "new_conversation", "employeeId": CHIEF_OF_STAFF_ENTITY_ID}
@@ -1082,14 +1164,14 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
             chief_fresh_live = _receive_until(chief_socket, _is_idle)
             replacement_session_id = _bound_session_id(chief_fresh_live)
             assert replacement_session_id != chief_session_id
-            assert "Use the installed" in json.dumps(chief_fresh_live)
+            assert "Start with the `panels` skill." in json.dumps(chief_fresh_live)
 
         with client.websocket_connect("/api/conversation") as replay_socket:
             replay_socket.send_json(
                 {"type": "attach", "employeeId": CHIEF_OF_STAFF_ENTITY_ID}
             )
             replay = _receive_until(replay_socket, _is_ready)
-            assert "Use the installed" in json.dumps(replay)
+            assert "Start with the `panels` skill." in json.dumps(replay)
 
     restarted_app = _application(chief_config, chief_clock, _definition())
     with TestClient(restarted_app) as restarted_client:
@@ -1109,7 +1191,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
                 )
             )
             loaded_live = _receive_until(loaded_chief, _is_idle)
-            assert "Use the installed" not in json.dumps(loaded_live)
+            assert "Start with the `panels` skill." not in json.dumps(loaded_live)
 
     chief_audit = [json.loads(line) for line in chief_audit_path.read_text().splitlines()]
     chief_deliveries = [
@@ -1117,9 +1199,9 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
         for item in chief_audit
     ]
     assert chief_deliveries == [
-        ["Use the installed `panels-chief-of-staff` skill.", "Chief first prompt"],
+        [_CHIEF_ROLE_DIRECTIVE, "Chief first prompt"],
         ["Chief later prompt"],
-        ["Use the installed `panels-chief-of-staff` skill.", "Chief fresh prompt"],
+        [_CHIEF_ROLE_DIRECTIVE, "Chief fresh prompt"],
         ["Chief loaded continuation"],
     ]
 
@@ -2057,12 +2139,12 @@ def test_browser_and_worker_share_one_real_sdk_session(
             replacement_session_id
         ]
         assert [_audited_prompt_texts(item) for item in audit] == [
-            ["Use the installed `panels-worker` skill.", "human prompt"],
+            [_TICKET_ROLE_DIRECTIVE, "human prompt"],
             ["worker prompt"],
             ["permission prompt"],
             ["hold prompt"],
             ["queued prompt"],
-            ["Use the installed `panels-worker` skill.", "replacement first prompt"],
+            [_TICKET_ROLE_DIRECTIVE, "replacement first prompt"],
         ]
         assert all(
             "DB rows are not ACP delivery" not in json.dumps(item, separators=(",", ":"))
@@ -2450,7 +2532,7 @@ def test_automatic_worker_delivers_pending_context_through_official_sdk_once(
             audit = json.loads(audit_receiver.recv(65_536))
             assert len(audit["prompt"]) == 2
             assert audit["prompt"][0]["text"] == (
-                "Use the installed `panels-worker` skill."
+                _TICKET_ROLE_DIRECTIVE
             )
             assert audit["prompt"][1]["type"] == "text"
             model_text = str(audit["prompt"][1]["text"])
@@ -2524,7 +2606,7 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
             audit = json.loads(audit_receiver.recv(65_536))
             session_id = str(audit["sessionId"])
             assert audit["prompt"][0]["text"] == (
-                "Use the installed `panels-worker` skill."
+                _TICKET_ROLE_DIRECTIVE
             )
             assert "[ACP_TEST_WAIT_FOR_CANCEL]" in audit["prompt"][1]["text"]
             with connect(db_path) as conn:
@@ -2567,7 +2649,7 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
                     item["payload"]["update"]["content"]["text"]
                     for item in worker_user_updates
                 )
-                assert "Use the installed `panels-worker` skill." in worker_prompt_text
+                assert _TICKET_ROLE_DIRECTIVE in worker_prompt_text
                 assert "[ACP_TEST_WAIT_FOR_CANCEL]" in worker_prompt_text
 
                 app.state.conversation.step_gateway.interrupt(
@@ -2768,7 +2850,7 @@ def test_worker_failure_settles_before_queued_successor(
                 if failure_mode == "capture":
                     successor_audit = json.loads(audit_receiver.recv(65_536))
                     assert _audited_prompt_texts(successor_audit) == [
-                        "Use the installed `panels-worker` skill.",
+                        _TICKET_ROLE_DIRECTIVE,
                         "queued successor",
                     ]
                     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as release_sender:

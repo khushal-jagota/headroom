@@ -9,12 +9,12 @@ from pathlib import Path
 from planner.environments.contracts import EnvironmentValidationError
 
 
-def resolve_repository_runtime_python(repository_root: Path) -> Path:
-    repository = repository_root.resolve()
-    interpreter = repository / ".venv" / "bin" / "python"
+def resolve_application_runtime_python(runtime_root: Path) -> Path:
+    runtime = runtime_root.resolve()
+    interpreter = runtime / ".venv" / "bin" / "python"
     if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
         raise EnvironmentValidationError(
-            f"repository runtime interpreter is missing or not executable: {interpreter}"
+            f"application runtime interpreter is missing or not executable: {interpreter}"
         )
     probe = subprocess.run(
         [
@@ -22,7 +22,7 @@ def resolve_repository_runtime_python(repository_root: Path) -> Path:
             "-c",
             "import pathlib, planner; print(pathlib.Path(planner.__file__).resolve())",
         ],
-        cwd=repository,
+        cwd=runtime,
         env=_probe_environment(),
         capture_output=True,
         text=True,
@@ -31,17 +31,22 @@ def resolve_repository_runtime_python(repository_root: Path) -> Path:
     )
     if probe.returncode != 0:
         raise EnvironmentValidationError(
-            "repository runtime could not import planner from its checkout: "
+            "application runtime could not import planner from its runtime root: "
             f"{probe.stderr.strip()}"
         )
     imported_planner = Path(probe.stdout.strip()).resolve()
-    expected_planner = (repository / "src" / "planner" / "__init__.py").resolve()
+    expected_planner = (runtime / "src" / "planner" / "__init__.py").resolve()
     if imported_planner != expected_planner:
         raise EnvironmentValidationError(
-            "repository runtime imports planner from the wrong checkout: "
+            "application runtime imports planner from the wrong checkout/runtime root: "
             f"expected {expected_planner}, got {imported_planner}"
         )
     return interpreter
+
+
+def resolve_repository_runtime_python(repository_root: Path) -> Path:
+    """Preserve the staging checkout contract while using the generic resolver."""
+    return resolve_application_runtime_python(repository_root)
 
 
 def _probe_environment() -> dict[str, str]:

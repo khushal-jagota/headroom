@@ -1,8 +1,9 @@
 # Runtime environments
 
 Panels has two prepared runtime environments: `live` and `staging`. They use separate
-checkouts, databases, managed files, Hermes homes, logs, locks, control sockets, and
-credential-file references.
+checkouts, databases, managed files, logs, locks, control sockets, and credential-file
+references. Hermes-backed Panels runs use the operator's normal Hermes home by default
+unless `PLAN_HERMES_HOME` is explicitly overridden.
 
 ```
 environment root
@@ -32,7 +33,7 @@ Use an absolute environment root and repository root:
 
 ```sh
 ENV_ROOT=/var/lib/panels/environments
-LIVE_REPO_ROOT=/opt/panels/live
+LIVE_RELEASE_ROOT=/opt/panels/releases
 
 panels environment prepare \
   --kind live \
@@ -101,8 +102,8 @@ Live cannot be reset or removed through the environment CLI.
 ## Staging environment
 
 Staging is prepared once and attached to the separate `staging` checkout. Its fake
-database, managed files, Hermes home, logs, credentials reference, and testing activity
-persist across runs. Its durable configuration has no server port.
+database, managed files, logs, credentials reference, and testing activity persist
+across runs. Its durable configuration has no server port.
 
 ```sh
 STAGING_REPO_ROOT=/opt/panels/staging
@@ -183,11 +184,10 @@ policy: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GOOGLE_API_KEY`. It rejects
 malformed, duplicate, unknown, or contract-owned keys.
 
 `environment run` starts from a scrubbed process environment. It keeps the operator's
-normal `HOME` for provider CLIs such as Claude and Codex, plus basic locale, terminal,
-path, and temporary-directory values. It adds the validated credential values and
-supplies the contract-owned database, port, log, lock, socket, and Hermes values.
-Panels' Hermes state remains isolated through `PLAN_HERMES_HOME`; other ambient
-`PLAN_*` values are not forwarded.
+normal `HOME` for Hermes and provider CLIs such as Claude and Codex, plus basic locale,
+terminal, path, and temporary-directory values. It adds the validated credential values
+and supplies the contract-owned database, port, log, lock, socket, and Hermes executable
+values. Other ambient `PLAN_*` values are not forwarded.
 
 The caller must provide exactly one `--repository-root`. The command checks that
 existing checkout against the prepared environment and uses it as the launch working
@@ -214,8 +214,8 @@ recorded old checkout and startup. Do not advance `staging`, change the primary
 checkout, or remove the fallback until live has passed those checks and the worker has
 reconnected.
 
-Recurring backups, automatic deployment, and public ingress changes remain separate
-work.
+Nightly SQLite backups and operator restore are described in [database backups](backups.md).
+Automatic deployment and public ingress changes remain separate work.
 
 ## Linux intent
 
@@ -238,13 +238,9 @@ The output is render-only and reports `vps_enforcement_verified` as false. Linux
 isolation exists only after an operator has installed and checked the accounts,
 permissions, credential files, services, and ingress on the target host.
 
-The static units use private target checkouts at `/opt/panels/live` and
-`/opt/panels/staging`, plus the root-owned, shared-read manager checkout at
-`/opt/panels/environment-manager`. The manager's pinned Python launches the environment
-command, validates that the target checkout's `.venv` imports `planner` from that exact
-target, and then executes the target interpreter. In each unit, `WorkingDirectory`, the
-`environment run --repository-root` value, and the target repository entry in
-`ReadWritePaths` must agree.
+The live unit uses the operator-owned `/opt/panels/current` release pointer. Staging uses
+`/opt/panels/staging` as its development checkout and the root-owned manager checkout.
+The live service receives only external writable state paths; the release root is read-only.
 
 ## Handoffs
 
@@ -257,4 +253,4 @@ target, and then executes the target interpreter. In each unit, `WorkingDirector
 
 ---
 
-_Last verified: 2026-07-22._
+_Last verified: 2026-07-23._

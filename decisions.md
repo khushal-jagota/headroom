@@ -3,6 +3,112 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-23 — The single-user Mac uses the signed-in operator identity
+
+Exact-commit deployment needs immutable non-Git releases, backup-before-switch, exact-SHA health,
+and code rollback. It does not require separate macOS application and deployment accounts. The Mac
+runner and LaunchAgent use the signed-in operator's existing Hermes/provider setup and user-owned
+application root; separate identities remain an optional future server hardening step.
+
+The user service control stops the foreground supervisor gracefully before unloading the
+LaunchAgent, then bootstraps it again for a restart. A forced `launchctl kickstart -k` can orphan
+the supervisor's application child, while booting out a KeepAlive job alone is not a truthful stop.
+
+## 2026-07-23 — The validated launcher supplies the packaged application root
+
+Checkout code can derive assets from `src/planner`, but an installed wheel cannot. The release
+launcher already validates the manifest and sets `PLAN_RELEASE_ROOT`; server composition uses that
+root for web, asset, and static paths, preserving the checkout fallback only when no release is
+active.
+
+## 2026-07-23 — GitHub variables enter deployment only through an explicit workflow map
+
+The Mac host paths and service adapter remain operator-owned repository variables. The workflow
+maps those names into its environment explicitly because GitHub does not automatically expose the
+`vars` context as shell variables. No path or host identity is compiled into application code.
+
+## 2026-07-23 — Keep deferred fork updates in the canonical bounded ingress queue
+
+Post-fork updates for the candidate session stay as deferred slots in the existing bounded ordered
+queue until private load capture attaches. This deliberately permits brief head-of-line blocking:
+it preserves one ordering, capacity, normalization, failure, and cleanup mechanism instead of
+creating a second payload store and delivery lifecycle. If private load never attaches, the normal
+ingress limit fails the child closed.
+
+## D-t_2wcx0a55-review-correction — Build and validate on the host runner
+
+The release-build workflow runs on the production-labelled runner after installing its pinned
+Python and Node prerequisites, so the exported virtual environment and frontend are host-native.
+The deploy job consumes that exact published artifact serially. This preserves the single runner
+boundary while avoiding a Linux-built artifact being used by the first macOS production host.
+
+## D-t_2wcx0a55-release-not-checkout — Git identifies source; live runs an application artifact
+
+After the user merges `staging → main`, deployment uses only the exact resulting `main` SHA.
+GitHub Actions may use its ordinary temporary checkout to obtain those files, but live receives a
+host-native versioned application tree with no Git metadata, branch, remote, or development
+workflow. Staging remains the persistent development checkout. A stable operator-owned `current`
+pointer selects a complete release, while database, managed files, agent state, configuration,
+credentials, logs, and backups remain outside every release.
+
+## D-t_2wcx0a55-one-protocol-two-service-managers — Move hosts by configuration, not semantics
+
+The current Mac is the first production target and the later VPS uses the same exact-SHA build,
+backup, atomic switch, health proof, release record, and code-rollback protocol. macOS launchd and
+Linux systemd are thin supervision adapters around one stable release launcher. The production
+self-hosted GitHub runner has only the operator deployment boundary; the live service identity can
+write persistent runtime state but not releases or deployment controls. The current private GitHub
+plan cannot enforce branch-required checks, so PR verification is advisory and every `main` push
+must pass its own release gate before deployment can start.
+
+## D-t_fvrfhk2k-agents-route-and-chief-resource — Make role kind explicit without inventing a registry
+
+Use `#/agents/chief-of-staff` for the standalone Agent and `#/agents/workers/<worker-type>` for
+Ticket Worker details. Both detail kinds share the launch-default and skill-editor components, but
+only Workers load a parameterized Worker resource and lifecycle manifest. Chief reads from the
+existing `WorkersResponse.chief_of_staff` and writes through its existing Chief endpoints. Chief
+events therefore refresh `workers`, never a fabricated `worker:chief_of_staff` identity. Keep the
+old Workers hashes as redirects so existing links remain usable, and remove Skills home from the
+index because the approved model has exactly Agents and Workers as peer sections.
+
+## D-t_fvrfhk2k-shared-worker-skill-is-configurable-not-launchable — Honor the owner override without inventing a runtime
+
+The owner added the packaged `panels-worker` skill to the Agents section before Closeout. Present it
+as a second Agent-like configuration card at `#/agents/worker-skill`, but do not give it backend,
+model, reasoning, or Stage controls: every Ticket Worker reads this shared role guidance, while no
+independent `panels-worker` employee is launched. Read it through the existing skills-home resource,
+edit it through `PATCH /api/skills/panels-worker`, and reuse the skills-home invalidation path. This
+keeps the new card truthful without adding an agent registry or another backend contract.
+
+## D-t_qe1gk3ha-creation-placement — Preserve explicit backlog selection
+
+Treat an omitted `sprint_id` as eligible for the current-sprint default, but treat an explicitly
+provided `sprint_id: null` as an intentional backlog placement. The existing CLI exposes
+`--sprint none`; collapsing that choice into the new default would silently change an established
+creation contract.
+
+## D-t_12sap6vx-sqlite-only-backups — Keep recovery small and explicit
+
+Use SQLite's online backup API into a temporary snapshot directory, verify integrity and checksum,
+then atomically publish the directory. Metadata records only the format, revision, timestamp,
+checksum, and verified state. Retention runs after publication and keeps seven verified snapshots;
+the design does not attempt managed files, Hermes state, off-host storage, or automatic restore
+rollback.
+
+Restore requires an explicit stopped-live flag and stages existing `-wal`/`-shm` before atomic
+replacement, restoring them if replacement fails and removing them after success. Reapplying stale
+sidecars is less safe than a simple stopped restore. Verified snapshots sort by creation metadata;
+because the writer adds one snapshot at a time to its seven-snapshot set, retention removes only the
+single oldest recovery point and never duplicates a database merely to delete it. Operational paths
+are environment inputs, and nightly plus pre-deployment runs resolve the revision from the configured
+live checkout so the repository does not encode a future VPS layout or stale revision value.
+
+## D-t-wrdzb9jn-implementation-slices — Keep backend and frontend work non-overlapping
+
+Implementation is split into a backend/domain/API/CLI slice and a frontend/shared-worker-skill
+slice in the same isolated Ticket worktree. Their file scopes do not overlap, so the slices can
+progress concurrently while the root agent retains serial review and integration responsibility.
+
 ## D-environment-import-one-generation — Live import has one durable commit point
 
 Keep the prepared runtime user home separate from the Hermes home and set it as the launched
@@ -20,6 +126,19 @@ A root-owned, shared-read manager checkout launches `environment run`, but the l
 that the selected target checkout's `.venv` imports `planner` from that exact target and then execs
 that interpreter. This lets current environment-management code launch accepted-old-main live code
 without allowing the staging service account to write or read private live paths.
+
+## D-t_pw264y71-default-hermes-home-with-explicit-override — Default to the real Hermes home, keep the override seam
+
+The owner-approved direction is that Hermes-backed Panels runs use the normal installed Hermes home
+by default, just as Codex and Claude already use their normal homes. The runtime therefore stops
+injecting a database-adjacent `data/hermes-home` as the default `HERMES_HOME`, and prepared
+environment launches stop exporting `PLAN_HERMES_HOME`.
+
+Keep the explicit override seam: `resolve_planner_home()` still honors `PLAN_HERMES_HOME`, and the
+legacy live-import Hermes-home copy path remains available for deployments that intentionally opt
+into a non-default Hermes home. Prepared environment materialization no longer provisions a
+separate per-environment Hermes skill home as part of the default runtime path because that state
+is no longer the canonical home Panels launches against.
 
 ## How this file is organised
 
@@ -142,6 +261,14 @@ locations, terminal exit, and unrelated metadata. The rule is backend-independen
 frontend does not present `rawOutput` from Hermes, Claude, or Codex.
 
 # Workspace
+
+## D-blocked-workspace-sections-use-existing-disclosure-state — Collapse only the synthetic Blocked group
+
+Workspace will mark its synthetic `blocked` stage group as default-collapsed in the
+existing stage-section model. It will not change canonical Ticket stages or the shared
+Disclosure component. Browser coverage will wait for a visible Workspace element,
+assert the Blocked section starts closed, open it to prove its cards remain available,
+and confirm an ordinary active stage keeps its current open default.
 
 ## D-ticket-error-requires-explicit-backend-provenance — Correctness failures are not Ticket failures
 
@@ -3370,7 +3497,28 @@ not guarantee notification/request wire ordering across the prior fork response.
   custom ownership and launch defaults and leaving general missing-stage validation strict.
 - Drafting changes packaged source and compatibility seams only. Publishing the packaged specialist
   into managed settings, final verification, and restart-backed activation belong to Closeout.
+# 2026-07-23 — Final ordered-ingress correction
+
+- Keep deferred private payloads in a consumer-owned pending route batch with one completion
+  future. This preserves serial sink delivery and lets `capture_load_session` wait for the held
+  prefix without allowing newer private slots to pass it.
+- Treat route normalization or sink failure as the existing generation-fatal ingress failure;
+  retain the accepted batch's fatal signal while ensuring the SDK child aborts and removes its
+  response epoch on every failure path.
+
 # 2026-07-23 — Panels Closeout pushes staging
+
+# 2026-07-23 — t_2wcx0a55 closeout integration repair
+
+- Keep the composition capacity regression hermetic by injecting the existing scripted employee
+  runtime definitions through `ConversationTestOptions`; do not install or invoke Hermes in CI.
+- Treat a fork response's exact session id as temporarily private before post-fork notifications
+  can race ahead of `session/load`. Ordered ingress consumes those notifications into a holding
+  buffer, then `capture_load_session` drains them to the private sink before the load request.
+  This preserves raw-order and exact-session assertions without routing candidate updates through
+  ordinary ingress or blocking the fork response.
+- Provision Chromium through the repository `.venv` in both Verify and Deploy workflows, and test
+  both asset commands occur before their `./verify` gates.
 
 - Panels Closeout must push the exact verified `staging` revision to `origin/staging` and verify the
   remote ref before cleanup.
@@ -3400,3 +3548,12 @@ not guarantee notification/request wire ordering across the prior fork response.
   move.
 - Preserve the original checkout's local commit and uncommitted work before conversion, restore that
   work onto `staging`, and leave live source and process state untouched.
+
+# 2026-07-23 — t_8dkhr2f7 direct Ticket branch and compact pipeline
+
+- Honor the Ticket kickoff's explicit decision that this small repository/GitHub operation does not
+  need an isolated worktree. Create a Ticket branch directly from the clean tracked `staging`
+  checkout and leave its pre-existing untracked nested worktree directories untouched.
+- Treat the user-approved Success, Approach, and Plan as the planning review boundary. Delegate the
+  contract-scoped implementation, then obtain one independent diff review before the final canonical
+  `./verify`; a separate plan-review round would add no new seam for this four-file workflow change.

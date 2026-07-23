@@ -314,7 +314,7 @@ def restart() -> None:
     from planner.server_lifecycle.supervisor import resolve_planner_launch_root
 
     launch_root = resolve_planner_launch_root()
-    config = load_config(str(launch_root / "config.yaml"))
+    config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
     control_socket_path = resolve_server_control_socket_path(
         config.port,
         os.environ,
@@ -1401,6 +1401,15 @@ def worker_propose(
         json_body={"body": body, "recap": recap_text},
     )
     http.emit(data, as_json, f"proposed on {data['id']}")
+
+
+@worker.command("request-user-help")
+@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
+@json_option
+def worker_request_user_help(ticket_id: str | None, as_json: bool) -> None:
+    tid = resolve_ticket_id(ticket_id, as_json)
+    data = http.send("POST", f"/api/tickets/{tid}/request-user-help", as_json=as_json)
+    http.emit(data, as_json, f"user help requested on {data['id']}")
 
 
 @worker.command("recap")

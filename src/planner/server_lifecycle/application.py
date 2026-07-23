@@ -18,7 +18,7 @@ def run_application_process() -> None:
     """Compose and run the existing application from its imported source root."""
     launch_root = Path(__file__).resolve().parents[3]
     os.chdir(launch_root)
-    config = load_config(str(launch_root / "config.yaml"))
+    config = load_config(os.environ.get("PLAN_CONFIG_PATH", str(launch_root / "config.yaml")))
     os.makedirs(os.path.dirname(config.db_path) or ".", exist_ok=True)
     os.makedirs(config.logs_dir, exist_ok=True)
     with connect(config.db_path, config.db_busy_timeout_ms) as bootstrap:
