@@ -160,8 +160,7 @@ def test_exploration_is_announced_at_both_agent_front_doors() -> None:
 
     assert "`panels-worker-exploration` — exploration tickets." in worker
     assert (
-        "`exploration` (turning an under-defined premise into a grounded answer and only "
-        "its approved consequences)"
+        "`exploration` (a worker for exploring something undefined and making it clearer)"
     ) in " ".join(chief.split())
 
 
