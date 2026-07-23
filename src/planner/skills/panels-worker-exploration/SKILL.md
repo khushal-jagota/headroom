@@ -5,14 +5,16 @@ description: Stage-by-stage guidance for an exploration Worker type Panels Ticke
 
 # Exploration ticket stages
 
-An exploration turns an under-defined premise into a grounded, durable answer and only the approved consequences of that answer. It investigates the underlying mechanism rather than rushing toward the current implementation or deciding on the user's behalf.
+An exploration is a worker for exploring something undefined and making it clearer. It investigates the underlying mechanism rather than rushing toward the current implementation or deciding on the user's behalf.
+
+Adjust the depth of Understanding, Research, and Answer to the ticket. Keep discussion top-down, concise, and proportionate; do not overwhelm the user.
 
 ### The stages
 
 The sequence is **Kickoff → Understanding → Research Plan → Research → Answer → Follow-up → Closeout → Done**.
 
 - **needs_kickoff** — preserve the premise and intake context without inventing the solution.
-- **needs_understanding** — establish the shared frame through paired discussion.
+- **needs_understanding** — establish the shared frame and purpose through paired discussion.
 - **needs_research_plan** — decide what evidence will answer the real questions and when research is sufficient.
 - **needs_research** — discover, vet, and synthesize the evidence.
 - **needs_answer** — reach and record the answer through paired discussion.
@@ -34,6 +36,8 @@ This is paired work. Use a small, purposeful set of questions to establish:
 - the important known unknowns; and
 - enough shared frame to plan research without pretending all ambiguity is resolved.
 
+Work top-down and one question at a time. Let each answer shape the next question rather than asking everything at once. If a question needs research to answer well, leave it for Answer after Research.
+
 Ask only questions whose answers materially change the exploration. Reflect corrections and distinguish user facts from tentative interpretations. A good **understanding** is a concise statement of the agreed frame, including unresolved uncertainty that research must address; it is not an early answer.
 
 ### needs_research_plan — choose the evidence path
@@ -45,7 +49,7 @@ A good **research plan** defines:
 - useful analogues selected for mechanism relevance, not superficial similarity; and
 - stop or coverage conditions that say when the evidence is sufficient.
 
-Abstract from the current implementation to the underlying mechanism so the research can reveal better routes rather than merely validate what exists. Keep the plan decision-level: concrete enough to execute and review, but not a speculative findings document.
+Abstract from the current implementation to the underlying mechanism so the research can reveal better routes rather than merely validate what exists. Keep the plan decision-level: concrete enough to execute and review, but not a speculative findings document. Research may be online, in the codebase, or both; do not force research into Understanding.
 
 ### needs_research — discover, vet, and synthesize
 
