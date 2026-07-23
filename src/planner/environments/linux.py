@@ -8,6 +8,7 @@ from pathlib import Path
 from planner.environments.contracts import EnvironmentManifest, EnvironmentValidationError
 
 DEFAULT_LINUX_ENVIRONMENT_MANAGER_ROOT = Path("/opt/panels/environment-manager")
+DEFAULT_LIVE_LAUNCHER = Path("/opt/panels/current/bin/panels-launcher")
 
 
 @dataclass(frozen=True)
@@ -32,11 +33,11 @@ def render_linux_specification(
     """Return the Linux account/unit/tmpfiles intent without changing local state."""
     if manifest.prepared_at is None:
         raise EnvironmentValidationError("Linux specification requires a prepared manifest")
-    if not manifest.repository_roots:
+    if manifest.kind != "live" and not manifest.repository_roots:
         raise EnvironmentValidationError("Linux specification requires a repository root")
 
     unit_name = _unit_name(manifest)
-    writable_paths = (
+    writable_paths: list[Path] = [
         manifest.instance_root,
         manifest.db_path.parent,
         manifest.managed_files_root,
@@ -44,8 +45,9 @@ def render_linux_specification(
         manifest.logs_dir,
         manifest.dispatcher_lock_path.parent,
         manifest.server_control_socket_path.parent,
-        *manifest.repository_roots,
-    )
+    ]
+    if manifest.kind != "live":
+        writable_paths.extend(manifest.repository_roots)
     tmpfiles_text = "\n".join(
         f"d {path} 0750 {manifest.expected_linux_account} {manifest.expected_linux_account} -"
         for path in writable_paths
@@ -69,11 +71,10 @@ def render_linux_specification(
         ),
         tmpfiles_text=tmpfiles_text,
         ownership_text=ownership_text,
-        strict_writable_paths=writable_paths,
+        strict_writable_paths=tuple(writable_paths),
         repository_path_policy=(
-            "repository roots are working directories only; the service writes runtime "
-            "state under the prepared instance root, while the VPS service may write "
-            "inside its own repository checkout"
+            "live runs from the operator-owned current release launcher; persistent state is "
+            "external and staging may use its working checkout"
         ),
         credential_file_reference=manifest.credentials_env_file,
         local_effects=(
@@ -97,26 +98,41 @@ def _unit_text(
     *,
     environment_manager_root: Path,
 ) -> str:
+    working_directory = str(manifest.repository_roots[0])
     read_write_paths = " ".join(
         (str(manifest.instance_root), *(str(root) for root in manifest.repository_roots))
     )
-    command = [
-        str(environment_manager_root / ".venv" / "bin" / "python"),
-        "-m",
-        "planner",
-        "environment",
-        "run",
-        "--kind",
-        manifest.kind,
-    ]
-    command.extend(
-        [
-            "--environment-root",
-            str(manifest.environment_root),
-            "--repository-root",
-            str(manifest.repository_roots[0]),
+    if manifest.kind == "live":
+        command = [str(DEFAULT_LIVE_LAUNCHER), "serve"]
+        working_directory = str(manifest.instance_root)
+        read_write_paths = " ".join(
+            (
+                str(manifest.db_path.parent),
+                str(manifest.managed_files_root),
+                str(manifest.hermes_home),
+                str(manifest.logs_dir),
+                str(manifest.dispatcher_lock_path.parent),
+                str(manifest.server_control_socket_path.parent),
+            )
+        )
+    else:
+        command = [
+            str(environment_manager_root / ".venv" / "bin" / "python"),
+            "-m",
+            "planner",
+            "environment",
+            "run",
+            "--kind",
+            manifest.kind,
         ]
-    )
+        command.extend(
+            [
+                "--environment-root",
+                str(manifest.environment_root),
+                "--repository-root",
+                str(manifest.repository_roots[0]),
+            ]
+        )
     credential_line = (
         f"EnvironmentFile={manifest.credentials_env_file}"
         if manifest.credentials_env_file is not None
@@ -132,7 +148,7 @@ def _unit_text(
             "[Service]",
             "Type=simple",
             f"User={manifest.expected_linux_account}",
-            f"WorkingDirectory={manifest.repository_roots[0]}",
+            f"WorkingDirectory={working_directory}",
             credential_line,
             f"ExecStart={' '.join(command)}",
             "Restart=on-failure",

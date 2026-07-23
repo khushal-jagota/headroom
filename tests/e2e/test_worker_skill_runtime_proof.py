@@ -34,7 +34,8 @@ from planner.conversation.role_skill_kickoff import RoleSkillKickoffAcpEmployeeC
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTED_AGENT = REPOSITORY_ROOT / "tests" / "support" / "acp_worker_skill_proof_agent.py"
-WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed Worktree lifecycle guidance."
+WORKTREE_GUIDANCE = "Always do your work on a worktree and a branch."
+WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed worktree and branch guidance."
 
 
 class _UnusedTurnStrategy:
@@ -68,7 +69,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_acp(
         assert installed_package.resolve() == (
             panels_skills_source_root / "panels-worker-coding"
         ).resolve()
-        assert "## Worktree lifecycle" in installed_skill.read_text(encoding="utf-8")
+        assert WORKTREE_GUIDANCE in installed_skill.read_text(encoding="utf-8")
 
         definition = AgentBackendDefinition(
             backend_key="worker-skill-proof",

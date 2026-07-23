@@ -6,8 +6,8 @@ This directory provides install inputs. Choose the real host paths in the operat
 ## Setup
 
 Copy `backup.env.example` to the host and set `PANELS_BACKUP_SOURCE_DB`, `PANELS_BACKUP_DIRECTORY`,
-`PANELS_LIVE_REPOSITORY`, and `PANELS_ENVIRONMENT_MANAGER_PYTHON`. The backup reads the
-current deployed revision from that live checkout each time it runs. Install
+`PANELS_CURRENT_RELEASE`, and `PANELS_ENVIRONMENT_MANAGER_PYTHON`. The backup reads the
+current deployed revision from the validated release manifest each time it runs. Install
 `panels-db-backup.service` and `panels-db-backup.timer`, then enable the timer. The timer runs
 nightly at 02:30 local host time and the backup does not stop `panels-live`.
 
@@ -18,12 +18,11 @@ database at that moment:
 PANELS_ENVIRONMENT_MANAGER_PYTHON=/chosen/manager/.venv/bin/python \
 PANELS_BACKUP_SOURCE_DB=/chosen/state/planning.db \
 PANELS_BACKUP_DIRECTORY=/chosen/state/backups \
-PANELS_LIVE_REPOSITORY=/chosen/live/checkout \
+PANELS_CURRENT_RELEASE=/chosen/releases/0123456789abcdef0123456789abcdef01234567 \
   ./ops/panels-environments/pre-deploy-backup.sh
 ```
 
-The deployment system supplies its own paths; the backup reads the revision from the configured
-live checkout. The repository does not assume a future VPS layout.
+The deployment system supplies its own paths; the backup never reads Git state from live.
 
 ## Inspect
 

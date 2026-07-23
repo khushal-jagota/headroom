@@ -20,8 +20,8 @@ ROLE_DIRECTIVE = (
     "then drill through to your identity through the skills layers. "
     "You are a ticket worker."
 )
-WORKTREE_HEADING = "## Worktree lifecycle"
-WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed Worktree lifecycle guidance."
+WORKTREE_GUIDANCE = "Always do your work on a worktree and a branch."
+WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed worktree and branch guidance."
 
 
 class WorkerSkillProofAgent(ScriptedAcpAgent):
@@ -41,8 +41,8 @@ class WorkerSkillProofAgent(ScriptedAcpAgent):
         hermes_home = Path(os.environ["HERMES_HOME"])
         installed_skill = hermes_home / "skills" / "panels-worker-coding" / "SKILL.md"
         skill_text = installed_skill.read_text(encoding="utf-8")
-        if WORKTREE_HEADING not in skill_text:
-            raise RuntimeError("installed coding Worker skill lacks Worktree lifecycle guidance")
+        if WORKTREE_GUIDANCE not in skill_text:
+            raise RuntimeError("installed coding Worker skill lacks worktree and branch guidance")
 
         await self._emit(  # noqa: SLF001 - this fixture specializes the scripted ACP agent.
             session_id,

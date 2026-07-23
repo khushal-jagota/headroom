@@ -3,6 +3,32 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## D-t_2wcx0a55-review-correction — Build and validate on the host runner
+
+The release-build workflow runs on the production-labelled runner after installing its pinned
+Python and Node prerequisites, so the exported virtual environment and frontend are host-native.
+The deploy job consumes that exact published artifact serially. This preserves the single runner
+boundary while avoiding a Linux-built artifact being used by the first macOS production host.
+
+## D-t_2wcx0a55-release-not-checkout — Git identifies source; live runs an application artifact
+
+After the user merges `staging → main`, deployment uses only the exact resulting `main` SHA.
+GitHub Actions may use its ordinary temporary checkout to obtain those files, but live receives a
+host-native versioned application tree with no Git metadata, branch, remote, or development
+workflow. Staging remains the persistent development checkout. A stable operator-owned `current`
+pointer selects a complete release, while database, managed files, agent state, configuration,
+credentials, logs, and backups remain outside every release.
+
+## D-t_2wcx0a55-one-protocol-two-service-managers — Move hosts by configuration, not semantics
+
+The current Mac is the first production target and the later VPS uses the same exact-SHA build,
+backup, atomic switch, health proof, release record, and code-rollback protocol. macOS launchd and
+Linux systemd are thin supervision adapters around one stable release launcher. The production
+self-hosted GitHub runner has only the operator deployment boundary; the live service identity can
+write persistent runtime state but not releases or deployment controls. The current private GitHub
+plan cannot enforce branch-required checks, so PR verification is advisory and every `main` push
+must pass its own release gate before deployment can start.
+
 ## D-t_fvrfhk2k-agents-route-and-chief-resource — Make role kind explicit without inventing a registry
 
 Use `#/agents/chief-of-staff` for the standalone Agent and `#/agents/workers/<worker-type>` for

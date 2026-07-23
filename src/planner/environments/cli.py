@@ -20,6 +20,11 @@ from planner.environments.contracts import (
     FixedEnvironmentPort,
     ResolvedEnvironmentInstance,
 )
+from planner.environments.deployment import (
+    HttpHealthClient,
+    SubprocessServiceController,
+    deploy_release,
+)
 from planner.environments.linux import render_linux_specification
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (
@@ -36,6 +41,7 @@ from planner.environments.materialize import (
     remove_environment_instance,
     reset_environment_instance,
 )
+from planner.environments.release import build_exported_release, validate_release_manifest
 from planner.environments.repository_runtime import resolve_repository_runtime_python
 from planner.environments.runtime_port import reserve_available_tcp_listener
 
@@ -80,6 +86,104 @@ def backup(source_db: Path, backup_dir: Path, deployed_revision: str) -> None:
     except (OSError, RuntimeError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(str(snapshot))
+
+
+@environment.command("release-build")
+@click.option(
+    "--source-root", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+)
+@click.option("--requested-sha", required=True)
+@click.option("--release-root", type=click.Path(path_type=Path, file_okay=False), required=True)
+def release_build(source_root: Path, requested_sha: str, release_root: Path) -> None:
+    """Build and validate one host-native exact-SHA release."""
+    try:
+        manifest = build_exported_release(
+            source_root,
+            requested_sha=requested_sha,
+            release_root=release_root,
+            install_dependencies=True,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(manifest.as_dict(), sort_keys=True))
+
+
+@environment.command("release-identity")
+@click.option(
+    "--release", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+)
+def release_identity(release: Path) -> None:
+    """Print the validated SHA for one release directory."""
+    try:
+        manifest = validate_release_manifest(release / "manifest.json")
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(manifest.release_sha)
+
+
+@environment.command("backup-current")
+@click.option(
+    "--source-db", type=click.Path(path_type=Path, exists=True, dir_okay=False), required=True
+)
+@click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
+@click.option(
+    "--current-release",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
+def backup_current(source_db: Path, backup_dir: Path, current_release: Path) -> None:
+    """Validate the current release and back up the database with its identity."""
+    try:
+        revision = validate_release_manifest(current_release / "manifest.json").release_sha
+        snapshot = create_database_backup(source_db, backup_dir, revision)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(str(snapshot))
+
+
+@environment.command("deploy")
+@click.option(
+    "--candidate", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+)
+@click.option("--current", "current_pointer", type=click.Path(path_type=Path), required=True)
+@click.option(
+    "--source-db", type=click.Path(path_type=Path, dir_okay=False), required=True
+)
+@click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
+@click.option("--records", "records_path", type=click.Path(path_type=Path), required=True)
+@click.option("--health-url", required=True)
+@click.option("--service-manager", type=click.Choice(["systemctl", "launchctl"]), required=True)
+@click.option("--service-name", required=True)
+@click.option("--baseline-release", type=click.Path(path_type=Path, exists=True, file_okay=False))
+def deploy(
+    candidate: Path,
+    current_pointer: Path,
+    source_db: Path,
+    backup_dir: Path,
+    records_path: Path,
+    health_url: str,
+    service_manager: str,
+    service_name: str,
+    baseline_release: Path | None,
+) -> None:
+    """Deploy one already-built release with backup, health proof, and code rollback."""
+    try:
+        baseline_sha = None
+        if baseline_release is not None:
+            baseline_sha = validate_release_manifest(baseline_release / "manifest.json").release_sha
+        result = deploy_release(
+            candidate=candidate,
+            current_pointer=current_pointer,
+            backup=lambda revision: create_database_backup(source_db, backup_dir, revision),
+            service=SubprocessServiceController(service_manager, service_name),
+            health=HttpHealthClient(health_url),
+            records_path=records_path,
+            source_db=source_db,
+            baseline_sha=baseline_sha,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(json.dumps(result.__dict__, sort_keys=True))
 
 
 @environment.command("restore")

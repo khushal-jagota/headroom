@@ -33,7 +33,7 @@ Use an absolute environment root and repository root:
 
 ```sh
 ENV_ROOT=/var/lib/panels/environments
-LIVE_REPO_ROOT=/opt/panels/live
+LIVE_RELEASE_ROOT=/opt/panels/releases
 
 panels environment prepare \
   --kind live \
@@ -238,13 +238,9 @@ The output is render-only and reports `vps_enforcement_verified` as false. Linux
 isolation exists only after an operator has installed and checked the accounts,
 permissions, credential files, services, and ingress on the target host.
 
-The static units use private target checkouts at `/opt/panels/live` and
-`/opt/panels/staging`, plus the root-owned, shared-read manager checkout at
-`/opt/panels/environment-manager`. The manager's pinned Python launches the environment
-command, validates that the target checkout's `.venv` imports `planner` from that exact
-target, and then executes the target interpreter. In each unit, `WorkingDirectory`, the
-`environment run --repository-root` value, and the target repository entry in
-`ReadWritePaths` must agree.
+The live unit uses the operator-owned `/opt/panels/current` release pointer. Staging uses
+`/opt/panels/staging` as its development checkout and the root-owned manager checkout.
+The live service receives only external writable state paths; the release root is read-only.
 
 ## Handoffs
 

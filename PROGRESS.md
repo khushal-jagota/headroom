@@ -1,5 +1,98 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Real release proof and verifier repair
+
+A real host-native release for `51c0d256467301304d1966b94018d8747567ef95` built successfully
+without Git metadata. Its installed `planner` imported from inside the release, its manifest proved
+the exact SHA, and an isolated deployment exercise backed up the prior manifest SHA, selected the
+candidate, detected failed health, restored the prior code pointer, restarted, and recorded
+`rolled_back`. The first canonical verifier then found one unrelated stale e2e assertion: the
+reconciled coding Worker skill still requires a worktree and branch but no longer uses the old
+`## Worktree lifecycle` heading. The proof fixture now asserts the current exact guidance; its
+focused e2e and Ruff pass. Next: commit the integration repair and run one clean canonical verifier.
+
+## Current work cycle (2026-07-23): Exact-commit deployment review clear
+
+The final focused re-review found three remaining executable-path issues: bare `panels` on the
+runner, runtime validation that did not prove non-empty built assets or in-release imports, and an
+unrecorded missing-baseline rejection. They are fixed with regressions. The workflow now invokes
+the Ticket `.venv`; runtime validation requires the frontend entrypoint, npm install marker, and
+an interpreter import rooted in the release; baseline rejection records `initial_failed`.
+Twenty-nine focused tests, Ruff, strict Mypy, and diff checks pass. No P0/P1 review finding remains.
+Next: real isolated release/deploy/rollback evidence and canonical `./verify`.
+
+## Current work cycle (2026-07-23): Fresh-runner verifier path spot-check
+
+The parent spot-check found that both workflows installed Python packages without creating the
+repository `.venv` that `./verify` executes. This small integration repair now creates `.venv`,
+installs through `.venv/bin/python`, and uses that same interpreter for release construction. The
+asset regression and Ruff pass. Next: independent re-review, real isolated release/deploy/rollback,
+then the one canonical `./verify`.
+
+## Current work cycle (2026-07-23): Ticket t_2wcx0a55 focused correction complete
+
+The second correction pass fixes the remaining executable-path blockers. Verify now provisions
+pinned Python/Node runtimes and all editable/npm dependencies before `./verify`. Deploy is one
+serial self-hosted production job that checks out, gates, builds into the exact
+`$PANELS_RELEASE_ROOT/${{ github.sha }}` path, validates, and deploys that same path without
+Actions artifacts. Production runtime validation requires the venv Python, executable launcher,
+built web assets, and agent-backend dependencies; incomplete same-SHA reuse is rejected.
+
+The host intent now provisions a non-root `panels-deploy` identity for release/current/deployment
+controls while `panels-live` remains read-only. Existing databases require an explicit baseline
+SHA and are backed up before the first pointer switch; backup failure leaves no pointer or restart.
+The obsolete repository-root implementation report was removed; the Ticket-scoped report is
+current. Focused tests, Ruff, strict Mypy, shell syntax, and diff checks pass. Canonical
+`./verify` was not run by instruction. Next: commit this correction pass and leave the worktree
+clean.
+
+## Current work cycle (2026-07-23): Correct exact-commit deployment review findings
+
+Applied the focused P0–P2 correction pass. Release identity now separates exported-source and
+final-artifact digests, validates exact release-root containment and symlinks, and reuses valid
+same-SHA releases. Deployment now has safe initial deployment, durable validation/switch failure
+records, and an inter-process flock. Production health requires the expected SHA while development
+test mode remains explicit. The workflow builds a host-native release on the production runner
+with immutable action SHAs and the service/backup assets use valid commands and readable release
+paths. Focused unit/integration tests, Ruff, and strict Mypy pass; canonical `./verify` remains
+unrun by instruction. Next: commit this correction pass and leave the branch clean.
+
+## Current work cycle (2026-07-23): Slice 3 host services and GitHub handoff
+
+Replaced live Linux checkout launch with the stable `current` release launcher, added read-only
+release/external-state service intent, checked-in macOS launchd and operator service control,
+updated backup inputs to read validated release manifests, and added exact-SHA GitHub verify/deploy
+workflows. Added release/deployment docs and asset/runtime tests. Focused combined gates pass; the
+canonical `./verify` remains intentionally unrun for the parent.
+
+## Current work cycle (2026-07-23): Slice 2 deployment transaction and recovery
+
+Added serialized deployment with validated candidate/current manifests, backup-before-switch,
+atomic `current` replacement, bounded candidate health, code-only rollback and prior-SHA proof,
+durable JSONL result records, same-SHA idempotence, and a narrow non-shell operator CLI using the
+existing SQLite backup operation. Deployment tests, environment CLI tests, Ruff, and strict Mypy
+pass. Next: host service assets and GitHub handoff.
+
+## Current work cycle (2026-07-23): Slice 1 release identity and runtime proof
+
+Added typed full-SHA release manifests, Git-free tracked-source export with source digests,
+scrubbed stable-launch environment construction, explicit `PLAN_RELEASE_SHA` config identity,
+`/api/meta` reporting, bounded health proof, and an application-runtime resolver that preserves
+the staging checkout wrapper. Focused release/environment tests pass, Ruff passes on the changed
+surface, and strict Mypy passes on five changed source files. Next: deployment transaction.
+
+## Current work cycle (2026-07-23): Implement exact-commit production deployment (`t_2wcx0a55`)
+
+Implementation is isolated on `ticket/t_2wcx0a55-exact-commit-deploy` from current
+`origin/staging` (`55b2e237`). The accepted contract now has three TDD slices: a Git-free,
+host-native release with exact-main-SHA runtime proof; a backup-before-switch deployment
+transaction with bounded health and code rollback; and matching launchd/systemd plus GitHub
+verification/deployment inputs. The local worktree has independent Python, frontend, and agent-
+backend dependencies and imports `planner` from this exact source root. Current live remains
+untouched. Next: independent plan review, delegated implementation, focused review, one canonical
+`./verify`, and a verified Implementation commit; Closeout retains service installation, runner
+registration, GitHub-side changes, and live cutover.
+
 ## Current work cycle (2026-07-23): Close out `t_7fefjrze`
 
 Ticket `t_7fefjrze` makes Workspace Blocked sections start collapsed while remaining
