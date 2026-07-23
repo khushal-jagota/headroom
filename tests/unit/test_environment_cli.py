@@ -286,10 +286,7 @@ def test_render_linux_uses_the_explicit_pinned_manager_checkout(tmp_path: Path) 
 
     assert result.exit_code == 0, result.output
     unit_text = json.loads(result.output)["unit_text"]
-    assert (
-        f"ExecStart={manager}/.venv/bin/python -m planner environment run --kind live"
-        in unit_text
-    )
+    assert "ExecStart=/opt/panels/current/bin/panels-launcher serve" in unit_text
 
 
 def test_import_live_cli_has_one_explicit_state_source_contract(tmp_path: Path) -> None:

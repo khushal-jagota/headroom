@@ -7,7 +7,8 @@ useradd --system --home-dir /var/lib/panels/nonproduction panels-worker
 
 install -d -m 0750 -o panels-live -g panels-live /var/lib/panels/environments/live
 install -d -m 0750 -o panels-worker -g panels-worker /var/lib/panels/environments/staging
-install -d -m 0750 -o panels-live -g panels-live /opt/panels/live
+install -d -m 0750 -o root -g root /opt/panels/releases
+install -d -m 0750 -o root -g root /opt/panels/current
 install -d -m 0750 -o panels-worker -g panels-worker /opt/panels/staging
 install -d -m 0755 -o root -g root /opt/panels/environment-manager
 install -d -m 0755 -o root -g root /etc/panels/environments
@@ -16,5 +17,5 @@ install -m 0640 -o panels-worker -g panels-worker /dev/null /etc/panels/environm
 
 chown -R panels-live:panels-live /var/lib/panels/environments/live
 chown -R panels-worker:panels-worker /var/lib/panels/environments/staging
-chown -R panels-live:panels-live /opt/panels/live
+chown root:root /opt/panels/releases /opt/panels/current
 chown -R panels-worker:panels-worker /opt/panels/staging

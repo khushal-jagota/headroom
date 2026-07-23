@@ -63,6 +63,7 @@ its old event lines are replaced by one minimal deletion audit.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and Linux render intent.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
+- **Exact-commit releases** (`release-deployment.md`) — Git-free production releases and deployment.
 
 **The surfaces you plan on**
 

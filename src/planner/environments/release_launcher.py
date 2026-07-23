@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -26,3 +27,17 @@ def launch_release(
 ) -> None:
     env = build_release_launch_env(release_root, ambient=os.environ if ambient is None else ambient)
     os.execve(str(release_root / ".venv" / "bin" / "python"), argv, env)
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        raise SystemExit("usage: release_launcher RELEASE_ROOT [planner arguments]")
+    root = Path(sys.argv[1]).expanduser().resolve()
+    launch_release(
+        root,
+        [str(root / ".venv" / "bin" / "python"), "-m", "planner", *sys.argv[2:]],
+    )
+
+
+if __name__ == "__main__":
+    main()

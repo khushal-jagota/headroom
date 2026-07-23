@@ -1,5 +1,13 @@
 # PROGRESS
 
+## Current work cycle (2026-07-23): Slice 3 host services and GitHub handoff
+
+Replaced live Linux checkout launch with the stable `current` release launcher, added read-only
+release/external-state service intent, checked-in macOS launchd and operator service control,
+updated backup inputs to read validated release manifests, and added exact-SHA GitHub verify/deploy
+workflows. Added release/deployment docs and asset/runtime tests. Focused combined gates pass; the
+canonical `./verify` remains intentionally unrun for the parent.
+
 ## Current work cycle (2026-07-23): Slice 2 deployment transaction and recovery
 
 Added serialized deployment with validated candidate/current manifests, backup-before-switch,

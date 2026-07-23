@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.panels.live</string>
+  <key>UserName</key><string>panels-live</string>
+  <key>ProgramArguments</key>
+  <array><string>/opt/panels/current/bin/panels-launcher</string><string>serve</string></array>
+  <key>WorkingDirectory</key><string>/var/lib/panels/environments/live</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PLAN_DB_PATH</key><string>/var/lib/panels/environments/live/planning.db</string>
+    <key>PLAN_LOGS_DIR</key><string>/var/log/panels</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>

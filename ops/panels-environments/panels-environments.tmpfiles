@@ -1,7 +1,8 @@
 # Render/install input only. The final VPS install applies these paths.
 d /var/lib/panels/environments/live 0750 panels-live panels-live -
 d /var/lib/panels/environments/staging 0750 panels-worker panels-worker -
-d /opt/panels/live 0750 panels-live panels-live -
+d /opt/panels/releases 0750 root root -
+d /opt/panels/current 0750 root root -
 d /opt/panels/staging 0750 panels-worker panels-worker -
 d /opt/panels/environment-manager 0755 root root -
 d /etc/panels/environments 0755 root root -

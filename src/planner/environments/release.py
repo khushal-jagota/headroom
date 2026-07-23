@@ -104,6 +104,7 @@ def build_exported_release(
     destination = release_root.expanduser().resolve()
     if destination.exists():
         raise ReleaseValidationError(f"release root already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}-", dir=str(destination.parent)))
     try:
         archive = subprocess.run(
@@ -115,6 +116,7 @@ def build_exported_release(
             tar.extractall(staging, filter="data")
         if install_dependencies:
             _install_release_dependencies(staging)
+        _write_stable_launcher(staging)
         source_digest = digest_release_source(staging)
         manifest = ReleaseManifest(requested_sha, source_digest)
         (staging / "manifest.json").write_text(
@@ -153,3 +155,16 @@ def _install_release_dependencies(release_root: Path) -> None:
     web_package = release_root / "web" / "package.json"
     if web_package.is_file():
         subprocess.run(["npm", "run", "build", "--prefix", str(release_root / "web")], check=True)
+
+
+def _write_stable_launcher(release_root: Path) -> None:
+    launcher = release_root / "bin" / "panels-launcher"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)\n'
+        'exec "$root/.venv/bin/python" -m planner.environments.release_launcher "$root" "$@"\n',
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)

@@ -1,0 +1,21 @@
+name: Deploy exact main commit
+on:
+  push:
+    branches: [main]
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: [self-hosted, production]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - name: Prove exact source commit
+        run: test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+      - name: Release gate
+        run: ./verify
+      - name: Deploy exact SHA
+        run: panels environment deploy --candidate "$PANELS_RELEASE_ROOT/${{ github.sha }}" --current "$PANELS_CURRENT_POINTER" --source-db "$PANELS_BACKUP_SOURCE_DB" --backup-dir "$PANELS_BACKUP_DIRECTORY" --records "$PANELS_DEPLOYMENT_RECORDS" --health-url "$PANELS_HEALTH_URL" --service-manager "$PANELS_SERVICE_MANAGER" --service-name "$PANELS_SERVICE_NAME"
