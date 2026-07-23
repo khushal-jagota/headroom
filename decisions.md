@@ -3576,6 +3576,8 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Close out only through the normal serial path: merge current `staging` into the ticket branch,
   review and verify that combined revision, then advance and push the exact verified `staging` ref.
   Do not alter the installed release or its user-owned running service in this ticket.
+- Closeout advanced and pushed verified integration commit `5bbec14d` to `origin/staging`; confirmed
+  the remote ref matches and retained existing rolling PR #7 (`staging` → `main`).
 # 2026-07-23 — t_2dm6mn08: proposal_discussion status representation
 
 - Represent "user messaged during an open approval" as ONE stored fact: a new

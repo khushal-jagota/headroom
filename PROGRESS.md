@@ -38,8 +38,12 @@ split, release-root behavior, documentation, and test surface unchanged. The fin
 `./verify` passed Ruff, strict Mypy across 160 source files, all 1,435 unit tests, compile and CSS
 checks, zero Svelte diagnostics, the production frontend build and frontend test suite, and all 126
 Playwright tests; final `VERIFY: PASS`. `staging` remained at the merged base throughout this final
-gate. Next: fast-forward and push the exact green `staging` revision, verify the remote ref and
-rolling pull-request state, then propose Closeout. The live release and its server remain untouched.
+gate. `staging` and `origin/staging` now both resolve to the exact verified integration commit
+`5bbec14d`; the remote ref was checked after push. Rolling pull request
+[#7](https://github.com/khushal-jagota/panels/pull/7) from `staging` to `main` already exists and
+will update normally. No Ticket service or runtime state was started. Next: remove the isolated
+ticket worktree and branch, then propose the verified Closeout report. The live release and its
+server remain untouched.
 ## Current work cycle (2026-07-23): t_2dm6mn08 — proposal_discussion status (Implementation)
 
 Build stage of ticket t_2dm6mn08 on branch `ticket/t_2dm6mn08-proposal-discussion` (off
