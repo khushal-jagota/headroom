@@ -7,7 +7,7 @@ case "$action" in
   *) echo "unsupported service action: $action" >&2; exit 2 ;;
 esac
 
-if command -v launchctl >/dev/null 2>&1; then
+if [ -n "${PANELS_LAUNCHCTL:-}" ] || command -v launchctl >/dev/null 2>&1; then
   launchctl=${PANELS_LAUNCHCTL:-/bin/launchctl}
   domain=${PANELS_LAUNCHD_DOMAIN:-"gui/$(id -u)"}
   label=${PANELS_LAUNCHD_LABEL:-com.panels.live}
