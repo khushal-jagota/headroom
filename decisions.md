@@ -3524,3 +3524,38 @@ not guarantee notification/request wire ordering across the prior fork response.
   move.
 - Preserve the original checkout's local commit and uncommitted work before conversion, restore that
   work onto `staging`, and leave live source and process state untouched.
+
+## t_98jx3k77 — Extend nightly backup to the managed-file tree
+
+- **Managed roots anchored on the database directory.** `managed_file_roots(db)` returns
+  `<db_parent>/files` and `<db_parent>/worker-settings`; the skills home is resolved through the same
+  `resolve_planner_home(default=<db_parent>/hermes-home)` the running server uses in
+  `_materialize_hermes` — i.e. `PLAN_HERMES_HOME` when set, else `<db_parent>/hermes-home/skills`.
+  (Independent review corrected an earlier hardcode that ignored `PLAN_HERMES_HOME`, which would have
+  silently skipped the skills tree whenever an operator set that variable.) Backup and restore derive
+  the same roots from `--source-db` / `--destination-db`. Ops note: if the live service sets
+  `PLAN_HERMES_HOME`, the backup service must set the same value (it does not inherit the live
+  service's environment), or the skills home will not be found.
+- **Skills home included but tolerated-absent.** It is not yet canonical managed state (owned by the
+  separate skills-home ticket). Capture skips any root that does not exist, so the skills home is
+  picked up automatically once it exists and its current absence is a normal empty capture.
+- **Symlinks preserved, not dereferenced.** Skills are provisioned as symlinks to the packaged
+  source; capture and restore use `copytree(symlinks=True)`, so a dangling link cannot abort the
+  whole backup (the database stays protected) and restore reproduces the symlink structure. Real
+  edited files under any root are still hashed and verified.
+- **Accepted low-severity review findings (not fixed):** a corrupt/tampered snapshot is excluded from
+  the verified set so it is never restore-eligible nor miscounted, but is therefore never pruned
+  (pre-existing behavior, also true of the v1 engine); and verification re-hashes retained snapshots
+  each run (pre-existing pattern, acceptable at retention=3 and nightly cadence).
+- **Snapshot format bumped to v2; no v1 migration.** The engine is only on `staging`, so there are no
+  production v1 snapshots. Retention/restore recognize v2 only; any non-v2 dir is simply not counted
+  as verified.
+- **Restore order: database first, managed roots second.** All manifests (DB + every root) are
+  validated before any destination is mutated, so a mid-restore failure requires a genuine filesystem
+  error. Managed roots fully roll back among themselves on failure; the database is not rolled back
+  once swapped (the pre-existing engine already treats the DB swap as the point of no return). A
+  failure after the DB swap leaves DB restored and files rolled back — acceptable given the two are
+  independently verified artifacts, not a transactional point-in-time.
+- **File verification = per-file sha256 manifest.** Files have no `PRAGMA integrity_check` analogue;
+  a `manifest.json` (relpath → sha256) checksummed into metadata is the equivalent, letting both
+  publish-time verify and restore-time re-validate reject any tampered capture.

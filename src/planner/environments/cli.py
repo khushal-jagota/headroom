@@ -80,7 +80,7 @@ def environment() -> None:
 @click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
 @click.option("--deployed-revision", required=True)
 def backup(source_db: Path, backup_dir: Path, deployed_revision: str) -> None:
-    """Create one verified online SQLite snapshot."""
+    """Create one verified snapshot of the database and the managed-file tree."""
     try:
         snapshot = create_database_backup(source_db, backup_dir, deployed_revision)
     except (OSError, RuntimeError) as exc:
@@ -132,7 +132,7 @@ def release_identity(release: Path) -> None:
     required=True,
 )
 def backup_current(source_db: Path, backup_dir: Path, current_release: Path) -> None:
-    """Validate the current release and back up the database with its identity."""
+    """Validate the current release and back up the database and file tree with its identity."""
     try:
         revision = validate_release_manifest(current_release / "manifest.json").release_sha
         snapshot = create_database_backup(source_db, backup_dir, revision)
@@ -193,7 +193,7 @@ def deploy(
 @click.option("--destination-db", type=click.Path(path_type=Path, dir_okay=False), required=True)
 @click.option("--live-stopped", is_flag=True, required=True)
 def restore(snapshot: Path, destination_db: Path, live_stopped: bool) -> None:
-    """Restore a verified snapshot into a stopped live database."""
+    """Restore a verified snapshot's database and file tree into a stopped live environment."""
     try:
         restore_database_snapshot(snapshot, destination_db, live_stopped=live_stopped)
     except (OSError, ValueError, RuntimeError) as exc:

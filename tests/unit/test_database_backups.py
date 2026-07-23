@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -8,8 +9,38 @@ import pytest
 from click.testing import CliRunner
 
 from planner.core.db import connect, create_schema
-from planner.environments.backup import create_database_backup, restore_database_snapshot
+from planner.environments.backup import (
+    _is_verified_snapshot,
+    create_database_backup,
+    restore_database_snapshot,
+)
 from planner.environments.cli import environment
+
+
+@pytest.fixture(autouse=True)
+def _default_skills_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Resolve the skills home from the database directory unless a test sets it.
+    monkeypatch.delenv("PLAN_HERMES_HOME", raising=False)
+
+
+def _seed_database(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO records VALUES ('canonical')")
+
+
+def _seed_managed_tree(data_dir: Path, marker: str) -> None:
+    """Create the managed-file roots beside a database, tagged with a marker."""
+    ticket = data_dir / "files" / "tickets" / "t_1" / "artifacts"
+    ticket.mkdir(parents=True)
+    (ticket / "ui.html").write_text(f"<h1>{marker}</h1>")
+    settings = data_dir / "worker-settings" / "coding"
+    settings.mkdir(parents=True)
+    (settings / "settings.json").write_text(f'{{"marker": "{marker}"}}')
+    skills = data_dir / "hermes-home" / "skills" / "panels"
+    skills.mkdir(parents=True)
+    (skills / "SKILL.md").write_text(f"# {marker}")
 
 
 def test_backup_uses_online_snapshot_and_records_integrity_metadata(tmp_path: Path) -> None:
@@ -82,43 +113,44 @@ def test_backup_publish_failure_leaves_existing_snapshot_intact(
     assert sorted(path.name for path in backup_dir.glob("snapshot-*")) == [old_snapshot.name]
 
 
-def test_retention_keeps_seven_verified_snapshots(tmp_path: Path) -> None:
+def test_retention_keeps_three_verified_snapshots(tmp_path: Path) -> None:
     source = tmp_path / "planning.db"
     backup_dir = tmp_path / "backups"
     with sqlite3.connect(source) as connection:
         connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    for revision in range(8):
+    for revision in range(4):
         create_database_backup(source, backup_dir, str(revision))
 
     snapshots = sorted(backup_dir.glob("snapshot-*"))
-    assert len(snapshots) == 7
+    assert len(snapshots) == 3
     assert all((snapshot / "metadata.json").exists() for snapshot in snapshots)
 
 
-def test_retention_keeps_newest_seven_by_creation_metadata(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_retention_keeps_newest_by_creation_metadata(tmp_path: Path) -> None:
     source = tmp_path / "planning.db"
     backup_dir = tmp_path / "backups"
     with sqlite3.connect(source) as connection:
         connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    snapshots = [create_database_backup(source, backup_dir, str(revision)) for revision in range(7)]
-    for revision, snapshot in enumerate(snapshots):
-        metadata = json.loads((snapshot / "metadata.json").read_text())
-        metadata["created_at"] = (
-            "2030-01-01T00:00:00+00:00"
-            if revision == 0
-            else f"202{revision - 1}-01-01T00:00:00+00:00"
-        )
-        (snapshot / "metadata.json").write_text(json.dumps(metadata))
+    snapshots = [create_database_backup(source, backup_dir, str(revision)) for revision in range(3)]
+    # Insertion order deliberately differs from chronological order: the second
+    # snapshot is the oldest by created_at, so it -- not the first -- is trimmed.
+    created_ats = {
+        0: "2030-01-01T00:00:00+00:00",
+        1: "2020-01-01T00:00:00+00:00",
+        2: "2025-01-01T00:00:00+00:00",
+    }
+    for revision, created_at in created_ats.items():
+        metadata = json.loads((snapshots[revision] / "metadata.json").read_text())
+        metadata["created_at"] = created_at
+        (snapshots[revision] / "metadata.json").write_text(json.dumps(metadata))
 
-    create_database_backup(source, backup_dir, "7")
+    create_database_backup(source, backup_dir, "3")
 
     retained_revisions = {
         json.loads((snapshot / "metadata.json").read_text())["deployed_revision"]
         for snapshot in backup_dir.glob("snapshot-*")
     }
-    assert retained_revisions == {"0", "2", "3", "4", "5", "6", "7"}
+    assert retained_revisions == {"0", "2", "3"}
 
 
 def test_retention_failure_leaves_existing_snapshots_intact(
@@ -159,7 +191,7 @@ def test_retention_does_not_duplicate_an_old_snapshot_before_removal(
     monkeypatch.setattr("planner.environments.backup.shutil.copytree", fail_copy)
     create_database_backup(source, backup_dir, "new")
 
-    assert len(tuple(backup_dir.glob("snapshot-*"))) == 7
+    assert len(tuple(backup_dir.glob("snapshot-*"))) == 3
 
 
 def test_restore_requires_stopped_live_and_removes_stale_sidecars(tmp_path: Path) -> None:
@@ -337,3 +369,210 @@ def test_environment_commands_expose_backup_and_stopped_restore(tmp_path: Path) 
         ],
     )
     assert restore_result.exit_code == 0, restore_result.output
+
+
+def test_backup_captures_and_verifies_the_managed_file_tree(tmp_path: Path) -> None:
+    source = tmp_path / "data" / "planner.db"
+    _seed_database(source)
+    _seed_managed_tree(source.parent, marker="captured")
+    backup_dir = tmp_path / "backups"
+
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+
+    metadata = json.loads((snapshot / "metadata.json").read_text())
+    assert metadata["managed_files"]["roots"] == ["files", "skills", "worker-settings"]
+    assert (
+        snapshot / "files" / "files" / "tickets" / "t_1" / "artifacts" / "ui.html"
+    ).read_text() == "<h1>captured</h1>"
+    assert (
+        snapshot / "files" / "worker-settings" / "coding" / "settings.json"
+    ).read_text() == '{"marker": "captured"}'
+    assert (snapshot / "files" / "skills" / "panels" / "SKILL.md").read_text() == "# captured"
+    assert _is_verified_snapshot(snapshot)
+
+
+def test_missing_skills_home_is_tolerated(tmp_path: Path) -> None:
+    source = tmp_path / "data" / "planner.db"
+    _seed_database(source)
+    _seed_managed_tree(source.parent, marker="captured")
+    shutil.rmtree(source.parent / "hermes-home")
+    backup_dir = tmp_path / "backups"
+
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+
+    metadata = json.loads((snapshot / "metadata.json").read_text())
+    assert metadata["managed_files"]["roots"] == ["files", "worker-settings"]
+    assert not (snapshot / "files" / "skills").exists()
+    assert _is_verified_snapshot(snapshot)
+
+
+def test_backup_without_managed_roots_is_database_only(tmp_path: Path) -> None:
+    source = tmp_path / "data" / "planner.db"
+    _seed_database(source)
+    backup_dir = tmp_path / "backups"
+
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+
+    metadata = json.loads((snapshot / "metadata.json").read_text())
+    assert "managed_files" not in metadata
+    assert not (snapshot / "files").exists()
+    assert _is_verified_snapshot(snapshot)
+
+
+def test_restore_brings_back_the_managed_file_tree(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "planner.db"
+    _seed_database(source)
+    _seed_managed_tree(source.parent, marker="snapshot")
+    backup_dir = tmp_path / "backups"
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+
+    destination = tmp_path / "live" / "planner.db"
+    _seed_database(destination)
+    _seed_managed_tree(destination.parent, marker="stale")
+    # A stale ticket file that only exists in the live tree must be gone afterwards.
+    (destination.parent / "files" / "tickets" / "t_old").mkdir(parents=True)
+    (destination.parent / "files" / "tickets" / "t_old" / "note.txt").write_text("stale")
+
+    restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    assert (
+        destination.parent / "files" / "tickets" / "t_1" / "artifacts" / "ui.html"
+    ).read_text() == "<h1>snapshot</h1>"
+    assert (
+        destination.parent / "worker-settings" / "coding" / "settings.json"
+    ).read_text() == '{"marker": "snapshot"}'
+    assert (destination.parent / "hermes-home" / "skills" / "panels" / "SKILL.md").read_text() == (
+        "# snapshot"
+    )
+    assert not (destination.parent / "files" / "tickets" / "t_old").exists()
+    with sqlite3.connect(destination) as connection:
+        assert connection.execute("SELECT value FROM records").fetchone()[0] == "canonical"
+
+
+def test_restore_rejects_tampered_managed_capture(tmp_path: Path) -> None:
+    source = tmp_path / "data" / "planner.db"
+    _seed_database(source)
+    _seed_managed_tree(source.parent, marker="captured")
+    backup_dir = tmp_path / "backups"
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+
+    tampered = snapshot / "files" / "files" / "tickets" / "t_1" / "artifacts" / "ui.html"
+    tampered.write_text("<h1>tampered after capture</h1>")
+
+    assert not _is_verified_snapshot(snapshot)
+    with pytest.raises(ValueError, match="verified"):
+        restore_database_snapshot(snapshot, tmp_path / "live" / "planner.db", live_stopped=True)
+
+
+def test_restore_managed_replacement_failure_rolls_back_the_live_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source" / "planner.db"
+    _seed_database(source)
+    _seed_managed_tree(source.parent, marker="snapshot")
+    backup_dir = tmp_path / "backups"
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+
+    destination = tmp_path / "live" / "planner.db"
+    _seed_database(destination)
+    _seed_managed_tree(destination.parent, marker="stale")
+
+    real_replace = __import__("os").replace
+    managed_targets = {"files", "worker-settings", "skills"}
+    state = {"failed": False}
+
+    def fail_managed_replace(source_path: str, destination_path: str) -> None:
+        # Fail only the first forward swap of a managed root; the rollback swap
+        # of that same target must be allowed through.
+        if not state["failed"] and Path(destination_path).name in managed_targets:
+            state["failed"] = True
+            raise OSError("managed replace failed")
+        real_replace(source_path, destination_path)
+
+    monkeypatch.setattr("planner.environments.backup.os.replace", fail_managed_replace)
+    with pytest.raises(OSError, match="managed replace failed"):
+        restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    # The live managed tree is rolled back to its pre-restore state.
+    assert (
+        destination.parent / "worker-settings" / "coding" / "settings.json"
+    ).read_text() == '{"marker": "stale"}'
+    assert (
+        destination.parent / "files" / "tickets" / "t_1" / "artifacts" / "ui.html"
+    ).read_text() == "<h1>stale</h1>"
+    leftover = [p for p in (destination.parent).glob("*.restore-*")]
+    assert leftover == []
+
+
+def test_skills_home_resolves_from_plan_hermes_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "data" / "planner.db"
+    _seed_database(source)
+    hermes_home = tmp_path / "elsewhere" / "hermes-home"
+    (hermes_home / "skills" / "panels").mkdir(parents=True)
+    (hermes_home / "skills" / "panels" / "SKILL.md").write_text("# from PLAN_HERMES_HOME")
+    monkeypatch.setenv("PLAN_HERMES_HOME", str(hermes_home))
+    backup_dir = tmp_path / "backups"
+
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+
+    metadata = json.loads((snapshot / "metadata.json").read_text())
+    assert "skills" in metadata["managed_files"]["roots"]
+    assert (snapshot / "files" / "skills" / "panels" / "SKILL.md").read_text() == (
+        "# from PLAN_HERMES_HOME"
+    )
+
+
+def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) -> None:
+    source = tmp_path / "data" / "planner.db"
+    _seed_database(source)
+    packaged = tmp_path / "repo" / "panels"
+    packaged.mkdir(parents=True)
+    (packaged / "SKILL.md").write_text("# canonical")
+    skills = source.parent / "hermes-home" / "skills"
+    skills.mkdir(parents=True)
+    (skills / "panels").symlink_to(packaged, target_is_directory=True)
+    # A dangling symlink must not abort the backup (the database must still be protected).
+    (skills / "broken").symlink_to(tmp_path / "missing", target_is_directory=True)
+    backup_dir = tmp_path / "backups"
+
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+
+    assert _is_verified_snapshot(snapshot)
+    assert (snapshot / "files" / "skills" / "panels").is_symlink()
+
+    destination = tmp_path / "live" / "planner.db"
+    _seed_database(destination)
+    restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    restored = destination.parent / "hermes-home" / "skills" / "panels"
+    assert restored.is_symlink()
+    assert (restored / "SKILL.md").read_text() == "# canonical"
+
+
+def test_environment_commands_restore_the_managed_file_tree(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "planner.db"
+    _seed_database(source)
+    _seed_managed_tree(source.parent, marker="snapshot")
+    backup_dir = tmp_path / "backups"
+    runner = CliRunner()
+    backup_result = runner.invoke(
+        environment,
+        ["backup", "--source-db", str(source), "--backup-dir", str(backup_dir),
+         "--deployed-revision", "rev-1"],
+    )
+    assert backup_result.exit_code == 0, backup_result.output
+    snapshot = next(backup_dir.glob("snapshot-*"))
+
+    destination = tmp_path / "live" / "planner.db"
+    _seed_database(destination)
+    restore_result = runner.invoke(
+        environment,
+        ["restore", "--snapshot", str(snapshot), "--destination-db", str(destination),
+         "--live-stopped"],
+    )
+    assert restore_result.exit_code == 0, restore_result.output
+    assert (
+        destination.parent / "files" / "tickets" / "t_1" / "artifacts" / "ui.html"
+    ).read_text() == "<h1>snapshot</h1>"

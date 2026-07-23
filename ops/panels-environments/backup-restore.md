@@ -31,8 +31,15 @@ find "$PANELS_BACKUP_DIRECTORY" -maxdepth 1 -type d -name 'snapshot-*' -print | 
 cat "$SNAPSHOT/metadata.json"
 ```
 
-Only snapshots with verified metadata and a matching checksum are eligible for restore. Successful
-backup runs retain the seven newest verified snapshots.
+Only snapshots with verified metadata and matching checksums are eligible for restore. Each
+snapshot covers the database and the managed-file tree beside it. Successful backup runs retain
+the three newest verified snapshots.
+
+The managed-file tree is the ticket files, worker-settings, and skills home that live beside the
+database. The skills home is resolved the same way the live server resolves it: `PLAN_HERMES_HOME`
+when set, otherwise `hermes-home` beside the database. If the live service sets `PLAN_HERMES_HOME`,
+set the same value in `backup.env` so the backup and restore commands capture the skills home the
+server actually uses.
 
 ## Restore
 
