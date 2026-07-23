@@ -33,6 +33,7 @@
   }
 
   let decisions = $derived(review.data?.ticket_decisions || []);
+  let helpRequests = $derived(review.data?.user_help_requests || []);
   let runningWorkerCount = $derived(review.data?.running_worker_count ?? 0);
   let currentDecision = $derived.by<ReviewTicketDecision | null>(() => {
     if (!decisions.length) return null;
@@ -217,13 +218,28 @@
 
 <section class="review-screen" data-screen="review">
   <ResourceState error={review.error} loading={review.loading} hasData={Boolean(review.data)} loadingText="Loading review...">
-    {#if !decisions.length}
+    {#if !decisions.length && !helpRequests.length}
     <div class="review-empty-state" data-review-empty>
       <div class="review-empty-mark" aria-hidden="true"><span></span></div>
       <div class="review-empty-text">There is nothing to review right now.</div>
       <div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>
     </div>
-  {:else if currentDecision}
+  {:else}
+    {#if helpRequests.length}
+      <section class="review-help-requests" data-review-help-requests aria-label="User help requests">
+        <div class="review-help-heading">User help requested</div>
+        {#each helpRequests as request}
+          <article class="review-help-card" data-review-help-card data-ticket-id={request.ticket_id}>
+            <div class="review-help-card-copy">
+              <div class="review-help-card-label">Worker is waiting for you</div>
+              <div class="review-help-card-title">{request.title}</div>
+            </div>
+            <a data-open-ticket href={`#/ticket/${request.ticket_id}`}>Open ticket &rsaquo;</a>
+          </article>
+        {/each}
+      </section>
+    {/if}
+    {#if currentDecision}
     {@const decision = currentDecision}
     {#if detailError}
       <div>
@@ -336,5 +352,31 @@
       <div class="review-empty-meta">{runningWorkersText(runningWorkerCount)}</div>
     </div>
     {/if}
+    {/if}
   </ResourceState>
 </section>
+
+<style>
+  .review-help-requests { display: grid; gap: var(--space-3); padding-top: var(--space-6); }
+  .review-help-heading {
+    color: var(--accent-bright);
+    font-size: var(--type-sm);
+    font-weight: 600;
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+  }
+  .review-help-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    border: var(--border-hairline) solid var(--accent-surface);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    background: var(--surface-overlay);
+  }
+  .review-help-card-copy { min-width: 0; }
+  .review-help-card-label { color: var(--accent-bright); font-size: var(--type-xs); }
+  .review-help-card-title { color: var(--text-strong); font-family: var(--font-serif); font-size: var(--type-lg); }
+  .review-help-card a { color: var(--text-muted); font-size: var(--type-sm); white-space: nowrap; }
+</style>
