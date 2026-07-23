@@ -63,7 +63,11 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_acp(
         )
 
         installed_skill = hermes_home / "skills" / "panels-worker-coding" / "SKILL.md"
-        assert not installed_skill.is_symlink()
+        installed_package = installed_skill.parent
+        assert installed_package.is_symlink()
+        assert installed_package.resolve() == (
+            panels_skills_source_root / "panels-worker-coding"
+        ).resolve()
         assert "## Worktree lifecycle" in installed_skill.read_text(encoding="utf-8")
 
         definition = AgentBackendDefinition(

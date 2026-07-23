@@ -52,6 +52,7 @@ export type ManagedSkill = {
   description: string;
   markdown_body: string;
 };
+export type SkillsHomeResponse = { skills: ManagedSkill[] };
 
 export type WorkerManagementSummary = {
   worker_type: string;
@@ -70,6 +71,7 @@ export type WorkersResponse = {
 export type ChiefManagementSettings = {
   employee_id: string;
   label: string;
+  skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
 };
 
