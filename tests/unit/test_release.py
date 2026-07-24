@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from planner.core.config import load_config
+from planner.core.server import resolve_application_root
 from planner.environments.release import (
     ReleaseValidationError,
     build_exported_release,
@@ -17,6 +18,25 @@ from planner.environments.release import (
 from planner.environments.release_launcher import build_release_launch_env
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def test_release_runtime_resolves_assets_from_the_manifest_root(tmp_path: Path) -> None:
+    release_root = tmp_path / "release"
+    installed_module = release_root / ".venv/lib/python3.13/site-packages/planner/core/server.py"
+    assert (
+        resolve_application_root(
+            environment={"PLAN_RELEASE_ROOT": str(release_root)},
+            module_file=installed_module,
+        )
+        == release_root.resolve()
+    )
+
+
+def test_checkout_runtime_resolves_assets_from_the_source_tree(tmp_path: Path) -> None:
+    module_file = tmp_path / "repo/src/planner/core/server.py"
+    assert resolve_application_root(environment={}, module_file=module_file) == (
+        tmp_path / "repo"
+    ).resolve()
 
 
 def test_release_manifest_requires_a_full_sha_and_matching_digest(tmp_path: Path) -> None:
@@ -140,8 +160,26 @@ def test_release_launcher_carries_manifest_sha_and_scrubs_unrelated_environment(
         ),
         encoding="utf-8",
     )
-    env = build_release_launch_env(release, ambient={"PATH": "/bin", "SECRET": "no"})
-    assert env == {"PATH": "/bin", "PLAN_RELEASE_SHA": SHA, "PLAN_RELEASE_ROOT": str(release)}
+    env = build_release_launch_env(
+        release,
+        ambient={
+            "HOME": "/Users/operator",
+            "USER": "operator",
+            "LOGNAME": "operator",
+            "SHELL": "/bin/zsh",
+            "PATH": "/bin",
+            "SECRET": "no",
+        },
+    )
+    assert env == {
+        "HOME": "/Users/operator",
+        "USER": "operator",
+        "LOGNAME": "operator",
+        "SHELL": "/bin/zsh",
+        "PATH": "/bin",
+        "PLAN_RELEASE_SHA": SHA,
+        "PLAN_RELEASE_ROOT": str(release),
+    }
 
 
 def test_release_manifest_requires_exact_release_directory_and_artifact_digest(

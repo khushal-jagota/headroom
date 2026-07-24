@@ -1289,6 +1289,14 @@ class _Actor:
         await self.publisher.publish_queue_snapshot(
             self.handle.employee, self.handle.binding, tuple(self.queue)
         )
+        # The prompt leaves the queue tray and enters the transcript at the moment it is sent:
+        # its human echo was withheld at submit time and is published here as it is dequeued.
+        await self.publisher.publish_human_echo(
+            self.handle.employee,
+            self.handle.binding,
+            queued.client_message_id,
+            queued.prompt,
+        )
         await self._start(
             _QueuedSubmission(
                 queued.client_message_id, "queue", queued.prompt, queued_handle

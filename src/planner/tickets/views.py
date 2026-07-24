@@ -362,6 +362,8 @@ def _ticket_decisions(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict
             continue
         if str(row["ticket_status"]) == TicketStatus.agent_running_step.value:
             continue
+        if str(row["ticket_status"]) == TicketStatus.proposal_discussion.value:
+            continue
         field = worker_type_definition.gating_field(stage)
         if field is None:
             continue

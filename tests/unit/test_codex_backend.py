@@ -193,8 +193,15 @@ def test_codex_definition_rejects_missing_or_wrong_adapter_version(
 
 
 def test_zero_arg_codex_registration_materializes_sdk_factory_and_exact_probe(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    native_home = tmp_path / "user-home" / ".codex"
+    (native_home / "sessions").mkdir(parents=True)
+    (native_home / "auth.json").write_text("auth", encoding="utf-8")
+    (native_home / "sessions" / "current.json").write_text("session", encoding="utf-8")
+    (native_home / "skills" / "user-skill").mkdir(parents=True)
+    (native_home / "skills" / "user-skill" / "SKILL.md").write_text("user", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(native_home.parent))
     registration = build_codex_employee_backend_registration()
     assert registration.backend_key == CODEX_BACKEND_KEY
 
@@ -202,6 +209,7 @@ def test_zero_arg_codex_registration_materializes_sdk_factory_and_exact_probe(
         EmployeeBackendBuildContext(
             repository_root=REPOSITORY_ROOT,
             data_directory=tmp_path,
+            employee_workspace_root=REPOSITORY_ROOT,
         )
     )
     assert materialized.definition.backend_key == CODEX_BACKEND_KEY
@@ -211,6 +219,12 @@ def test_zero_arg_codex_registration_materializes_sdk_factory_and_exact_probe(
         "APP_SERVER_LOGS",
         str(tmp_path / "codex-acp-logs"),
     )
+    assert (native_home / "skills" / "user-skill" / "SKILL.md").read_text() == "user"
+    assert (native_home / "skills" / "panels-worker-coding").resolve() == (
+        tmp_path / "skills" / "panels-worker-coding"
+    ).resolve()
+    assert (native_home / "auth.json").read_text() == "auth"
+    assert (native_home / "sessions" / "current.json").read_text() == "session"
     assert materialized.is_executable() is True
     assert materialized.startup_preflight is None
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import subprocess
 import time
 from collections.abc import Callable
@@ -42,10 +43,48 @@ class SubprocessServiceController:
         if self.manager == "systemctl":
             command = ["systemctl", "restart", self.service_name]
         elif self.manager == "launchctl":
-            command = ["launchctl", "kickstart", "-k", f"system/{self.service_name}"]
+            target = (
+                self.service_name
+                if "/" in self.service_name
+                else f"system/{self.service_name}"
+            )
+            if target.startswith("gui/"):
+                self._restart_user_launchagent(target)
+                return
+            command = ["/bin/launchctl", "kickstart", "-k", target]
         else:
             raise DeploymentError("unsupported service manager")
         subprocess.run(command, check=True, shell=False)
+
+    @staticmethod
+    def _restart_user_launchagent(target: str) -> None:
+        domain, label = target.rsplit("/", 1)
+        plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
+        subprocess.run(
+            ["/bin/launchctl", "kill", "SIGTERM", target], check=False, shell=False
+        )
+        deadline = time.monotonic() + 10.0
+        while True:
+            inspection = subprocess.run(
+                ["/bin/launchctl", "print", target],
+                check=False,
+                shell=False,
+                capture_output=True,
+                text=True,
+            )
+            if inspection.returncode != 0 or re.search(
+                r"(?m)^\s*pid = \d+\s*$", inspection.stdout
+            ) is None:
+                break
+            if time.monotonic() >= deadline:
+                raise DeploymentError("user LaunchAgent did not stop cleanly")
+            time.sleep(0.05)
+        subprocess.run(
+            ["/bin/launchctl", "bootout", target], check=False, shell=False
+        )
+        subprocess.run(
+            ["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False
+        )
 
 
 @dataclass(frozen=True)

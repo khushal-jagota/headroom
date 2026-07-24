@@ -267,19 +267,27 @@ def test_claude_environment_is_confined_and_keeps_only_panels_worker_identity() 
     assert environment["PLAN_TICKET_ID"] == "ticket-claude"
     assert set(environment) == {
         *default_environment(),
+        "CLAUDE_CONFIG_DIR",
         "PLAN_ACTOR",
         "PLAN_TICKET_ID",
     }
     assert "ANTHROPIC_API_KEY" not in environment
     assert "CLAUDE_CODE_EXECUTABLE" not in environment
-    assert "CLAUDE_CONFIG_DIR" not in environment
+    assert environment["CLAUDE_CONFIG_DIR"] == "/custom/config"
     assert "HERMES_HOME" not in environment
     assert "OPENAI_API_KEY" not in environment
 
 
 def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    native_home = tmp_path / "user-home" / ".claude"
+    (native_home / "projects").mkdir(parents=True)
+    (native_home / "settings.json").write_text("settings", encoding="utf-8")
+    (native_home / "projects" / "session.json").write_text("session", encoding="utf-8")
+    (native_home / "skills" / "user-skill").mkdir(parents=True)
+    (native_home / "skills" / "user-skill" / "SKILL.md").write_text("user", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(native_home.parent))
     from planner.conversation.backend_catalog import EmployeeBackendBuildContext
 
     registration = build_claude_employee_backend_registration()
@@ -289,6 +297,7 @@ def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
         EmployeeBackendBuildContext(
             data_directory=tmp_path,
             repository_root=REPOSITORY_ROOT,
+            employee_workspace_root=REPOSITORY_ROOT,
         )
     )
     assert materialized.definition.backend_key == CLAUDE_BACKEND_KEY
@@ -296,6 +305,13 @@ def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
     assert materialized.child_factory.definition is materialized.definition
     assert materialized.startup_preflight is not None
     assert materialized.is_executable() is False
+    assert materialized.definition.environment_overrides == ()
+    assert (native_home / "skills" / "user-skill" / "SKILL.md").read_text() == "user"
+    assert (native_home / "skills" / "panels-worker-coding").resolve() == (
+        tmp_path / "skills" / "panels-worker-coding"
+    ).resolve()
+    assert (native_home / "settings.json").read_text() == "settings"
+    assert (native_home / "projects" / "session.json").read_text() == "session"
 
 
 @pytest.mark.parametrize(
@@ -583,6 +599,7 @@ def _control(text: str) -> SessionNotification:
 
 def test_claude_startup_preflight_is_initialize_only_and_closes_before_ready() -> None:
     async def exercise() -> None:
+        employee_workspace_root = REPOSITORY_ROOT.parent
         fake = _FakeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
@@ -591,7 +608,7 @@ def test_claude_startup_preflight_is_initialize_only_and_closes_before_ready() -
         preflight = ClaudeBackendStartupPreflight(
             definition=factory.definition,
             child_factory=factory,
-            repository_root=REPOSITORY_ROOT,
+            employee_workspace_root=employee_workspace_root,
             timeout_seconds=1,
         )
         assert preflight.is_executable() is False
@@ -603,7 +620,7 @@ def test_claude_startup_preflight_is_initialize_only_and_closes_before_ready() -
         employee, generation = fake.create_calls[0]
         assert employee.entity_kind == "ticket"
         assert employee.backend_key == CLAUDE_BACKEND_KEY
-        assert employee.workspace_roots == (REPOSITORY_ROOT,)
+        assert employee.workspace_roots == (employee_workspace_root,)
         assert generation == 1
         child = fake.children[0]
         assert len(child.initialize_requests) == 1
@@ -645,7 +662,7 @@ def test_claude_startup_preflight_fails_closed_on_mismatch(
         preflight = ClaudeBackendStartupPreflight(
             definition=factory.definition,
             child_factory=factory,
-            repository_root=REPOSITORY_ROOT,
+            employee_workspace_root=REPOSITORY_ROOT,
             timeout_seconds=1,
         )
         with pytest.raises(ClaudeBackendStartupError, match=message):
@@ -734,7 +751,7 @@ def test_claude_startup_preflight_hang_uses_one_deadline_and_force_closes() -> N
         preflight = ClaudeBackendStartupPreflight(
             definition=factory.definition,
             child_factory=factory,
-            repository_root=REPOSITORY_ROOT,
+            employee_workspace_root=REPOSITORY_ROOT,
             timeout_seconds=0.01,
         )
         with pytest.raises(
@@ -796,7 +813,7 @@ def test_claude_startup_preflight_cancellation_during_spawn_settles_late_child()
         preflight = ClaudeBackendStartupPreflight(
             definition=factory.definition,
             child_factory=factory,
-            repository_root=REPOSITORY_ROOT,
+            employee_workspace_root=REPOSITORY_ROOT,
             timeout_seconds=1,
         )
         run = asyncio.create_task(preflight.run())
@@ -823,7 +840,7 @@ def test_claude_startup_preflight_cancellation_during_initialize_settles_child()
         preflight = ClaudeBackendStartupPreflight(
             definition=factory.definition,
             child_factory=factory,
-            repository_root=REPOSITORY_ROOT,
+            employee_workspace_root=REPOSITORY_ROOT,
             timeout_seconds=1,
         )
         run = asyncio.create_task(preflight.run())
@@ -855,7 +872,7 @@ def test_exact_claude_package_initialize_preflight_uses_no_session_or_prompt() -
         preflight = ClaudeBackendStartupPreflight(
             definition=definition,
             child_factory=factory,
-            repository_root=REPOSITORY_ROOT,
+            employee_workspace_root=REPOSITORY_ROOT,
             timeout_seconds=30,
         )
         await preflight.run()

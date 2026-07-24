@@ -216,6 +216,7 @@ def import_live_environment_state(
         source_files,
         source_hermes,
         source_worker_settings,
+        source_skills,
         source_agent_homes,
         source_logs,
     ) = sources
@@ -231,6 +232,8 @@ def import_live_environment_state(
             _sqlite_backup(source_db, staged_data / "planner.db")
             shutil.copytree(source_files, staged_data / "files")
             shutil.copytree(source_worker_settings, staged_data / "worker-settings")
+            if source_skills.is_dir():
+                shutil.copytree(source_skills, staged_data / "skills")
             staged_hermes = temporary_root / "hermes-home"
             shutil.copytree(source_hermes, staged_hermes, symlinks=True)
             staged_runtime_user_home = temporary_root / "user-home"
@@ -406,13 +409,14 @@ def _validate_live_import_sources(
     source_hermes_home: Path,
     source_runtime_user_home: Path,
     source_logs_root: Path,
-) -> tuple[Path, Path, Path, Path, tuple[Path, Path], Path]:
+) -> tuple[Path, Path, Path, Path, Path, tuple[Path, Path], Path]:
     source_db = source_db_path.resolve()
     source_files = source_managed_files_root.resolve()
     source_hermes = source_hermes_home.resolve()
     source_user_home = source_runtime_user_home.resolve()
     source_logs = source_logs_root.resolve()
     source_worker_settings = source_db.parent / "worker-settings"
+    source_skills = source_db.parent / "skills"
     if not source_db.is_file():
         raise EnvironmentValidationError(f"live import database is not a file: {source_db}")
     for label, source in (
@@ -451,6 +455,7 @@ def _validate_live_import_sources(
             "source_managed_files_root": source_files,
             "source_hermes_home": source_hermes,
             "source_worker_settings": source_worker_settings,
+            **({"source_skills": source_skills} if source_skills.is_dir() else {}),
             "source_codex_home": source_codex_home,
             "source_claude_home": source_claude_home,
             "source_logs_root": source_logs,
@@ -461,6 +466,7 @@ def _validate_live_import_sources(
         source_files,
         source_hermes,
         source_worker_settings,
+        source_skills,
         (source_codex_home, source_claude_home),
         source_logs,
     )

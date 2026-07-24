@@ -153,13 +153,13 @@ async def list_workers(config: Cfg) -> JsonDict:
 
 
 @router.get("/skills")
-async def list_skills() -> JsonDict:
-    return _skills_home_json(service.read_skills_home())
+async def list_skills(config: Cfg) -> JsonDict:
+    return _skills_home_json(service.read_skills_home(_database_parent(config)))
 
 
 @router.get("/skills/{skill_name}")
-async def get_skill(skill_name: str) -> JsonDict:
-    home = service.read_skills_home()
+async def get_skill(skill_name: str, config: Cfg) -> JsonDict:
+    home = service.read_skills_home(_database_parent(config))
     for skill in home.skills:
         if skill.name == skill_name:
             return _skill_json(skill)
@@ -168,14 +168,14 @@ async def get_skill(skill_name: str) -> JsonDict:
 
 @router.patch("/skills/{skill_name}")
 async def patch_skill(
-    skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clock: Clk
+    skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "skill patch requires exactly one field", {})
     now = clock.now_unix()
     skill = service.save_skill(
-        skill_name, raw,
+        _database_parent(config), skill_name, raw,
         after_publish=lambda: _worker_settings_changed_callback(
             conn, "skills_home", changed="skill", now=now
         ),

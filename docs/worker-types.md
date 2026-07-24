@@ -178,10 +178,11 @@ _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 ## Managed settings and the Agents page
 
 The registry remains the immutable workflow definition. A managed source beside the
-database owns only the ownership default for each existing non-terminal Stage. Every
-editable skill has exactly one canonical version-controlled `SKILL.md` under
-`src/planner/skills`. All backends read that file; the Hermes home contains a symlink,
-never a copied overlay.
+database owns the ownership default for each existing non-terminal Stage and every
+editable skill. `data/skills` is the one live skill home for Codex, Claude, and Hermes.
+The packaged `src/planner/skills` tree seeds a new home only; it is never changed by
+the product and does not replace a managed edit. Hermes contains symlinks to the
+managed home, never copied overlays.
 
 The browser navigation and settings page is **Agents** at `#/agents`. It has exactly two
 stacked sections:
@@ -210,8 +211,7 @@ revision.
 Every editable skill name is read-only. Description and Markdown body are ordinary
 direct edits that save, fail, and retry independently. Successful skill edits refresh
 the configured planner Hermes home without changing existing Employee session ids.
-Codex and Claude Code continue to use the repository skill source exposed through their
-native project links.
+Codex and Claude Code use the same managed home.
 
 `GET /api/workers` serves the Agents-page index data, including Chief settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.

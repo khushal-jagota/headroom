@@ -67,7 +67,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_acp(
         installed_package = installed_skill.parent
         assert installed_package.is_symlink()
         assert installed_package.resolve() == (
-            panels_skills_source_root / "panels-worker-coding"
+            database_parent / "skills" / "panels-worker-coding"
         ).resolve()
         assert WORKTREE_GUIDANCE in installed_skill.read_text(encoding="utf-8")
 

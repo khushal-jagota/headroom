@@ -36,7 +36,7 @@ def test_v28_to_v29_adds_ticket_conversation_projection_idempotently(tmp_path) -
         "has_pending_permission",
         "updated_at",
     }
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     sql_before = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' "
         "AND name='ticket_conversation_projections'"
@@ -90,7 +90,7 @@ def test_v31_to_v32_clears_legacy_errors_without_backend_provenance(tmp_path) ->
 
     create_schema(conn)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     assert [
         tuple(row)
         for row in conn.execute(
@@ -140,7 +140,7 @@ def test_v32_to_v33_seeds_durable_conversation_from_existing_binding(tmp_path) -
             "FROM employee_conversations WHERE employee_id = 't_bound'"
         ).fetchone()
     ) == ("t_bound", "ticket", "t_bound", "codex", "gpt-5", "high", 7, 1, 2)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM employee_conversations").fetchone()[0] == 1
     conn.close()
@@ -163,7 +163,88 @@ def test_v33_to_v34_adds_null_safe_employee_configuration_catalog_cache(tmp_path
         "catalog_json",
         "discovered_at",
     }
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    conn.close()
+
+
+_V35_TICKETS_DDL = """
+CREATE TABLE tickets (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL CHECK (length(title) <= 200),
+  worker_type TEXT NOT NULL,
+  employee_backend TEXT NOT NULL,
+  employee_launch_model TEXT,
+  employee_launch_reasoning_effort TEXT,
+  stage TEXT NOT NULL DEFAULT 'needs_kickoff',
+  priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
+  deadline TEXT,
+  project_id TEXT REFERENCES projects(id),
+  sprint_item_id TEXT REFERENCES sprint_items(id),
+  sprint_id TEXT REFERENCES sprints(id),
+  recap TEXT NOT NULL DEFAULT '',
+  ceiling TEXT NOT NULL,
+  at_cap TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
+  ticket_status TEXT NOT NULL DEFAULT 'empty'
+                CHECK (ticket_status IN ('empty','agent_running_step',
+                                         'awaiting_approval','user_takeover',
+                                         'needs_user','paired_work','errored')),
+  backend_error TEXT,
+  stage_ownership_overrides TEXT NOT NULL DEFAULT '{}',
+  default_stage_ownership_mode TEXT
+                CHECK (default_stage_ownership_mode IN ('worker','user','paired')),
+  employee_session_id TEXT,
+  alias TEXT,
+  fields TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+)
+"""
+
+
+def test_v35_to_v36_allows_proposal_discussion_and_preserves_rows(tmp_path) -> None:
+    conn = connect(str(tmp_path / "v35-to-v36-proposal-discussion.db"))
+    create_schema(conn)
+    # Rebuild the Ticket table into its settled v35 shape (no proposal_discussion) and
+    # rewind the schema marker so create_schema runs the forward v36 migration.
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("DROP TABLE tickets")
+    conn.execute(_V35_TICKETS_DDL)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA user_version=35")
+    _insert_ticket(
+        conn,
+        id="t_awaiting",
+        title="awaiting proposal",
+        worker_type="coding",
+        employee_backend="hermes",
+        ceiling="needs_success",
+        ticket_status="awaiting_approval",
+        fields=_EMPTY_CODING_FIELDS,
+        created_at=1,
+        updated_at=1,
+    )
+    conn.commit()
+    # v35 rejects proposal_discussion before the migration runs.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'proposal_discussion' WHERE id = 't_awaiting'"
+        )
+
+    create_schema(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    tickets_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
+    ).fetchone()[0]
+    assert "proposal_discussion" in tickets_sql
+    row = conn.execute(
+        "SELECT ticket_status FROM tickets WHERE id = 't_awaiting'"
+    ).fetchone()
+    assert str(row["ticket_status"]) == "awaiting_approval"
+    # v36 now accepts the new status.
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'proposal_discussion' WHERE id = 't_awaiting'"
+    )
     conn.close()
 
 
@@ -404,7 +485,7 @@ def test_v25_to_v26_assigns_exact_hermes_and_preserves_ticket_bytes(tmp_path) ->
     assert after.pop("default_stage_ownership_mode") == "worker"
     assert after.pop("backend_error") is None
     assert after == before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     conn.close()
 
 
@@ -476,7 +557,7 @@ def test_v26_reopen_preserves_non_hermes_selection_and_is_idempotent(tmp_path) -
         == sql_before
     )
     assert tuple(conn.execute("SELECT * FROM tickets").fetchone()) == row_before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     conn.close()
 
 
@@ -538,7 +619,7 @@ def test_v26_to_v27_preserves_ticket_and_binding_bytes_and_seeds_null_configurat
     assert binding_after.pop("employee_launch_model") is None
     assert binding_after.pop("employee_launch_reasoning_effort") is None
     assert binding_after == binding_before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     conn.close()
 
 
@@ -570,7 +651,7 @@ def test_v32_reopen_preserves_explicit_ticket_configuration_and_is_idempotent(
         ).fetchone()[0]
         == sql_before
     )
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     conn.close()
 
 
@@ -2300,7 +2381,7 @@ def test_v28_removes_learning_and_unassigns_only_its_ideas_idempotently(tmp_path
         ("project_vylo", "Vylo", "", 0, 0),
     ]
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
 
     first_ideas = [tuple(row) for row in conn.execute("SELECT * FROM ideas ORDER BY id")]
     first_projects = [tuple(row) for row in conn.execute("SELECT * FROM projects ORDER BY id")]
@@ -2309,7 +2390,7 @@ def test_v28_removes_learning_and_unassigns_only_its_ideas_idempotently(tmp_path
     assert [
         tuple(row) for row in conn.execute("SELECT * FROM projects ORDER BY id")
     ] == first_projects
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 36
     conn.close()
 
 
@@ -2634,7 +2715,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 35
+    assert SCHEMA_VERSION == 36
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -2670,6 +2751,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     assert "at_cap IN ('stop','propose')" in tickets_sql
     assert "ticket_status IN ('empty'" in tickets_sql
     assert "paired_work" in tickets_sql
+    assert "proposal_discussion" in tickets_sql
     assert "execution_route" not in tickets_sql
     assert "khushal" not in tickets_sql
 
@@ -3354,7 +3436,7 @@ def test_pre_column_v24_binding_schema_reopens_with_empty_provenance(
     }["compaction_boundaries_json"]
     assert column["notnull"] == 1
     assert column["dflt_value"] == "'[]'"
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     conn.close()
 
 
@@ -3387,7 +3469,7 @@ def test_amended_v24_binding_schema_reopens_without_rewriting_provenance(
     )
     create_schema(conn)
     assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
     conn.close()
 
 
@@ -3587,7 +3669,7 @@ def test_v25_cutover_converts_worker_correctness_and_deletes_conversation_state(
     ):
         assert not db_module._table_exists(conn, table)
     assert "chat_session_key" not in db_module._table_columns(conn, "days")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 35
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 36
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM employee_step_runs").fetchone()[0] == 3
@@ -3736,10 +3818,10 @@ def test_create_schema_reaches_only_consolidated_ticket_rebuild_after_lock(tmp_p
     # The two historical Ticket rebuilds, v25 cutover, terminal v26 backend rebuild,
     # additive v27 launch configuration, v28 Learning-project, v29 projection, v30
     # captured ownership, v31 Chief launch snapshots, v32 backend errors, v33
-    # durable empty conversation generations, v34 catalog cache, and v35
-    # needs_user status are the
+    # durable empty conversation generations, v34 catalog cache, v35
+    # needs_user status, and v36 proposal_discussion status are the
     # only write locks.
-    assert statements.count("BEGIN IMMEDIATE") == 13
+    assert statements.count("BEGIN IMMEDIATE") == 14
     ticket_snapshot_index = next(
         index
         for index, statement in enumerate(statements)

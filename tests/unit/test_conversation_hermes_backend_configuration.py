@@ -52,10 +52,10 @@ def test_provision_planner_home_skills_symlinks_packaged_skills_idempotently(
     )
     assert "panels-ticket-management" in PLANNER_SKILL_NAMES
     assert panels_skill_root() == Path(__file__).resolve().parents[2] / "src/planner/skills"
-    provision_planner_home_skills(tmp_path, names)
-    provision_planner_home_skills(tmp_path, names)
+    provision_planner_home_skills(tmp_path / "home", names, configured_database_parent=tmp_path)
+    provision_planner_home_skills(tmp_path / "home", names, configured_database_parent=tmp_path)
     for name in names:
-        target = tmp_path / "skills" / name
+        target = tmp_path / "home" / "skills" / name
         assert target.is_symlink()
         assert (target / "SKILL.md").is_file()
 

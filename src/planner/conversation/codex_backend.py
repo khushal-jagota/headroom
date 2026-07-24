@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
+from planner.skill_sources import provision_native_backend_skills
+
 from .backend_contracts import (
     AgentBackendDefinition,
     BackendTurnCapabilities,
@@ -181,6 +183,7 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
         context: EmployeeBackendBuildContext,
     ) -> MaterializedEmployeeBackendRegistration:
         repository_root = context.repository_root
+        employee_workspace_root = context.employee_workspace_root
         node = resolve_codex_node_executable()
         strategy = CodexAcpTurnStrategy()
         definition = build_codex_acp_backend_definition(
@@ -188,6 +191,9 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
             node_executable=node,
             app_server_logs=context.data_directory / "codex-acp-logs",
             turn_strategy=strategy,
+        )
+        provision_native_backend_skills(
+            _native_codex_home(), context.data_directory
         )
         entrypoint = Path(definition.argv[1])
         child_factory = SdkAcpEmployeeChildFactory(definition)
@@ -203,10 +209,15 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
                 StableAcpEmployeeSessionConfigurationAdapter(
                     definition=definition,
                     child_factory=child_factory,
-                    workspace_root=repository_root,
+                    workspace_root=employee_workspace_root,
                     full_access_mode="agent-full-access",
                 )
             ),
         )
 
     return EmployeeBackendRegistration(CODEX_BACKEND_KEY, materialize)
+
+
+def _native_codex_home() -> Path:
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".codex"

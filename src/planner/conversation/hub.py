@@ -24,6 +24,7 @@ from starlette.websockets import WebSocketDisconnect
 from planner.tickets.conversation_projection import TicketConversationProjection
 
 from .backend_contracts import (
+    AcpEmployeeChild,
     ConversationIngressReplayBatch,
     ConversationIngressTransition,
     SessionNotificationReplayMaterializer,
@@ -55,6 +56,7 @@ from .contracts import (
 from .employee_registry import (
     AcpEmployeeRecord,
     AcpEmployeeRegistry,
+    AcpEmployeeStaleGeneration,
     ConversationIngressSource,
 )
 from .permission_broker import ConversationPermissionBroker
@@ -688,18 +690,23 @@ class ConversationHub:
                 prompt = prompt.model_copy(
                     update={"session_id": stream.binding.acp_session_id}
                 )
-            await self._publish_human_echo(
-                stream.employee,
-                stream.binding,
-                action.client_message_id,
-                prompt,
-            )
+            # A queued prompt is echoed into the transcript when it is actually dequeued and sent
+            # (see ConversationTurnBroker._advance_queue), not at submit time; while it waits it
+            # lives only in the queue snapshot. Every other choice is delivered now, so echoes now.
+            if action.delivery_choice != "queue":
+                await self._publish_human_echo(
+                    stream.employee,
+                    stream.binding,
+                    action.client_message_id,
+                    prompt,
+                )
             await self._deliver_with_logging(
                 handle,
                 action.client_message_id,
                 action.delivery_choice,
                 prompt,
             )
+            await self._enter_ticket_proposal_discussion(stream.employee)
             return
         if isinstance(action, CancelAction):
             await self._require_broker().cancel(handle, action.queued_client_message_id)
@@ -739,14 +746,31 @@ class ConversationHub:
                 employee_id, binding.binding_generation
             )
             deadline = asyncio.get_running_loop().time() + self._new_conversation_timeout_seconds
-            await self._require_broker().prepare_new_conversation(handle, deadline)
+            try:
+                await self._require_broker().prepare_new_conversation(handle, deadline)
+            except Exception as error:
+                # Old-session teardown is best-effort. The broker force-disposes the
+                # old actor on every failure branch, so an unreachable or hung old
+                # child is left closed and non-accepting regardless. Do not let a
+                # teardown failure gate committing the fresh generation.
+                _LOGGER.warning(
+                    "New conversation old-session teardown for %s did not complete "
+                    "cleanly; committing the fresh generation anyway: %r",
+                    employee_id,
+                    error,
+                )
         conversation = await self.repository.start_new_conversation(employee_id, binding)
         if stream is not None:
             self._streams.pop(employee_id, None)
-        if binding is not None:
-            await self._require_registry().retire_conversation(
-                employee_id, binding.binding_generation
-            )
+        # Evict the old registry record before confirming the fresh conversation
+        # ready. Eviction is synchronous, so a first prompt on the new conversation
+        # spawns a fresh generation instead of reusing the old, now-deleted one. The
+        # slow child teardown is deferred to best-effort cleanup below.
+        old_child = (
+            await self._evict_old_conversation(employee_id, binding.binding_generation)
+            if binding is not None
+            else None
+        )
         self._empty_browsers[employee_id] = browsers
         replay = self._empty_conversation_bootstrap(
             await self.repository.resolve_employee(employee_id),
@@ -755,7 +779,50 @@ class ConversationHub:
         for browser in browsers.values():
             cast(_BrowserOutboundQueue, browser.queue).put_replay_cutover_nowait(replay)
         await self._reset_ticket_conversation_projection(employee)
+        if old_child is not None:
+            await self._close_old_child_best_effort(employee_id, old_child)
         return conversation
+
+    async def _evict_old_conversation(
+        self, employee_id: str, binding_generation: int
+    ) -> AcpEmployeeChild | None:
+        """Evict the pre-New registry record so its generation cannot be reused.
+
+        A stale-generation failure means the record was already advanced or removed,
+        which is exactly the state eviction aims for, so it is safe to continue.
+        """
+        try:
+            return await self._require_registry().evict_conversation(
+                employee_id, binding_generation
+            )
+        except AcpEmployeeStaleGeneration:
+            return None
+
+    async def _close_old_child_best_effort(
+        self, employee_id: str, child: AcpEmployeeChild
+    ) -> None:
+        """Close the evicted old child as best-effort cleanup after New is ready.
+
+        The fresh generation is already committed, its reset/ready cutover already
+        published, and its record already evicted, so an unreachable or hung old
+        child must neither fail nor undo New. Bound the close by the new-conversation
+        deadline and swallow any failure or timeout.
+        """
+        deadline = (
+            asyncio.get_running_loop().time() + self._new_conversation_timeout_seconds
+        )
+        try:
+            await asyncio.wait_for(
+                child.close(),
+                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+            )
+        except Exception as error:
+            _LOGGER.warning(
+                "New conversation old-session cleanup for %s did not complete "
+                "cleanly; continuing best-effort: %r",
+                employee_id,
+                error,
+            )
 
     async def _dispatch_empty_action(
         self,
@@ -772,18 +839,21 @@ class ConversationHub:
                 prompt=action.prompt,
                 field_meta=action.prompt_meta,
             )
-            await self._publish_human_echo(
-                employee,
-                binding,
-                action.client_message_id,
-                prompt,
-            )
+            # A queued prompt echoes at dequeue, not at submit; see _dispatch_action above.
+            if action.delivery_choice != "queue":
+                await self._publish_human_echo(
+                    employee,
+                    binding,
+                    action.client_message_id,
+                    prompt,
+                )
             await self._deliver_with_logging(
                 handle,
                 action.client_message_id,
                 action.delivery_choice,
                 prompt,
             )
+            await self._enter_ticket_proposal_discussion(employee)
             return
         if isinstance(action, NewConversationAction):
             await self.new_conversation(employee_id)
@@ -1069,12 +1139,8 @@ class ConversationHub:
             )
             if not replay_available:
                 return
-            for queued in queued_prompts:
-                self._publish_human_echo_now(
-                    stream,
-                    queued.client_message_id,
-                    queued.prompt,
-                )
+            # Still-queued prompts are not part of the transcript; they resurface in the queue
+            # snapshot only and echo into the transcript when they are dequeued and sent.
             self._publish_queue_snapshot_now(stream, queued_prompts)
 
         projection_lock = self._ticket_projection_lock(token.original_handle.employee)
@@ -1310,12 +1376,8 @@ class ConversationHub:
                     employee_id, state
                 )
                 return
-            for queued in queued_prompts:
-                self._publish_human_echo_now(
-                    stream,
-                    queued.client_message_id,
-                    queued.prompt,
-                )
+            # Still-queued prompts stay out of the transcript and resurface only in the queue
+            # snapshot. A send-now successor, by contrast, is being started now, so it echoes.
             if send_now_successor_human_echo is not None:
                 self._publish_human_echo_now(
                     stream,
@@ -1446,6 +1508,17 @@ class ConversationHub:
             ),
         )
 
+    async def publish_human_echo(
+        self,
+        employee: ConversationEmployee,
+        binding: ConversationSessionBinding,
+        client_message_id: str,
+        prompt: PromptRequest,
+    ) -> None:
+        await self._publish_human_echo(
+            employee, binding, client_message_id, prompt
+        )
+
     async def publish_queue_snapshot(
         self,
         employee: ConversationEmployee,
@@ -1570,6 +1643,16 @@ class ConversationHub:
             return
         await asyncio.to_thread(
             projection.record_activity, employee.entity_id, state
+        )
+
+    async def _enter_ticket_proposal_discussion(
+        self, employee: ConversationEmployee
+    ) -> None:
+        projection = self._ticket_conversation_projection
+        if projection is None or employee.entity_kind != "ticket":
+            return
+        await asyncio.to_thread(
+            projection.enter_proposal_discussion_on_human_prompt, employee.entity_id
         )
 
     async def _record_ticket_permission(

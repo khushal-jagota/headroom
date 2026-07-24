@@ -327,7 +327,7 @@ def test_restored_old_schema_can_migrate_and_preserves_data(tmp_path: Path) -> N
 
     with connect(str(restored)) as connection:
         create_schema(connection)
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 35
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 36
         assert (
             connection.execute(
                 "SELECT fields FROM tickets WHERE id = 't_backup_migration'"
