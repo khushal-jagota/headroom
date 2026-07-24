@@ -1,5 +1,5 @@
 """The clock. Real time in production; a mutable fake in test mode so planning-date
-math (§6.1) and the set-now test endpoint (D5) are deterministic. The choice is
+math (§6.1) and the set-now test endpoint are deterministic. The choice is
 made once at startup from config."""
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ class RealClock:
 
 
 class TestClock:
-    """Mutable clock for PLAN_FAKE_NOW and POST /api/test/set-now (D5)."""
+    """Mutable clock for PLAN_FAKE_NOW and POST /api/test/set-now."""
 
     def __init__(self, start: datetime) -> None:
         self._now = start
