@@ -109,8 +109,8 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     assert created["stage"] == "needs_success", created
 
     card = f'[data-card][data-ticket-stage="needs_success"][data-ticket-id="{tid}"]'
-    # No reload, no goto: the board is not day-scoped, so the freshly created
-    # Ticket's card can only arrive via a WS-flush re-render of the open pages.
+    # No reload, no goto: the today's-roster card arrives via a WS-flush
+    # re-render of the open pages.
     _wait_present(page_b, card)
     assert "T18 board ticket" in page_b.inner_text(card)
     assert page_b.evaluate("window.__plannerDebug.flushes") > flushes_b
@@ -118,14 +118,14 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     _wait_present(page_a, card)
     assert "T18 board ticket" in page_a.inner_text(card)
 
-    # Day membership no longer affects the Workspace board: removing the Ticket
-    # from today leaves its card in place.
+    # Workspace follows today's membership: removing the Ticket removes its card.
     cli(server, "day", "remove-ticket", tid, "--date", "today")
     page_b.wait_for_function(
-        "f => window.__plannerDebug.flushes > f", arg=flushes_b, timeout=WAIT_MS
+        "sel => document.querySelector(sel) === null", arg=card, timeout=WAIT_MS
     )
-    assert page_b.query_selector(card) is not None
-    assert page_a.query_selector(card) is not None
+    page_a.wait_for_function(
+        "sel => document.querySelector(sel) === null", arg=card, timeout=WAIT_MS
+    )
 
 
 def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):

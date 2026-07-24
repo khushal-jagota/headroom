@@ -194,6 +194,106 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     assert completed_mark.get_attribute("aria-label") == "Nothing waiting"
 
 
+def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_open(
+    server, context_factory, open_page, cli, api
+) -> None:
+    standalone = _create_ticket(cli, server, "Standalone Vylo ticket")
+    no_project = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "No project ticket",
+    )["id"]
+    parent_item = cli(
+        server,
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        "Parented work",
+        "--project",
+        "Vylo",
+    )["id"]
+    parented = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Parented Vylo ticket",
+        "--sprint-item",
+        parent_item,
+    )["id"]
+    other_day = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Other day ticket",
+    )["id"]
+    cli(server, "day", "remove-ticket", other_day, "--date", "today")
+    cli(server, "day", "add-ticket", other_day, "--date", "2026-07-23")
+    for ticket_id in (standalone, no_project, parented):
+        _add_today(api, server, ticket_id)
+
+    no_project_card = f'[data-card][data-ticket-id="{no_project}"]'
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/workspace/{no_project}",
+        no_project_card,
+        settled=True,
+    )
+    project_filter = page.locator("[data-project-filter]")
+    assert project_filter.locator("option").all_text_contents() == [
+        "All projects",
+        "Vylo",
+        "No project",
+    ]
+    assert page.locator(f'[data-card][data-ticket-id="{other_day}"]').count() == 0
+
+    project_filter.select_option("project_vylo")
+    assert page.locator(f'[data-card][data-ticket-id="{standalone}"]').count() == 1
+    assert page.locator(f'[data-card][data-ticket-id="{parented}"]').count() == 1
+    assert page.locator(no_project_card).count() == 0
+    assert page.locator(
+        f'section[data-screen="ticket"][data-ticket-id="{no_project}"]'
+    ).count() == 1
+    assert page.url.endswith(f"#/workspace/{no_project}")
+
+    project_filter.select_option("__no_project__")
+    assert page.locator(no_project_card).count() == 1
+    assert page.locator(f'[data-card][data-ticket-id="{standalone}"]').count() == 0
+    assert page.locator(f'[data-card][data-ticket-id="{parented}"]').count() == 0
+
+    project_filter.select_option("__all_projects__")
+    assert page.locator(no_project_card).count() == 1
+    assert page.locator(f'[data-card][data-ticket-id="{standalone}"]').count() == 1
+    assert page.locator(f'[data-card][data-ticket-id="{parented}"]').count() == 1
+
+    # Live invalidation removes the last cards for the selected concrete
+    # project. The stale selection resets to All projects and the remaining
+    # roster recovers without a reload.
+    project_filter.select_option("project_vylo")
+    cli(server, "day", "remove-ticket", standalone, "--date", "today")
+    cli(server, "day", "remove-ticket", parented, "--date", "today")
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.value === '__all_projects__'",
+        arg="[data-project-filter]",
+        timeout=WAIT_MS,
+    )
+    assert project_filter.input_value() == "__all_projects__"
+    assert page.locator(no_project_card).count() == 1
+    assert page.locator(f'[data-card][data-ticket-id="{standalone}"]').count() == 0
+    assert page.locator(f'[data-card][data-ticket-id="{parented}"]').count() == 0
+
+
 def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
     server, context_factory, open_page, cli, api
 ) -> None:

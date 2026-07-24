@@ -3,6 +3,15 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-24 — Workspace project filtering does not own Ticket selection
+
+The selected Ticket remains resolved against the complete day-scoped board while the project
+filter narrows only the left-panel roster before its status buckets are built. This keeps a direct
+Workspace Ticket URL valid and avoids closing an inspector merely because the user changes a
+visibility control. The board's existing effective project fields are sufficient for standalone,
+sprint-parented, and no-project choices; no second project contract or canonical client store is
+needed.
+
 ## 2026-07-24 — Status is a sanitized snapshot; cleanup is proof-bound
 
 One operator-produced snapshot feeds both the SSH-usable CLI and the manually refreshed header
