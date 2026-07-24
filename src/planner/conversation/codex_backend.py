@@ -183,6 +183,7 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
         context: EmployeeBackendBuildContext,
     ) -> MaterializedEmployeeBackendRegistration:
         repository_root = context.repository_root
+        employee_workspace_root = context.employee_workspace_root
         node = resolve_codex_node_executable()
         strategy = CodexAcpTurnStrategy()
         definition = build_codex_acp_backend_definition(
@@ -208,7 +209,7 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
                 StableAcpEmployeeSessionConfigurationAdapter(
                     definition=definition,
                     child_factory=child_factory,
-                    workspace_root=repository_root,
+                    workspace_root=employee_workspace_root,
                     full_access_mode="agent-full-access",
                 )
             ),

@@ -446,18 +446,24 @@ class AcpEmployeeRegistry:
             return await self.new_conversation(employee)
         return record
 
-    async def retire_conversation(
+    async def evict_conversation(
         self, employee_id: str, binding_generation: int
-    ) -> None:
+    ) -> AcpEmployeeChild | None:
+        """Remove the conversation's registry record and return its child.
+
+        Eviction is synchronous under the registry lock: once this returns, the
+        record is gone, so a new conversation's first prompt spawns a fresh
+        generation instead of reusing this one. The returned child is not closed;
+        the caller owns that (best-effort) teardown.
+        """
         lifecycle_gate = await self._lifecycle_mutation_gate(employee_id)
         async with lifecycle_gate:
             publication_gate = await self._publication_update_gate(employee_id)
-            child: AcpEmployeeChild | None = None
             async with publication_gate:
                 async with self._lock:
                     record = self._records.get(employee_id)
                     if record is None:
-                        return
+                        return None
                     if record.binding.binding_generation != binding_generation:
                         raise AcpEmployeeStaleGeneration(
                             "conversation retirement names a stale binding generation"
@@ -469,9 +475,14 @@ class AcpEmployeeRegistry:
                     self._record_identity_by_generation.pop(
                         (employee_id, record.child_generation), None
                     )
-                    child = record.child
-            if child is not None:
-                await child.close()
+                    return record.child
+
+    async def retire_conversation(
+        self, employee_id: str, binding_generation: int
+    ) -> None:
+        child = await self.evict_conversation(employee_id, binding_generation)
+        if child is not None:
+            await child.close()
 
     async def _replace_conversation(self, employee: ConversationEmployee) -> AcpEmployeeRecord:
         if employee.entity_kind == "ticket":

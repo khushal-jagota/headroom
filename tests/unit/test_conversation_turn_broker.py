@@ -193,6 +193,12 @@ class _Publisher:
         del employee, binding
         self.events.append(("queue", prompts))
 
+    async def publish_human_echo(
+        self, employee: Any, binding: Any, client_message_id: str, prompt: Any
+    ):
+        del employee, binding
+        self.events.append(("human_echo", (client_message_id, prompt)))
+
     async def publish_compaction(self, employee: Any, binding: Any, compaction: Any):
         del employee, binding
         self.events.append(("compaction", compaction))
@@ -1254,6 +1260,11 @@ def test_fifo_publishes_exact_positions_and_delivers_each_prompt_once() -> None:
         child.responses.put_nowait(PromptResponse(stop_reason="end_turn"))
         await _wait_until(lambda: len(child.prompts) == 3)
         assert [request.prompt[0].text for request in child.prompts] == ["one", "two", "three"]
+        # A queued prompt is echoed into the transcript only when it is dequeued and sent, so the
+        # broker emits one human echo per queued prompt (m2, m3) and none for the normal head (m1,
+        # whose echo the hub already published at submit time).
+        human_echoes = [event[1] for event in publisher.events if event[0] == "human_echo"]
+        assert [client_message_id for client_message_id, _prompt in human_echoes] == ["m2", "m3"]
         await broker.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

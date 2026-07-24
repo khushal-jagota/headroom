@@ -37,6 +37,7 @@ def workspace_dot_state(facts: WorkspaceDotFacts) -> WorkspaceDotState:
         or facts.ticket_status
         in {
             TicketStatus.awaiting_approval,
+            TicketStatus.proposal_discussion,
             TicketStatus.user_takeover,
             TicketStatus.needs_user,
             TicketStatus.paired_work,

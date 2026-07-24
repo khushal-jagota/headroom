@@ -159,6 +159,62 @@ def test_acknowledgement_clears_only_completed_response_and_is_idempotent(tmp_pa
     conn.close()
 
 
+def test_courier_flips_awaiting_approval_to_proposal_discussion(tmp_path) -> None:
+    db_path = str(tmp_path / "projection-courier-flip.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    ticket = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Courier flip",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+    )
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'awaiting_approval' WHERE id = ?",
+        (ticket.id,),
+    )
+    conn.commit()
+    projection = TicketConversationProjection(db_path, now=lambda: 2)
+
+    projection.enter_proposal_discussion_on_human_prompt(ticket.id)
+
+    row = conn.execute(
+        "SELECT ticket_status FROM tickets WHERE id = ?", (ticket.id,)
+    ).fetchone()
+    assert str(row["ticket_status"]) == "proposal_discussion"
+    conn.close()
+
+
+def test_courier_is_a_no_op_when_not_awaiting_approval(tmp_path) -> None:
+    db_path = str(tmp_path / "projection-courier-noop.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    ticket = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Courier no-op",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+    )
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+        (ticket.id,),
+    )
+    conn.commit()
+    projection = TicketConversationProjection(db_path, now=lambda: 2)
+
+    projection.enter_proposal_discussion_on_human_prompt(ticket.id)
+
+    row = conn.execute(
+        "SELECT ticket_status FROM tickets WHERE id = ?", (ticket.id,)
+    ).fetchone()
+    assert str(row["ticket_status"]) == "agent_running_step"
+    conn.close()
+
+
 def test_projection_reset_clears_stale_conversation_facts(tmp_path) -> None:
     db_path = str(tmp_path / "projection-reset.db")
     conn = connect(db_path)

@@ -243,6 +243,14 @@ assert.equal(
 assert.equal(
   ticketStageVisualStateFor(coding, {
     ticketStage: "needs_success",
+    ticketStatus: "proposal_discussion",
+    fieldName: "success"
+  }),
+  "current-awaiting-approval"
+);
+assert.equal(
+  ticketStageVisualStateFor(coding, {
+    ticketStage: "needs_success",
     ticketStatus: "empty",
     fieldName: "success",
     fieldHasProposal: true

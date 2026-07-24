@@ -36,7 +36,12 @@ from planner.days import data as days_data
 from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, AtCap, EmployeeLaunchConfiguration
+from planner.tickets.contracts import (
+    NO_FURTHER,
+    AtCap,
+    EmployeeLaunchConfiguration,
+    TicketStatus,
+)
 from planner.worker_context import data as worker_context_data
 
 
@@ -312,6 +317,25 @@ def test_employee_configuration_endpoint_allows_pristine_statuses_and_emits_exac
             ]
     finally:
         check.close()
+
+
+def test_employee_configuration_stays_editable_when_kickoff_proposal_enters_discussion(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    # A kickoff proposal that a user starts discussing flips awaiting_approval ->
+    # proposal_discussion; the proposal is still filed and approvable, so Employee
+    # configuration must stay editable exactly as it is at awaiting_approval.
+    _app, db_path = _make_app(tmp_path)
+    ticket_id = _create_pristine_ticket(db_path)
+    conn = connect(str(db_path))
+    try:
+        tickets_data.enter_proposal_discussion(conn, ticket_id, now=2)
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+        assert ticket.ticket_status is TicketStatus.proposal_discussion
+        assert tickets_data.employee_configuration_editable(conn, ticket) is True
+    finally:
+        conn.close()
 
 
 def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(

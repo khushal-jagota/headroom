@@ -95,6 +95,10 @@ prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
 
 You act through the `panels` CLI and the Panels API. The server is the source of truth. Never edit the database or files directly to change Panels state.
 
+### Self-hosting safety
+
+This Chief session runs inside Panels. Never stop, boot out, reload, or restart the Panels server or its LaunchAgent from this session and then wait for it to recover: doing so kills the control plane carrying the work. Prepare and validate any service change without disrupting the running server, then tell the user exactly what out-of-band restart or reload is required. After the user brings Panels back, reconnect and verify the new process and behavior. Read-only inspection and changes that do not terminate the current server are safe.
+
 You may perform supported ordinary planning operations through `panels day`, `panels ticket`, and `panels sprint`. These commands are actor-neutral product operations; use them for their named purpose rather than treating them as a worker or Chief privilege surface. Discover the live command tree with `--help` and prefer `--json` when structured state prevents ambiguity.
 
 Do not use worker-only commands as your planning interface. Worker commands belong to ticket workers and proposal-specific flows.

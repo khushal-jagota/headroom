@@ -523,7 +523,10 @@ def _registry(
     return AcpEmployeeRegistry(
         backend_catalog=catalog,
         materialized_backends=catalog.materialize(
-            EmployeeBackendBuildContext(data_directory=Path.cwd())
+            EmployeeBackendBuildContext(
+                data_directory=Path.cwd(),
+                employee_workspace_root=Path.cwd(),
+            )
         ),
         resolve_binding=resolve or repository.resolve,
         compare_and_swap_binding=ordinary_compare_and_swap,
@@ -3166,7 +3169,10 @@ def test_crash_respawns_and_loads_same_durable_binding_without_drift() -> None:
         registry = AcpEmployeeRegistry(
             backend_catalog=catalog,
             materialized_backends=catalog.materialize(
-                EmployeeBackendBuildContext(data_directory=Path.cwd())
+                EmployeeBackendBuildContext(
+                    data_directory=Path.cwd(),
+                    employee_workspace_root=Path.cwd(),
+                )
             ),
             resolve_binding=repository.resolve,
             compare_and_swap_binding=repository.compare_and_swap,

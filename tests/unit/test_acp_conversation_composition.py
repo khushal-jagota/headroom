@@ -43,6 +43,7 @@ from planner.conversation.composition import (
 from planner.conversation.configuration import ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
 from planner.conversation.wire_contracts import CancelAction, PromptAction
 from planner.core import loops as loops_module
+from planner.core import server as server_module
 from planner.core.clock import TestClock as MutableTestClock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -215,18 +216,47 @@ def test_bind_once_callbacks_fail_closed_until_exactly_one_binding() -> None:
     asyncio.run(exercise())
 
 
+def test_employee_workspace_contracts_reject_relative_paths(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="employee backend workspace root must be absolute"):
+        EmployeeBackendBuildContext(
+            data_directory=tmp_path,
+            employee_workspace_root=Path("relative-workspace"),
+        )
+
+    async def exercise() -> None:
+        db_path, clock, _ticket_id = _database(tmp_path)
+        with pytest.raises(
+            ValueError, match="conversation employee workspace root must be absolute"
+        ):
+            ConversationComposition.build(
+                db_path=db_path,
+                busy_timeout_ms=5000,
+                clock=clock,
+                repository_root=tmp_path,
+                employee_workspace_root=Path("relative-workspace"),
+                loop=asyncio.get_running_loop(),
+            )
+
+    asyncio.run(exercise())
+
+
 def test_production_browser_capacity_is_1024_and_test_options_can_override(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         db_path, clock, _ticket_id = _database(tmp_path)
+        definition = _definition()
+        factory = _Factory(definition)
         production = ConversationComposition.build(
             db_path=db_path,
             busy_timeout_ms=5000,
             clock=clock,
             repository_root=Path.cwd(),
+            employee_workspace_root=Path.cwd(),
             loop=asyncio.get_running_loop(),
-            test_options=None,
+            test_options=ConversationTestOptions(
+                employee_runtime_definitions=_runtime_definitions(definition, factory),
+            ),
         )
         assert ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES == 1_024
         assert production.hub._browser_capacity == 1_024  # noqa: SLF001
@@ -239,6 +269,7 @@ def test_production_browser_capacity_is_1024_and_test_options_can_override(
             busy_timeout_ms=5000,
             clock=clock,
             repository_root=tmp_path,
+            employee_workspace_root=tmp_path,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(
@@ -265,6 +296,7 @@ def test_single_conversation_composition_owns_runtime_and_closes_browser_admissi
             busy_timeout_ms=5000,
             clock=clock,
             repository_root=tmp_path,
+            employee_workspace_root=tmp_path,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(definition, factory),
@@ -307,6 +339,7 @@ def test_real_composition_keeps_new_empty_until_the_first_prompt(tmp_path: Path)
             busy_timeout_ms=5000,
             clock=clock,
             repository_root=tmp_path,
+            employee_workspace_root=tmp_path,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(definition, factory),
@@ -369,6 +402,7 @@ def test_conversation_composition_injects_sqlite_worker_context_into_step_gatewa
             busy_timeout_ms=3210,
             clock=clock,
             repository_root=tmp_path,
+            employee_workspace_root=tmp_path,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(definition, _Factory(definition)),
@@ -389,6 +423,7 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
 ) -> None:
     async def exercise() -> None:
         db_path, clock, _ticket_id = _database(tmp_path)
+        employee_workspace_root = tmp_path / "Coding"
         order: list[str] = []
         contexts: list[EmployeeBackendBuildContext] = []
         hermes_definition = _definition()
@@ -433,6 +468,7 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
             busy_timeout_ms=5000,
             clock=clock,
             repository_root=tmp_path,
+            employee_workspace_root=employee_workspace_root,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=build_employee_runtime_definitions(catalog),
@@ -445,6 +481,16 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
             tmp_path.resolve(),
             tmp_path.resolve(),
         ]
+        assert [context.employee_workspace_root for context in contexts] == [
+            employee_workspace_root.resolve(),
+            employee_workspace_root.resolve(),
+            employee_workspace_root.resolve(),
+            employee_workspace_root.resolve(),
+        ]
+        assert (
+            composition.hub.repository._workspace_root  # noqa: SLF001
+            == employee_workspace_root.resolve()
+        )
         assert hermes_factory.children == []
         assert codex_factory.children == []
         assert claude_factory.children == []
@@ -475,7 +521,10 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
         },
     )
     order: list[tuple[str, float | None]] = []
+    composition_build_kwargs: dict[str, Any] = {}
     step_gateway = object()
+    preferred_employee_workspace_root = tmp_path / "Coding"
+    preferred_employee_workspace_root.mkdir()
 
     class _FakeHub:
         async def websocket(self, websocket: Any) -> None:
@@ -505,7 +554,8 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
             order.append(("runtime.stop", deadline))
 
     def build_composition(cls: object, **kwargs: Any) -> _FakeComposition:
-        del cls, kwargs
+        del cls
+        composition_build_kwargs.update(kwargs)
         order.append(("conversation.build", None))
         return composition
 
@@ -534,6 +584,11 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
         classmethod(build_composition),
     )
     monkeypatch.setattr(
+        server_module,
+        "_PREFERRED_EMPLOYEE_WORKSPACE_ROOT",
+        preferred_employee_workspace_root,
+    )
+    monkeypatch.setattr(
         tickets_data,
         "audit_ticket_registry_integrity",
         audit_ticket_registry_integrity,
@@ -550,6 +605,15 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
         assert not hasattr(app.state, "employee_child_pool")
         assert not hasattr(app.state, "employee_child_relay")
 
+    assert composition_build_kwargs["repository_root"] == server_module._REPO_ROOT
+    assert (
+        composition_build_kwargs["employee_workspace_root"]
+        == preferred_employee_workspace_root.resolve()
+    )
+    assert (
+        composition_build_kwargs["employee_workspace_root"]
+        != composition_build_kwargs["repository_root"]
+    )
     names = [name for name, _deadline in order]
     assert names == [
         "storage.audit",
@@ -709,7 +773,12 @@ def test_employee_backend_catalog_rejects_empty_duplicate_and_runtime_key_mismat
         (EmployeeBackendRegistration("probe-backend", registration.runtime_builder),)
     )
     with pytest.raises(ValueError, match="does not match"):
-        mismatched.materialize(EmployeeBackendBuildContext(data_directory=tmp_path))
+        mismatched.materialize(
+            EmployeeBackendBuildContext(
+                data_directory=tmp_path,
+                employee_workspace_root=tmp_path,
+            )
+        )
 
 
 def test_conversation_test_options_are_rejected_outside_test_mode(

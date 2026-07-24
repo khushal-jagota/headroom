@@ -503,7 +503,12 @@ def employee_configuration_editable(
 ) -> bool:
     if (
         ticket.stage != "needs_kickoff"
-        or ticket.ticket_status not in {TicketStatus.awaiting_approval, TicketStatus.empty}
+        or ticket.ticket_status
+        not in {
+            TicketStatus.awaiting_approval,
+            TicketStatus.proposal_discussion,
+            TicketStatus.empty,
+        }
         or ticket.employee_session_id is not None
     ):
         return False
@@ -1443,6 +1448,7 @@ def set_stage_ownership(
             not in (
                 TicketStatus.agent_running_step,
                 TicketStatus.awaiting_approval,
+                TicketStatus.proposal_discussion,
                 TicketStatus.errored,
             )
         ):
@@ -1500,6 +1506,7 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
         if effective_before is not StageOwnershipMode.user and updated.ticket_status not in (
             TicketStatus.agent_running_step,
             TicketStatus.awaiting_approval,
+            TicketStatus.proposal_discussion,
             TicketStatus.errored,
         ):
             _write_entered_stage_ticket_status(
@@ -1577,6 +1584,7 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
         if effective_before is not effective_after and updated.ticket_status not in (
             TicketStatus.agent_running_step,
             TicketStatus.awaiting_approval,
+            TicketStatus.proposal_discussion,
             TicketStatus.errored,
         ):
             _write_entered_stage_ticket_status(
@@ -1610,6 +1618,19 @@ def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, n
             )
         if ticket.ticket_status is not TicketStatus.needs_user:
             _write_ticket_status(conn, ticket_id, TicketStatus.needs_user, now)
+        return _load_ticket_for_write(conn, ticket_id)
+
+
+def enter_proposal_discussion(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
+    """Flip a filed proposal into in-flight discussion when a human sends a typed message.
+
+    Automatic consequence of message admission, not an actor-authored write, so no actor is
+    required. A no-op unless the Ticket is parked at awaiting_approval.
+    """
+    with _txn(conn):
+        ticket = _load_ticket_for_write(conn, ticket_id)
+        if ticket.ticket_status is TicketStatus.awaiting_approval:
+            _write_ticket_status(conn, ticket_id, TicketStatus.proposal_discussion, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 

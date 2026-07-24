@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sqlite3
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic as _monotonic
@@ -44,11 +45,30 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.gateway_offline: 503,
 }
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+def resolve_application_root(
+    *,
+    environment: Mapping[str, str] | None = None,
+    module_file: Path | None = None,
+) -> Path:
+    values = os.environ if environment is None else environment
+    release_root = values.get("PLAN_RELEASE_ROOT")
+    if release_root is not None:
+        return Path(release_root).expanduser().resolve()
+    return (Path(__file__) if module_file is None else module_file).resolve().parents[3]
+
+
+_REPO_ROOT = resolve_application_root()
+_PREFERRED_EMPLOYEE_WORKSPACE_ROOT = Path.home() / "Coding"
 _WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_INDEX = _WEB_DIST / "index.html"
 _ASSETS_DIR = _REPO_ROOT / "assets"
 _STATIC_DIR = _REPO_ROOT / "static"
+
+
+def resolve_employee_workspace_root() -> Path:
+    if _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.is_dir():
+        return _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.resolve(strict=False)
+    return _REPO_ROOT.resolve(strict=False)
 
 
 def svelte_index_html() -> str:
@@ -102,6 +122,7 @@ def create_app(
                 busy_timeout_ms=config.db_busy_timeout_ms,
                 clock=clock,
                 repository_root=_REPO_ROOT,
+                employee_workspace_root=resolve_employee_workspace_root(),
                 loop=asyncio.get_running_loop(),
                 test_options=conversation_test_options,
             )
@@ -125,6 +146,7 @@ def create_app(
                 busy_timeout_ms=config.db_busy_timeout_ms,
                 clock=clock,
                 repository_root=_REPO_ROOT,
+                employee_workspace_root=resolve_employee_workspace_root(),
                 loop=asyncio.get_running_loop(),
             )
             try:

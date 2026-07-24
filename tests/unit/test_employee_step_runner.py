@@ -209,6 +209,7 @@ def test_first_automatic_prompt_uses_selected_model_then_reasoning(
                 busy_timeout_ms=5000,
                 clock=RealClock(),
                 repository_root=tmp_path,
+                employee_workspace_root=tmp_path,
                 loop=asyncio.get_running_loop(),
                 test_options=ConversationTestOptions(
                     employee_runtime_definitions=(

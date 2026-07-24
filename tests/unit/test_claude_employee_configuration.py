@@ -332,10 +332,12 @@ def _employee(
 def test_materialized_claude_registration_uses_its_decorated_durable_factory_for_configuration(
     tmp_path: Path,
 ) -> None:
+    employee_workspace_root = tmp_path / "employee-workspace"
     materialized = build_claude_employee_backend_registration().runtime_builder(
         EmployeeBackendBuildContext(
             data_directory=tmp_path,
             repository_root=REPOSITORY_ROOT,
+            employee_workspace_root=employee_workspace_root,
         )
     )
 
@@ -345,7 +347,8 @@ def test_materialized_claude_registration_uses_its_decorated_durable_factory_for
     assert adapter is materialized.resolved_employee_configuration_adapter()
     assert adapter._child_factory is materialized.child_factory
     assert adapter._definition is materialized.definition
-    assert adapter._workspace_root == REPOSITORY_ROOT
+    assert Path(materialized.definition.argv[1]).is_relative_to(REPOSITORY_ROOT)
+    assert adapter._workspace_root == employee_workspace_root
     assert materialized.startup_preflight is not None
     assert materialized.is_executable() is False
 
@@ -557,7 +560,10 @@ def test_first_claude_session_configures_before_binding_and_never_reapplies_afte
         registry = AcpEmployeeRegistry(
             backend_catalog=backend_catalog,
             materialized_backends=backend_catalog.materialize(
-                EmployeeBackendBuildContext(data_directory=REPOSITORY_ROOT / "data")
+                EmployeeBackendBuildContext(
+                    data_directory=REPOSITORY_ROOT / "data",
+                    employee_workspace_root=REPOSITORY_ROOT,
+                )
             ),
             resolve_binding=repository.resolve,
             compare_and_swap_binding=repository.compare_and_swap,
@@ -641,7 +647,10 @@ def test_invalid_claude_launch_configuration_publishes_no_binding_or_prompt(
         registry = AcpEmployeeRegistry(
             backend_catalog=backend_catalog,
             materialized_backends=backend_catalog.materialize(
-                EmployeeBackendBuildContext(data_directory=REPOSITORY_ROOT / "data")
+                EmployeeBackendBuildContext(
+                    data_directory=REPOSITORY_ROOT / "data",
+                    employee_workspace_root=REPOSITORY_ROOT,
+                )
             ),
             resolve_binding=repository.resolve,
             compare_and_swap_binding=repository.compare_and_swap,

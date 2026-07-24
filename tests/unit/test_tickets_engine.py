@@ -558,6 +558,103 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     assert status_events[-2].payload == {"ticket_status": "errored", "error": "boom"}
 
 
+def _park_proposal_discussion(
+    tmp_db: Connection,
+    cfg: Config,
+    fake_clock: TestClock,
+    now: int,
+    *,
+    finish_run: bool,
+) -> Ticket:
+    t = _create(tmp_db, cfg, fake_clock)
+    t = _claim_eligible_automatic_step(tmp_db, t.id, now=now)
+    assert t is not None
+    t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
+    assert t.ticket_status is TicketStatus.awaiting_approval
+    if finish_run:
+        t = data.finish_run_if_still_running_step(
+            tmp_db,
+            t.id,
+            employee_session_transition=EmployeeSessionIdTransition(None, "sess-1"),
+            now=now,
+        )
+    t = data.enter_proposal_discussion(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.proposal_discussion
+    return t
+
+
+def test_enter_proposal_discussion_flips_only_from_awaiting_approval(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _create(tmp_db, cfg, fake_clock)
+    assert t.ticket_status is TicketStatus.empty
+    # No-op from empty.
+    t = data.enter_proposal_discussion(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.empty
+    # No-op from agent_running_step.
+    t = _claim_eligible_automatic_step(tmp_db, t.id, now=now)
+    assert t is not None
+    assert t.ticket_status is TicketStatus.agent_running_step
+    t = data.enter_proposal_discussion(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.agent_running_step
+    # Flips from awaiting_approval.
+    t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
+    assert t.ticket_status is TicketStatus.awaiting_approval
+    t = data.enter_proposal_discussion(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.proposal_discussion
+
+
+def test_proposal_discussion_exit_re_propose_returns_to_awaiting_approval(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _park_proposal_discussion(tmp_db, cfg, fake_clock, now, finish_run=False)
+    t = data.file_proposal(tmp_db, t.id, field="success", body="revised", actor="agent", now=now)
+    assert t.ticket_status is TicketStatus.awaiting_approval
+
+
+def test_proposal_discussion_exit_accept_rests_the_ticket(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _park_proposal_discussion(tmp_db, cfg, fake_clock, now, finish_run=True)
+    t = data.accept_proposal(
+        tmp_db,
+        t.id,
+        field="success",
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
+    assert t.ticket_status is TicketStatus.empty
+
+
+def test_proposal_discussion_exit_send_back_reopens_and_clears_proposal(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _park_proposal_discussion(tmp_db, cfg, fake_clock, now, finish_run=True)
+    t = data.return_for_revision(
+        tmp_db, t.id, message="please revise", actor="human", now=now
+    )
+    assert t.ticket_status is TicketStatus.agent_running_step
+    fields = json.loads(
+        tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()["fields"]
+    )
+    assert fields["success"]["proposal"] is None
+
+
+def test_take_over_preserves_proposal_discussion(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    t = _park_proposal_discussion(tmp_db, cfg, fake_clock, now, finish_run=True)
+    t = data.take_over_ticket(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.proposal_discussion
+
+
 def test_claim_running_step_employee_session_id_logs_lookup_event(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
