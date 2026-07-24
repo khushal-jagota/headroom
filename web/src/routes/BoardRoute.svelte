@@ -22,7 +22,43 @@
   );
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
   let rightPaneMode = $derived<"chief" | "ticket">(selectedCard ? "ticket" : "chief");
-  let buckets = $derived(buildBuckets(allCards));
+  const ALL_PROJECTS = "__all_projects__";
+  const NO_PROJECT = "__no_project__";
+  let selectedProjectId = $state(ALL_PROJECTS);
+  let projectOptions = $derived(
+    Array.from(
+      new Map(
+        allCards
+          .filter((card) => card.group_project_id)
+          .map((card) => [String(card.group_project_id), String(card.group_project)])
+      )
+    )
+      .map(([id, name]) => ({ id, name }))
+      .sort((left, right) => left.name.localeCompare(right.name))
+  );
+  let rosterCards = $derived(
+    selectedProjectId === ALL_PROJECTS
+      ? allCards
+      : allCards.filter((card) =>
+          selectedProjectId === NO_PROJECT
+            ? !card.group_project_id
+            : card.group_project_id === selectedProjectId
+        )
+  );
+  let buckets = $derived(buildBuckets(rosterCards));
+
+  $effect(() => {
+    const selectedProjectStillExists = projectOptions.some(
+      (project) => project.id === selectedProjectId
+    );
+    if (
+      selectedProjectId !== ALL_PROJECTS &&
+      selectedProjectId !== NO_PROJECT &&
+      !selectedProjectStillExists
+    ) {
+      selectedProjectId = ALL_PROJECTS;
+    }
+  });
 
   $effect(() => {
     if (ticketId && board.data && !board.loading && !board.stale && !selectedCard) {
@@ -159,6 +195,17 @@
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
         <section class="board-workspace-left" aria-label="Workspace tickets by status">
+          <label class="board-workspace-project-filter">
+            <span>Project</span>
+            <select bind:value={selectedProjectId} data-project-filter>
+              <option value={ALL_PROJECTS}>All projects</option>
+              {#each projectOptions as project (project.id)}
+                <option value={project.id}>{project.name}</option>
+              {/each}
+              <option value={NO_PROJECT}>No project</option>
+            </select>
+          </label>
+
           <button
             type="button"
             class="board-workspace-chief-peer"

@@ -18,9 +18,13 @@ One screen per part of the system:
   field, and each decision fades in as it arrives. The approve button physically
   refuses to work until "how far may the worker go next" has been answered, both
   halves.
-- **Workspace** — every active ticket in a left rail backed by the board resource
-  (the board is not day-scoped: attention routing spans days; dropped tickets never
-  appear). The rail groups tickets into collapsible boxed **status buckets**, in a
+- **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
+  follows the same 5am planning-day boundary as the Day screen; dropped tickets never
+  appear. One project selector narrows the roster by each ticket's effective project,
+  including **All projects** and **No project**. A ticket parented by a sprint item uses
+  that item's project; a standalone ticket uses its own project. The selector does not
+  close or replace an already-open ticket inspector. The rail groups the visible
+  tickets into collapsible boxed **status buckets**, in a
   fixed order that puts what needs the user first: Errored, Needs you, Kickoff,
   Stopped, Taken over, Paired, Agent working, Needs approval, Closing out, Blocked,
   Done. A bucket with no tickets is not rendered; Blocked and Done start collapsed.
