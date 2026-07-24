@@ -28,6 +28,12 @@ checks; zero Svelte diagnostics; production frontend build and frontend tests; a
 Playwright tests, ending `VERIFY: PASS`. No source or generated application file changed after the
 run. No merge, push, deployment, or live-state action was performed here.
 
+Closeout begins from current `staging`/`origin/staging` at `2fbf12bb`, the same base already contained
+by the Ticket branch, so no reconciliation merge is required. The final closeout revision will include
+this bookkeeping update, receive its own canonical `./verify`, then advance and push `staging` only if
+that exact revision remains green. No deployment is part of this Ticket; Linux resource collection
+and host adoption remain with `t_qrdamx8z`.
+
 ## Current work cycle (2026-07-23): Employee workspace-root split (`t_hkrhftnr`)
 
 Implementation is isolated on `ticket/t_hkrhftnr-workspace-root` from current `staging`
