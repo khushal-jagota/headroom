@@ -66,7 +66,7 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     page.wait_for_url(f"{server.base}/#/workspace/{tid}", timeout=WAIT_MS)
     ticket = _workspace_ticket(tid)
     page.wait_for_selector(f"{ticket} [data-chat-input]", timeout=WAIT_MS)
-    assert page.query_selector('[aria-label="Workspace ticket tree"]') is not None
+    assert page.query_selector('[aria-label="Workspace tickets by status"]') is not None
     assert page.inner_text(f"{ticket} .ticket-title") == "Workspace selectable ticket"
 
     page.click("[data-chief-of-staff-button]")
@@ -105,6 +105,8 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
         "coding",
         "--title",
         "Other workspace ticket",
+        "--kickoff-note",
+        "Pending kickoff",
     )["id"]
     for ticket_id in (first_id, second_id, other_id):
         api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
@@ -123,20 +125,20 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
 
     page.reload()
     page.wait_for_selector(first_ticket, timeout=WAIT_MS)
-    no_project_section = '[data-project-key="__no_project__"]'
-    no_project_summary = f'{no_project_section} > .disclosure-summary'
-    page.click(no_project_summary)
-    assert page.get_attribute(no_project_section, "open") is None
+    kickoff_bucket = '[data-bucket-section][data-bucket-key="kickoff"]'
+    kickoff_summary = f"{kickoff_bucket} > .disclosure-summary"
+    page.click(kickoff_summary)
+    assert page.get_attribute(kickoff_bucket, "open") is None
 
     page.click(f'[data-card][data-ticket-id="{second_id}"]')
     page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)
     page.wait_for_selector(second_ticket, timeout=WAIT_MS)
-    assert page.get_attribute(no_project_section, "open") is None
+    assert page.get_attribute(kickoff_bucket, "open") is None
 
     page.go_back()
     page.wait_for_url(f"{server.base}/#/workspace/{encoded_first_id}", timeout=WAIT_MS)
     page.wait_for_selector(first_ticket, timeout=WAIT_MS)
-    assert page.get_attribute(no_project_section, "open") is None
+    assert page.get_attribute(kickoff_bucket, "open") is None
 
     page.go_forward()
     page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)

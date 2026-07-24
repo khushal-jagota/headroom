@@ -1,9 +1,8 @@
 """Managed Worker-settings persistence and composition.
 
-Settings live beside the configured database.  Skill markdown is deliberately
-different: the packaged ``src/planner/skills`` tree is the one canonical file
-every backend reads and edits.  The database-side directory stores settings
-only; it never contains a skill overlay or recovery copy.
+Settings and skill markdown both live beside the configured database. Packaged
+``src/planner/skills`` files seed a new managed home but are never edited or
+used as a live authority.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from typing import Any, Final
 import yaml
 
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
-from planner.skill_sources import panels_skill_root
+from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
@@ -181,12 +180,20 @@ def _restore_last_known_good(root: Path, worker_type: str) -> bool:
     return True
 
 
-def _panels_skill_source(skill_name: str) -> Path:
-    return panels_skill_root() / skill_name / SKILL_FILE_NAME
+def _managed_skill_path(configured_database_parent: Path | str, skill_name: str) -> Path:
+    return (
+        ensure_managed_panels_skills(
+            configured_database_parent, packaged_skill_root=panels_skill_root()
+        )
+        / skill_name
+        / SKILL_FILE_NAME
+    )
 
 
-def read_skills_home() -> SkillsHome:
-    root = panels_skill_root()
+def read_skills_home(configured_database_parent: Path | str) -> SkillsHome:
+    root = ensure_managed_panels_skills(
+        configured_database_parent, packaged_skill_root=panels_skill_root()
+    )
     skills: list[ManagedSkill] = []
     for directory in sorted(root.iterdir(), key=lambda path: path.name):
         if not directory.is_dir() or directory.name.startswith("."):
@@ -198,12 +205,15 @@ def read_skills_home() -> SkillsHome:
 
 
 def save_skill(
+    configured_database_parent: Path | str,
     skill_name: str,
     payload: dict[str, Any],
     *,
     after_publish: Callable[[], None] | None = None,
 ) -> ManagedSkill:
-    root = panels_skill_root().resolve()
+    root = ensure_managed_panels_skills(
+        configured_database_parent, packaged_skill_root=panels_skill_root()
+    ).resolve()
     if not skill_name or skill_name in {".", ".."} or Path(skill_name).name != skill_name:
         raise PlannerError(ErrorCode.not_found, "skill not found", {"skill_name": skill_name})
     path = (root / skill_name / SKILL_FILE_NAME).resolve()
@@ -580,7 +590,7 @@ def _read_settings_with_recovery(
         if "launch_defaults" not in settings_payload:
             settings_payload["launch_defaults"] = _launch_defaults_payload(launch_defaults)
             _atomic_replace_json(_settings_path(root, definition.worker_type), settings_payload)
-        skill_path = _panels_skill_source(definition.worker_profile.specialist_skill)
+        skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
         if not skill_path.is_file():
             raise FileNotFoundError(f"specialist skill source not found: {skill_path}")
         skill_text = skill_path.read_text(encoding="utf-8")
@@ -608,7 +618,7 @@ def _read_settings_with_recovery(
         if "launch_defaults" not in settings_payload:
             settings_payload["launch_defaults"] = _launch_defaults_payload(launch_defaults)
             _atomic_replace_json(_settings_path(root, definition.worker_type), settings_payload)
-        skill_path = _panels_skill_source(definition.worker_profile.specialist_skill)
+        skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
         skill_text = skill_path.read_text(encoding="utf-8")
         skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
     _backup_last_known_good(root, definition.worker_type)
@@ -712,7 +722,7 @@ def read_chief_settings(
         payload = _load_json_object(path)
         if payload.get("employee_id") != CHIEF_SETTINGS_KEY or payload.get("label") != CHIEF_LABEL:
             raise PlannerError(ErrorCode.validation, "managed Chief settings are invalid", {})
-        skill_path = _panels_skill_source(CHIEF_SKILL_NAME)
+        skill_path = _managed_skill_path(root.parent, CHIEF_SKILL_NAME)
         skill = _parse_skill(skill_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
         return ManagedChiefSettings(
             employee_id=CHIEF_SETTINGS_KEY,
@@ -782,7 +792,7 @@ def update_chief_launch_defaults(
             snapshot.restore()
             raise
         skill = _parse_skill(
-            _panels_skill_source(CHIEF_SKILL_NAME).read_text(encoding="utf-8"),
+            _managed_skill_path(root.parent, CHIEF_SKILL_NAME).read_text(encoding="utf-8"),
             CHIEF_SKILL_NAME,
         )
         return ManagedChiefSettings(CHIEF_SETTINGS_KEY, CHIEF_LABEL, skill, launch_defaults)
@@ -806,7 +816,7 @@ def save_chief_skill(
         )
     if "name" in payload and payload["name"] != CHIEF_SKILL_NAME:
         raise PlannerError(ErrorCode.validation, "Chief skill name is immutable", {})
-    current_path = _panels_skill_source(CHIEF_SKILL_NAME)
+    current_path = _managed_skill_path(configured_database_parent, CHIEF_SKILL_NAME)
     with _worker_settings_lock(
         managed_worker_settings_root(configured_database_parent), CHIEF_SETTINGS_KEY
     ):
@@ -948,7 +958,9 @@ def save_specialist_skill(
                     "expected": definition.worker_profile.specialist_skill,
                 },
             )
-        canonical_skill_path = _panels_skill_source(definition.worker_profile.specialist_skill)
+        canonical_skill_path = _managed_skill_path(
+            configured_database_parent, definition.worker_profile.specialist_skill
+        )
         skill_snapshot = _PathSnapshot(canonical_skill_path)
         try:
             _atomic_replace_text(canonical_skill_path, rendered)
@@ -1012,7 +1024,9 @@ def materialize_specialist_skill(
     target_dir = target_skills_root / definition.worker_profile.specialist_skill
     target_dir.mkdir(parents=True, exist_ok=True)
     target_skill = target_dir / SKILL_FILE_NAME
-    source_skill = _panels_skill_source(definition.worker_profile.specialist_skill)
+    source_skill = _managed_skill_path(
+        configured_database_parent, definition.worker_profile.specialist_skill
+    )
     if not source_skill.is_file():
         raise FileNotFoundError(f"specialist skill source not found: {source_skill}")
     if target_skill.is_symlink() and target_skill.resolve() == source_skill.resolve():

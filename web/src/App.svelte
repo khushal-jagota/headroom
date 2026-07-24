@@ -13,6 +13,7 @@
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
   import AgentsRoute from "./routes/AgentsRoute.svelte";
+  import VpsStatusPopover from "./components/VpsStatusPopover.svelte";
 
   type Route = {
     name: string;
@@ -207,6 +208,7 @@
       <a class:active={currentNav("agents")} class="nav-link" data-screen="agents" href="#/agents">Agents</a>
     </nav>
     <div class="shell-statuses">
+      <VpsStatusPopover />
       {#if (review.data?.running_worker_count || 0) > 0}
         <span class="shell-presence" data-shell-presence>
           <span class="shell-presence-spin" aria-hidden="true"></span>

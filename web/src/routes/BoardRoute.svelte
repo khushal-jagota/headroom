@@ -1,9 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { resourceCatalogue } from "../lib/resourceCatalogue";
-  import { labelize } from "../lib/ui";
   import type { FieldStageVisualState } from "../lib/ui";
-  import type { WorkerTypeManifest, WorkerTypesResponse } from "../lib/lifecycle";
   import AcpConversation from "../components/AcpConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -13,14 +11,18 @@
   let { ticketId }: { ticketId?: string } = $props();
 
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
-  const noProjectKey = "__no_project__";
   const board = resourceCatalogue.board();
-  const manifest = resourceCatalogue.workerTypeManifests();
   let columns = $derived(board.data?.columns || []);
-  let allCards = $derived(columns.flatMap((column) => column.cards));
+  let allCards = $derived(
+    columns.flatMap((column) =>
+      column.cards.map(
+        (card): Record<string, any> => ({ ...card, stage: column.stage })
+      )
+    )
+  );
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
   let rightPaneMode = $derived<"chief" | "ticket">(selectedCard ? "ticket" : "chief");
-  let projectSections = $derived(buildProjectSections(columns, manifest.data));
+  let buckets = $derived(buildBuckets(allCards));
 
   $effect(() => {
     if (ticketId && board.data && !board.loading && !board.stale && !selectedCard) {
@@ -36,217 +38,127 @@
     window.location.hash = "#/workspace";
   }
 
-  type WorkspaceDotState = "exceptional" | "active" | "needs_attention" | "settled" | "quiet";
+  type AgentReplyState = "none" | "unseen" | "seen";
 
-  type WorkspaceDotPresentation = {
+  type SignalPresentation = {
     state: FieldStageVisualState;
-    marker: string | null;
     ariaLabel: string;
   };
 
-  const workspaceDotPresentation: Record<WorkspaceDotState, WorkspaceDotPresentation> = {
-    exceptional: {
-      state: "errored",
-      marker: "errored",
-      ariaLabel: "Worker exception"
-    },
-    active: {
-      state: "current-running",
-      marker: "agent-running-step",
-      ariaLabel: "Worker active"
-    },
-    needs_attention: {
-      state: "current-awaiting-approval",
-      marker: null,
-      ariaLabel: "Worker needs attention"
-    },
-    settled: {
-      state: "completed",
-      marker: null,
-      ariaLabel: "Worker complete"
-    },
-    quiet: {
-      state: "current-waiting",
-      marker: null,
-      ariaLabel: "Worker quiet"
+  // The row mark carries only the two signals: an agent working now wins the
+  // mark; otherwise the reply state shows — accent while unseen, grey once
+  // seen, the reduced ring when nothing is waiting.
+  function signalPresentation(card: Record<string, any>): SignalPresentation {
+    if (card.agent_working) {
+      return { state: "current-running", ariaLabel: "Agent working" };
     }
+    const reply = card.agent_reply_state as AgentReplyState;
+    if (reply === "unseen") {
+      return { state: "current-awaiting-approval", ariaLabel: "Unseen agent reply" };
+    }
+    if (reply === "seen") {
+      return { state: "reply-seen", ariaLabel: "Agent reply seen" };
+    }
+    return { state: "upcoming", ariaLabel: "Nothing waiting" };
+  }
+
+  type BucketKey =
+    | "errored"
+    | "needs_you"
+    | "kickoff"
+    | "stopped"
+    | "taken_over"
+    | "paired"
+    | "agent_working"
+    | "needs_approval"
+    | "closing_out"
+    | "blocked"
+    | "done";
+
+  type BucketDefinition = {
+    key: BucketKey;
+    label: string;
+    defaultCollapsed: boolean;
   };
 
-  // The stage heading carries position; the mark carries only the derived Workspace condition.
-  function currentStageField(card: Record<string, any>): string {
-    return card.gating_field || "closeout";
-  }
+  // Canonical order, top to bottom. A bucket with no tickets is not rendered.
+  const BUCKET_DEFINITIONS: readonly BucketDefinition[] = [
+    { key: "errored", label: "Errored", defaultCollapsed: false },
+    { key: "needs_you", label: "Needs you", defaultCollapsed: false },
+    { key: "kickoff", label: "Kickoff", defaultCollapsed: false },
+    { key: "stopped", label: "Stopped", defaultCollapsed: false },
+    { key: "taken_over", label: "Taken over", defaultCollapsed: false },
+    { key: "paired", label: "Paired", defaultCollapsed: false },
+    { key: "agent_working", label: "Agent working", defaultCollapsed: false },
+    { key: "needs_approval", label: "Needs approval", defaultCollapsed: false },
+    { key: "closing_out", label: "Closing out", defaultCollapsed: false },
+    { key: "blocked", label: "Blocked", defaultCollapsed: true },
+    { key: "done", label: "Done", defaultCollapsed: true }
+  ];
 
-  function currentStageLabel(card: Record<string, any>): string {
-    if (card.is_done || card.is_dropped) {
-      return card.stage_label || labelize(card.stage);
+  // Every ticket sits in exactly one bucket. Status decides first; Blocked
+  // claims only idle tickets. The one exception: a kickoff-stage ticket with a
+  // parked proposal belongs in Kickoff, not Needs approval.
+  function bucketFor(card: Record<string, any>): BucketKey {
+    if (card.is_done) return "done";
+    const status = String(card.ticket_status);
+    if (status === "errored") return "errored";
+    if (status === "needs_user") return "needs_you";
+    if (status === "awaiting_approval") {
+      return card.stage === "needs_kickoff" ? "kickoff" : "needs_approval";
     }
-    return card.gating_field_label || labelize(currentStageField(card));
+    if (status === "proposal_discussion" || status === "paired_work") return "paired";
+    if (status === "agent_running_step") return "agent_working";
+    if (status === "user_takeover") return "taken_over";
+    if (card.blocked) return "blocked";
+    if (card.stage === "needs_kickoff") return "kickoff";
+    if (card.stage === "needs_closeout") return "closing_out";
+    return "stopped";
   }
 
-  function activitySortValue(card: Record<string, any>): number {
-    return Number(card.activity_at ?? 0);
-  }
-
-  function workerTypeSortValue(
-    workerTypes: WorkerTypesResponse | undefined,
-    card: Record<string, any>
-  ): number {
-    const index = workerTypes?.worker_types.findIndex(
-      (workerType) => workerType.worker_type === card.worker_type
-    );
-    return index !== undefined && index >= 0 ? index : Number.MAX_SAFE_INTEGER;
-  }
-
-  function stageSortValue(
-    workerTypes: WorkerTypesResponse | undefined,
-    card: Record<string, any>
-  ): number {
-    const workerType = workerTypes?.worker_types.find(
-      (candidate) => candidate.worker_type === card.worker_type
-    );
-    const index = workerType?.stages.findIndex((stage) => stage.id === card.stage);
-    return index !== undefined && index >= 0 ? index : Number.MAX_SAFE_INTEGER;
-  }
-
-  function workspaceStage(card: Record<string, any>): string {
-    if (card.stage === "needs_kickoff") return card.stage;
-    return card.blocked ? "blocked" : card.stage;
-  }
-
-  function workspaceStageSortValue(
-    workerTypes: WorkerTypesResponse | undefined,
-    stage: string,
-    card: Record<string, any>
-  ): number {
-    return stage === "blocked" ? -1 : stageSortValue(workerTypes, card);
-  }
-
-  function isTerminalStage(
-    manifestWorker: WorkerTypeManifest | undefined,
-    stage: string
-  ): boolean {
-    return Boolean(manifestWorker?.stages.find((candidate) => candidate.id === stage)?.is_terminal);
-  }
-
-  type StageSection = {
-    key: string;
+  type BucketSection = {
+    key: BucketKey;
     label: string;
-    // Blocked and terminal (Done) stages render collapsed by default; active stages are open.
-    // Terminal state is keyed off the served manifest so it generalizes across worker types.
-    collapsed: boolean;
+    defaultCollapsed: boolean;
     cards: Record<string, any>[];
   };
 
-  type WorkerSection = {
-    key: string;
-    label: string;
-    stages: StageSection[];
-  };
-
-  type ProjectSection = {
-    key: string;
-    label: string;
-    workers: WorkerSection[];
-  };
-
-  function buildProjectSections(
-    sourceColumns: Array<{ stage: string; cards: Record<string, any>[] }>,
-    workerTypes: WorkerTypesResponse | undefined
-  ): ProjectSection[] {
-    const groups = new Map<string, { key: string; label: string; cards: Record<string, any>[] }>();
-    let sequence = 0;
-
-    for (const column of sourceColumns) {
-      for (const card of column.cards) {
-        const key = card.group_project_id || noProjectKey;
-        const label = card.group_project || "No project";
-        if (!groups.has(key)) groups.set(key, { key, label, cards: [] });
-        groups.get(key)?.cards.push({
-          ...card,
-          stage: column.stage,
-          workspace_stage: workspaceStage({ ...card, stage: column.stage }),
-          boardSequence: sequence
-        });
-        sequence += 1;
-      }
+  function buildBuckets(cards: Record<string, any>[]): BucketSection[] {
+    const byBucket = new Map<BucketKey, Record<string, any>[]>();
+    for (const card of cards) {
+      const key = bucketFor(card);
+      if (!byBucket.has(key)) byBucket.set(key, []);
+      byBucket.get(key)?.push(card);
     }
-
-    const sortedProjects = Array.from(groups.values()).sort((left, right) => {
-      if (left.key === noProjectKey) return 1;
-      if (right.key === noProjectKey) return -1;
-      return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
-    });
-
-    return sortedProjects.map((project) => {
-      const cardsByWorker = new Map<string, Record<string, any>[]>();
-      for (const card of project.cards) {
-        if (!cardsByWorker.has(card.worker_type)) cardsByWorker.set(card.worker_type, []);
-        cardsByWorker.get(card.worker_type)?.push(card);
-      }
-
-      const workers = Array.from(cardsByWorker.entries())
-        .sort(([leftType, leftCards], [rightType, rightCards]) => {
-          const manifestDelta =
-            workerTypeSortValue(workerTypes, leftCards[0]) -
-            workerTypeSortValue(workerTypes, rightCards[0]);
-          return manifestDelta || leftType.localeCompare(rightType);
+    return BUCKET_DEFINITIONS.filter((definition) => byBucket.has(definition.key)).map(
+      (definition) => ({
+        key: definition.key,
+        label: definition.label,
+        defaultCollapsed: definition.defaultCollapsed,
+        cards: (byBucket.get(definition.key) ?? []).sort((left, right) => {
+          const activityDelta =
+            Number(right.activity_at ?? 0) - Number(left.activity_at ?? 0);
+          return activityDelta || String(left.id).localeCompare(String(right.id));
         })
-        .map(([workerType, cards]) => {
-          const cardsByStage = new Map<string, Record<string, any>[]>();
-          for (const card of cards) {
-            if (!cardsByStage.has(card.workspace_stage)) cardsByStage.set(card.workspace_stage, []);
-            cardsByStage.get(card.workspace_stage)?.push(card);
-          }
-
-          const manifestWorker = workerTypes?.worker_types.find(
-            (candidate) => candidate.worker_type === workerType
-          );
-
-          const stages = Array.from(cardsByStage.entries())
-            .sort(([leftStage, leftCards], [rightStage, rightCards]) => {
-              const manifestDelta =
-                workspaceStageSortValue(workerTypes, leftStage, leftCards[0]) -
-                workspaceStageSortValue(workerTypes, rightStage, rightCards[0]);
-              return manifestDelta || leftStage.localeCompare(rightStage);
-            })
-            .map(([stage, stageCards]) => ({
-              key: stage,
-              label: stage === "blocked" ? "Blocked" : currentStageLabel(stageCards[0]),
-              collapsed: stage === "blocked" || isTerminalStage(manifestWorker, stage),
-              cards: stageCards.sort((left, right) => {
-                const activityDelta = activitySortValue(right) - activitySortValue(left);
-                return activityDelta || left.boardSequence - right.boardSequence;
-              })
-            }));
-
-          return {
-            key: workerType,
-            label: manifestWorker?.label ?? labelize(workerType),
-            stages
-          };
-        });
-
-      return { key: project.key, label: project.label, workers };
-    });
+      })
+    );
   }
 
   onDestroy(() => {
     board.dispose();
-    manifest.dispose();
   });
 </script>
 
 <section class="board-screen" data-screen="workspace">
   <ResourceState
-    error={board.error || manifest.error}
-    loading={board.loading || manifest.loading}
-    hasData={Boolean(board.data && manifest.data)}
+    error={board.error}
+    loading={board.loading}
+    hasData={Boolean(board.data)}
     loadingText="Loading workspace..."
   >
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
-        <section class="board-workspace-left" aria-label="Workspace ticket tree">
+        <section class="board-workspace-left" aria-label="Workspace tickets by status">
           <button
             type="button"
             class="board-workspace-chief-peer"
@@ -258,79 +170,41 @@
             <span class="board-workspace-chief-peer-label">Chief of Staff</span>
           </button>
 
-          {#each projectSections as project}
+          {#each buckets as bucket (bucket.key)}
             <Disclosure
-              variant="workspace-project"
-              class="board-workspace-index-section"
+              variant="workspace-bucket"
               chevron="trailing"
-              defaultOpen={true}
-              data-project-section=""
-              data-project-key={project.key}
+              defaultOpen={!bucket.defaultCollapsed}
+              data-bucket-section=""
+              data-bucket-key={bucket.key}
             >
               {#snippet summary()}
-                <span class="board-workspace-project-label">{project.label}</span>
+                <span class="board-workspace-bucket-label">{bucket.label}</span>
               {/snippet}
 
-              <div class="board-workspace-index-items">
-                {#each project.workers as worker}
-                  <Disclosure
-                    variant="workspace-worker"
-                    chevron="trailing"
-                    defaultOpen={true}
-                    data-worker-section=""
-                    data-worker-type={worker.key}
+              <div class="board-workspace-bucket-tickets">
+                {#each bucket.cards as card (card.id)}
+                  {@const presentation = signalPresentation(card)}
+                  <button
+                    type="button"
+                    class="list-row list-row--board"
+                    class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
+                    onclick={() => selectCard(card.id)}
+                    data-card=""
+                    data-ticket-id={card.id}
+                    data-ticket-stage={card.stage}
+                    data-ticket-status={card.ticket_status}
                   >
-                    {#snippet summary()}
-                      <span class="board-workspace-worker-label">{worker.label}</span>
-                    {/snippet}
-
-                    <div class="board-workspace-worker-stages">
-                      {#each worker.stages as stage}
-                        <Disclosure
-                          variant="workspace-stage"
-                          chevron="trailing"
-                          defaultOpen={!stage.collapsed}
-                          data-stage-section=""
-                          data-stage-key={stage.key}
-                        >
-                          {#snippet summary()}
-                            <span class="board-workspace-stage-label">{stage.label}</span>
-                          {/snippet}
-
-                          <div class="board-workspace-stage-tickets">
-                            {#each stage.cards as card}
-                              {@const stageField = currentStageField(card)}
-                              {@const workspaceDotState = (card.workspace_stage === "blocked"
-                                ? "quiet"
-                                : card.workspace_dot_state) as WorkspaceDotState}
-                              {@const workspacePresentation = workspaceDotPresentation[workspaceDotState]}
-                              <button
-                                type="button"
-                                class="list-row list-row--board"
-                                class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
-                                onclick={() => selectCard(card.id)}
-                                data-card=""
-                                data-ticket-id={card.id}
-                                data-ticket-stage={card.stage}
-                                data-ticket-status={card.ticket_status}
-                              >
-                                <span class="list-row-title">{card.title}</span>
-                                <StageMark
-                                  state={workspacePresentation.state}
-                                  class="board-workspace-stage-mark"
-                                  data-stage-field={stageField}
-                                  data-stage-state={workspacePresentation.state}
-                                  data-marker={workspacePresentation.marker || undefined}
-                                  data-workspace-dot-state={workspaceDotState}
-                                  aria-label={workspacePresentation.ariaLabel}
-                                />
-                              </button>
-                            {/each}
-                          </div>
-                        </Disclosure>
-                      {/each}
-                    </div>
-                  </Disclosure>
+                    <span class="list-row-title">{card.title}</span>
+                    <StageMark
+                      state={presentation.state}
+                      class="board-workspace-stage-mark"
+                      data-stage-state={presentation.state}
+                      data-agent-working={card.agent_working ? "true" : "false"}
+                      data-reply-state={card.agent_reply_state}
+                      aria-label={presentation.ariaLabel}
+                    />
+                  </button>
                 {/each}
               </div>
             </Disclosure>

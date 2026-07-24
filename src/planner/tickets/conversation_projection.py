@@ -30,6 +30,7 @@ def _changed_fields(
     if (
         current.has_completed_response_awaiting_user
         != previous.has_completed_response_awaiting_user
+        or current.has_completed_response != previous.has_completed_response
     ):
         changed.append("response")
     if current.has_pending_permission != previous.has_pending_permission:
@@ -41,6 +42,9 @@ def _changed_fields(
 class TicketConversationProjectionSnapshot:
     latest_activity_state: WorkspaceActivityState | None = None
     has_completed_response_awaiting_user: bool = False
+    # Stays true once any Worker reply has completed (until reset), so a seen
+    # reply is distinguishable from a Ticket that never had one.
+    has_completed_response: bool = False
     has_pending_permission: bool = False
 
 
@@ -66,6 +70,20 @@ class TicketConversationProjection:
     def acknowledge_completed_response(self, ticket_id: str) -> bool:
         """Mark only the latest completed Worker response as seen."""
         return self._write(ticket_id, has_completed_response_awaiting_user=False)
+
+    def enter_proposal_discussion_on_human_prompt(self, ticket_id: str) -> None:
+        """Courier a human typed message into the tickets domain's proposal-discussion flip.
+
+        A no-op unless the Ticket is parked at awaiting_approval; the tickets-domain
+        transition owns that guard.
+        """
+        import planner.tickets.data as tickets_data
+
+        conn = connect(self._db_path, self._busy_timeout_ms)
+        try:
+            tickets_data.enter_proposal_discussion(conn, ticket_id, now=self._now())
+        finally:
+            conn.close()
 
     def reset(self, ticket_id: str) -> bool:
         conn = connect(self._db_path, self._busy_timeout_ms)
@@ -149,6 +167,7 @@ class TicketConversationProjection:
             current = TicketConversationProjectionSnapshot(
                 latest_activity_state=next_state,
                 has_completed_response_awaiting_user=next_response,
+                has_completed_response=previous.has_completed_response or next_response,
                 has_pending_permission=next_permission,
             )
             if current == previous:
@@ -157,11 +176,13 @@ class TicketConversationProjection:
             conn.execute(
                 "INSERT INTO ticket_conversation_projections ("
                 "ticket_id, latest_activity_state, has_completed_response_awaiting_user, "
-                "has_pending_permission, updated_at) VALUES (?, ?, ?, ?, ?) "
+                "has_completed_response, has_pending_permission, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(ticket_id) DO UPDATE SET "
                 "latest_activity_state = excluded.latest_activity_state, "
                 "has_completed_response_awaiting_user = "
                 "excluded.has_completed_response_awaiting_user, "
+                "has_completed_response = excluded.has_completed_response, "
                 "has_pending_permission = excluded.has_pending_permission, "
                 "updated_at = excluded.updated_at",
                 (
@@ -170,6 +191,7 @@ class TicketConversationProjection:
                     if current.latest_activity_state is not None
                     else None,
                     int(current.has_completed_response_awaiting_user),
+                    int(current.has_completed_response),
                     int(current.has_pending_permission),
                     self._now(),
                 ),
@@ -197,7 +219,8 @@ class TicketConversationProjection:
     ) -> TicketConversationProjectionSnapshot | None:
         row = conn.execute(
             "SELECT latest_activity_state, has_completed_response_awaiting_user, "
-            "has_pending_permission FROM ticket_conversation_projections WHERE ticket_id = ?",
+            "has_completed_response, has_pending_permission "
+            "FROM ticket_conversation_projections WHERE ticket_id = ?",
             (ticket_id,),
         ).fetchone()
         if row is None:
@@ -211,5 +234,6 @@ class TicketConversationProjection:
             has_completed_response_awaiting_user=bool(
                 row["has_completed_response_awaiting_user"]
             ),
+            has_completed_response=bool(row["has_completed_response"]),
             has_pending_permission=bool(row["has_pending_permission"]),
         )

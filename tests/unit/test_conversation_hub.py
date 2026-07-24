@@ -7,6 +7,7 @@ import sys
 import threading
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -66,7 +67,12 @@ from planner.conversation.sqlite_binding_repository import (
 from planner.conversation.turn_broker import (
     ConversationTurnAttachState,
 )
-from planner.conversation.wire_contracts import CancelAction, HumanEcho, PromptAction
+from planner.conversation.wire_contracts import (
+    CancelAction,
+    HumanEcho,
+    PermissionResponseAction,
+    PromptAction,
+)
 from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.tickets.conversation_projection import TicketConversationProjection
@@ -472,9 +478,11 @@ async def _ticket_database(
     }
     conn.execute(
         "INSERT INTO tickets "
-        "(id, title, worker_type, employee_backend, stage, ceiling, fields, "
+        "(id, title, worker_type, employee_backend, stage, ceiling, "
+        "default_stage_ownership_mode, fields, "
         "created_at, updated_at) "
-        "VALUES ('t_hub', 'Hub', 'coding', ?, 'needs_kickoff', 'needs_kickoff', ?, 1, 1)",
+        "VALUES ('t_hub', 'Hub', 'coding', ?, 'needs_kickoff', 'needs_kickoff', "
+        "'worker', ?, 1, 1)",
         (backend_key, json.dumps(fields, separators=(",", ":"))),
     )
     conn.close()
@@ -608,6 +616,63 @@ def test_empty_conversation_survives_restart_and_first_prompt_activates_it(
         assert await repository.resolve("t_hub") == record.binding
         assert len(broker.deliveries) == 1
         assert broker.deliveries[0][3].session_id == "session-hub"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_queue_choice_withholds_human_echo_at_submit(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        _db_path, repository = await _ticket_database(tmp_path)
+        record, handle = _runtime(tmp_path)
+        registry = _ActivatingRegistry(record, handle, repository)
+        broker = _DeliveryBroker()
+        hub = ConversationHub(repository)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=registry,
+            broker=broker,
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-queue")
+        await browser.queue.get()  # reset
+        await browser.queue.get()  # ready
+
+        # A normal prompt activates the stream and echoes into the transcript at submit; a queued
+        # prompt that follows is delivered but must NOT echo until it is actually dequeued and sent.
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="normal-1",
+                prompt=[TextContentBlock(type="text", text="hello")],
+                delivery_choice="normal",
+            ),
+        )
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="queued-1",
+                prompt=[TextContentBlock(type="text", text="later")],
+                delivery_choice="queue",
+            ),
+        )
+
+        envelopes = [
+            json.loads(browser.queue.get_nowait())
+            for _ in range(browser.queue.qsize())
+        ]
+        echoes = [
+            item["payload"]["clientMessageId"]
+            for item in envelopes
+            if item["type"] == "human_echo"
+        ]
+        assert echoes == ["normal-1"]
+        assert [
+            (delivery[1], delivery[2]) for delivery in broker.deliveries
+        ] == [("normal-1", "normal"), ("queued-1", "queue")]
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1137,6 +1202,133 @@ def test_ticket_activity_and_permission_publication_updates_workspace_projection
             "test",
         )
         assert projection.read("t_hub").has_pending_permission is False
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def _set_ticket_status(db_path: str, ticket_status: str) -> None:
+    conn = connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = ?, "
+            "default_stage_ownership_mode = 'worker' WHERE id = 't_hub'",
+            (ticket_status,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _read_ticket_status(db_path: str) -> str:
+    conn = connect(db_path)
+    try:
+        return str(
+            conn.execute(
+                "SELECT ticket_status FROM tickets WHERE id = 't_hub'"
+            ).fetchone()["ticket_status"]
+        )
+    finally:
+        conn.close()
+
+
+class _AcceptingPermissions(_Permissions):
+    async def respond_to_permission(
+        self, connection_id: str, request_id: str, option_id: str
+    ) -> Any:
+        del connection_id, request_id, option_id
+        return SimpleNamespace(disposition="accepted")
+
+
+def test_prompt_action_on_ticket_flips_awaiting_approval_to_proposal_discussion(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        _set_ticket_status(db_path, "awaiting_approval")
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_DeliveryBroker(),
+            permission_broker=_Permissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        await hub.dispatch_action(
+            browser.connection_id,
+            PromptAction(
+                type="prompt",
+                employee_id="t_hub",
+                client_message_id="message-flip",
+                prompt=[TextContentBlock(type="text", text="a question")],
+                delivery_choice="normal",
+            ),
+        )
+
+        assert _read_ticket_status(db_path) == "proposal_discussion"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_permission_response_action_does_not_flip_ticket_status(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        _set_ticket_status(db_path, "awaiting_approval")
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_DeliveryBroker(),
+            permission_broker=_AcceptingPermissions(),
+        )
+        browser = await hub.attach_browser("t_hub", connection_id="browser-a")
+
+        await hub.dispatch_action(
+            browser.connection_id,
+            PermissionResponseAction(
+                type="permission_response",
+                employee_id="t_hub",
+                request_id="permission-1",
+                option_id="once",
+            ),
+        )
+
+        assert _read_ticket_status(db_path) == "awaiting_approval"
+        await hub.shutdown(asyncio.get_running_loop().time() + 1)
+
+    asyncio.run(exercise())
+
+
+def test_agent_reply_still_delivers_on_a_proposal_discussion_ticket(
+    tmp_path: Path,
+) -> None:
+    # The conversation reply path reads no ticket_status: an agent reply reaches the
+    # browser unchanged even while the ticket is parked in proposal_discussion.
+    async def exercise() -> None:
+        db_path, repository = await _ticket_database(tmp_path)
+        _set_ticket_status(db_path, "proposal_discussion")
+        record, handle = _runtime(tmp_path)
+        projection = TicketConversationProjection(db_path, now=lambda: 2)
+        hub = ConversationHub(repository, ticket_conversation_projection=projection)
+        hub.bind_owners(  # type: ignore[arg-type]
+            registry=_Registry(record, handle),
+            broker=_Broker(),
+            permission_broker=_Permissions(),
+        )
+        subscription = await hub.attach_browser("t_hub", connection_id="browser-a")
+        while not subscription.queue.empty():
+            subscription.queue.get_nowait()
+
+        await hub.publish_activity(record.employee, record.binding, "thinking", "Working")
+
+        envelope = json.loads(await asyncio.wait_for(subscription.queue.get(), timeout=1))
+        assert envelope["type"] == "activity"
+        assert envelope["payload"]["state"] == "thinking"
+        assert _read_ticket_status(db_path) == "proposal_discussion"
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1924,18 +2116,19 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
         assert not waiting_attach.done()
 
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(8)]
+            # A still-queued prompt is not echoed into the transcript on a compaction replay; it
+            # resurfaces in the queue snapshot alone and echoes only when it is dequeued and sent.
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(7)]
             assert [item["type"] for item in envelopes] == [
                 "connection",
                 "acp_session_update",
                 "acp_session_update",
                 "acp_session_update",
                 "connection",
-                "human_echo",
                 "queue_snapshot",
                 "acp_session_update",
             ]
-            assert [item["sequence"] for item in envelopes] == list(range(1, 9))
+            assert [item["sequence"] for item in envelopes] == list(range(1, 8))
             assert all(item["acpSessionId"] == "session-fork" for item in envelopes)
             assert [
                 envelopes[0]["payload"]["state"],
@@ -1943,15 +2136,14 @@ def test_compaction_transition_orders_both_candidate_origins_once_before_ready(
             ] == ["reset", "ready"]
             assert [
                 envelopes[index]["payload"]["update"]["content"]["text"]
-                for index in (1, 2, 3, 7)
+                for index in (1, 2, 3, 6)
             ] == [
                 "durable summary",
                 "source candidate",
                 "fresh candidate",
                 "later N+1",
             ]
-            assert envelopes[5]["payload"]["prompt"]["sessionId"] == "session-fork"
-            assert envelopes[6]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[5]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
         assert not hub._compaction_transitions["t_hub"].quarantined_ingress  # noqa: SLF001
         await hub.complete_compaction_transition(token, replacement_handle)
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
@@ -2117,16 +2309,17 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
         attached = await asyncio.wait_for(waiting_attach, timeout=1)
         assert attached.connection_id == "browser-after-recovery"
         for subscription in (first, second):
-            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(6)]
+            # The still-queued prompt is not echoed on recovery; only the send-now successor, which
+            # is being started now, echoes. The queued prompt resurfaces in the queue snapshot only.
+            envelopes = [json.loads(subscription.queue.get_nowait()) for _ in range(5)]
             assert [item["type"] for item in envelopes] == [
                 "connection",
                 "acp_session_update",
                 "connection",
                 "human_echo",
-                "human_echo",
                 "queue_snapshot",
             ]
-            assert [item["sequence"] for item in envelopes] == list(range(5, 11))
+            assert [item["sequence"] for item in envelopes] == list(range(5, 10))
             assert [
                 envelopes[0]["payload"]["state"],
                 envelopes[2]["payload"]["state"],
@@ -2135,18 +2328,14 @@ def test_requested_cancel_recovery_rebinds_two_browsers_same_binding_with_ordere
             assert envelopes[1]["payload"]["update"]["content"]["text"] == (
                 "durable replay" * 3
             )
-            assert envelopes[3]["payload"]["clientMessageId"] == "queued-1"
-            assert envelopes[3]["payload"]["prompt"] == queued.prompt.model_dump(
-                mode="json", by_alias=True, exclude_none=True
-            )
-            assert envelopes[4]["payload"]["clientMessageId"] == ("send-now-successor")
-            assert envelopes[4]["payload"]["prompt"] == (
+            assert envelopes[3]["payload"]["clientMessageId"] == ("send-now-successor")
+            assert envelopes[3]["payload"]["prompt"] == (
                 successor_echo.prompt.model_dump(mode="json", by_alias=True, exclude_none=True)
             )
-            assert envelopes[5]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
+            assert envelopes[4]["payload"]["items"][0]["clientMessageId"] == ("queued-1")
             assert all(
                 item["clientMessageId"] != "send-now-successor"
-                for item in envelopes[5]["payload"]["items"]
+                for item in envelopes[4]["payload"]["items"]
             )
 
         assert first.queue.empty()

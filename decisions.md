@@ -3,6 +3,45 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-24 — Status is a sanitized snapshot; cleanup is proof-bound
+
+One operator-produced snapshot feeds both the SSH-usable CLI and the manually refreshed header
+popover. This preserves the live/Worker authority boundary and avoids browser polling or a second
+canonical state store. CPU/load/RAM/swap remain nullable on the current Mac; final Linux collection
+and thresholds stay with the existing VPS deployment Ticket rather than being faked or split into a
+duplicate Ticket.
+
+Cleanup has one dry-run/apply inventory and may act only on configured logs, verified backup
+retention, and expired Panels operation temporaries that pass containment and live-reference checks.
+Processes, worktrees, caches, prepared environments, selected releases, and unknown state are never
+automatic deletion targets. One implementation Ticket is appropriate because the backend snapshot,
+CLI/API, popover, and cleanup safety contract share types and acceptance tests; splitting them would
+create overlapping edits and an artificial integration boundary.
+
+## 2026-07-24 — Cleanup apply repeats every safety proof
+
+The Resolution review makes an earlier dry run non-authoritative. Apply therefore recomputes verified
+backup retention membership at mutation time, rejects a root that has become a symlink, and rechecks
+containment, kind, expiry, and live references for every temporary/log target. A path that loses any
+proof remains in place and is reported for review. Shared status does not expose raw Git worktree
+paths: Git may prove their existence, but arbitrary filesystem names are not safe browser evidence.
+
+## 2026-07-24 — Status proof and operator inputs remain local and explicit
+
+A snapshot directory, its metadata/database files, and its managed-tree directory and manifest are
+all proof-bearing evidence. Reject a symlink at any of those boundaries before reading it; only a
+direct child of a non-symlink configured backup root can contribute to recency, retention, or cleanup.
+This keeps an externally valid snapshot link from becoming either health evidence or deletion input.
+
+The Linux maintenance unit loads a separate operator-owned environment with absolute
+`PLAN_DB_PATH`, `PLAN_LOGS_DIR`, and `PLAN_BACKUP_DIR`; it does not reinterpret the backup service's
+`PANELS_*` variables or rely on relative defaults. The live service receives the same selected
+`PLAN_BACKUP_DIR` so its snapshot and maintenance inspect one location.
+
+Process collection treats ordinary subprocess errors as unavailable evidence. It recognises only the
+bounded console-script `serve` forms and the release launcher's `python -m planner serve` form, then
+serialises role, pid, state, and elapsed age only; raw command text is discarded.
+
 ## 2026-07-23 — The single-user Mac uses the signed-in operator identity
 
 Exact-commit deployment needs immutable non-Git releases, backup-before-switch, exact-SHA health,
@@ -3555,6 +3594,91 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Preserve the original checkout's local commit and uncommitted work before conversion, restore that
   work onto `staging`, and leave live source and process state untouched.
 
+## t_98jx3k77 — Extend nightly backup to the managed-file tree
+
+- **Managed roots anchored on the database directory.** `managed_file_roots(db)` returns
+  `<db_parent>/files` and `<db_parent>/worker-settings`; the skills home is resolved through the same
+  `resolve_planner_home(default=<db_parent>/hermes-home)` the running server uses in
+  `_materialize_hermes` — i.e. `PLAN_HERMES_HOME` when set, else `<db_parent>/hermes-home/skills`.
+  (Independent review corrected an earlier hardcode that ignored `PLAN_HERMES_HOME`, which would have
+  silently skipped the skills tree whenever an operator set that variable.) Backup and restore derive
+  the same roots from `--source-db` / `--destination-db`. Ops note: if the live service sets
+  `PLAN_HERMES_HOME`, the backup service must set the same value (it does not inherit the live
+  service's environment), or the skills home will not be found.
+- **Skills home included but tolerated-absent.** It is not yet canonical managed state (owned by the
+  separate skills-home ticket). Capture skips any root that does not exist, so the skills home is
+  picked up automatically once it exists and its current absence is a normal empty capture.
+- **Symlinks preserved, not dereferenced.** Skills are provisioned as symlinks to the packaged
+  source; capture and restore use `copytree(symlinks=True)`, so a dangling link cannot abort the
+  whole backup (the database stays protected) and restore reproduces the symlink structure. Real
+  edited files under any root are still hashed and verified.
+- **Accepted low-severity review findings (not fixed):** a corrupt/tampered snapshot is excluded from
+  the verified set so it is never restore-eligible nor miscounted, but is therefore never pruned
+  (pre-existing behavior, also true of the v1 engine); and verification re-hashes retained snapshots
+  each run (pre-existing pattern, acceptable at retention=3 and nightly cadence).
+- **Snapshot format bumped to v2; no v1 migration.** The engine is only on `staging`, so there are no
+  production v1 snapshots. Retention/restore recognize v2 only; any non-v2 dir is simply not counted
+  as verified.
+- **Restore order: database first, managed roots second.** All manifests (DB + every root) are
+  validated before any destination is mutated, so a mid-restore failure requires a genuine filesystem
+  error. Managed roots fully roll back among themselves on failure; the database is not rolled back
+  once swapped (the pre-existing engine already treats the DB swap as the point of no return). A
+  failure after the DB swap leaves DB restored and files rolled back — acceptable given the two are
+  independently verified artifacts, not a transactional point-in-time.
+- **File verification = per-file sha256 manifest.** Files have no `PRAGMA integrity_check` analogue;
+  a `manifest.json` (relpath → sha256) checksummed into metadata is the equivalent, letting both
+  publish-time verify and restore-time re-validate reject any tampered capture.
+# 2026-07-23 — t_hkrhftnr Employee workspace-root split
+
+- Implement on an isolated Ticket branch from `staging`; do not modify or restart the live checkout
+  or its operator-owned server.
+- Keep `repository_root` as the deployed-checkout infrastructure root. Add one distinct
+  `employee_workspace_root` for bindings, backend configuration discovery, and Claude startup
+  preflight.
+- Resolve the workspace from one `server.py` constant pointing at `~/Coding`; use it only when the
+  path is a directory, otherwise fall back to `repository_root`. An absent path or same-named file
+  is not a valid workspace. Do not create or persist the path.
+- Make the composition and backend-context workspace arguments explicit and absolute; do not add a
+  default that can silently recombine workspace and infrastructure roots.
+- Keep per-project routing, settings, and migration out of scope. Reserve one canonical `./verify`
+  for the settled tree after focused tests and independent implementation review.
+- Close the review-found test seam at the production composition boundary: capture `create_app`'s
+  build arguments and prove the resolver-selected Employee workspace remains distinct from the
+  checkout root. Separate resolver and composition unit tests alone would not catch recombining the
+  roots in server wiring.
+- Close out only through the normal serial path: merge current `staging` into the ticket branch,
+  review and verify that combined revision, then advance and push the exact verified `staging` ref.
+  Do not alter the installed release or its user-owned running service in this ticket.
+- Closeout advanced and pushed verified integration commit `5bbec14d` to `origin/staging`; confirmed
+  the remote ref matches and retained existing rolling PR #7 (`staging` → `main`).
+# 2026-07-23 — t_2dm6mn08: proposal_discussion status representation
+
+- Represent "user messaged during an open approval" as ONE stored fact: a new
+  `ticket_status = proposal_discussion`. Deliberately did NOT add a separate stored
+  state field to `Proposal`. Reason: the proposal's "in discussion" state is the same
+  fact seen at the field; a duplicate field would need every exit to clear a second
+  thing. Because only `ticket_status` changes, the three existing exits (re-propose →
+  `awaiting_approval`, approve, send-back → `agent_running_step`) already overwrite it,
+  so no new exit machinery exists.
+- The message→flip crosses the conversation→tickets boundary through the existing
+  `TicketConversationProjection` courier (the object the hub already calls by
+  `entity_id` for ACP facts), not a direct hub→`tickets.data` call. Keeps the
+  conversation hub decoupled from ticket status, matching how activity/permission facts
+  already flow. The canonical transition (`enter_proposal_discussion`) still lives in
+  `tickets/data.py`; the courier is a thin connection-owning delegate.
+- `proposal_discussion` is protected from ownership-change overwrite exactly like
+  `awaiting_approval` (added to the guard tuples in `set_stage_ownership`,
+  `take_over_ticket`, `release_ticket`) — a deliberate divergence from `needs_user`,
+  which yields to takeover. Rationale: the proposal stays filed and approvable, so it
+  must survive Take over / Release the same way a pending approval does.
+- Reconciliation: staging had already shipped a sibling `needs_user` status after this
+  ticket's code maps were taken against `main`. Mirrored `needs_user`'s integration at
+  every consumer, with two intentional differences unique to this ticket: the review
+  queue EXCLUDES `proposal_discussion` (clean queue only), and it is overwrite-protected.
+  Independent review caught one missed consumer — `employee_configuration_editable`
+  (a kickoff-proposal-in-discussion must stay config-editable like `awaiting_approval`);
+  fixed with a covering test.
+
 # 2026-07-23 — t_8dkhr2f7 direct Ticket branch and compact pipeline
 
 - Honor the Ticket kickoff's explicit decision that this small repository/GitHub operation does not
@@ -3571,4 +3695,15 @@ not guarantee notification/request wire ordering across the prior fork response.
   Python action's hosted-runner cache path is not writable by the production runner account.
 - Fail fast unless the host provides Python 3.12 or newer and Node 22. Release construction still
   installs all Python and Node dependencies into the exported exact-SHA release; these checks only
-  make the operator-owned host prerequisite explicit.
+make the operator-owned host prerequisite explicit.
+
+## 2026-07-24 — Workspace regroup: signals stay facts, buckets stay frontend
+
+The board keeps serving facts (`ticket_status`, `stage`, `blocked`, the two signal fields);
+bucket membership lives in `BoardRoute` alone. One classifier in `workspace_signals.py` stays
+pure and testable; no bucket enum enters the backend, so a future regrouping is a frontend-only
+change. A pending permission ask counts as an unseen reply rather than a third signal — it is an
+agent ask the user has not handled. The seen marker generalizes the existing acknowledgement
+(`has_completed_response` remembered past acknowledge) instead of adding a parallel tracker,
+and rides the existing `ticket_conversation_projection_changed` event, so the reactivity
+completeness test needs no new mapping.

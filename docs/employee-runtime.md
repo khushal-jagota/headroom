@@ -164,9 +164,14 @@ with its Worker. There is no runtime fallback to a different backend or explicit
 
 The ordered production catalog is exactly `hermes`, `codex`, and `claude`. The server
 uses the official ACP client library to run each adapter over standard input and
-output. All three use the Ticket workspace root, support observed compaction and ACP
-permissions, and can carry both human and Automatic Employee work. Hermes supports
-native Steer. Codex and Claude Code do not; Queue and Send Now remain available.
+output. Employee sessions use `~/Coding` as their workspace root when that path is an
+existing directory. If it is absent or is not a directory, they use the Panels
+repository root instead. Startup only selects between those paths; it does not create
+or persist the preferred directory. Adapter packages, role skills, static assets, and
+other application infrastructure remain rooted in the Panels repository. All three
+backends support observed compaction and ACP permissions, and can carry both human and
+Automatic Employee work. Hermes supports native Steer. Codex and Claude Code do not;
+Queue and Send Now remain available.
 
 Hermes exposes Model selection and no Reasoning selection. Codex and Claude Code expose
 both through ACP, with Reasoning choices discovered again for the selected Model. After
@@ -206,4 +211,4 @@ startup behavior changes the Ticket's durable backend choice or session identity
 
 ---
 
-_Last verified: 2026-07-21 (three-backend ACP Employee runtime and correctness-only run records)._
+_Last verified: 2026-07-23 (Employee workspace and repository infrastructure roots split)._

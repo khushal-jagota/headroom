@@ -31,6 +31,7 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     empty = "empty"
     agent_running_step = "agent_running_step"
     awaiting_approval = "awaiting_approval"
+    proposal_discussion = "proposal_discussion"
     user_takeover = "user_takeover"
     needs_user = "needs_user"
     paired_work = "paired_work"
@@ -51,25 +52,31 @@ class WorkspaceActivityState(StrEnum):
     failed = "failed"
 
 
-class WorkspaceDotState(StrEnum):
-    exceptional = "exceptional"
-    active = "active"
-    needs_attention = "needs_attention"
-    settled = "settled"
-    quiet = "quiet"
+class WorkspaceAgentReplyState(StrEnum):
+    """Whether a Worker reply (or permission ask) is waiting, and whether it was seen."""
+
+    none = "none"
+    unseen = "unseen"
+    seen = "seen"
 
 
 @dataclass(frozen=True)
-class WorkspaceDotFacts:
-    """Factual Ticket and ACP inputs for the one Workspace-dot classifier."""
+class WorkspaceSignalFacts:
+    """Factual Ticket and ACP inputs for the two Workspace row signals."""
 
     ticket_status: TicketStatus
-    backend_error: str | None = None
-    has_pending_proposal: bool = False
     latest_activity_state: WorkspaceActivityState | None = None
     has_completed_response_awaiting_user: bool = False
+    has_completed_response: bool = False
     has_pending_permission: bool = False
-    is_completed: bool = False
+
+
+@dataclass(frozen=True)
+class WorkspaceSignals:
+    """The two Workspace row signals: an agent working now, and a reply waiting."""
+
+    agent_working: bool
+    agent_reply_state: WorkspaceAgentReplyState
 
 
 @dataclass(frozen=True)

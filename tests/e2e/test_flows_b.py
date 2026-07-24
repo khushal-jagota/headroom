@@ -129,13 +129,15 @@ def _snap_ticket(p: Page):
 
 def _snap_board(p: Page, mid):
     card = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
-    stage = '[data-worker-type="coding"] [data-stage-key="needs_implementation"]'
+    bucket = '[data-bucket-section][data-bucket-key="needs_approval"]'
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
-        "stage": p.inner_text(f"{stage} > summary .board-workspace-stage-label"),
-        "nested": p.eval_on_selector_all(f"{stage} {card}", "e=>e.length"),
+        "bucket": p.inner_text(f"{bucket} > summary .board-workspace-bucket-label"),
+        "nested": p.eval_on_selector_all(f"{bucket} {card}", "e=>e.length"),
         "marks": p.eval_on_selector_all(f"{card} .board-workspace-stage-mark", "e=>e.length"),
-        "marker": p.get_attribute(f"{card} .board-workspace-stage-mark", "data-marker"),
+        "agent_working": p.get_attribute(
+            f"{card} .board-workspace-stage-mark", "data-agent-working"
+        ),
     }
 
 
@@ -449,10 +451,10 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     after_b = _snap_board(page_b, mid)
     expected_b = {
         "title": E31_TITLE,
-        "stage": "IMPLEMENTATION",
+        "bucket": "Needs approval",
         "nested": 1,
         "marks": 1,
-        "marker": None,
+        "agent_working": "false",
     }
     assert before_b == after_b == expected_b, (before_b, after_b)
 

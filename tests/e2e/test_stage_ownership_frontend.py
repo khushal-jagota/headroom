@@ -124,15 +124,16 @@ def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
         page.wait_for_selector(card, timeout=WAIT_MS)
         assert page.locator('[aria-label="Ticket status"]').count() == 0
         assert page.get_attribute(card, "data-ticket-status") == "paired_work"
-        success_stage = '[data-worker-type="coding"] [data-stage-key="needs_success"]'
-        assert page.inner_text(f"{success_stage} > summary .board-workspace-stage-label") == (
-            "SUCCESS"
+        paired_bucket = '[data-bucket-section][data-bucket-key="paired"]'
+        assert page.inner_text(f"{paired_bucket} > summary .board-workspace-bucket-label") == (
+            "Paired"
         )
-        assert page.locator(f"{success_stage} {card}").count() == 1
+        assert page.locator(f"{paired_bucket} {card}").count() == 1
         assert page.inner_text(f"{card} .list-row-title") == "Paired workspace ticket"
         assert page.locator(f"{card} > *").count() == 2
         paired_mark = page.locator(
-            f'{card} .board-workspace-stage-mark[data-stage-state="current-awaiting-approval"]'
+            f'{card} .board-workspace-stage-mark[data-stage-state="upcoming"]'
         )
         assert paired_mark.count() == 1
-        assert paired_mark.get_attribute("data-marker") is None
+        assert paired_mark.get_attribute("data-agent-working") == "false"
+        assert paired_mark.get_attribute("data-reply-state") == "none"

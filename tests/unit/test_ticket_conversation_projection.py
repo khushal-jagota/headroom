@@ -36,6 +36,7 @@ def test_projection_updates_facts_and_emits_only_on_change(tmp_path) -> None:
     row = projection.read(ticket.id)
     assert row.latest_activity_state == "idle"
     assert row.has_completed_response_awaiting_user is True
+    assert row.has_completed_response is True
     assert row.has_pending_permission is False
     events = [
         event
@@ -149,6 +150,8 @@ def test_acknowledgement_clears_only_completed_response_and_is_idempotent(tmp_pa
     row = projection.read(ticket.id)
     assert row.latest_activity_state == "idle"
     assert row.has_completed_response_awaiting_user is False
+    # Acknowledging clears only the awaiting bit; the reply stays remembered.
+    assert row.has_completed_response is True
     assert row.has_pending_permission is True
     projection_events = [
         event
@@ -156,6 +159,106 @@ def test_acknowledgement_clears_only_completed_response_and_is_idempotent(tmp_pa
         if event.kind == "ticket_conversation_projection_changed"
     ]
     assert projection_events[-1].payload == {"changed": ["response"]}
+    conn.close()
+
+
+def test_has_completed_response_survives_acknowledgement_until_reset(tmp_path) -> None:
+    db_path = str(tmp_path / "projection-completed-response.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    ticket = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Remembered reply",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+    )
+    projection = TicketConversationProjection(db_path, now=lambda: 2)
+    assert projection.read(ticket.id).has_completed_response is False
+
+    # A completed turn flips both facts true together.
+    projection.record_activity(ticket.id, "thinking")
+    assert projection.read(ticket.id).has_completed_response is False
+    projection.record_activity(ticket.id, "idle")
+    completed = projection.read(ticket.id)
+    assert completed.has_completed_response_awaiting_user is True
+    assert completed.has_completed_response is True
+
+    # Acknowledging clears only the awaiting bit — the seen reply stays remembered.
+    projection.acknowledge_completed_response(ticket.id)
+    acknowledged = projection.read(ticket.id)
+    assert acknowledged.has_completed_response_awaiting_user is False
+    assert acknowledged.has_completed_response is True
+
+    # Reset deletes the row, so the memory clears, and the changed-fields event
+    # reports "response" for the has_completed_response flip alone.
+    projection.reset(ticket.id)
+    assert projection.read(ticket.id).has_completed_response is False
+    projection_events = [
+        event
+        for event in read_events_since(conn, 0, 100)
+        if event.kind == "ticket_conversation_projection_changed"
+    ]
+    assert projection_events[-1].payload == {
+        "changed": ["latest_activity_state", "response"]
+    }
+    conn.close()
+
+
+def test_courier_flips_awaiting_approval_to_proposal_discussion(tmp_path) -> None:
+    db_path = str(tmp_path / "projection-courier-flip.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    ticket = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Courier flip",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+    )
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'awaiting_approval' WHERE id = ?",
+        (ticket.id,),
+    )
+    conn.commit()
+    projection = TicketConversationProjection(db_path, now=lambda: 2)
+
+    projection.enter_proposal_discussion_on_human_prompt(ticket.id)
+
+    row = conn.execute(
+        "SELECT ticket_status FROM tickets WHERE id = ?", (ticket.id,)
+    ).fetchone()
+    assert str(row["ticket_status"]) == "proposal_discussion"
+    conn.close()
+
+
+def test_courier_is_a_no_op_when_not_awaiting_approval(tmp_path) -> None:
+    db_path = str(tmp_path / "projection-courier-noop.db")
+    conn = connect(db_path)
+    create_schema(conn)
+    ticket = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Courier no-op",
+        actor="human",
+        now=1,
+        title_max_chars=200,
+    )
+    conn.execute(
+        "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+        (ticket.id,),
+    )
+    conn.commit()
+    projection = TicketConversationProjection(db_path, now=lambda: 2)
+
+    projection.enter_proposal_discussion_on_human_prompt(ticket.id)
+
+    row = conn.execute(
+        "SELECT ticket_status FROM tickets WHERE id = ?", (ticket.id,)
+    ).fetchone()
+    assert str(row["ticket_status"]) == "agent_running_step"
     conn.close()
 
 
@@ -179,6 +282,7 @@ def test_projection_reset_clears_stale_conversation_facts(tmp_path) -> None:
     row = projection.read(ticket.id)
     assert row.latest_activity_state is None
     assert row.has_completed_response_awaiting_user is False
+    assert row.has_completed_response is False
     assert row.has_pending_permission is False
     projection_events = [
         event

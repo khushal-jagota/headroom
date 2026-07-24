@@ -83,46 +83,51 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         context_factory(),
         server,
         "#/workspace",
-        f'[data-card][data-ticket-id="{kickoff_dependent}"]',
+        f'[data-card][data-ticket-id="{later_dependent}"]',
         settled=True,
     )
-    coding = '[data-worker-type="coding"]'
-    blocked = f'{coding} [data-stage-key="blocked"]'
-    active = f'{coding} [data-stage-key="needs_success"]'
-    kickoff = f'{coding} [data-stage-key="needs_kickoff"]'
+    blocked = '[data-bucket-section][data-bucket-key="blocked"]'
+    stopped = '[data-bucket-section][data-bucket-key="stopped"]'
+    kickoff = '[data-bucket-section][data-bucket-key="kickoff"]'
+    approval = '[data-bucket-section][data-bucket-key="needs_approval"]'
     active_card = f'[data-card][data-ticket-id="{blocker}"]'
     later_card = f'[data-card][data-ticket-id="{later_dependent}"]'
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
+    # Blocked collapses by default and claims only idle blocked tickets; a
+    # blocked ticket with a real status keeps its status bucket, and a blocked
+    # kickoff-stage parked proposal stays in Kickoff.
     assert page.locator(blocked).get_attribute("open") is None
-    assert page.locator(active).get_attribute("open") is not None
-    assert page.locator(f"{active} {active_card}").is_visible()
-    assert page.locator(kickoff).get_attribute("open") is not None
-    assert not page.locator(f"{blocked} {later_card}").is_visible()
-    page.locator(f"{blocked} > summary").click()
-    assert page.locator(blocked).get_attribute("open") is not None
-    page.wait_for_selector(f"{blocked} {later_card}", state="visible", timeout=WAIT_MS)
-    assert page.locator(f"{blocked} {shared_card}").is_visible()
-    assert page.locator(f"{blocked} {later_card}").count() == 1
-    assert page.locator(f"{blocked} {shared_card}").count() == 1
+    assert page.locator(stopped).get_attribute("open") is not None
+    assert page.locator(f"{stopped} {active_card}").is_visible()
+    assert page.locator(approval).get_attribute("open") is not None
+    assert page.locator(f"{approval} {later_card}").is_visible()
+    assert page.locator(f"{blocked} {later_card}").count() == 0
     assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
     assert page.locator(f"{blocked} {kickoff_card}").count() == 0
+    assert not page.locator(f"{blocked} {shared_card}").is_visible()
+    page.locator(f"{blocked} > summary").click()
+    assert page.locator(blocked).get_attribute("open") is not None
+    page.wait_for_selector(f"{blocked} {shared_card}", state="visible", timeout=WAIT_MS)
+    assert page.locator(f"{blocked} {shared_card}").count() == 1
     assert page.get_attribute(later_card, "data-ticket-stage") == "needs_plan"
     assert page.get_attribute(
-        f"{later_card} .board-workspace-stage-mark", "data-workspace-dot-state"
-    ) == "quiet"
+        f"{later_card} .board-workspace-stage-mark", "data-agent-working"
+    ) == "false"
     assert "Prerequisite" not in page.inner_text(f"{blocked} > .disclosure-body")
 
-    cli(server, "ticket", "unblock", later_dependent, "--by", blocker)
-    page.wait_for_selector(f'{coding} [data-stage-key="needs_plan"] {later_card}', timeout=WAIT_MS)
-    assert page.locator(f"{blocked} {shared_card}").count() == 1
+    cli(server, "ticket", "unblock", shared_dependent, "--by", blocker)
+    page.wait_for_selector(f"{stopped} {shared_card}", timeout=WAIT_MS)
+    assert page.locator(blocked).count() == 0
 
     _post_stage(server, blocker, "done")
     page.wait_for_selector(
-        f'{coding} [data-stage-key="needs_approach"] {shared_card}', timeout=WAIT_MS
+        f'[data-bucket-section][data-bucket-key="done"] {active_card}',
+        state="attached",
+        timeout=WAIT_MS,
     )
-    assert page.locator(blocked).count() == 0
+    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
     assert _get_ticket(server, later_dependent)["stage"] == "needs_plan"
     assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 

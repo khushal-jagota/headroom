@@ -10,7 +10,8 @@ export type FieldStageVisualState =
   | "current-paired-work"
   | "current-awaiting-approval"
   | "errored"
-  | "upcoming";
+  | "upcoming"
+  | "reply-seen";
 
 export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");
@@ -58,6 +59,7 @@ export function ticketStatusText(value: string): string {
     empty: "empty",
     agent_running_step: "running step",
     awaiting_approval: "awaiting approval",
+    proposal_discussion: "in discussion",
     paired_work: "paired work",
     user_takeover: "user takeover",
     errored: "errored"

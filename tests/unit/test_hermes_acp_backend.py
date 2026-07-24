@@ -168,6 +168,7 @@ def test_production_hermes_registration_reuses_exact_resolved_installation(
     materialized = registration.runtime_builder(
         EmployeeBackendBuildContext(
             data_directory=tmp_path,
+            employee_workspace_root=REPOSITORY_ROOT,
             planner_home_default=planner_home,
             repository_root=REPOSITORY_ROOT,
         )

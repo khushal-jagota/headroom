@@ -134,11 +134,16 @@ export function createConversationController(options: ConversationControllerOpti
   ): ConversationActionResult => {
     const cursor = committedState.cursor;
     if (!cursor) return { ok: false, reason: 'Conversation is not ready', clientMessageId };
-    const optimisticPrompt: PromptRequest = {
-      sessionId: cursor.acpSessionId ?? '',
-      prompt: [...contentBlocks],
-    };
-    transition({ kind: 'optimistic_prompt', clientMessageId, prompt: optimisticPrompt });
+    // A queued prompt lives only in the queue tray (from the server queue snapshot) until it is
+    // actually sent; it must not echo into the transcript at submit time. Every other choice is
+    // delivered immediately, so it keeps its optimistic transcript echo.
+    if (choice !== 'queue') {
+      const optimisticPrompt: PromptRequest = {
+        sessionId: cursor.acpSessionId ?? '',
+        prompt: [...contentBlocks],
+      };
+      transition({ kind: 'optimistic_prompt', clientMessageId, prompt: optimisticPrompt });
+    }
     const result = send({
       type: 'prompt',
       employeeId: options.employeeId,

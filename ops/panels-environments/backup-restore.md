@@ -1,7 +1,7 @@
 # Panels SQLite backup and restore runbook
 
 This directory provides install inputs. Choose the real host paths in the operator-owned
-`backup.env`; none are fixed by the repository.
+`backup.env` and `maintenance.env`; none are fixed by the repository.
 
 ## Setup
 
@@ -31,8 +31,16 @@ find "$PANELS_BACKUP_DIRECTORY" -maxdepth 1 -type d -name 'snapshot-*' -print | 
 cat "$SNAPSHOT/metadata.json"
 ```
 
-Only snapshots with verified metadata and a matching checksum are eligible for restore. Successful
-backup runs retain the seven newest verified snapshots.
+Only snapshots with verified metadata and matching checksums are eligible for restore. Each
+snapshot covers the database and the managed-file tree beside it. Successful backup runs retain
+the seven newest verified snapshots. The nightly and pre-deployment backup schedules remain
+unchanged by status collection.
+
+The managed-file tree is the ticket files, worker-settings, and skills home that live beside the
+database. The skills home is resolved the same way the live server resolves it: `PLAN_HERMES_HOME`
+when set, otherwise `hermes-home` beside the database. If the live service sets `PLAN_HERMES_HOME`,
+set the same value in `backup.env` so the backup and restore commands capture the skills home the
+server actually uses.
 
 ## Restore
 
@@ -45,3 +53,14 @@ If verification fails, keep live stopped and choose another verified snapshot. T
 deletes an older snapshot as part of a failed backup attempt.
 
 See [docs/backups.md](../../docs/backups.md) for the system-level model.
+
+## Daily local maintenance
+
+`panels-maintenance.service` and `panels-maintenance.timer` are optional systemd inputs for an
+operator-owned daily `panels environment cleanup --apply` run. Copy
+`maintenance.env.example` to `/etc/panels/environments/maintenance.env` and set its absolute
+`PLAN_DB_PATH`, `PLAN_LOGS_DIR`, and `PLAN_BACKUP_DIR` values to the live environment. Set the
+same `PLAN_BACKUP_DIR` in `live.env` so the server status and maintenance use one backup root.
+The matching launchd plist is an input for the same command on macOS. Both commands build a fresh
+inventory at execution time; a previous dry run is not authority to delete anything. Install them
+only with an identity permitted to read the configured logs and backup directory.

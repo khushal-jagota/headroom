@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from planner.core.config import Config, load_config
 from planner.core.errors import PlannerError
+from planner.environments.vps_status import VpsStatusPolicy, collect_cleanup_inventory
 
 _RETIRED_CONFIG_NAMES = (
     "claim_ttl_seconds",
@@ -26,6 +29,7 @@ def test_config_defaults_expose_only_live_runtime_knobs() -> None:
     assert cfg.trusted_ingress_allowed_login is None
     assert cfg.trusted_ingress_canonical_origin is None
     assert cfg.shutdown_grace_seconds == 30
+    assert cfg.backup_dir == "data/backups"
     for name in _RETIRED_CONFIG_NAMES:
         assert not hasattr(cfg, name)
 
@@ -138,3 +142,61 @@ def test_checked_in_config_exposes_ws_heartbeat_cadence() -> None:
 
     assert "ws_heartbeat_ms: 15000" in path.read_text()
     assert load_config(path=str(path), env={}).ws_heartbeat_ms == 15000
+
+
+def test_backup_directory_is_configurable_without_reusing_a_release_path() -> None:
+    cfg = load_config(path=None, env={"PLAN_BACKUP_DIR": "/operator-state/backups"})
+
+    assert cfg.backup_dir == "/operator-state/backups"
+
+
+def test_operator_maintenance_and_live_inputs_propagate_absolute_status_paths(
+    tmp_path: Path,
+) -> None:
+    asset_root = Path(__file__).parents[2] / "ops" / "panels-environments"
+    maintenance = _environment_file_values(asset_root / "maintenance.env.example")
+    live = _environment_file_values(asset_root / "live.env.example")
+    service = (asset_root / "panels-maintenance.service").read_text(encoding="utf-8")
+
+    operator_inputs = {
+        **maintenance,
+        "PLAN_DB_PATH": str(tmp_path / "state" / "planning.db"),
+        "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+        "PLAN_BACKUP_DIR": str(tmp_path / "backups"),
+    }
+    config = load_config(path=None, env=operator_inputs)
+    logs_root = Path(config.logs_dir)
+    backup_root = Path(config.backup_dir)
+    logs_root.mkdir()
+    backup_root.mkdir()
+    log = logs_root / "panels.log"
+    log.write_text("x", encoding="utf-8")
+    abandoned = backup_root / ".backup-abandoned"
+    abandoned.mkdir()
+    old = datetime.now(UTC) - timedelta(hours=25)
+    os.utime(abandoned, (old.timestamp(), old.timestamp()))
+    inventory = collect_cleanup_inventory(
+        config,
+        policy=VpsStatusPolicy(log_warning_bytes=1),
+    )
+
+    assert Path(config.db_path).is_absolute()
+    assert Path(config.logs_dir).is_absolute()
+    assert Path(config.backup_dir).is_absolute()
+    assert config.logs_dir == operator_inputs["PLAN_LOGS_DIR"]
+    assert config.backup_dir == operator_inputs["PLAN_BACKUP_DIR"]
+    assert {candidate.root for candidate in inventory.candidates} == {logs_root, backup_root}
+    assert all(candidate.root != Path("data/backups") for candidate in inventory.candidates)
+    assert live["PLAN_BACKUP_DIR"] == maintenance["PLAN_BACKUP_DIR"]
+    assert "EnvironmentFile=/etc/panels/environments/maintenance.env" in service
+    assert "backup.env" not in service
+
+
+def _environment_file_values(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value
+    return values

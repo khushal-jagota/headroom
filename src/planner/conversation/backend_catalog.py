@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from planner.conversation.hermes_backend_configuration import (
@@ -33,12 +33,15 @@ from .sdk_child import SdkAcpEmployeeChildFactory
 @dataclass(frozen=True, slots=True)
 class EmployeeBackendBuildContext:
     data_directory: Path
+    employee_workspace_root: Path
     planner_home_default: Path | None = None
-    repository_root: Path = field(default_factory=lambda: Path(__file__).resolve().parents[3])
+    repository_root: Path = Path(__file__).resolve().parents[3]
 
     def __post_init__(self) -> None:
         if not self.repository_root.is_absolute():
             raise ValueError("employee backend repository root must be absolute")
+        if not self.employee_workspace_root.is_absolute():
+            raise ValueError("employee backend workspace root must be absolute")
 
 
 @dataclass(frozen=True, slots=True)

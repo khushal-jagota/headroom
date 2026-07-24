@@ -690,18 +690,23 @@ class ConversationHub:
                 prompt = prompt.model_copy(
                     update={"session_id": stream.binding.acp_session_id}
                 )
-            await self._publish_human_echo(
-                stream.employee,
-                stream.binding,
-                action.client_message_id,
-                prompt,
-            )
+            # A queued prompt is echoed into the transcript when it is actually dequeued and sent
+            # (see ConversationTurnBroker._advance_queue), not at submit time; while it waits it
+            # lives only in the queue snapshot. Every other choice is delivered now, so echoes now.
+            if action.delivery_choice != "queue":
+                await self._publish_human_echo(
+                    stream.employee,
+                    stream.binding,
+                    action.client_message_id,
+                    prompt,
+                )
             await self._deliver_with_logging(
                 handle,
                 action.client_message_id,
                 action.delivery_choice,
                 prompt,
             )
+            await self._enter_ticket_proposal_discussion(stream.employee)
             return
         if isinstance(action, CancelAction):
             await self._require_broker().cancel(handle, action.queued_client_message_id)
@@ -834,18 +839,21 @@ class ConversationHub:
                 prompt=action.prompt,
                 field_meta=action.prompt_meta,
             )
-            await self._publish_human_echo(
-                employee,
-                binding,
-                action.client_message_id,
-                prompt,
-            )
+            # A queued prompt echoes at dequeue, not at submit; see _dispatch_action above.
+            if action.delivery_choice != "queue":
+                await self._publish_human_echo(
+                    employee,
+                    binding,
+                    action.client_message_id,
+                    prompt,
+                )
             await self._deliver_with_logging(
                 handle,
                 action.client_message_id,
                 action.delivery_choice,
                 prompt,
             )
+            await self._enter_ticket_proposal_discussion(employee)
             return
         if isinstance(action, NewConversationAction):
             await self.new_conversation(employee_id)
@@ -1131,12 +1139,8 @@ class ConversationHub:
             )
             if not replay_available:
                 return
-            for queued in queued_prompts:
-                self._publish_human_echo_now(
-                    stream,
-                    queued.client_message_id,
-                    queued.prompt,
-                )
+            # Still-queued prompts are not part of the transcript; they resurface in the queue
+            # snapshot only and echo into the transcript when they are dequeued and sent.
             self._publish_queue_snapshot_now(stream, queued_prompts)
 
         projection_lock = self._ticket_projection_lock(token.original_handle.employee)
@@ -1372,12 +1376,8 @@ class ConversationHub:
                     employee_id, state
                 )
                 return
-            for queued in queued_prompts:
-                self._publish_human_echo_now(
-                    stream,
-                    queued.client_message_id,
-                    queued.prompt,
-                )
+            # Still-queued prompts stay out of the transcript and resurface only in the queue
+            # snapshot. A send-now successor, by contrast, is being started now, so it echoes.
             if send_now_successor_human_echo is not None:
                 self._publish_human_echo_now(
                     stream,
@@ -1508,6 +1508,17 @@ class ConversationHub:
             ),
         )
 
+    async def publish_human_echo(
+        self,
+        employee: ConversationEmployee,
+        binding: ConversationSessionBinding,
+        client_message_id: str,
+        prompt: PromptRequest,
+    ) -> None:
+        await self._publish_human_echo(
+            employee, binding, client_message_id, prompt
+        )
+
     async def publish_queue_snapshot(
         self,
         employee: ConversationEmployee,
@@ -1632,6 +1643,16 @@ class ConversationHub:
             return
         await asyncio.to_thread(
             projection.record_activity, employee.entity_id, state
+        )
+
+    async def _enter_ticket_proposal_discussion(
+        self, employee: ConversationEmployee
+    ) -> None:
+        projection = self._ticket_conversation_projection
+        if projection is None or employee.entity_kind != "ticket":
+            return
+        await asyncio.to_thread(
+            projection.enter_proposal_discussion_on_human_prompt, employee.entity_id
         )
 
     async def _record_ticket_permission(

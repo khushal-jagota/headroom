@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
-from planner.skill_sources import panels_skill_root
+from planner.skill_sources import ensure_managed_panels_skills
 
 DEFAULT_HERMES_PYTHON: Final = "~/.hermes/hermes-agent/venv/bin/python"
 DEFAULT_PLANNER_HOME: Final = "~/.hermes"
@@ -63,16 +63,12 @@ def provision_planner_home_skills(
     configured_database_parent: Path | str | None = None,
     panels_skills_source_root: Path | str | None = None,
 ) -> None:
-    """Expose the canonical packaged Panels skills in a Hermes home.
-
-    Every backend receives a symlink to the version-controlled source file.  No
-    database-side or Hermes-owned copy is materialized.
-    """
-    source_root = (
-        Path(panels_skills_source_root).resolve()
-        if panels_skills_source_root is not None
-        else panels_skill_root()
-    )
+    """Expose the managed Panels skills home in a Hermes home."""
+    if configured_database_parent is None:
+        raise ValueError("managed Panels skills require a database parent")
+    source_root = ensure_managed_panels_skills(
+        configured_database_parent, packaged_skill_root=panels_skills_source_root
+    ).resolve()
     target_root = Path(home).expanduser() / "skills"
     target_root.mkdir(parents=True, exist_ok=True)
     for skill_name in skill_names:

@@ -1,5 +1,32 @@
 export type AnyRecord = Record<string, any>;
 
+export type VpsStatusState = "healthy" | "warning" | "critical" | "unavailable" | "review_needed";
+
+export type VpsStatusSection = {
+  state: VpsStatusState;
+  summary: string;
+  [key: string]: unknown;
+};
+
+export type VpsStatusSnapshot = {
+  collected_at: string;
+  overall_state: VpsStatusState;
+  environment: VpsStatusSection;
+  release: VpsStatusSection;
+  backup: VpsStatusSection;
+  disk: VpsStatusSection;
+  workloads: VpsStatusSection;
+  worktrees: VpsStatusSection;
+  logs: VpsStatusSection;
+  cleanup_candidates: VpsStatusSection;
+  resources: VpsStatusSection & {
+    cpu_percent: number | null;
+    load_averages: number[] | null;
+    ram: unknown | null;
+    swap: unknown | null;
+  };
+};
+
 // The served Worker-type manifest response (GET /api/worker-types).
 import type { WorkerTypeManifest } from "./lifecycle";
 export type { WorkerTypesResponse } from "./lifecycle";

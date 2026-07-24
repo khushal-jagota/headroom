@@ -28,7 +28,8 @@ assert.match(ticketRouteSource, /contextRow=\{name === "kickoff" && kickoffCardS
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-configuration/);
 assert.match(ticketRouteSource, /kind: "ticketChanged", ticketId: stableId/);
 assert.match(ticketRouteSource, /\/acknowledge-completed-response/);
-assert.match(boardRouteSource, /settled:\s*\{\s*state: "completed"/);
+assert.match(boardRouteSource, /state: "current-running", ariaLabel: "Agent working"/);
+assert.match(boardRouteSource, /state: "reply-seen", ariaLabel: "Agent reply seen"/);
 assert.match(ticketRouteSource, /deferInitialAttach=\{detail\.employee_configuration_editable\}/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.match(employeeConfigurationSource, /employee_launch_model/);

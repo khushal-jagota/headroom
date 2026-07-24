@@ -23,6 +23,24 @@ start a server by themselves.
 
 Code paths: `src/planner/environments/`, `src/planner/cli/main.py`.
 
+## Host status and maintenance
+
+`panels environment status --json` reads local filesystem and process evidence directly. It does
+not contact the Panels HTTP server, so an operator can use it over SSH while the server is down.
+`GET /api/vps-status` returns the same sanitized snapshot for the header Status popover. The
+popover fetches only when it opens or when its **Refresh** button is pressed; it does not poll.
+
+The current macOS path reports CPU, load average, RAM, and swap as unavailable. Linux resource
+collection and its thresholds are intentionally deferred to Ticket `t_qrdamx8z`.
+
+`panels environment cleanup` is a host-local dry run. It lists a fresh in-memory inventory and
+does not authorize any later command. `panels environment cleanup --apply` builds a new inventory,
+then immediately re-proves every target under the operator's filesystem authority before changing
+it. It can rotate oversized configured log files, remove expired `.backup-*` temporary directories
+under the configured backup directory, and prune only verified backups beyond seven. It never
+kills a process or removes a worktree, cache, prepared environment, release, symlink, or ambiguous
+path. Cleanup has no HTTP endpoint.
+
 ## Live environment
 
 Live is a prepared external environment attached to a separate `main` checkout. Its
@@ -69,14 +87,14 @@ panels environment import-live \
 
 The command requires an already prepared live environment. It reads the committed
 SQLite state through the backup API, including committed WAL data, and stages the
-database, managed files, worker settings, complete Hermes home, Codex and Claude
+database, managed files, worker settings, managed skills, complete Hermes home, Codex and Claude
 identity/configuration/session trees, and an archive of the source logs. Worker
 settings must exist at `worker-settings` beside the source database; that path is
 inferred so it cannot be omitted accidentally. The runtime user home locates its
 `.codex` and `.claude` children. Database, Hermes, managed-file, and log sources may
 otherwise live below that home. Sockets and other special files are skipped; private
 directory and file modes and ordinary symlinks are preserved. Panels-owned Hermes
-skill links are repaired to the repository recorded in the prepared live manifest.
+skill links are repaired to the managed skills home in the imported generation.
 
 All source paths must exist and remain outside the prepared live instance. Durable
 state is built as one new generation and made current with one atomic stable-pointer

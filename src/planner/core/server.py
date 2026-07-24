@@ -23,6 +23,7 @@ from planner.core.testmode import TestModeAcceptingEmployeeRevisionRunner, build
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.core.ws import tail_events
 from planner.days.api import router as days_router
+from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
 from planner.runtime.automatic_employee_step_eligibility_wake import (
@@ -45,6 +46,7 @@ _STATUS_BY_CODE: dict[ErrorCode, int] = {
     ErrorCode.gateway_offline: 503,
 }
 
+
 def resolve_application_root(
     *,
     environment: Mapping[str, str] | None = None,
@@ -58,10 +60,17 @@ def resolve_application_root(
 
 
 _REPO_ROOT = resolve_application_root()
+_PREFERRED_EMPLOYEE_WORKSPACE_ROOT = Path.home() / "Coding"
 _WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_INDEX = _WEB_DIST / "index.html"
 _ASSETS_DIR = _REPO_ROOT / "assets"
 _STATIC_DIR = _REPO_ROOT / "static"
+
+
+def resolve_employee_workspace_root() -> Path:
+    if _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.is_dir():
+        return _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.resolve(strict=False)
+    return _REPO_ROOT.resolve(strict=False)
 
 
 def svelte_index_html() -> str:
@@ -90,6 +99,7 @@ def create_app(
     conn_factory: Callable[[], sqlite3.Connection],
     *,
     conversation_test_options: ConversationTestOptions | None = None,
+    vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
 ) -> FastAPI:
     if conversation_test_options is not None and not config.test_mode:
         raise ValueError("conversation_test_options are accepted only in test mode")
@@ -115,6 +125,7 @@ def create_app(
                 busy_timeout_ms=config.db_busy_timeout_ms,
                 clock=clock,
                 repository_root=_REPO_ROOT,
+                employee_workspace_root=resolve_employee_workspace_root(),
                 loop=asyncio.get_running_loop(),
                 test_options=conversation_test_options,
             )
@@ -138,6 +149,7 @@ def create_app(
                 busy_timeout_ms=config.db_busy_timeout_ms,
                 clock=clock,
                 repository_root=_REPO_ROOT,
+                employee_workspace_root=resolve_employee_workspace_root(),
                 loop=asyncio.get_running_loop(),
             )
             try:
@@ -197,6 +209,9 @@ def create_app(
         TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
     )
     app.state.conversation = None
+    configured_vps_status_collector = vps_status_collector or (
+        lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
+    )
 
     @app.exception_handler(PlannerError)
     async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:
@@ -236,6 +251,10 @@ def create_app(
                 status_code=503, content={"ready": False, "error": "expected release SHA required"}
             )
         return JSONResponse(status_code=200, content={"ready": True, "release_sha": release_sha})
+
+    @app.get("/api/vps-status")
+    async def vps_status() -> dict[str, object]:
+        return configured_vps_status_collector(config).as_dict()
 
     @app.get("/api/worker-types")
     async def worker_types() -> dict[str, Any]:

@@ -264,6 +264,8 @@ def _materialize(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     scenario: _Scenario | None = None,
+    *,
+    employee_workspace_root: Path = REPOSITORY_ROOT,
 ) -> tuple[Any, _ScriptedFactory, EmployeeBackendCatalog]:
     constructor = _FactoryConstructor(scenario or _Scenario())
     monkeypatch.setattr(
@@ -277,6 +279,7 @@ def _materialize(
         EmployeeBackendBuildContext(
             repository_root=REPOSITORY_ROOT,
             data_directory=tmp_path,
+            employee_workspace_root=employee_workspace_root,
         )
     )[0]
     assert constructor.factory is not None
@@ -308,6 +311,20 @@ def test_codex_registration_reuses_one_locked_definition_and_factory_for_configu
     assert adapter._definition is materialized.definition
     assert adapter._child_factory is factory
     assert adapter._workspace_root == REPOSITORY_ROOT
+
+
+def test_codex_registration_splits_adapter_entrypoint_from_employee_workspace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    employee_workspace_root = tmp_path / "employee-workspace"
+    materialized, _factory, _catalog = _materialize(
+        monkeypatch,
+        tmp_path,
+        employee_workspace_root=employee_workspace_root,
+    )
+
+    assert Path(materialized.definition.argv[1]).is_relative_to(REPOSITORY_ROOT)
+    assert _adapter(materialized)._workspace_root == employee_workspace_root
 
 
 def test_codex_catalog_uses_semantic_categories_exact_values_and_server_cache(

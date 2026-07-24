@@ -18,27 +18,33 @@ One screen per part of the system:
   field, and each decision fades in as it arrives. The approve button physically
   refuses to work until "how far may the worker go next" has been answered, both
   halves.
-- **Workspace** — today's tickets in a left rail backed by the board resource. The
-   rail groups tickets by project, then orders rows by Worker type, that type's Stage,
-   and recent activity. It shows one current-stage dot per ticket. The board card owns
-  one derived Workspace result with the fixed precedence **exceptional**, **permission
-  attention**, **active**, **other attention**, **settled**, then **quiet**. Active work
-  spins; attention is a filled dot; a completed Ticket is green; quiet is a ring;
-  exceptional keeps the error treatment. Exceptional is derived only from the Ticket's
-  canonical confirmed backend Worker error; failed or interrupted ACP activity does not
-  create it. The result combines Ticket facts with a small durable Ticket-linked ACP
-  projection, so a browser reload or an unopened conversation does not invent or retain
-  stale activity. Initial and repeated
-  idle are quiet until an admitted turn has real activity; a completed response stays
-  attention through reconnect/load until a new turn, explicit reset, or the user opens
-  that Ticket. Opening acknowledges only the completed-response fact; proposal,
-  permission, ownership, and error attention remain authoritative. A response that
-  completes while its Ticket is open is already seen; there is no response-generation
-  or message-visibility tracking. The result includes
-  every Ticket status. Done tickets sit under their own **Done** stage section, which
-  is collapsed by default and can be opened to browse like any other section; when a
-  group has no done tickets, no Done section appears. **Chief of Staff** sits first in
-  the rail at the same visual weight as the project headers.
+- **Workspace** — every active ticket in a left rail backed by the board resource
+  (the board is not day-scoped: attention routing spans days; dropped tickets never
+  appear). The rail groups tickets into collapsible boxed **status buckets**, in a
+  fixed order that puts what needs the user first: Errored, Needs you, Kickoff,
+  Stopped, Taken over, Paired, Agent working, Needs approval, Closing out, Blocked,
+  Done. A bucket with no tickets is not rendered; Blocked and Done start collapsed.
+  Every ticket sits in exactly one bucket: its status decides first, Blocked claims
+  only idle tickets, and a kickoff-stage ticket with a parked proposal sits in
+  Kickoff rather than Needs approval. Paired holds both paired work and proposal
+  discussion; Stopped is a ticket whose turn ended with nothing running and nothing
+  asked of the user; Taken over is that same stopped condition while the user holds
+  the stage. Rows carry only the ticket title and one mark, sorted by recent
+  activity.
+
+  The mark carries exactly two signals. An agent working right now spins. Otherwise
+  the mark shows the reply state: a filled accent dot for a Worker reply (or
+  pending permission ask) the user has not seen, the same dot greyed once the user
+  has opened the ticket since that reply, and a faint ring when nothing is waiting.
+  The signals combine Ticket facts with a small durable Ticket-linked ACP
+  projection, so a browser reload or an unopened conversation does not invent or
+  retain stale activity. A completed response stays unseen through reconnect/load
+  until a new turn, explicit reset, or the user opens that Ticket; the projection
+  also remembers that a reply ever completed, which is what keeps a seen reply
+  distinguishable from a ticket that never had one. A response that completes while
+  its Ticket is open is already seen; there is no response-generation or
+  message-visibility tracking. **Chief of Staff** sits first in the rail above the
+  buckets.
 
   The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the
