@@ -366,7 +366,7 @@ class ScriptedAcpAgent:
                     content=[
                         FileEditToolCallContent(
                             type="diff",
-                            path="PROGRESS.md",
+                            path="large-file.md",
                             old_text=whole_file,
                             new_text=whole_file + "small append\n",
                         )

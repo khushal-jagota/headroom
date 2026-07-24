@@ -127,7 +127,6 @@ class ErrorCode(StrEnum):
     scope_missing = "scope_missing"                # §4.4.7 accept without the full pair
     scope_invalid = "scope_invalid"                # next_ceiling before the new Stage / unknown
     stale_claim = "stale_claim"                    # §7.6 stale/foreign claim; detail names it
-    recap_too_early = "recap_too_early"            # §3.3 recap write at needs_success
     title_too_long = "title_too_long"              # §3.3 > title_max_chars
     sprint_overlap = "sprint_overlap"              # §3.1 overlapping date ranges
     link_cycle = "link_cycle"                      # blocks active-cycle rejection

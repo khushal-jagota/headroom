@@ -241,8 +241,9 @@ server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by e
 Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.ts`
 remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. `web/src/lib/dates.ts` holds the date formatting the Day and Sprint screens
-share — the short-month day label the redesign speaks in, plus the weekday name. (The two visible native selects were left un-unified on purpose —
-they share almost nothing real; see `decisions.md`, D77.)
+share — the short-month day label the redesign speaks in, plus the weekday name. The two
+visible native selects remain separate because they share almost nothing beyond being
+native selects.
 
 **The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
 diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
