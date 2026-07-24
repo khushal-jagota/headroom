@@ -12,6 +12,15 @@ venv console script is invalid because its shebang names its build location. The
 substitutes that one target only in a copied wrapper, so production has no override while
 the release-pointer behavior remains hermetic.
 
+## 2026-07-24 — Workspace project filtering does not own Ticket selection
+
+The selected Ticket remains resolved against the complete day-scoped board while the project
+filter narrows only the left-panel roster before its status buckets are built. This keeps a direct
+Workspace Ticket URL valid and avoids closing an inspector merely because the user changes a
+visibility control. The board's existing effective project fields are sufficient for standalone,
+sprint-parented, and no-project choices; no second project contract or canonical client store is
+needed.
+
 ## 2026-07-24 — Status is a sanitized snapshot; cleanup is proof-bound
 
 One operator-produced snapshot feeds both the SSH-usable CLI and the manually refreshed header
