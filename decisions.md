@@ -3,6 +3,45 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-24 — Status is a sanitized snapshot; cleanup is proof-bound
+
+One operator-produced snapshot feeds both the SSH-usable CLI and the manually refreshed header
+popover. This preserves the live/Worker authority boundary and avoids browser polling or a second
+canonical state store. CPU/load/RAM/swap remain nullable on the current Mac; final Linux collection
+and thresholds stay with the existing VPS deployment Ticket rather than being faked or split into a
+duplicate Ticket.
+
+Cleanup has one dry-run/apply inventory and may act only on configured logs, verified backup
+retention, and expired Panels operation temporaries that pass containment and live-reference checks.
+Processes, worktrees, caches, prepared environments, selected releases, and unknown state are never
+automatic deletion targets. One implementation Ticket is appropriate because the backend snapshot,
+CLI/API, popover, and cleanup safety contract share types and acceptance tests; splitting them would
+create overlapping edits and an artificial integration boundary.
+
+## 2026-07-24 — Cleanup apply repeats every safety proof
+
+The Resolution review makes an earlier dry run non-authoritative. Apply therefore recomputes verified
+backup retention membership at mutation time, rejects a root that has become a symlink, and rechecks
+containment, kind, expiry, and live references for every temporary/log target. A path that loses any
+proof remains in place and is reported for review. Shared status does not expose raw Git worktree
+paths: Git may prove their existence, but arbitrary filesystem names are not safe browser evidence.
+
+## 2026-07-24 — Status proof and operator inputs remain local and explicit
+
+A snapshot directory, its metadata/database files, and its managed-tree directory and manifest are
+all proof-bearing evidence. Reject a symlink at any of those boundaries before reading it; only a
+direct child of a non-symlink configured backup root can contribute to recency, retention, or cleanup.
+This keeps an externally valid snapshot link from becoming either health evidence or deletion input.
+
+The Linux maintenance unit loads a separate operator-owned environment with absolute
+`PLAN_DB_PATH`, `PLAN_LOGS_DIR`, and `PLAN_BACKUP_DIR`; it does not reinterpret the backup service's
+`PANELS_*` variables or rely on relative defaults. The live service receives the same selected
+`PLAN_BACKUP_DIR` so its snapshot and maintenance inspect one location.
+
+Process collection treats ordinary subprocess errors as unavailable evidence. It recognises only the
+bounded console-script `serve` forms and the release launcher's `python -m planner serve` form, then
+serialises role, pid, state, and elapsed age only; raw command text is discarded.
+
 ## 2026-07-23 — The single-user Mac uses the signed-in operator identity
 
 Exact-commit deployment needs immutable non-Git releases, backup-before-switch, exact-SHA health,

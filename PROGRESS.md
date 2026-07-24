@@ -1,5 +1,30 @@
 # PROGRESS
 
+## Current work cycle (2026-07-24): Lightweight VPS status and safe cleanup (`t_ub13wga8`)
+
+Implemented in isolated worktree `.worktrees/t_ub13wga8` on branch
+`ticket/t_ub13wga8-vps-status`. One immutable sanitized status snapshot now serves direct
+`panels environment status --json`, read-only `GET /api/vps-status`, and the manually fetched header
+popover. The host-local cleanup command is dry-run by default and can only rotate configured regular
+logs, prune verified backups beyond seven, and delete expired `.backup-*` directories after immediate
+re-proof. It has no HTTP route. macOS resource fields remain null/unavailable; Linux collection stays
+with `t_qrdamx8z`.
+
+The first implementation review's five corrections are complete. The follow-up review's four
+findings are also fixed with regressions: proof-bearing snapshot symlinks are rejected before status,
+retention, or cleanup; the systemd maintenance unit has explicit absolute DB/log/backup inputs and
+the live input carries the same backup root; process probe failures produce a sanitized unavailable
+section; and the collector recognises the actual `python -m planner serve` launcher without retaining
+arguments. The settled focused backend suite passed (`76 passed`, one existing FastAPI/Starlette
+deprecation warning); changed-surface Ruff and strict Mypy passed; `npm --prefix web run check` had
+zero diagnostics; `node web/tests/vps-status.test.mjs` and `git diff --check` passed.
+
+The controller reran the settled focused gates outside the restricted sub-agent sandbox: 76 backend
+tests passed, the focused Playwright popover case passed, Svelte reported zero diagnostics, the
+frontend status test passed, and changed-surface Ruff, strict Mypy, and `git diff --check` passed.
+Independent re-review reports no unresolved finding. `./verify` remains reserved for the final
+committed tree; no merge, push, deployment, or live-state action was performed here.
+
 ## Current work cycle (2026-07-23): Employee workspace-root split (`t_hkrhftnr`)
 
 Implementation is isolated on `ticket/t_hkrhftnr-workspace-root` from current `staging`

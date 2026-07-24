@@ -242,6 +242,73 @@ textarea {
   min-width: 0;
 }
 
+.vps-status {
+  position: relative;
+}
+
+.vps-status-trigger,
+.vps-status-refresh {
+  border: 0;
+  background: transparent;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.vps-status-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.vps-status-trigger:hover,
+.vps-status-trigger:focus-visible,
+.vps-status-refresh:hover,
+.vps-status-refresh:focus-visible {
+  color: var(--text-strong);
+}
+
+.vps-status-mark {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--text-faintest);
+}
+
+.vps-status-trigger[data-state="healthy"] .vps-status-mark { background: var(--accent-done); }
+.vps-status-trigger[data-state="warning"] .vps-status-mark { background: var(--accent-bright); }
+.vps-status-trigger[data-state="critical"] .vps-status-mark { background: var(--accent-error); }
+
+.vps-status-popover {
+  position: absolute;
+  z-index: 3;
+  top: calc(100% + var(--space-3));
+  right: 0;
+  width: min(340px, calc(100vw - var(--space-8)));
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-base);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+}
+
+.vps-status-heading,
+.vps-status-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.vps-status-list { margin: var(--space-3) 0 0; }
+.vps-status-list > div { padding: var(--space-2) 0; border-top: var(--border-hairline) solid var(--border-color); }
+.vps-status-list dt, .vps-status-list dd { margin: 0; font-size: var(--type-xs); }
+.vps-status-list dd { color: var(--text-faint); text-align: right; }
+.vps-status-list > div[data-state="warning"] dd { color: var(--accent-bright); }
+.vps-status-list > div[data-state="critical"] dd { color: var(--accent-error); }
+.vps-status-error { color: var(--accent-error); font-size: var(--type-xs); }
+
 .shell-presence {
   display: flex;
   align-items: center;

@@ -27,7 +27,7 @@ SNAPSHOT_METADATA_NAME = "metadata.json"
 SNAPSHOT_FILES_DIR_NAME = "files"
 SNAPSHOT_FILES_MANIFEST_NAME = "manifest.json"
 SNAPSHOT_FORMAT = "panels-backup-v2"
-RETENTION_COUNT = 3
+RETENTION_COUNT = 7
 
 
 def managed_file_roots(database_path: Path) -> dict[str, Path]:
@@ -64,9 +64,10 @@ def create_database_backup(
     temporary_dir = Path(tempfile.mkdtemp(prefix=".backup-", dir=backup_dir))
     try:
         temporary_database = temporary_dir / SNAPSHOT_DATABASE_NAME
-        with sqlite3.connect(source_db) as source_connection, sqlite3.connect(
-            temporary_database
-        ) as destination_connection:
+        with (
+            sqlite3.connect(source_db) as source_connection,
+            sqlite3.connect(temporary_database) as destination_connection,
+        ):
             source_connection.backup(destination_connection)
         _verify_database(temporary_database)
         checksum = _sha256(temporary_database)
@@ -88,14 +89,11 @@ def create_database_backup(
             json.dumps(metadata, sort_keys=True, indent=2) + "\n"
         )
         snapshot_name = (
-            "snapshot-"
-            + datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            + "-"
-            + uuid.uuid4().hex[:8]
+            "snapshot-" + datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8]
         )
         snapshot = backup_dir / snapshot_name
         os.replace(temporary_dir, snapshot)
-        _retain_verified_snapshots(backup_dir)
+        apply_verified_snapshot_retention(backup_dir, verified_snapshot_retention_plan(backup_dir))
         return snapshot
     except BaseException:
         shutil.rmtree(temporary_dir, ignore_errors=True)
@@ -117,7 +115,10 @@ def restore_database_snapshot(
     """
     if not live_stopped:
         raise ValueError("live environment must be stopped before restore")
-    snapshot = snapshot.expanduser().resolve()
+    snapshot = snapshot.expanduser()
+    if snapshot.is_symlink() or not is_verified_snapshot(snapshot):
+        raise ValueError("snapshot is not verified")
+    snapshot = snapshot.resolve()
     destination_db = destination_db.expanduser().resolve()
     metadata_path = snapshot / SNAPSHOT_METADATA_NAME
     snapshot_database = snapshot / SNAPSHOT_DATABASE_NAME
@@ -229,8 +230,11 @@ def _managed_files_valid(files_dir: Path, recorded: object) -> bool:
     manifest_sha = recorded.get("manifest_sha256")
     if not isinstance(roots, list) or not isinstance(manifest_sha, str):
         return False
+    manifest_path = files_dir / SNAPSHOT_FILES_MANIFEST_NAME
+    if files_dir.is_symlink() or not files_dir.is_dir() or manifest_path.is_symlink():
+        return False
     try:
-        manifest_bytes = (files_dir / SNAPSHOT_FILES_MANIFEST_NAME).read_bytes()
+        manifest_bytes = manifest_path.read_bytes()
     except OSError:
         return False
     if hashlib.sha256(manifest_bytes).hexdigest() != manifest_sha:
@@ -243,7 +247,11 @@ def _managed_files_valid(files_dir: Path, recorded: object) -> bool:
         return False
     for name in roots:
         root_copy = files_dir / name
-        if not root_copy.is_dir() or _relative_manifest(root_copy) != manifest.get(name):
+        if (
+            root_copy.is_symlink()
+            or not root_copy.is_dir()
+            or _relative_manifest(root_copy) != manifest.get(name)
+        ):
             return False
     return True
 
@@ -294,10 +302,19 @@ def _restore_managed_files(
         raise
 
 
-def _verified_snapshots(backup_dir: Path) -> list[Path]:
+def verified_snapshots(backup_dir: Path) -> list[Path]:
+    """Return only complete, checksum-verified snapshots, newest first."""
+    configured_root = backup_dir.expanduser()
+    if configured_root.is_symlink() or not configured_root.is_dir():
+        return []
+    root = configured_root.resolve()
     snapshots: list[tuple[Path, str]] = []
-    for candidate in backup_dir.glob("snapshot-*"):
-        if not _is_verified_snapshot(candidate):
+    for candidate in configured_root.glob("snapshot-*"):
+        if (
+            candidate.is_symlink()
+            or candidate.parent.resolve() != root
+            or not _is_verified_snapshot(candidate)
+        ):
             continue
         try:
             metadata = json.loads((candidate / SNAPSHOT_METADATA_NAME).read_text())
@@ -311,10 +328,18 @@ def _verified_snapshots(backup_dir: Path) -> list[Path]:
     ]
 
 
-def _is_verified_snapshot(candidate: Path) -> bool:
+def is_verified_snapshot(candidate: Path) -> bool:
+    """Whether ``candidate`` is a complete verified Panels backup snapshot."""
     metadata_path = candidate / SNAPSHOT_METADATA_NAME
     database_path = candidate / SNAPSHOT_DATABASE_NAME
-    if not candidate.is_dir() or not metadata_path.is_file() or not database_path.is_file():
+    if (
+        candidate.is_symlink()
+        or not candidate.is_dir()
+        or metadata_path.is_symlink()
+        or not metadata_path.is_file()
+        or database_path.is_symlink()
+        or not database_path.is_file()
+    ):
         return False
     try:
         metadata = json.loads(metadata_path.read_text())
@@ -334,12 +359,50 @@ def _is_verified_snapshot(candidate: Path) -> bool:
     return True
 
 
+def verified_snapshot_retention_plan(backup_dir: Path) -> tuple[Path, ...]:
+    """The verified paths that retention may remove, oldest-first.
+
+    Invalid and ambiguous directories never enter this plan.  This is the one
+    proof used by backup publication, status, and host-local cleanup.
+    """
+    return tuple(reversed(verified_snapshots(backup_dir)[RETENTION_COUNT:]))
+
+
+def apply_verified_snapshot_retention(backup_dir: Path, paths: tuple[Path, ...]) -> None:
+    """Remove the supplied, still-proven verified snapshots under ``backup_dir``."""
+    configured_root = backup_dir.expanduser()
+    if configured_root.is_symlink() or not configured_root.is_dir():
+        raise ValueError("backup retention root is no longer a regular directory")
+    root = configured_root.resolve()
+    current_plan = {path.resolve() for path in verified_snapshot_retention_plan(configured_root)}
+    for candidate in paths:
+        resolved = candidate.expanduser().resolve()
+        if (
+            candidate.is_symlink()
+            or resolved.parent != root
+            or resolved not in current_plan
+            or not is_verified_snapshot(resolved)
+        ):
+            raise ValueError("backup retention target is no longer verified")
+        # This writer adds one snapshot at a time to a directory it normally keeps at
+        # RETENTION_COUNT, so one successful removal restores the invariant without
+        # copying a snapshot merely to delete it. If that removal fails, no older
+        # recovery point has been touched.
+        shutil.rmtree(resolved)
+
+
+# Backwards-compatible private aliases stay inside this module while callers use
+# the public proof functions above.
+def _verified_snapshots(backup_dir: Path) -> list[Path]:
+    return verified_snapshots(backup_dir)
+
+
+def _is_verified_snapshot(candidate: Path) -> bool:
+    return is_verified_snapshot(candidate)
+
+
 def _retain_verified_snapshots(backup_dir: Path) -> None:
-    excess = _verified_snapshots(backup_dir)[RETENTION_COUNT:]
+    excess = verified_snapshot_retention_plan(backup_dir)
     if not excess:
         return
-    # This writer adds one snapshot at a time to a directory it normally keeps at
-    # RETENTION_COUNT, so one successful removal restores the invariant without
-    # copying a snapshot merely to delete it. If that removal fails, no older
-    # recovery point has been touched.
-    shutil.rmtree(excess[-1])
+    apply_verified_snapshot_retention(backup_dir, excess)

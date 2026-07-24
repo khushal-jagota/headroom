@@ -37,6 +37,7 @@ class Config:
     ui_debounce_ms: int
     dispatcher_lock_path: str
     logs_dir: str
+    backup_dir: str
     events_read_limit: int
     db_busy_timeout_ms: int
     shutdown_grace_seconds: int
@@ -243,6 +244,7 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
             cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
         ),
         logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", "data/logs"),
+        backup_dir=_str_value(cfg, env, "backup_dir", "PLAN_BACKUP_DIR", "data/backups"),
         events_read_limit=_int_value(cfg, env, "events_read_limit", "PLAN_EVENTS_READ_LIMIT", 500),
         db_busy_timeout_ms=_int_value(
             cfg, env, "db_busy_timeout_ms", "PLAN_DB_BUSY_TIMEOUT_MS", 5000
