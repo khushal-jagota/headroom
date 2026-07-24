@@ -1351,32 +1351,28 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
 
-    with pytest.raises(PlannerError) as exc_early:
-        data.write_recap(tmp_db, t.id, body="too early", actor="agent", now=now)
-    assert exc_early.value.code is ErrorCode.recap_too_early
-    assert data.read_ticket(tmp_db, t.id).recap == ""
+    # Recap is never blocked: writable from the first worker stage.
+    assert t.stage == "needs_success"
+    t = data.write_recap(tmp_db, t.id, body="first recap", actor="agent", now=now)
+    assert t.recap == "first recap"
+    assert t.stage == "needs_success"
+    assert len(_events(tmp_db, cfg, t.id, EventKind.recap_updated)) == 1
 
     _scope(tmp_db, t, "needs_approach", AtCap.propose, fake_clock)
     t = data.file_proposal(tmp_db, t.id, field="success", body="s", actor="agent", now=now)
     assert t.stage == "needs_approach"
 
-    t = data.write_recap(tmp_db, t.id, body="first recap", actor="agent", now=now)
-    assert t.recap == "first recap"
-    assert len(_events(tmp_db, cfg, t.id, EventKind.recap_updated)) == 1
-
     t = data.write_recap(tmp_db, t.id, body="second recap", actor="agent", now=now)
     assert t.recap == "second recap"
     assert len(_events(tmp_db, cfg, t.id, EventKind.recap_updated)) == 2
     assert t.stage == "needs_approach"
-    assert len(_events(tmp_db, cfg, t.id, EventKind.stage_changed)) == 1
 
+    # And still writable on a terminal ticket.
     t = data.drop_ticket(tmp_db, t.id, actor="human", now=now)
     assert t.stage == "dropped"
-    with pytest.raises(PlannerError) as exc_dropped:
-        data.write_recap(tmp_db, t.id, body="post-drop recap", actor="agent", now=now)
-    assert exc_dropped.value.code is ErrorCode.recap_too_early
-    assert exc_dropped.value.detail["stage"] == "dropped"
-    assert data.read_ticket(tmp_db, t.id).recap == "second recap"
+    t = data.write_recap(tmp_db, t.id, body="post-drop recap", actor="agent", now=now)
+    assert t.recap == "post-drop recap"
+    assert len(_events(tmp_db, cfg, t.id, EventKind.recap_updated)) == 3
 
 
 def test_a13_sprint_assignment_rules(

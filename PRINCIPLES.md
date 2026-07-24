@@ -36,5 +36,5 @@ These are standing rules. They apply unless a live owner decision overrides them
 
 ## Test discipline
 - Requirements and design decisions are stated concretely — decisions with criteria, never vibes or open qualifiers.
-- Acceptance tests assert specific stated values, never vibes. Tests evolve deliberately with the design; when one changes, the change is intentional and noted in decisions.md, never a silent weakening.
+- Acceptance tests assert specific stated values, never vibes. Tests evolve deliberately with the design; when one changes, the change is intentional and recorded on the owning ticket, never a silent weakening.
 - Verification means running the check fresh and showing full output. Results are never asserted from memory.
