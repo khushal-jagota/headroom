@@ -1,5 +1,38 @@
 # PROGRESS
 
+## Current work cycle (2026-07-25): Mobile Workspace selection pages (`t_w5gmk3cq`)
+
+Implementation is isolated on `ticket/t_w5gmk3cq-mobile-workspace-pages` from current
+`staging` (`a2c0ee01`). Success and approach are approved: the existing 960px Workspace
+layout boundary must also choose navigation, sending narrow Ticket and Chief of Staff
+selections to their complete standalone pages while preserving wider two-pane behavior.
+
+Current stage: implementation settled and reviewed. The worktree has its own editable Python
+installation and Node dependency trees, with the planner import resolving to the worktree.
+The two Workspace handlers now choose existing standalone routes at the existing narrow
+breakpoint; desktop destinations are unchanged. The new focused Playwright case demonstrated
+RED before the source edit and GREEN afterward; all five Chief/Workspace cases pass, Svelte
+check reports zero errors and warnings, and the tracked frontend build is current.
+
+Real 390px Ticket and Chief of Staff destination screenshots are stored as Ticket artifacts.
+Independent plan and implementation reviews both report no unresolved finding.
+
+The first foreground canonical attempt was externally terminated during frontend Node tests
+and produced no verdict. After removing only its four exact generated runtime leftovers, the
+warranted detached attempt completed: Ruff and MyPy clean, 1,451 unit tests passed, Svelte
+check/build and all frontend tests passed, and 129 Playwright e2e tests passed. The retained
+162-line log has SHA-256
+`bfe8f131d67dd009df18ddbc5a4ff06cb3667cfb63ffcddaa66ba38a30381815` and ends
+`VERIFY: PASS`.
+
+Current stage: Closeout. The implementation package is approved. The owner explicitly
+directed a compact integration: incorporate `main` and current `staging`, resolve only real
+conflicts, push the resulting revision to `origin/staging`, and do not rerun `./verify`.
+`origin/main` is already an ancestor of `origin/staging`; the ticket branch began at local
+`staging` and will merge the newly fetched remote staging tip. The unrelated dirty staging
+checkout remains untouched. Next: commit, merge, push, confirm the remote SHA and rolling PR,
+then propose the closeout report. Blockers: none.
+
 ## Current work cycle (2026-07-24): Restore day-scoped Workspace (`t_p9chftfg`)
 
 Implementation is isolated on `ticket/t_p9chftfg-day-workspace` from current `staging`

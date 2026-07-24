@@ -76,6 +76,50 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     assert page.locator("[data-acp-conversation-pane]").count() == 1
 
 
+def test_mobile_workspace_selections_open_standalone_pages(
+    server, context_factory, open_page, cli, api
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Mobile workspace ticket",
+    )["id"]
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": tid})
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace",
+        f'[data-card][data-ticket-id="{tid}"]',
+        settled=True,
+    )
+    page.set_viewport_size({"width": 390, "height": 844})
+
+    page.click(f'[data-card][data-ticket-id="{tid}"]')
+    page.wait_for_url(f"{server.base}/#/ticket/{tid}", timeout=WAIT_MS)
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{tid}"] .ticket-title',
+        timeout=WAIT_MS,
+    )
+    assert page.locator('section[data-screen="workspace"]').count() == 0
+    assert page.inner_text(".ticket-title") == "Mobile workspace ticket"
+
+    page.goto(f"{server.base}/#/workspace/{tid}")
+    page.wait_for_selector("[data-chief-of-staff-button]", timeout=WAIT_MS)
+    page.click("[data-chief-of-staff-button]")
+    page.wait_for_url(f"{server.base}/#/chief", timeout=WAIT_MS)
+    page.wait_for_selector(
+        'section[data-screen="chief"] [data-chat-input]',
+        timeout=WAIT_MS,
+    )
+    assert page.locator('section[data-screen="workspace"]').count() == 0
+    assert page.inner_text("h1") == "Chief of Staff"
+
+
 def test_workspace_ticket_route_restores_on_load_refresh_and_history(
     server, context_factory, open_page, cli, api
 ) -> None:

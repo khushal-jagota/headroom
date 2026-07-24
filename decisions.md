@@ -3716,3 +3716,30 @@ agent ask the user has not handled. The seen marker generalizes the existing ack
 (`has_completed_response` remembered past acknowledge) instead of adding a parallel tracker,
 and rides the existing `ticket_conversation_projection_changed` event, so the reactivity
 completeness test needs no new mapping.
+
+## 2026-07-25 — t_w5gmk3cq reuses the layout breakpoint as the navigation decision
+
+- Use the existing `(max-width: 960px)` condition at click time. It is already the exact
+  boundary where CSS removes the Workspace inspector, so a second breakpoint or durable
+  responsive state would create two facts for one layout decision.
+- Reuse the existing standalone Ticket and Chief of Staff routes. The ticket changes only
+  which existing destination Workspace selects; it adds no new page or navigation model.
+- Keep the implementation slice bounded to the Workspace route, focused browser coverage,
+  current frontend documentation, and generated frontend output. The parent owns memory,
+  review records, screenshots, and canonical verification.
+- Capture evidence from an isolated worktree-local server rather than the installed service.
+  A first fixture command accidentally reached the installed live CLI and created temporary
+  Ticket `t_54kav7m8`; resolve the exact target, hard-delete only that newly created fixture,
+  and record the correction. No pre-existing Ticket or file was removed.
+- Treat the foreground canonical run's exit 143 as an interrupted attempt because it emitted
+  no verifier verdict. Remove only its exact untracked runtime fixtures, confirm no child
+  remains, and run the warranted canonical attempt detached with a retained full log. This
+  is recovery from interruption, not a rerun to quote a prior result.
+- At Closeout, follow the owner's explicit verification override: do not rerun `./verify`.
+  Preserve the prior clean implementation result, merge fetched `origin/main` and
+  `origin/staging` into the Ticket branch, inspect/repair only merge conflicts, and push the
+  exact result to `origin/staging`.
+- Do not update through `/opt/panels/staging` because it contains unrelated uncommitted work,
+  including overlapping `PROGRESS.md` and `decisions.md`. The Ticket branch already descends
+  from that local staging commit; integrate the newer remote staging tip in the isolated
+  worktree and advance the remote ref directly.
