@@ -230,10 +230,16 @@ def test_release_launcher_preserves_allowlisted_external_runtime_variables(tmp_p
     )
     env = build_release_launch_env(
         release,
-        ambient={"PLAN_DB_PATH": "/state/db", "PLAN_LOGS_DIR": "/logs", "SECRET": "no"},
+        ambient={
+            "PLAN_DB_PATH": "/state/db",
+            "PLAN_LOGS_DIR": "/logs",
+            "PLAN_BACKUP_DIR": "/backups",
+            "SECRET": "no",
+        },
     )
     assert env["PLAN_DB_PATH"] == "/state/db"
     assert env["PLAN_LOGS_DIR"] == "/logs"
+    assert env["PLAN_BACKUP_DIR"] == "/backups"
     assert "SECRET" not in env
 
 

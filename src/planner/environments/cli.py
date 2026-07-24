@@ -11,6 +11,7 @@ from pathlib import Path
 import click
 
 from planner.conversation.hermes_backend_configuration import resolve_hermes_python
+from planner.core.config import Config, load_config
 from planner.environments.backup import create_database_backup, restore_database_snapshot
 from planner.environments.contracts import (
     DynamicEnvironmentPort,
@@ -44,6 +45,13 @@ from planner.environments.materialize import (
 from planner.environments.release import build_exported_release, validate_release_manifest
 from planner.environments.repository_runtime import resolve_repository_runtime_python
 from planner.environments.runtime_port import reserve_available_tcp_listener
+from planner.environments.vps_status import (
+    CleanupInventory,
+    VpsStatusDependencies,
+    apply_cleanup_inventory,
+    collect_cleanup_inventory,
+    collect_vps_status,
+)
 
 ExecFn = Callable[[str, list[str], Mapping[str, str]], object]
 ResolveInstanceFn = Callable[..., ResolvedEnvironmentInstance]
@@ -51,6 +59,7 @@ MaterializeFn = Callable[..., EnvironmentManifest]
 InspectInstanceFn = Callable[..., EnvironmentManifest]
 ImportLiveFn = Callable[..., EnvironmentManifest]
 ResolveRepositoryRuntimePythonFn = Callable[[Path], Path]
+LoadConfigFn = Callable[[], Config]
 
 
 @dataclass(frozen=True)
@@ -66,11 +75,62 @@ class EnvironmentCliDependencies:
     resolve_repository_runtime_python: ResolveRepositoryRuntimePythonFn = (
         resolve_repository_runtime_python
     )
+    load_config: LoadConfigFn = load_config
+    vps_status_dependencies: VpsStatusDependencies | None = None
 
 
 @click.group("environment")
 def environment() -> None:
     """Prepare and run isolated Panels environments."""
+
+
+def _environment_cli_dependencies() -> EnvironmentCliDependencies:
+    dependencies = click.get_current_context().obj
+    return (
+        dependencies
+        if isinstance(dependencies, EnvironmentCliDependencies)
+        else EnvironmentCliDependencies()
+    )
+
+
+@environment.command("status")
+@click.option(
+    "--json", "as_json", is_flag=True, help="Print the sanitized status snapshot as JSON."
+)
+def status(as_json: bool) -> None:
+    """Collect a local operational snapshot without contacting the HTTP server."""
+    dependencies = _environment_cli_dependencies()
+    snapshot = collect_vps_status(
+        dependencies.load_config(),
+        dependencies=dependencies.vps_status_dependencies,
+    )
+    payload = snapshot.as_dict()
+    if as_json:
+        click.echo(json.dumps(payload, sort_keys=True))
+        return
+    click.echo(f"{payload['overall_state']}: {payload['collected_at']}")
+
+
+@environment.command("cleanup")
+@click.option(
+    "--apply", "apply", is_flag=True, help="Apply a fresh, immediately re-proven inventory."
+)
+@click.option("--json", "as_json", is_flag=True, help="Print the inventory or result as JSON.")
+def cleanup(apply: bool, as_json: bool) -> None:
+    """Inspect or safely maintain host-local Panels state (dry run by default)."""
+    dependencies = _environment_cli_dependencies()
+    inventory: CleanupInventory = collect_cleanup_inventory(
+        dependencies.load_config(), dependencies=dependencies.vps_status_dependencies
+    )
+    payload: dict[str, object] = {"dry_run": not apply, **inventory.as_dict()}
+    if apply:
+        payload["result"] = apply_cleanup_inventory(inventory).as_dict()
+    if as_json:
+        click.echo(json.dumps(payload, sort_keys=True))
+        return
+    click.echo("applied cleanup" if apply else "cleanup dry run")
+    for candidate in inventory.candidates:
+        click.echo(f"{candidate.kind}: {candidate.path}")
 
 
 @environment.command("backup")
@@ -146,9 +206,7 @@ def backup_current(source_db: Path, backup_dir: Path, current_release: Path) -> 
     "--candidate", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
 )
 @click.option("--current", "current_pointer", type=click.Path(path_type=Path), required=True)
-@click.option(
-    "--source-db", type=click.Path(path_type=Path, dir_okay=False), required=True
-)
+@click.option("--source-db", type=click.Path(path_type=Path, dir_okay=False), required=True)
 @click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
 @click.option("--records", "records_path", type=click.Path(path_type=Path), required=True)
 @click.option("--health-url", required=True)

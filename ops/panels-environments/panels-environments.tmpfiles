@@ -9,4 +9,5 @@ d /opt/panels/staging 0750 panels-worker panels-worker -
 d /opt/panels/environment-manager 0755 root root -
 d /etc/panels/environments 0755 root root -
 z /etc/panels/environments/live.env 0640 panels-live panels-live -
+z /etc/panels/environments/maintenance.env 0640 panels-live panels-live -
 z /etc/panels/environments/staging.env 0640 panels-worker panels-worker -

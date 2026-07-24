@@ -17,6 +17,7 @@ install -d -m 0750 -o panels-worker -g panels-worker /opt/panels/staging
 install -d -m 0755 -o root -g root /opt/panels/environment-manager
 install -d -m 0755 -o root -g root /etc/panels/environments
 install -m 0640 -o panels-live -g panels-live /dev/null /etc/panels/environments/live.env
+install -m 0640 -o panels-live -g panels-live /dev/null /etc/panels/environments/maintenance.env
 install -m 0640 -o panels-worker -g panels-worker /dev/null /etc/panels/environments/staging.env
 
 chown -R panels-live:panels-live /var/lib/panels/environments/live

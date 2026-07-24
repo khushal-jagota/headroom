@@ -13,7 +13,7 @@ managed-file tree    ──file copy────┤
                             │ integrity + checksums
                             ▼
                     atomic verified snapshot
-                            │ keep newest three
+                            │ keep newest seven verified snapshots
                             ▼
                     operator-selected restore
 ```
@@ -32,8 +32,9 @@ captured once it exists; until then its absence is a normal empty capture, not a
 The temporary directory is never published, and a snapshot publishes only when both the database
 integrity check and the managed-file manifest verify. A failed copy, integrity check,
 verification, metadata write, or atomic publish therefore leaves existing verified snapshots
-untouched. Retention runs only after publication and removes the single oldest recovery point
-after the new one succeeds. If that removal fails, the older recovery point remains.
+untouched. Retention runs only after publication and keeps the seven newest verified snapshots,
+removing only verified recovery points beyond that set. If removal fails, the older recovery point
+remains.
 
 The database and managed-file tree are independently verified recovery artifacts captured
 back-to-back at nightly granularity; they are not a single transactional point-in-time. This is

@@ -67,7 +67,7 @@ generic Stage setter.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.
-- **`environment prepare / inspect / import-live / run / reset / remove / render-linux`**
+- **`environment status / cleanup / prepare / inspect / import-live / run / reset / remove / render-linux`**
   — manage prepared live and staging runtime instances. `environment import-live`
   requires explicit database, managed-files, Hermes-home, runtime-user-home, and logs
   sources, then atomically switches one complete durable generation into an already
@@ -76,6 +76,10 @@ generic Stage setter.
   checkout's interpreter. Live uses its configured ingress port; staging chooses an
   available port each time it runs. `render-linux` requires the pinned
   `--environment-manager-root` used to launch either private target checkout.
+  `environment status --json` is a direct host-local snapshot command and works without the
+  server. `environment cleanup` is dry-run by default; only `--apply` mutates a newly collected,
+  immediately re-proven inventory under the operator's filesystem permissions. It has no HTTP
+  route and never removes processes, worktrees, caches, prepared environments, or releases.
 - **`restart`** — ask that running `serve` command to load the current Panels code again.
   The command reports when the request is accepted. If `serve` is not running, it reports
   the connection error and stops.

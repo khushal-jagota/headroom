@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 from pathlib import Path
@@ -12,7 +13,10 @@ from planner.core.db import connect, create_schema
 from planner.environments.backup import (
     _is_verified_snapshot,
     create_database_backup,
+    is_verified_snapshot,
     restore_database_snapshot,
+    verified_snapshot_retention_plan,
+    verified_snapshots,
 )
 from planner.environments.cli import environment
 
@@ -113,17 +117,64 @@ def test_backup_publish_failure_leaves_existing_snapshot_intact(
     assert sorted(path.name for path in backup_dir.glob("snapshot-*")) == [old_snapshot.name]
 
 
-def test_retention_keeps_three_verified_snapshots(tmp_path: Path) -> None:
+def test_retention_keeps_seven_verified_snapshots(tmp_path: Path) -> None:
     source = tmp_path / "planning.db"
     backup_dir = tmp_path / "backups"
     with sqlite3.connect(source) as connection:
         connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    for revision in range(4):
+    for revision in range(8):
         create_database_backup(source, backup_dir, str(revision))
 
     snapshots = sorted(backup_dir.glob("snapshot-*"))
-    assert len(snapshots) == 3
+    assert len(snapshots) == 7
     assert all((snapshot / "metadata.json").exists() for snapshot in snapshots)
+
+
+def test_verified_snapshot_evidence_rejects_symlinked_snapshots_and_proof_entries(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "planning.db"
+    backup_dir = tmp_path / "backups"
+    external_dir = tmp_path / "external-backups"
+    with sqlite3.connect(source) as connection:
+        connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
+    _seed_managed_tree(tmp_path, "regular")
+    regular = create_database_backup(source, backup_dir, "regular")
+    external = create_database_backup(source, external_dir, "external")
+    linked_snapshot = backup_dir / "snapshot-external-link"
+    linked_snapshot.symlink_to(external, target_is_directory=True)
+
+    linked_metadata = backup_dir / "snapshot-linked-metadata"
+    shutil.copytree(regular, linked_metadata)
+    (linked_metadata / "metadata.json").unlink()
+    os.symlink(external / "metadata.json", linked_metadata / "metadata.json")
+
+    linked_database = backup_dir / "snapshot-linked-database"
+    shutil.copytree(regular, linked_database)
+    (linked_database / "database.sqlite").unlink()
+    os.symlink(external / "database.sqlite", linked_database / "database.sqlite")
+
+    linked_managed_tree = backup_dir / "snapshot-linked-managed-tree"
+    shutil.copytree(regular, linked_managed_tree)
+    shutil.rmtree(linked_managed_tree / "files")
+    os.symlink(external / "files", linked_managed_tree / "files")
+
+    linked_manifest = backup_dir / "snapshot-linked-manifest"
+    shutil.copytree(regular, linked_manifest)
+    (linked_manifest / "files" / "manifest.json").unlink()
+    os.symlink(
+        external / "files" / "manifest.json",
+        linked_manifest / "files" / "manifest.json",
+    )
+
+    assert is_verified_snapshot(regular)
+    assert not is_verified_snapshot(linked_snapshot)
+    assert not is_verified_snapshot(linked_metadata)
+    assert not is_verified_snapshot(linked_database)
+    assert not is_verified_snapshot(linked_managed_tree)
+    assert not is_verified_snapshot(linked_manifest)
+    assert verified_snapshots(backup_dir) == [regular]
+    assert verified_snapshot_retention_plan(backup_dir) == ()
 
 
 def test_retention_keeps_newest_by_creation_metadata(tmp_path: Path) -> None:
@@ -131,7 +182,7 @@ def test_retention_keeps_newest_by_creation_metadata(tmp_path: Path) -> None:
     backup_dir = tmp_path / "backups"
     with sqlite3.connect(source) as connection:
         connection.execute("CREATE TABLE records (value TEXT NOT NULL)")
-    snapshots = [create_database_backup(source, backup_dir, str(revision)) for revision in range(3)]
+    snapshots = [create_database_backup(source, backup_dir, str(revision)) for revision in range(7)]
     # Insertion order deliberately differs from chronological order: the second
     # snapshot is the oldest by created_at, so it -- not the first -- is trimmed.
     created_ats = {
@@ -144,13 +195,13 @@ def test_retention_keeps_newest_by_creation_metadata(tmp_path: Path) -> None:
         metadata["created_at"] = created_at
         (snapshots[revision] / "metadata.json").write_text(json.dumps(metadata))
 
-    create_database_backup(source, backup_dir, "3")
+    create_database_backup(source, backup_dir, "7")
 
     retained_revisions = {
         json.loads((snapshot / "metadata.json").read_text())["deployed_revision"]
         for snapshot in backup_dir.glob("snapshot-*")
     }
-    assert retained_revisions == {"0", "2", "3"}
+    assert retained_revisions == {"0", "2", "3", "4", "5", "6", "7"}
 
 
 def test_retention_failure_leaves_existing_snapshots_intact(
@@ -191,7 +242,7 @@ def test_retention_does_not_duplicate_an_old_snapshot_before_removal(
     monkeypatch.setattr("planner.environments.backup.shutil.copytree", fail_copy)
     create_database_backup(source, backup_dir, "new")
 
-    assert len(tuple(backup_dir.glob("snapshot-*"))) == 3
+    assert len(tuple(backup_dir.glob("snapshot-*"))) == 7
 
 
 def test_restore_requires_stopped_live_and_removes_stale_sidecars(tmp_path: Path) -> None:
