@@ -28,10 +28,14 @@ checks; zero Svelte diagnostics; production frontend build and frontend tests; a
 Playwright tests, ending `VERIFY: PASS`. No source or generated application file changed after the
 run. No merge, push, deployment, or live-state action was performed here.
 
-Closeout begins from current `staging`/`origin/staging` at `2fbf12bb`, the same base already contained
-by the Ticket branch, so no reconciliation merge is required. The final closeout revision will include
-this bookkeeping update, receive its own canonical `./verify`, then advance and push `staging` only if
-that exact revision remains green. No deployment is part of this Ticket; Linux resource collection
+Closeout began from `staging`/`origin/staging` at `2fbf12bb`, the same base already contained by the
+Ticket branch, so no reconciliation merge was required. The integrated revision passed the canonical
+closeout `./verify`: Ruff; strict Mypy across 161 source files; 1,461 unit tests; compile/CSS checks;
+zero Svelte diagnostics; production frontend build and frontend tests; and 127 Playwright tests,
+ending `VERIFY: PASS`. `staging` and `origin/staging` were advanced to that exact green application
+revision, and rolling PR [#7](https://github.com/khushal-jagota/panels/pull/7) remains open from
+`staging` to `main`. This closeout record is the only later change; no source or generated application
+file changed after the green gate. No deployment is part of this Ticket; Linux resource collection
 and host adoption remain with `t_qrdamx8z`.
 
 ## Current work cycle (2026-07-23): Employee workspace-root split (`t_hkrhftnr`)
