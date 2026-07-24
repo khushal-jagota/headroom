@@ -22,8 +22,11 @@ zero diagnostics; `node web/tests/vps-status.test.mjs` and `git diff --check` pa
 The controller reran the settled focused gates outside the restricted sub-agent sandbox: 76 backend
 tests passed, the focused Playwright popover case passed, Svelte reported zero diagnostics, the
 frontend status test passed, and changed-surface Ruff, strict Mypy, and `git diff --check` passed.
-Independent re-review reports no unresolved finding. `./verify` remains reserved for the final
-committed tree; no merge, push, deployment, or live-state action was performed here.
+Independent re-review reports no unresolved finding. The committed tree then passed the one
+canonical `./verify`: Ruff; strict Mypy across 161 source files; 1,461 unit tests; compile and CSS
+checks; zero Svelte diagnostics; production frontend build and frontend tests; and all 127
+Playwright tests, ending `VERIFY: PASS`. No source or generated application file changed after the
+run. No merge, push, deployment, or live-state action was performed here.
 
 ## Current work cycle (2026-07-23): Employee workspace-root split (`t_hkrhftnr`)
 

@@ -23,5 +23,13 @@ Focused evidence on the settled source:
 - Focused Playwright popover test: `1 passed` in the controller environment.
 - Independent correction re-review: `PASS`, with no unresolved finding.
 
-`./verify` is reserved for the committed final tree. No merge, push, deployment, restart, or
-live-state action was performed.
+Canonical completion evidence on the committed application tree:
+
+- `./verify`: `VERIFY: PASS`.
+- Ruff passed; strict Mypy passed across 161 source files.
+- 1,461 unit tests and 127 Playwright tests passed.
+- Compile/CSS checks, zero-diagnostic Svelte check, production frontend build, and all frontend
+  tests passed.
+
+No source or generated application file changed after that run. No merge, push, deployment,
+restart, or live-state action was performed.
