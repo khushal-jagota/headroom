@@ -33,10 +33,11 @@ def test_v28_to_v29_adds_ticket_conversation_projection_idempotently(tmp_path) -
         "ticket_id",
         "latest_activity_state",
         "has_completed_response_awaiting_user",
+        "has_completed_response",
         "has_pending_permission",
         "updated_at",
     }
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     sql_before = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' "
         "AND name='ticket_conversation_projections'"
@@ -90,7 +91,7 @@ def test_v31_to_v32_clears_legacy_errors_without_backend_provenance(tmp_path) ->
 
     create_schema(conn)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     assert [
         tuple(row)
         for row in conn.execute(
@@ -140,7 +141,7 @@ def test_v32_to_v33_seeds_durable_conversation_from_existing_binding(tmp_path) -
             "FROM employee_conversations WHERE employee_id = 't_bound'"
         ).fetchone()
     ) == ("t_bound", "ticket", "t_bound", "codex", "gpt-5", "high", 7, 1, 2)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM employee_conversations").fetchone()[0] == 1
     conn.close()
@@ -163,7 +164,7 @@ def test_v33_to_v34_adds_null_safe_employee_configuration_catalog_cache(tmp_path
         "catalog_json",
         "discovered_at",
     }
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     conn.close()
 
 
@@ -232,7 +233,7 @@ def test_v35_to_v36_allows_proposal_discussion_and_preserves_rows(tmp_path) -> N
 
     create_schema(conn)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
     ).fetchone()[0]
@@ -245,6 +246,88 @@ def test_v35_to_v36_allows_proposal_discussion_and_preserves_rows(tmp_path) -> N
     conn.execute(
         "UPDATE tickets SET ticket_status = 'proposal_discussion' WHERE id = 't_awaiting'"
     )
+    conn.close()
+
+
+def test_v36_to_v37_adds_has_completed_response_and_backfills_from_awaiting(
+    tmp_path,
+) -> None:
+    conn = connect(str(tmp_path / "v36-to-v37-completed-response.db"))
+    create_schema(conn)
+    # Rebuild the projection table into its settled v36 shape (no
+    # has_completed_response) and rewind the schema marker so create_schema runs
+    # the forward v37 migration.
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("DROP TABLE ticket_conversation_projections")
+    conn.execute(
+        "CREATE TABLE ticket_conversation_projections ("
+        "ticket_id TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE, "
+        "latest_activity_state TEXT, "
+        "has_completed_response_awaiting_user INTEGER NOT NULL DEFAULT 0 "
+        "CHECK (has_completed_response_awaiting_user IN (0,1)), "
+        "has_pending_permission INTEGER NOT NULL DEFAULT 0 "
+        "CHECK (has_pending_permission IN (0,1)), "
+        "updated_at INTEGER NOT NULL)"
+    )
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA user_version=36")
+    for ticket_id in ("t_awaiting_reply", "t_quiet"):
+        _insert_ticket(
+            conn,
+            id=ticket_id,
+            title=ticket_id,
+            worker_type="coding",
+            employee_backend="hermes",
+            stage="needs_success",
+            ceiling="needs_success",
+            ticket_status="empty",
+            fields=_EMPTY_CODING_FIELDS,
+            created_at=1,
+            updated_at=1,
+        )
+    conn.execute(
+        "INSERT INTO ticket_conversation_projections ("
+        "ticket_id, latest_activity_state, has_completed_response_awaiting_user, "
+        "has_pending_permission, updated_at) VALUES "
+        "('t_awaiting_reply', 'idle', 1, 0, 2), ('t_quiet', 'idle', 0, 0, 2)"
+    )
+    conn.commit()
+
+    create_schema(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
+    columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(ticket_conversation_projections)")
+    }
+    assert "has_completed_response" in columns
+    projections_sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='ticket_conversation_projections'"
+    ).fetchone()[0]
+    assert "has_completed_response IN (0,1)" in projections_sql
+    # An awaiting reply backfills to "a reply completed"; a quiet row stays 0.
+    assert [
+        tuple(row)
+        for row in conn.execute(
+            "SELECT ticket_id, has_completed_response_awaiting_user, "
+            "has_completed_response FROM ticket_conversation_projections "
+            "ORDER BY ticket_id"
+        )
+    ] == [("t_awaiting_reply", 1, 1), ("t_quiet", 0, 0)]
+    # The new column rejects non-boolean values.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE ticket_conversation_projections SET has_completed_response = 2 "
+            "WHERE ticket_id = 't_quiet'"
+        )
+    # Re-running create_schema is a no-op on the migrated table.
+    sql_before = projections_sql
+    create_schema(conn)
+    assert conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' "
+        "AND name='ticket_conversation_projections'"
+    ).fetchone()[0] == sql_before
     conn.close()
 
 
@@ -485,7 +568,7 @@ def test_v25_to_v26_assigns_exact_hermes_and_preserves_ticket_bytes(tmp_path) ->
     assert after.pop("default_stage_ownership_mode") == "worker"
     assert after.pop("backend_error") is None
     assert after == before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     conn.close()
 
 
@@ -557,7 +640,7 @@ def test_v26_reopen_preserves_non_hermes_selection_and_is_idempotent(tmp_path) -
         == sql_before
     )
     assert tuple(conn.execute("SELECT * FROM tickets").fetchone()) == row_before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     conn.close()
 
 
@@ -619,7 +702,7 @@ def test_v26_to_v27_preserves_ticket_and_binding_bytes_and_seeds_null_configurat
     assert binding_after.pop("employee_launch_model") is None
     assert binding_after.pop("employee_launch_reasoning_effort") is None
     assert binding_after == binding_before
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     conn.close()
 
 
@@ -651,7 +734,7 @@ def test_v32_reopen_preserves_explicit_ticket_configuration_and_is_idempotent(
         ).fetchone()[0]
         == sql_before
     )
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     conn.close()
 
 
@@ -2381,7 +2464,7 @@ def test_v28_removes_learning_and_unassigns_only_its_ideas_idempotently(tmp_path
         ("project_vylo", "Vylo", "", 0, 0),
     ]
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
 
     first_ideas = [tuple(row) for row in conn.execute("SELECT * FROM ideas ORDER BY id")]
     first_projects = [tuple(row) for row in conn.execute("SELECT * FROM projects ORDER BY id")]
@@ -2390,7 +2473,7 @@ def test_v28_removes_learning_and_unassigns_only_its_ideas_idempotently(tmp_path
     assert [
         tuple(row) for row in conn.execute("SELECT * FROM projects ORDER BY id")
     ] == first_projects
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
     conn.close()
 
 
@@ -2715,7 +2798,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     create_schema(conn)
-    assert SCHEMA_VERSION == 36
+    assert SCHEMA_VERSION == 37
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
     info = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -3436,7 +3519,7 @@ def test_pre_column_v24_binding_schema_reopens_with_empty_provenance(
     }["compaction_boundaries_json"]
     assert column["notnull"] == 1
     assert column["dflt_value"] == "'[]'"
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     conn.close()
 
 
@@ -3469,7 +3552,7 @@ def test_amended_v24_binding_schema_reopens_without_rewriting_provenance(
     )
     create_schema(conn)
     assert conn.execute("SELECT 1 FROM conversation_session_bindings").fetchone() is None
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     conn.close()
 
 
@@ -3669,7 +3752,7 @@ def test_v25_cutover_converts_worker_correctness_and_deletes_conversation_state(
     ):
         assert not db_module._table_exists(conn, table)
     assert "chat_session_key" not in db_module._table_columns(conn, "days")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     create_schema(conn)
     assert conn.execute("SELECT COUNT(*) FROM employee_step_runs").fetchone()[0] == 3

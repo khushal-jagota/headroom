@@ -2708,55 +2708,16 @@ select {
   line-height: 1;
 }
 
-/* The first project sits one top-level gap below the Chief-of-Staff peer, matching
- * the rhythm between project headers so Chief of Staff reads as a sibling area. */
-.board-workspace-chief-peer + .board-workspace-index-section {
+/* The first bucket sits one top-level gap below the Chief-of-Staff peer, so
+ * Chief of Staff reads as a sibling area above the status buckets. */
+.board-workspace-chief-peer + .disclosure--workspace-bucket {
   margin-top: calc(var(--space-7) - var(--space-1));
 }
 
-/* Project → worker type → current stage. Scale carries the project boundary; worker
- * types are the only boxed level, and stage rules provide the finer subdivision. */
-.board-workspace-index-section {
-  position: relative;
-}
-
-.board-workspace-index-section + .board-workspace-index-section {
-  margin-top: calc(var(--space-7) - var(--space-1));
-}
-
-.disclosure--workspace-project > .disclosure-summary,
-.disclosure--workspace-worker > .disclosure-summary,
-.disclosure--workspace-stage > .disclosure-summary {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  text-align: left;
-  margin: 0;
-}
-
-.disclosure--workspace-project > .disclosure-summary {
-  padding: var(--space-2) 0;
-  color: var(--text-strong);
-}
-
-.board-workspace-project-label {
-  min-width: 0;
-  font-family: var(--font-serif);
-  font-size: calc(var(--space-7) - var(--space-2));
-  font-weight: 500;
-  line-height: 1;
-}
-
-.board-workspace-index-items {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-width: 0;
-  margin-top: var(--space-3);
-}
-
-.disclosure--workspace-worker {
+/* Status buckets — the rail's one level. Each bucket is a box (the worker-section
+ * idiom), headed by the serif voice one scale below the project headers. A bucket
+ * with no tickets is not rendered at all. */
+.disclosure--workspace-bucket {
   min-width: 0;
   padding: var(--space-4);
   border: var(--border-hairline) solid var(--border-color);
@@ -2764,71 +2725,56 @@ select {
   background: transparent;
 }
 
-.disclosure--workspace-worker > .disclosure-summary {
-  color: var(--text-muted);
+.disclosure--workspace-bucket + .disclosure--workspace-bucket {
+  margin-top: var(--space-4);
 }
 
-.disclosure--workspace-worker[open] > .disclosure-summary {
-  margin-bottom: var(--space-4);
+.disclosure--workspace-bucket > .disclosure-summary {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: left;
+  margin: 0;
+  color: var(--text-strong);
 }
 
-.board-workspace-worker-label {
+.disclosure--workspace-bucket[open] > .disclosure-summary {
+  margin-bottom: var(--space-3);
+}
+
+.board-workspace-bucket-label {
   min-width: 0;
-  font-family: var(--font-ui);
-  font-size: var(--type-lg);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
   font-weight: 500;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.2;
 }
 
-.board-workspace-worker-stages,
-.board-workspace-stage-tickets {
+/* Errored carries the app's error red at the bucket level, so the row marks
+ * stay free to carry only the two activity signals. */
+.disclosure--workspace-bucket[data-bucket-key="errored"] .board-workspace-bucket-label {
+  color: var(--accent-error);
+}
+
+.board-workspace-bucket-tickets {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.disclosure--workspace-stage + .disclosure--workspace-stage {
-  margin-top: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-.disclosure--workspace-stage > .disclosure-summary {
-  color: var(--text-muted);
-}
-
-.disclosure--workspace-stage[open] > .disclosure-summary {
-  margin-bottom: var(--space-1);
-}
-
-.board-workspace-stage-label {
-  min-width: 0;
-  font-family: var(--font-ui);
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  line-height: 1.35;
-  text-transform: uppercase;
-}
-
-/* Every level uses the shared trailing disclosure mark. The mark stays at the far
+/* Buckets use the shared trailing disclosure mark. The mark stays at the far
  * edge and appears only when its own summary carries pointer or keyboard intent. */
-.disclosure--workspace-project > .disclosure-summary > .disclosure-chev,
-.disclosure--workspace-worker > .disclosure-summary > .disclosure-chev,
-.disclosure--workspace-stage > .disclosure-summary > .disclosure-chev {
+.disclosure--workspace-bucket > .disclosure-summary > .disclosure-chev {
   flex: 0 0 auto;
   margin-left: auto;
   opacity: 0;
   transition: opacity var(--motion-fast) var(--motion-ease);
 }
 
-.disclosure--workspace-project > .disclosure-summary:hover > .disclosure-chev,
-.disclosure--workspace-project > .disclosure-summary:focus-visible > .disclosure-chev,
-.disclosure--workspace-worker > .disclosure-summary:hover > .disclosure-chev,
-.disclosure--workspace-worker > .disclosure-summary:focus-visible > .disclosure-chev,
-.disclosure--workspace-stage > .disclosure-summary:hover > .disclosure-chev,
-.disclosure--workspace-stage > .disclosure-summary:focus-visible > .disclosure-chev {
+.disclosure--workspace-bucket > .disclosure-summary:hover > .disclosure-chev,
+.disclosure--workspace-bucket > .disclosure-summary:focus-visible > .disclosure-chev {
   opacity: 1;
 }
 
@@ -3440,6 +3386,12 @@ select {
 .stage-mark--upcoming {
   border-color: var(--text-faintest);
   opacity: 0.56;
+}
+
+/* A Worker reply the user has already opened: the same dot, greyed. */
+.stage-mark--reply-seen {
+  background: var(--text-faintest);
+  border-color: var(--text-faintest);
 }
 
 @keyframes stage-mark-spin {

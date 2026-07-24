@@ -109,30 +109,23 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     assert created["stage"] == "needs_success", created
 
     card = f'[data-card][data-ticket-stage="needs_success"][data-ticket-id="{tid}"]'
-    # New Tickets now default onto today; remove it first so this test still
-    # isolates the explicit live-board add below.
-    cli(server, "day", "remove-ticket", tid, "--date", "today")
-    page_b.wait_for_function(
-        "f => window.__plannerDebug.flushes > f", arg=flushes_b, timeout=WAIT_MS
-    )
-    page_b.wait_for_function(
-        "selector => document.querySelector(selector) === null", arg=card, timeout=WAIT_MS
-    )
-    page_a.wait_for_function(
-        "selector => document.querySelector(selector) === null", arg=card, timeout=WAIT_MS
-    )
-
-    flushes_b = page_b.evaluate("window.__plannerDebug.flushes")
-    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": tid})
-
-    # No reload, no goto: the card can only arrive via a WS-flush re-render after
-    # the ticket is explicitly added back to today's board.
+    # No reload, no goto: the board is not day-scoped, so the freshly created
+    # Ticket's card can only arrive via a WS-flush re-render of the open pages.
     _wait_present(page_b, card)
     assert "T18 board ticket" in page_b.inner_text(card)
     assert page_b.evaluate("window.__plannerDebug.flushes") > flushes_b
 
     _wait_present(page_a, card)
     assert "T18 board ticket" in page_a.inner_text(card)
+
+    # Day membership no longer affects the Workspace board: removing the Ticket
+    # from today leaves its card in place.
+    cli(server, "day", "remove-ticket", tid, "--date", "today")
+    page_b.wait_for_function(
+        "f => window.__plannerDebug.flushes > f", arg=flushes_b, timeout=WAIT_MS
+    )
+    assert page_b.query_selector(card) is not None
+    assert page_a.query_selector(card) is not None
 
 
 def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):

@@ -3657,3 +3657,14 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Fail fast unless the host provides Python 3.12 or newer and Node 22. Release construction still
   installs all Python and Node dependencies into the exported exact-SHA release; these checks only
 make the operator-owned host prerequisite explicit.
+
+## 2026-07-24 — Workspace regroup: signals stay facts, buckets stay frontend
+
+The board keeps serving facts (`ticket_status`, `stage`, `blocked`, the two signal fields);
+bucket membership lives in `BoardRoute` alone. One classifier in `workspace_signals.py` stays
+pure and testable; no bucket enum enters the backend, so a future regrouping is a frontend-only
+change. A pending permission ask counts as an unseen reply rather than a third signal — it is an
+agent ask the user has not handled. The seen marker generalizes the existing acknowledgement
+(`has_completed_response` remembered past acknowledge) instead of adding a parallel tracker,
+and rides the existing `ticket_conversation_projection_changed` event, so the reactivity
+completeness test needs no new mapping.

@@ -16,7 +16,7 @@ from planner.core.legacy_execution_route import (
 from planner.projects import data as projects_data
 from planner.worker_types.configuration import configured_worker_type_registry
 
-SCHEMA_VERSION: Final = 36
+SCHEMA_VERSION: Final = 37
 
 DDL: Final = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS ticket_conversation_projections (
   ticket_id                              TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE,
   latest_activity_state                  TEXT,
   has_completed_response_awaiting_user   INTEGER NOT NULL DEFAULT 0 CHECK (has_completed_response_awaiting_user IN (0,1)),
+  has_completed_response                 INTEGER NOT NULL DEFAULT 0 CHECK (has_completed_response IN (0,1)),
   has_pending_permission                 INTEGER NOT NULL DEFAULT 0 CHECK (has_pending_permission IN (0,1)),
   updated_at                             INTEGER NOT NULL
 );
@@ -344,7 +345,40 @@ def create_schema(conn: sqlite3.Connection) -> None:
             # Fresh databases receive the current DDL before the forward migrations.
             # They still need the schema marker advanced past v35.
             conn.execute("PRAGMA user_version=36")
+    if incoming_version < 37:
+        if "has_completed_response" not in _table_columns(
+            conn, "ticket_conversation_projections"
+        ):
+            _migrate_to_v37(conn)
+        else:
+            # Fresh databases receive the current DDL before the forward migrations.
+            # They still need the schema marker advanced past v36.
+            conn.execute("PRAGMA user_version=37")
     _create_indexes(conn)
+
+
+def _migrate_to_v37(conn: sqlite3.Connection) -> None:
+    """Remember that a Worker reply completed, so a seen reply stays distinguishable
+    from a Ticket that never had one."""
+    if conn.in_transaction:
+        conn.commit()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "ALTER TABLE ticket_conversation_projections "
+            "ADD COLUMN has_completed_response INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (has_completed_response IN (0,1))"
+        )
+        conn.execute(
+            "UPDATE ticket_conversation_projections SET has_completed_response = 1 "
+            "WHERE has_completed_response_awaiting_user = 1"
+        )
+        conn.execute("PRAGMA user_version=37")
+        conn.execute("COMMIT")
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 
 def _migrate_to_v36(conn: sqlite3.Connection) -> None:
@@ -825,15 +859,22 @@ def _ticket_conversation_projection_table_is_v29(conn: sqlite3.Connection) -> bo
         (str(row[2]), str(row[3]), str(row[4]), str(row[6]))
         for row in conn.execute("PRAGMA foreign_key_list(ticket_conversation_projections)")
     }
+    required = {
+        "ticket_id": ("TEXT", 0, None, 1),
+        "latest_activity_state": ("TEXT", 0, None, 0),
+        "has_completed_response_awaiting_user": ("INTEGER", 1, "0", 0),
+        "has_pending_permission": ("INTEGER", 1, "0", 0),
+        "updated_at": ("INTEGER", 1, None, 0),
+    }
+    # v37 adds has_completed_response; a fresh DDL table carries it in declared
+    # order and a migrated table carries it appended, so v29 validation checks
+    # column shapes, not position, and permits only that one later column.
+    optional = {"has_completed_response": ("INTEGER", 1, "0", 0)}
+    by_name = {column[0]: column[1:] for column in columns}
+    extras = {name: shape for name, shape in by_name.items() if name not in required}
     return (
-        columns
-        == (
-            ("ticket_id", "TEXT", 0, None, 1),
-            ("latest_activity_state", "TEXT", 0, None, 0),
-            ("has_completed_response_awaiting_user", "INTEGER", 1, "0", 0),
-            ("has_pending_permission", "INTEGER", 1, "0", 0),
-            ("updated_at", "INTEGER", 1, None, 0),
-        )
+        all(by_name.get(name) == shape for name, shape in required.items())
+        and all(optional.get(name) == shape for name, shape in extras.items())
         and foreign_keys == {("tickets", "ticket_id", "id", "CASCADE")}
     )
 

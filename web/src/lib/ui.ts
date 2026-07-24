@@ -10,7 +10,8 @@ export type FieldStageVisualState =
   | "current-paired-work"
   | "current-awaiting-approval"
   | "errored"
-  | "upcoming";
+  | "upcoming"
+  | "reply-seen";
 
 export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");

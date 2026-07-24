@@ -61,6 +61,8 @@ def test_direct_user_acknowledges_completed_response_only_once(tmp_path: Path) -
     assert repeated.json() == {"acknowledged": False}
     snapshot = projection.read(ticket_id)
     assert snapshot.has_completed_response_awaiting_user is False
+    # The acknowledged reply stays remembered as seen.
+    assert snapshot.has_completed_response is True
     assert snapshot.has_pending_permission is True
 
 

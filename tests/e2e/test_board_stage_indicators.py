@@ -1,4 +1,4 @@
-"""Focused Workspace hierarchy and running-indicator regressions."""
+"""Focused Workspace status-bucket and row-signal regressions."""
 
 from __future__ import annotations
 
@@ -7,6 +7,39 @@ import sqlite3
 from planner.tickets.conversation_projection import TicketConversationProjection
 
 WAIT_MS = 10_000
+
+# The full canonical bucket order, top to bottom.
+BUCKET_ORDER = [
+    "errored",
+    "needs_you",
+    "kickoff",
+    "stopped",
+    "taken_over",
+    "paired",
+    "agent_working",
+    "needs_approval",
+    "closing_out",
+    "blocked",
+    "done",
+]
+
+BUCKET_LABELS = {
+    "errored": "Errored",
+    "needs_you": "Needs you",
+    "kickoff": "Kickoff",
+    "stopped": "Stopped",
+    "taken_over": "Taken over",
+    "paired": "Paired",
+    "agent_working": "Agent working",
+    "needs_approval": "Needs approval",
+    "closing_out": "Closing out",
+    "blocked": "Blocked",
+    "done": "Done",
+}
+
+
+def _bucket(key: str) -> str:
+    return f'[data-bucket-section][data-bucket-key="{key}"]'
 
 
 def _add_today(api, server, ticket_id: str) -> None:
@@ -39,53 +72,27 @@ def _set_ticket_updated_at(server, ticket_id: str, updated_at: int) -> None:
         )
 
 
-def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
+def _create_ticket(cli, server, title: str, *, worker_type: str = "coding") -> str:
+    return cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        worker_type,
+        "--title",
+        title,
+        "--project-id",
+        "project_vylo",
+    )["id"]
+
+
+def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     server, context_factory, open_page, cli, api
 ) -> None:
-    waiting = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Waiting ticket",
-        "--project-id",
-        "project_vylo",
-    )["id"]
-    running = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Running ticket",
-        "--project-id",
-        "project_vylo",
-    )["id"]
-    errored = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Errored ticket",
-        "--project-id",
-        "project_vylo",
-    )["id"]
-    completed = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Completed ticket",
-        "--project-id",
-        "project_vylo",
-    )["id"]
+    waiting = _create_ticket(cli, server, "Waiting ticket")
+    running = _create_ticket(cli, server, "Running ticket")
+    errored = _create_ticket(cli, server, "Errored ticket")
+    completed = _create_ticket(cli, server, "Completed ticket")
     for ticket_id in (waiting, running, errored, completed):
         _add_today(api, server, ticket_id)
         _set_ticket_stage(server, ticket_id, "needs_success")
@@ -100,7 +107,7 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
         context_factory(),
         server,
         "#/workspace",
-        '[data-project-key="project_vylo"]',
+        _bucket("stopped"),
         settled=True,
     )
 
@@ -108,12 +115,28 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
     running_card = f'[data-card][data-ticket-id="{running}"]'
     errored_card = f'[data-card][data-ticket-id="{errored}"]'
     completed_card = f'[data-card][data-ticket-id="{completed}"]'
-    completed_stage = (
-        '[data-project-key="project_vylo"] [data-worker-type="coding"] '
-        '[data-stage-key="done"]'
+
+    # Only the populated buckets render, in canonical order; the old
+    # Project -> Worker type -> Stage tree is gone.
+    rendered = page.eval_on_selector_all(
+        "[data-bucket-section]",
+        "els => els.map(el => el.getAttribute('data-bucket-key'))",
     )
+    assert rendered == ["errored", "stopped", "agent_working", "done"]
+    assert page.locator("[data-project-section]").count() == 0
+    assert page.locator("[data-worker-section]").count() == 0
+    assert page.locator("[data-stage-section]").count() == 0
+
+    # Each card sits in exactly one bucket.
+    assert page.locator(f'{_bucket("stopped")} {waiting_card}').count() == 1
+    assert page.locator(f'{_bucket("agent_working")} {running_card}').count() == 1
+    assert page.locator(f'{_bucket("errored")} {errored_card}').count() == 1
+    assert page.locator(f'{_bucket("done")} {completed_card}').count() == 1
+
+    # Done is collapsed by default; opening it reveals the completed row.
+    assert page.get_attribute(_bucket("done"), "open") is None
     assert not page.is_visible(completed_card)
-    page.click(f"{completed_stage} > summary")
+    page.click(f'{_bucket("done")} > summary')
     for selector, title in (
         (waiting_card, "Waiting ticket"),
         (running_card, "Running ticket"),
@@ -129,51 +152,52 @@ def test_workspace_ticket_rows_contain_only_title_and_existing_condition_mark(
         assert page.locator(f"{card} > *").count() == 2
         assert page.locator(f"{card} .board-workspace-stage-mark").count() == 1
 
+    # A quiet ticket: not working, no reply.
     waiting_mark = page.locator(
-        f'{waiting_card} .board-workspace-stage-mark[data-stage-state="current-waiting"]'
+        f'{waiting_card} .board-workspace-stage-mark[data-stage-state="upcoming"]'
     )
     assert waiting_mark.count() == 1
-    assert waiting_mark.get_attribute("data-workspace-dot-state") == "quiet"
+    assert waiting_mark.get_attribute("data-agent-working") == "false"
+    assert waiting_mark.get_attribute("data-reply-state") == "none"
+    assert waiting_mark.get_attribute("data-workspace-dot-state") is None
     assert waiting_mark.get_attribute("data-marker") is None
-    assert waiting_mark.get_attribute("aria-label") == "Worker quiet"
+    assert waiting_mark.get_attribute("aria-label") == "Nothing waiting"
 
+    # A running step: the working signal wins the mark.
     running_mark = page.locator(
-        f'{running_card} [data-marker="agent-running-step"][data-stage-state="current-running"]'
+        f'{running_card} .board-workspace-stage-mark[data-stage-state="current-running"]'
     )
     assert running_mark.count() == 1
-    assert running_mark.get_attribute("data-stage-field") == "success"
-    assert running_mark.get_attribute("data-workspace-dot-state") == "active"
-    assert running_mark.get_attribute("aria-label") == "Worker active"
+    assert running_mark.get_attribute("data-agent-working") == "true"
+    assert running_mark.get_attribute("data-reply-state") == "none"
+    assert running_mark.get_attribute("aria-label") == "Agent working"
 
+    # The errored condition lives on the bucket, not the row mark: the mark
+    # carries only the two signals, and the Errored label carries the error red.
     errored_mark = page.locator(
-        f'{errored_card} [data-marker="errored"][data-stage-state="errored"]'
+        f'{errored_card} .board-workspace-stage-mark[data-stage-state="upcoming"]'
     )
     assert errored_mark.count() == 1
-    assert errored_mark.get_attribute("data-workspace-dot-state") == "exceptional"
-    assert errored_mark.get_attribute("aria-label") == "Worker exception"
+    assert errored_mark.get_attribute("data-agent-working") == "false"
+    assert errored_mark.get_attribute("data-reply-state") == "none"
+    assert errored_mark.get_attribute("aria-label") == "Nothing waiting"
+    errored_label_color = page.eval_on_selector(
+        f'{_bucket("errored")} .board-workspace-bucket-label',
+        "el => getComputedStyle(el).color",
+    )
+    assert errored_label_color == "rgb(216, 93, 93)"
 
     completed_mark = page.locator(
-        f'{completed_card} [data-stage-state="completed"]'
+        f'{completed_card} .board-workspace-stage-mark[data-stage-state="upcoming"]'
     )
     assert completed_mark.count() == 1
-    assert completed_mark.get_attribute("data-workspace-dot-state") == "settled"
-    assert completed_mark.get_attribute("aria-label") == "Worker complete"
+    assert completed_mark.get_attribute("aria-label") == "Nothing waiting"
 
 
 def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Backend failure ticket",
-        "--project-id",
-        "project_vylo",
-    )["id"]
+    ticket_id = _create_ticket(cli, server, "Backend failure ticket")
     _add_today(api, server, ticket_id)
     _set_ticket_stage(server, ticket_id, "needs_success")
     _set_ticket_status(
@@ -195,36 +219,28 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
     reason = "[data-backend-error]"
     page.wait_for_selector(reason, timeout=WAIT_MS)
     assert page.text_content(reason).strip() == "Provider process exited with status 17"
-    assert page.get_attribute(mark, "data-workspace-dot-state") == "exceptional"
-    assert page.get_attribute(mark, "data-stage-state") == "errored"
+    assert page.locator(f'{_bucket("errored")} {card}').count() == 1
+    assert page.get_attribute(mark, "data-stage-state") == "upcoming"
+    assert page.get_attribute(mark, "data-agent-working") == "false"
 
     _set_ticket_status(server, ticket_id, "empty")
     page.reload()
     page.wait_for_selector(mark, timeout=WAIT_MS)
     assert page.locator(reason).count() == 0
-    assert page.get_attribute(mark, "data-stage-state") == "current-waiting"
-    assert page.get_attribute(mark, "data-workspace-dot-state") == "quiet"
-    assert page.get_attribute(mark, "data-marker") is None
+    assert page.locator(f'{_bucket("stopped")} {card}').count() == 1
+    assert page.locator(_bucket("errored")).count() == 0
+    assert page.get_attribute(mark, "data-stage-state") == "upcoming"
+    assert page.get_attribute(mark, "data-reply-state") == "none"
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute(
             "SELECT ticket_status, backend_error FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone() == ("empty", None)
 
 
-def test_workspace_dot_follows_projection_activity_and_reload(
+def test_workspace_signals_follow_projection_activity_reply_and_acknowledgement(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Projection Workspace ticket",
-        "--project-id",
-        "project_vylo",
-    )["id"]
+    ticket_id = _create_ticket(cli, server, "Projection Workspace ticket")
     _add_today(api, server, ticket_id)
     _set_ticket_stage(server, ticket_id, "needs_success")
     _set_ticket_status(server, ticket_id, "empty")
@@ -237,11 +253,12 @@ def test_workspace_dot_follows_projection_activity_and_reload(
         settled=True,
     )
     mark = f'[data-card][data-ticket-id="{ticket_id}"] .board-workspace-stage-mark'
-    assert page.get_attribute(mark, "data-stage-state") == "current-waiting"
-    assert page.get_attribute(mark, "data-workspace-dot-state") == "quiet"
-    assert page.get_attribute(mark, "data-marker") is None
-    assert page.get_attribute(mark, "aria-label") == "Worker quiet"
+    assert page.get_attribute(mark, "data-stage-state") == "upcoming"
+    assert page.get_attribute(mark, "data-agent-working") == "false"
+    assert page.get_attribute(mark, "data-reply-state") == "none"
+    assert page.get_attribute(mark, "aria-label") == "Nothing waiting"
 
+    # A working activity state flips the working signal live.
     projection = TicketConversationProjection(server.db_path, now=lambda: 2)
     projection.record_activity(ticket_id, "thinking")
     page.wait_for_function(
@@ -250,16 +267,15 @@ def test_workspace_dot_follows_projection_activity_and_reload(
         arg=mark,
         timeout=WAIT_MS,
     )
-    assert page.get_attribute(mark, "data-marker") == "agent-running-step"
-    assert page.get_attribute(mark, "data-workspace-dot-state") == "active"
-    assert page.get_attribute(mark, "aria-label") == "Worker active"
+    assert page.get_attribute(mark, "data-agent-working") == "true"
+    assert page.get_attribute(mark, "aria-label") == "Agent working"
 
     page.reload()
     page.wait_for_selector(mark, timeout=WAIT_MS)
     assert page.get_attribute(mark, "data-stage-state") == "current-running"
-    assert page.get_attribute(mark, "data-workspace-dot-state") == "active"
-    assert page.get_attribute(mark, "aria-label") == "Worker active"
+    assert page.get_attribute(mark, "data-agent-working") == "true"
 
+    # The completed turn becomes an unseen reply.
     projection.record_activity(ticket_id, "idle")
     page.wait_for_function(
         "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
@@ -267,31 +283,35 @@ def test_workspace_dot_follows_projection_activity_and_reload(
         arg=mark,
         timeout=WAIT_MS,
     )
-    assert page.get_attribute(mark, "data-marker") is None
-    assert page.get_attribute(mark, "data-workspace-dot-state") == "needs_attention"
-    assert page.get_attribute(mark, "aria-label") == "Worker needs attention"
+    assert page.get_attribute(mark, "data-agent-working") == "false"
+    assert page.get_attribute(mark, "data-reply-state") == "unseen"
+    assert page.get_attribute(mark, "aria-label") == "Unseen agent reply"
 
+    # Opening the ticket acknowledges the reply: seen, not gone.
     page.click(f'[data-card][data-ticket-id="{ticket_id}"]')
     page.wait_for_function(
         "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
-        "=== 'current-waiting'",
+        "=== 'reply-seen'",
         arg=mark,
         timeout=WAIT_MS,
     )
-    assert page.get_attribute(mark, "data-workspace-dot-state") == "quiet"
-    assert page.get_attribute(mark, "aria-label") == "Worker quiet"
+    assert page.get_attribute(mark, "data-reply-state") == "seen"
+    assert page.get_attribute(mark, "aria-label") == "Agent reply seen"
 
+    # A pending permission ask reads as an unseen reply again.
     page.click("[data-chief-of-staff-button]")
     projection.record_activity(ticket_id, "thinking")
     projection.record_activity(ticket_id, "idle")
     projection.record_permission(ticket_id, True)
     page.wait_for_function(
-        "selector => document.querySelector(selector)?.getAttribute('data-workspace-dot-state') "
-        "=== 'needs_attention'",
+        "selector => document.querySelector(selector)?.getAttribute('data-reply-state') "
+        "=== 'unseen'",
         arg=mark,
         timeout=WAIT_MS,
     )
 
+    # Opening the ticket screen acknowledges the completed response, but the
+    # pending permission keeps the reply unseen.
     with page.expect_response(
         lambda response: response.url.endswith(
             f"/api/tickets/{ticket_id}/acknowledge-completed-response"
@@ -303,240 +323,160 @@ def test_workspace_dot_follows_projection_activity_and_reload(
     page.wait_for_selector(f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS)
     acknowledged = projection.read(ticket_id)
     assert acknowledged.has_completed_response_awaiting_user is False
+    assert acknowledged.has_completed_response is True
     assert acknowledged.has_pending_permission is True
 
     page.goto(f"{server.base}/#/workspace")
     page.wait_for_selector(mark, timeout=WAIT_MS)
-    assert page.get_attribute(mark, "data-workspace-dot-state") == "needs_attention"
+    assert page.get_attribute(mark, "data-reply-state") == "unseen"
+    assert page.get_attribute(mark, "data-stage-state") == "current-awaiting-approval"
 
 
-def test_workspace_groups_populated_project_worker_and_stage_sections_in_contract_order(
+def test_workspace_buckets_render_membership_in_canonical_order(
     server, context_factory, open_page, cli, api
 ) -> None:
-    coding_success = cli(
+    errored = _create_ticket(cli, server, "Errored bucket ticket")
+    needs_you = _create_ticket(cli, server, "Needs you ticket")
+    kickoff_idle = _create_ticket(cli, server, "Kickoff idle ticket")
+    kickoff_awaiting = _create_ticket(cli, server, "Kickoff awaiting ticket")
+    stopped_older = _create_ticket(cli, server, "Stopped older ticket")
+    stopped_newer = _create_ticket(cli, server, "Stopped newer ticket")
+    taken_over = _create_ticket(cli, server, "Taken over ticket")
+    discussion = _create_ticket(cli, server, "Proposal discussion ticket")
+    paired = _create_ticket(cli, server, "Paired work ticket")
+    running = _create_ticket(cli, server, "Agent working ticket")
+    approval = _create_ticket(cli, server, "Needs approval ticket")
+    closing = _create_ticket(cli, server, "Closing out ticket")
+    done = _create_ticket(cli, server, "Done ticket")
+    blocked_idle = cli(
         server,
         "ticket",
         "create",
         "--worker-type",
         "coding",
         "--title",
-        "Vylo coding success",
+        "Blocked idle ticket",
         "--project-id",
         "project_vylo",
+        "--blocked-by",
+        stopped_older,
     )["id"]
-    older_plan = cli(
+    blocked_running = cli(
         server,
         "ticket",
         "create",
         "--worker-type",
         "coding",
         "--title",
-        "Vylo older plan",
+        "Blocked running ticket",
         "--project-id",
         "project_vylo",
+        "--blocked-by",
+        stopped_older,
     )["id"]
-    newer_plan = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Vylo newer plan",
-        "--project-id",
-        "project_vylo",
-    )["id"]
-    done = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Vylo done",
-        "--project-id",
-        "project_vylo",
-    )["id"]
-    new_worker_stages = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "new_worker",
-        "--title",
-        "Vylo new worker stages",
-        "--project-id",
-        "project_vylo",
-    )["id"]
-    new_worker_thinking = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "new_worker",
-        "--title",
-        "Vylo new worker thinking",
-        "--project-id",
-        "project_vylo",
-    )["id"]
-    research_project = cli(server, "project", "create", "--name", "Research")
-    research = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Research ticket",
-        "--project-id",
-        research_project["id"],
-    )["id"]
-    no_project = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "No project ticket",
-    )["id"]
-    for ticket_id in (
-        coding_success,
-        older_plan,
-        newer_plan,
-        done,
-        new_worker_stages,
-        new_worker_thinking,
-        research,
-        no_project,
-    ):
-        _add_today(api, server, ticket_id)
 
-    _set_ticket_stage(server, coding_success, "needs_success")
-    _set_ticket_stage(server, older_plan, "needs_plan")
-    _set_ticket_stage(server, newer_plan, "needs_plan")
+    _set_ticket_status(server, errored, "errored", backend_error="boom")
+    _set_ticket_status(server, needs_you, "needs_user")
+    _set_ticket_stage(server, kickoff_idle, "needs_kickoff")
+    _set_ticket_stage(server, kickoff_awaiting, "needs_kickoff")
+    _set_ticket_status(server, kickoff_awaiting, "awaiting_approval")
+    for ticket_id in (stopped_older, stopped_newer):
+        _set_ticket_stage(server, ticket_id, "needs_success")
+    _set_ticket_updated_at(server, stopped_older, 10)
+    _set_ticket_updated_at(server, stopped_newer, 30)
+    _set_ticket_status(server, taken_over, "user_takeover")
+    _set_ticket_status(server, discussion, "proposal_discussion")
+    _set_ticket_status(server, paired, "paired_work")
+    _set_ticket_status(server, running, "agent_running_step")
+    _set_ticket_stage(server, approval, "needs_plan")
+    _set_ticket_status(server, approval, "awaiting_approval")
+    _set_ticket_stage(server, closing, "needs_closeout")
     _set_ticket_stage(server, done, "done")
-    _set_ticket_stage(server, new_worker_stages, "needs_stages")
-    _set_ticket_stage(server, new_worker_thinking, "needs_thinking")
-    _set_ticket_updated_at(server, older_plan, 10)
-    _set_ticket_updated_at(server, newer_plan, 30)
+    _set_ticket_stage(server, blocked_idle, "needs_success")
+    _set_ticket_stage(server, blocked_running, "needs_success")
+    _set_ticket_status(server, blocked_running, "agent_running_step")
 
     page = open_page(
         context_factory(),
         server,
         "#/workspace",
-        '[data-project-key="project_vylo"]',
+        _bucket("stopped"),
         settled=True,
     )
 
-    project_labels = page.eval_on_selector_all(
-        "[data-project-section] > summary .board-workspace-project-label",
+    # All eleven buckets are populated, so all render, in canonical order with
+    # their canonical labels.
+    rendered = page.eval_on_selector_all(
+        "[data-bucket-section]",
+        "els => els.map(el => el.getAttribute('data-bucket-key'))",
+    )
+    assert rendered == BUCKET_ORDER
+    labels = page.eval_on_selector_all(
+        "[data-bucket-section] > summary .board-workspace-bucket-label",
         "els => els.map(el => el.textContent.trim())",
     )
-    assert project_labels == ["Research", "Vylo", "No project"]
-    project_geometry = page.eval_on_selector_all(
-        "[data-project-section]",
-        "els => els.map(el => ({marginTop: getComputedStyle(el).marginTop, "
-        "fontSize: getComputedStyle("
-        "el.querySelector('.board-workspace-project-label')).fontSize}))",
-    )
-    assert [item["fontSize"] for item in project_geometry] == ["40px", "40px", "40px"]
-    # The first project sits one top-level gap below the Chief-of-Staff peer, so every
-    # project section carries the same top margin.
-    assert [item["marginTop"] for item in project_geometry] == ["44px", "44px", "44px"]
+    assert labels == [BUCKET_LABELS[key] for key in BUCKET_ORDER]
 
-    vylo = '[data-project-key="project_vylo"]'
-    worker_labels = page.eval_on_selector_all(
-        f"{vylo} > .disclosure-body > .board-workspace-index-items "
-        "> [data-worker-section] > summary .board-workspace-worker-label",
+    # Blocked and Done are collapsed by default; every other bucket is open.
+    for key in BUCKET_ORDER:
+        is_open = page.get_attribute(_bucket(key), "open") is not None
+        assert is_open is (key not in ("blocked", "done")), key
+
+    # Membership: exactly one bucket per ticket.
+    memberships = {
+        errored: "errored",
+        needs_you: "needs_you",
+        kickoff_idle: "kickoff",
+        # A kickoff-stage parked proposal belongs in Kickoff, not Needs approval.
+        kickoff_awaiting: "kickoff",
+        stopped_older: "stopped",
+        stopped_newer: "stopped",
+        taken_over: "taken_over",
+        discussion: "paired",
+        paired: "paired",
+        running: "agent_working",
+        approval: "needs_approval",
+        closing: "closing_out",
+        blocked_idle: "blocked",
+        # Blocked claims only idle tickets: a real status wins.
+        blocked_running: "agent_working",
+        done: "done",
+    }
+    for ticket_id, bucket_key in memberships.items():
+        card = f'[data-card][data-ticket-id="{ticket_id}"]'
+        assert page.locator(card).count() == 1, ticket_id
+        assert page.locator(f"{_bucket(bucket_key)} {card}").count() == 1, ticket_id
+    assert (
+        page.locator(
+            f'{_bucket("blocked")} [data-card][data-ticket-id="{blocked_running}"]'
+        ).count()
+        == 0
+    )
+    assert (
+        page.locator(
+            f'{_bucket("needs_approval")} [data-card][data-ticket-id="{kickoff_awaiting}"]'
+        ).count()
+        == 0
+    )
+
+    # Rows within a bucket sort by activity, newest first, and carry no chips.
+    stopped_titles = page.eval_on_selector_all(
+        f'{_bucket("stopped")} [data-card] .list-row-title',
         "els => els.map(el => el.textContent.trim())",
     )
-    assert worker_labels == ["Coding", "New Worker"]
-    worker_type = page.eval_on_selector(
-        f"{vylo} [data-worker-type='coding'] .board-workspace-worker-label",
-        "el => ({fontSize: getComputedStyle(el).fontSize, "
-        "textTransform: getComputedStyle(el).textTransform})",
+    assert stopped_titles == ["Stopped newer ticket", "Stopped older ticket"]
+    assert page.locator("[data-card] .chip").count() == 0
+    row_child_counts = page.eval_on_selector_all(
+        "[data-card]",
+        "els => els.map(el => el.children.length)",
     )
-    assert worker_type == {"fontSize": "20px", "textTransform": "none"}
-
-    coding = f'{vylo} [data-worker-type="coding"]'
-    coding_stage_labels = page.eval_on_selector_all(
-        f"{coding} > .disclosure-body > .board-workspace-worker-stages "
-        "> [data-stage-section] > summary .board-workspace-stage-label",
-        "els => els.map(el => el.textContent.trim())",
-    )
-    assert coding_stage_labels == ["Success", "Plan", "Done"]
-    stage_type = page.eval_on_selector(
-        f"{coding} [data-stage-key='needs_success'] .board-workspace-stage-label",
-        "el => ({fontSize: getComputedStyle(el).fontSize, "
-        "textTransform: getComputedStyle(el).textTransform})",
-    )
-    assert stage_type == {"fontSize": "11px", "textTransform": "uppercase"}
-    assert page.locator(f'{coding} [data-stage-key="needs_kickoff"]').count() == 0
-    # Done renders as its own stage section (no more Hide-done filter), collapsed by
-    # default so its tickets are present in the DOM but not visible.
-    done_stage = f'{coding} [data-stage-key="done"]'
-    assert page.locator(done_stage).count() == 1
-    assert page.get_attribute(done_stage, "open") is None
-
-    plan = f'{coding} [data-stage-key="needs_plan"]'
-    plan_titles = page.eval_on_selector_all(
-        f"{plan} [data-card] .list-row-title",
-        "els => els.map(el => el.textContent.trim())",
-    )
-    assert plan_titles == ["Vylo newer plan", "Vylo older plan"]
-
-    new_worker = f'{vylo} [data-worker-type="new_worker"]'
-    new_worker_stage_labels = page.eval_on_selector_all(
-        f"{new_worker} > .disclosure-body > .board-workspace-worker-stages "
-        "> [data-stage-section] > summary .board-workspace-stage-label",
-        "els => els.map(el => el.textContent.trim())",
-    )
-    assert new_worker_stage_labels == ["Stages", "Thinking"]
-    assert page.locator(f'{new_worker} [data-stage-key="needs_understanding"]').count() == 0
-
-    # There is no Hide-done filter; the collapsed Done section holds its ticket in the
-    # DOM but out of view, and opening the disclosure reveals it like any other stage.
-    assert page.locator("[data-hide-done-toggle]").count() == 0
-    done_card = f'[data-card][data-ticket-id="{done}"]'
-    assert page.locator(done_card).count() == 1
-    assert not page.is_visible(done_card)
-    page.click(f"{done_stage} > summary")
-    page.wait_for_selector(done_card, state="visible", timeout=WAIT_MS)
-
-    # The New Worker group has no done tickets, so no empty Done section renders.
-    assert page.locator(f'{new_worker} [data-stage-key="done"]').count() == 0
-
-    # Chief of Staff reads at project-header weight: same serif size as the project
-    # labels, sitting first in the rail, and still selects the chief pane.
-    chief = 'section[data-screen="workspace"] [data-chief-of-staff-button]'
-    chief_type = page.eval_on_selector(
-        f"{chief} .board-workspace-chief-peer-label",
-        "el => ({fontSize: getComputedStyle(el).fontSize, "
-        "fontFamily: getComputedStyle(el).fontFamily})",
-    )
-    project_type = page.eval_on_selector(
-        ".board-workspace-project-label",
-        "el => ({fontSize: getComputedStyle(el).fontSize, "
-        "fontFamily: getComputedStyle(el).fontFamily})",
-    )
-    assert chief_type == project_type
+    assert set(row_child_counts) == {2}
 
 
-def test_workspace_group_disclosures_are_independent_and_chevrons_reveal_on_intent(
+def test_workspace_bucket_disclosures_collapse_and_chevrons_reveal_on_intent(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Nested disclosure ticket",
-        "--project-id",
-        "project_vylo",
-    )["id"]
+    ticket_id = _create_ticket(cli, server, "Nested disclosure ticket")
     _add_today(api, server, ticket_id)
     _set_ticket_stage(server, ticket_id, "needs_plan")
 
@@ -544,69 +484,48 @@ def test_workspace_group_disclosures_are_independent_and_chevrons_reveal_on_inte
         context_factory(),
         server,
         "#/workspace",
-        '[data-project-key="project_vylo"]',
+        _bucket("stopped"),
         settled=True,
     )
 
-    project = '[data-project-key="project_vylo"]'
-    worker = f'{project} [data-worker-type="coding"]'
-    stage = f'{worker} [data-stage-key="needs_plan"]'
+    bucket = _bucket("stopped")
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
-    assert page.locator(project).get_attribute("open") == ""
-    assert page.locator(worker).get_attribute("open") == ""
-    assert page.locator(stage).get_attribute("open") == ""
+    assert page.locator(bucket).get_attribute("open") == ""
 
-    project_chevron = page.locator(f"{project} > summary > .disclosure-chev")
-    worker_chevron = page.locator(f"{worker} > summary > .disclosure-chev")
-    assert project_chevron.evaluate("el => getComputedStyle(el).opacity") == "0"
-    assert worker_chevron.evaluate("el => getComputedStyle(el).opacity") == "0"
-    page.hover(f"{project} > summary")
+    chevron = page.locator(f"{bucket} > summary > .disclosure-chev")
+    assert chevron.evaluate("el => getComputedStyle(el).opacity") == "0"
+    page.hover(f"{bucket} > summary")
     page.wait_for_function(
         "selector => getComputedStyle(document.querySelector(selector)).opacity === '1'",
-        arg=f"{project} > summary > .disclosure-chev",
+        arg=f"{bucket} > summary > .disclosure-chev",
         timeout=WAIT_MS,
     )
-    assert worker_chevron.evaluate("el => getComputedStyle(el).opacity") == "0"
     chevron_geometry = page.eval_on_selector(
-        f"{project} > summary",
+        f"{bucket} > summary",
         "summary => ({summary: summary.getBoundingClientRect(), "
         "chevron: summary.querySelector('.disclosure-chev').getBoundingClientRect()})",
     )
     assert abs(chevron_geometry["summary"]["right"] - chevron_geometry["chevron"]["right"]) < 1
 
-    page.click(f"{project} > summary")
-    page.click(f"{project} > summary")
     page.mouse.move(0, 0)
     page.wait_for_function(
         "selector => getComputedStyle(document.querySelector(selector)).opacity === '0'",
-        arg=f"{project} > summary > .disclosure-chev",
+        arg=f"{bucket} > summary > .disclosure-chev",
         timeout=WAIT_MS,
     )
+    # Keyboard intent reveals the chevron too: Tab from the Chief-of-Staff peer
+    # lands on the bucket summary.
+    page.click("[data-chief-of-staff-button]")
     page.keyboard.press("Tab")
     page.wait_for_function(
         "selector => getComputedStyle(document.querySelector(selector)).opacity === '1'",
-        arg=f"{worker} > summary > .disclosure-chev",
+        arg=f"{bucket} > summary > .disclosure-chev",
         timeout=WAIT_MS,
     )
 
-    page.click(f"{stage} > summary")
-    assert page.locator(stage).get_attribute("open") is None
-    assert page.locator(worker).get_attribute("open") == ""
-    assert page.locator(project).get_attribute("open") == ""
+    page.click(f"{bucket} > summary")
+    assert page.locator(bucket).get_attribute("open") is None
     assert page.locator(card).is_hidden()
-    page.click(f"{stage} > summary")
+    page.click(f"{bucket} > summary")
+    assert page.locator(bucket).get_attribute("open") == ""
     assert page.locator(card).is_visible()
-
-    page.click(f"{worker} > summary")
-    assert page.locator(worker).get_attribute("open") is None
-    assert page.locator(project).get_attribute("open") == ""
-    assert page.locator(stage).get_attribute("open") == ""
-    assert page.locator(card).is_hidden()
-    page.click(f"{worker} > summary")
-    assert page.locator(card).is_visible()
-
-    page.click(f"{project} > summary")
-    assert page.locator(project).get_attribute("open") is None
-    assert page.locator(worker).get_attribute("open") == ""
-    assert page.locator(stage).get_attribute("open") == ""
-    assert page.locator(card).is_hidden()

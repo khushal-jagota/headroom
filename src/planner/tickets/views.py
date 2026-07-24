@@ -15,10 +15,10 @@ from planner.tickets.contracts import (
     Ticket,
     TicketStatus,
     WorkspaceActivityState,
-    WorkspaceDotFacts,
+    WorkspaceSignalFacts,
 )
 from planner.tickets.logic import fields_codec, machine
-from planner.tickets.logic.workspace_dot import workspace_dot_state
+from planner.tickets.logic.workspace_signals import workspace_signals
 from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -215,7 +215,9 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 # --- board (§10.3) -------------------------------------------------------------
 
 
-def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
+def board_view(conn: sqlite3.Connection) -> JsonDict:
+    # Workspace attention routing spans days, so the board carries every
+    # non-dropped Ticket rather than a day's membership.
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
@@ -226,6 +228,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         "tickets.backend_error, "
         "ticket_conversation_projections.latest_activity_state, "
         "ticket_conversation_projections.has_completed_response_awaiting_user, "
+        "ticket_conversation_projections.has_completed_response, "
         "ticket_conversation_projections.has_pending_permission, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
@@ -233,9 +236,7 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
         "LEFT JOIN ticket_conversation_projections "
         "ON ticket_conversation_projections.ticket_id = tickets.id "
-        "WHERE tickets.stage != 'dropped' "
-        "AND tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)",
-        (day_id,),
+        "WHERE tickets.stage != 'dropped'"
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_target_ids = core_links.blocked_target_ids(conn)
@@ -297,33 +298,25 @@ def board_view(conn: sqlite3.Connection, now: int, *, day_id: str) -> JsonDict:
             "gating_field_label": gating_field_label,
             "is_done": stage == worker_type_definition.completed_stage(),
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
-            "workspace_dot_state": workspace_dot_state(
-                WorkspaceDotFacts(
-                    ticket_status=TicketStatus(str(row["ticket_status"])),
-                    backend_error=(
-                        str(row["backend_error"])
-                        if row["backend_error"] is not None
-                        else None
-                    ),
-                    has_pending_proposal=machine.has_pending_gating_proposal(
-                        stage,
-                        fields,
-                        worker_type_definition=worker_type_definition,
-                    ),
-                    latest_activity_state=(
-                        WorkspaceActivityState(str(row["latest_activity_state"]))
-                        if row["latest_activity_state"] is not None
-                        else None
-                    ),
-                    has_completed_response_awaiting_user=bool(
-                        row["has_completed_response_awaiting_user"] or 0
-                    ),
-                    has_pending_permission=bool(row["has_pending_permission"] or 0),
-                    is_completed=stage == worker_type_definition.completed_stage(),
-                )
-            ).value,
             "blocked": str(row["id"]) in blocked_target_ids,
         }
+        signals = workspace_signals(
+            WorkspaceSignalFacts(
+                ticket_status=TicketStatus(str(row["ticket_status"])),
+                latest_activity_state=(
+                    WorkspaceActivityState(str(row["latest_activity_state"]))
+                    if row["latest_activity_state"] is not None
+                    else None
+                ),
+                has_completed_response_awaiting_user=bool(
+                    row["has_completed_response_awaiting_user"] or 0
+                ),
+                has_completed_response=bool(row["has_completed_response"] or 0),
+                has_pending_permission=bool(row["has_pending_permission"] or 0),
+            )
+        )
+        card["agent_working"] = signals.agent_working
+        card["agent_reply_state"] = signals.agent_reply_state.value
         sort_key = (
             _prio_rank(priority),
             0 if deadline is not None else 1,
