@@ -73,6 +73,16 @@ class SprintItem:                  # §3.2
     updated_at: int = 0
 
 
+@dataclass(frozen=True)
+class SprintItemDeletion:
+    """The deleted identity plus surviving resources affected by the transaction."""
+
+    sprint_item_id: str
+    title: str
+    sprint_ids: tuple[str, ...]
+    linked_entity_ids: tuple[str, ...]
+
+
 # --- request bodies (§9 wire shapes) ---
 # Every key is optional on the wire: an absent key takes the documented default,
 # unknown keys are ignored. The api layer marshals the raw JSON dict into these

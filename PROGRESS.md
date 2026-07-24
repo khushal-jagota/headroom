@@ -1,5 +1,25 @@
 # PROGRESS
 
+## Current work cycle (2026-07-24): supported Sprint Item deletion (`t_2ncx8seu`)
+
+Implementation is isolated on `ticket/t_2ncx8seu-sprint-item-delete` from current
+`staging`. Added the canonical transactional `sprints.data.delete_item` writer, the
+direct-user `DELETE /api/items/{item_id}` route, and confirmed
+`panels sprint item delete <item-id> --yes`. Deletion refuses ordered child Ticket ids
+with the accepted validation envelope, prunes item-owned/referring event history,
+removes blocking links with `link_removed` events on surviving Tickets, and leaves one
+`sprint_item_deleted` audit/invalidation event plus affected-resource metadata. The
+frontend event catalogue classifies the deletion as a Sprint Item event.
+
+Focused gates passed: `tests/unit/test_sprint_item_delete.py` plus
+`tests/unit/test_authctx_routes.py` (22 passed); `web/tests/resource-catalogue.test.mjs`
+(all assertions passed); `tests/unit/test_frontend_event_mapping.py` plus
+`tests/e2e/test_sprint_item_delete_e2e.py` (2 passed); targeted Ruff and mypy checks
+passed. Independent diff review found no unresolved violations and additionally ran the
+full web npm test green. The Implementation package is ready for proposal. Canonical
+`./verify`, current-`staging` integration, push, and cleanup remain reserved for
+Closeout. Blockers: none.
+
 ## Current work cycle (2026-07-24): Workspace left panel regroup (`t_ava8za6k`)
 
 Implementation is isolated on `ticket/t_ava8za6k-status-buckets` from current `staging`

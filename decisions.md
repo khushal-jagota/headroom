@@ -3707,3 +3707,19 @@ agent ask the user has not handled. The seen marker generalizes the existing ack
 (`has_completed_response` remembered past acknowledge) instead of adding a parallel tracker,
 and rides the existing `ticket_conversation_projection_changed` event, so the reactivity
 completeness test needs no new mapping.
+
+## 2026-07-24 — t_2ncx8seu Sprint Item deletion
+
+- Keep deletion in `sprints.data` as the only canonical writer and enforce the direct
+  actor boundary there as well as at HTTP ingress. This matches Ticket hard deletion
+  and prevents a future caller from bypassing the authority contract.
+- Refuse any child Tickets instead of cascading or detaching them. The ordered Ticket
+  ids make the refusal stable and leave every movement/removal of real work explicit.
+- Treat the deleted Sprint Item id as the durable audit and invalidation identity.
+  Delete all older events owned by or referring to that id, emit `link_removed` only
+  on surviving Ticket endpoints, then retain one `sprint_item_deleted` event carrying
+  its prior sprint placement. Existing prefix-based catalogue rules then refresh
+  backlog, board, and current sprint without a new resource or browser action.
+- Keep the permanent operation out of the browser and require `--yes` in the CLI.
+  The accepted plan calls for a supported direct operation, not another UI control or
+  eligibility wake path.
