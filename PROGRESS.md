@@ -1,5 +1,21 @@
 # PROGRESS
 
+## Current work cycle (2026-07-24): Bare Panels CLI for agent shells (`t_80u04jna`)
+
+Implementation is isolated on `ticket/t_80u04jna-bare-panels-cli` from current `staging`
+(`ce32d11`). The approved plan provisions a host-level `/usr/local/bin/panels` wrapper
+that enters the canonical `/opt/panels/current/bin/panels-launcher`, while deployment
+and rollback remain responsible only for switching the `current` pointer.
+
+The wrapper asset, Linux setup install contract, static and hermetic deployment-asset
+tests, and environment documentation are implemented. The hermetic test substitutes the
+one canonical target in a copied wrapper, exercises a scrubbed agent-like PATH outside
+the checkout, and proves exact arguments and a simulated `current` switch across two
+releases. The focused deployment-asset module passes (13 tests), and the already-installed
+live wrapper passed `--help` plus a read-only Ticket query from `/tmp` with a scrubbed
+agent-like environment. Current hypothesis: this is the complete approved implementation
+surface. Next step: commit for independent implementation review. Blockers: none.
+
 ## Current work cycle (2026-07-24): Workspace left panel regroup (`t_ava8za6k`)
 
 Implementation is isolated on `ticket/t_ava8za6k-status-buckets` from current `staging`

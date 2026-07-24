@@ -3,6 +3,15 @@
 Every delegated or judgment call, briefly justified. This file exists so a real rationale — the
 *why* behind a call that isn't visible in the code — isn't re-litigated later.
 
+## 2026-07-24 — The bare CLI is a host wrapper over the selected release
+
+Install a root-owned regular wrapper in `/usr/local/bin` and keep its only production
+target hard-coded as `/opt/panels/current/bin/panels-launcher`. A direct symlink is invalid
+because the release launcher derives the release root from its invocation path; a release
+venv console script is invalid because its shebang names its build location. The test
+substitutes that one target only in a copied wrapper, so production has no override while
+the release-pointer behavior remains hermetic.
+
 ## 2026-07-24 — Status is a sanitized snapshot; cleanup is proof-bound
 
 One operator-produced snapshot feeds both the SSH-usable CLI and the manually refreshed header
