@@ -555,6 +555,34 @@ def test_restore_brings_back_the_managed_file_tree(tmp_path: Path) -> None:
         assert connection.execute("SELECT value FROM records").fetchone()[0] == "canonical"
 
 
+def test_restore_makes_read_only_snapshot_state_owner_writable(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "planner.db"
+    _seed_database(source)
+    _seed_managed_tree(source.parent, marker="snapshot")
+    snapshot = create_database_backup(source, tmp_path / "backups", "rev-1")
+    snapshot_database = snapshot / "database.sqlite"
+    snapshot_database.chmod(0o400)
+    captured = snapshot / "files"
+    for path in sorted(captured.rglob("*"), reverse=True):
+        if path.is_symlink():
+            continue
+        path.chmod(0o500 if path.is_dir() else 0o400)
+    captured.chmod(0o500)
+
+    destination = tmp_path / "live" / "planner.db"
+    restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    with sqlite3.connect(destination) as connection:
+        connection.execute("INSERT INTO records VALUES ('writable')")
+        connection.commit()
+    settings = destination.parent / "worker-settings" / "coding" / "settings.json"
+    settings.write_text('{"marker": "writable"}')
+    new_ticket = destination.parent / "files" / "tickets" / "t_new"
+    new_ticket.mkdir()
+    (new_ticket / "note.txt").write_text("writable")
+    assert settings.read_text() == '{"marker": "writable"}'
+
+
 def test_restore_rejects_tampered_managed_capture(tmp_path: Path) -> None:
     source = tmp_path / "data" / "planner.db"
     _seed_database(source)

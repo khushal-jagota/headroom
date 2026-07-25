@@ -152,6 +152,7 @@ def restore_database_snapshot(
             )
     try:
         shutil.copy2(snapshot_database, temporary_database)
+        temporary_database.chmod(temporary_database.stat().st_mode | 0o600)
         _verify_database(temporary_database)
         try:
             for sidecar, sidecar_backup in sidecar_backups:
@@ -280,6 +281,7 @@ def _restore_managed_files(
             old: Path | None = None
             try:
                 shutil.copytree(source, staged, symlinks=True)
+                _make_owner_writable_tree(staged)
                 if target.exists() or target.is_symlink():
                     old = target.with_name(f".{target.name}.restore-old-{uuid.uuid4().hex}")
                     os.replace(target, old)
@@ -301,6 +303,19 @@ def _restore_managed_files(
             if old is not None:
                 os.replace(old, target)
         raise
+
+
+def _make_owner_writable_tree(root: Path) -> None:
+    """Make one restored managed root usable by its owning live service."""
+    for directory, names, filenames in os.walk(root):
+        directory_path = Path(directory)
+        directory_path.chmod(directory_path.stat().st_mode | 0o700)
+        for name in (*names, *filenames):
+            path = directory_path / name
+            if path.is_symlink():
+                continue
+            owner_permissions = 0o700 if path.is_dir() else 0o600
+            path.chmod(path.stat().st_mode | owner_permissions)
 
 
 def verified_snapshots(backup_dir: Path) -> list[Path]:
