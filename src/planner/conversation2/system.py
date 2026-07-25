@@ -62,8 +62,10 @@ from planner.conversation2.contracts import (
     backend_supports_steer,
 )
 from planner.conversation2.events import (
+    AgentMessageDeltaFrame,
     AgentMessageEventPayload,
     ConversationEventPayload,
+    ConversationLiveTailFrame,
     ConversationTurnEnding,
     ModelChangedEventPayload,
     PermissionAnsweredEventPayload,
@@ -76,6 +78,7 @@ from planner.conversation2.events import (
     ToolCallStatus,
     TurnEndedEventPayload,
 )
+from planner.conversation2.live_tail import ConversationLiveTail
 from planner.conversation2.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
@@ -192,6 +195,7 @@ class SqliteProcessConversationSystem:
         *,
         store: ConversationStore,
         backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
+        live_tail: ConversationLiveTail | None = None,
         monotonic_now: Callable[[], float] = time.monotonic,
         idle_child_stop_after_seconds: float = IDLE_CHILD_STOP_AFTER_SECONDS,
         idle_child_sweep_interval_seconds: float = IDLE_CHILD_SWEEP_INTERVAL_SECONDS,
@@ -200,6 +204,9 @@ class SqliteProcessConversationSystem:
         if missing:
             raise ValueError(f"no backend child factory for {missing}")
         self._store = store
+        # Nobody watching is the ordinary case for a system built without one: the record
+        # is written exactly the same way, and there is simply nowhere to show it.
+        self._live_tail = live_tail
         self._backend_child_factories = dict(backend_child_factories)
         self._monotonic_now = monotonic_now
         self._idle_child_stop_after_seconds = idle_child_stop_after_seconds
@@ -314,6 +321,28 @@ class SqliteProcessConversationSystem:
         if state is None or state.running_turn is None:
             return False
         return bool(state.running_turn.pending_permission_ask_ids)
+
+    async def pending_permission_ask_ids(self, conversation_id: str) -> frozenset[str]:
+        """Which asks are waiting for an answer right now.
+
+        The same fact ``has_pending_permission_ask`` answers, named rather than counted,
+        so a surface that has to show the ask itself can find it in the record instead of
+        working out for itself which one is still live.
+        """
+        state = await self._conversation_state(conversation_id)
+        if state is None or state.running_turn is None:
+            return frozenset()
+        return frozenset(state.running_turn.pending_permission_ask_ids)
+
+    async def held_prompt_count(self, conversation_id: str) -> int:
+        """How many messages are waiting for the agent to free up.
+
+        Held messages live in this process and nowhere else, so this is a question only
+        the running system can answer — the record has no row for a message that has not
+        been delivered yet.
+        """
+        state = await self._conversation_state(conversation_id)
+        return 0 if state is None else len(state.held_prompts)
 
     # --- answering a permission ask -----------------------------------------------------
 
@@ -1180,7 +1209,18 @@ class SqliteProcessConversationSystem:
     ) -> StoredConversationEvent:
         stored = await self._store.append_event(state.record.conversation_id, payload)
         state.record = replace(state.record, latest_sequence=stored.sequence)
+        # Shown only once it is committed, so a watcher never sees a row that is not in
+        # the record — which is what lets a reader replay and then carry straight on.
+        if self._live_tail is not None:
+            self._live_tail.publish_event(stored)
         return stored
+
+    def _publish_live_tail_frame(
+        self, conversation_id: str, frame: ConversationLiveTailFrame
+    ) -> None:
+        """Show something that has not finished arriving. Never waits, never stores."""
+        if self._live_tail is not None:
+            self._live_tail.publish_frame(conversation_id, frame)
 
     def _set_phase(self, state: _ConversationState, phase: _ConversationPhase) -> None:
         state.phase = phase
@@ -1218,12 +1258,17 @@ class _CoreBackendEventSink:
         self._state = state
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
-        """Dropped: a delta is not a row.
+        """Shown on the live tail and never stored: a delta is not a row.
 
         Deltas exist to be shown while they arrive; the finished message is what is
-        recorded. Until there is a live tail to show them on, there is nowhere for one to
-        go and nothing to keep.
+        recorded. This one goes straight out to whoever is watching, ahead of the queue
+        the rows go through, because it is not a row and has nothing to be ordered
+        against — the message it belongs to is written whole when it finishes.
         """
+        del turn_token
+        self._system._publish_live_tail_frame(
+            self._state.record.conversation_id, AgentMessageDeltaFrame(text_delta=text_delta)
+        )
 
     async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
         self._enqueue(

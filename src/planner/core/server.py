@@ -16,6 +16,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.composition import ConversationComposition, ConversationTestOptions
+from planner.conversation2.api import build_conversation2_runtime, unwired_backend_child_factories
+from planner.conversation2.api import router as conversation2_router
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
@@ -161,6 +163,18 @@ def create_app(
                 app.state.conversation = None
                 raise
             app.state.employee_step_runner = loops.employee_step_runner
+
+        # The new conversation system, alongside the old one and touched by nothing else:
+        # no production screen and no loop calls it. Its backend adapters are wired in
+        # separately; until they are, a conversation is real and a send finds no child.
+        conversation2 = build_conversation2_runtime(
+            db_path=config.db_path,
+            db_busy_timeout_ms=config.db_busy_timeout_ms,
+            sse_heartbeat_ms=config.sse_heartbeat_ms,
+            backend_child_factories=unwired_backend_child_factories(),
+        )
+        app.state.conversation2 = conversation2
+        await conversation2.system.start_idle_child_janitor()
         try:
             yield
         finally:
@@ -173,8 +187,12 @@ def create_app(
                 if test_runner is not None:
                     await asyncio.to_thread(test_runner.stop, deadline=deadline)
             finally:
-                if conversation is not None:
-                    await conversation.shutdown(deadline)
+                try:
+                    if conversation is not None:
+                        await conversation.shutdown(deadline)
+                finally:
+                    app.state.conversation2 = None
+                    await conversation2.shutdown()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -199,6 +217,7 @@ def create_app(
         TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
     )
     app.state.conversation = None
+    app.state.conversation2 = None
     configured_vps_status_collector = vps_status_collector or (
         lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
     )
@@ -216,6 +235,7 @@ def create_app(
     ):
         app.include_router(domain_router, prefix="/api")
     app.include_router(files_router)
+    app.include_router(conversation2_router, prefix="/api/conversation2")
 
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:
