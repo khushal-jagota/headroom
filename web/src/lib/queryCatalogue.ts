@@ -16,8 +16,11 @@ import type {
   WorkersResponse
 } from "./types";
 
-// Every server resource the browser reads, in one place: its query key and the
-// API path it comes from. A screen names the resource it needs and gets both.
+// Every server resource that follows the change stream, in one place: its query
+// key and the API path it comes from. A screen names the resource it needs and
+// gets both. One-shot reads that nothing invalidates — the employee
+// configuration catalog, the VPS status snapshot — stay imperative fetches
+// where they are used.
 function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
   return queryOptions<T>({
     queryKey,

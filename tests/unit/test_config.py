@@ -141,6 +141,15 @@ def test_sse_heartbeat_ms_can_be_overridden_by_environment() -> None:
     assert cfg.sse_heartbeat_ms == 125
 
 
+@pytest.mark.parametrize("heartbeat", ["0", "-1"])
+def test_a_heartbeat_cadence_at_or_below_zero_refuses_to_load(heartbeat: str) -> None:
+    # A zero interval would spin the change stream instead of keeping it quiet.
+    with pytest.raises(PlannerError) as raised:
+        load_config(path=None, env={"PLAN_SSE_HEARTBEAT_MS": heartbeat})
+
+    assert "sse_heartbeat_ms must be greater than zero" in raised.value.message
+
+
 def test_checked_in_config_exposes_sse_heartbeat_cadence() -> None:
     path = Path(__file__).parents[2] / "config.yaml"
 

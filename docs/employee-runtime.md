@@ -47,9 +47,11 @@ therefore cannot claim the Ticket, create a run, or contact an agent. The transa
 changes the Ticket to `agent` and creates the Employee-step record before the worker
 prompt begins.
 
-Discovery does not wait for its timer to come round. Every committed write in the
-server announces itself — the announcement says nothing about what changed — and
-discovery answers by re-running the whole eligibility check. Checking too often is
+Discovery does not wait for its timer to come round. Every write committed through
+the database door announces itself — the announcement says nothing about what
+changed — and discovery answers by re-running the whole eligibility check. (One
+internal conversation cache writes outside the door and stays silent; it never
+affects eligibility.) Checking too often is
 harmless: the check is read-only and the decision is complete. The periodic timer and
 SQLite state are still the backstop, so a lost announcement cannot lose work.
 

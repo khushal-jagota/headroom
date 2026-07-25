@@ -383,6 +383,7 @@ def test_chief_rejections_do_not_signal_or_change_canonical_records(
             (ticket_id,),
         )
         conn.close()
+        changes.reset()
         before_active = _ticket_snapshot(db_path, ticket_id)
         active_reconcile = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
@@ -476,6 +477,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
             conn.close()
         assert not _is_eligible_today(db_path, ticket_id)
 
+        changes.reset()
         same_paired = client.put(
             f"/api/tickets/{ticket_id}/stage-ownership/needs_success",
             json={"ownership_mode": StageOwnershipMode.paired.value},
@@ -484,24 +486,26 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
         assert same_paired.json()["ticket_status"] == TicketStatus.paired.value
         # Rewriting the same ownership mode changes nothing canonical, but the writer
         # still opens and commits its transaction, and every commit signals.
-        assert changes.calls == 2
+        assert changes.calls == 1
         assert not _is_eligible_today(db_path, ticket_id)
 
+        changes.reset()
         user = client.put(
             f"/api/tickets/{ticket_id}/stage-ownership/needs_success",
             json={"ownership_mode": StageOwnershipMode.user.value},
         )
         assert user.status_code == 200, user.text
         assert user.json()["ticket_status"] == TicketStatus.user.value
-        assert changes.calls == 3
+        assert changes.calls == 1
 
+        changes.reset()
         paired_again = client.put(
             f"/api/tickets/{ticket_id}/stage-ownership/needs_success",
             json={"ownership_mode": StageOwnershipMode.paired.value},
         )
         assert paired_again.status_code == 200, paired_again.text
         assert paired_again.json()["ticket_status"] == TicketStatus.empty.value
-        assert changes.calls == 4
+        assert changes.calls == 1
         assert _is_eligible_today(db_path, ticket_id)
 
 

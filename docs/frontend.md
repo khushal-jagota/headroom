@@ -100,14 +100,16 @@ share.
 ## The two rules that shape it
 
 - **The server says "something changed"; the browser refetches what it is showing.**
-  Every server read the browser makes is listed in one place — its name and the
-  address it comes from — so a screen asks for a resource by name and gets both.
+  Every live-updated read the browser makes is listed in one place — its name and
+  the address it comes from — so a screen asks for a resource by name and gets both.
   The reads are cached and shared: two screens asking for the same thing make one
-  request.
+  request. (A few one-shot reads, like the VPS status check and the employee
+  configuration probe, are plain fetches and sit outside the list.)
 
   The server holds open a change stream and sends one line down it every time a write
-  is committed. The line says nothing about what changed — there is no vocabulary
-  here to keep in step with the backend. The browser answers by marking every cached
+  is committed through the database door. (One internal conversation cache writes
+  outside that door and stays silent; it feeds no screen.) The line says nothing
+  about what changed — there is no vocabulary here to keep in step with the backend. The browser answers by marking every cached
   read stale, and only the reads a screen is currently using are fetched again;
   everything else waits until something needs it. A burst of writes collapses into
   one round of refetching. A refetch that comes back the same leaves the page alone,

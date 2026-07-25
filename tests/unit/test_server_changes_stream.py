@@ -133,6 +133,23 @@ def test_the_stream_is_an_event_stream_that_says_only_that_something_changed(
     assert frames == ["data: change\n\n"]
 
 
+def test_a_signal_raised_on_another_thread_reaches_the_stream(tmp_path: Path) -> None:
+    """Writers commit on their own threads; the stream lives on the event loop."""
+    app = _make_app(tmp_path, sse_heartbeat_ms=60_000)
+
+    async def emit_from_a_worker_thread() -> None:
+        emitting = threading.Thread(target=change_signal.emit)
+        emitting.start()
+        emitting.join(5)
+        assert not emitting.is_alive()
+
+    _started, frames = asyncio.run(
+        _collect_frames(app, frames_wanted=1, once_open=emit_from_a_worker_thread)
+    )
+
+    assert frames == ["data: change\n\n"]
+
+
 def test_signals_raised_while_a_frame_is_owed_coalesce_into_one_frame(
     tmp_path: Path,
 ) -> None:

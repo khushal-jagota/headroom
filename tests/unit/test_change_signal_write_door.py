@@ -20,6 +20,9 @@ class _SignalCounter:
     def record(self) -> None:
         self.count += 1
 
+    def reset(self) -> None:
+        self.count = 0
+
 
 @pytest.fixture
 def signals() -> Iterator[_SignalCounter]:
@@ -71,6 +74,75 @@ def test_the_commit_method_on_a_connection_with_nothing_open_signals_nothing(
     conn.commit()
 
     assert signals.count == 0
+
+
+def test_a_bare_write_with_no_transaction_open_signals_once(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    """These connections leave transactions to the caller, so this write is already in."""
+    conn.execute("INSERT INTO door (note) VALUES ('straight in')")
+
+    assert signals.count == 1
+    assert conn.execute("SELECT COUNT(*) FROM door").fetchone()[0] == 1
+
+    conn.execute("UPDATE door SET note = 'edited' WHERE note = 'straight in'")
+    assert signals.count == 2
+
+    conn.execute("DELETE FROM door WHERE note = 'edited'")
+    assert signals.count == 3
+
+
+def test_a_bare_read_signals_nothing(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    conn.execute("INSERT INTO door (note) VALUES ('a row to read')")
+    signals.reset()
+
+    conn.execute("SELECT * FROM door").fetchall()
+    conn.execute("SELECT COUNT(*) FROM door").fetchone()
+    conn.execute("PRAGMA busy_timeout").fetchone()
+
+    assert signals.count == 0
+
+
+def test_a_bare_write_that_changes_no_rows_signals_nothing(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    conn.execute("UPDATE door SET note = 'nobody' WHERE note = 'no such row'")
+    conn.execute("DELETE FROM door WHERE note = 'no such row'")
+
+    assert signals.count == 0
+
+
+def test_a_schema_change_signals_nothing(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    conn.execute("CREATE TABLE later (id INTEGER PRIMARY KEY)")
+    conn.execute("DROP TABLE later")
+
+    assert signals.count == 0
+
+
+def test_statements_inside_a_transaction_wait_for_its_commit(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute("INSERT INTO door (note) VALUES ('one')")
+    conn.execute("INSERT INTO door (note) VALUES ('two')")
+    conn.execute("SELECT COUNT(*) FROM door").fetchone()
+    assert signals.count == 0
+
+    conn.execute("COMMIT")
+    assert signals.count == 1
+
+
+def test_opening_a_transaction_signals_nothing(
+    conn: sqlite3.Connection, signals: _SignalCounter
+) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+
+    assert signals.count == 0
+    conn.execute("ROLLBACK")
 
 
 def test_a_rollback_signals_nothing(

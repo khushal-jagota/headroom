@@ -47,17 +47,27 @@ def _wait_for_server(port: int, child: subprocess.Popen[bytes]) -> None:
     raise AssertionError("the application process never started serving")
 
 
-def _hold_open_change_stream(port: int, opened: threading.Event) -> None:
+def _hold_open_change_stream(
+    port: int, opened: threading.Event, refusals: list[str]
+) -> None:
+    """Open the change stream and sit on it, the way a browser tab does.
+
+    `opened` is set only once the server has actually answered with a change stream,
+    so a connection that never got one cannot let the test pass on a technicality.
+    """
     connection = HTTPConnection("127.0.0.1", port, timeout=SHUTDOWN_BUDGET_SECONDS)
     try:
         connection.request("GET", "/api/changes")
         response = connection.getresponse()
-        assert response.status == 200
+        content_type = response.headers.get("content-type", "")
+        if response.status != 200 or not content_type.startswith("text/event-stream"):
+            refusals.append(f"status {response.status}, content-type {content_type!r}")
+            return
         opened.set()
-        # Sit on the stream exactly as a browser does, reading nothing in particular.
+        # Read nothing in particular; this returns when the server ends the response.
         response.read()
-    except OSError:
-        opened.set()
+    except OSError as exc:
+        refusals.append(f"{type(exc).__name__}: {exc}")
     finally:
         connection.close()
 
@@ -87,11 +97,14 @@ def test_sigterm_stops_the_application_with_a_change_stream_held_open(
     try:
         _wait_for_server(port, child)
         opened = threading.Event()
+        refusals: list[str] = []
         holding = threading.Thread(
-            target=_hold_open_change_stream, args=(port, opened), daemon=True
+            target=_hold_open_change_stream,
+            args=(port, opened, refusals),
+            daemon=True,
         )
         holding.start()
-        assert opened.wait(10), "the change stream never opened"
+        assert opened.wait(10), f"the change stream never opened: {refusals}"
 
         child.send_signal(signal.SIGTERM)
         # Uvicorn re-raises the signal it captured once it has shut down cleanly, so a

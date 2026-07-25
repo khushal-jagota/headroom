@@ -60,10 +60,12 @@
     }
   });
 
-  // The board is settled — loaded, with no fetch in flight — and the ticket in
-  // the address is not on it, so the address is stale: fall back to the board.
+  // The board is settled — loaded, no fetch in flight, and the last read
+  // succeeded — and the ticket in the address is not on it, so the address is
+  // stale: fall back to the board. A failed refetch leaves the previous board in
+  // place, which is not evidence the ticket is gone, so it holds instead.
   $effect(() => {
-    if (ticketId && board.data && !board.isFetching && !selectedCard) {
+    if (ticketId && board.data && !board.isFetching && !board.isError && !selectedCard) {
       window.location.replace("#/workspace");
     }
   });

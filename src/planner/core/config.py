@@ -120,6 +120,18 @@ def _int_value(
     return _parse_int(value, key)
 
 
+def _positive_int_value(
+    file_cfg: Mapping[str, object], env: Mapping[str, str], key: str, env_var: str, default: int
+) -> int:
+    """An interval or size that only means something above zero, refused below it."""
+    value = _int_value(file_cfg, env, key, env_var, default)
+    if value <= 0:
+        raise PlannerError(
+            ErrorCode.validation, f"{key} must be greater than zero: {value}"
+        )
+    return value
+
+
 def _bool_value(
     file_cfg: Mapping[str, object], env: Mapping[str, str], key: str, env_var: str, default: bool
 ) -> bool:
@@ -232,7 +244,7 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         boundary_hour=_int_value(cfg, env, "boundary_hour", "PLAN_BOUNDARY_HOUR", 5),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
-        sse_heartbeat_ms=_int_value(
+        sse_heartbeat_ms=_positive_int_value(
             cfg, env, "sse_heartbeat_ms", "PLAN_SSE_HEARTBEAT_MS", 15000
         ),
         dispatcher_lock_path=_str_value(
