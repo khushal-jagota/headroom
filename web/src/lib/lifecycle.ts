@@ -180,11 +180,6 @@ export function fieldStageVisualStateFor(
   });
 }
 
-export function recapVisibleFor(lc: Lifecycle | null, stage: string): boolean {
-  if (!lc) return false;
-  return lc.stageOrder.indexOf(stage) > 1;
-}
-
 // --- per-type lifecycle lookup over a fetched manifest response -----------------
 // Pure: lives here (not in the Svelte-runes manifest.svelte.ts) so the unit test
 // exercises the REAL selector, not a copy (Codex F6). Memoizes the built Lifecycle

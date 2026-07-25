@@ -81,22 +81,6 @@ def check_agent_proposal(
         )
 
 
-def check_recap_writable(
-    stage: str,
-    *,
-    worker_type_definition: WorkerTypeDefinition,
-) -> None:
-    first_worker = worker_type_definition.first_worker_stage()
-    if stage == worker_type_definition.dropped_stage.id or not (
-        worker_type_definition.stage_index(stage) > worker_type_definition.stage_index(first_worker)
-    ):
-        raise PlannerError(
-            ErrorCode.recap_too_early,
-            f"recap is writable only past the first worker stage ({first_worker})",
-            {"stage": stage, "first_worker_stage": first_worker},
-        )
-
-
 def check_sprint_assignable(ticket_id: str, sprint_item_id: str | None) -> None:
     if sprint_item_id is not None:
         raise PlannerError(

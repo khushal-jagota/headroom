@@ -339,6 +339,18 @@ exact(
   keysForEvent(event("t_left", "link_added", { from_id: "t_left", to_id: "si_right" })),
   ["ticket:t_left", "items:backlog", "board", "sprint:current"]
 );
+exact(keysForEvent(event("si_deleted", "sprint_item_deleted")), [
+  "items:backlog",
+  "board",
+  "sprint:current"
+]);
+exact(
+  keysForEvent(event("t_survivor", "link_removed", {
+    from_id: "t_survivor",
+    to_id: "si_deleted"
+  })),
+  ["ticket:t_survivor", "items:backlog", "board", "sprint:current"]
+);
 for (const kind of ["link_added", "link_removed"]) {
   exact(
     keysForEvent(event("t_blocker", kind, { from_id: "t_blocker", to_id: "t_dependent" })),
@@ -459,7 +471,12 @@ for (const kind of backendKinds) {
     sample = event("day_today", kind, kind === "day_ticket_added" || kind === "day_ticket_removed" ? { ticket_id: "t_backend" } : {});
   } else if (["sprint_created", "sprint_updated"].includes(kind)) {
     sample = event("sp_backend", kind);
-  } else if (["sprint_item_created", "item_updated", "item_children_changed"].includes(kind)) {
+  } else if ([
+    "sprint_item_created",
+    "sprint_item_deleted",
+    "item_updated",
+    "item_children_changed"
+  ].includes(kind)) {
     sample = event("si_backend", kind);
   } else if (kind === "idea_created") {
     sample = event("idea_backend", kind);

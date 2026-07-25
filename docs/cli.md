@@ -43,11 +43,13 @@ generic Stage setter.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
   backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
   — manage sprint items and their ticket membership. Creating a ticket is still
   `ticket create`; adding an existing ticket to an item is a sprint-item command.
   `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
   Item status is read-only and derived from child tickets and active blocking links.
+  `sprint item delete <item-id> --yes` permanently removes a childless item. An item
+  with child tickets must have that work explicitly moved or removed first.
 - **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` preserves

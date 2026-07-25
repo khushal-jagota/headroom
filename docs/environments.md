@@ -21,6 +21,12 @@ checked-in files under `ops/panels-environments/` are inputs for an operator-own
 Linux installation. They do not create accounts, install services, change ingress, or
 start a server by themselves.
 
+Linux setup installs a root-owned `/usr/local/bin/panels` wrapper for ordinary agent
+shells. It works through the standard PATH from outside a release checkout and forwards
+the command to `/opt/panels/current/bin/panels-launcher`. It is a regular file, not a
+symlink, because the release launcher uses its own path to find the selected release.
+Deployments and rollbacks switch `/opt/panels/current`; they do not rewrite the wrapper.
+
 Code paths: `src/planner/environments/`, `src/planner/cli/main.py`.
 
 ## Host status and maintenance

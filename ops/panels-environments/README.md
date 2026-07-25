@@ -27,6 +27,16 @@ operator-owned deployed app launcher:
 The `current` deployment root and deployment controls are writable only by the operator/deploy
 identity. The live service receives external state paths and cannot modify `current/app`.
 
+`setup-accounts.sh` also installs the checked-in `panels` wrapper as the root-owned,
+mode-`0755` regular file `/usr/local/bin/panels`. Agent shells include `/usr/local/bin`
+in their standard PATH, so the bare command works outside a release checkout. The wrapper
+executes `/opt/panels/current/bin/panels-launcher` and forwards every argument unchanged.
+It is deliberately a wrapper rather than a symlink: the launcher derives its release root
+from its own path, so a symlink in `/usr/local/bin` would resolve the wrong root.
+
+Deployments and rollbacks do not replace this host-level command. They switch only
+`/opt/panels/current`, and the wrapper follows whichever release that pointer selects.
+
 Live uses the fixed port in its prepared contract. Start the staging unit only while
 active work needs it and stop it afterward; each start chooses an available loopback
 port and reports the actual URL in the service log. Staging's prepared state remains

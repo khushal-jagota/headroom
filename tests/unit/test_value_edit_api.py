@@ -1,4 +1,4 @@
-"""API-level tests for PUT /api/tickets/{id}/value/{field} (Decision B). Exercises
+"""API-level tests for PUT /api/tickets/{id}/value/{field}. Exercises
 ValueEditBody marshalling, the direct-only gate, bad-field validation,
 the ticket_json response shape, and that the edit lands a field_value_edited event
 on GET /api/tickets/{id}/events (the _apply_decision appender path). Supporting tests,
