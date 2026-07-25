@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 from tests.unit.test_conversation2_codex_scripted_app_server import scripted_app_server_launch
 
+from planner.conversation2.backends.codex_app_server import adapter
 from planner.conversation2.backends.codex_app_server.adapter import (
     WITHDRAWN_ASK_DECISION,
     CodexAppServerBackendChild,
@@ -521,6 +522,85 @@ def test_an_interrupt_reaches_codex_and_its_outcome_is_the_turns_ending(tmp_path
     _run(exercise)
 
 
+def test_a_cancel_returns_only_once_codex_says_the_turn_has_ended(tmp_path: Path) -> None:
+    """The send-now race: the next turn must not be written into the middle of a cancel.
+
+    ``turn/interrupt`` is acknowledged the instant codex reads it and means nothing yet.
+    A send-now writes its message the moment the cancel returns, so a cancel that returned
+    at the acknowledgment would put that message in front of a codex still winding the old
+    turn down — and codex would take it as work to do after that turn rather than as the
+    turn to run now. The script here holds the ending back deliberately.
+    """
+
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "await_interrupt"},
+                        {"do": "sleep", "seconds": 0.4},
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                },
+                {
+                    "actions": [
+                        {
+                            "do": "item_completed",
+                            "item": {"type": "agentMessage", "id": "m2", "text": "urgent"},
+                        },
+                        {"do": "complete", "status": "completed"},
+                    ]
+                },
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, "something long")
+
+            await scripted.child.cancel_running_turn()
+            # Codex's own account of the ending has arrived by the time this returned.
+            assert scripted.sink.endings == [ConversationTurnEnding.interrupted]
+
+            # What a send-now does next: write immediately, with no waiting of its own.
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, "urgent")
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.agent_messages == ["urgent"]
+            # And at the child: the second turn was asked for after the first had ended.
+            assert scripted.what_happened_at_the_child() == [
+                "received turn/start",
+                "received turn/interrupt",
+                "emitted turn/completed",
+                "received turn/start",
+                "emitted turn/completed",
+            ]
+
+    _run(exercise)
+
+
+def test_a_cancel_a_codex_never_answers_gives_up_rather_than_wedging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wait is bounded: a backend that goes quiet must not hold the conversation."""
+
+    async def exercise() -> None:
+        script = {"turns": [{"actions": [{"do": "await_interrupt"}]}, {}]}
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, "something long")
+
+            await scripted.child.cancel_running_turn()
+            # Codex never said the turn ended, and the conversation carries on regardless.
+            assert scripted.sink.endings == []
+
+            await scripted.write_prompt(2, "urgent")
+            await scripted.sink.wait_for_the_turn_to_end()
+
+    monkeypatch.setattr(adapter, "CANCEL_SETTLING_TIMEOUT_SECONDS", 0.2)
+    _run(exercise)
+
+
 # --- changing what the conversation runs on ----------------------------------------------------
 
 
@@ -925,6 +1005,24 @@ class _ScriptedChild:
             await asyncio.sleep(0.05)
             waited += 0.05
         assert self.answers(), "nothing this adapter answered ever reached the child"
+
+    def what_happened_at_the_child(self) -> list[str]:
+        """The child's own order of events: what it was sent, and what it sent back.
+
+        Ordering is the whole assertion for a race, and the only account of it that cannot
+        be fooled by this side's bookkeeping is the child's.
+        """
+        happened: list[str] = []
+        for entry in self.transcript():
+            if "received" in entry and entry["received"].get("method"):
+                happened.append(f"received {entry['received']['method']}")
+            elif "emitted" in entry:
+                happened.append(f"emitted {next(iter(entry['emitted']))}")
+        return [
+            step
+            for step in happened
+            if step.startswith("emitted") or step.split()[1] in {"turn/start", "turn/interrupt"}
+        ]
 
     def launched(self) -> dict[str, Any]:
         launched: list[dict[str, Any]] = [

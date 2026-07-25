@@ -5,12 +5,15 @@ This is the whole of what the conversation system knows about talking to codex. 
 of the conversation's rules: it never decides that a message waits, never decides that an
 ask has expired, and never writes a row.
 
-Four things about codex's app-server shape this adapter.
+Five things about codex's app-server shape this adapter.
 
 **A turn is started, not awaited.** ``turn/start`` answers as soon as codex has taken the
 message, and the turn's ending arrives much later as a ``turn/completed`` notification. So
 the write returns at acceptance — either the response or the ``turn/started`` notification,
-whichever comes first — and the ending is reported when it happens.
+whichever comes first — and the ending is reported when it happens. A cancel is the same
+protocol read the other way round, and so has the opposite rule: ``turn/interrupt`` answers
+straight away and means nothing yet, so a cancel is not finished until the turn's own
+ending has arrived.
 
 **A model or effort change is a parameter of the turn.** Codex takes both on ``turn/start``,
 so a change carried by a message is simply that turn's parameters. There is nothing to set
@@ -122,6 +125,12 @@ TOOL_CALL_DETAIL_MAXIMUM_CHARACTERS = 4096
 # How much of a command is kept as a tool call's title.
 TOOL_CALL_TITLE_MAXIMUM_CHARACTERS = 200
 
+# How long a cancel waits for codex to say the turn it interrupted has ended. Codex ends an
+# interrupted turn in well under a second; this is long enough that only a codex which has
+# stopped answering reaches it, and short enough that one which has does not hold up the
+# message that was meant to displace the turn.
+CANCEL_SETTLING_TIMEOUT_SECONDS = 15.0
+
 # What a codex tool item's own status means to a conversation's record. Declined is a
 # finish: the work was asked for and did not happen.
 _FINISHED_TOOL_CALL_STATUSES: dict[str, ToolCallStatus] = {
@@ -178,6 +187,10 @@ class _TurnInFlight:
     agent_message_texts: dict[str, list[str]] = field(default_factory=dict)
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
     last_error_summary: str | None = None
+    # Set once codex's own account of this turn ending has arrived and been worked through.
+    # It is what a cancel waits on, so the turn after it is not written into the middle of
+    # codex still stopping this one.
+    ended: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class CodexAppServerBackendChild:
@@ -290,7 +303,19 @@ class CodexAppServerBackendChild:
         raise PromptWriteFailed("codex does not take text into a turn that is already running")
 
     async def cancel_running_turn(self) -> None:
-        """Ask codex to stop the running turn. Its ending arrives as ``turn/completed``."""
+        """Stop the running turn, and return once codex says it has stopped.
+
+        ``turn/interrupt`` answers with an empty object the moment codex has read it, which
+        says nothing about the turn: the outcome arrives later as ``turn/completed`` with a
+        status of interrupted. Returning at the acknowledgment would let the next message —
+        a send-now's, written the instant this returns — reach codex while it is still
+        winding the old turn down, and codex would take it as something to do after the
+        turn it is busy ending rather than as the turn to run now.
+
+        So this waits for codex's own account of the ending. It is bounded, because a
+        backend that never says the turn ended must not wedge the conversation: on the
+        bound this returns anyway, which is no worse than not having waited at all.
+        """
         turn = self._turn
         if turn is None or turn.turn_id is None:
             return
@@ -300,6 +325,13 @@ class CodexAppServerBackendChild:
             await self._client.request("turn/interrupt", _wire(parameters))
         except CodexAppServerError as did_not_reach:
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
+        try:
+            await asyncio.wait_for(turn.ended.wait(), CANCEL_SETTLING_TIMEOUT_SECONDS)
+        except TimeoutError:
+            LOGGER.warning(
+                "conversation %s: codex took the interrupt but never said the turn ended",
+                self._resolved_start.conversation_id,
+            )
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         """Give codex the option a person chose, as the answer to the request it is holding."""
@@ -501,6 +533,9 @@ class CodexAppServerBackendChild:
                 else None
             ),
         )
+        # Last, so that a cancel waiting here returns to a child with nothing of this turn
+        # left to do: its asks are settled and everything it said has been reported.
+        turn.ended.set()
 
     async def _complete_agent_messages(self, turn: _TurnInFlight) -> None:
         """Finish anything the agent was part way through saying when the turn stopped."""
@@ -698,6 +733,7 @@ class CodexAppServerBackendChild:
             error_summary="the codex process ended while the turn was running",
             standard_error_tail=self._client.standard_error_tail(),
         )
+        turn.ended.set()
 
 
 class _CodexServerMessages:

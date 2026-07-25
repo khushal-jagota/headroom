@@ -144,11 +144,66 @@ def test_real_codex_takes_an_interrupt(tmp_path: Path) -> None:
             await _wait_until_the_agent_is_speaking(sink)
             said_before_the_interrupt = "".join(sink.deltas)
             await child.cancel_running_turn()
-            await sink.wait_for_the_turn_to_end()
 
+            # Not ``wait_for_the_turn_to_end`` — the cancel itself is what waits now, so by
+            # the time it has returned real codex has already said the turn is over.
             assert sink.endings == [ConversationTurnEnding.interrupted]
             assert said_before_the_interrupt
             print("REAL CODEX interrupted mid-answer after:", said_before_the_interrupt[:120])
+        finally:
+            await child.stop()
+
+    _run(exercise)
+
+
+@real_codex_only
+def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
+    tmp_path: Path,
+) -> None:
+    """The send-now sequence against a busy real codex: cancel, then write immediately.
+
+    This is the shape that went wrong in dogfooding — the urgent message reached the
+    backend while it was still winding the interrupted turn down, and the backend queued it
+    behind that turn instead of running it. What proves it is running now is the urgent
+    reply's own text coming back.
+    """
+
+    async def exercise() -> None:
+        from planner.conversation2.backends.contracts import TurnToken
+
+        sink = _RecordingSink()
+        child = _real_child(tmp_path, sink)
+        await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+        try:
+            sink.expect_another_turn()
+            await child.write_prompt(
+                TurnToken(conversation_id="real-codex", turn_number=1),
+                "Count slowly from 1 to 300, one number per line, and do not stop early.",
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await _wait_until_the_agent_is_speaking(sink)
+
+            # Exactly what the core does for a send-now, with no waiting of its own between.
+            await child.cancel_running_turn()
+            assert sink.endings == [ConversationTurnEnding.interrupted]
+            sink.expect_another_turn()
+            await child.write_prompt(
+                TurnToken(conversation_id="real-codex", turn_number=2),
+                "Stop counting. Reply with exactly one word: pineapple. No tools.",
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await sink.wait_for_the_turn_to_end()
+
+            urgent_reply = sink.agent_messages[-1]
+            print("REAL CODEX send-now reply:", urgent_reply)
+            assert sink.endings[-1] is ConversationTurnEnding.completed
+            assert "pineapple" in urgent_reply.lower()
         finally:
             await child.stop()
 

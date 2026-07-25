@@ -252,7 +252,12 @@ class ScriptedAppServer:
                 )
             case "await_interrupt":
                 await self._interrupted.wait()
+            case "sleep":
+                # A real codex does not finish winding a turn down the instant it is told
+                # to. Scripting that delay is what makes the race visible.
+                await asyncio.sleep(action["seconds"])
             case "complete":
+                self._write_down({"emitted": {"turn/completed": turn_id}})
                 await self._notify(
                     "turn/completed",
                     {
