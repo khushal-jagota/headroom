@@ -11,7 +11,7 @@
   import ConversationPane from "../components/conversation2/ConversationPane.svelte";
   import NewConversationForm from "../components/conversation2/NewConversationForm.svelte";
   import {
-    conversationIsRunning,
+    conversationLiveness,
     createConversationStream,
     currentRunValues,
     emptyConversationFeed,
@@ -65,9 +65,23 @@
   let stream: ConversationStream | null = null;
 
   let started = $derived(view !== null);
-  let rows = $derived(transcriptRows(feed));
+  // The rows are the record and they are almost always the fresher of the two, so they
+  // win. The one thing they cannot say is that a turn stopped without an ending — ending
+  // a turn is a row, and a server that went away mid-turn wrote none — so a snapshot that
+  // had already seen every row this reader holds is believed about that.
+  let liveness = $derived(
+    conversationLiveness(
+      feed,
+      view === null ? null : { latestSequence: view.latest_sequence, isRunning: view.is_running }
+    )
+  );
+  let rows = $derived(
+    transcriptRows(feed, {
+      turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
+    })
+  );
   let ask = $derived(liveAskFrom(rows));
-  let running = $derived(conversationIsRunning(feed));
+  let running = $derived(liveness.isRunning);
 
   // A queued or steered note describes traffic that a turn ending settles — the held
   // message has run, the steered text was taken. A refusal outlives endings: it is
@@ -139,7 +153,11 @@
       (next) => {
         feed = next;
         connectionTrouble = false;
-      }
+      },
+      // Every connect asks the system about itself again, after the rows are in. This is
+      // the after-a-restart path: the rows still leave a turn open, and only the system
+      // can say that nothing is running behind it any more.
+      () => void refreshView()
     );
     try {
       await stream.connect();

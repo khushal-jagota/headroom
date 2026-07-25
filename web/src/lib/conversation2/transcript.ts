@@ -21,6 +21,11 @@ import type { ConversationFeed } from "./feed";
 
 export type PermissionAskState = "live" | "answered" | "dead";
 
+/** Why a dead ask is dead. Both are the same death — its turn is gone — but they are not
+ *  the same story, and a reader who was told the wrong one would go looking for a turn
+ *  ending that was never written. */
+export type PermissionAskDeadReason = "turn_ended" | "no_ending_recorded";
+
 export type TranscriptRow =
   | {
       key: string;
@@ -67,6 +72,7 @@ export type TranscriptRow =
       detail: string | null;
       options: readonly PermissionAskOption[];
       state: PermissionAskState;
+      deadReason: PermissionAskDeadReason | null;
       answeredOptionLabel: string | null;
     }
   | {
@@ -83,6 +89,10 @@ export type TranscriptRow =
       ending: ConversationTurnEnding;
       errorSummary: string | null;
     }
+  /** Not a row: the pane saying that the turn the last rows left open is not running any
+   *  more, and that no ending was ever written for it. Without this the thread would just
+   *  stop, which reads as a turn still going. */
+  | { key: string; kind: "turn_stopped"; sequence: number }
   /** Agent text that is still arriving. Replaced by its row, never kept beside it. */
   | { key: string; kind: "streaming_agent_message"; sequence: number; text: string };
 
@@ -113,10 +123,56 @@ export function turnEndingSentence(
   return errorSummary ? `${base} · ${errorSummary}` : base;
 }
 
-export function transcriptRows(feed: ConversationFeed): TranscriptRow[] {
+export type TranscriptReading = {
+  /** The conversation system says no turn is running while the rows still leave one
+   *  open. The turn stopped without an ending, so the pane says the ending the record
+   *  will never contain, and the asks that were waiting on it are dead. */
+  turnStoppedWithoutAnEnding?: boolean;
+};
+
+const ASK_DEAD_SENTENCES: Record<PermissionAskDeadReason, string> = {
+  turn_ended: "expired with the turn",
+  no_ending_recorded: "expired — its turn stopped without an ending"
+};
+
+/** Why this ask can no longer be answered, in the words a person reads.
+ *
+ * The second one does not name a cause it cannot prove. What is known is that the turn
+ * is not running and no ending was ever written for it — a server that went away mid-turn
+ * leaves exactly that, and so does anything else that stops a process — so that, and not
+ * a guess about which, is what it says.
+ */
+export function askDeadSentence(reason: PermissionAskDeadReason | null): string {
+  return reason === null ? "expired with the turn" : ASK_DEAD_SENTENCES[reason];
+}
+
+/** The pane's own words for a turn whose ending the record will never contain. */
+export const TURN_STOPPED_SENTENCE = "turn stopped without an ending";
+
+function killOpenAsks(
+  rows: TranscriptRow[],
+  askRowIndex: Map<string, number>,
+  reason: PermissionAskDeadReason
+): void {
+  for (const at of askRowIndex.values()) {
+    const asked = rows[at];
+    if (asked?.kind === "permission_ask" && asked.state === "live") {
+      rows[at] = { ...asked, state: "dead", deadReason: reason };
+    }
+  }
+  askRowIndex.clear();
+}
+
+export function transcriptRows(
+  feed: ConversationFeed,
+  reading: TranscriptReading = {}
+): TranscriptRow[] {
   const rows: TranscriptRow[] = [];
   const toolCallRowIndex = new Map<string, number>();
   const askRowIndex = new Map<string, number>();
+  // Half-finished output belongs to a turn that is running. When the turn is gone,
+  // whatever was left in flight is not arriving, and it is not drawn.
+  const turnIsGone = reading.turnStoppedWithoutAnEnding === true;
 
   for (const event of feed.events) {
     const sequence = event.sequence;
@@ -210,6 +266,7 @@ export function transcriptRows(feed: ConversationFeed): TranscriptRow[] {
           detail: event.payload.detail,
           options: event.payload.options,
           state: "live",
+          deadReason: null,
           answeredOptionLabel: null
         });
         break;
@@ -239,13 +296,7 @@ export function transcriptRows(feed: ConversationFeed): TranscriptRow[] {
         break;
       case "turn_ended":
         // Every ask still open belonged to the turn that just ended, so it ended too.
-        for (const at of askRowIndex.values()) {
-          const asked = rows[at];
-          if (asked?.kind === "permission_ask" && asked.state === "live") {
-            rows[at] = { ...asked, state: "dead" };
-          }
-        }
-        askRowIndex.clear();
+        killOpenAsks(rows, askRowIndex, "turn_ended");
         rows.push({
           key: `e${sequence}`,
           kind: "turn_ended",
@@ -257,15 +308,26 @@ export function transcriptRows(feed: ConversationFeed): TranscriptRow[] {
     }
   }
 
+  if (turnIsGone) {
+    // The turn is gone and its ending was never written, so the asks that were waiting
+    // on it are as dead as any other — they just have a different story.
+    killOpenAsks(rows, askRowIndex, "no_ending_recorded");
+    rows.push({
+      key: "turn-stopped",
+      kind: "turn_stopped",
+      sequence: feed.latestSequence + 1
+    });
+  }
+
   for (const [toolCallId, at] of toolCallRowIndex) {
     const progress = feed.toolCallProgress[toolCallId];
     const row = rows[at];
-    if (progress !== undefined && row?.kind === "tool_call" && row.status === "running") {
+    if (!turnIsGone && progress !== undefined && row?.kind === "tool_call" && row.status === "running") {
       rows[at] = { ...row, progress };
     }
   }
 
-  if (feed.streamingAgentText !== "") {
+  if (feed.streamingAgentText !== "" && !turnIsGone) {
     rows.push({
       key: "streaming",
       kind: "streaming_agent_message",

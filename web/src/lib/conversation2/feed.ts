@@ -70,6 +70,11 @@ export function feedWithLiveFrame(
   feed: ConversationFeed,
   frame: ConversationLiveFrame
 ): ConversationFeed {
+  // A frame that arrives after its own turn's rows is a ghost: the tail can hand over a
+  // piece of text that was queued behind the replay it interrupted, and drawing it would
+  // put half a message back on screen underneath the finished one. Rows are the record,
+  // so when they say nothing is running there is nothing half-finished to show.
+  if (!conversationIsRunning(feed)) return feed;
   if (frame.frame === "agent_message_delta") {
     return { ...feed, streamingAgentText: feed.streamingAgentText + frame.text_delta };
   }
@@ -105,20 +110,62 @@ function withoutKey(
   return remaining;
 }
 
-/** Whether a turn is running, told from the rows themselves.
+/** Whether the rows leave a turn open.
  *
- * The snapshot answers this at the moment it was fetched; the rows answer it now. A turn
- * begins at the prompt that reached the backend and ends at its turn-ended row, so a
- * prompt after the last ending is a turn that is still going. A steer's prompt joins the
- * turn already running, which this reads the same way.
+ * A turn begins at the prompt that reached the backend and ends at its turn-ended row,
+ * so the newest of those two rows settles it. A steer's prompt joins the turn already
+ * running, which this reads the same way.
+ *
+ * This is what the rows say, which is not always the whole story — see
+ * ``conversationLiveness``, which is what a surface should ask.
  */
 export function conversationIsRunning(feed: ConversationFeed): boolean {
-  let running = false;
-  for (const event of feed.events) {
-    if (event.kind === "prompt") running = true;
-    else if (event.kind === "turn_ended") running = false;
+  for (let at = feed.events.length - 1; at >= 0; at -= 1) {
+    const kind = feed.events[at]?.kind;
+    if (kind === "turn_ended") return false;
+    if (kind === "prompt") return true;
   }
-  return running;
+  return false;
+}
+
+/** What the conversation system says about itself, at the row it had seen when it said it. */
+export type ConversationLivenessSnapshot = {
+  latestSequence: number;
+  isRunning: boolean;
+};
+
+export type ConversationLiveness = {
+  isRunning: boolean;
+  /** The rows leave a turn open and the system says none is running: the turn stopped
+   *  without its ending ever being written. A server that went away mid-turn leaves
+   *  exactly this, and it is the only thing that does. */
+  turnStoppedWithoutAnEnding: boolean;
+};
+
+/** Whether a turn is running, from the rows and the system's own answer together.
+ *
+ * The rows are the record and they are almost always the fresher of the two, so they
+ * win — a surface following a live tail must not be dragged backwards by a snapshot
+ * taken before the last row landed.
+ *
+ * The exception is the one case the rows cannot describe. Ending a turn is a row, so a
+ * process that stops mid-turn writes no ending, and the rows are left saying "running"
+ * for as long as they exist. Only the system can say otherwise, and it can only be
+ * believed when it had already seen every row this reader holds. That is what freshness
+ * means here, and it is why the comparison is against the newest row rather than a clock.
+ */
+export function conversationLiveness(
+  feed: ConversationFeed,
+  snapshot: ConversationLivenessSnapshot | null
+): ConversationLiveness {
+  const rowsSayRunning = conversationIsRunning(feed);
+  if (snapshot === null || snapshot.latestSequence < feed.latestSequence) {
+    return { isRunning: rowsSayRunning, turnStoppedWithoutAnEnding: false };
+  }
+  return {
+    isRunning: snapshot.isRunning,
+    turnStoppedWithoutAnEnding: rowsSayRunning && !snapshot.isRunning
+  };
 }
 
 /** The model and reasoning effort this conversation is running on now.
@@ -170,7 +217,11 @@ export type ConversationStream = {
 export function createConversationStream(
   conversationId: string,
   ports: ConversationStreamPorts,
-  onFeed: (feed: ConversationFeed) => void
+  onFeed: (feed: ConversationFeed) => void,
+  /** Called once the rows are in and the tail is open. This is where a reader asks the
+   *  system about itself again: reconnecting is what happens after a server went away,
+   *  and the rows alone cannot tell you that a turn stopped when it did. */
+  onConnected?: () => void
 ): ConversationStream {
   let feed = emptyConversationFeed();
   let closeTail: (() => void) | null = null;
@@ -207,6 +258,7 @@ export function createConversationStream(
         void connect().catch(() => undefined);
       }
     });
+    onConnected?.();
   }
 
   return {

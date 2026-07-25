@@ -7,7 +7,11 @@
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
   import type { TranscriptRow } from "../../lib/conversation2/transcript";
-  import { turnEndingSentence } from "../../lib/conversation2/transcript";
+  import {
+    askDeadSentence,
+    turnEndingSentence,
+    TURN_STOPPED_SENTENCE
+  } from "../../lib/conversation2/transcript";
 
   let { rows }: { rows: readonly TranscriptRow[] } = $props();
 
@@ -25,7 +29,7 @@
 
   function askStateLine(row: Extract<TranscriptRow, { kind: "permission_ask" }>): string {
     if (row.state === "answered") return `answered · ${row.answeredOptionLabel ?? ""}`;
-    if (row.state === "dead") return "expired with the turn";
+    if (row.state === "dead") return askDeadSentence(row.deadReason);
     return "waiting for you";
   }
 </script>
@@ -94,6 +98,8 @@
       <div class="acp-turn-end" data-conversation2-row="turn_ended">
         {turnEndingSentence(row.ending, row.errorSummary)}
       </div>
+    {:else if row.kind === "turn_stopped"}
+      <div class="acp-turn-end" data-conversation2-row="turn_stopped">{TURN_STOPPED_SENTENCE}</div>
     {/if}
   {/each}
 </div>

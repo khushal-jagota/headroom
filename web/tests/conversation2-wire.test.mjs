@@ -45,12 +45,12 @@ const {
   feedWithCommittedEvents,
   feedWithLiveFrame,
   conversationIsRunning,
+  conversationLiveness,
   currentRunValues,
   createConversationStream
 } = await import(join(directory, "feed.mjs"));
-const { transcriptRows, liveAskFrom, refusalSentence, turnEndingSentence } = await import(
-  join(directory, "transcript.mjs")
-);
+const { transcriptRows, liveAskFrom, askDeadSentence, refusalSentence, turnEndingSentence } =
+  await import(join(directory, "transcript.mjs"));
 const {
   askActions,
   askIsGeneric,
@@ -108,19 +108,47 @@ const TURN_ENDED = (sequence, ending = "completed", error_summary = null) =>
 
 {
   // Half-finished text is shown, then replaced by its row — never kept beside it.
-  let feed = emptyConversationFeed();
+  let feed = feedWithCommittedEvent(emptyConversationFeed(), PROMPT(0));
   feed = feedWithLiveFrame(feed, { frame: "agent_message_delta", text_delta: "he" });
   feed = feedWithLiveFrame(feed, { frame: "agent_message_delta", text_delta: "llo" });
   assert.equal(feed.streamingAgentText, "hello");
-  assert.equal(feed.events.length, 0, "a live frame is never a row");
+  assert.equal(feed.events.length, 1, "a live frame is never a row");
   feed = feedWithCommittedEvent(feed, AGENT(1, "hello there"));
   assert.equal(feed.streamingAgentText, "");
-  assert.equal(feed.events.length, 1);
+  assert.equal(feed.events.length, 2);
+}
+
+{
+  // A frame that arrives after its own turn's rows is a ghost. The tail can hand one over
+  // behind the replay it interrupted, and drawing it would put half a message back on
+  // screen underneath the finished one.
+  let feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    PROMPT(1),
+    AGENT(2, "the whole message"),
+    TURN_ENDED(3)
+  ]);
+  feed = feedWithLiveFrame(feed, { frame: "agent_message_delta", text_delta: "the who" });
+  assert.equal(feed.streamingAgentText, "", "a delta after the turn ended is dropped");
+  feed = feedWithLiveFrame(feed, {
+    frame: "tool_call_progress",
+    tool_call_id: "t1",
+    detail: "still going"
+  });
+  assert.deepEqual(feed.toolCallProgress, {}, "so is tool progress from a turn that is over");
+  assert.equal(
+    transcriptRows(feed).some((row) => row.kind === "streaming_agent_message"),
+    false
+  );
+
+  // The same frame during a running turn is exactly what it was always for.
+  let live = feedWithCommittedEvent(emptyConversationFeed(), PROMPT(1));
+  live = feedWithLiveFrame(live, { frame: "agent_message_delta", text_delta: "arriving" });
+  assert.equal(live.streamingAgentText, "arriving");
 }
 
 {
   // Tool progress is dropped by the finish it was leading up to, and by the turn's end.
-  let feed = emptyConversationFeed();
+  let feed = feedWithCommittedEvent(emptyConversationFeed(), PROMPT(0));
   feed = feedWithLiveFrame(feed, { frame: "tool_call_progress", tool_call_id: "t1", detail: "…" });
   feed = feedWithLiveFrame(feed, { frame: "tool_call_progress", tool_call_id: "t2", detail: "…" });
   assert.deepEqual(Object.keys(feed.toolCallProgress).sort(), ["t1", "t2"]);
@@ -143,6 +171,74 @@ const TURN_ENDED = (sequence, ending = "completed", error_summary = null) =>
   assert.equal(conversationIsRunning(feed), true);
   feed = feedWithCommittedEvent(feed, TURN_ENDED(2));
   assert.equal(conversationIsRunning(feed), false);
+}
+
+// --- a turn that stopped without an ending ---------------------------------------------------
+
+{
+  // Ending a turn is a row, so a server that went away mid-turn wrote none: the rows are
+  // left saying "running" forever. A snapshot that had already seen every row this reader
+  // holds is the only thing that can say otherwise, and it is believed.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    PROMPT(1),
+    event(2, "permission_asked", { ask_id: "a1", title: "Run ls", detail: null, options: [] })
+  ]);
+  assert.equal(conversationIsRunning(feed), true, "the rows alone still say running");
+
+  const liveness = conversationLiveness(feed, { latestSequence: 2, isRunning: false });
+  assert.deepEqual(liveness, { isRunning: false, turnStoppedWithoutAnEnding: true });
+
+  const rows = transcriptRows(feed, {
+    turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
+  });
+  const askRow = rows.find((row) => row.kind === "permission_ask");
+  assert.equal(askRow.state, "dead", "an ask does not outlive the turn it was waiting on");
+  assert.equal(askRow.deadReason, "no_ending_recorded");
+  assert.equal(askDeadSentence(askRow.deadReason), "expired — its turn stopped without an ending");
+  assert.equal(liveAskFrom(rows), null, "so it stops holding the composer");
+  assert.equal(
+    rows.some((row) => row.kind === "turn_stopped"),
+    true,
+    "the thread says the ending the record will never contain"
+  );
+}
+
+{
+  // The live path is untouched: a snapshot taken before the newest row cannot overrule it.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    TURN_ENDED(1),
+    PROMPT(2, "the turn that is running now")
+  ]);
+  assert.deepEqual(
+    conversationLiveness(feed, { latestSequence: 1, isRunning: false }),
+    { isRunning: true, turnStoppedWithoutAnEnding: false },
+    "rows newer than the snapshot stay authoritative"
+  );
+  const rows = transcriptRows(feed, { turnStoppedWithoutAnEnding: false });
+  assert.equal(rows.some((row) => row.kind === "turn_stopped"), false);
+}
+
+{
+  // With no snapshot at all there is nothing to reconcile against, so the rows stand.
+  const running = feedWithCommittedEvent(emptyConversationFeed(), PROMPT(1));
+  assert.deepEqual(conversationLiveness(running, null), {
+    isRunning: true,
+    turnStoppedWithoutAnEnding: false
+  });
+
+  // A fresh snapshot that says running while the rows show an ending is a turn whose
+  // prompt row has not arrived yet — believed, and not a stopped turn.
+  const ended = feedWithCommittedEvents(emptyConversationFeed(), [PROMPT(1), TURN_ENDED(2)]);
+  assert.deepEqual(conversationLiveness(ended, { latestSequence: 3, isRunning: true }), {
+    isRunning: true,
+    turnStoppedWithoutAnEnding: false
+  });
+
+  // An idle conversation the rows already agree about is not a stopped turn either.
+  assert.deepEqual(conversationLiveness(ended, { latestSequence: 2, isRunning: false }), {
+    isRunning: false,
+    turnStoppedWithoutAnEnding: false
+  });
 }
 
 {
@@ -186,8 +282,15 @@ const TURN_ENDED = (sequence, ending = "completed", error_summary = null) =>
   };
 
   let published = emptyConversationFeed();
-  const stream = createConversationStream("c1", ports, (next) => (published = next));
+  let connectedCount = 0;
+  const stream = createConversationStream(
+    "c1",
+    ports,
+    (next) => (published = next),
+    () => (connectedCount += 1)
+  );
   await stream.connect();
+  assert.equal(connectedCount, 1, "connecting is where a reader asks the system about itself");
   assert.deepEqual(calls, [
     ["fetch", "c1", 0],
     ["tail", "c1", 2]
@@ -207,6 +310,11 @@ const TURN_ENDED = (sequence, ending = "completed", error_summary = null) =>
   ], "reconnecting asks for what is missing rather than the whole conversation again");
   assert.equal(openTails, 2);
   assert.equal(closedTails, 1, "the old tail is closed before another is opened");
+  assert.equal(
+    connectedCount,
+    2,
+    "and it asks again after a reconnect, which is the after-a-restart path"
+  );
   assert.deepEqual(published.events.map((held) => held.sequence), [1, 2, 3]);
 
   stream.close();
@@ -297,13 +405,13 @@ const TURN_ENDED = (sequence, ending = "completed", error_summary = null) =>
 
 {
   // Text still arriving is a line of its own, and it goes away when its row lands.
-  let feed = emptyConversationFeed();
+  let feed = feedWithCommittedEvent(emptyConversationFeed(), PROMPT(1));
   feed = feedWithLiveFrame(feed, { frame: "agent_message_delta", text_delta: "half" });
   assert.equal(transcriptRows(feed).at(-1).kind, "streaming_agent_message");
-  feed = feedWithCommittedEvent(feed, AGENT(1, "half a message, finished"));
+  feed = feedWithCommittedEvent(feed, AGENT(2, "half a message, finished"));
   const rows = transcriptRows(feed);
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].kind, "agent_message");
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].kind, "agent_message");
 }
 
 {

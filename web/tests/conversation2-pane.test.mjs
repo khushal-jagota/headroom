@@ -109,6 +109,17 @@ assert.ok(
 assert.match(routeSource, /visibilitychange/);
 assert.match(routeSource, /stream\?\.connect\(\)/);
 
+// The pane never shows a turn running on the rows alone: it reconciles them with what
+// the system says about itself, and asks again every time it reconnects.
+assert.match(routeSource, /conversationLiveness/);
+assert.doesNotMatch(
+  routeSource,
+  /conversationIsRunning/,
+  "the rows alone cannot say a turn stopped without an ending"
+);
+assert.match(routeSource, /turnStoppedWithoutAnEnding/);
+assert.match(routeSource, /\(\) => void refreshView\(\)/);
+
 // --- what the components draw ------------------------------------------------------------------
 
 const ssrDirectory = await mkdtemp(join(webRoot, "tests", ".c2ssr-"));
@@ -151,7 +162,7 @@ try {
     return render(component, { props }).body.replace(/<!--[\s\S]*?-->/g, "");
   }
 
-  function askRow(state) {
+  function askRow(state, deadReason = state === "dead" ? "turn_ended" : null) {
     return {
       key: "e2",
       kind: "permission_ask",
@@ -161,6 +172,7 @@ try {
       detail: "in ~/Coding",
       options: [],
       state,
+      deadReason,
       answeredOptionLabel: state === "answered" ? "Approve once" : null
     };
   }
@@ -177,6 +189,21 @@ try {
 
   const answeredThread = drawn(Transcript, { rows: [askRow("answered")] });
   assert.match(answeredThread, /answered · Approve once/);
+
+  // An ask whose turn stopped without an ending is dead in the same way, with its own
+  // story — a reader told "expired with the turn" would go looking for an ending that
+  // was never written.
+  const stoppedThread = drawn(Transcript, {
+    rows: [
+      askRow("dead", "no_ending_recorded"),
+      { key: "turn-stopped", kind: "turn_stopped", sequence: 3 }
+    ]
+  });
+  assert.match(stoppedThread, /data-conversation2-ask-state="dead"/);
+  assert.match(stoppedThread, /expired — its turn stopped without an ending/);
+  assert.match(stoppedThread, /data-conversation2-row="turn_stopped"/);
+  assert.match(stoppedThread, /turn stopped without an ending/);
+  assert.doesNotMatch(stoppedThread, /<button/, "nothing here is actionable either");
 
   // The thread's other lines: a prompt says how it was sent, a turn ending carries its reason.
   const mixedThread = drawn(Transcript, {
