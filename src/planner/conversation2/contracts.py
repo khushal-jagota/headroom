@@ -1,7 +1,8 @@
 """The contract between Panels' conversation system and the rest of Panels.
 
 This module is the whole seam. The rest of Panels can start a conversation, send text
-into it, interrupt it, and ask whether it is running. Nothing else crosses the boundary.
+into it, interrupt its running turn, kill its activity outright, and ask whether it is
+running. Nothing else crosses the boundary.
 
 The conversation id is the identity everywhere. It is owned by the caller and it is the
 only name this contract knows a conversation by. The ACP session id of the backend
@@ -267,8 +268,9 @@ class ConversationAlreadyStarted(Exception):
 class ConversationSystem(Protocol):
     """Everything the rest of Panels can do to a conversation.
 
-    Four operations — start one, send text into it, interrupt it, ask whether it is
-    running — plus one more read: whether a permission ask is waiting. There is no read
+    Five operations — start one, send text into it, interrupt the running turn, kill
+    its activity outright, ask whether it is running — plus one more read: whether a
+    permission ask is waiting. There is no read
     of a conversation's backend or model — those are values the caller passed in, not
     questions this contract answers. The transcript read is deferred to the real build
     and is deliberately absent.
@@ -359,10 +361,28 @@ class ConversationSystem(Protocol):
 
         Stopping the turn frees the agent, so a message that was being held for it runs
         from that point — interrupting sends nothing, but it is not the end of the
-        conversation's traffic.
+        conversation's traffic. ``kill`` is the operation that ends the traffic.
 
         The turn's interruption is recorded as an event. There is nothing to return. If
         the conversation is idle, or the id names no conversation, nothing happens.
+        """
+        ...
+
+    async def kill(self, conversation_id: str) -> None:
+        """Kill this conversation's activity outright: stop the running turn AND discard
+        every held message. Nothing runs afterwards until someone sends again.
+
+        This is what pressing New uses — the new worker has nothing to do with the old
+        one other than killing it, and ``interrupt`` alone cannot do that, because
+        freeing the agent lets the held messages run. Kill silences both.
+
+        The conversation itself is not ended: its record and events remain, and it is
+        still addressable — a later send behaves exactly as it always does. The stopped
+        turn's interruption is recorded as an event, and so is the discard of each held
+        message, because text a caller handed over must never disappear without a trace.
+
+        There is nothing to return. If the conversation is idle with nothing held, or
+        the id names no conversation, nothing happens.
         """
         ...
 
