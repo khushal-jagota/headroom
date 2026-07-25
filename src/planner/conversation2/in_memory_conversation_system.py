@@ -39,6 +39,7 @@ class InMemoryConversationObservationKind(StrEnum):
 
     prompt_delivered = "prompt_delivered"
     prompt_delivery_refused = "prompt_delivery_refused"
+    prompt_discarded = "prompt_discarded"
     turn_ended = "turn_ended"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
@@ -210,6 +211,24 @@ class InMemoryConversationSystem:
             return
         self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
         self._drain(state)
+
+    async def kill(self, conversation_id: str) -> None:
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            return
+        # The held messages are discarded before the turn ends, so nothing can dequeue
+        # them in between — kill silences the queue and the turn as one act.
+        while state.held_prompts:
+            held = state.held_prompts.popleft()
+            state.observations.append(
+                InMemoryConversationObservation(
+                    kind=InMemoryConversationObservationKind.prompt_discarded,
+                    text=held.text,
+                    sender_label=held.sender_label,
+                )
+            )
+        if state.running_turn is not None:
+            self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
 
     async def is_running(self, conversation_id: str) -> bool:
         state = self._conversations.get(conversation_id)

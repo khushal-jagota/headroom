@@ -23,10 +23,12 @@ the layer being replaced. Renaming it is the job of whoever deletes that layer.
 
 ## The boundary
 
-Four operations cross it — start a conversation, send text into it, interrupt it, ask
-whether it is running — plus one more read: whether a permission ask is waiting, which
-exists for the surfaces that tell the owner a conversation needs them. The conversation
-id is the identity everywhere; the ACP session id
+Five operations cross it — start a conversation, send text into it, interrupt the
+running turn, kill its activity outright (stop the turn AND discard the held messages —
+what pressing New uses), ask whether it is running — plus one more read: whether a
+permission ask is waiting, which exists for the surfaces that tell the owner a
+conversation needs them. The conversation id is the identity everywhere; the ACP
+session id
 of the backend is internal to the conversation system and appears nowhere here.
 Permissions are internal too — they have no method, only rules, and those rules are on
 the Protocol's docstring.
