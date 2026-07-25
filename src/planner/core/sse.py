@@ -13,7 +13,9 @@ reader left.
 
 This module also holds the set of streams that are currently open, because a server being
 shut down has to close them itself: they are idle by nature, and waiting for their clients
-to leave first would mean waiting forever.
+to leave first would mean waiting forever. Every stream this process serves the browser
+belongs in that set, not only the change stream — a conversation's live tail is idle in
+exactly the same way and would hold a shutdown open in exactly the same way.
 """
 
 from __future__ import annotations
@@ -62,6 +64,24 @@ def open_change_stream_count() -> int:
         return len(_open_stream_closers)
 
 
+def register_open_stream_closer(close: Callable[[], None]) -> Callable[[], None]:
+    """Track a stream a shutdown will have to close, and hand back how to forget it.
+
+    The closer is called from the process's signal handler, on a thread that is not the
+    stream's, so it must hand the real work to its own event loop rather than doing it
+    where it is called.
+    """
+    with _lock:
+        _open_stream_closers.append(close)
+
+    def forget() -> None:
+        with _lock:
+            if close in _open_stream_closers:
+                _open_stream_closers.remove(close)
+
+    return forget
+
+
 async def change_stream(heartbeat_ms: int) -> AsyncIterator[str]:
     loop = asyncio.get_running_loop()
     state = _ChangeStreamState()
@@ -83,8 +103,7 @@ async def change_stream(heartbeat_ms: int) -> AsyncIterator[str]:
 
     heartbeat_seconds = heartbeat_ms / 1000
     unsubscribe = change_signal.subscribe(on_change)
-    with _lock:
-        _open_stream_closers.append(close)
+    forget_closer = register_open_stream_closer(close)
     try:
         while True:
             try:
@@ -100,7 +119,5 @@ async def change_stream(heartbeat_ms: int) -> AsyncIterator[str]:
             else:
                 yield HEARTBEAT_FRAME
     finally:
-        with _lock:
-            if close in _open_stream_closers:
-                _open_stream_closers.remove(close)
+        forget_closer()
         unsubscribe()

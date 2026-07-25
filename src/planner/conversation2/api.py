@@ -57,7 +57,7 @@ from planner.conversation2.snapshot import (
 )
 from planner.conversation2.storage import ConversationStore, StoredConversationEvent
 from planner.conversation2.system import SqliteProcessConversationSystem
-from planner.core.sse import HEARTBEAT_FRAME
+from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
 # The two things a tail carries, told apart by name so a browser never has to guess which
 # it is holding: one is a row that is in the record, the other is gone once it is drawn.
@@ -496,6 +496,16 @@ async def _tail_stream(
 ) -> AsyncIterator[str]:
     subscription = runtime.live_tail.subscribe(conversation_id)
     heartbeat_seconds = runtime.sse_heartbeat_ms / 1000
+    # A shutdown drains its connections before it ever reaches the lifespan, so a tail
+    # that only closed there would hold the whole shutdown open. It is tracked in the
+    # same place the change stream is, and closed by the same signal handler — from
+    # another thread, so the close is handed back to this stream's own loop.
+    loop = asyncio.get_running_loop()
+
+    def close_from_another_thread() -> None:
+        loop.call_soon_threadsafe(subscription.close)
+
+    forget_closer = register_open_stream_closer(close_from_another_thread)
     try:
         replayed = await runtime.store.read_events_after(conversation_id, after)
         highest_replayed = replayed[-1].sequence if replayed else after
@@ -526,6 +536,7 @@ async def _tail_stream(
             if live_frame is not None:
                 yield _stream_frame(LIVE_FRAME_STREAM_NAME, live_frame)
     finally:
+        forget_closer()
         subscription.close()
 
 

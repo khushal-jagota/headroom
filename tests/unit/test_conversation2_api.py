@@ -54,6 +54,7 @@ from planner.conversation2.snapshot import (
 )
 from planner.conversation2.storage import ConversationStore
 from planner.conversation2.system import SqliteProcessConversationSystem
+from planner.core import sse
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -844,6 +845,40 @@ def test_shutting_down_closes_every_open_tail(harness: _Harness) -> None:
             for _ in range(20):
                 await asyncio.sleep(0)
             assert harness.live_tail.open_subscription_count() == 0
+
+    _run(exercise)
+
+
+def test_a_tail_is_closed_by_the_same_door_that_closes_the_change_stream(
+    harness: _Harness,
+) -> None:
+    """The door that matters is the signal handler's, not the lifespan's.
+
+    A server draining its connections never reaches the lifespan while a stream is still
+    open, so a tail that was only closed there would hold the shutdown open forever. It
+    is closed from the same call the change stream is, on a thread that is not its own.
+    """
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+
+        streams_before = sse.open_change_stream_count()
+        async with _EventStreamDrive(
+            harness.app, "/api/conversation2/conversations/c/tail", "after=0"
+        ) as stream:
+            await stream.wait_until_watching(harness.live_tail)
+            assert sse.open_change_stream_count() == streams_before + 1
+
+            # Exactly as the process's signal handler calls it: from another thread.
+            await asyncio.to_thread(sse.close_open_change_streams)
+            for _ in range(50):
+                if harness.live_tail.open_subscription_count() == 0:
+                    break
+                await asyncio.sleep(0.005)
+
+            assert harness.live_tail.open_subscription_count() == 0
+            assert sse.open_change_stream_count() == streams_before
 
     _run(exercise)
 
