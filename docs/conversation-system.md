@@ -50,7 +50,8 @@ The answer to a send is the fate of that delivery, and fate means it happened:
 started (the text reached a live agent), queued at a position, injected, or
 refused with a named reason. The only refusals are genuine impossibilities — no
 such conversation, the agent would not start, its session would not load, the
-write failed. A busy agent is never a refusal. How a turn later ends is never
+write failed, a steer with no running turn to join, or a steer at a backend that
+cannot steer. A busy agent is never a refusal. How a turn later ends is never
 part of the answer — endings are notebook rows.
 
 A send may also carry a model or reasoning-effort change. The change rides the

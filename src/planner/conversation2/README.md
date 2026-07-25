@@ -38,19 +38,20 @@ conversation runs on the named value. There is no separate set-model operation �
 change rides the message (commit-on-send), a held message applies it when it runs, and a
 refused delivery changes nothing. How a backend realizes the change is internal.
 
-## What is deferred
+## The real build lives here too
 
-These are ruled to belong to the real build, and are deliberately absent rather than
-sketched:
-
-- **The transcript read** — fetching the events after a position, the live tail, and the
-  shape of an event record.
-- **The database schema** — how a conversation, its events, and its held messages are
-  stored.
+What the contract deferred has since been built, in this same package: the event
+record and storage (`events.py`, `storage.py`, one migration), the real system
+(`system.py`), the three backend adapters (`backends/`), and the reading side —
+events-after-a-position, a live tail, and the backend cards (`api.py`,
+`live_tail.py`, `snapshot.py`). The conformance suite runs against the real system
+through a process-backed binder in `tests/unit/test_conversation2_conformance.py`.
+The transcript read and the schema are typed by the real build, not by the
+contract — the seam above still deliberately says nothing about them.
 
 ## Obligations this seam cannot check
 
-The conformance suite proves what it can observe from outside. Two ruled obligations are
+The conformance suite proves what it can observe from outside. Three ruled obligations are
 the real build's to keep, because no external observer can see them:
 
 - **The conversation's record is written as step one**, before any other creation work.
