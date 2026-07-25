@@ -123,7 +123,9 @@ def test_deploy_workflow_and_user_runner_share_one_real_runner_contract() -> Non
     assert "ExecStart=%h/Coding/Panels/.github-runner/run.sh" in unit
     assert "ConditionPathExists=%h/Coding/Panels/.github-runner/.runner" in unit
     assert "User=" not in unit
-    assert "${{ runner.temp }}/panels-candidate-" in workflow
+    assert "${{ runner.temp }}" not in workflow
+    assert "PANELS_CANDIDATE_APP=$RUNNER_TEMP/panels-candidate-" in workflow
+    assert '>> "$GITHUB_ENV"' in workflow
     assert 'python3 -m venv "$PANELS_DEPLOY_VENV"' in workflow
     assert "--source-root \"$GITHUB_WORKSPACE\"" in workflow
     assert "--requested-sha \"$PANELS_REQUESTED_SHA\"" in workflow

@@ -83,6 +83,7 @@ def test_compatibility_upgrades_copy_then_boots_previous_app_with_isolated_state
     environment = popen_calls[0][1]
     assert environment["PLAN_TEST_MODE"] == "1"
     assert environment["PLAN_APP_SHA"] == SHA_A
+    assert environment["PLAN_APP_ROOT"] == str(current)
     assert environment["PLAN_DB_PATH"] != str(source_db)
     assert environment["PLAN_LOGS_DIR"].startswith(
         str(Path(environment["PLAN_DB_PATH"]).parents[1])
