@@ -103,12 +103,15 @@ def test_github_deployment_proves_and_builds_the_requested_exact_sha() -> None:
     assert "workflow_dispatch:" in workflow
     assert "commit_sha:" in workflow
     assert "github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha" in workflow
-    assert 'git rev-parse HEAD)" = "$PANELS_REQUESTED_SHA"' in workflow
+    assert 'git -C "$PANELS_CANDIDATE_SOURCE" rev-parse HEAD)' in workflow
     assert "'^[0-9a-f]{40}$'" in workflow
-    assert workflow.index("git rev-parse HEAD") < workflow.index(
+    assert workflow.index("rev-parse HEAD") < workflow.index(
         "app-build"
     ) < workflow.index("app-deploy")
     assert "actions/checkout@" in workflow and "@v4" not in workflow
+    assert workflow.count("actions/checkout@") == 1
+    assert "ref: ${{ github.sha }}" in workflow
+    assert 'git worktree add --detach "$PANELS_CANDIDATE_SOURCE"' in workflow
     assert "upload-artifact" not in workflow
     assert "download-artifact" not in workflow
 
@@ -125,9 +128,10 @@ def test_deploy_workflow_and_user_runner_share_one_real_runner_contract() -> Non
     assert "User=" not in unit
     assert "${{ runner.temp }}" not in workflow
     assert "PANELS_CANDIDATE_APP=$RUNNER_TEMP/panels-candidate-" in workflow
+    assert "PANELS_CANDIDATE_SOURCE=$RUNNER_TEMP/panels-source-" in workflow
     assert '>> "$GITHUB_ENV"' in workflow
     assert 'python3 -m venv "$PANELS_DEPLOY_VENV"' in workflow
-    assert "--source-root \"$GITHUB_WORKSPACE\"" in workflow
+    assert "--source-root \"$PANELS_CANDIDATE_SOURCE\"" in workflow
     assert "--requested-sha \"$PANELS_REQUESTED_SHA\"" in workflow
     assert "--candidate-app \"$PANELS_CANDIDATE_APP\"" in workflow
     assert "actions/setup-python@" not in workflow
