@@ -38,6 +38,7 @@ def prove_previous_app_compatibility(
         disposable_db.parent.mkdir()
         _copy_database(source_db, disposable_db)
         environment = _probe_environment(root, disposable_db, current.app_sha)
+        environment["PLAN_APP_ROOT"] = str(current_app.resolve())
         _upgrade_database(candidate_app, disposable_db, environment)
         port = _available_port()
         environment["PLAN_PORT"] = str(port)
