@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from planner.conversation2.contracts import ResolvedConversationStart
+from planner.conversation2.contracts import PromptDeliveryMode, ResolvedConversationStart
 from planner.conversation2.events import (
     ConversationTurnEnding,
     PermissionAskOption,
@@ -205,10 +205,17 @@ class BackendChild(Protocol):
         turn_token: TurnToken,
         text: str,
         *,
+        sender_label: str,
+        mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> None:
         """Start a turn with this text, on these values.
+
+        ``sender_label`` and ``mode`` travel with the text as the backend's own metadata
+        — who sent it and how it was meant to meet the agent. Nothing branches on them,
+        here or anywhere: a backend that has a metadata channel is handed them and a
+        backend that has none drops them, and the turn runs the same either way.
 
         The change and the prompt are one operation because they are one act: the message
         carries the change, so **a change must not stand if the write does not**. How that
@@ -224,11 +231,12 @@ class BackendChild(Protocol):
         cannot be made to this child at all.
         """
 
-    async def steer(self, text: str) -> None:
+    async def steer(self, text: str, *, sender_label: str) -> None:
         """Put text into the turn that is already running, without ending it.
 
         Only a backend that can do this ever has it called: the core refuses a steer aimed
-        at one that cannot, before any child is touched. Raises ``PromptWriteFailed``.
+        at one that cannot, before any child is touched. ``sender_label`` travels with the
+        text the same way it does on a prompt. Raises ``PromptWriteFailed``.
         """
 
     async def cancel_running_turn(self) -> None:

@@ -142,9 +142,14 @@ class _FakeBackendChild:
         turn_token: TurnToken,
         text: str,
         *,
+        sender_label: str,
+        mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> None:
+        # The label and the mode travel with the text as metadata for backends that have a
+        # channel for it. This stand-in has none, so it takes them and lets them go.
+        del sender_label, mode
         if self._backend.needs_rebind_once and (
             model_change is not None or reasoning_effort_change is not None
         ):
@@ -178,7 +183,8 @@ class _FakeBackendChild:
             for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
                 await asyncio.sleep(0)
 
-    async def steer(self, text: str) -> None:
+    async def steer(self, text: str, *, sender_label: str) -> None:
+        del sender_label
         if self._backend.write_fails:
             raise PromptWriteFailed(self._backend.conversation_id)
         self._backend.writes.append(_FakeBackendWrite(text=text, steered=True))

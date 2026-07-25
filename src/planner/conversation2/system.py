@@ -493,7 +493,7 @@ class SqliteProcessConversationSystem:
             state.lock.release()
 
         try:
-            await child.steer(text)
+            await child.steer(text, sender_label=sender_label)
         except PromptWriteFailed:
             return PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
@@ -528,6 +528,8 @@ class SqliteProcessConversationSystem:
                 state,
                 reservation.token,
                 text=text,
+                sender_label=sender_label,
+                mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
             )
@@ -560,6 +562,8 @@ class SqliteProcessConversationSystem:
         turn_token: TurnToken,
         *,
         text: str,
+        sender_label: str,
+        mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> PromptDeliveryRefusalReason | None:
@@ -580,6 +584,8 @@ class SqliteProcessConversationSystem:
             await child.write_prompt(
                 turn_token,
                 composed_text,
+                sender_label=sender_label,
+                mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
             )
@@ -590,6 +596,8 @@ class SqliteProcessConversationSystem:
                 state,
                 turn_token,
                 text=composed_text,
+                sender_label=sender_label,
+                mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
             )
@@ -601,6 +609,8 @@ class SqliteProcessConversationSystem:
         turn_token: TurnToken,
         *,
         text: str,
+        sender_label: str,
+        mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> PromptDeliveryRefusalReason | None:
@@ -633,6 +643,8 @@ class SqliteProcessConversationSystem:
             await child.write_prompt(
                 turn_token,
                 text,
+                sender_label=sender_label,
+                mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
             )
@@ -742,6 +754,8 @@ class SqliteProcessConversationSystem:
                     state,
                     reservation.token,
                     text=held.text,
+                    sender_label=held.sender_label,
+                    mode=PromptDeliveryMode.run_when_free,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
                 )
