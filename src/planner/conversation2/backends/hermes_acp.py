@@ -51,6 +51,7 @@ from acp.exceptions import RequestError
 from acp.interfaces import Client
 from acp.schema import (
     AgentMessageChunk,
+    AgentPlanUpdate,
     AgentThoughtChunk,
     AllowedOutcome,
     ClientCapabilities,
@@ -86,6 +87,8 @@ from planner.conversation2.contracts import (
 from planner.conversation2.events import (
     ConversationTurnEnding,
     PermissionAskOption,
+    PlanEntry,
+    PlanEntryStatus,
     ToolCallStatus,
 )
 
@@ -791,8 +794,12 @@ class HermesAcpBackendChild:
             return
         match update:
             case AgentThoughtChunk():
-                # Thinking is dropped where it arrives: never stored, never forwarded.
+                # What it thought is dropped where it arrives: never stored, never
+                # forwarded. That it thought is forwarded, and is all that is.
+                await self._sink.model_thinking_happened(turn.token)
                 return
+            case AgentPlanUpdate():
+                await self._sink.plan_updated(turn.token, _plan_entries(update.entries))
             case AgentMessageChunk():
                 await self._on_agent_message_chunk(turn, update)
             case ToolCallStart():
@@ -1010,6 +1017,19 @@ class HermesAcpBackendChildFactory:
         return HermesAcpBackendChild(
             launch=self._launch, resolved_start=resolved_start, event_sink=event_sink
         )
+
+
+def _plan_entries(entries: Any) -> tuple[PlanEntry, ...]:
+    """An ACP plan as this conversation's own.
+
+    ACP words a step as its ``content`` and states it with the same three statuses this
+    system uses, so the mapping is a rename. The priority ACP also carries is dropped:
+    nothing here reads it, and a field nobody consumes is one more thing to keep true.
+    """
+    return tuple(
+        PlanEntry(text=entry.content, status=PlanEntryStatus(str(entry.status)))
+        for entry in entries
+    )
 
 
 def _text_of(content: Any) -> str | None:

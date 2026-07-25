@@ -47,13 +47,20 @@ from planner.conversation2.events import (
     AgentMessageDeltaFrame,
     ConversationEventKind,
     ConversationTurnEnding,
+    ModelThinkingFrame,
     PermissionAskOption,
     PromptEventPayload,
     TurnEndedEventPayload,
 )
-from planner.conversation2.live_tail import ConversationLiveTail
+from planner.conversation2.live_tail import (
+    ConversationLiveTail,
+    ConversationTailSubscription,
+)
 from planner.conversation2.storage import ConversationStore, StoredConversationEvent
-from planner.conversation2.system import SqliteProcessConversationSystem
+from planner.conversation2.system import (
+    MODEL_THINKING_PULSE_INTERVAL_SECONDS,
+    SqliteProcessConversationSystem,
+)
 from planner.core.db import connect, create_schema
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
@@ -271,11 +278,13 @@ class _Harness:
         self.backends: dict[str, _FakeBackend] = {}
         self.spawned_conversation_ids: list[str] = []
         self.clock = _FakeMonotonicClock()
+        self.live_tail = ConversationLiveTail()
         self.system = SqliteProcessConversationSystem(
             store=self.store,
             backend_child_factories={
                 backend_key: self._make_child for backend_key in ConversationBackendKey
             },
+            live_tail=self.live_tail,
             monotonic_now=self.clock,
             idle_child_stop_after_seconds=idle_child_stop_after_seconds,
             idle_child_sweep_interval_seconds=idle_child_sweep_interval_seconds,
@@ -292,6 +301,10 @@ class _Harness:
 
     def backend(self, conversation_id: str) -> _FakeBackend:
         return self.backends.setdefault(conversation_id, _FakeBackend(conversation_id))
+
+    def watch(self, conversation_id: str) -> ConversationTailSubscription:
+        """Watch a conversation the way a browser does, for what is shown and not kept."""
+        return self.live_tail.subscribe(conversation_id)
 
     # --- driving the backend, each returning once the system has finished reacting ---
 
@@ -1351,6 +1364,99 @@ def test_is_running_through_the_whole_lifecycle(harness: _Harness) -> None:
         assert await harness.system.is_running("c") is False
 
     _run(exercise)
+
+
+# --- saying the model is thinking ----------------------------------------------------------
+
+
+def test_a_burst_of_thinking_is_one_pulse_and_then_a_pulse_now_and_then(
+    harness: _Harness,
+) -> None:
+    """A pulse says the agent is alive. Hundreds of them say it hundreds of times.
+
+    The first one goes out immediately — being prompt is the whole point — and the rest of
+    the burst is dropped until the interval is up. Dropping them loses nothing: there is
+    nothing in a pulse to lose.
+    """
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "work", sender_label="owner")
+        backend = harness.backend("c")
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        with harness.watch("c") as watching:
+            for _ in range(50):
+                await backend.sink.model_thinking_happened(token)
+            assert await _thinking_pulses_now(watching) == 1
+
+            # Not yet: a burst is one fact however long it goes on for.
+            harness.clock.advance(MODEL_THINKING_PULSE_INTERVAL_SECONDS / 2)
+            await backend.sink.model_thinking_happened(token)
+            assert await _thinking_pulses_now(watching) == 0
+
+            harness.clock.advance(MODEL_THINKING_PULSE_INTERVAL_SECONDS)
+            await backend.sink.model_thinking_happened(token)
+            assert await _thinking_pulses_now(watching) == 1
+
+    _run(exercise)
+
+
+def test_a_new_turn_may_say_it_is_thinking_straight_away(harness: _Harness) -> None:
+    """Holding a new turn's first pulse back would silence the moment this exists for."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "first", sender_label="owner")
+        backend = harness.backend("c")
+        first_token = backend.live_turn_token
+        assert first_token is not None and backend.sink is not None
+        with harness.watch("c") as watching:
+            await backend.sink.model_thinking_happened(first_token)
+            assert await _thinking_pulses_now(watching) == 1
+
+            await harness.complete_turn("c")
+            await harness.system.send("c", "second", sender_label="owner")
+            second_token = backend.live_turn_token
+            assert second_token is not None and second_token != first_token
+
+            # No time has passed on the clock at all, and it still speaks.
+            await backend.sink.model_thinking_happened(second_token)
+            assert await _thinking_pulses_now(watching) == 1
+
+    _run(exercise)
+
+
+def test_a_thought_from_a_turn_that_is_over_is_not_shown(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "first", sender_label="owner")
+        backend = harness.backend("c")
+        stale_token = backend.live_turn_token
+        assert stale_token is not None and backend.sink is not None
+        await harness.complete_turn("c")
+
+        with harness.watch("c") as watching:
+            await backend.sink.model_thinking_happened(stale_token)
+            assert await _thinking_pulses_now(watching) == 0
+
+    _run(exercise)
+
+
+async def _thinking_pulses_now(watching: ConversationTailSubscription) -> int:
+    """How many pulses are waiting for this watcher, taken until none is forthcoming.
+
+    A watch carries committed rows as well as frames — a turn ending, the next prompt —
+    and those are not what these tests are counting, so they are taken and passed over.
+    """
+    pulses = 0
+    while True:
+        try:
+            item = await asyncio.wait_for(watching.next_item(), 0.02)
+        except TimeoutError:
+            return pulses
+        if isinstance(item, ModelThinkingFrame):
+            pulses += 1
 
 
 # --- the role text ------------------------------------------------------------------------

@@ -62,6 +62,10 @@ class CodexModelCatalog:
 
     models: tuple[CodexModel, ...]
     reasoning_effort_options: tuple[str, ...]
+    # The model codex runs when nobody picks one, and the effort that model starts at.
+    # Codex flags both itself, per model, so neither is worked out here.
+    default_model_id: str | None = None
+    default_reasoning_effort: str | None = None
 
 
 class _SaysNothing:
@@ -155,4 +159,10 @@ def _catalog(listed: bindings.ModelListResponse) -> CodexModelCatalog:
         for effort in offered:
             if effort not in efforts:
                 efforts.append(effort)
-    return CodexModelCatalog(models=tuple(models), reasoning_effort_options=tuple(efforts))
+    default = next((model for model in models if model.is_default), None)
+    return CodexModelCatalog(
+        models=tuple(models),
+        reasoning_effort_options=tuple(efforts),
+        default_model_id=None if default is None else default.model_id,
+        default_reasoning_effort=None if default is None else default.default_reasoning_effort,
+    )

@@ -96,6 +96,15 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     # nobody here could have checked.
     (_V2_NAMESPACE, "CommandExecutionOutputDeltaNotification"),
     (_V2_NAMESPACE, "McpToolCallProgressNotification"),
+    # The two ways codex streams private reasoning. Nothing in them is read: the adapter
+    # takes their arrival as the sign that the model is working and drops every byte of
+    # what it said, which is the same thing it has always done with reasoning.
+    (_V2_NAMESPACE, "ReasoningTextDeltaNotification"),
+    (_V2_NAMESPACE, "ReasoningSummaryTextDeltaNotification"),
+    # The turn's plan, whole, every time codex changes it. Its other plan message,
+    # ``item/plan/delta``, streams a proposed plan *document* and says so — that is prose,
+    # not a list of steps, and calling it a todo list would be mislabelling it.
+    (_V2_NAMESPACE, "TurnPlanUpdatedNotification"),
     # The two snapshot probes, which are requests like any other.
     (_V2_NAMESPACE, "GetAccountParams"),
     (_V2_NAMESPACE, "GetAccountResponse"),

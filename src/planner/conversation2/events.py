@@ -6,7 +6,7 @@ the same rows the browser saw as they happened.
 
 Two kinds of thing travel through the conversation system and only one of them is a row:
 
-- **Event kinds** — the ten below. Each has a payload type and a canonical JSON form, and
+- **Event kinds** — the eleven below. Each has a payload type and a canonical JSON form, and
   each is written to ``conversation_events`` when the thing it names has finished
   happening: the prompt reached the backend, the agent's message is complete, the tool
   call started, the tool call finished, the turn ended, the message that was waiting was
@@ -14,7 +14,9 @@ Two kinds of thing travel through the conversation system and only one of them i
 - **Live tail frames** — the half-finished text a backend streams while it works. They are
   shown and then forgotten. They are not rows, they have no kind, and nothing stores them.
 
-Thinking has neither. It is dropped where it arrives.
+Thinking is neither, and stays neither: its content is dropped where it arrives. The one
+thing kept from it is that it happened at all, as a frame carrying no content, so a turn
+that has not produced anything visible yet can still show that it is alive.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ class ConversationEventKind(StrEnum):
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
+    plan_updated = "plan_updated"
     model_changed = "model_changed"
     turn_ended = "turn_ended"
 
@@ -64,6 +67,22 @@ class ToolCallStatus(StrEnum):
 
     completed = "completed"
     failed = "failed"
+
+
+class PlanEntryStatus(StrEnum):
+    """Where one step of a plan has got to. Three states, and a step is in exactly one."""
+
+    pending = "pending"
+    in_progress = "in_progress"
+    completed = "completed"
+
+
+@dataclass(frozen=True, slots=True)
+class PlanEntry:
+    """One step of the agent's plan, as the agent worded it."""
+
+    text: str
+    status: PlanEntryStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +202,24 @@ class PermissionAnsweredEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanUpdatedEventPayload:
+    """The agent's plan as it stands, whole, every time it changes.
+
+    Each row carries the entire plan rather than what moved in it, because the question a
+    reader asks is "what is the plan now" and the newest row answers it on its own. So the
+    latest row replaces the one before it; nothing is merged, and no reader has to rebuild
+    a plan by replaying a conversation.
+
+    A plan is a row and not a frame: a plan outlives the moment it was announced in, and
+    somebody opening a conversation an hour later still needs to see it.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.plan_updated
+
+    entries: tuple[PlanEntry, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ModelChangedEventPayload:
     """The values the conversation runs on from this delivery onwards.
 
@@ -219,6 +256,7 @@ type ConversationEventPayload = (
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
     | PermissionAnsweredEventPayload
+    | PlanUpdatedEventPayload
     | ModelChangedEventPayload
     | TurnEndedEventPayload
 )
@@ -244,7 +282,20 @@ class ToolCallProgressFrame:
     detail: str
 
 
-type ConversationLiveTailFrame = AgentMessageDeltaFrame | ToolCallProgressFrame
+@dataclass(frozen=True, slots=True)
+class ModelThinkingFrame:
+    """The model was thinking a moment ago. That it happened, and nothing about what.
+
+    Thinking is dropped where it arrives and that ruling is untouched: not a byte of what
+    the model reasoned is stored, shown, or carried here. This frame has no fields at all,
+    because the only thing it says is that the agent is alive and working — which is what a
+    turn has to be able to show before its first tool call or its first word of text.
+    """
+
+
+type ConversationLiveTailFrame = (
+    AgentMessageDeltaFrame | ToolCallProgressFrame | ModelThinkingFrame
+)
 
 
 def conversation_event_payload_kind(payload: ConversationEventPayload) -> ConversationEventKind:
@@ -324,6 +375,13 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case PermissionAnsweredEventPayload():
             return {"ask_id": payload.ask_id, "option_id": payload.option_id}
+        case PlanUpdatedEventPayload():
+            return {
+                "entries": [
+                    {"text": entry.text, "status": str(entry.status)}
+                    for entry in payload.entries
+                ]
+            }
         case ModelChangedEventPayload():
             return {"model": payload.model, "reasoning_effort": payload.reasoning_effort}
         case TurnEndedEventPayload():
@@ -385,6 +443,16 @@ def _payload_from_json_object(
         case ConversationEventKind.permission_answered:
             return PermissionAnsweredEventPayload(
                 ask_id=_text(stored, "ask_id"), option_id=_text(stored, "option_id")
+            )
+        case ConversationEventKind.plan_updated:
+            return PlanUpdatedEventPayload(
+                entries=tuple(
+                    PlanEntry(
+                        text=_text(entry, "text"),
+                        status=PlanEntryStatus(_text(entry, "status")),
+                    )
+                    for entry in stored["entries"]
+                )
             )
         case ConversationEventKind.model_changed:
             return ModelChangedEventPayload(

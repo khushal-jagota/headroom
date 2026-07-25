@@ -72,6 +72,8 @@ from planner.conversation2.contracts import (
 from planner.conversation2.events import (
     ConversationTurnEnding,
     PermissionAskOption,
+    PlanEntry,
+    PlanEntryStatus,
     ToolCallStatus,
 )
 
@@ -596,6 +598,13 @@ class CodexAppServerBackendChild:
                 await self._on_tool_call_progress(
                     notification.turnId, notification.itemId, notification.message
                 )
+            case (
+                bindings.ReasoningTextDeltaNotification()
+                | bindings.ReasoningSummaryTextDeltaNotification()
+            ):
+                await self._on_model_thinking(notification.turnId)
+            case bindings.TurnPlanUpdatedNotification():
+                await self._on_plan_updated(notification)
             case bindings.ItemCompletedNotification():
                 await self._on_item_completed(notification)
             case bindings.ErrorNotification():
@@ -647,14 +656,44 @@ class CodexAppServerBackendChild:
             return
         await self._sink.tool_call_progress(turn.token, tool_call_id=item_id, detail=detail)
 
+    async def _on_model_thinking(self, turn_id: str) -> None:
+        """Codex streamed some private reasoning.
+
+        Its text is not read and is not passed on — the delta is taken as nothing more
+        than the sign that the model is working, which is the same thing this adapter has
+        always done with reasoning, minus the silence.
+        """
+        turn = self._turn_this_is_about(turn_id)
+        if turn is None:
+            return
+        await self._sink.model_thinking_happened(turn.token)
+
+    async def _on_plan_updated(
+        self, notification: bindings.TurnPlanUpdatedNotification
+    ) -> None:
+        """The turn's plan, whole, as codex now has it.
+
+        Codex sends the entire plan on every change, which is exactly what a plan row is,
+        so it passes straight through. The explanation codex sends alongside it is prose
+        about the plan rather than part of it, and nothing here has a place for it.
+        """
+        turn = self._turn_this_is_about(notification.turnId)
+        if turn is None:
+            return
+        await self._sink.plan_updated(turn.token, _plan_entries(notification.plan))
+
     async def _on_item_started(self, notification: bindings.ItemStartedNotification) -> None:
         turn = self._turn_this_is_about(notification.turnId)
         if turn is None:
             return
+        if isinstance(notification.item, bindings.ReasoningThreadItem):
+            # What it reasoned is dropped where it arrives. That it began reasoning is the
+            # earliest sign codex gives that the model is working, and it is passed on.
+            await self._sink.model_thinking_happened(turn.token)
+            return
         started = _tool_call_started(notification.item)
         if started is None:
-            # Reasoning is dropped where it arrives, and the rest of codex's items are
-            # things a conversation's record has no row for.
+            # The rest of codex's items are things a conversation's record has no row for.
             return
         title, tool_kind, detail = started
         await self._sink.tool_call_started(
@@ -810,6 +849,21 @@ def _role_text(resolved_start: ResolvedConversationStart) -> str | None:
 
 
 # --- reading codex's items -----------------------------------------------------------------
+
+
+# Codex words the middle state differently from everybody else; the other two match.
+_PLAN_ENTRY_STATUSES: dict[str, PlanEntryStatus] = {
+    "pending": PlanEntryStatus.pending,
+    "inProgress": PlanEntryStatus.in_progress,
+    "completed": PlanEntryStatus.completed,
+}
+
+
+def _plan_entries(plan: list[bindings.TurnPlanStep]) -> tuple[PlanEntry, ...]:
+    return tuple(
+        PlanEntry(text=step.step, status=_PLAN_ENTRY_STATUSES[str(step.status)])
+        for step in plan
+    )
 
 
 def _tool_call_started(item: Any) -> tuple[str, str, str | None] | None:

@@ -43,6 +43,7 @@ from acp.interfaces import Agent
 from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
+    AgentPlanUpdate,
     AgentThoughtChunk,
     ContentToolCallContent,
     Implementation,
@@ -50,6 +51,7 @@ from acp.schema import (
     LoadSessionResponse,
     NewSessionResponse,
     PermissionOption,
+    PlanEntry,
     PromptResponse,
     RequestPermissionRequest,
     SessionConfigOptionSelect,
@@ -274,6 +276,9 @@ class ScriptedAcpAgent:
                     str(command["text"]), str(command.get("message_id", "scripted-message"))
                 )
                 return {"ok": True}
+            case "emit_plan":
+                await self._emit_plan(command)
+
             case "emit_thought":
                 await self._emit_thought(str(command["text"]))
                 return {"ok": True}
@@ -390,6 +395,22 @@ class ScriptedAcpAgent:
                 session_update="agent_message_chunk",
                 content=TextContentBlock(type="text", text=text),
                 message_id=message_id,
+            )
+        )
+
+    async def _emit_plan(self, command: dict[str, Any]) -> None:
+        """A plan the way ACP words one: content, a status, and a priority nobody reads."""
+        await self._notify_session_update(
+            AgentPlanUpdate(
+                session_update="plan",
+                entries=[
+                    PlanEntry(
+                        content=str(entry["text"]),
+                        status=entry.get("status", "pending"),
+                        priority=entry.get("priority", "medium"),
+                    )
+                    for entry in command["entries"]
+                ],
             )
         )
 

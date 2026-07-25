@@ -208,7 +208,22 @@ class ScriptedAppServer:
             case "reasoning_delta":
                 await self._notify(
                     "item/reasoning/textDelta",
-                    {**route, "itemId": action.get("item_id", "r"), "delta": action["text"]},
+                    {
+                        **route,
+                        "itemId": action.get("item_id", "r"),
+                        "contentIndex": 0,
+                        "delta": action["text"],
+                    },
+                )
+            case "reasoning_summary_delta":
+                await self._notify(
+                    "item/reasoning/summaryTextDelta",
+                    {
+                        **route,
+                        "itemId": action.get("item_id", "r"),
+                        "summaryIndex": 0,
+                        "delta": action["text"],
+                    },
                 )
             case "unknown_notification":
                 await self._notify("thread/tokenUsage/updated", {**route, "usage": {}})
@@ -225,6 +240,11 @@ class ScriptedAppServer:
                 await self._notify(
                     "item/mcpToolCall/progress",
                     {**route, "itemId": action["item_id"], "message": action["text"]},
+                )
+            case "plan_updated":
+                await self._notify(
+                    "turn/plan/updated",
+                    {**route, "plan": action["plan"], "explanation": action.get("explanation")},
                 )
             case "item_started":
                 await self._notify(

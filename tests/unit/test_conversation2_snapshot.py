@@ -62,6 +62,10 @@ class _FakeMachine:
     after_run: dict[tuple[str, ...], Callable[[], None]] = field(default_factory=dict)
     run_commands: list[tuple[str, ...]] = field(default_factory=list)
     registry_lookups: list[str] = field(default_factory=list)
+    # What any command this script does not name answers with. The hermes catalog probe is
+    # run as a path this machine resolves for itself, so a test says what it answers
+    # without having to predict how it was spelled.
+    answers_any_other_command: CommandOutcome | None = None
     # Commands that wait to be let go, so a test can hold one in flight and see what
     # another caller does while it is.
     slow_commands: set[tuple[str, ...]] = field(default_factory=set)
@@ -94,7 +98,10 @@ class _FakeMachine:
             self.commands_in_flight -= 1
         outcome = self.outcomes.get(
             command,
-            CommandOutcome(exit_code=-1, standard_output="", standard_error="no such command"),
+            self.answers_any_other_command
+            or CommandOutcome(
+                exit_code=-1, standard_output="", standard_error="no such command"
+            ),
         )
         happens_next = self.after_run.get(command)
         if happens_next is not None:
@@ -117,7 +124,15 @@ def _codex_that_answers(*models: CodexModel) -> Callable[[str], Any]:
             for effort in model.reasoning_effort_options:
                 if effort not in efforts:
                     efforts.append(effort)
-        return CodexModelCatalog(models=models, reasoning_effort_options=tuple(efforts))
+        default = next((model for model in models if model.is_default), None)
+        return CodexModelCatalog(
+            models=models,
+            reasoning_effort_options=tuple(efforts),
+            default_model_id=None if default is None else default.model_id,
+            default_reasoning_effort=(
+                None if default is None else default.default_reasoning_effort
+            ),
+        )
 
     return probe
 
@@ -150,7 +165,7 @@ _CLAUDE_HANDSHAKE_MODELS = (
 
 
 def _claude_that_answers(
-    *models: ClaudeModel,
+    *models: ClaudeModel, default_model_id: str | None = None
 ) -> Callable[[str], Any]:
     answered = models or _CLAUDE_HANDSHAKE_MODELS
 
@@ -162,7 +177,9 @@ def _claude_that_answers(
                 if effort not in efforts:
                     efforts.append(effort)
         return ClaudeModelCatalog(
-            models=tuple(answered), reasoning_effort_options=tuple(efforts)
+            models=tuple(answered),
+            reasoning_effort_options=tuple(efforts),
+            default_model_id=default_model_id,
         )
 
     return probe
@@ -524,6 +541,102 @@ def test_a_version_that_cannot_be_read_is_a_diagnosis_not_a_guess() -> None:
             "`claude --version` did not report a version, so Panels cannot tell which "
             "one is installed."
         )
+
+    _run(exercise)
+
+
+# --- what a backend runs when nobody picks --------------------------------------------------
+
+
+def test_claude_names_the_concrete_model_its_default_reaches() -> None:
+    """"Default" is not a model anybody can be shown as running: the model it reaches is."""
+
+    async def exercise() -> None:
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            _installed_claude(),
+            claude_model_catalog_probe=_claude_that_answers(default_model_id="opus[1m]"),
+        )
+
+        assert card.default_model_id == "opus[1m]"
+        assert card.default_model_id in [model.model_id for model in card.available_models]
+        # Claude's handshake says which efforts a model takes and nothing about where it
+        # starts, so there is no default effort to report and none is invented.
+        assert card.default_reasoning_effort is None
+
+    _run(exercise)
+
+
+def test_codex_names_the_model_and_the_effort_it_flags_as_its_own() -> None:
+    async def exercise() -> None:
+        card = await probe_backend(
+            ConversationBackendKey.codex,
+            _installed_codex(),
+            codex_model_catalog_probe=_codex_that_answers(
+                CodexModel(
+                    model_id="gpt-5.6-sol",
+                    display_name="GPT-5.6-Sol",
+                    reasoning_effort_options=("low", "medium", "high"),
+                    default_reasoning_effort="low",
+                    is_default=True,
+                ),
+                CodexModel(
+                    model_id="gpt-5.5",
+                    display_name="GPT-5.5",
+                    reasoning_effort_options=("medium",),
+                    default_reasoning_effort="medium",
+                    is_default=False,
+                ),
+            ),
+        )
+
+        assert card.default_model_id == "gpt-5.6-sol"
+        assert card.default_reasoning_effort == "low"
+
+    _run(exercise)
+
+
+def test_hermes_names_the_model_its_own_configuration_runs_on() -> None:
+    async def exercise() -> None:
+        machine = _FakeMachine(executables={"hermes": HERMES_PATH})
+        machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
+        )
+        machine.answers_any_other_command = CommandOutcome(
+            exit_code=0,
+            standard_output=json.dumps(
+                {
+                    "provider": "openai",
+                    "nativeModel": "gpt-5.6-sol",
+                    "models": [
+                        {"model": "gpt-5.6-sol", "description": "the fast one"},
+                        {"model": "gpt-5.5", "description": None},
+                    ],
+                }
+            ),
+            standard_error="",
+        )
+
+        card = await probe_backend(ConversationBackendKey.hermes, machine)
+
+        assert card.default_model_id == "gpt-5.6-sol"
+        assert [model.model_id for model in card.available_models] == [
+            "gpt-5.6-sol",
+            "gpt-5.5",
+        ]
+        # Hermes has no reasoning effort at all, so it has no default one either.
+        assert card.reasoning_effort_options == ()
+        assert card.default_reasoning_effort is None
+
+    _run(exercise)
+
+
+def test_a_backend_that_is_not_there_runs_nothing_by_default() -> None:
+    async def exercise() -> None:
+        card = await probe_backend(ConversationBackendKey.codex, _FakeMachine())
+
+        assert card.default_model_id is None
+        assert card.default_reasoning_effort is None
 
     _run(exercise)
 

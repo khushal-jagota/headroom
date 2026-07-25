@@ -1756,6 +1756,66 @@
     }
    ]
   },
+  "ReasoningSummaryTextDeltaNotification": {
+   "$schema": "http://json-schema.org/draft-07/schema#",
+   "properties": {
+    "delta": {
+     "type": "string"
+    },
+    "itemId": {
+     "type": "string"
+    },
+    "summaryIndex": {
+     "format": "int64",
+     "type": "integer"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "delta",
+    "itemId",
+    "summaryIndex",
+    "threadId",
+    "turnId"
+   ],
+   "title": "ReasoningSummaryTextDeltaNotification",
+   "type": "object"
+  },
+  "ReasoningTextDeltaNotification": {
+   "$schema": "http://json-schema.org/draft-07/schema#",
+   "properties": {
+    "contentIndex": {
+     "format": "int64",
+     "type": "integer"
+    },
+    "delta": {
+     "type": "string"
+    },
+    "itemId": {
+     "type": "string"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "contentIndex",
+    "delta",
+    "itemId",
+    "threadId",
+    "turnId"
+   ],
+   "title": "ReasoningTextDeltaNotification",
+   "type": "object"
+  },
   "SandboxMode": {
    "enum": [
     "read-only",
@@ -3549,6 +3609,59 @@
      "type": "string"
     }
    ]
+  },
+  "TurnPlanStep": {
+   "properties": {
+    "status": {
+     "$ref": "#/definitions/TurnPlanStepStatus"
+    },
+    "step": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "status",
+    "step"
+   ],
+   "type": "object"
+  },
+  "TurnPlanStepStatus": {
+   "enum": [
+    "pending",
+    "inProgress",
+    "completed"
+   ],
+   "type": "string"
+  },
+  "TurnPlanUpdatedNotification": {
+   "$schema": "http://json-schema.org/draft-07/schema#",
+   "properties": {
+    "explanation": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "plan": {
+     "items": {
+      "$ref": "#/definitions/TurnPlanStep"
+     },
+     "type": "array"
+    },
+    "threadId": {
+     "type": "string"
+    },
+    "turnId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "plan",
+    "threadId",
+    "turnId"
+   ],
+   "title": "TurnPlanUpdatedNotification",
+   "type": "object"
   },
   "TurnStartParams": {
    "$schema": "http://json-schema.org/draft-07/schema#",

@@ -29,6 +29,7 @@ from planner.conversation2.contracts import PromptDeliveryMode, ResolvedConversa
 from planner.conversation2.events import (
     ConversationTurnEnding,
     PermissionAskOption,
+    PlanEntry,
     ToolCallStatus,
 )
 
@@ -119,6 +120,17 @@ class BackendEventSink(Protocol):
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         """A piece of an agent message that has not finished. Shown live, never stored."""
 
+    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
+        """The model emitted private reasoning just now — and that is the whole message.
+
+        There is no payload and there will not be one. What the model reasoned is dropped
+        by the adapter where it arrives, exactly as it always has been; this says only that
+        it happened, so a turn with nothing else to show yet can still show it is alive.
+
+        Report it as it arrives. The core decides how often anyone is told, because a burst
+        of reasoning is one fact — the agent is working — however many pieces it came in.
+        """
+
     async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
         """The whole of a finished agent message."""
 
@@ -154,6 +166,19 @@ class BackendEventSink(Protocol):
         tool_call_status: ToolCallStatus,
         detail: str | None,
     ) -> None: ...
+
+    async def plan_updated(
+        self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]
+    ) -> None:
+        """The agent's plan, whole, as it now stands.
+
+        Report the entire plan every time it changes rather than what moved in it: the
+        core writes one row per update and the newest row is the answer on its own, so a
+        reader never has to rebuild a plan out of a conversation's history.
+
+        A backend that has no plan on its wire reports nothing here, and the conversation
+        simply has no plan — which is a true thing to show and needs no stand-in.
+        """
 
     async def permission_ask_raised(
         self, turn_token: TurnToken, ask: BackendPermissionAsk

@@ -58,6 +58,8 @@ from planner.conversation2.events import (
     AgentMessageEventPayload,
     ConversationEventKind,
     ConversationTurnEnding,
+    ModelThinkingFrame,
+    PlanUpdatedEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
     ToolCallStartedEventPayload,
@@ -158,22 +160,89 @@ def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> No
 # --- what the adapter makes of what the agent says -------------------------------------------
 
 
-def test_thinking_is_dropped_where_it_arrives(tmp_path: Path) -> None:
-    """A thought is never stored and never forwarded — it has no row and no delta."""
+def test_a_thought_is_never_stored_and_only_its_arrival_is_shown(tmp_path: Path) -> None:
+    """What the agent thought has no row and no frame carrying it.
+
+    That it was thinking is shown, because a turn which has produced nothing visible yet
+    still has to be able to say it is alive. The thought itself goes nowhere at all.
+    """
 
     async def exercise() -> None:
         async with open_conversation2_system_under_test() as subject:
             await _start_and_send(subject, tmp_path)
-            await subject.tell_agent("c", {"command": "emit_thought", "text": "hmm, let me see"})
-            await subject.tell_agent("c", {"command": "emit_agent_message", "text": "the answer"})
+            with subject.watch("c") as watching:
+                await subject.tell_agent(
+                    "c", {"command": "emit_thought", "text": "hmm, let me see"}
+                )
+                shown = await _next_frame(watching)
+
+            assert shown == ModelThinkingFrame()
+
+            await subject.tell_agent(
+                "c", {"command": "emit_agent_message", "text": "the answer"}
+            )
             await subject.complete_running_turn("c")
 
+            events = await subject.recorded_events("c")
             texts = [
                 event.payload.text
-                for event in await subject.recorded_events("c")
+                for event in events
                 if isinstance(event.payload, AgentMessageEventPayload)
             ]
             assert texts == ["the answer"]
+            # Not a word of the thought reached the record.
+            assert all("hmm" not in str(event.payload) for event in events)
+
+    _run(exercise)
+
+
+def test_the_agents_plan_is_written_down_whole_every_time_it_changes(
+    tmp_path: Path,
+) -> None:
+    """A plan outlives the moment it was announced in, so it is a row and not a frame.
+
+    Each row carries the whole plan, so the newest one answers "what is the plan now" by
+    itself. ACP's priority is not carried: nothing reads it.
+    """
+
+    async def exercise() -> None:
+        async with open_conversation2_system_under_test() as subject:
+            await _start_and_send(subject, tmp_path)
+            await subject.tell_agent(
+                "c",
+                {
+                    "command": "emit_plan",
+                    "entries": [
+                        {"text": "read the code", "status": "completed"},
+                        {"text": "write the thing", "status": "in_progress", "priority": "high"},
+                        {"text": "run the tests", "status": "pending"},
+                    ],
+                },
+            )
+            await subject.tell_agent(
+                "c",
+                {
+                    "command": "emit_plan",
+                    "entries": [
+                        {"text": "read the code", "status": "completed"},
+                        {"text": "write the thing", "status": "completed"},
+                        {"text": "run the tests", "status": "in_progress"},
+                    ],
+                },
+            )
+            await subject.complete_running_turn("c")
+
+            plans = [
+                event.payload
+                for event in await subject.recorded_events("c")
+                if isinstance(event.payload, PlanUpdatedEventPayload)
+            ]
+            assert len(plans) == 2
+            assert [(entry.text, str(entry.status)) for entry in plans[-1].entries] == [
+                ("read the code", "completed"),
+                ("write the thing", "completed"),
+                ("run the tests", "in_progress"),
+            ]
 
     _run(exercise)
 

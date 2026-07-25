@@ -79,6 +79,7 @@ from claude_agent_sdk import (
     StreamEvent,
     SystemMessage,
     TextBlock,
+    ThinkingBlock,
     ToolPermissionContext,
     ToolResultBlock,
     ToolUseBlock,
@@ -104,6 +105,8 @@ from planner.conversation2.contracts import (
 from planner.conversation2.events import (
     ConversationTurnEnding,
     PermissionAskOption,
+    PlanEntry,
+    PlanEntryStatus,
     ToolCallStatus,
 )
 
@@ -115,6 +118,10 @@ CLAUDE_CODE_SYSTEM_PROMPT: Final[SystemPromptPreset] = {
     "type": "preset",
     "preset": "claude_code",
 }
+
+# The one tool claude keeps a plan in. Its input is the whole list, every time it is
+# called, which is why reading the call is reading the plan.
+TODO_WRITE_TOOL_NAME: Final = "TodoWrite"
 
 # The reasoning efforts claude has. A conversation asking for anything else is asking for a
 # session claude cannot give it.
@@ -642,8 +649,11 @@ class ClaudeAgentSdkBackendChild:
         delta = event.get("delta")
         if not isinstance(delta, dict):
             return
-        # A thinking delta is dropped where it arrives, along with everything else that is
-        # not the agent's own text.
+        # What the model thought is dropped where it arrives, along with everything else
+        # that is not the agent's own text. That it thought is forwarded on its own.
+        if delta.get("type") == "thinking_delta":
+            await self._sink.model_thinking_happened(turn.token)
+            return
         if delta.get("type") != "text_delta":
             return
         text = delta.get("text")
@@ -675,6 +685,9 @@ class ClaudeAgentSdkBackendChild:
                     said.append(block.text)
                 case ToolUseBlock():
                     await self._complete_agent_message(turn, said)
+                    plan = _todo_write_plan(block)
+                    if plan is not None:
+                        await self._sink.plan_updated(turn.token, plan)
                     await self._sink.tool_call_started(
                         turn.token,
                         tool_call_id=block.id,
@@ -685,8 +698,12 @@ class ClaudeAgentSdkBackendChild:
                         tool_kind=block.name,
                         detail=_canonical_json(block.input),
                     )
+                case ThinkingBlock():
+                    # What it thought is dropped where it arrives: never stored, never
+                    # forwarded. That it thought is forwarded, and is all that is.
+                    await self._sink.model_thinking_happened(turn.token)
+                    continue
                 case _:
-                    # Thinking is dropped where it arrives: never stored, never forwarded.
                     continue
         await self._complete_agent_message(turn, said)
 
@@ -1025,6 +1042,39 @@ def _answer_for(
     if option_id == DECLINE_OPTION_ID:
         return PermissionResultDeny(message=DECLINED_TOOL_MESSAGE)
     return None
+
+
+def _todo_write_plan(block: ToolUseBlock) -> tuple[PlanEntry, ...] | None:
+    """Claude's plan, read off the one tool that carries one.
+
+    Claude has no plan on its wire at all: what it has is a tool it calls to keep its own
+    todo list, and the list is the tool's input. So the plan is read from the call as it is
+    made — which is also the moment it changes.
+
+    Anything the least bit unexpected reads as no plan rather than a guessed one. A wrong
+    plan on the screen is worse than none, and the tool call itself is still recorded
+    whatever this decides.
+    """
+    if block.name != TODO_WRITE_TOOL_NAME or not isinstance(block.input, dict):
+        return None
+    listed = block.input.get("todos")
+    if not isinstance(listed, list) or not listed:
+        return None
+    entries: list[PlanEntry] = []
+    for todo in listed:
+        if not isinstance(todo, dict):
+            return None
+        text = todo.get("content")
+        status = todo.get("status")
+        if not isinstance(text, str) or not text or not isinstance(status, str):
+            return None
+        try:
+            entries.append(PlanEntry(text=text, status=PlanEntryStatus(status)))
+        except ValueError:
+            # A status this system has no word for. Showing the plan without it would be
+            # showing a different plan.
+            return None
+    return tuple(entries)
 
 
 def _canonical_json(value: Any) -> str | None:

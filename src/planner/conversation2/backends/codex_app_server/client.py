@@ -52,6 +52,9 @@ CONSUMED_SERVER_NOTIFICATIONS: dict[str, type[BaseModel]] = {
     "item/completed": bindings.ItemCompletedNotification,
     "item/commandExecution/outputDelta": bindings.CommandExecutionOutputDeltaNotification,
     "item/mcpToolCall/progress": bindings.McpToolCallProgressNotification,
+    "item/reasoning/textDelta": bindings.ReasoningTextDeltaNotification,
+    "item/reasoning/summaryTextDelta": bindings.ReasoningSummaryTextDeltaNotification,
+    "turn/plan/updated": bindings.TurnPlanUpdatedNotification,
     "error": bindings.ErrorNotification,
 }
 

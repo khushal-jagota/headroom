@@ -26,6 +26,9 @@ from planner.conversation2.events import (
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
     PermissionAskOption,
+    PlanEntry,
+    PlanEntryStatus,
+    PlanUpdatedEventPayload,
     PromptDeliveryRefusedEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
@@ -75,6 +78,15 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
         ),
     ),
     PermissionAnsweredEventPayload(ask_id="ask-1", option_id="allow-once"),
+    PlanUpdatedEventPayload(
+        entries=(
+            PlanEntry(text="read the code", status=PlanEntryStatus.completed),
+            PlanEntry(text="write the thing", status=PlanEntryStatus.in_progress),
+            PlanEntry(text="run the tests", status=PlanEntryStatus.pending),
+        )
+    ),
+    # A plan can be emptied, and an empty plan is still a plan that was announced.
+    PlanUpdatedEventPayload(entries=()),
     ModelChangedEventPayload(model="second-model", reasoning_effort=None),
     TurnEndedEventPayload(ending=ConversationTurnEnding.failed, error_summary="it fell over"),
 )

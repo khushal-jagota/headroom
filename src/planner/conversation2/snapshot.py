@@ -157,6 +157,12 @@ class BackendSnapshot:
     identity: BackendIdentity | None
     available_models: tuple[BackendModel, ...]
     reasoning_effort_options: tuple[str, ...]
+    # What this backend runs when nobody picks. They are concrete values from the lists
+    # above, because "default" is not something a person can be shown as running — a
+    # surface offering a choice pre-selects these rather than offering a word. Absent
+    # means the backend does not say, which is not the same as there being none.
+    default_model_id: str | None
+    default_reasoning_effort: str | None
     update_advisory: BackendUpdateAdvisory | None
     diagnoses: tuple[str, ...]
 
@@ -399,6 +405,8 @@ class _CatalogAnswer:
 
     models: tuple[BackendModel, ...] = ()
     reasoning_effort_options: tuple[str, ...] = ()
+    default_model_id: str | None = None
+    default_reasoning_effort: str | None = None
     diagnoses: tuple[str, ...] = ()
 
 
@@ -488,6 +496,10 @@ async def _claude_catalog(request: _CatalogRequest) -> _CatalogAnswer:
         ),
         reasoning_effort_options=catalog.reasoning_effort_options
         or _CLAUDE_FALLBACK_REASONING_EFFORT_OPTIONS,
+        default_model_id=catalog.default_model_id,
+        # Claude's handshake names no default effort — its entries say which efforts a
+        # model takes and nothing about where it starts — so there is none to report.
+        default_reasoning_effort=None,
     )
 
 
@@ -541,6 +553,8 @@ async def _codex_catalog(request: _CatalogRequest) -> _CatalogAnswer:
             for model in catalog.models
         ),
         reasoning_effort_options=catalog.reasoning_effort_options,
+        default_model_id=catalog.default_model_id,
+        default_reasoning_effort=catalog.default_reasoning_effort,
     )
 
 
@@ -584,7 +598,19 @@ async def _hermes_catalog(request: _CatalogRequest) -> _CatalogAnswer:
                 "are listed. Check that hermes runs from a terminal.",
             )
         )
-    return _CatalogAnswer(models=_hermes_models(outcome.standard_output))
+    return _CatalogAnswer(
+        models=_hermes_models(outcome.standard_output),
+        # Hermes calls it the native model: the one its own configuration runs on.
+        default_model_id=_hermes_native_model(outcome.standard_output),
+    )
+
+
+def _hermes_native_model(probe_output: str) -> str | None:
+    try:
+        native = json.loads(probe_output)["nativeModel"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    return _optional_text(native)
 
 
 def _hermes_models(probe_output: str) -> tuple[BackendModel, ...]:
@@ -682,6 +708,8 @@ async def probe_backend(
             identity=None,
             available_models=(),
             reasoning_effort_options=(),
+            default_model_id=None,
+            default_reasoning_effort=None,
             update_advisory=None,
             diagnoses=(recipe.missing_binary_diagnosis,),
         )
@@ -728,6 +756,8 @@ async def probe_backend(
         identity=identity,
         available_models=catalog.models,
         reasoning_effort_options=catalog.reasoning_effort_options,
+        default_model_id=catalog.default_model_id,
+        default_reasoning_effort=catalog.default_reasoning_effort,
         update_advisory=advisory,
         diagnoses=tuple(diagnoses),
     )

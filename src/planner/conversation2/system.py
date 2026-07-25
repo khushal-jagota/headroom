@@ -68,8 +68,11 @@ from planner.conversation2.events import (
     ConversationLiveTailFrame,
     ConversationTurnEnding,
     ModelChangedEventPayload,
+    ModelThinkingFrame,
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
+    PlanEntry,
+    PlanUpdatedEventPayload,
     PromptDeliveryRefusedEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
@@ -100,6 +103,12 @@ IDLE_CHILD_SWEEP_INTERVAL_SECONDS = 5 * 60
 # How much of a failed turn's standard error goes in the error-log line. Enough to see
 # what happened, not enough to bury the line it is part of.
 STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS = 2048
+
+# How often a conversation may say that its model is thinking. Reasoning arrives in a
+# burst of many small pieces and they all mean one thing — the agent is alive and working
+# — so telling a browser hundreds of times would be hundreds of frames saying the same
+# thing. Dropping the rest costs nothing: a pulse carries no information to lose.
+MODEL_THINKING_PULSE_INTERVAL_SECONDS = 0.25
 
 # What separates a conversation's role text from the first message it is composed onto.
 ROLE_TEXT_PROMPT_SEPARATOR = "\n\n"
@@ -183,6 +192,9 @@ class _ConversationState:
     next_turn_number: int = 1
     has_delivered_prompt: bool = False
     last_touched_monotonic: float = 0.0
+    # When this conversation last said its model was thinking. Kept per conversation
+    # because the rate it may be said at is about one browser watching one conversation.
+    model_thinking_shown_at_monotonic: float = 0.0
 
     def __post_init__(self) -> None:
         self.phase_settled.set()
@@ -864,6 +876,10 @@ class SqliteProcessConversationSystem:
             ),
             resolved=asyncio.Event(),
         )
+        # A new turn may say it is thinking straight away. Holding its first pulse back
+        # because the turn before it had just said so would silence the very moment this
+        # exists for: a turn that has started and has nothing to show yet.
+        state.model_thinking_shown_at_monotonic = 0.0
         state.next_turn_number += 1
         state.reserved_turn = reservation
         self._set_phase(state, _ConversationPhase.starting)
@@ -1134,6 +1150,19 @@ class SqliteProcessConversationSystem:
         finally:
             state.lock.release()
 
+    async def _on_plan_updated(
+        self,
+        state: _ConversationState,
+        turn_token: TurnToken,
+        entries: tuple[PlanEntry, ...],
+    ) -> None:
+        if await self._hold_for_the_live_turn(state, turn_token) is None:
+            return
+        try:
+            await self._append_event(state, PlanUpdatedEventPayload(entries=entries))
+        finally:
+            state.lock.release()
+
     async def _on_permission_ask_raised(
         self, state: _ConversationState, turn_token: TurnToken, ask: BackendPermissionAsk
     ) -> None:
@@ -1332,6 +1361,24 @@ class SqliteProcessConversationSystem:
             return
         self._live_tail.publish_frame(state.record.conversation_id, frame)
 
+    def _publish_model_thinking(
+        self, state: _ConversationState, turn_token: TurnToken
+    ) -> None:
+        """Say the model is thinking, at most so often, and never say what it thought.
+
+        The turn is checked before the rate is, so that a dead turn's reasoning cannot use
+        up the moment a live turn was about to speak in. After that the first pulse goes
+        out immediately — being prompt is the whole point of it — and the rest of the burst
+        is dropped until the interval is up.
+        """
+        if self._live_tail is None or not self._names_a_turn_to_show(state, turn_token):
+            return
+        now = self._monotonic_now()
+        if now - state.model_thinking_shown_at_monotonic < MODEL_THINKING_PULSE_INTERVAL_SECONDS:
+            return
+        state.model_thinking_shown_at_monotonic = now
+        self._live_tail.publish_frame(state.record.conversation_id, ModelThinkingFrame())
+
     def _names_a_turn_to_show(
         self, state: _ConversationState, turn_token: TurnToken
     ) -> bool:
@@ -1410,6 +1457,15 @@ class _CoreBackendEventSink:
             self._state, turn_token, AgentMessageDeltaFrame(text_delta=text_delta)
         )
 
+    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
+        """Shown on the live tail and never stored: that it happened, and nothing more.
+
+        It carries no content and there is nothing for it to be ordered against, so it
+        goes straight out rather than through the queue the rows go through — and it is
+        dropped, like any frame, if it names a turn this conversation has moved on from.
+        """
+        self._system._publish_model_thinking(self._state, turn_token)
+
     async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
         self._enqueue(
             partial(self._system._on_agent_message_completed, self._state, turn_token, text)
@@ -1469,6 +1525,19 @@ class _CoreBackendEventSink:
                 tool_call_status,
                 detail,
             )
+        )
+
+    async def plan_updated(
+        self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]
+    ) -> None:
+        """A row like any other: it goes through the queue, in order, and is kept.
+
+        A plan is not a passing thing to show — somebody opening this conversation later
+        still needs to see what the agent set out to do — so it is written down rather
+        than shown and forgotten.
+        """
+        self._enqueue(
+            partial(self._system._on_plan_updated, self._state, turn_token, entries)
         )
 
     async def permission_ask_raised(

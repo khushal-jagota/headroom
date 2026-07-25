@@ -56,6 +56,10 @@ class ClaudeModelCatalog:
 
     models: tuple[ClaudeModel, ...]
     reasoning_effort_options: tuple[str, ...]
+    # Which of the models above claude runs when nobody picks one. Claude says this as a
+    # pseudo-entry called "default" that is not itself selectable, so what is kept is the
+    # real entry it resolves to. Absent when nothing in the list matches it.
+    default_model_id: str | None = None
 
 
 def versioned_display_name(resolved_model_id: str) -> str:
@@ -95,6 +99,7 @@ async def probe_claude_model_catalog(claude_executable: str) -> ClaudeModelCatal
 
     models: list[ClaudeModel] = []
     efforts_in_listed_order: list[str] = []
+    default_resolves_to: str | None = None
     for entry in reported:
         if not isinstance(entry, dict):
             continue
@@ -103,6 +108,9 @@ async def probe_claude_model_catalog(claude_executable: str) -> ClaudeModelCatal
         if not isinstance(value, str) or not isinstance(resolved, str):
             continue
         if value == _DEFAULT_PSEUDO_MODEL_VALUE:
+            # Not an option — "default" is not a model anybody can be shown as running.
+            # What it resolves to is a model, and that is the part worth keeping.
+            default_resolves_to = resolved
             continue
         raw_efforts = entry.get("supportedEffortLevels")
         efforts = tuple(
@@ -122,8 +130,26 @@ async def probe_claude_model_catalog(claude_executable: str) -> ClaudeModelCatal
     if not models:
         raise ClaudeModelCatalogUnavailable("claude's startup handshake named no models")
     return ClaudeModelCatalog(
-        models=tuple(models), reasoning_effort_options=tuple(efforts_in_listed_order)
+        models=tuple(models),
+        reasoning_effort_options=tuple(efforts_in_listed_order),
+        default_model_id=_default_model_id(models, default_resolves_to),
     )
+
+
+def _default_model_id(models: list[ClaudeModel], resolves_to: str | None) -> str | None:
+    """The listed model claude's default reaches, named as the picker names it.
+
+    Claude's default is stated as a resolved model id, and a picker holds the values
+    ``--model`` accepts. So the two are joined here on the resolved id, and a default that
+    matches nothing listed is reported as no default rather than as a value nobody could
+    have selected.
+    """
+    if resolves_to is None:
+        return None
+    for model in models:
+        if model.resolved_model_id == resolves_to:
+            return model.model_id
+    return None
 
 
 async def _read_models_from_init(claude_executable: str) -> list[object]:

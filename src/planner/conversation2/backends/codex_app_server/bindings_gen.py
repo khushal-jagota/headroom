@@ -11,8 +11,8 @@ The pin these models were generated under:
     from the dump's        codex_app_server_protocol.schemas.json
     dump digest (sha256)   5469280cfbdaa12f6d28e2206f942da808f8b699ce6c43b13f2439d843432f38
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) 77ea9fb7f1be420c1478e58763cae7d2bf8b85eb1aac13a21bd73c33683cf832
-    definitions generated  96
+    subset digest (sha256) b5660308001fe318c25e0dc125e979585091ec34cadf2f340e47de7289ee2779
+    definitions generated  101
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -294,6 +294,22 @@ class ReasoningEffort(RootModel[str]):
 
 class ReasoningEffortOption(BaseModel):
     reasoningEffort: Annotated[str, Field(min_length=1)]
+
+
+class ReasoningSummaryTextDeltaNotification(BaseModel):
+    delta: str
+    itemId: str
+    summaryIndex: int
+    threadId: str
+    turnId: str
+
+
+class ReasoningTextDeltaNotification(BaseModel):
+    contentIndex: int
+    delta: str
+    itemId: str
+    threadId: str
+    turnId: str
 
 
 class DangerFullAccessSandboxPolicy(BaseModel):
@@ -772,6 +788,18 @@ class TurnError(BaseModel):
         | None
     ) = None
     message: str
+
+
+class TurnPlanStep(BaseModel):
+    status: Literal["pending", "inProgress", "completed"]
+    step: str
+
+
+class TurnPlanUpdatedNotification(BaseModel):
+    explanation: str | None = None
+    plan: list[TurnPlanStep]
+    threadId: str
+    turnId: str
 
 
 class TurnStartParams(BaseModel):

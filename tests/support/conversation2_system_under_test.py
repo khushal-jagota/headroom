@@ -72,6 +72,7 @@ from planner.conversation2.events import (
     ModelChangedEventPayload,
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
+    PlanEntry,
     PromptDeliveryRefusedEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
@@ -152,6 +153,14 @@ class _ObservingSink:
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         await self._sink.agent_message_delta(turn_token, text_delta)
+
+    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
+        await self._sink.model_thinking_happened(turn_token)
+
+    async def plan_updated(
+        self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]
+    ) -> None:
+        await self._sink.plan_updated(turn_token, entries)
 
     async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
         await self._sink.agent_message_completed(turn_token, text)

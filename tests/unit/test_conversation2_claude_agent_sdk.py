@@ -157,12 +157,20 @@ class _RecordingSink:
         self.tools_started: list[dict[str, Any]] = []
         self.tools_finished: list[dict[str, Any]] = []
         self.tools_progressed: list[tuple[str, str]] = []
+        self.thinking_pulses: list[TurnToken] = []
+        self.plans: list[list[tuple[str, str]]] = []
         self.asks: list[BackendPermissionAsk] = []
         self.endings: list[dict[str, Any]] = []
         self.cursors: list[str] = []
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         self.deltas.append((turn_token, text_delta))
+
+    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
+        self.thinking_pulses.append(turn_token)
+
+    async def plan_updated(self, turn_token: TurnToken, entries: Any) -> None:
+        self.plans.append([(entry.text, str(entry.status)) for entry in entries])
 
     async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
         self.messages.append((turn_token, text))
@@ -704,8 +712,14 @@ def test_a_prompt_that_does_not_reach_the_wire_says_so(tmp_path: Path) -> None:
 # --- what the agent says ---------------------------------------------------------------------
 
 
-def test_thinking_is_dropped_where_it_arrives(tmp_path: Path) -> None:
-    """Not stored and not shown, in either of the two places claude sends it."""
+def test_thinking_is_dropped_where_it_arrives_and_only_its_arrival_is_told(
+    tmp_path: Path,
+) -> None:
+    """Not stored and not shown, in either of the two places claude sends it.
+
+    What is passed on is that it happened — twice, once for each place — with not a word
+    of what was thought going anywhere.
+    """
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
@@ -732,6 +746,9 @@ def test_thinking_is_dropped_where_it_arrives(tmp_path: Path) -> None:
 
         assert sink.deltas == []
         assert sink.messages == [(TURN, "the answer")]
+        # Both places claude sends thinking said so, and neither carried the thought.
+        assert sink.thinking_pulses == [TURN, TURN]
+        assert "hmm" not in repr(sink.__dict__)
         await child.stop()
 
     _run(exercise)
@@ -892,6 +909,98 @@ def test_a_subagents_own_tool_results_are_not_this_conversations_finishes(
         await clients[0].until_taken_in()
 
         assert sink.tools_finished == []
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_the_todo_list_claude_keeps_for_itself_is_this_conversations_plan(
+    tmp_path: Path,
+) -> None:
+    """Claude has no plan on its wire — it has a tool it keeps a todo list in.
+
+    The list is the tool's input, so the plan is read from the call as it is made, which
+    is also the moment it changes. The call is still recorded as a tool call either way.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        clients[0].say(
+            _assistant(
+                ToolUseBlock(
+                    id="tool-1",
+                    name="TodoWrite",
+                    input={
+                        "todos": [
+                            {"content": "read the code", "status": "completed"},
+                            {"content": "write the thing", "status": "in_progress"},
+                            {"content": "run the tests", "status": "pending"},
+                        ]
+                    },
+                ),
+                session_id=session_id,
+            ),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.plans == [
+            [
+                ("read the code", "completed"),
+                ("write the thing", "in_progress"),
+                ("run the tests", "pending"),
+            ]
+        ]
+        assert [started["tool_call_id"] for started in sink.tools_started] == ["tool-1"]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_todo_list_that_is_not_the_shape_it_should_be_is_no_plan_at_all(
+    tmp_path: Path,
+) -> None:
+    """A wrong plan on the screen is worse than none, so doubt reads as nothing.
+
+    The tool call itself is still recorded: what could not be understood is the plan, not
+    the fact that claude called the tool.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        clients[0].say(
+            _assistant(
+                ToolUseBlock(
+                    id="tool-1",
+                    name="TodoWrite",
+                    input={"todos": [{"content": "do it", "status": "half-done"}]},
+                ),
+                session_id=session_id,
+            ),
+            _assistant(
+                ToolUseBlock(id="tool-2", name="TodoWrite", input={"todos": "not a list"}),
+                session_id=session_id,
+            ),
+            _assistant(
+                ToolUseBlock(id="tool-3", name="Bash", input={"command": "ls"}),
+                session_id=session_id,
+            ),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.plans == []
+        assert [started["tool_call_id"] for started in sink.tools_started] == [
+            "tool-1",
+            "tool-2",
+            "tool-3",
+        ]
         await child.stop()
 
     _run(exercise)

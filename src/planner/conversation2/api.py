@@ -40,6 +40,7 @@ from planner.conversation2.contracts import (
 )
 from planner.conversation2.events import (
     AgentMessageDeltaFrame,
+    ModelThinkingFrame,
     PermissionAskedEventPayload,
     ToolCallProgressFrame,
     conversation_event_payload_to_canonical_json,
@@ -437,6 +438,8 @@ def _snapshot_json(snapshot: BackendSnapshot) -> dict[str, Any]:
             for model in snapshot.available_models
         ],
         "reasoning_effort_options": list(snapshot.reasoning_effort_options),
+        "default_model_id": snapshot.default_model_id,
+        "default_reasoning_effort": snapshot.default_reasoning_effort,
         "update_advisory": (
             None
             if advisory is None
@@ -475,6 +478,8 @@ def _live_frame_json(frame: ConversationTailItem) -> Mapping[str, Any] | None:
     match frame:
         case AgentMessageDeltaFrame(text_delta=text_delta):
             return {"frame": "agent_message_delta", "text_delta": text_delta}
+        case ModelThinkingFrame():
+            return {"frame": "model_thinking"}
         case ToolCallProgressFrame(tool_call_id=tool_call_id, detail=detail):
             return {
                 "frame": "tool_call_progress",

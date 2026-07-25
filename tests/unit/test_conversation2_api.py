@@ -307,6 +307,13 @@ class _Harness:
         )
         await self.settle()
 
+    async def model_is_thinking(self, conversation_id: str) -> None:
+        backend = self.backend(conversation_id)
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        await backend.sink.model_thinking_happened(token)
+        await self.settle()
+
     async def start_tool_call(self, conversation_id: str, tool_call_id: str) -> None:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
@@ -974,6 +981,41 @@ def test_the_tail_shows_a_tool_call_getting_on_with_it_and_keeps_no_row_for_it(
                 "tool_call_started",
                 "tool_call_finished",
             ]
+
+    _run(exercise)
+
+
+def test_the_tail_says_the_model_is_thinking_without_saying_what(
+    harness: _Harness,
+) -> None:
+    """The one thing a turn can show before it has produced anything visible.
+
+    The frame carries no fields at all — there is nothing in it to leak — and it is
+    exactly the shape the pane reads.
+    """
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation2/conversations/c/send",
+                json={"text": "think hard about this", "sender_label": "owner"},
+            )
+
+            async with _EventStreamDrive(
+                harness.app, "/api/conversation2/conversations/c/tail", "after=1"
+            ) as stream:
+                await stream.wait_until_watching(harness.live_tail)
+                await harness.model_is_thinking("c")
+
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "model_thinking"},
+                )
+
+            # It was shown, and the record does not know it ever happened.
+            rows = (await client.get("/api/conversation2/conversations/c/events")).json()
+            assert [event["kind"] for event in rows["events"]] == ["prompt"]
 
     _run(exercise)
 

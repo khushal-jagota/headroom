@@ -231,8 +231,10 @@ def test_what_the_agent_says_becomes_deltas_then_one_finished_message(tmp_path: 
     _run(exercise)
 
 
-def test_thinking_is_dropped_where_it_arrives(tmp_path: Path) -> None:
-    """Reasoning has no row and no live frame: it is not shown and it is not stored."""
+def test_thinking_is_dropped_where_it_arrives_and_only_its_arrival_is_told(
+    tmp_path: Path,
+) -> None:
+    """Reasoning has no row and no text anywhere: only that it happened is passed on."""
 
     async def exercise() -> None:
         script = {
@@ -241,6 +243,8 @@ def test_thinking_is_dropped_where_it_arrives(tmp_path: Path) -> None:
                     "actions": [
                         {"do": "reasoning_delta", "text": "first I will"},
                         {"do": "reasoning_delta", "text": " look around"},
+                        # Codex streams reasoning two ways; both mean the same thing here.
+                        {"do": "reasoning_summary_delta", "text": "looking around"},
                         {"do": "complete", "status": "completed"},
                     ]
                 }
@@ -253,6 +257,9 @@ def test_thinking_is_dropped_where_it_arrives(tmp_path: Path) -> None:
 
             assert scripted.sink.deltas == []
             assert scripted.sink.agent_messages == []
+            # One pulse per delta the adapter saw, of either kind; the core decides how
+            # often anyone hears about them.
+            assert scripted.sink.thinking_pulses == 3
 
     _run(exercise)
 
@@ -355,6 +362,46 @@ def test_both_ways_codex_says_a_tool_call_is_getting_on_become_the_same_frame(
             # The call still starts and finishes exactly once: progress is neither.
             assert scripted.sink.tool_calls_started == [("cmd-1", "ls -la", "execute")]
             assert scripted.sink.tool_calls_finished == [("cmd-1", ToolCallStatus.completed)]
+
+    _run(exercise)
+
+
+def test_the_turns_plan_comes_through_whole_in_this_systems_own_words(
+    tmp_path: Path,
+) -> None:
+    """Codex sends the whole plan on every change, and words its middle state its own way."""
+
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {
+                            "do": "plan_updated",
+                            "plan": [
+                                {"step": "read the code", "status": "completed"},
+                                {"step": "write the thing", "status": "inProgress"},
+                                {"step": "run the tests", "status": "pending"},
+                            ],
+                            "explanation": "prose about the plan, which is not the plan",
+                        },
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, "plan some work")
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.plans == [
+                [
+                    ("read the code", "completed"),
+                    ("write the thing", "in_progress"),
+                    ("run the tests", "pending"),
+                ]
+            ]
 
     _run(exercise)
 
@@ -871,6 +918,8 @@ class _RecordingSink:
         self.agent_messages: list[str] = []
         self.tool_calls_started: list[tuple[str, str, str]] = []
         self.tool_calls_progressed: list[tuple[str, str]] = []
+        self.thinking_pulses: int = 0
+        self.plans: list[list[tuple[str, str]]] = []
         self.tool_calls_finished: list[tuple[str, ToolCallStatus]] = []
         self.asks: list[BackendPermissionAsk] = []
         self.endings: list[ConversationTurnEnding] = []
@@ -893,6 +942,12 @@ class _RecordingSink:
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         self.deltas.append(text_delta)
+
+    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
+        self.thinking_pulses += 1
+
+    async def plan_updated(self, turn_token: TurnToken, entries: Any) -> None:
+        self.plans.append([(entry.text, str(entry.status)) for entry in entries])
 
     async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
         self.agent_messages.append(text)
