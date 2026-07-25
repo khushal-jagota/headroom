@@ -108,8 +108,8 @@ complete Kickoff field value, an exact settled-field prefix for the target Stage
 request. It refuses backward moves, pending proposals, active ticket control, and
 running Employee steps. It moves the ceiling to the imported Stage but preserves the Ticket's
 at-cap choice: an explicit **Stop** remains Stop; otherwise **Continue** remains. The
-target Stage's effective ownership then determines whether the Ticket rests for the
-worker, the user, or paired work.
+target Stage's effective ownership then determines whether the Ticket rests ready for
+the worker, with the user, or paired.
 
 The create or reconciliation writer commits all fields, Kickoff value, recap, Stage,
 scope, ownership-derived resting status, and event signals together. A validation or
@@ -130,16 +130,28 @@ of existing blocker Ticket ids. Panels creates the dependent Ticket, every direc
 blocker rejects the whole create with a structured error. Nothing is saved. A successful
 create commits once, then wakes Automatic Employee eligibility once.
 
-Blocking is always derived from direct incoming links whose blocker Ticket is not done
-or dropped. It does not write a Blocked Stage or change the dependent Ticket's real
-Stage, ownership, scope, proposal, or direct user controls. It only prevents an Automatic
-Employee step. Every active blocker must clear before automatic work can resume.
+A blocker is **live** while the Ticket doing the blocking is neither done nor dropped.
+Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket
+comes to rest with nothing running, it lands on **blocked** instead of **empty** if a
+live blocker remains. `blocked` only ever stands in for `empty`, so a Ticket that is
+running a step, waiting for approval, asking for help, or held by the user keeps that
+status untouched. Blocking still writes no Blocked Stage and changes nothing about the
+Ticket's real Stage, ownership, scope, proposal, or direct user controls. It only keeps
+automatic work from starting, because the runtime starts `empty` Tickets and nothing
+else.
 
-The Workspace keeps a blocked Ticket in Kickoff until Kickoff is approved. After
-Kickoff, a Ticket with any active blocker appears quietly in a synthetic **Blocked**
-section above Kickoff. The row does not repeat blocker names. When the final blocker is
-removed, done, or dropped, the Ticket returns to its unchanged real Stage and its normal
-attention state.
+Clearing happens inside the action that removes the cause. When a blocking Ticket is
+finished, dropped, or deleted, or a blocking link is removed, that same write deletes
+the links it held and rewrites every Ticket it was blocking in the same transaction —
+back to `empty`, or left on `blocked` when another live blocker remains. A Ticket that
+stays blocked is not rewritten at all, so nothing is announced for a change that did
+not happen. A Ticket may also block a Sprint item; a Sprint item carries no Ticket
+status, so only Ticket targets are rewritten.
+
+A newly created dependent Ticket parks its Kickoff proposal first, so it waits for
+approval before it can rest anywhere. It becomes `blocked` the first time it comes to
+rest with its blockers still live. On the Workspace screen a blocked Ticket then sits
+in the **Blocked** group, which starts collapsed.
 
 Ticket detail shows only direct blockers that are active now. Each row links to the
 blocker and can remove that one link, during Kickoff or later. The section is absent
@@ -164,15 +176,18 @@ Later changes therefore do not move work already resting there. A Ticket may als
 the stored default for a particular Stage. The current Stage's override wins; without one,
 the stored default applies. Terminal Tickets have no current owner.
 
-- **Worker-owned** Stages rest ready for automatic eligibility. The other runtime,
-  blocker, proposal, and scope conditions must still allow a run.
-- **User-owned** Stages rest in **user takeover** and are never dispatched
-  automatically. The user does the work, then the Chief records it through external-work
-  reconciliation; there is no direct self-settle path.
+- **Worker-owned** Stages rest at `empty`, ready for automatic eligibility — or at
+  `blocked` while a live blocker remains. The other runtime, proposal, and scope
+  conditions must still allow a run.
+- **User-owned** Stages rest at `user` and are never dispatched automatically. The user
+  does the work, then the Chief records it through external-work reconciliation; there
+  is no direct self-settle path.
 - **Paired** Stages get one automatic Employee opening turn when the Stage becomes
-  eligible, then rest in **paired work**. Human conversation continues the durable
-  Employee conversation. A turn without a proposal leaves paired work unchanged; a real
-  proposal always parks for approval, regardless of scope.
+  eligible, then rest at `paired`. Because only `empty` Tickets are started
+  automatically, a Ticket resting at `paired` is never started again — the human
+  conversation carries it from there, on the same durable Employee conversation. A turn
+  without a proposal leaves it at `paired`; a real proposal always parks for approval,
+  regardless of scope.
 
 **Take over** sets a `user` override for the current Stage, even if an Employee run is
 active. That run cannot undo the takeover when it settles. **Release** clears the current
@@ -240,14 +255,23 @@ ones after it, never an earlier one, so you can't hand back ground the ticket ha
 already covered. One shared source of the allowed stages feeds both the header row
 and the approval screen, so the two can never disagree.
 
+Review shows exactly the tickets whose status is `awaiting_approval` — nothing more
+decides membership. So a ticket leaves Review the moment its status changes, whichever
+way that happens.
+
 The Review screen can also send a ticket back instead of accepting it, whatever field
 is currently gated. The human writes short guidance in the review card. Panels
 reserves a revision Employee step and sends that guidance as the real next ACP prompt
 in the Ticket's existing durable session. The ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
-its control status is **agent running step**. The gated field can therefore be revised
+its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision.
+
+Replying in chat to a ticket that is waiting for approval is the third way out. The
+reply moves the ticket to `paired` — the human and the worker are now talking — and the
+ticket drops out of Review. The parked proposal is not touched: it stays filed on its
+field, ready to be approved later. Nothing else about the ticket changes.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
@@ -311,4 +335,4 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ---
 
-_Last verified: 2026-07-21._
+_Last verified: 2026-07-25 (the eight Ticket statuses and the blocked stand-in)._

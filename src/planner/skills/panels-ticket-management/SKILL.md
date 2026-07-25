@@ -71,7 +71,7 @@ If the missing work is cross-cutting adoption—runtime launch, persistent envir
    - Prefer a supported operation that leaves the ticket at its current gate with `at_cap=stop` before day placement.
    - If the live CLI has no direct scope/control operation, do not invent one. An ordinary newly created ticket whose Kickoff is genuinely awaiting approval is not runnable; add it only when that pending gate provides the required safety, then immediately read it back and verify `stage`, `at_cap`, and `ticket_status`.
    - If neither a supported Stop operation nor a non-runnable pending gate is available, do not add the ticket to today without explicit permission to start it.
-6. After any approved placement, read the ticket back and verify the requested `day_ids`, sprint, or sprint item. Do not report setup complete from the create response alone. Also report whether the resulting `ticket_status` is empty/stopped, awaiting approval, or already running.
+6. After any approved placement, read the ticket back and verify the requested `day_ids`, sprint, or sprint item. Do not report setup complete from the create response alone. Also report the resulting `ticket_status` — `empty` (at rest and startable), `blocked` (at rest behind a live blocker), `awaiting_approval`, or `agent` (already running).
 7. Unless asked to drive or monitor the worker flow, stop after setup and report the ticket id, project/sprint/day placement, scope, and current state/status. The user may review elsewhere.
 
 ## Onboard the first tickets for a future Worker type
@@ -117,7 +117,7 @@ When the user asks to move recent or yesterday's work into today:
 4. Add selected tickets with `panels day add-ticket <ticket_id> --date today --json`.
 5. Preserve prior day links as history unless the user explicitly asks to remove them.
 6. If today's notes still describe carryover as “pending review,” remove or replace that stale note after the user approves and the move succeeds. Preserve unrelated day notes.
-7. Verify today/Workspace visibility and tell the user if adding the ticket woke execution (`ticket_status: agent_running_step`). For an exact-set request, compare expected and actual ticket-id sets and report missing or unexpected ids rather than relying on counts alone.
+7. Verify today/Workspace visibility and tell the user if adding the ticket woke execution (`ticket_status: agent`). For an exact-set request, compare expected and actual ticket-id sets and report missing or unexpected ids rather than relying on counts alone.
 
 ## Bring current-sprint work into today
 
@@ -202,7 +202,7 @@ For an existing ticket, Chief reconciliation rejects active control and pending 
 
 When a Panels ticket is already being implemented by the Panels worker, do not casually dispatch a separate coding subagent into the same shared worktree. External delegations have independent time/call limits and can leave partial edits that confuse the worker loop. Prefer inspecting the ticket, chat state, events, and focused tests read-only; if recovery implementation is needed, either let the Panels worker continue, create a follow-up ticket, or explicitly coordinate a single owner for the worktree.
 
-When a ticket shows `ticket_status: errored`, do not immediately release/retry it. First inspect the ticket's `chat_session_key`, raw Hermes logs, and `slash_worker` process. If the raw worker session is still making API/tool calls or has just received `/compress`/`continue`, wait and monitor; a release can interrupt the live turn and create another false errored result. After manual recovery, treat canonical ticket `state` and gated field values/proposals as authoritative over a possibly stale `ticket_status`. If release is appropriate, remember that it rings readiness: a runnable ticket on today may immediately become `agent_running_step`, so verify and report the observed post-release status rather than promising `empty`.
+When a ticket shows `ticket_status: errored`, do not immediately release/retry it. First inspect the ticket's `chat_session_key`, raw Hermes logs, and `slash_worker` process. If the raw worker session is still making API/tool calls or has just received `/compress`/`continue`, wait and monitor; a release can interrupt the live turn and create another false errored result. After manual recovery, treat canonical ticket `state` and gated field values/proposals as authoritative over a possibly stale `ticket_status`. If release is appropriate, remember that it rings readiness: a runnable ticket on today may immediately become `agent`, so verify and report the observed post-release status rather than promising `empty`.
 
 ## Debugging visibility
 

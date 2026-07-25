@@ -21,8 +21,8 @@ If the scheduler chooses the oldest waiter, that is deterministic fairness—not
 Verify these rules against the live code before relying on them, but the current implementation behaves as follows:
 
 - A lane is effective project + Worker type. Different lanes may run concurrently.
-- A candidate must be on today, non-terminal, at a gated Stage, unblocked, free of a parked proposal or active run, and allowed by its Stage ownership/control. At Closeout, `Continue` can be eligible while an empty `Stop` Ticket is parked.
-- Any matching Closeout with non-empty `ticket_status` occupies the lane—including running, paired, errored, or awaiting approval—until it leaves that condition.
+- A candidate must be on today, non-terminal, at a gated Stage, resting at `ticket_status: empty`, free of a parked proposal, and allowed by its Stage ownership/control. Resting at `empty` is what carries "unblocked, not running, not held": a blocked Ticket rests at `blocked`, not `empty`, so it is never a candidate. At Closeout, `Continue` can be eligible while an `empty` `Stop` Ticket is parked.
+- Any matching Closeout whose `ticket_status` is neither `empty` nor `blocked` occupies the lane—`agent`, `paired`, `awaiting_approval`, `needs_user`, `user`, or `errored`—until it leaves that condition. `blocked` is how a resting Ticket looks while a blocker is live, so a blocked Closeout does not hold the lane.
 - In a free lane, discovery takes the eligible waiter with the oldest `updated_at`; Ticket id breaks an exact tie. Priority and Workspace position do not select the next waiter.
 - Marking the active Closeout Done releases its lane. Marking a waiting Ticket itself Done removes it rather than putting it last.
 

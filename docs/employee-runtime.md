@@ -24,15 +24,19 @@ eligible ids to the runner. A Ticket is eligible when all of these current facts
 1. It belongs to the supplied planning day.
 2. No `employee_step_runs` row is currently running for it.
 3. Its Stage is not terminal and has a next gated field.
-4. Its effective Stage owner is `worker`, or it is a `paired` Stage that has not
-   already received its opening step.
-5. Its Ticket status matches that ownership state.
+4. Its effective Stage owner is not the user.
+5. Its Ticket status is `empty`. This one fact carries most of the rule: a Ticket that
+   is blocked, paired, waiting for approval, asking for help, held by the user, running,
+   or errored is by definition not `empty`, so it is not started. A `paired` Stage is
+   started once, on entry, while it is still `empty`; once it settles back to `paired`
+   it is never started again.
 6. No proposal is already parked on the gated field.
 7. Scope permits work at the current ceiling.
-8. The Ticket has no active blocker.
-9. If the Stage gates Closeout, no Ticket in the same effective-project and Worker-type
-   lane is already at Closeout with a non-empty status. A parented Ticket uses its sprint
-   item's project. Projectless Tickets share one projectless lane per Worker type.
+8. If the Stage gates Closeout, no other Ticket in the same effective-project and
+   Worker-type lane is already at Closeout with a status other than `empty` or
+   `blocked` — a resting Ticket does not hold the lane, and `blocked` is how a resting
+   Ticket looks while a blocker is live. A parented Ticket uses its sprint item's
+   project. Projectless Tickets share one projectless lane per Worker type.
 
 Discovery orders candidates by oldest `updated_at`, then Ticket id. Ordinary Stages keep
 their existing behavior. For Closeout, one poll submits at most one waiting Ticket from
@@ -40,7 +44,7 @@ each free lane.
 
 The runner repeats the same decision under `BEGIN IMMEDIATE`. A stale discovery result
 therefore cannot claim the Ticket, create a run, or contact an agent. The transaction
-changes the Ticket to `agent_running_step`, creates the Employee-step record, and writes
+changes the Ticket to `agent`, creates the Employee-step record, and writes
 the `employee_step_started` event before the worker prompt begins.
 
 Eligibility-affecting actions commit first and then send a payload-free, best-effort
@@ -207,4 +211,4 @@ startup behavior changes the Ticket's durable backend choice or session identity
 
 ---
 
-_Last verified: 2026-07-25 (Employee workspace and repository infrastructure roots split)._
+_Last verified: 2026-07-25 (eligibility now turns on the empty Ticket status)._
