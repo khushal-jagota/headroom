@@ -106,7 +106,6 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
         server,
         "#/workspace",
         _bucket("empty"),
-        settled=True,
     )
 
     waiting_card = f'[data-card][data-ticket-id="{waiting}"]'
@@ -246,7 +245,6 @@ def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_ope
         server,
         f"#/workspace/{no_project}",
         no_project_card,
-        settled=True,
     )
     project_filter = page.locator("[data-project-filter]")
     assert project_filter.locator("option").all_text_contents() == [
@@ -310,7 +308,6 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
         server,
         f"#/workspace/{ticket_id}",
         f'[data-card][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
     mark = f"{card} .board-workspace-stage-mark"
@@ -348,7 +345,6 @@ def test_workspace_signals_follow_projection_activity_reply_and_acknowledgement(
         server,
         "#/workspace",
         f'[data-card][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     mark = f'[data-card][data-ticket-id="{ticket_id}"] .board-workspace-stage-mark'
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
@@ -499,7 +495,6 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         server,
         "#/workspace",
         _bucket("empty"),
-        settled=True,
     )
 
     # All nine status groups are populated, so all render, in display order with
@@ -585,7 +580,6 @@ def test_workspace_bucket_disclosures_collapse_and_chevrons_reveal_on_intent(
         server,
         "#/workspace",
         _bucket("empty"),
-        settled=True,
     )
 
     bucket = _bucket("empty")

@@ -254,7 +254,7 @@ def settle_blocked_standin(conn: sqlite3.Connection, ticket_id: str, now: int) -
     The single transition writer for the link-driven pair. A no-op unless the Ticket is
     currently resting at `empty` or `blocked` — every other status owns itself — and it
     writes only when the value actually changes, so a Ticket that stays blocked because
-    another live blocker remains emits no event.
+    another live blocker remains writes nothing.
     """
     row = conn.execute(
         "SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)
@@ -1673,9 +1673,7 @@ def delete_ticket(
     """Permanently remove a mistaken ticket and its product footprint in one transaction.
 
     Deletion is blocked while a durable Employee step is running. The check is
-    made under the same write lock before cleanup. All ticket-owned Planner history is
-    removed; the one surviving
-    ticket event is the minimal deletion audit and invalidation doorbell.
+    made under the same write lock before cleanup.
     """
     admission.require_direct_actor(actor, "delete_ticket")
     with _txn(conn):

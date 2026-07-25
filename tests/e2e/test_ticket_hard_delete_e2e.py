@@ -74,7 +74,6 @@ def test_ticket_ui_has_no_delete_control(
         server,
         f"#/ticket/{ticket_id}",
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     _assert_no_delete_control(page)
 

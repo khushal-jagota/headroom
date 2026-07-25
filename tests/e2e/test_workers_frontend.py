@@ -168,7 +168,6 @@ def test_agents_index_worker_detail_and_mobile_layout(server, context_factory, o
         server,
         "#/agents",
         'section[data-screen="agents"] [data-workers-list]',
-        settled=False,
     )
     assert page.locator('[data-screen="agents"] [data-agents-section]').count() == 1
     assert page.locator('[data-screen="agents"] [data-workers-section]').count() == 1
@@ -417,7 +416,7 @@ def test_worker_selection_persists_from_kickoff_card_context_row(
         "Choose the worker",
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready)
 
     # The worker pills live inside the Kickoff approval card's context row.
     row = '[data-approval-block][data-field="kickoff"] [data-approval-context-row]'
@@ -441,7 +440,7 @@ def test_worker_selection_persists_from_kickoff_card_context_row(
     assert api.get(server, f"/api/tickets/{ticket}")["employee_backend"] == target
 
 
-def test_worker_stage_default_save_refreshes_without_socket_and_ticket_defaults_hold(
+def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_defaults_hold(
     server, context_factory, cli, api
 ) -> None:
     existing_ticket = cli(
@@ -460,7 +459,8 @@ def test_worker_stage_default_save_refreshes_without_socket_and_ticket_defaults_
 
     page = context_factory().new_page()
     requests: list[tuple[str, str]] = []
-    page.route_web_socket("**/api/events*", lambda _socket: None)
+    # Block the change stream: the save must refresh the screen on its own.
+    page.route("**/api/changes", lambda route: route.abort())
     page.on("request", lambda request: requests.append((request.method, request.url)))
     page.goto(server.base + "/#/agents/workers/coding")
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)

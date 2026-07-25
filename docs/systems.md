@@ -26,10 +26,10 @@ durable ACP conversation for an employee.
 
 SQLite is the canonical product record. `src/planner/core/db.py` opens connections with
 foreign keys enabled and brings a database up to the current schema. Domain writers group
-related record and event changes in one transaction.
+related changes in one transaction.
 
 The record contains planning objects, Ticket fields and status, proposals, Stage
-ownership and scope, links, the event log, pending worker context, durable ACP session
+ownership and scope, links, pending worker context, durable ACP session
 bindings, and correctness-only Employee-step runs. Conversation transcript content
 belongs to the ACP backend and typed replay, not to duplicate Panels message tables.
 
@@ -43,13 +43,14 @@ untouched. A database older than that is refused by name rather than half-upgrad
 older checkout is what brings those forward. The whole step is all-or-nothing, so a change
 that fails leaves the database exactly as it was.
 
-The event log is normally append-only. It is a doorbell and audit trail, not the source
-for rebuilding the whole product. Permanent Ticket deletion is the deliberate
-exception: old events for that Ticket are replaced by one deletion audit while
-surviving related objects receive their own cleanup events.
+Committing a write is also what tells the rest of the process that something changed.
+The signal carries nothing — no entity, no kind, no payload — and both listeners answer
+it the same way: the browser refetches what it is showing, and the Employee-runtime
+discovery loop re-checks eligibility. It is a nudge for latency only; SQLite and the
+periodic timer stay canonical.
 
 _Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`,
-`src/planner/core/events.py`.
+`src/planner/core/change_signal.py`.
 
 ### 2. The Planning Objects
 
@@ -118,12 +119,12 @@ running step per Ticket.
 
 The gateway prepares pending worker context into the actual model prompt before ACP
 delivery. It acknowledges exact context revisions only after ACP admits that prompt.
-An event or correctness row is never treated as model context.
+A correctness row is never treated as model context.
 
 Restart recovery uses the same durable session. It replaces a stranded running record
 without replaying the original prompt, and all terminal settlements are first-wins.
-The payload-free wake reduces latency after eligibility-affecting commits; SQLite and
-the periodic timer remain canonical.
+The discovery loop listens for the commit signal so an eligibility-affecting write is
+picked up promptly; SQLite and the periodic timer remain canonical.
 
 _Code paths:_ `src/planner/runtime/` and `src/planner/worker_context/`.
 
@@ -196,10 +197,12 @@ Every shared Markdown surface uses one Vite-owned GFM pipeline. Raw HTML stays v
 as text, unsafe content is removed before DOM creation, and managed links keep their
 exact source tokens through direct editing and preview lifecycles.
 
-Canonical product reads use one Resource Catalogue. Events invalidate only the keyed
-resources they affect, such as `ticket:<id>`, `board`, `review`, or `sprint:current`.
-The server remains the source of truth; the browser does not keep a second canonical
-product store.
+Canonical product reads are cached under one name each, such as `board`, `review`,
+`sprint:current`, or a single Ticket. The server holds open a change stream at
+`GET /api/changes` and sends one contentless line per committed write; the browser
+marks every cached read stale and refetches only the ones a screen is currently using.
+A refetch that comes back the same leaves the page alone. The server remains the source
+of truth; the browser does not keep a second canonical product store.
 
 Conversation state is separate from that REST cache. Each ACP pane owns a typed
 conversation controller and reducer. Chief, Ticket, and Workspace mounts all use the
@@ -234,15 +237,17 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 - **Proposal versus canonical value.** A worker proposal is inert until the resolution
   engine accepts it.
-- **Event versus state.** Events notify and audit; domain tables hold canonical values.
+- **Signal versus state.** The change signal only says that something changed; domain
+  tables hold canonical values.
 - **Correctness run versus conversation.** `employee_step_runs` proves ownership and
   settlement; ACP owns model input, output, and replay.
 - **Stored worker context versus delivered context.** Pending context reaches the model
   only when `AcpStepGateway` includes it in an admitted prompt.
 - **Binding owner versus Ticket mirror.** `conversation_session_bindings` owns ACP
   identity; a Ticket mirror supports Ticket correctness and worker lookup.
-- **Product cache versus conversation reducer.** REST resources use keyed invalidation;
-  the ACP pane uses strict typed sequence and generation admission.
+- **Product cache versus conversation reducer.** REST resources are refetched on a
+  contentless change signal; the ACP pane uses strict typed sequence and generation
+  admission.
 - **Ticket file versus conversation image.** Ticket artifacts use managed paths;
   images in a prompt are inline ACP blocks.
 - **Human versus worker authority.** Humans approve and grant scope. Workers propose.
@@ -263,4 +268,4 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ---
 
-_Last verified: 2026-07-25 (the eight Ticket statuses and the blocked stand-in)._
+_Last verified: 2026-07-25 (the eight Ticket statuses, and one contentless change signal per commit)._

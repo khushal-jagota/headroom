@@ -84,8 +84,8 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     board = 'section[data-screen="workspace"]'
     ctx_a = context_factory()
     ctx_b = context_factory()
-    page_a = open_page(ctx_a, server, "#/workspace", board, settled=False)
-    page_b = open_page(ctx_b, server, "#/workspace", board, settled=False)
+    page_a = open_page(ctx_a, server, "#/workspace", board)
+    page_b = open_page(ctx_b, server, "#/workspace", board)
 
     for page in (page_a, page_b):
         count = page.eval_on_selector_all(
@@ -109,8 +109,8 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     assert created["stage"] == "needs_success", created
 
     card = f'[data-card][data-ticket-stage="needs_success"][data-ticket-id="{tid}"]'
-    # No reload, no goto: the today's-roster card arrives via a WS-flush
-    # re-render of the open pages.
+    # No reload, no goto: the today's-roster card arrives via a change-stream
+    # refetch of the open pages.
     _wait_present(page_b, card)
     assert "T18 board ticket" in page_b.inner_text(card)
     assert page_b.evaluate("window.__plannerDebug.flushes") > flushes_b
@@ -146,7 +146,7 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
     )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{tid}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{tid}", ready)
 
     # Rendered: the proposal's markdown structure, with exact texts.
     b = "[data-approval-block] .approval-draft .markdown-block"
@@ -205,7 +205,7 @@ def test_review_tracks_today_membership_without_reload(
     # from the empty state and exercises the live membership invalidation.
     cli(server, "day", "remove-ticket", tid, "--date", "today")
     card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", "[data-review-empty]", settled=True)
+    page = open_page(context_factory(), server, "#/review", "[data-review-empty]")
     badge = page.locator('a[data-screen="review"] .nav-badge')
 
     assert api.get(server, "/api/review")["ticket_decisions"] == []
@@ -273,7 +273,7 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
     )["id"]
     _add_to_today(api, server, tid)
     card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page = open_page(context_factory(), server, "#/review", card)
     assert page.get_attribute(card, "data-field") == "kickoff"
     assert page.locator(f'{card} [data-field="kickoff"] [data-approval-block]').count() == 1
     assert page.locator(f"{card} [data-review-revision]").count() == 0
@@ -318,7 +318,7 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
 
     _add_to_today(api, server, tid)
     card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page_a = open_page(context_factory(), server, "#/review", card, settled=True)
+    page_a = open_page(context_factory(), server, "#/review", card)
     assert page_a.get_attribute(card, "data-field") == "success"
 
     # Second context watches the ticket page for the flip.
@@ -327,7 +327,6 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
         server,
         f"#/ticket/{tid}",
         'section[data-screen="ticket"][data-stage="needs_success"]',
-        settled=True,
     )
 
     # Scope defaults to the next stage and then propose.
@@ -340,7 +339,7 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     page_a.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
     assert api.get(server, "/api/review")["ticket_decisions"] == []
 
-    # Second context updates without reload — the flip arrives via the WS flush.
+    # Second context updates without reload — the flip arrives via the change stream.
     page_b.wait_for_function(
         "() => { const s = document.querySelector('section[data-screen=\"ticket\"]');"
         " return !!s && s.getAttribute('data-stage') === 'needs_approach'; }",
@@ -386,7 +385,7 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
 
     _add_to_today(api, server, tid)
     card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page = open_page(context_factory(), server, "#/review", card)
     page.fill(f"{card} [data-review-revision-input]", "Make it shorter.")
     page.click(f"{card} [data-review-revision-send]")
     page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
@@ -425,7 +424,7 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
 
     _add_to_today(api, server, tid)
     card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page = open_page(context_factory(), server, "#/review", card)
 
     # Untouched focus/blur keeps the rendered structure in place and must not
     # serialize the DOM back to canonical markdown forms.
@@ -486,7 +485,7 @@ def test_review_approval_renders_nested_mixed_gfm_lists(
 
     _add_to_today(api, server, tid)
     card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page = open_page(context_factory(), server, "#/review", card)
 
     draft = page.locator(f"{card} .approval-draft")
     top_level_ordered = draft.locator(".markdown-block > ol").first
@@ -517,7 +516,7 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
 
     _add_to_today(api, server, tid)
     card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page = open_page(context_factory(), server, "#/review", card)
 
     # The proposal remains one contenteditable surface. Escape discards an active
     # keyboard edit, and approving after a real keyboard edit sends exact Markdown.
@@ -568,7 +567,6 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
         server,
         f"#/ticket/{tid}",
         'section[data-screen="ticket"][data-stage="needs_approach"]',
-        settled=True,
     )
     assert (
         ticket_page.text_content('[data-field="success"] .markdown-block h1')
@@ -627,7 +625,7 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
 
     _add_to_today(api, server, first, second)
     card = "[data-review-card]"
-    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page = open_page(context_factory(), server, "#/review", card)
     ticket_before = page.get_attribute(card, "data-ticket-id")
 
     # Track every accept/approve POST so the negative assertion is deterministic —
@@ -650,11 +648,11 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
     editor = page.locator(f"{card} [data-edit]")
     editor.focus()
     page.keyboard.press("Meta+Enter")
-    # Flush the browser's network: this awaited round-trip resolves only after any
-    # request the (synchronous) keydown handler dispatched has already fired its
-    # request event, so approve_requests is authoritative without a sleep.
-    page.evaluate("() => fetch('/api/review').then(r => r.text())")
-    page.wait_for_load_state("networkidle")
+    # Flush the browser's network by awaiting a real round-trip: it resolves only after
+    # any request the (synchronous) keydown handler dispatched has already fired its
+    # request event, so approve_requests is authoritative without a sleep. (Waiting for
+    # an idle network would never return — the change stream is open for the page's life.)
+    page.evaluate("async () => { await (await fetch('/api/review')).text(); }")
     assert approve_requests == []
     assert api.get(server, f"/api/tickets/{first}")["fields"]["success"]["proposal"] is not None
     assert api.get(server, f"/api/tickets/{second}")["fields"]["success"]["proposal"] is not None
@@ -766,7 +764,7 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
     assert decisions[0]["field"] == "plan", decisions
 
     card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page = open_page(context_factory(), server, "#/review", card)
     assert page.get_attribute(card, "data-field") == "plan"
 
 
@@ -790,7 +788,6 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
         server,
         f"#/ticket/{tid}",
         f'section[data-screen="ticket"][data-ticket-id="{tid}"][data-stage="needs_kickoff"]',
-        settled=True,
     )
     assert page.locator('details[data-field="kickoff"] [data-approval-block]').count() == 1
     assert page.locator("details[data-field]").count() == 6
@@ -861,7 +858,6 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
         server,
         f"#/ticket/{tid}",
         f'section[data-screen="ticket"][data-ticket-id="{tid}"] details[data-field="kickoff"]',
-        settled=True,
     )
     assert page.locator('details[data-field="kickoff"][open]').count() == 0
     page.click('details[data-field="kickoff"] .disclosure-summary')
@@ -905,7 +901,6 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
         f"#/ticket/{empty_tid}",
         f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] '
         'details[data-field="kickoff"]',
-        settled=True,
     )
     empty_page.click('details[data-field="kickoff"] .disclosure-summary')
     empty_page.wait_for_selector('details[data-field="kickoff"][open]', timeout=WAIT_MS)
@@ -942,7 +937,6 @@ def test_ticket_facts_have_owner_without_execution_route(
         server,
         f"#/ticket/{tid}",
         ready,
-        settled=True,
     )
 
     assert page.locator(".ticket-facts [data-execution-route]").count() == 0

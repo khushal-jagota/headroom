@@ -204,9 +204,10 @@ Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/agents
 
 A Ticket captures the managed ownership default when it enters a Stage. Later global
 changes affect only future entries; the Ticket's explicit Stage override still wins.
-Settings writes use atomic replacement and one writer lock per Worker or Chief. A failed
-event write restores the canonical file, so every backend continues to see the prior
-revision.
+Settings writes use atomic replacement and one writer lock per Worker or Chief. These
+files live beside the database rather than in it, so the writer announces the change
+itself once the new file is in place; if that fails, the canonical file is put back and
+every backend continues to see the prior revision.
 
 Every editable skill name is read-only. Description and Markdown body are ordinary
 direct edits that save, fail, and retry independently. Successful skill edits refresh
@@ -217,9 +218,8 @@ Codex and Claude Code use the same managed home.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for `panels-worker`. Worker and
 Chief endpoints edit skill description and body or launch defaults; the shared
-`PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill.
-`worker_settings_changed` invalidates `workers`, the matching `worker:<id>`, or
-`skills-home` according to the changed role.
+`PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill. A saved change
+announces itself, and any Agents screen on display refetches what it is showing.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
 `src/planner/conversation/hermes_backend_configuration.py`, and
@@ -355,4 +355,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-21._
+_Last verified: 2026-07-25._

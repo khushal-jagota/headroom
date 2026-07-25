@@ -548,7 +548,7 @@
           </p>
           <div class="meta" aria-label="Document facts">
             <span class="pill">SQLite is canonical</span>
-            <span class="pill">Events are doorbells</span>
+            <span class="pill">One contentless change signal</span>
             <span class="pill">Workers propose</span>
             <span class="pill">Humans resolve</span>
           </div>
@@ -576,13 +576,13 @@
               </div>
             </li>
             <li>
-              <strong>SQLite records + events</strong>
-              <span>records change; events append</span>
+              <strong>SQLite records</strong>
+              <span>one commit, one change signal</span>
             </li>
             <li class="split">
               <div>
-                <strong>WebSocket doorbell</strong>
-                <span>keyed UI refetch</span>
+                <strong>Change stream</strong>
+                <span>on-screen reads refetch</span>
               </div>
               <div>
                 <strong>AutomaticEmployeeStepDiscoveryLoop</strong>
@@ -606,7 +606,7 @@
         <ul class="question-list">
           <li>
             <strong>What is true?</strong>
-            <span>Record System. SQLite records are truth; events tell screens to refetch.</span>
+            <span>Record System. SQLite records are truth; a commit tells screens to refetch.</span>
           </li>
           <li>
             <strong>Who can decide?</strong>
@@ -622,7 +622,7 @@
           </li>
           <li>
             <strong>Why did UI update?</strong>
-            <span>Human UI System. Events map to resource keys and cause targeted refetches.</span>
+            <span>Human UI System. A change signal restages every cached read; only what is on screen refetches.</span>
           </li>
         </ul>
       </section>
@@ -640,23 +640,24 @@
           <details open>
             <summary>
               <span class="number">01</span>
-              <span><strong>The Record System</strong><span>Canonical objects and event doorbells.</span></span>
+              <span><strong>The Record System</strong><span>Canonical objects and the change signal.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                SQLite stores sprints, sprint items, tickets, days, ideas, links,
-                and events. The intended shape is contracts for records and enums,
+                SQLite stores sprints, sprint items, tickets, days, ideas, and links.
+                The intended shape is contracts for records and enums,
                 writer modules for mutations, API files for HTTP, and logic files
                 for pure rules.
               </p>
               <p>
-                A write should go through a canonical writer, append an event, and
-                let the UI refetch from the server. Events are append-only. Records
-                are not.
+                A write should go through a canonical writer and let the UI refetch
+                from the server. Committing a write announces itself — the
+                announcement carries no entity, kind, or payload — and both the
+                browser and the discovery loop answer by asking the record again.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/core/db.py</code>,
-                <code>src/planner/core/events.py</code>,
+                <code>src/planner/core/change_signal.py</code>,
                 <code>src/planner/*/contracts.py</code>,
                 <code>src/planner/*/data.py</code>
               </p>
@@ -762,7 +763,7 @@
                 is already parked, scope permits the next proposal, and no Employee step
                 is already running. The <code>empty</code> check is what keeps blocked,
                 paired, errored, user-held, help-waiting, and approval-waiting Tickets
-                from starting; the decision reads no event history at all.
+                from starting; the decision reads only current facts.
               </p>
               <p>
                 AutomaticEmployeeStepDiscoveryLoop is read-only and advisory. It selects
@@ -788,27 +789,22 @@
               <p>
                 The gateway prepares pending worker context into the actual model prompt
                 before ACP delivery. It acknowledges exact context revisions only after ACP
-                admits the prompt. A correctness row or event is never model context.
+                admits the prompt. A correctness row is never model context.
               </p>
               <p>
-                Ticket, Day membership, and blocking-link actions commit first, then call
-                <code>AutomaticEmployeeStepEligibilityWake.wake()</code>. Runner settlement does
-                the same. This best-effort same-process wake carries no Ticket id, owns no state,
-                and sends no IPC. Failure is logged and ignored; SQLite and the periodic discovery
-                timer remain canonical. The polling-lock owner uses
-                <code>LoopAutomaticEmployeeStepEligibilityWake</code>; processes without the lock receive
-                <code>NoOpAutomaticEmployeeStepEligibilityWake</code>.
+                The discovery loop subscribes to the change signal, so any committed write
+                in the server process makes it check again at once. The signal carries no
+                Ticket id, owns no state, and sends no IPC; a failed delivery is logged and
+                ignored, because SQLite and the periodic discovery timer remain canonical.
+                Over-waking is deliberate and cheap: the re-check is read-only and complete.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/runtime/automatic_employee_step_eligibility.py</code>,
                 <code>src/planner/runtime/automatic_employee_step_discovery_loop.py</code>,
-                <code>src/planner/runtime/automatic_employee_step_eligibility_wake.py</code>,
+                <code>src/planner/core/change_signal.py</code>,
                 <code>src/planner/runtime/employee_step_runner.py</code>,
                 <code>src/planner/runtime/acp_step_gateway.py</code>,
                 <code>src/planner/runtime/employee_step_repository.py</code>,
-                <code>src/planner/tickets/actions.py</code>,
-                <code>src/planner/days/actions.py</code>,
-                <code>src/planner/core/link_actions.py</code>,
                 <code>src/planner/core/loops.py</code>
               </p>
             </div>
@@ -908,13 +904,10 @@
             </summary>
             <div class="detail-body">
               <p>
-                The Resource Catalogue names every cached server read, its endpoint
-                and type, and the events that affect it. Screens open resources such
-                as <code>ticket:&lt;id&gt;</code>, <code>board</code>,
-                <code>review</code>, <code>day:today</code>, and
-                <code>sprint:current</code>. The cache engine only manages loaded
-                values, subscribers, and overlapping requests. It knows nothing
-                about Tickets or Projects.
+                One catalogue names every cached server read and the address it comes
+                from: <code>board</code>, <code>review</code>, <code>day:today</code>,
+                <code>sprint:current</code>, one Ticket by id, and the rest. Screens ask
+                for a read by name; the shared cache serves one request to all of them.
               </p>
               <p>
                 Review contains exactly today’s Tickets whose
@@ -922,24 +915,22 @@
                 global running-worker count.
               </p>
               <p>
-                WebSocket events invalidate resources through catalogue dependencies,
-                and a successful UI write applies one named catalogue effect
-                immediately. Only the affected projections refetch. There is no
-                whole-screen refetch or canonical client store; the server remains
-                the source of truth.
+                The server holds open a change stream at <code>GET /api/changes</code> and
+                sends one contentless line per committed write. The browser marks every
+                cached read stale; only the reads a screen is currently showing are fetched
+                again, and a burst of writes collapses into one round. A refetch that comes
+                back identical leaves the page alone, so typing, focus, and scroll survive.
+                A successful UI write does the same thing itself without waiting for the
+                stream. There is no whole-screen reload or canonical client store; the
+                server remains the source of truth.
               </p>
               <p>
-                A Project rename refreshes Projects, Board, today’s Day, backlog
-                Sprint items, Ideas, current Sprint, and an already-opened Ticket
-                whose direct Project matches. An opened Ticket whose first read has
-                not settled is included conservatively. A loaded Ticket with another
-                Project, no Project, or no direct Project field is excluded. Project
-                creation and summary-only edits refresh Projects only. The catalogue
-                keeps its own private process-lifetime list of opened resources for
-                this check; the cache remains generic.
+                The stream also owns the connection pill: Connected while it is open,
+                Reconnecting while the browser retries. Opening the stream refetches what is
+                on screen, which is how a gap is repaired.
               </p>
               <p>
-                ACP conversation state does not enter the REST Resource Catalogue. Its
+                ACP conversation state does not enter that cache. Its
                 transport, controller, and reducer own one typed socket projection keyed
                 by Employee, session, generation, and sequence. Canonical Ticket, Board,
                 Sprint, and Review reads stay server-owned REST resources.
@@ -957,9 +948,10 @@
               <p class="code-paths">
                 Code paths: <code>web/src/App.svelte</code>,
                 <code>web/src/routes/</code>,
-                <code>web/src/lib/resourceCatalogue.ts</code>,
-                <code>web/src/lib/resources.svelte.ts</code>,
-                <code>web/src/lib/ws.ts</code>,
+                <code>web/src/lib/queryCatalogue.ts</code>,
+                <code>web/src/lib/queryClient.ts</code>,
+                <code>web/src/lib/changeStream.ts</code>,
+                <code>web/src/lib/mutate.ts</code>,
                 <code>web/src/lib/acp/</code>,
                 <code>web/src/components/acp/</code>,
                 <code>web/src/lib/managedMarkdown.ts</code>,
@@ -1015,7 +1007,7 @@
           </li>
           <li>
             <strong>Canonical writers</strong>
-            <span>Own record mutation and event emission. Most live in domain <code>data.py</code> files.</span>
+            <span>Own record mutation. Most live in domain <code>data.py</code> files.</span>
           </li>
           <li>
             <strong>ACP conversation composition</strong>

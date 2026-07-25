@@ -90,8 +90,8 @@ One screen per part of the system:
 
 The shell itself carries two separate live signals. Worker presence is the small
 spinner and "N working" readout from the global running-worker count. Server
-connection health is the compact Connected / Reconnecting / Offline readout beside
-it, driven only by the browser's event WebSocket.
+connection health is the compact Connected / Reconnecting readout beside it, which
+says whether the change stream below is open.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -99,44 +99,40 @@ share.
 
 ## The two rules that shape it
 
-- **One Resource Catalogue, no canonical client store.** The catalogue names every
-  cached server read, its endpoint and type, and the events that affect it. The cache
-  engine only manages loaded values, subscribers, and overlapping requests; it knows
-  nothing about Tickets or Projects. The event log is a doorbell. Events invalidate
-  catalogue resources such as `ticket:<id>`, `board`, `review`, `sprint:current`,
-  `workers`, `worker:<id>`, and `skills-home`, and successful UI writes apply one named
-  catalogue effect immediately. Only those resources refetch. There is no whole-screen
-  refetch or client-side copy of canonical state — the server remains the source of
-  truth.
+- **The server says "something changed"; the browser refetches what it is showing.**
+  Every server read the browser makes is listed in one place — its name and the
+  address it comes from — so a screen asks for a resource by name and gets both.
+  The reads are cached and shared: two screens asking for the same thing make one
+  request.
 
-  A Project rename refreshes Projects, Board, today's Day, backlog Sprint items,
-  Ideas, current Sprint, and an already-opened Ticket when its loaded direct Project
-  matches. An opened Ticket whose first load has not settled is refreshed
-  conservatively. A loaded Ticket with another Project, no Project, or no direct
-  Project field is excluded. Project creation and summary-only edits refresh Projects
-  only. The catalogue keeps its own private process-lifetime list of opened
-  parameterized resources to make this check; the cache remains generic.
+  The server holds open a change stream and sends one line down it every time a write
+  is committed. The line says nothing about what changed — there is no vocabulary
+  here to keep in step with the backend. The browser answers by marking every cached
+  read stale, and only the reads a screen is currently using are fetched again;
+  everything else waits until something needs it. A burst of writes collapses into
+  one round of refetching. A refetch that comes back the same leaves the page alone,
+  so a busy stream does not make the screen flicker. A successful write from the
+  browser does the same thing itself, without waiting for the stream to say so.
 
-  Conversation state is intentionally outside the Resource Catalogue. Each ACP pane
+  There is no client-side copy of canonical state and no whole-screen reload — the
+  server remains the source of truth, and the browser holds only the answers it has
+  been given.
+
+  Conversation state is deliberately not one of those cached reads. Each ACP pane
   owns one typed `/api/conversation` WebSocket controller. Its session replay,
   generation, sequence, queue, permissions, terminal state, and delivery receipts are
   conversation state rather than cached REST resources. The controller reduces the
   ordered replay envelopes into a private candidate and publishes the complete
   conversation to the pane once at `ready`; an existing complete transcript remains
-  visible during a refresh, while post-ready updates still render incrementally. Ticket
-  `employee_session_changed` still refreshes only the matching `ticket:<id>` so the
-  Ticket mirror stays current without refetching unrelated product projections.
+  visible during a refresh, while post-ready updates still render incrementally.
 
-  The event WebSocket is also the browser's connection-health owner. The shell starts
-  at Reconnecting and changes to Connected only after a valid event frame or heartbeat
-  frame arrives; socket open alone is not enough. Quiet heartbeats are shaped like the
-  event envelope with `events: []` and the current cursor. They update liveness only:
-  no event keys are mapped, no flush is scheduled, and no resource is invalidated. If a
-  healthy connection closes or misses heartbeats, the shell shows Reconnecting, then
-  Offline after the served heartbeat grace. Retries keep going with the same capped
-  backoff. When a previously healthy connection becomes healthy again, the catalogue
-  refreshes the currently subscribed resources once, in addition to normal cursor
-  catch-up and keyed invalidation for missed events.
+  The change stream is also the browser's connection-health owner. The shell starts at
+  Reconnecting and says Connected while the stream is open. When the stream drops, the
+  browser retries on its own and the shell says Reconnecting until it is back. Because
+  anything that changed during the gap went unheard, opening the stream refetches
+  what is on screen — that, plus the same refetch when the window is focused again, is
+  the whole recovery story. The server sends an occasional invisible keep-alive line
+  down a quiet stream, which changes nothing on screen.
 
   The browser does not merge a second Panels transcript with backend history. ACP
   load/replay is the one conversation projection, and reconnect uses the same strict
@@ -185,7 +181,9 @@ share.
   content, not managed files.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,
   approval drafts, and future Markdown surfaces remain directly editable with their
-  existing focus, blur/save, keyboard, paste, and Escape behavior. Links stay mounted
+  existing focus, blur/save, keyboard, paste, and Escape behavior. What is being typed
+  belongs to the editor, not to the cache: a refetch that lands mid-composition never
+  writes over it, so the caret, the text, and the place on the page all stay put. Links stay mounted
   as atomic preview blocks while the surrounding text is edited. Each block retains
   its original Markdown link token, so saving emits ordinary Markdown and ignores
   generated images, media controls, nested Markdown, and iframe content. There is no
@@ -251,9 +249,10 @@ local day, not the server's planning-day boundary.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),
-`web/src/lib/resourceCatalogue.ts` (cached reads, event dependencies, and mutation effects),
-`web/src/lib/resources.svelte.ts` (the generic cache engine), `web/src/lib/ws.ts`
-(the event doorbell), `web/src/lib/acp/` and `web/src/components/acp/` (the typed
+`web/src/lib/queryCatalogue.ts` (every server read, by name and address),
+`web/src/lib/queryClient.ts` (the one shared cache), `web/src/lib/changeStream.ts`
+(the change stream and connection health), `web/src/lib/mutate.ts` (a write, then the
+refetch it earns), `web/src/lib/acp/` and `web/src/components/acp/` (the typed
 conversation controller, state, transport, transcript, and composer), and the
 remaining `web/src/lib/` helpers (API, Managed Markdown, `markdownPipeline.ts`,
 `labelize`, dates), `assets/tokens.css` (design tokens), `assets/app.css` (shared
@@ -277,4 +276,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-25 (Workspace groups by Ticket status; single ACP conversation pane, GFM rendering, Resource Catalogue, and shared file previews)._
+_Last verified: 2026-07-25 (Workspace groups by Ticket status; single ACP conversation pane, GFM rendering, the change stream feeding cached reads, and shared file previews)._

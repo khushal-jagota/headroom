@@ -272,10 +272,6 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: this half only inspects steady-state ticket DOM (embedded
-        # markdown/HTML preview + popup geometry); it does not exercise the
-        # un-settled lifecycle.
-        settled=True,
     )
     _open_ticket_field(ticket_page, "success")
     embedded_markdown = ticket_page.locator('[data-file-preview-kind="markdown"]').first
@@ -408,7 +404,6 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     _open_ticket_field(ticket_page, "success")
 
@@ -468,7 +463,6 @@ def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfa
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     _open_ticket_field(ticket_page, "success")
 
@@ -536,11 +530,6 @@ def test_markdown_file_preview_has_component_owned_max_height(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: drain the since=0 catch-up flush (and re-anchor) BEFORE resolving
-        # the preview locators, so a pending re-render can't detach the measured node
-        # mid-test (the detached node reports 0x0 -> a load-dependent flake). See sibling
-        # test_loaded_preview_proposal_approves_without_edited_body.
-        settled=True,
     )
     _open_ticket_field(page, "success")
 
@@ -603,7 +592,6 @@ def test_read_only_ticket_surfaces_share_file_preview(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
 
     _open_ticket_field(page, "success")
@@ -716,10 +704,6 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: the test name says "at rest" — it only waits for steady-state
-        # previews to render across fields/note/recap/proposal. Draining the since=0
-        # catch-up flush first stops a re-render from detaching those nodes mid-wait.
-        settled=True,
     )
 
     _open_ticket_field(page, "success")
@@ -795,11 +779,6 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: this test edits an at-rest preview and asserts the raw-markdown
-        # round-trip on reload; it does not depend on the un-settled state. Draining the
-        # since=0 catch-up flush before resolving the editable stops a re-render from
-        # detaching the contenteditable node under the caret placement.
-        settled=True,
     )
 
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
@@ -884,11 +863,6 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: this test focuses/clicks at-rest preview actions and asserts no
-        # writes fire; the write-capturing listener is attached AFTER the catch-up flush
-        # would land anyway, so draining it up front only prevents a re-render from
-        # detaching the previews before the actions run. No assertion needs the un-settled state.
-        settled=True,
     )
 
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
@@ -976,12 +950,6 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: this test edits atomic preview slots and reads back stored raw
-        # markdown; the edits it drives are the only re-renders it reasons about. Draining
-        # the since=0 catch-up flush first removes the unrelated re-render that could
-        # detach a slot mid-caret-placement. The delete steps below already gate on their
-        # own flush deltas, which this leaves intact.
-        settled=True,
     )
 
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
@@ -1185,31 +1153,17 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
             };
         })()"""
     )
-    # Kept settled=False for the TICKET screen: this test's coverage IS the un-settled
-    # loading/fetch-abort lifecycle — the intercepted slow.md fetch stays pending as
-    # "Loading preview...", and deleting its slot must abort that in-flight fetch.
-    #
-    # The load flake is that the since=0 catch-up replay of this ticket's create/approve
-    # events triggers a flush -> ticket-resource refetch -> TicketRoute re-render ->
-    # mountFilePreviews REBUILDS every atomic slot. That rebuild unmounts the first slow
-    # FilePreview, which aborts its pending fetch — a phantom abort that lands in
-    # __previewAborts BEFORE the test's own Delete (measured: aborts=1, a second slow fetch
-    # pending, before any interaction). The test's real Delete then makes it 2, so the
-    # `__previewAborts.length === 1` assertion only holds if the Delete wins the race
-    # against that rebuild — which it loses under CPU load. The rebuild likewise detaches
-    # the captured __removedPreviewFrame on its own, poisoning the second deletion's proxy.
-    #
-    # Fix (no assertion touched): drain the catch-up replay on a NEUTRAL route where the
-    # ticket:<id> resource has no entry/subscribers, so the flush's invalidate() cannot
-    # launch a ticket refetch and no rebuild happens. THEN navigate to the ticket by hash;
-    # TicketRoute mounts the slow preview exactly once and it stays pending until Delete.
-    # Now every __previewAborts count is caused solely by the test's own deletions.
+    # This test's coverage IS the loading/fetch-abort lifecycle: the intercepted slow.md
+    # fetch stays pending as "Loading preview...", and deleting its slot must abort that
+    # in-flight fetch. Open on a NEUTRAL route first so the change stream opens — and runs
+    # its one reconciling round of refetches — while nothing is showing the ticket. Then
+    # navigate to the ticket by hash: its slow preview mounts exactly once and stays
+    # pending until the Delete below, so every __previewAborts entry is this test's doing.
     page = open_page(
         context,
         server,
         "#/day",
         "[data-day-overview]",
-        settled=True,
     )
     page.evaluate("id => { window.location.hash = '#/ticket/' + id; }", ticket_id)
     page.wait_for_selector(
@@ -1303,11 +1257,6 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        # settled=True: this test asserts the SAME preview node survives caret-driven
-        # edits (captures __atomicPreviewBeforeEdit and checks identity). An unrelated
-        # since=0 catch-up re-render would swap that node out and fail the identity check
-        # for reasons the test isn't about, so drain it before capturing the reference.
-        settled=True,
     )
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
     _open_ticket_field(page, "success")
@@ -1382,7 +1331,6 @@ def test_editable_same_source_owner_update_preserves_pristine_preview_and_resets
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
     slot_selector = f"{editable} [data-markdown-source-token='{image_token}']"
@@ -1452,7 +1400,6 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
         server,
         f"#/ticket/{ticket_id}",
         f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     editable = '[data-field="success"] .ticket-field-value [data-markdown-inline-edit]'
     _open_ticket_field(page, "success")
@@ -1544,7 +1491,7 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         stdin=body,
     )
     card = f'[data-review-card][data-ticket-id="{ticket_id}"]'
-    page = open_page(context_factory(), server, "#/review", card, settled=True)
+    page = open_page(context_factory(), server, "#/review", card)
     page.locator(f"{card} [data-file-preview-kind='markdown'] h1").first.wait_for(
         state="visible", timeout=WAIT_MS
     )

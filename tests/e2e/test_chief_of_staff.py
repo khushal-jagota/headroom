@@ -21,7 +21,6 @@ def test_chief_of_staff_route_nav_and_acp_mount(server, context_factory, open_pa
         server,
         "#/chief",
         'section[data-screen="chief"] [data-chat-input]',
-        settled=False,
     )
 
     assert page.query_selector('a.nav-link[data-screen="chief"]') is None
@@ -50,7 +49,6 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
         server,
         "#/workspace",
         'section[data-screen="workspace"] [data-chat-input]',
-        settled=True,
     )
 
     assert "active" in (
@@ -119,7 +117,6 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
         server,
         f"#/workspace/{encoded_first_id}",
         first_ticket,
-        settled=True,
     )
     assert page.inner_text(".ticket-title") == "First routed workspace ticket"
 
@@ -172,7 +169,6 @@ def test_legacy_board_route_renders_workspace(server, context_factory, open_page
         server,
         "#/board",
         'section[data-screen="workspace"] [data-chief-of-staff-button]',
-        settled=False,
     )
 
     assert "active" in (

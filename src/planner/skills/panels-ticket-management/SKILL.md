@@ -132,7 +132,7 @@ When the user asks what else from the sprint belongs in today, do not rank ticke
 4. Avoid carrying both an old implementation ticket and its newer publication/closeout ticket, or both a broad gate ticket and a more concrete integration ticket already on today. Stale P3 cleanup should not displace the sprint bet merely because it is easy to start.
 5. Present the smallest recommended set before adding it. Add only the tickets the user chooses, then verify today’s `day_ids` and resulting control status.
 
-If a candidate has a settled value in its current gating field but its `state` still points at that field, repair the stale position before waking a worker: inspect events/history, move only to the next genuinely blank gate through the supported direct state operation, set scope for that gate, and preserve the user’s current-state investigation request in the ticket-level note. Do not wake a worker into a gate whose canonical field is already settled.
+If a candidate has a settled value in its current gating field but its `state` still points at that field, repair the stale position before waking a worker: read the ticket's canonical state — its field values and proposals, recap, status, and `updated_at` — then move only to the next genuinely blank gate through the supported direct state operation, set scope for that gate, and preserve the user’s current-state investigation request in the ticket-level note. Do not wake a worker into a gate whose canonical field is already settled.
 
 See `references/sprint-to-day-triage.md` for the compact selection and stale-position recovery pattern.
 
@@ -200,7 +200,7 @@ For an existing ticket, Chief reconciliation rejects active control and pending 
 
 ## Active worker and shared-worktree pitfall
 
-When a Panels ticket is already being implemented by the Panels worker, do not casually dispatch a separate coding subagent into the same shared worktree. External delegations have independent time/call limits and can leave partial edits that confuse the worker loop. Prefer inspecting the ticket, chat state, events, and focused tests read-only; if recovery implementation is needed, either let the Panels worker continue, create a follow-up ticket, or explicitly coordinate a single owner for the worktree.
+When a Panels ticket is already being implemented by the Panels worker, do not casually dispatch a separate coding subagent into the same shared worktree. External delegations have independent time/call limits and can leave partial edits that confuse the worker loop. Prefer inspecting the ticket's canonical state (fields, recap, status, `updated_at`), chat state, and focused tests read-only; if recovery implementation is needed, either let the Panels worker continue, create a follow-up ticket, or explicitly coordinate a single owner for the worktree.
 
 When a ticket shows `ticket_status: errored`, do not immediately release/retry it. First inspect the ticket's `chat_session_key`, raw Hermes logs, and `slash_worker` process. If the raw worker session is still making API/tool calls or has just received `/compress`/`continue`, wait and monitor; a release can interrupt the live turn and create another false errored result. After manual recovery, treat canonical ticket `state` and gated field values/proposals as authoritative over a possibly stale `ticket_status`. If release is appropriate, remember that it rings readiness: a runnable ticket on today may immediately become `agent`, so verify and report the observed post-release status rather than promising `empty`.
 

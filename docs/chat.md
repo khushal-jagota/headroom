@@ -206,8 +206,8 @@ durable ACP session. The automatic path is not a hidden transcript writer. It us
 
 Pending worker context is prepared into that real model prompt before delivery. Its
 exact revisions are acknowledged only after ACP admits the prompt. If admission fails,
-the pending context stays pending for the next legitimate attempt. Writing an event or
-correctness row is never treated as delivery to the model.
+the pending context stays pending for the next legitimate attempt. Writing a database
+row is never treated as delivery to the model.
 
 `employee_step_runs` records only execution ownership and settlement. It contains the
 step id, Ticket id, status, employee session id, error, and timestamps. It contains no
