@@ -254,7 +254,19 @@ class BackendChild(Protocol):
         """
 
     async def cancel_running_turn(self) -> None:
-        """Stop the turn that is running. The child stays alive for the next one."""
+        """Stop the turn that is running. The child stays alive for the next one.
+
+        **Returns once the backend's own account of that turn has ended**, not merely once
+        the stop was sent. The core writes the next prompt the moment this returns — that
+        is what a send-now is — and a backend still finishing the turn it was told to drop
+        has not freed itself for another. A message that arrives into that gap is one the
+        backend may hold for later, answer with a note about holding it, or lose; none of
+        which is the turn the caller was told had started.
+
+        An adapter whose backend gives it no way to know when the turn finished bounds the
+        wait rather than waiting forever. Giving up on the wait changes nothing about the
+        record: the core wrote the ending when it decided on it, and it stands either way.
+        """
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         """Give the backend the option a person chose for one of its asks.

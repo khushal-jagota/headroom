@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 from tests.support.conversation2_scripted_acp_agent import (
     ARM_REJECT_LOAD_SESSION,
+    ARM_REJECT_NEW_SESSION,
     ScriptedAcpAgentControl,
     scripted_acp_agent_launch,
 )
@@ -31,7 +32,11 @@ from tests.support.conversation2_system_under_test import (
     open_conversation2_system_under_test,
 )
 
+from planner.conversation2.backends import hermes_acp
 from planner.conversation2.backends.contracts import (
+    BackendPermissionAsk,
+    PermissionAnswerWriteFailed,
+    PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
 )
@@ -347,10 +352,85 @@ def test_a_change_that_cannot_be_put_back_starts_the_child_again(tmp_path: Path)
             assert account["sessions_loaded"] == 1
             assert account["loaded_from"] == "scripted-session-1"
             assert account["model"] == "second-model"
-            assert [write["text"] for write in account["prompt_writes"]] == ["two"]
+            # The account is the conversation's, not the process's: the child that was
+            # started again is the same agent on the same session, and it was told both.
+            assert [write["text"] for write in account["prompt_writes"]] == ["one", "two"]
             assert await subject.backend_model("c") == "second-model"
 
     _run(exercise, seconds=90.0)
+
+
+# --- a turn that is still ending is not a free agent ----------------------------------------------
+
+
+def test_a_send_now_waits_for_the_cancelled_turn_to_be_over_at_the_agent(tmp_path: Path) -> None:
+    """The prompt that replaces a turn must not arrive while that turn is still ending.
+
+    An agent handed a prompt with a turn still open does not start it — it holds it and
+    says so, and the reply the sender was waiting for never comes. This was found against
+    real hermes, where a cancel takes a moment: the agent answered "Queued for the next
+    turn" and nothing else. So the agent here is told to take its time over a cancel, and
+    what is asserted is the agent's own account of the state it was in when the next
+    prompt landed.
+    """
+
+    async def exercise() -> None:
+        async with open_conversation2_system_under_test() as subject:
+            await subject.system.start_conversation(
+                ConversationStartRequest(conversation_id="c", workspace_folder=tmp_path)
+            )
+            await subject.system.send("c", "the long one", sender_label="owner")
+            await subject.tell_agent(
+                "c", {"command": "take_this_long_over_a_cancel", "seconds": 0.3}
+            )
+
+            fate = await subject.system.send(
+                "c", "the urgent one", sender_label="owner", mode=PromptDeliveryMode.send_now
+            )
+            assert fate == PromptDeliveryStarted()
+
+            account = await subject.agent_account("c")
+            assert [write["text"] for write in account["prompt_writes"]] == [
+                "the long one",
+                "the urgent one",
+            ]
+            assert account["cancellations"] == 1
+            assert [write["turn_open_on_arrival"] for write in account["prompt_writes"]] == [
+                False,
+                False,
+            ]
+
+    _run(exercise)
+
+
+def test_an_interrupt_waits_for_the_cancelled_turn_too(tmp_path: Path) -> None:
+    """Interrupting frees the agent, so what was held runs — into the same gap."""
+
+    async def exercise() -> None:
+        async with open_conversation2_system_under_test() as subject:
+            await subject.system.start_conversation(
+                ConversationStartRequest(conversation_id="c", workspace_folder=tmp_path)
+            )
+            await subject.system.send("c", "the long one", sender_label="owner")
+            await subject.system.send("c", "the held one", sender_label="owner")
+            await subject.tell_agent(
+                "c", {"command": "take_this_long_over_a_cancel", "seconds": 0.3}
+            )
+
+            await subject.system.interrupt("c")
+            await subject.settle()
+
+            account = await subject.agent_account("c")
+            assert [write["text"] for write in account["prompt_writes"]] == [
+                "the long one",
+                "the held one",
+            ]
+            assert [write["turn_open_on_arrival"] for write in account["prompt_writes"]] == [
+                False,
+                False,
+            ]
+
+    _run(exercise)
 
 
 # --- a resume that did not restore --------------------------------------------------------------
@@ -360,18 +440,155 @@ def test_a_session_that_will_not_load_is_never_replaced_by_a_fresh_one(tmp_path:
     """The one thing this must never do quietly: hand back a different conversation."""
 
     async def exercise() -> None:
-        async with _scripted_child(
-            tmp_path, arms=(ARM_REJECT_LOAD_SESSION,)
-        ) as (child, control):
+        async with _scripted_child(tmp_path, arms=(ARM_REJECT_LOAD_SESSION,)) as (
+            child,
+            control,
+            sink,
+        ):
             with pytest.raises(SessionLoadFailed):
                 await child.start(
                     _resolved_start(tmp_path), vendor_session_cursor="a-session-from-before"
                 )
+            # A fresh session mints a cursor and says so. Nothing was minted, so nothing was
+            # put in the place of the session that would not load.
+            assert sink.vendor_session_cursor is None
+            assert await control.send({"command": "report"}) is None
+
+    _run(exercise)
+
+
+def test_a_child_that_did_not_finish_starting_is_not_left_running(tmp_path: Path) -> None:
+    """The core adopts a child when start returns, so one that never returned is nobody's.
+
+    Its process, its wire and its readers are this adapter's to shut down, because there is
+    nothing else that knows the child exists.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, arms=(ARM_REJECT_NEW_SESSION,)) as (
+            child,
+            control,
+            _sink,
+        ):
+            with pytest.raises(SessionLoadFailed):
+                await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+
+            # Nothing is listening any more, which is only true of an agent that has gone.
+            assert await control.send({"command": "report"}) is None
+            assert child._standard_error_reader is None
+            assert child._child_watcher is None
+            assert child._connection is None
+
+    _run(exercise)
+
+
+def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: Path) -> None:
+    """A failed answer must not be what uses up the one open request an ask has.
+
+    The core hands a refused answer's ask back as still waiting, which is only honest if
+    the ask can still take one. So an answer that was never going to reach the agent is
+    refused before anything is spent, and the ask is exactly where it was.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                "work",
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await control.send({"command": "raise_permission_ask"})
+            await sink.wait_for_an_ask()
+            ask_id = sink.asks[-1].ask_id
+
+            # Something wrote and found the wire gone — which is how this adapter ever
+            # knows — and only then is the ask answered.
+            await control.send({"command": "break_wire"})
+            with pytest.raises(PromptWriteFailed):
+                await child.steer("are you there", sender_label="owner")
+
+            with pytest.raises(PermissionAnswerWriteFailed):
+                await child.answer_permission_ask(ask_id, "allow-once")
+
+            turn = child._turn
+            assert turn is not None
+            assert ask_id in turn.parked_asks
+            assert not turn.parked_asks[ask_id].answer.done()
+
+    _run(exercise)
+
+
+def test_an_answer_that_cannot_be_shown_to_have_landed_does_not_wait_for_good(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one case this adapter cannot see coming, bounded rather than left hanging.
+
+    An answer is the response to a request hermes is holding open, and the SDK sends that
+    response itself once the handler returns — so when the send fails, nothing tells this
+    adapter. Waiting for proof that will never arrive would leave the owner's answer
+    pending for good. It is given a bound instead, and an answer that could not be shown to
+    have landed is reported as not landed, with the ask let go: its one open request has
+    been used up either way.
+    """
+    monkeypatch.setattr(hermes_acp, "ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS", 0.2)
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                "work",
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await control.send({"command": "raise_permission_ask"})
+            await sink.wait_for_an_ask()
+            ask_id = sink.asks[-1].ask_id
+
+            # Nothing has written since, so the adapter has no way to know yet.
+            await control.send({"command": "break_wire"})
+            with pytest.raises(PermissionAnswerWriteFailed):
+                await child.answer_permission_ask(ask_id, "allow-once")
+
+            turn = child._turn
+            assert turn is not None
+            assert ask_id not in turn.parked_asks
+
+    _run(exercise)
+
+
+def test_an_answer_that_reached_the_wire_uses_the_ask_up(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                "work",
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await control.send({"command": "raise_permission_ask"})
+            await sink.wait_for_an_ask()
+            ask_id = sink.asks[-1].ask_id
+
+            await child.answer_permission_ask(ask_id, "allow-once")
+            turn = child._turn
+            assert turn is not None
+            assert ask_id not in turn.parked_asks
+            with pytest.raises(PermissionAnswerWriteFailed):
+                await child.answer_permission_ask(ask_id, "reject-once")
+
             report = await control.send({"command": "report"})
             assert report is not None
-            assert report["sessions_created"] == 0
-            assert report["sessions_loaded"] == 0
-            assert report["session_id"] is None
+            assert [ask["answer"] for ask in report["asks"]] == ["allow-once"]
 
     _run(exercise)
 
@@ -455,6 +672,57 @@ def test_real_hermes_takes_a_model_change_between_turns(tmp_path: Path) -> None:
             await child.stop()
 
     _run(exercise, seconds=600.0)
+
+
+@real_hermes_only
+def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: Path) -> None:
+    """The send-now shape, against the hermes that showed the problem.
+
+    Cancel then write is exactly what the core does for a send-now. Before the cancel was
+    waited on, hermes took the second prompt while it was still finishing the first, held
+    it, and answered "Queued for the next turn" — so the word asked for never came back.
+    """
+
+    async def exercise() -> None:
+        sink = _RecordingSink()
+        resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
+        child = HermesAcpBackendChild(
+            launch=_real_hermes_launch(), resolved_start=resolved, event_sink=sink
+        )
+        await child.start(resolved, vendor_session_cursor=None)
+        try:
+            await child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                "Count slowly from 1 to 200, one number per line.",
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await asyncio.sleep(2)
+
+            await child.cancel_running_turn()
+            assert sink.endings == [ConversationTurnEnding.interrupted]
+
+            sink.expect_another_turn()
+            await child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=2),
+                "Reply with exactly the word: pineapple",
+                sender_label="owner",
+                mode=PromptDeliveryMode.send_now,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await sink.wait_for_the_turn_to_end()
+
+            assert sink.endings[-1] is ConversationTurnEnding.completed
+            reply = sink.agent_messages[-1].lower()
+            assert "pineapple" in reply
+            assert "queued" not in reply
+        finally:
+            await child.stop()
+
+    _run(exercise, seconds=300.0)
 
 
 @real_hermes_only
@@ -543,8 +811,10 @@ class _RecordingSink:
     def __init__(self) -> None:
         self.agent_messages: list[str] = []
         self.endings: list[ConversationTurnEnding] = []
+        self.asks: list[BackendPermissionAsk] = []
         self.vendor_session_cursor: str | None = None
         self._turn_over = asyncio.Event()
+        self._an_ask_arrived = asyncio.Event()
 
     def expect_another_turn(self) -> None:
         self._turn_over.clear()
@@ -564,8 +834,15 @@ class _RecordingSink:
     async def tool_call_finished(self, turn_token: TurnToken, **kwargs: object) -> None:
         return None
 
-    async def permission_ask_raised(self, turn_token: TurnToken, ask: object) -> None:
-        return None
+    async def wait_for_an_ask(self) -> None:
+        await self._an_ask_arrived.wait()
+        self._an_ask_arrived.clear()
+
+    async def permission_ask_raised(
+        self, turn_token: TurnToken, ask: BackendPermissionAsk
+    ) -> None:
+        self.asks.append(ask)
+        self._an_ask_arrived.set()
 
     async def turn_ended(
         self,
@@ -585,17 +862,18 @@ class _RecordingSink:
 @asynccontextmanager
 async def _scripted_child(
     workspace: Path, *, arms: tuple[str, ...] = ()
-) -> AsyncIterator[tuple[HermesAcpBackendChild, ScriptedAcpAgentControl]]:
+) -> AsyncIterator[tuple[HermesAcpBackendChild, ScriptedAcpAgentControl, _RecordingSink]]:
     """One adapter and one scripted agent, with nothing of the conversation system around."""
     directory = Path(tempfile.mkdtemp(prefix="pc2u-"))
     control = ScriptedAcpAgentControl(str(directory / "s.sock"))
+    sink = _RecordingSink()
     child = HermesAcpBackendChild(
         launch=scripted_acp_agent_launch(control_socket_path=control.socket_path, arms=arms),
         resolved_start=_resolved_start(workspace),
-        event_sink=_RecordingSink(),
+        event_sink=sink,
     )
     try:
-        yield child, control
+        yield child, control, sink
     finally:
         await control.send({"command": "shutdown"})
         await child.stop()

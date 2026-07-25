@@ -130,6 +130,12 @@ class _ScriptedConversation:
     turn_endings_reported: int = 0
     permission_asks_reported: int = 0
     ask_ids_in_order: list[str] = field(default_factory=list)
+    # What agents before this one saw. A conversation outlives its children — one whose
+    # child was stopped and started again is the same agent on the same session — so what
+    # the backend side has been told is not reset by a respawn.
+    writes_to_agents_before_this_one: list[dict[str, Any]] = field(default_factory=list)
+    cancellations_before_this_agent: int = 0
+    asks_before_this_agent: list[dict[str, Any]] = field(default_factory=list)
 
 
 class _ObservingSink:
@@ -271,7 +277,22 @@ class _CountedChild:
         self._conversation.expected_permission_answers += 1
 
     async def stop(self) -> None:
+        # Read the agent one last time while it is still there, so what it saw stays with
+        # the conversation rather than going with the process.
+        await self._conversation_account_carried_forward()
         await self._child.stop()
+
+    async def _conversation_account_carried_forward(self) -> None:
+        conversation = self._conversation
+        report = await conversation.control.send({"command": "report"})
+        if report is not None:
+            conversation.writes_to_agents_before_this_one.extend(report["prompt_writes"])
+            conversation.cancellations_before_this_agent += int(report["cancellations"])
+            conversation.asks_before_this_agent.extend(report["asks"])
+        # A new agent has seen nothing yet, so nothing is owed to it either.
+        conversation.expected_prompt_writes = 0
+        conversation.expected_cancellations = 0
+        conversation.expected_permission_answers = 0
 
 
 class Conversation2SystemUnderTest:
@@ -311,12 +332,6 @@ class Conversation2SystemUnderTest:
                 control_socket_path=conversation.control.socket_path, arms=conversation.arms
             )
         )
-        # A new child is a new process with an empty account, so what is owed to it starts
-        # again with it. Only the live agent has an account; the one before it is gone.
-        conversation.expected_prompt_writes = 0
-        conversation.expected_cancellations = 0
-        conversation.expected_permission_answers = 0
-        conversation.ask_ids_in_order.clear()
         child = HermesAcpBackendChild(
             launch=launch,
             resolved_start=resolved_start,
@@ -344,15 +359,15 @@ class Conversation2SystemUnderTest:
         while True:
             report = await conversation.control.send({"command": "report"})
             if report is None:
-                # No agent was ever spawned for this conversation, or the one that was has
-                # gone. Either way it has seen nothing.
-                return {"prompt_writes": [], "cancellations": 0, "asks": [], "answered": 0}
+                # No agent is listening: none was ever spawned, or the one that was has
+                # gone. Whatever agents before it were told still stands.
+                return _everything_this_conversation_has_told_its_backend(conversation, None)
             if (
                 len(report["prompt_writes"]) >= conversation.expected_prompt_writes
                 and report["cancellations"] >= conversation.expected_cancellations
                 and report["answered"] >= conversation.expected_permission_answers
             ):
-                return report
+                return _everything_this_conversation_has_told_its_backend(conversation, report)
             await asyncio.sleep(0)
 
     async def agent_account(self, conversation_id: str) -> dict[str, Any]:
@@ -473,6 +488,28 @@ class Conversation2SystemUnderTest:
         for conversation in self._conversations.values():
             await conversation.control.send({"command": "shutdown"})
         await self._system.shutdown()
+
+
+def _everything_this_conversation_has_told_its_backend(
+    conversation: _ScriptedConversation, live: dict[str, Any] | None
+) -> dict[str, Any]:
+    """One conversation's backend account: the agent running now, and the ones before it."""
+    carried: dict[str, Any] = {
+        "prompt_writes": list(conversation.writes_to_agents_before_this_one),
+        "cancellations": conversation.cancellations_before_this_agent,
+        "asks": list(conversation.asks_before_this_agent),
+        "answered": sum(
+            1 for ask in conversation.asks_before_this_agent if ask["answer"] is not None
+        ),
+    }
+    if live is None:
+        return carried
+    merged = dict(live)
+    merged["prompt_writes"] = carried["prompt_writes"] + list(live["prompt_writes"])
+    merged["cancellations"] = carried["cancellations"] + int(live["cancellations"])
+    merged["asks"] = carried["asks"] + list(live["asks"])
+    merged["answered"] = carried["answered"] + int(live["answered"])
+    return merged
 
 
 def _recorded_fact(event: StoredConversationEvent) -> RecordedFact | None:

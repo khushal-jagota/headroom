@@ -91,11 +91,18 @@ STANDARD_INPUT_FILE_DESCRIPTOR = 0
 
 @dataclass(slots=True)
 class _PromptWrite:
-    """One prompt that actually arrived here, as this agent read it."""
+    """One prompt that actually arrived here, as this agent read it.
+
+    ``turn_open_on_arrival`` is what catches a conversation system writing into a gap. A
+    real agent that is handed a prompt while it still has a turn open does not start it —
+    it holds it for later, and answers about having held it. Recording the condition is
+    how a test can say that never happened rather than hoping.
+    """
 
     text: str
     sender_label: str | None
     delivery_mode: str | None
+    turn_open_on_arrival: bool = False
 
 
 @dataclass(slots=True)
@@ -130,6 +137,7 @@ class ScriptedAcpAgent:
         self._read_transport: asyncio.ReadTransport | None = None
         self._open_turn: asyncio.Future[PromptResponse] | None = None
         self._break_wire_at_next_answer = False
+        self._seconds_to_take_over_a_cancel = 0.0
         self._wire_broken = False
         self.shutting_down = asyncio.Event()
         self._background: set[asyncio.Task[Any]] = set()
@@ -204,6 +212,7 @@ class ScriptedAcpAgent:
                 text=text.removeprefix(STEER_COMMAND_PREFIX) if steered else text,
                 sender_label=kwargs.get("sender_label"),
                 delivery_mode=kwargs.get("delivery_mode"),
+                turn_open_on_arrival=not steered and self._open_turn is not None,
             )
         )
         if steered:
@@ -215,8 +224,21 @@ class ScriptedAcpAgent:
         return await open_turn
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
+        """Take the cancel, and take as long over it as a test has asked for.
+
+        A real agent does not finish the instant it is told to stop, and an agent that did
+        would hide the one thing worth testing here: what happens to a prompt written into
+        the moment between the stop and the stopping.
+        """
         del session_id, kwargs
         self.account.cancellations += 1
+        if self._seconds_to_take_over_a_cancel <= 0:
+            self._finish_open_turn(PromptResponse(stop_reason="cancelled"))
+            return
+        self._run_in_background(self._finish_the_turn_slowly())
+
+    async def _finish_the_turn_slowly(self) -> None:
+        await asyncio.sleep(self._seconds_to_take_over_a_cancel)
         self._finish_open_turn(PromptResponse(stop_reason="cancelled"))
 
     def _reasoning_effort_option(self) -> SessionConfigOptionSelect:
@@ -260,9 +282,12 @@ class ScriptedAcpAgent:
                 return {"ok": True}
             case "emit_tool_call_progress":
                 await self._emit_tool_call_progress(command)
-
+                return {"ok": True}
             case "emit_tool_call_finished":
                 await self._emit_tool_call_finished(command)
+                return {"ok": True}
+            case "take_this_long_over_a_cancel":
+                self._seconds_to_take_over_a_cancel = float(command["seconds"])
                 return {"ok": True}
             case "break_wire":
                 self._break_the_wire()
@@ -284,6 +309,7 @@ class ScriptedAcpAgent:
                     "text": write.text,
                     "sender_label": write.sender_label,
                     "delivery_mode": write.delivery_mode,
+                    "turn_open_on_arrival": write.turn_open_on_arrival,
                 }
                 for write in account.prompt_writes
             ],

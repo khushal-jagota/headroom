@@ -105,6 +105,17 @@ REASONING_EFFORT_CONFIGURATION_CATEGORY = "thought_level"
 # Enough of a dead agent's standard error to say what happened, in the failed turn's line.
 STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS = 8192
 
+# How long a cancelled turn is given to finish at the agent before the next message is
+# written anyway. A hermes that is going to answer its cancel answers it in well under a
+# second; this is only the point at which waiting stops being worth the delay.
+CANCELLED_TURN_ENDING_TIMEOUT_SECONDS = 15.0
+
+# How long an answer to a permission ask is given to show up on the wire. The response to a
+# held-open request is sent by the SDK once the handler returns, and a send of its own that
+# fails is not reported back here — so an answer nobody can show reached hermes is called
+# what it is instead of being waited on for good.
+ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS = 15.0
+
 # Agent output arrives one JSON line at a time and a finished message can be long, so the
 # line limit is raised well past the stream default rather than left to be reassembled.
 CHILD_OUTPUT_LINE_LIMIT_BYTES = 50 * 1024 * 1024
@@ -256,14 +267,24 @@ class HermesAcpBackendChild:
         *,
         vendor_session_cursor: str | None,
     ) -> None:
-        """Spawn hermes, speak ACP to it, and bind the session this conversation runs in."""
+        """Spawn hermes, speak ACP to it, and bind the session this conversation runs in.
+
+        A child that does not finish starting is shut down here, by the only thing holding
+        it. The core adopts a child when this returns, so one that never returned is one it
+        was never given and cannot be asked to stop — leaving a hermes running, its wire
+        open and its reader tasks alive, for a conversation that has no child at all.
+        """
         self._resolved_start = resolved_start
-        connection = await self._spawn(resolved_start)
-        if vendor_session_cursor is None:
-            await self._create_session(connection, resolved_start)
-        else:
-            await self._load_session(connection, resolved_start, vendor_session_cursor)
-        await self._apply_start_values(resolved_start)
+        try:
+            connection = await self._spawn(resolved_start)
+            if vendor_session_cursor is None:
+                await self._create_session(connection, resolved_start)
+            else:
+                await self._load_session(connection, resolved_start, vendor_session_cursor)
+            await self._apply_start_values(resolved_start)
+        except BaseException:
+            await self.stop()
+            raise
 
     async def write_prompt(
         self,
@@ -311,9 +332,46 @@ class HermesAcpBackendChild:
         self._forget(prompt, "steer")
 
     async def cancel_running_turn(self) -> None:
+        """Stop the turn, and do not come back until hermes says it has stopped.
+
+        ``session/cancel`` is a notification, so sending it says nothing about when the
+        turn actually ends — and the core writes the next prompt the moment this returns.
+        A prompt that arrives while hermes is still finishing the turn it was told to drop
+        is not the next turn: hermes holds it and answers with a note that it has been
+        queued, and the reply the sender was waiting for never comes. So the stop is sent
+        and then the turn's own ending is waited for, which is the only thing that makes
+        "the incumbent is dead" true on the backend's account rather than on ours.
+        """
         connection, session_id = self._bound_session()
+        turn = self._turn
         self._require_a_live_wire()
         await self._guarded(connection.cancel(session_id=session_id))
+        if turn is not None:
+            await self._wait_for_the_backend_to_finish(turn)
+
+    async def _wait_for_the_backend_to_finish(self, turn: _TurnInFlight) -> None:
+        """Wait for the cancelled turn to be over at the agent, but not forever.
+
+        Waiting for the whole ending — not just the prompt's answer — is deliberate: it is
+        also what settles the turn's outstanding permission asks with hermes, so a turn
+        being replaced never leaves a call of its own hanging.
+
+        A hermes that answers its cancel takes well under a second. One that does not is
+        not going to be waited on indefinitely: the conversation's ending is already
+        written, so giving up here leaves the record exactly as it was and gets the next
+        message moving.
+        """
+        finishing = [task for task in (turn.ending_reporter, turn.prompt) if task is not None]
+        done, still_going = await asyncio.wait(
+            finishing, timeout=CANCELLED_TURN_ENDING_TIMEOUT_SECONDS
+        )
+        if still_going:
+            LOGGER.warning(
+                "conversation %s did not hear its backend finish the turn it cancelled "
+                "within %s seconds; carrying on",
+                turn.token.conversation_id,
+                CANCELLED_TURN_ENDING_TIMEOUT_SECONDS,
+            )
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         """Give hermes the option a person chose, and wait for it to be on the wire.
@@ -323,22 +381,44 @@ class HermesAcpBackendChild:
         difference between an answer that was recorded and one that was actually given.
         """
         turn = self._turn
-        parked = None if turn is None else turn.parked_asks.pop(ask_id, None)
-        if parked is None:
+        if turn is None:
             raise PermissionAnswerWriteFailed(ask_id)
+        parked = turn.parked_asks.get(ask_id)
+        if parked is None or parked.answer.done() or parked.request_id is None:
+            # Nothing to answer, already answered, or an ask this child cannot tie an
+            # answer back to — in which case there would be no way to know it was sent,
+            # and an answer that cannot be shown to have landed has not landed.
+            raise PermissionAnswerWriteFailed(ask_id)
+        # Asked before anything is spent. Hermes holds one open request per ask and giving
+        # it an answer uses that request up, so an answer that was never going to reach it
+        # must not be the thing that uses it up: the core hands the ask back as waiting
+        # when a write fails, and it has to still be an ask that can take an answer.
+        self._require_a_live_wire_or_answer_failed(ask_id)
+
         reached_the_wire: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._permission_answer_waiters[parked.request_id] = reached_the_wire
-        if not parked.answer.done():
-            parked.answer.set_result(
-                RequestPermissionResponse(
-                    outcome=AllowedOutcome(outcome="selected", option_id=option_id)
-                )
+        parked.answer.set_result(
+            RequestPermissionResponse(
+                outcome=AllowedOutcome(outcome="selected", option_id=option_id)
             )
+        )
         try:
-            await reached_the_wire
+            await asyncio.wait_for(reached_the_wire, ANSWER_ON_THE_WIRE_TIMEOUT_SECONDS)
         except Exception as never_sent:
             self._permission_answer_waiters.pop(parked.request_id, None)
+            # The open request this answer was the response to is used up now, whether or
+            # not the answer got out, so this ask cannot take another one. It is let go
+            # here and dies with its turn like any other ask nobody answered.
+            turn.parked_asks.pop(ask_id, None)
             raise PermissionAnswerWriteFailed(ask_id) from never_sent
+        self._permission_answer_waiters.pop(parked.request_id, None)
+        turn.parked_asks.pop(ask_id, None)
+
+    def _require_a_live_wire_or_answer_failed(self, ask_id: str) -> None:
+        try:
+            self._require_a_live_wire()
+        except PromptWriteFailed as gone:
+            raise PermissionAnswerWriteFailed(ask_id) from gone
 
     async def stop(self) -> None:
         """Shut the child down: stop reading, close the wire, end the process."""
