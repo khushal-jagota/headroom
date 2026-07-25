@@ -36,8 +36,7 @@ const {
   ceilingOptionsFor,
   fieldIsPassedFor,
   ticketStageVisualStateFor,
-  fieldStageVisualStateFor,
-  recapVisibleFor
+  fieldStageVisualStateFor
 } = await import(lifecyclePath);
 await rm(dir, { recursive: true, force: true });
 
@@ -313,12 +312,6 @@ assert.equal(
   "current-awaiting-approval"
 );
 
-// recapVisibleFor: hidden through needs_success, visible from needs_approach on.
-assert.equal(recapVisibleFor(coding, "needs_kickoff"), false);
-assert.equal(recapVisibleFor(coding, "needs_success"), false);
-assert.equal(recapVisibleFor(coding, "needs_approach"), true);
-assert.equal(recapVisibleFor(coding, "done"), true);
-
 // --- Part A: pre-load null defaults (Codex F1) ----------------------------------
 assert.equal(gatingFieldFor(null, "needs_success"), null);
 assert.equal(advanceTargetFor(null, "needs_plan", "done"), null);
@@ -332,7 +325,6 @@ assert.equal(
   }),
   "upcoming"
 );
-assert.equal(recapVisibleFor(null, "needs_approach"), false);
 
 // --- Part B: a synthetic SECOND Worker type proves the render logic is variable ---
 // research: needs_brief -> needs_findings -> needs_writeup -> done; fields brief/
@@ -397,9 +389,6 @@ assert.deepEqual(ceilingOptionsFor(lc2, "needs_findings"), [
 assert.equal(fieldIsPassedFor(lc2, "brief", "needs_findings"), true);
 assert.equal(fieldIsPassedFor(lc2, "findings", "needs_findings"), false);
 assert.equal(gatingFieldFor(lc2, "needs_findings"), "findings");
-assert.equal(recapVisibleFor(lc2, "needs_brief"), false);
-assert.equal(recapVisibleFor(lc2, "needs_findings"), false);
-assert.equal(recapVisibleFor(lc2, "needs_writeup"), true);
 assert.equal(
   ticketStageVisualStateFor(lc2, {
     ticketStage: "needs_findings",

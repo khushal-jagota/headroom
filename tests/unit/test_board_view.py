@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
+from datetime import datetime
 from sqlite3 import Connection
+from types import SimpleNamespace
 
 import pytest
 from tests.support.probe import (
@@ -17,6 +20,7 @@ from planner.core.contracts import LinkKind, Priority
 from planner.days.data import add_day_ticket
 from planner.projects.data import create_project
 from planner.sprints.data import create_item
+from planner.tickets.api import board as board_route
 from planner.tickets.contracts import AtCap
 from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.tickets.data import accept_proposal, create_ticket
@@ -98,7 +102,21 @@ def _ticket(
     return ticket.id
 
 
-def test_board_view_carries_every_non_dropped_ticket_regardless_of_day(
+def _board(conn: Connection) -> dict:
+    day_id = "day_2026-07-04"
+    ticket_ids = conn.execute("SELECT id FROM tickets").fetchall()
+    for row in ticket_ids:
+        ticket_id = str(row["id"])
+        exists = conn.execute(
+            "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
+            (day_id, ticket_id),
+        ).fetchone()
+        if exists is None:
+            add_day_ticket(conn, day_id, ticket_id, 10)
+    return board_view(conn, day_id=day_id)
+
+
+def test_board_view_carries_only_the_requested_days_non_dropped_tickets(
     tmp_db: Connection,
 ) -> None:
     today = _ticket(tmp_db, "Today board ticket", 1)
@@ -107,12 +125,37 @@ def test_board_view_carries_every_non_dropped_ticket_regardless_of_day(
     add_day_ticket(tmp_db, "day_2026-07-04", today, 10)
     add_day_ticket(tmp_db, "day_2026-07-03", other_day, 10)
 
-    board = board_view(tmp_db)
+    board = board_view(tmp_db, day_id="day_2026-07-04")
     titles = {card["title"] for column in board["columns"] for card in column["cards"]}
 
-    # Workspace attention routing spans days: tickets on other days and tickets on
-    # no day at all still appear.
-    assert titles == {"Today board ticket", "Other day ticket", "Backlog ticket"}
+    assert titles == {"Today board ticket"}
+
+
+@pytest.mark.parametrize(
+    ("now", "expected_day_id"),
+    [
+        (datetime(2026, 7, 5, 4, 59), "day_2026-07-04"),
+        (datetime(2026, 7, 5, 5, 0), "day_2026-07-05"),
+    ],
+)
+def test_board_route_resolves_the_5am_planning_day(
+    tmp_db: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+    now: datetime,
+    expected_day_id: str,
+) -> None:
+    resolved_day_ids: list[str] = []
+
+    def capture_board(_conn: Connection, *, day_id: str) -> dict:
+        resolved_day_ids.append(day_id)
+        return {"columns": []}
+
+    monkeypatch.setattr("planner.tickets.api.tickets_views.board_view", capture_board)
+    clock = SimpleNamespace(now=lambda: now)
+    config = SimpleNamespace(boundary_hour=5)
+
+    assert asyncio.run(board_route(tmp_db, config, clock)) == {"columns": []}
+    assert resolved_day_ids == [expected_day_id]
 
 
 def test_board_view_groups_parented_ticket_by_parent_item_project(
@@ -131,7 +174,7 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
     for ticket_id in (parented, standalone, unprojected):
         add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 10)
 
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
     cards = {card["title"]: card for column in board["columns"] for card in column["cards"]}
 
     assert cards["Parented ticket"]["project_id"] is None
@@ -147,7 +190,7 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
 def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connection) -> None:
     _ticket(tmp_db, "Coding board ticket", 1)
 
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
 
     # A coding-only board reproduces the 7 coding columns, in order, no appended column.
     assert [column["stage"] for column in board["columns"]] == _CODING_COLUMN_ORDER
@@ -195,7 +238,7 @@ def test_board_mixed_coding_probe_does_not_throw(
         at_cap=AtCap.propose,
     )
 
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
 
     states = [column["stage"] for column in board["columns"]]
     # Coding's 7 columns first, in order; probe's needs_alpha appended after.
@@ -225,21 +268,21 @@ def test_board_card_uses_the_canonical_workspace_signals(tmp_db: Connection) -> 
     projection = TicketConversationProjection(db_path, now=lambda: 2)
     projection.record_activity(ticket_id, "thinking")
 
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["agent_working"] is True
     assert card["agent_reply_state"] == "none"
 
     # A completed reply awaiting the user reads as an unseen reply on the card.
     projection.record_activity(ticket_id, "idle")
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["agent_working"] is False
     assert card["agent_reply_state"] == "unseen"
 
     # Acknowledging the reply moves it to seen, not back to none.
     projection.acknowledge_completed_response(ticket_id)
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["agent_working"] is False
     assert card["agent_reply_state"] == "seen"
@@ -257,7 +300,7 @@ def test_board_card_carries_canonical_ticket_backend_error(
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     TicketConversationProjection(db_path, now=lambda: 2).record_activity(ticket_id, "interrupted")
 
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["backend_error"] == "Provider exploded"
     assert card["ticket_status"] == "errored"
@@ -269,7 +312,7 @@ def test_board_card_carries_canonical_ticket_backend_error(
         "UPDATE tickets SET ticket_status = 'empty', backend_error = NULL WHERE id = ?",
         (ticket_id,),
     )
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["backend_error"] is None
     assert card["ticket_status"] == "empty"
@@ -293,7 +336,7 @@ def test_board_cards_expose_active_incoming_blocking_without_changing_real_stage
     core_links.add_link(tmp_db, blocker, kickoff_dependent, LinkKind.blocks, 5)
     core_links.add_link(tmp_db, blocker, later_dependent, LinkKind.blocks, 5)
 
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
     cards = {card["id"]: card for column in board["columns"] for card in column["cards"]}
 
     assert cards[kickoff_dependent]["stage"] == "needs_kickoff"
@@ -309,7 +352,7 @@ def test_completed_board_card_is_done_with_quiet_signals(tmp_db: Connection) -> 
         (ticket_id,),
     )
 
-    board = board_view(tmp_db)
+    board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["is_done"] is True
     assert card["agent_working"] is False

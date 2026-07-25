@@ -1,6 +1,6 @@
 # AGENTS.md
 
-There is no immutable spec. `SPEC.md` was a starting point and has been retired: the design intent now lives in the redesign mockups and plans under `orchestration/*-redesign/`, and the backend correctness model is the code plus its tests (surfaced by `./verify`).
+There is no immutable spec. `SPEC.md` was a starting point and has been retired: design intent lives in `DESIGN.md` and the current plain-language documentation, and the backend correctness model is the code plus its tests (surfaced by `./verify`).
 
 **PRINCIPLES.md** holds the standing engineering and design rules; they bind unless a live owner decision overrides them.
 
@@ -13,7 +13,7 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - ACP conversation code lives in `conversation/`. One production composition owns the typed browser WebSocket, durable session bindings, backend children, human and Automatic Employee delivery, turn choices, permissions, and replay. The production backend catalog is exactly `hermes`, `codex`, and `claude`.
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and Vite chunks under `/_app/`. Shared design assets remain in `assets/`: `tokens.css` and `app.css`; the Vite-owned GFM pipeline lives in `web/src/lib/markdownPipeline.ts`.
 - Panels-owned agent role skills live in `src/planner/skills/`, especially `panels` and `panels-worker`; they ship with the Python package, project-native agent roots point there, and startup exposes those same source directories to the planner Hermes home under `data/hermes-home/skills/`.
-- `docs/` is the live plain-language system documentation. `orchestration/*-redesign/` holds current design intent and mockups; `orchestration/tickets/` holds ticket plans, dispatches, and reviews.
+- `docs/` is the live plain-language system documentation. `orchestration/tickets/` holds historical ticket plans, dispatches, and reviews.
 - `data/` is gitignored runtime state: SQLite DBs, WAL/SHM files, logs, locks, Hermes home state, smoke artifacts, and verify output.
 
 ## Worker conversation boundary
@@ -26,9 +26,8 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - **Everything earns its existence; understand before you extend.** When handed something to build or plan, first work out what each existing thing actually *is* and why it exists — never fit around a structure you have not understood. Add nothing without a clear, stated reason: no speculative field, status, guard, or mechanism. If you cannot say plainly why a thing exists, it should not. When a plan — yours or a reviewer's — bolts on something that wasn't asked for or doesn't clearly make sense, cut it, don't accommodate it.
 
 ## Memory
-- **PROGRESS.md** — update every work cycle: current build stage, what just passed, current hypothesis, next step, blockers. After any context compaction, read it first — it is your memory, not the conversation.
-- **decisions.md** — every delegated or judgment call, briefly justified.
-- **docs/** — plain-language documentation of what exists and how it works, split by system (`docs/README.md` is the map; `docs/CLAUDE.md` holds the conventions). Simple sentences, no jargon — a smart non-engineer must be able to read it; if a section can't be understood without reading the code, rewrite the section. Kept **current, not frozen**: written as work completes, and corrected in the same breath when a feature changes or is removed — a doc still describing deleted machinery is a bug, not history. History is git's; the live build snapshot is PROGRESS.md's.
+- **Panels ticket fields, recap, and artifacts** — keep the current stage, evidence, judgment calls, next step, and blockers with the ticket that owns the work.
+- **docs/** — plain-language documentation of what exists and how it works, split by system (`docs/README.md` is the map; `docs/CLAUDE.md` holds the conventions). Simple sentences, no jargon — a smart non-engineer must be able to read it; if a section can't be understood without reading the code, rewrite the section. Kept **current, not frozen**: written as work completes, and corrected in the same breath when a feature changes or is removed — a doc still describing deleted machinery is a bug, not history. History is git's.
 
 ## Verification
 - `./verify` is the only source of truth for completeness. Run it after changes land — not mid-work, not to re-confirm a result nothing has changed since. One clean run is the claim; show its full output and cite it. Don't re-run just to quote it.
@@ -36,10 +35,10 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 - Independent reviews may use a fresh sub-agent; the Codex CLI is not required. Use one focused review wherever a second pair of eyes materially improves confidence: completed work against its contract/design, intricate correctness logic, or a combined diff before integration. A second round is only for a concrete unresolved finding. Surface the review output and address or refute each point in writing.
 
 ## Operating model: plan and orchestrate
-- You are primarily a **planner and orchestrator of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, verification runs, and the memory files. Implementation substance is produced by sub-agents working tickets.
-- Write code directly only when a change is too small to be worth a ticket — glue, integration repairs, one-line fixes — and note it in PROGRESS.md. If you catch yourself implementing a stage's substance inline, stop and cut tickets. Route, don't execute.
+- You are primarily a **planner and orchestrator of sub-agents**. Your own outputs are: the plan, contract-scoped tickets, dispatches, independent reviews, serial integrations, and verification runs. Implementation substance is produced by sub-agents working tickets.
+- Write code directly only when a change is too small to be worth a ticket — glue, integration repairs, one-line fixes — and note it in the owning ticket. If you catch yourself implementing a stage's substance inline, stop and cut tickets. Route, don't execute.
 - A ticket is contract-scoped: it names the contract/type files it implements against, the acceptance tests it must turn green, and nothing else. Sub-agents do not invent shapes, do not modify contracts, and do not touch files outside their ticket.
-- Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) an independent reviewer checks that plan against the contracts and relevant design doc; (4) a sub-agent implements to the reviewed plan; (5) an independent reviewer checks the implementation diff; (6) you integrate serially. Steps 2–5 can be collapsed for trivial tickets, noted in decisions.md. A multi-ticket program may explicitly reserve one full `./verify` for its final settled tree; individual tickets then use their named focused gates.
+- Per-ticket pipeline — each step isolated work: (1) you decompose and write the ticket; (2) a sub-agent plans the ticket's implementation; (3) an independent reviewer checks that plan against the contracts and relevant design doc; (4) a sub-agent implements to the reviewed plan; (5) an independent reviewer checks the implementation diff; (6) you integrate serially. Steps 2–5 can be collapsed for trivial tickets when the ticket records why. A multi-ticket program may explicitly reserve one full `./verify` for its final settled tree; individual tickets then use their named focused gates.
 - Parallelisation is your call: decide from file overlap which tickets may share the main worktree and which need isolated git worktrees; never let two agents write the same files concurrently.
 - Spot-check the load-bearing code yourself even when reviews pass: the resolution engine, dispatcher claim/reclaim, planning-date math, and the migration parser.
 - A ticket is done when its named gates pass and its independent review reports no unresolved violations. When the program reserves a final canonical `./verify`, that final gate—not repeated per-ticket runs—makes the repository-wide completeness claim.
@@ -84,11 +83,11 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
 
 ## Conduct
 - Keep `./verify` green; never advance over failing tests.
-- Blocked three attempts on the same problem → log it in PROGRESS.md and change approach materially, not the same idea harder.
-- Do not ask questions mid-run. Delegated choices are yours; make them and log them in decisions.md.
+- Blocked three attempts on the same problem → record the blocker on the ticket and change approach materially, not the same idea harder.
+- Do not ask questions mid-run. Delegated choices are yours; make them and record them on the ticket.
 
 ## Project notes
 - Python ≥ 3.12, venv at `.venv`, deps pinned in `requirements.txt`. Run the server: `panels serve` (or `python -m planner serve`). DB and logs live under `data/` (gitignored).
 - Frontend is Svelte/Vite in `web/`; FastAPI serves the built `web/dist` app at `/` and mounts Vite chunks under `/_app/`. Shared tokens, app CSS, and markdown rendering remain in `assets/`.
-- Frontend reactivity is `events → keyed invalidation → targeted refetch` (Decision A; see spike 06 + decisions.md). The UI keeps a keyed resource cache (`ticket:<id>`, `board`, `sprint:current`, …) and refetches only the resources an event invalidates — never a whole-screen refetch, never a client-side store of canonical state (the server stays the single source of truth). Invalidation keys off the changed entity's `entity_id` prefix → its resource + the aggregates it appears in, so a new event kind about an existing entity needs no mapping change. A completeness test (required, spike 06 Phase 2) asserts every backend event kind maps to at least one resource — so when you add an event kind or a resource, a forgotten mapping fails `./verify` instead of going silently stale.
+- Frontend reactivity is `events → keyed invalidation → targeted refetch`. The UI keeps a keyed resource cache (`ticket:<id>`, `board`, `sprint:current`, …) and refetches only the resources an event invalidates — never a whole-screen refetch, never a client-side store of canonical state (the server stays the single source of truth). Invalidation keys off the changed entity's `entity_id` prefix → its resource + the aggregates it appears in, so a new event kind about an existing entity needs no mapping change. A completeness test asserts every backend event kind maps to at least one resource — so when you add an event kind or a resource, a forgotten mapping fails `./verify` instead of going silently stale.
 - One canonical writer function per state transition. Agents (claim-carrying requests) write proposals only — the resolution engine is the single door to canonical values.

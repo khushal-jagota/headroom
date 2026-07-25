@@ -3505,7 +3505,7 @@ def test_normalized_codex_edit_over_one_megabyte_replays_through_ready(
                 content=[
                     FileEditToolCallContent(
                         type="diff",
-                        path="PROGRESS.md",
+                        path="large-file.md",
                         old_text=whole_file,
                         new_text=whole_file + "small append\n",
                     )

@@ -1209,8 +1209,9 @@ async def remove_link(
 
 
 @router.get("/board")
-async def board(conn: DbConn) -> JsonDict:
-    return tickets_views.board_view(conn)
+async def board(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+    day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
+    return tickets_views.board_view(conn, day_id=day_id)
 
 
 @router.get("/review")

@@ -2,11 +2,95 @@ from __future__ import annotations
 
 import os
 import plistlib
+import shutil
 import subprocess
 from pathlib import Path
 
 ASSET_ROOT = Path(__file__).resolve().parents[2] / "ops" / "panels-environments"
 WORKFLOW_ROOT = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+
+
+def test_linux_setup_installs_bare_panels_wrapper_contract() -> None:
+    wrapper_path = ASSET_ROOT / "panels"
+    wrapper = wrapper_path.read_text(encoding="utf-8")
+    setup = (ASSET_ROOT / "setup-accounts.sh").read_text(encoding="utf-8")
+
+    assert wrapper_path.is_file()
+    assert not wrapper_path.is_symlink()
+    assert wrapper_path.stat().st_mode & 0o111 == 0o111
+    assert wrapper == (
+        '#!/bin/sh\n'
+        'set -eu\n'
+        '\n'
+        'exec /opt/panels/current/bin/panels-launcher "$@"\n'
+    )
+    assert 'asset_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)' in setup
+    assert (
+        'install -m 0755 -o root -g root "$asset_directory/panels" '
+        "/usr/local/bin/panels"
+    ) in setup
+    assert "ln " not in setup
+    assert ".venv/bin/panels" not in setup
+
+
+def test_bare_panels_wrapper_follows_current_and_preserves_arguments(
+    tmp_path: Path,
+) -> None:
+    canonical_target = "/opt/panels/current/bin/panels-launcher"
+    source_wrapper = (ASSET_ROOT / "panels").read_text(encoding="utf-8")
+    assert source_wrapper.count(canonical_target) == 1
+
+    command_directory = tmp_path / "command-bin"
+    command_directory.mkdir()
+    wrapper_path = command_directory / "panels"
+    simulated_current = tmp_path / "current"
+    wrapper_path.write_text(
+        source_wrapper.replace(canonical_target, f"{simulated_current}/bin/panels-launcher"),
+        encoding="utf-8",
+    )
+    shutil.copymode(ASSET_ROOT / "panels", wrapper_path)
+
+    for release_name in ("release-a", "release-b"):
+        launcher = tmp_path / release_name / "bin" / "panels-launcher"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' '{release_name}' \"$@\"\n",
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
+
+    simulated_current.symlink_to(tmp_path / "release-a", target_is_directory=True)
+    outside_checkout = tmp_path / "agent-home"
+    outside_checkout.mkdir()
+    agent_environment = {
+        "HOME": str(outside_checkout),
+        "LANG": "C",
+        "PATH": f"{command_directory}:/usr/bin:/bin",
+    }
+
+    help_result = subprocess.run(
+        ["panels", "--help"],
+        cwd=outside_checkout,
+        env=agent_environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert help_result.stdout.splitlines() == ["release-a", "--help"]
+
+    simulated_current.unlink()
+    simulated_current.symlink_to(tmp_path / "release-b", target_is_directory=True)
+    read_only_arguments = ["ticket", "show", "t_example", "--json"]
+    read_only_result = subprocess.run(
+        ["panels", *read_only_arguments],
+        cwd=outside_checkout,
+        env=agent_environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert read_only_result.stdout.splitlines() == ["release-b", *read_only_arguments]
 
 
 def test_linux_live_service_uses_current_launcher_and_external_state() -> None:

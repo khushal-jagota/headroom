@@ -18,9 +18,13 @@ One screen per part of the system:
   field, and each decision fades in as it arrives. The approve button physically
   refuses to work until "how far may the worker go next" has been answered, both
   halves.
-- **Workspace** — every active ticket in a left rail backed by the board resource
-  (the board is not day-scoped: attention routing spans days; dropped tickets never
-  appear). The rail groups tickets into collapsible boxed **status buckets**, in a
+- **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
+  follows the same 5am planning-day boundary as the Day screen; dropped tickets never
+  appear. One project selector narrows the roster by each ticket's effective project,
+  including **All projects** and **No project**. A ticket parented by a sprint item uses
+  that item's project; a standalone ticket uses its own project. The selector does not
+  close or replace an already-open ticket inspector. The rail groups the visible
+  tickets into collapsible boxed **status buckets**, in a
   fixed order that puts what needs the user first: Errored, Needs you, Kickoff,
   Stopped, Taken over, Paired, Agent working, Needs approval, Closing out, Blocked,
   Done. A bucket with no tickets is not rendered; Blocked and Done start collapsed.
@@ -46,11 +50,14 @@ One screen per part of the system:
   message-visibility tracking. **Chief of Staff** sits first in the rail above the
   buckets.
 
-  The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
-  the same complete ticket screen used by a direct ticket link while leaving the
-  Workspace rail in place, and records the selection at `#/workspace/<ticket-id>`.
-  That address can be loaded, refreshed, shared, or revisited with browser history;
-  a missing ticket safely leaves the Chief of Staff view open.
+  On screens wider than 960px, the right side opens on the Chief of Staff conversation.
+  Selecting a ticket switches it to the same complete ticket screen used by a direct
+  ticket link while leaving the Workspace rail in place, and records the selection at
+  `#/workspace/<ticket-id>`. That address can be loaded, refreshed, shared, or
+  revisited with browser history; a missing ticket safely leaves the Chief of Staff
+  view open. At 960px or less, selecting a ticket opens its standalone
+  `#/ticket/<ticket-id>` page, and selecting Chief of Staff opens the standalone
+  `#/chief` page.
 - **Ticket** — the whole story of one piece of work: a serif title, a single facts
   line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
   exact backend Worker failure reason directly below that line when one exists, the
@@ -237,8 +244,9 @@ server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by e
 Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.ts`
 remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. `web/src/lib/dates.ts` holds the date formatting the Day and Sprint screens
-share — the short-month day label the redesign speaks in, plus the weekday name. (The two visible native selects were left un-unified on purpose —
-they share almost nothing real; see `decisions.md`, D77.)
+share — the short-month day label the redesign speaks in, plus the weekday name. The two
+visible native selects remain separate because they share almost nothing beyond being
+native selects.
 
 **The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
 diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not

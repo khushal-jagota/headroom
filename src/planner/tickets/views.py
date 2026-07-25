@@ -215,9 +215,10 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 # --- board (§10.3) -------------------------------------------------------------
 
 
-def board_view(conn: sqlite3.Connection) -> JsonDict:
-    # Workspace attention routing spans days, so the board carries every
-    # non-dropped Ticket rather than a day's membership.
+def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
+    # Workspace is the current planning day's roster. Ticket detail remains a
+    # separate resource, so narrowing this projection does not constrain direct
+    # Ticket routes or an already-open inspector.
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
@@ -236,7 +237,9 @@ def board_view(conn: sqlite3.Connection) -> JsonDict:
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
         "LEFT JOIN ticket_conversation_projections "
         "ON ticket_conversation_projections.ticket_id = tickets.id "
-        "WHERE tickets.stage != 'dropped'"
+        "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
+        "WHERE day_tickets.day_id = ? AND tickets.stage != 'dropped'",
+        (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
     blocked_target_ids = core_links.blocked_target_ids(conn)
