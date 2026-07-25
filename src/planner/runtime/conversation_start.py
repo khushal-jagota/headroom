@@ -221,19 +221,19 @@ async def reset_ticket_conversation(
     *,
     now: int,
 ) -> None:
-    """Stop the Ticket's conversation and unlink it, so the next start is a fresh one.
+    """Kill the Ticket's conversation and unlink it, so the next start is a fresh one.
+
+    Killing stops the running turn and discards every message the conversation system
+    was holding, so the old worker is silenced rather than merely interrupted — nothing
+    it was queued to do runs after this. That is what the contract says ``kill`` is for,
+    and it is why interrupting is not enough here: freeing the agent would let the held
+    messages run.
 
     The last-chosen launch columns stay: they are what the next conversation starts
     from. A Ticket with no conversation has nothing to reset.
-
-    CONTRACT GAP, flagged for integration: interrupting frees the agent, and messages
-    the conversation system was holding for it then run. So resetting a conversation
-    that has held traffic leaves the old worker running, no longer linked to any Ticket.
-    The contract has no operation that discards held messages, so this is the closest
-    reading available; closing the gap is a conversation-contract decision.
     """
     conversation_id = tickets_data.read_ticket(conn, ticket_id).employee_session_id
     if conversation_id is None:
         return
-    await system.interrupt(conversation_id)
+    await system.kill(conversation_id)
     tickets_data.clear_ticket_conversation_link(conn, ticket_id, now=now)

@@ -23,7 +23,10 @@ from planner.conversation2.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation2.in_memory_conversation_system import (
+    InMemoryConversationObservationKind,
+    InMemoryConversationSystem,
+)
 from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime.conversation_start import (
     CONVERSATION_ID_PREFIX,
@@ -323,6 +326,37 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
         assert after.employee_launch_model == "opus"
         assert after.employee_launch_reasoning_effort == "high"
         assert after.updated_at == 30
+
+    asyncio.run(exercise())
+
+
+def test_resetting_discards_a_message_the_conversation_was_holding(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        conversation_id = await start_ticket_conversation(
+            system, tmp_db, ticket, _values(ticket.id), now=10
+        )
+        await system.send(conversation_id, "running work", sender_label="loop")
+        held = await system.send(conversation_id, "held work", sender_label="owner")
+        assert isinstance(held, PromptDeliveryQueued)
+
+        await reset_ticket_conversation(system, tmp_db, ticket.id, now=30)
+
+        # Freeing the agent would have let the held message run. It never reached the
+        # backend, and its discard is on the record rather than silent.
+        assert [write.text for write in system.backend_prompt_writes(conversation_id)] == [
+            "running work"
+        ]
+        discarded = [
+            (observation.text, observation.sender_label)
+            for observation in system.observations(conversation_id)
+            if observation.kind is InMemoryConversationObservationKind.prompt_discarded
+        ]
+        assert discarded == [("held work", "owner")]
+        assert await system.is_running(conversation_id) is False
+        assert read_ticket(tmp_db, ticket.id).employee_session_id is None
 
     asyncio.run(exercise())
 
