@@ -1,10 +1,9 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
   import { fetchText } from "../lib/api";
-  import {
-    mutateJsonWithResourceEffect,
-    resourceCatalogue
-  } from "../lib/resourceCatalogue";
+  import { mutateJson } from "../lib/mutate";
+  import { queries } from "../lib/queryCatalogue";
   import { PRIORITIES, fieldSlot, labelize, ticketStatusText } from "../lib/ui";
   import {
     ceilingOptionsFor,
@@ -32,16 +31,16 @@
   let { id }: { id: string } = $props();
   const stableId = untrack(() => id);
 
-  const ticket = resourceCatalogue.ticket(stableId);
-  const sprints = resourceCatalogue.sprintSummaries();
-  const projects = resourceCatalogue.projects();
-  const currentSprint = resourceCatalogue.currentSprint();
-  const manifest = resourceCatalogue.workerTypeManifests();
+  const ticket = createQuery(() => queries.ticket(stableId));
+  const sprints = createQuery(() => queries.sprintSummaries());
+  const projects = createQuery(() => queries.projects());
+  const currentSprint = createQuery(() => queries.currentSprint());
+  const manifest = createQuery(() => queries.workerTypeManifests());
 
-  // Derive the per-Worker-type lifecycle from the RESOURCE (ticket.data?.worker_type), not
+  // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
   // the markup-local {@const detail} which is only bound inside {#if ticket.data}
   // (Codex F2). Null while the manifest is still loading OR when the Worker type is absent
-  // from a loaded manifest; the markup tells those apart via manifest.loading /
+  // from a loaded manifest; the markup tells those apart via manifest.isFetching /
   // manifest.error + a type-present check (Codex F3).
   let lc = $derived(lifecycleFor(manifest.data, ticket.data?.worker_type));
   let manifestMissingWorkerType = $derived(
@@ -68,28 +67,19 @@
   ]);
 
   onMount(() => {
-    void mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/acknowledge-completed-response`,
-      { method: "POST" },
-      { kind: "ticketChanged", ticketId: stableId }
-    ).catch((err) => {
+    void mutateJson(`/api/tickets/${stableId}/acknowledge-completed-response`, {
+      method: "POST"
+    }).catch((err) => {
       headerError = err;
     });
   });
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
-    const effect = "title" in body
-      ? { kind: "ticketTitleChanged" as const, ticketId: stableId }
-      : { kind: "ticketChanged" as const, ticketId: stableId };
-    return mutateJsonWithResourceEffect(`/api/tickets/${stableId}`, { method: "PATCH", body }, effect);
+    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/scope`,
-      { method: "POST", body },
-      { kind: "ticketChanged", ticketId: stableId }
-    );
+    return mutateJson(`/api/tickets/${stableId}/scope`, { method: "POST", body });
   }
 
   function currentStageOwnershipOverride(detail: TicketDetail): StageOwnershipMode | null {
@@ -113,45 +103,37 @@
   }
 
   function saveStageOwner(detail: TicketDetail, ownershipMode: string): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
+    return mutateJson(
       `/api/tickets/${stableId}/stage-ownership/${encodeURIComponent(detail.stage)}`,
-      { method: "PUT", body: { ownership_mode: ownershipMode || null } },
-      { kind: "ticketReviewStateChanged", ticketId: stableId }
+      { method: "PUT", body: { ownership_mode: ownershipMode || null } }
     );
   }
 
   function saveNote(field: string, note: string): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/notes/${field}`,
-      { method: "PUT", body: { user_note: note } },
-      { kind: "ticketChanged", ticketId: stableId }
-    );
+    return mutateJson(`/api/tickets/${stableId}/notes/${field}`, {
+      method: "PUT",
+      body: { user_note: note }
+    });
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/value/${field}`,
-      { method: "PUT", body: { body } },
-      { kind: "ticketChanged", ticketId: stableId }
-    );
+    return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
+      method: "PUT",
+      body: { body }
+    });
   }
 
   function saveEmployeeConfiguration(
     configuration: EmployeeConfigurationSnapshot
   ): Promise<TicketDetail> {
-    return mutateJsonWithResourceEffect<TicketDetail>(
-      `/api/tickets/${stableId}/employee-configuration`,
-      { method: "PUT", body: configuration },
-      { kind: "ticketChanged", ticketId: stableId }
-    );
+    return mutateJson<TicketDetail>(`/api/tickets/${stableId}/employee-configuration`, {
+      method: "PUT",
+      body: configuration
+    });
   }
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/accept/${field}`,
-      { method: "POST", body },
-      { kind: "ticketReviewStateChanged", ticketId: stableId }
-    );
+    return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
   }
 
   function writeClipboard(text: string): Promise<void> {
@@ -185,11 +167,7 @@
       ? "release"
       : "takeover";
     try {
-      await mutateJsonWithResourceEffect(
-        `/api/tickets/${stableId}/${action}`,
-        { method: "POST" },
-        { kind: "ticketReviewStateChanged", ticketId: stableId }
-      );
+      await mutateJson(`/api/tickets/${stableId}/${action}`, { method: "POST" });
     } catch (err) {
       headerError = err;
     }
@@ -246,23 +224,11 @@
       kind: "blocks"
     });
     try {
-      await mutateJsonWithResourceEffect(
-        `/api/links?${query.toString()}`,
-        { method: "DELETE" },
-        { kind: "ticketChanged", ticketId: stableId }
-      );
+      await mutateJson(`/api/links?${query.toString()}`, { method: "DELETE" });
     } catch (err) {
       headerError = err;
     }
   }
-
-  onDestroy(() => {
-    ticket.dispose();
-    sprints.dispose();
-    projects.dispose();
-    currentSprint.dispose();
-    manifest.dispose();
-  });
 </script>
 
 <section
@@ -271,7 +237,7 @@
   data-ticket-id={stableId}
   data-stage={ticket.data?.stage}
 >
-  <ResourceState error={ticket.error} loading={ticket.loading} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
+  <ResourceState error={ticket.error} loading={ticket.isFetching} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
     {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
@@ -407,11 +373,10 @@
                 multiline
                 placeholder="Short orientation for a cold reader..."
                 onSave={(raw) =>
-                  mutateJsonWithResourceEffect(
-                    `/api/tickets/${stableId}/recap`,
-                    { method: "PUT", body: { body: raw } },
-                    { kind: "ticketChanged", ticketId: stableId }
-                  )}
+                  mutateJson(`/api/tickets/${stableId}/recap`, {
+                    method: "PUT",
+                    body: { body: raw }
+                  })}
               />
             </Disclosure>
           </div>

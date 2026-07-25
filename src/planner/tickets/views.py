@@ -89,16 +89,6 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
     }
 
 
-def event_json(row: sqlite3.Row) -> JsonDict:
-    return {
-        "id": int(row["id"]),
-        "entity_id": str(row["entity_id"]),
-        "kind": str(row["kind"]),
-        "payload": json.loads(str(row["payload"])),
-        "created_at": int(row["created_at"]),
-    }
-
-
 # --- ticket reads --------------------------------------------------------------
 
 
@@ -159,15 +149,6 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
     if blocker_summary.blocked:
         detail["blocker_summary"] = blocker_summary_json(blocker_summary)
     return detail
-
-
-def list_events_for_entity(conn: sqlite3.Connection, entity_id: str, limit: int) -> list[JsonDict]:
-    rows = conn.execute(
-        "SELECT id, entity_id, kind, payload, created_at FROM events WHERE entity_id = ? "
-        "ORDER BY id ASC LIMIT ?",
-        (entity_id, limit),
-    ).fetchall()
-    return [event_json(r) for r in rows]
 
 
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
@@ -397,12 +378,9 @@ def review_view(
             "waiting_since": int(row["waiting_since"]),
         }
         for row in conn.execute(
-            "SELECT t.id, t.title, MAX(e.created_at) AS waiting_since FROM tickets t "
-            "JOIN events e ON e.entity_id = t.id "
-            "WHERE t.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) "
-            "AND t.ticket_status = 'needs_user' AND e.kind = 'ticket_status_changed' "
-            "AND json_extract(e.payload, '$.ticket_status') = 'needs_user' "
-            "GROUP BY t.id, t.title ORDER BY t.id",
+            "SELECT id, title, ticket_status_changed_at AS waiting_since FROM tickets "
+            "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) "
+            "AND ticket_status = 'needs_user' ORDER BY id",
             (day_id,),
         ).fetchall()
     ]

@@ -116,7 +116,7 @@ def test_queue_pickup_command_removed(server) -> None:
     assert "queue" in (proc.stderr + proc.stdout)  # click's "No such command 'queue'"
 
 
-def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> None:
+def test_ticket_approval_copy_and_worker_note_shape(server, cli, api) -> None:
     tid = cli(
         server,
         "ticket",
@@ -195,9 +195,6 @@ def test_ticket_approval_copy_events_and_worker_note_shape(server, cli, api) -> 
     assert "CLI approve ticket" in copied["text"]
     assert "updated intake" in copied["text"]
     assert "approach note" in copied["text"]
-    events = cli(server, "ticket", "events", tid)
-    assert "events" in events
-    assert any(event["kind"] == "proposal_accepted" for event in events["events"])
 
 
 def test_sprint_ticket_commands_use_sprint_option_and_current_selector(server, cli, api) -> None:

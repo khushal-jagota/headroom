@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import {
-    mutateJsonWithResourceEffect,
-    resourceCatalogue
-  } from "../lib/resourceCatalogue";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { mutateJson } from "../lib/mutate";
+  import { queries } from "../lib/queryCatalogue";
   import { PRIORITY_ORDER } from "../lib/ui";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
@@ -16,8 +14,8 @@
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
-  const backlog = resourceCatalogue.backlogSprintItems();
-  const projects = resourceCatalogue.projects();
+  const backlog = createQuery(() => queries.backlogSprintItems());
+  const projects = createQuery(() => queries.projects());
 
   const priorityOptions = PRIORITY_ORDER.map((value) => ({ value, label: value }));
 
@@ -60,11 +58,7 @@
     };
     if (deadline.trim()) payload.deadline = deadline.trim();
     try {
-      await mutateJsonWithResourceEffect(
-        "/api/items",
-        { method: "POST", body: payload },
-        { kind: "backlogSprintItemCreated" }
-      );
+      await mutateJson("/api/items", { method: "POST", body: payload });
       title = "";
       deadline = "";
       body = "";
@@ -74,11 +68,6 @@
       creating = false;
     }
   }
-
-  onDestroy(() => {
-    backlog.dispose();
-    projects.dispose();
-  });
 </script>
 
 <section class="backlog-screen" data-screen="backlog">
@@ -106,7 +95,7 @@
       </Disclosure>
 
       <div class="groups" data-backlog-items>
-        <ResourceState error={backlog.error} loading={backlog.loading} hasData={Boolean(backlog.data)} loadingText="Loading backlog...">
+        <ResourceState error={backlog.error} loading={backlog.isFetching} hasData={Boolean(backlog.data)} loadingText="Loading backlog...">
         {#if !(backlog.data?.items || []).length}
           <div class="quiet-line">No unscheduled items.</div>
         {:else}

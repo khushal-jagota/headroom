@@ -1,13 +1,10 @@
-"""Day membership actions that commit before waking Automatic Employee-step eligibility."""
+"""Day membership actions that own the transaction their two writes share."""
 
 from __future__ import annotations
 
 import sqlite3
 
 from planner.days import data as days_data
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    AutomaticEmployeeStepEligibilityWake,
-)
 from planner.tickets import data as tickets_data
 
 
@@ -17,7 +14,6 @@ def add_ticket_to_day(
     ticket_id: str,
     *,
     now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -28,8 +24,6 @@ def add_ticket_to_day(
         raise
     else:
         conn.execute("COMMIT")
-    if changed:
-        automatic_employee_step_eligibility_wake.wake()
     return changed
 
 
@@ -39,7 +33,6 @@ def remove_ticket_from_day(
     ticket_id: str,
     *,
     now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -49,6 +42,4 @@ def remove_ticket_from_day(
         raise
     else:
         conn.execute("COMMIT")
-    if changed:
-        automatic_employee_step_eligibility_wake.wake()
     return changed

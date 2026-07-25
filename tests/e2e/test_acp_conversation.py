@@ -1857,11 +1857,6 @@ def test_browser_and_worker_share_one_real_sdk_session(
             title_max_chars=200,
             employee_backend="hermes",
         )
-        conn.execute(
-            "INSERT INTO events (entity_id, kind, payload, created_at) "
-            "VALUES (?, 'test_db_only', '{}', ?)",
-            (ticket.id, clock.now_unix()),
-        )
 
     definition = _definition()
     app = _application(config, clock, definition)

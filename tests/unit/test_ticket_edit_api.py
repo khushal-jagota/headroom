@@ -30,7 +30,6 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
-from planner.core.events import read_events_since
 from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.runtime import automatic_employee_step_eligibility
@@ -147,11 +146,6 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.ticket_status.value,
             ),
             "updated_at": ticket.updated_at,
-            "events": tuple(
-                (event.kind, event.payload, event.created_at)
-                for event in read_events_since(conn, 0, 10_000)
-                if event.entity_id == ticket_id
-            ),
             "context": tuple(
                 (item.context_key, item.text, item.revision)
                 for item in worker_context_data.snapshot(conn, ticket_id).items
@@ -191,10 +185,7 @@ def test_ticket_creation_copies_worker_type_configuration_once(
             },
         )
         before = connect(str(db_path))
-        counts_before = tuple(
-            before.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("tickets", "events")
-        )
+        tickets_before = before.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
         before.close()
         rejected = client.post(
             "/api/tickets",
@@ -217,22 +208,7 @@ def test_ticket_creation_copies_worker_type_configuration_once(
     assert rejected.json()["error"]["code"] == "validation"
     check = connect(str(db_path))
     try:
-        assert (
-            tuple(
-                check.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                for table in ("tickets", "events")
-            )
-            == counts_before
-        )
-        created_payloads = [
-            event.payload
-            for event in read_events_since(check, 0, 10_000)
-            if event.kind == "ticket_created"
-        ]
-        assert [payload["employee_backend"] for payload in created_payloads] == [
-            "probe-backend",
-            "hermes",
-        ]
+        assert check.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
     finally:
         check.close()
 
@@ -273,7 +249,7 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
         ]
 
 
-def test_employee_configuration_endpoint_allows_pristine_statuses_and_emits_exact_event(
+def test_employee_configuration_endpoint_allows_pristine_statuses(
     tmp_path: Path,
     probe_runtime: None,
 ) -> None:
@@ -301,20 +277,10 @@ def test_employee_configuration_endpoint_allows_pristine_statuses_and_emits_exac
     check = connect(str(db_path))
     try:
         for ticket_id in (awaiting_id, empty_id):
-            events = [
-                event
-                for event in read_events_since(check, 0, 10_000)
-                if event.entity_id == ticket_id and event.kind == "ticket_updated"
-            ]
-            assert [event.payload for event in events] == [
-                {
-                    "field": "employee_configuration",
-                    "from": _employee_configuration_body(
-                        "probe-backend", "probe-model", "probe-high"
-                    ),
-                    "to": _employee_configuration_body("hermes"),
-                }
-            ]
+            stored = tickets_data.read_ticket(check, ticket_id)
+            assert stored.employee_backend == "hermes"
+            assert stored.employee_launch_model is None
+            assert stored.employee_launch_reasoning_effort is None
     finally:
         check.close()
 
@@ -836,16 +802,6 @@ def test_employee_configuration_writer_and_first_binding_race_in_both_commit_ord
     binding_first_check.close()
 
 
-def _new_ticket_events(db_path: Path, ticket_id: str, prior_count: int) -> list[Any]:
-    conn = connect(str(db_path))
-    try:
-        return [
-            event for event in read_events_since(conn, 0, 10_000) if event.entity_id == ticket_id
-        ][prior_count:]
-    finally:
-        conn.close()
-
-
 def test_execution_route_is_absent_and_patch_rejects_it_as_unknown(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_ticket(db_path)
@@ -924,29 +880,7 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
     assert response.json()["deadline"] == "2026-08-01"
     assert response.json()["project_id"] == "project_vylo"
     assert response.json()["sprint_id"] == "sp_edit"
-    events = _new_ticket_events(db_path, ticket_id, len(before["events"]))
-    assert [(event.kind, event.payload) for event in events] == [
-        (
-            "ticket_updated",
-            {"field": "title", "from": "Before edit", "to": "After edit"},
-        ),
-        (
-            "ticket_updated",
-            {"field": "priority", "from": "P3", "to": "P1"},
-        ),
-        (
-            "ticket_updated",
-            {"field": "deadline", "from": None, "to": "2026-08-01"},
-        ),
-        (
-            "ticket_updated",
-            {"field": "project_id", "from": None, "to": "project_vylo"},
-        ),
-        (
-            "ticket_updated",
-            {"field": "sprint_id", "from": None, "to": "sp_edit"},
-        ),
-    ]
+    assert before["values"] != _snapshot(db_path, ticket_id)["values"]
     assert _snapshot(db_path, ticket_id)["context"] == (
         (
             "ticket_changed",
@@ -973,19 +907,19 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
     )
 
 
-def test_compound_patch_rolls_back_row_events_and_context_after_event_insert_fails(
+def test_compound_patch_rolls_back_the_row_and_context_when_a_later_write_fails(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_ticket(db_path)
     conn = connect(str(db_path))
     try:
+        # The worker-context notice is written after the ticket row, inside the same
+        # transaction, so failing it proves the row write rolls back with it.
         conn.execute(
-            "CREATE TRIGGER abort_priority_ticket_event "
-            "BEFORE INSERT ON events "
-            "WHEN NEW.kind = 'ticket_updated' "
-            "AND json_extract(NEW.payload, '$.field') = 'priority' "
-            "BEGIN SELECT RAISE(ABORT, 'forced ticket event failure'); END"
+            "CREATE TRIGGER abort_worker_context_notice "
+            "BEFORE INSERT ON pending_worker_context "
+            "BEGIN SELECT RAISE(ABORT, 'forced worker context failure'); END"
         )
     finally:
         conn.close()

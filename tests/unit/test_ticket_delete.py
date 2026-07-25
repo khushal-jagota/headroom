@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -8,11 +7,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.core import change_signal
 from planner.core import links as core_links
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
-from planner.core.contracts import EventKind, LinkKind
+from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
@@ -123,44 +123,15 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
         "SELECT 1 FROM employee_step_runs WHERE ticket_id = ?", (target.id,)
     ).fetchone() is None
 
-    target_events = tmp_db.execute(
-        "SELECT kind, payload, created_at FROM events WHERE entity_id = ? ORDER BY id",
-        (target.id,),
-    ).fetchall()
-    assert len(target_events) == 1
-    assert target_events[0]["kind"] == EventKind.ticket_deleted.value
-    assert json.loads(target_events[0]["payload"]) == {
-        "ticket_id": target.id,
-        "title": "Mistaken ticket",
-        "actor": "human",
-    }
-    assert target_events[0]["created_at"] == now
-
-    prior_reference_events = tmp_db.execute(
-        "SELECT kind, payload FROM events WHERE kind IN ('day_ticket_added', 'link_added')"
-    ).fetchall()
-    for event in prior_reference_events:
-        assert target.id not in json.loads(event["payload"]).values()
-
-    day_event = tmp_db.execute(
-        "SELECT payload FROM events WHERE entity_id = ? AND kind = 'day_ticket_removed' "
-        "ORDER BY id DESC LIMIT 1",
-        (day_id,),
-    ).fetchone()
-    assert json.loads(day_event["payload"]) == {"ticket_id": target.id}
-    item_event = tmp_db.execute(
-        "SELECT payload FROM events WHERE entity_id = 'si_delete_parent' "
-        "AND kind = 'item_children_changed' ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    assert json.loads(item_event["payload"]) == {"ticket_id": target.id, "reason": "deleted"}
-    for survivor_id in (before.id, after.id, "si_delete_parent"):
-        event = tmp_db.execute(
-            "SELECT payload FROM events WHERE entity_id = ? AND kind = 'link_removed' "
-            "ORDER BY id DESC LIMIT 1",
-            (survivor_id,),
-        ).fetchone()
-        assert event is not None
-        assert target.id in json.loads(event["payload"]).values()
+    # Nothing anywhere still refers to the deleted Ticket.
+    assert tmp_db.execute(
+        "SELECT 1 FROM day_tickets WHERE ticket_id = ?", (target.id,)
+    ).fetchone() is None
+    assert tmp_db.execute(
+        "SELECT 1 FROM pending_worker_context WHERE worker_entity_id = ?", (target.id,)
+    ).fetchone() is None
+    assert tickets_data.read_ticket(tmp_db, before.id).ticket_status is not None
+    assert tickets_data.read_ticket(tmp_db, after.id).ticket_status is not None
 
 
 def test_delete_ticket_rejects_agent_and_each_active_worker_invariant(
@@ -217,14 +188,6 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     return create_app(config, clock, conn_factory), db_path
 
 
-class _EligibilityWakeSpy:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def wake(self) -> None:
-        self.calls += 1
-
-
 def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     conn = connect(str(db_path))
@@ -239,9 +202,14 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
     days_data.add_day_ticket(conn, "day_2026-07-04", target.id, 1)
     conn.close()
 
+    signals = 0
+
+    def record() -> None:
+        nonlocal signals
+        signals += 1
+
+    unsubscribe = change_signal.subscribe(record)
     with TestClient(app) as client:
-        eligibility_wake_spy = _EligibilityWakeSpy()
-        app.state.automatic_employee_step_eligibility_wake = eligibility_wake_spy
         forbidden = client.delete(f"/api/tickets/{target.id}", headers={"X-Plan-Actor": "agent"})
         assert forbidden.status_code == 400
         assert forbidden.json()["error"]["code"] == "agent_forbidden"
@@ -258,4 +226,5 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
             "linked_entity_ids": [],
         }
         assert client.get(f"/api/tickets/{target.id}").status_code == 404
-        assert eligibility_wake_spy.calls == 1
+    unsubscribe()
+    assert signals == 1

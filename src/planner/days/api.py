@@ -19,7 +19,6 @@ from planner.days import data as days_data
 from planner.days.contracts import AddDayTicketBody
 from planner.days.logic import dates
 from planner.tickets.api import (
-    AutomaticEmployeeStepEligibilityWakeDependency,
     Cfg,
     Clk,
     Ctx,
@@ -100,7 +99,6 @@ async def add_day_ticket(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = AddDayTicketBody(ticket_id=body_str(raw, "ticket_id"))
     did = resolve_day_id(date, clk, cfg)
@@ -110,7 +108,6 @@ async def add_day_ticket(
         did,
         body["ticket_id"],
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return _day_view(conn, did, now)
 
@@ -122,7 +119,6 @@ async def remove_day_ticket(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
@@ -131,6 +127,5 @@ async def remove_day_ticket(
         did,
         ticket_id,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return _day_view(conn, did, now)

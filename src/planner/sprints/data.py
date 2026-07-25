@@ -14,9 +14,8 @@ from typing import NamedTuple, cast
 
 from planner.core import links as core_links
 from planner.core.clock import Clock
-from planner.core.contracts import EventKind, Priority
+from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.sprints.contracts import (
     KICKOFF_FIELDS,
@@ -176,13 +175,6 @@ def create_sprint(
                 now,
             ),
         )
-        append_event(
-            conn,
-            sprint_id,
-            EventKind.sprint_created,
-            {"name": name, "date_start": date_start, "date_end": date_end},
-            now,
-        )
     return _load_sprint(conn, sprint_id)
 
 
@@ -197,20 +189,12 @@ def update_sprint_field(
         )
     # Freeze retired (rev6): nothing in a sprint locks, so every text field
     # (kickoff / mid-sprint / review / name) is always editable. No admissibility gate.
-    sprint = _load_sprint(conn, sprint_id)
+    _load_sprint(conn, sprint_id)
     now = clock.now_unix()
-    prev = getattr(sprint, field)
     with _tx(conn):
         conn.execute(
             f"UPDATE sprints SET {field} = ?, updated_at = ? WHERE id = ?",
             (value, now, sprint_id),
-        )
-        append_event(
-            conn,
-            sprint_id,
-            EventKind.sprint_updated,
-            {"field": field, "from": prev, "to": value},
-            now,
         )
     return _load_sprint(conn, sprint_id)
 
@@ -256,22 +240,6 @@ def set_sprint_dates(
             "UPDATE sprints SET date_start = ?, date_end = ?, updated_at = ? WHERE id = ?",
             (new_start, new_end, now, sprint_id),
         )
-        if new_start != sprint.date_start:
-            append_event(
-                conn,
-                sprint_id,
-                EventKind.sprint_updated,
-                {"field": "date_start", "from": sprint.date_start, "to": new_start},
-                now,
-            )
-        if new_end != sprint.date_end:
-            append_event(
-                conn,
-                sprint_id,
-                EventKind.sprint_updated,
-                {"field": "date_end", "from": sprint.date_end, "to": new_end},
-                now,
-            )
     return _load_sprint(conn, sprint_id)
 
 
@@ -311,13 +279,6 @@ def create_item(
                 now,
             ),
         )
-        append_event(
-            conn,
-            item_id,
-            EventKind.sprint_item_created,
-            {"title": title, "project_id": project_id, "sprint_id": sprint_id},
-            now,
-        )
     return _load_item(conn, item_id)
 
 
@@ -338,7 +299,6 @@ def create_idea(
             "VALUES (?, ?, ?, ?, ?, ?)",
             (idea_id, title, body, project_id, now, now),
         )
-        append_event(conn, idea_id, EventKind.idea_created, {"title": title, "source": "api"}, now)
     row = cast(
         sqlite3.Row | None,
         conn.execute(
@@ -359,8 +319,7 @@ def update_item_field(
         raise PlannerError(
             ErrorCode.validation, "field is not an editable item field", {"field": field}
         )
-    item = _load_item(conn, item_id)
-    prev = getattr(item, field)
+    _load_item(conn, item_id)
     stored: str | None = value
     if field == "priority":
         if value is None:
@@ -380,21 +339,13 @@ def update_item_field(
             f"UPDATE sprint_items SET {field} = ?, updated_at = ? WHERE id = ?",
             (stored, now, item_id),
         )
-        append_event(
-            conn,
-            item_id,
-            EventKind.item_updated,
-            {"field": field, "from": prev, "to": stored},
-            now,
-        )
     return _load_item(conn, item_id)
 
 
 def assign_item_sprint(
     conn: sqlite3.Connection, item_id: str, sprint_id: str | None, *, clock: Clock
 ) -> SprintItem:
-    item = _load_item(conn, item_id)
-    prev = item.sprint_id
+    _load_item(conn, item_id)
     if sprint_id is not None:
         _load_sprint(conn, sprint_id)
     now = clock.now_unix()
@@ -402,13 +353,6 @@ def assign_item_sprint(
         conn.execute(
             "UPDATE sprint_items SET sprint_id = ?, updated_at = ? WHERE id = ?",
             (sprint_id, now, item_id),
-        )
-        append_event(
-            conn,
-            item_id,
-            EventKind.item_updated,
-            {"field": "sprint_id", "from": prev, "to": sprint_id},
-            now,
         )
     return _load_item(conn, item_id)
 

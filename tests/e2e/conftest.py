@@ -98,9 +98,6 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
                 "PLAN_LOGS_DIR": str(srvdir / "logs"),
                 "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
-                "PLAN_WS_POLL_MS": "50",
-                "PLAN_WS_HEARTBEAT_MS": "500",
-                "PLAN_UI_DEBOUNCE_MS": "50",
             }
         )
         if trusted_ingress_env is not None:
@@ -146,8 +143,6 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
             if resp is not None and resp.status_code == 200:
                 meta = resp.json()
                 assert meta["test_mode"] is True, meta
-                assert meta["ui_debounce_ms"] == 50, meta
-                assert meta["ws_heartbeat_ms"] == 500, meta
                 root = httpx.get(f"{base}/", timeout=1.0)
                 assert root.status_code == 200, root.status_code
                 assert "data-svelte-app" in root.text
@@ -201,24 +196,18 @@ def open_page() -> Callable[..., Page]:
         server: ServerHandle,
         route: str,
         ready_selector: str,
-        settled: bool,
     ) -> Page:
         page = ctx.new_page()
         page.goto(server.base + "/" + route)
         page.wait_for_selector(ready_selector, timeout=WAIT_MS)
-        # WS-open gate: never fire an observed mutation before the socket is live.
+        # Change-stream gate: never fire an observed change before the stream is live,
+        # or the browser has no way to hear about it. What the screen already shows is
+        # current by construction — the first read happens at page open — so there is
+        # nothing to let settle beyond this.
         page.wait_for_function(
-            "() => window.__plannerDebug && window.__plannerDebug.wsOpens >= 1",
+            "() => window.__plannerDebug && window.__plannerDebug.sseOpens >= 1",
             timeout=WAIT_MS,
         )
-        if settled:
-            # Events preceded page-open: let the since=0 catch-up replay's one flush
-            # re-render land, then re-anchor on the ready selector (screen replaced).
-            page.wait_for_function(
-                "() => window.__plannerDebug && window.__plannerDebug.flushes >= 1",
-                timeout=WAIT_MS,
-            )
-            page.wait_for_selector(ready_selector, timeout=WAIT_MS)
         return page
 
     return _open

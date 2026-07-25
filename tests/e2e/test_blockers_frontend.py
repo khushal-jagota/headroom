@@ -84,7 +84,6 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         server,
         "#/workspace",
         f'[data-card][data-ticket-id="{later_dependent}"]',
-        settled=True,
     )
     blocked = '[data-bucket-section][data-bucket-key="blocked"]'
     empty = '[data-bucket-section][data-bucket-key="empty"]'
@@ -185,7 +184,7 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
     _post_stage(server, cleared_blocker, "done")
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{blocked_ticket}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{blocked_ticket}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{blocked_ticket}", ready)
 
     # At needs_kickoff the direct blockers render as chips inside the Kickoff
     # approval card's context row; the standalone section is suppressed.
@@ -275,7 +274,7 @@ def test_kickoff_card_context_row_approves_and_standalone_blockers_return(
         blocker,
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready)
 
     # Structure: worker pills and blocker chips inside the approval card, in one
     # context row directly above the Approve/ceiling action row.

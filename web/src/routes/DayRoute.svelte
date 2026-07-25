@@ -1,15 +1,13 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
   import { shortMonthDayLabel, weekdayLabel } from "../lib/dates";
-  import {
-    mutateJsonWithResourceEffect,
-    resourceCatalogue
-  } from "../lib/resourceCatalogue";
+  import { mutateJson } from "../lib/mutate";
+  import { queries } from "../lib/queryCatalogue";
   import type { DayResponse } from "../lib/types";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
 
-  const day = resourceCatalogue.todayDay();
+  const day = createQuery(() => queries.todayDay());
 
   type DayBodyField = "brief_take" | "watchout" | "if_today_lands";
   type DayBodyAttr = "day-take-body" | "day-watch-body" | "day-lands-body";
@@ -42,18 +40,12 @@
 
   function saveField(field: string, raw: string): Promise<unknown> {
     const date = dateSegment();
-    return mutateJsonWithResourceEffect(
-      `/api/day/${date}`,
-      { method: "PATCH", body: { [field]: raw } },
-      { kind: "todayDayChanged" }
-    );
+    return mutateJson(`/api/day/${date}`, { method: "PATCH", body: { [field]: raw } });
   }
-
-  onDestroy(() => day.dispose());
 </script>
 
 <section class="day-screen" data-screen="day">
-  <ResourceState error={day.error} loading={day.loading} hasData={Boolean(day.data)} loadingText="Loading day...">
+  <ResourceState error={day.error} loading={day.isFetching} hasData={Boolean(day.data)} loadingText="Loading day...">
     {#if day.data}
       {@const info = dateLabel(dateSegment())}
       <div class="doc" data-day-overview>

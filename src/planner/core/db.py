@@ -4,6 +4,13 @@ WAL mode, foreign keys on. Booleans are INTEGER 0/1; JSON is TEXT holding canoni
 all times are INTEGER unix seconds; all dates are TEXT ISO. Column names match the
 contract dataclass field names one-for-one.
 
+Every connection opened here also announces its own commits on the process-wide change
+signal, so nothing a writer does has to remember to say it wrote. One writer stays
+outside this door on purpose: ``conversation/employee_configuration.py`` opens a raw
+``sqlite3`` connection for its backend catalog cache and commits there. That cache is
+conversation's own; it changes nothing the browser shows and nothing Automatic
+Employee-step eligibility reads, so it is left unwatched.
+
 The schema itself is not written here. It lives in the migration history under
 ``migrations/``, whose first revision is the schema as the old hand-written migration
 ladder left it.
@@ -20,6 +27,7 @@ from alembic.config import Config
 from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
+from planner.core import change_signal
 from planner.projects import data as projects_data
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
@@ -73,11 +81,59 @@ PRE_ALEMBIC_INDEX_NAMES: Final = frozenset(
 )
 
 
+def _statement_commits(sql: str) -> bool:
+    """Whether this statement is the one that ends a transaction by keeping its work.
+
+    Transactions here always end with a literal ``COMMIT``; a ``ROLLBACK`` throws the
+    work away and must stay silent.
+    """
+    return sql.strip().lower().startswith("commit")
+
+
+class ChangeSignallingConnection(sqlite3.Connection):
+    """A connection that announces every write it commits, once each.
+
+    This is the door writers already go through, so no writer has to remember to
+    announce anything. A write commits in one of two ways here, and both are watched:
+
+    - inside a transaction the caller opened, when the closing ``COMMIT`` runs;
+    - on its own. These connections leave transaction control to the caller, so a
+      statement run with nothing open commits the moment it returns. Whether it was
+      really a write is the row count: a statement that leaves the stored rows exactly
+      as they were — a read, an update that matched nothing, a schema change — says
+      nothing, because there is nothing for a reader to come back for.
+
+    The announcement happens after the statement returns, when the write lock is
+    already released and the new rows are readable. A rollback, or a commit that
+    fails, announces nothing.
+    """
+
+    def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+        had_open_transaction = self.in_transaction
+        rows_changed_before = self.total_changes
+        cursor = super().execute(sql, parameters)
+        if self.in_transaction:
+            return cursor
+        if had_open_transaction:
+            if _statement_commits(sql):
+                change_signal.emit()
+        elif self.total_changes != rows_changed_before:
+            change_signal.emit()
+        return cursor
+
+    def commit(self) -> None:
+        had_open_transaction = self.in_transaction
+        super().commit()
+        if had_open_transaction:
+            change_signal.emit()
+
+
 def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
     conn = sqlite3.connect(
         db_path,
         isolation_level=None,
         timeout=busy_timeout_ms / 1000,
+        factory=ChangeSignallingConnection,
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

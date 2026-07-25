@@ -1,6 +1,6 @@
-"""Shared vocabulary used across every domain: cross-domain enums, the event
-kinds, the link kinds, the two infrastructure shapes (event row, link row), and
-the structured-error contract (ErrorCode, PlannerError) that pure logic raises.
+"""Shared vocabulary used across every domain: cross-domain enums, the kinds a
+resolution decision is stated in, the link kinds, the link row, and the
+structured-error contract (ErrorCode, PlannerError) that pure logic raises.
 
 Stdlib only. Nothing here imports another planner module."""
 
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Literal
 
-JsonDict = dict[str, Any]  # event payloads, adapter blobs
+JsonDict = dict[str, Any]  # decision payloads, adapter blobs
 UnixTime = int             # unix seconds
 
 
@@ -73,15 +73,6 @@ class EventKind(StrEnum):
     link_added = "link_added"                        # {from_id, to_id, kind}
     link_removed = "link_removed"
     employee_step_started = "employee_step_started"  # {employee_step_id}
-
-
-@dataclass(frozen=True)
-class EventRow:                              # a row read back from the append-only events table
-    id: int
-    entity_id: str
-    kind: str
-    payload: JsonDict
-    created_at: int
 
 
 @dataclass(frozen=True)

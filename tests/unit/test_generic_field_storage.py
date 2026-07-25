@@ -44,9 +44,8 @@ from tests.support.probe import PROBE_FIELD_IDS as _PROBE_FIELD_IDS
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.core.clock import TestClock
-from planner.core.contracts import ErrorCode, EventKind, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError
 from planner.core.db import connect, create_schema
-from planner.core.events import read_events_since
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -330,16 +329,7 @@ def _create_probe(tmp_db: Connection, now: int) -> str:
     return ticket.id
 
 
-def _events(tmp_db: Connection, tid: str) -> list[tuple[str, dict[str, object]]]:
-    """(kind, payload) rows for a ticket in append order."""
-    return [(e.kind, e.payload) for e in read_events_since(tmp_db, 0, 10_000) if e.entity_id == tid]
-
-
-def _kinds_after(tmp_db: Connection, tid: str, since: int) -> list[tuple[str, dict[str, object]]]:
-    return _events(tmp_db, tid)[since:]
-
-
-def test_probe_data_layer_drive_to_done_exact_events(
+def test_probe_data_layer_drive_to_done(
     tmp_db: Connection, fake_clock: TestClock, probe_registry: WorkerTypeDefinition
 ) -> None:
     now = fake_clock.now_unix()
@@ -359,7 +349,6 @@ def test_probe_data_layer_drive_to_done_exact_events(
     assert fields_codec.get_slot(t.fields, "kickoff").proposal is not None
 
     # --- accept kickoff, expanding the ceiling onward to needs_beta (beyond needs_alpha).
-    before = len(_events(tmp_db, tid))
     t = tickets_data.accept_proposal(
         tmp_db,
         tid,
@@ -372,24 +361,8 @@ def test_probe_data_layer_drive_to_done_exact_events(
     assert t.stage == _A
     assert t.ceiling == _B
     assert fields_codec.get_slot(t.fields, "kickoff").value == ""  # default kickoff note
-    # EXACT event order + payloads: proposal_accepted(kickoff) -> stage_changed -> scope_changed.
-    kinds = _kinds_after(tmp_db, tid, before)
-    assert [k for k, _ in kinds] == [
-        EventKind.proposal_accepted.value,
-        EventKind.stage_changed.value,
-        EventKind.scope_changed.value,
-        EventKind.ticket_status_changed.value,
-    ]
-    assert kinds[0][1] == {"field": "kickoff", "body": "", "resolved_by": "direct", "edited": False}
-    assert kinds[1][1] == {
-        "from_stage": "needs_kickoff",
-        "to_stage": _A,
-        "cause": "direct_accept",
-    }
-    assert kinds[2][1] == {"ceiling": _B, "at_cap": "propose", "cause": "onward_scope"}
 
     # --- propose alpha: ceiling (_B) is BEYOND state (_A) -> AUTO-ACCEPTS + advances.
-    before = len(_events(tmp_db, tid))
     t = tickets_data.file_proposal(
         tmp_db, tid, field=_FA, body="alpha body", actor="agent", now=now
     )
@@ -399,40 +372,17 @@ def test_probe_data_layer_drive_to_done_exact_events(
     # Probe's mixed ownership fired for the FOREIGN type:
     # worker-owned needs_alpha auto-accepted into newly eligible paired needs_beta.
     assert t.ticket_status == TicketStatus.empty
-    kinds = _kinds_after(tmp_db, tid, before)
-    assert [k for k, _ in kinds] == [
-        EventKind.proposal_accepted.value,
-        EventKind.stage_changed.value,
-    ]
-    assert kinds[0][1] == {
-        "field": _FA,
-        "body": "alpha body",
-        "resolved_by": "auto",
-        "edited": False,
-    }
-    assert kinds[1][1] == {"from_stage": _A, "to_stage": _B, "cause": "auto_accept"}
 
     # --- at needs_beta (ceiling _B ==): propose beta -> PARKS (value None, proposal set).
-    before = len(_events(tmp_db, tid))
     t = tickets_data.file_proposal(tmp_db, tid, field=_FB, body="beta v1", actor="agent", now=now)
     beta = fields_codec.get_slot(t.fields, _FB)
     assert beta.value is None and beta.proposal is not None and beta.proposal.body == "beta v1"
     assert t.stage == _B
-    kinds = _kinds_after(tmp_db, tid, before)
-    assert [k for k, _ in kinds] == [
-        EventKind.proposal_filed.value,
-        EventKind.ticket_status_changed.value,
-    ]
-    assert kinds[0][1] == {"field": _FB, "body": "beta v1", "proposed_by": "agent"}
+    assert t.ticket_status == TicketStatus.awaiting_approval
 
-    # --- propose beta AGAIN -> SUPERSEDES the first (proposal_superseded emitted).
-    before = len(_events(tmp_db, tid))
+    # --- propose beta AGAIN -> SUPERSEDES the first.
     t = tickets_data.file_proposal(tmp_db, tid, field=_FB, body="beta v2", actor="agent", now=now)
     assert fields_codec.get_slot(t.fields, _FB).proposal.body == "beta v2"
-    kinds = _kinds_after(tmp_db, tid, before)
-    assert kinds[0][0] == EventKind.proposal_superseded.value
-    assert kinds[0][1] == {"field": _FB, "replaced_body": "beta v1"}
-    assert kinds[1][0] == EventKind.proposal_filed.value
 
     # --- accept beta -> advances to done (the terminal), value settled.
     t = tickets_data.accept_proposal(
@@ -467,16 +417,12 @@ def test_probe_recap_path_infers_gating_field(
     )
     assert t.stage == _A
 
-    before = len(_events(tmp_db, tid))
     t = tickets_data.file_current_proposal_with_recap(
         tmp_db, tid, body="alpha via recap", recap="probe recap", actor="agent", now=now
     )
     assert t.recap == "probe recap"
     assert fields_codec.get_slot(t.fields, _FA).proposal.body == "alpha via recap"
     assert t.stage == _A  # parked at the ceiling
-    kinds = [k for k, _ in _kinds_after(tmp_db, tid, before)]
-    assert EventKind.proposal_filed.value in kinds
-    assert EventKind.recap_updated.value in kinds
 
 
 def test_probe_return_for_revision_clears_parked_proposal(

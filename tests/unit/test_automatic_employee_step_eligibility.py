@@ -15,9 +15,6 @@ from planner.days import data as days_data
 from planner.runtime.automatic_employee_step_eligibility import (
     is_eligible_for_automatic_employee_step,
 )
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
@@ -115,7 +112,6 @@ def _block(
         target_id,
         LinkKind.blocks,
         now=now,
-        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
     )
 
 
@@ -215,25 +211,6 @@ def test_paired_owned_ticket_resting_at_paired_is_never_startable(tmp_path: Path
             (TicketStatus.empty.value, ticket.id),
         )
         assert _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
-    finally:
-        conn.close()
-
-
-def test_eligibility_reads_no_events_at_all(tmp_path: Path) -> None:
-    # The decision is made from the Ticket row, day membership, employee steps and the
-    # Closeout lane. Nothing reads the event log, so the whole table can be gone.
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn)
-        blocked_ticket = _ticket(conn)
-        conn.execute(
-            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
-            (TicketStatus.blocked.value, blocked_ticket.id),
-        )
-        conn.execute("DROP TABLE events")
-
-        assert _eligible(conn, ticket)
-        assert not _eligible(conn, blocked_ticket)
     finally:
         conn.close()
 

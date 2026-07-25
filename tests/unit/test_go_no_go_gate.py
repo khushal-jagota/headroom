@@ -88,14 +88,6 @@ PROBE_MANIFEST = {
     "default_employee_reasoning_effort": "probe-high",
 }
 
-# The gating accept event order the engine emits for a direct gating accept with an
-# onward scope pair (observed once, then pinned): the accept, the linear advance, the
-# onward scope change, and the durable-control reset.
-_ACCEPT_EVENTS = ["proposal_accepted", "stage_changed", "scope_changed", "ticket_status_changed"]
-# A parked propose-with-recap: the filed proposal, the recap write, the awaiting reset.
-_PROPOSE_EVENTS = ["proposal_filed", "recap_updated", "ticket_status_changed"]
-
-
 @pytest.fixture
 def probe_installed() -> Iterator[None]:
     install_probe_registry()
@@ -124,10 +116,6 @@ def app_db(tmp_path: Path):
 
     app = create_app(config, build_clock(config), conn_factory)
     return app, db_path
-
-
-def _event_kinds(client: TestClient, tid: str) -> list[str]:
-    return [e["kind"] for e in client.get(f"/api/tickets/{tid}/events").json()["events"]]
 
 
 def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
@@ -159,7 +147,6 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
 
         # 4-5. Accept the (create-time) kickoff proposal. Keep the ceiling AT the state
         # advanced into with at_cap=propose, so the next stage's proposal PARKS.
-        base = len(_event_kinds(client, tid))
         accept_kickoff = client.post(
             f"/api/tickets/{tid}/accept/kickoff",
             json={"next_ceiling": "needs_alpha", "at_cap": "propose"},
@@ -171,7 +158,6 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         assert k["at_cap"] == "propose"
         assert k["fields"]["kickoff"]["value"] == "kickoff body"
         assert k["fields"]["kickoff"]["proposal"] is None
-        assert _event_kinds(client, tid)[base:] == _ACCEPT_EVENTS
 
         # Drive alpha then beta: propose-with-recap parks on the registry-selected field,
         # then accept advances with the exact next ceiling.
@@ -182,7 +168,6 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
             # 2-3. Propose the current gating field with a non-empty recap; it PARKS on
             # exactly the field the registry gates for the current state.
             at_cap = "propose" if field == "alpha" else "stop"
-            base = len(_event_kinds(client, tid))
             proposed = client.post(
                 f"/api/tickets/{tid}/propose",
                 json={"body": f"{field} proposal", "recap": f"recap {field}"},
@@ -194,11 +179,8 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
             # The proposal parks: the ceiling is unchanged from before the propose,
             # and no other field carries a proposal.
             assert parked["ceiling"] == k["ceiling"]
-            assert _event_kinds(client, tid)[base:] == _PROPOSE_EVENTS
 
-            # 4-5. Accept: exact next state/ceiling, settled value, cleared proposal,
-            # and the exact event order.
-            base = len(_event_kinds(client, tid))
+            # 4-5. Accept: exact next state/ceiling, settled value, cleared proposal.
             accepted = client.post(
                 f"/api/tickets/{tid}/accept/{field}",
                 json={"next_ceiling": next_ceiling, "at_cap": at_cap},
@@ -209,7 +191,6 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
             assert a["at_cap"] == at_cap
             assert a["fields"][field]["value"] == f"{field} proposal"
             assert a["fields"][field]["proposal"] is None
-            assert _event_kinds(client, tid)[base:] == _ACCEPT_EVENTS
             k = a
 
         # 6. Landed at done, ceiling done.

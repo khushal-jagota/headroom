@@ -12,7 +12,7 @@ read today's Ticket membership            claim under one SQLite write lock
 apply the complete eligibility rule  ───► create one correctness-only run
 hand eligible ids to the runner            send through AcpStepGateway
                                              │
-commit → best-effort wake ◄──────────────────┘
+any committed write ◄────────────────────────┘
 SQLite and the periodic timer remain canonical
 ```
 
@@ -44,16 +44,20 @@ each free lane.
 
 The runner repeats the same decision under `BEGIN IMMEDIATE`. A stale discovery result
 therefore cannot claim the Ticket, create a run, or contact an agent. The transaction
-changes the Ticket to `agent`, creates the Employee-step record, and writes
-the `employee_step_started` event before the worker prompt begins.
+changes the Ticket to `agent` and creates the Employee-step record before the worker
+prompt begins.
 
-Eligibility-affecting actions commit first and then send a payload-free, best-effort
-wake. The periodic discovery timer and SQLite state are still the backstop, so a lost
-same-process wake cannot lose work.
+Discovery does not wait for its timer to come round. Every write committed through
+the database door announces itself — the announcement says nothing about what
+changed — and discovery answers by re-running the whole eligibility check. (One
+internal conversation cache writes outside the door and stays silent; it never
+affects eligibility.) Checking too often is
+harmless: the check is read-only and the decision is complete. The periodic timer and
+SQLite state are still the backstop, so a lost announcement cannot lose work.
 
 _Code paths:_ `src/planner/runtime/automatic_employee_step_eligibility.py`,
 `src/planner/runtime/automatic_employee_step_discovery_loop.py`, and
-`src/planner/runtime/automatic_employee_step_eligibility_wake.py`.
+`src/planner/core/change_signal.py`.
 
 ## The correctness record
 
@@ -100,7 +104,7 @@ Pending worker context is a separate durable service. The gateway prepares its e
 text into the model prompt, admits that prompt through ACP, and only then acknowledges
 the included context revisions. A pre-admission failure keeps those revisions pending.
 The worker sees the context because it is in the actual ACP prompt, not because Panels
-wrote an event, database transcript, or UI row.
+wrote a database row or a UI row.
 
 Human prompts and Automatic Employee prompts therefore share one durable backend
 conversation. The broker serializes their delivery choices; the runtime does not use
@@ -211,4 +215,4 @@ startup behavior changes the Ticket's durable backend choice or session identity
 
 ---
 
-_Last verified: 2026-07-25 (eligibility now turns on the empty Ticket status)._
+_Last verified: 2026-07-25 (eligibility turns on the empty Ticket status; discovery listens for the change signal)._

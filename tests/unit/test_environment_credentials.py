@@ -158,9 +158,6 @@ def test_hidden_test_launch_seam_injects_fake_runtime_itself(tmp_path: Path) -> 
         "PLAN_TEST_MODE": "0",
         "PLAN_GATEWAY_ADAPTER": "real",
         "PLAN_FAKE_NOW": "2099-01-01T00:00:00",
-        "PLAN_WS_POLL_MS": "9999",
-        "PLAN_WS_HEARTBEAT_MS": "9999",
-        "PLAN_UI_DEBOUNCE_MS": "9999",
         "PLAN_TICK_SECONDS": "9999",
     }
 
@@ -175,9 +172,6 @@ def test_hidden_test_launch_seam_injects_fake_runtime_itself(tmp_path: Path) -> 
     assert run_env["PLAN_TEST_MODE"] == "1"
     assert "PLAN_GATEWAY_ADAPTER" not in run_env
     assert run_env["PLAN_FAKE_NOW"] == "2026-07-04T12:00:00+00:00"
-    assert run_env["PLAN_WS_POLL_MS"] == "50"
-    assert run_env["PLAN_WS_HEARTBEAT_MS"] == "500"
-    assert run_env["PLAN_UI_DEBOUNCE_MS"] == "50"
     assert run_env["PLAN_TICK_SECONDS"] == "1"
 
 

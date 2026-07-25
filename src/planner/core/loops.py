@@ -5,19 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+from collections.abc import Callable
 from time import monotonic as _monotonic
 from typing import Any
 
+from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.db import connect
 from planner.runtime.automatic_employee_step_discovery_loop import (
     AutomaticEmployeeStepDiscoveryLoop,
-)
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    AutomaticEmployeeStepEligibilityWake,
-    LoopAutomaticEmployeeStepEligibilityWake,
-    NoOpAutomaticEmployeeStepEligibilityWake,
 )
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.runtime.employee_step_runner import EmployeeStepRunner
@@ -33,16 +30,13 @@ class BackgroundLoops:
         employee_step_runner: EmployeeStepRunner,
         automatic_employee_step_discovery_loop: AutomaticEmployeeStepDiscoveryLoop | None = None,
         lock_path: str | None = None,
-        automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake
-        | None = None,
+        stop_waking_discovery_on_change: Callable[[], None] | None = None,
         shutdown_grace_seconds: float = 30.0,
     ) -> None:
         self._tasks = tasks
         self.employee_step_runner = employee_step_runner
         self.automatic_employee_step_discovery_loop = automatic_employee_step_discovery_loop
-        self.automatic_employee_step_eligibility_wake = (
-            automatic_employee_step_eligibility_wake or NoOpAutomaticEmployeeStepEligibilityWake()
-        )
+        self._stop_waking_discovery_on_change = stop_waking_discovery_on_change
         self._lock_path = lock_path
         self._shutdown_grace_seconds = shutdown_grace_seconds
         self._stopped = False
@@ -53,6 +47,9 @@ class BackgroundLoops:
         if self._stopped:
             return
         self._stopped = True
+        if self._stop_waking_discovery_on_change is not None:
+            self._stop_waking_discovery_on_change()
+            self._stop_waking_discovery_on_change = None
         if deadline is None:
             deadline = _monotonic() + self._shutdown_grace_seconds
         if self.automatic_employee_step_discovery_loop is not None:
@@ -128,54 +125,46 @@ def start_background_loops(
 ) -> BackgroundLoops:
     """Always compose Employee execution; optionally own automatic discovery.
 
-    Production supplies the one ACP ``step_gateway``. The discovery loop,
-    eligibility, and wake are transport-agnostic and unchanged."""
+    Production supplies the one ACP ``step_gateway``. While the discovery loop runs it
+    is subscribed to the change signal, so any committed write asks it to look again
+    instead of waiting out its periodic timer. Over-waking costs a read-only
+    re-check of the complete eligibility decision."""
     global _active
     if _active is not None:
         raise RuntimeError("background loops already running")
 
-    def build_runner(
-        eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-    ) -> EmployeeStepRunner:
+    def build_runner() -> EmployeeStepRunner:
         return EmployeeStepRunner(
             config.db_path,
             clock,
             gateway=step_gateway,
-            automatic_employee_step_eligibility_wake=eligibility_wake,
             boundary_hour=config.boundary_hour,
             busy_timeout_ms=config.db_busy_timeout_ms,
         )
 
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake = (
-        NoOpAutomaticEmployeeStepEligibilityWake()
-    )
     employee_step_runner: EmployeeStepRunner
     automatic_employee_step_discovery_loop: AutomaticEmployeeStepDiscoveryLoop | None = None
     lock_path: str | None = None
+    stop_waking_discovery_on_change: Callable[[], None] | None = None
 
     if not config.dispatch_enabled:
         _LOGGER.info("Automatic Employee-step discovery disabled (dispatch_enabled=false)")
-        employee_step_runner = build_runner(automatic_employee_step_eligibility_wake)
+        employee_step_runner = build_runner()
         _settle_stale_employee_steps_after_ticket_handoff(config, clock)
         _recover_running_ticket_steps(config, employee_step_runner)
     elif not ensure_machine_lock(config.dispatcher_lock_path):
         _LOGGER.info(
             "Automatic Employee-step discovery not started: another process holds the polling lock"
         )
-        employee_step_runner = build_runner(automatic_employee_step_eligibility_wake)
+        employee_step_runner = build_runner()
         _settle_stale_employee_steps_after_ticket_handoff(config, clock)
         _recover_running_ticket_steps(config, employee_step_runner)
     else:
         candidate_runner: EmployeeStepRunner | None = None
         candidate_loop: AutomaticEmployeeStepDiscoveryLoop | None = None
-        loop_slot: list[AutomaticEmployeeStepDiscoveryLoop] = []
-
-        def wake_loop() -> None:
-            loop_slot[0].wake()
-
-        candidate_eligibility_wake = LoopAutomaticEmployeeStepEligibilityWake(wake_loop)
+        candidate_unsubscribe: Callable[[], None] | None = None
         try:
-            candidate_runner = build_runner(candidate_eligibility_wake)
+            candidate_runner = build_runner()
             _settle_stale_employee_steps_after_ticket_handoff(config, clock)
             _recover_running_ticket_steps(config, candidate_runner)
             candidate_loop = AutomaticEmployeeStepDiscoveryLoop(
@@ -185,13 +174,15 @@ def start_background_loops(
                 boundary_hour=config.boundary_hour,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
-            loop_slot.append(candidate_loop)
             candidate_loop.start(config.tick_seconds)
+            candidate_unsubscribe = change_signal.subscribe(candidate_loop.wake)
         except Exception:
             _LOGGER.exception(
                 "Automatic Employee-step discovery failed to start; "
                 "direct employee revisions remain available"
             )
+            if candidate_unsubscribe is not None:
+                candidate_unsubscribe()
             if candidate_loop is not None:
                 try:
                     candidate_loop.stop()
@@ -205,14 +196,13 @@ def start_background_loops(
                 except Exception:
                     _LOGGER.exception("discarded employee runner failed to stop")
             release_machine_lock(config.dispatcher_lock_path)
-            automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
-            employee_step_runner = build_runner(automatic_employee_step_eligibility_wake)
+            employee_step_runner = build_runner()
         else:
             assert candidate_runner is not None
             assert candidate_loop is not None
-            automatic_employee_step_eligibility_wake = candidate_eligibility_wake
             employee_step_runner = candidate_runner
             automatic_employee_step_discovery_loop = candidate_loop
+            stop_waking_discovery_on_change = candidate_unsubscribe
             lock_path = config.dispatcher_lock_path
 
     loops = BackgroundLoops(
@@ -220,7 +210,7 @@ def start_background_loops(
         employee_step_runner,
         automatic_employee_step_discovery_loop,
         lock_path,
-        automatic_employee_step_eligibility_wake,
+        stop_waking_discovery_on_change,
         shutdown_grace_seconds=float(config.shutdown_grace_seconds),
     )
     _active = loops

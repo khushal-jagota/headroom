@@ -31,7 +31,7 @@ def test_ticket_facts_edit_current_stage_owner_without_execution_route(
         "Stage owner controls",
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready)
 
     owner = ".ticket-facts [data-stage-owner]"
     assert page.locator(".ticket-facts [data-execution-route]").count() == 0
@@ -113,11 +113,7 @@ def test_workspace_stage_mark_renders_paired_on_desktop_and_mobile(
         page.goto(server.base + "/#/workspace")
         page.wait_for_selector(f'[data-card][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS)
         page.wait_for_function(
-            "() => window.__plannerDebug && window.__plannerDebug.wsOpens >= 1",
-            timeout=WAIT_MS,
-        )
-        page.wait_for_function(
-            "() => window.__plannerDebug && window.__plannerDebug.flushes >= 1",
+            "() => window.__plannerDebug && window.__plannerDebug.sseOpens >= 1",
             timeout=WAIT_MS,
         )
         card = f'[data-card][data-ticket-id="{ticket_id}"]'

@@ -359,14 +359,6 @@ textarea {
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
 
-.shell-connection[data-state="offline"] {
-  color: var(--accent-error);
-}
-
-.shell-connection[data-state="offline"] .shell-connection-mark {
-  background: var(--accent-error);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
   .shell-connection[data-state="reconnecting"] .shell-connection-mark {

@@ -39,7 +39,7 @@ generic Stage setter.
 - **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
   clear one Stage's ownership override. `default` clears the override so the Worker
   type's Stage default applies. Terminal and unknown Stages are rejected.
-- **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
+- **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
   backlog where a list supports it.
@@ -135,4 +135,4 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 
 ---
 
-_Last verified: 2026-07-15._
+_Last verified: 2026-07-25._

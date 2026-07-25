@@ -24,8 +24,7 @@ that system's doc.
                    (the single door)
                           │
                           ▼
-          the record  +  the normally append-only event log
-                (ticket deletion leaves one audit line)
+                      the record
 ```
 
 Two kinds of user, two surfaces, on purpose. The human uses the web page, where
@@ -33,9 +32,7 @@ every decision that matters lives — approving work, granting how far a worker 
 go, closing things out. AI workers use a command-line tool and can only ever file
 _proposals_. A piece of code called the **resolution engine** is the one thing that
 can turn a proposal into a real value or move a ticket to its next stage; a worker
-can never take a decision that belongs to the human. Every normal change also writes
-a permanent event line. Permanently deleting a mistaken ticket is the sole exception:
-its old event lines are replaced by one minimal deletion audit.
+can never take a decision that belongs to the human.
 
 ## The systems
 
@@ -77,7 +74,7 @@ its old event lines are replaced by one minimal deletion audit.
 **The two interfaces**
 
 - **The front end** (`frontend.md`) — the Svelte web app: the screens, shared tokens,
-  and keyed invalidation rule.
+  and how open screens follow the server.
 - **The command-line tool** (`cli.md`) — the `panels` tool workers act through, and
   why it holds no approval powers.
 
@@ -89,5 +86,5 @@ its old event lines are replaced by one minimal deletion audit.
 
 ---
 
-_Last verified: 2026-07-21 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-25 · Covers the system landscape; each doc carries its own
 code paths._

@@ -378,17 +378,4 @@ def test_review_component_has_only_ticket_specific_entry_contract() -> None:
         assert forbidden not in source
     assert "data-ticket-id={decision.ticket_id}" in source
     assert "data-field={decision.field}" in source
-
-    accept_source = source.split("function accept(", 1)[1].split("function saveTitle", 1)[0]
-    title_source = source.split("function saveTitle", 1)[1].split(
-        "async function returnForRevision", 1
-    )[0]
-    revision_source = source.split("async function returnForRevision", 1)[1].split(
-        "onDestroy", 1
-    )[0]
-    assert source.count("review.refresh()") == 1
-    assert 'kind: "reviewTicketAccepted"' in accept_source
-    assert 'kind: "ticketTitleChanged"' in title_source
-    assert 'kind: "reviewTicketReturnedForRevision"' in revision_source
     assert "refreshReviewAfter" not in source
-    assert "mutateJson(" not in source

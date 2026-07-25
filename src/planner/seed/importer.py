@@ -9,9 +9,7 @@ import sqlite3
 from pathlib import Path
 from typing import cast
 
-from planner.core.contracts import EventKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.projects import data as projects_data
 from planner.projects.contracts import Project
@@ -184,18 +182,6 @@ def _import_sprint(
             now,
         ),
     )
-    append_event(
-        conn,
-        sprint_id,
-        EventKind.sprint_created,
-        {
-            "name": sprint.name,
-            "date_start": sprint.date_start,
-            "date_end": sprint.date_end,
-            "source": "seed",
-        },
-        now,
-    )
     report.sprints += 1
     return sprint_id
 
@@ -234,17 +220,6 @@ def _import_items(
                 now,
                 now,
             ),
-        )
-        append_event(
-            conn,
-            item_id,
-            EventKind.sprint_item_created,
-            {
-                "title": item.title,
-                "sprint_id": item_sprint_id,
-                "source": "seed",
-            },
-            now,
         )
         if item_is_deferred:
             report.deferred_items += 1
@@ -318,8 +293,9 @@ def _import_tickets(
             "id, title, worker_type, employee_backend, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, default_stage_ownership_mode, "
-            "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "employee_session_id, alias, fields, created_at, updated_at, "
+            "ticket_status_changed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 ticket.title,
@@ -344,20 +320,8 @@ def _import_tickets(
                 fields_codec.fields_to_json(fields),
                 now,
                 now,
+                now,
             ),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_created,
-            {
-                "title": ticket.title,
-                "stage": ticket.stage,
-                "alias": ticket.alias,
-                "source": "seed",
-                "employee_backend": employee_backend,
-            },
-            now,
         )
         report.tickets += 1
 
@@ -390,13 +354,6 @@ def _import_ideas(
                 now,
                 now,
             ),
-        )
-        append_event(
-            conn,
-            idea_id,
-            EventKind.idea_created,
-            {"title": idea.title, "source": "seed"},
-            now,
         )
         report.ideas += 1
 

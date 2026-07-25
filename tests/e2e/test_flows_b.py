@@ -65,7 +65,7 @@ E32_LOOSE_TITLE = "E32 loose ticket"
 
 # Sprint Overview (rev6 redesign): the three headed inline-editable sections. Kickoff
 # renders its seeded fields; a Mid-sprint Review sub-field round-trips through the
-# shared inlineEdit → per-field PATCH → WS-flush re-render (the same path as Day/ticket).
+# shared inlineEdit → per-field PATCH → refetch re-render (the same path as Day/ticket).
 SO_SPRINT_NAME = "SO sprint"
 SO_START = "2026-07-01"  # range contains baseline planning date 2026-07-04
 SO_END = "2026-07-14"  # a 2-week span
@@ -104,18 +104,13 @@ def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
 
 def _reload_settle(page: Page, ready_selector):
     # open_page opens FRESH pages; after page.reload() the __plannerDebug counters
-    # reset and the since=0 catch-up replay fires one flush — re-apply full discipline.
+    # reset — re-apply the same gate the fixture applies.
     page.reload()
     page.wait_for_selector(ready_selector, timeout=WAIT_MS)
     page.wait_for_function(
-        "() => window.__plannerDebug && window.__plannerDebug.wsOpens >= 1",
+        "() => window.__plannerDebug && window.__plannerDebug.sseOpens >= 1",
         timeout=WAIT_MS,
     )
-    page.wait_for_function(
-        "() => window.__plannerDebug && window.__plannerDebug.flushes >= 1",
-        timeout=WAIT_MS,
-    )
-    page.wait_for_selector(ready_selector, timeout=WAIT_MS)
 
 
 def _snap_ticket(p: Page):
@@ -155,7 +150,7 @@ def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, op
     r = _set_now(api, server, NOW_0501)
     assert r["planning_date"] == DAY_CUR, r
 
-    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
     page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
     # The four fields render in their slots, but stay empty by default.
@@ -195,7 +190,7 @@ def test_e29_day_overview_structured_and_edit(server, context_factory, open_page
         },
     )
 
-    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
     page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
     assert page.inner_text("[data-day-focus]") == E29_FOCUS
@@ -248,7 +243,7 @@ def test_day_markdown_focus_noop_keeps_raw_source(server, context_factory, open_
         {"watchout": DAY_NOOP_MARKDOWN},
     )
 
-    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
     page.wait_for_selector("[data-day-watch-body] h1", timeout=WAIT_MS)
 
     assert page.inner_text("[data-day-watch-body] h1") == "Day raw forms"
@@ -287,7 +282,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{mid}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{mid}", ready)
     assert (
         page.get_attribute('section[data-screen="ticket"]', "data-stage")
         == "needs_implementation"
@@ -318,7 +313,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
 
     # Review decision + approve via the Review card, ordinary field path.
     card = f'[data-review-card][data-ticket-id="{mid}"]'
-    rpage = open_page(context_factory(), server, "#/review", card, settled=True)
+    rpage = open_page(context_factory(), server, "#/review", card)
     assert rpage.get_attribute(card, "data-field") == "implementation"
     decisions = api.get(server, "/api/review")["ticket_decisions"]
     assert len(decisions) == 1, decisions
@@ -354,7 +349,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     assert r2["fields"]["closeout"]["proposal"]["body"] == E30_CLOSEOUT, r2
 
     card2 = f'[data-review-card][data-ticket-id="{mid}"]'
-    rpage2 = open_page(context_factory(), server, "#/review", card2, settled=True)
+    rpage2 = open_page(context_factory(), server, "#/review", card2)
     assert rpage2.get_attribute(card2, "data-field") == "closeout"
     assert rpage2.locator(f"{card2} [data-scope-ceiling]").input_value() == "done"
     rpage2.click(f"{card2} [data-accept]")
@@ -426,7 +421,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     # Ticket surface.
     ready_t = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
     mid_t = '[data-approval-block][data-mode="gating-pending"]'
-    page_t = open_page(context_factory(), server, f"#/ticket/{mid}", ready_t, settled=True)
+    page_t = open_page(context_factory(), server, f"#/ticket/{mid}", ready_t)
     page_t.wait_for_selector(mid_t, timeout=WAIT_MS)
     before_t = _snap_ticket(page_t)
     _reload_settle(page_t, ready_t)
@@ -443,7 +438,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     # Board surface.
     ready_b = 'section[data-screen="workspace"]'
     mid_b = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
-    page_b = open_page(context_factory(), server, "#/workspace", ready_b, settled=True)
+    page_b = open_page(context_factory(), server, "#/workspace", ready_b)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     before_b = _snap_board(page_b, mid)
     _reload_settle(page_b, ready_b)
@@ -460,7 +455,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
 
     # Day surface — the overview renders structured fields; a reload restores.
     ready_d = "[data-day-take-body]"
-    page_d = open_page(context_factory(), server, "#/day", ready_d, settled=True)
+    page_d = open_page(context_factory(), server, "#/day", ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
     assert "Jul 5" in page_d.text_content("[data-day-date]")  # raw DOM (label uppercases)
     before_d = _snap_day(page_d)
@@ -507,8 +502,8 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     # the row itself as data-item-status. Assert the item is present exactly once and
     # carries the todo status, and that the loose ticket sits under the loose group.
     ready = f'[data-item-id="{iid}"][data-item-status="todo"]'
-    pa = open_page(context_factory(), server, "#/sprint", ready, settled=True)
-    pb = open_page(context_factory(), server, "#/sprint", ready, settled=True)
+    pa = open_page(context_factory(), server, "#/sprint", ready)
+    pb = open_page(context_factory(), server, "#/sprint", ready)
 
     for p in (pa, pb):
         p.wait_for_selector(ready, timeout=WAIT_MS)
@@ -584,7 +579,7 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
 
     ready = '[data-phase="kickoff"]'
     # Legacy #/sprint/overview replace-redirects to the new documents page.
-    page = open_page(context_factory(), server, "#/sprint/overview", ready, settled=True)
+    page = open_page(context_factory(), server, "#/sprint/overview", ready)
 
     # The redirect landed on the documents page (tabs are gone): the hash is
     # #/sprint/documents and the page shows its unique "Sprint documents" heading.
@@ -606,7 +601,7 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
 
     # Inline-edit round-trip on the NEW Mid-sprint field: open its section, edit
     # the contenteditable surface, blur → PATCH /api/sprints/{id}
-    # {mid_where_we_stand} → the WS flush re-renders from the saved value.
+    # {mid_where_we_stand} → the refetch re-renders from the saved value.
     page.click('[data-phase="mid"] > summary')
     sel = '[data-field="mid_where_we_stand"] .fval .ed'
     f0 = page.evaluate("window.__plannerDebug.flushes")

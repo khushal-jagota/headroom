@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { resourceCatalogue } from "../lib/resourceCatalogue";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { queries } from "../lib/queryCatalogue";
   import { labelize, type FieldStageVisualState } from "../lib/ui";
   import AcpConversation from "../components/AcpConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -11,7 +11,7 @@
   let { ticketId }: { ticketId?: string } = $props();
 
   const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
-  const board = resourceCatalogue.board();
+  const board = createQuery(() => queries.board());
   let columns = $derived(board.data?.columns || []);
   let allCards = $derived(
     columns.flatMap((column) =>
@@ -60,8 +60,12 @@
     }
   });
 
+  // The board is settled — loaded, no fetch in flight, and the last read
+  // succeeded — and the ticket in the address is not on it, so the address is
+  // stale: fall back to the board. A failed refetch leaves the previous board in
+  // place, which is not evidence the ticket is gone, so it holds instead.
   $effect(() => {
-    if (ticketId && board.data && !board.loading && !board.stale && !selectedCard) {
+    if (ticketId && board.data && !board.isFetching && !board.isError && !selectedCard) {
       window.location.replace("#/workspace");
     }
   });
@@ -154,15 +158,12 @@
     }));
   }
 
-  onDestroy(() => {
-    board.dispose();
-  });
 </script>
 
 <section class="board-screen" data-screen="workspace">
   <ResourceState
     error={board.error}
-    loading={board.loading}
+    loading={board.isFetching}
     hasData={Boolean(board.data)}
     loadingText="Loading workspace..."
   >

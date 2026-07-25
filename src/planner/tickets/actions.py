@@ -4,26 +4,16 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import replace
 from datetime import datetime
 
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    AutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.contracts import EmployeeRevisionRunner
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import (
-    AtCap,
-    NextCeiling,
-    StageOwnershipMode,
-    Ticket,
-    TicketDeletion,
-)
+from planner.tickets.contracts import Ticket
 from planner.tickets.logic import admission
 
 
@@ -59,7 +49,6 @@ def create_ticket(
     actor: str,
     now: int,
     title_max_chars: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     worker_type: str,
     employee_backend: str | None = None,
     kickoff_note: str = "",
@@ -84,7 +73,7 @@ def create_ticket(
             sprint_item_id=sprint_item_id,
             sprint_id_explicit=sprint_id_explicit,
         )
-    ticket = tickets_data.create_ticket(
+    return tickets_data.create_ticket(
         conn,
         title=title,
         actor=actor,
@@ -101,8 +90,6 @@ def create_ticket(
         employee_backend=employee_backend,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
 
 
 def create_ticket_from_external_work(
@@ -114,7 +101,6 @@ def create_ticket_from_external_work(
     actor: str,
     now: int,
     title_max_chars: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     worker_type: str,
     employee_backend: str | None = None,
     kickoff_note: str | None = None,
@@ -140,7 +126,7 @@ def create_ticket_from_external_work(
             sprint_item_id=sprint_item_id,
             sprint_id_explicit=sprint_id_explicit,
         )
-    ticket = tickets_data.create_ticket_from_external_work(
+    return tickets_data.create_ticket_from_external_work(
         conn,
         title=title,
         kickoff_note=kickoff_note,
@@ -160,49 +146,6 @@ def create_ticket_from_external_work(
         employee_backend=employee_backend,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def reconcile_ticket_from_external_work(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    target_stage: str,
-    provided_values: Mapping[str, str],
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-    kickoff_note: str | None = None,
-    recap: str | None = None,
-) -> Ticket:
-    before = tickets_data.read_ticket(conn, ticket_id)
-    ticket = tickets_data.reconcile_ticket_from_external_work(
-        conn,
-        ticket_id,
-        kickoff_note=kickoff_note,
-        target_stage=target_stage,
-        provided_values=provided_values,
-        actor=actor,
-        now=now,
-        recap=recap,
-    )
-    if replace(before, updated_at=ticket.updated_at) != ticket:
-        automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def delete_ticket(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> TicketDeletion:
-    deleted = tickets_data.delete_ticket(conn, ticket_id, actor=actor, now=now)
-    automatic_employee_step_eligibility_wake.wake()
-    return deleted
 
 
 def add_link(
@@ -212,7 +155,6 @@ def add_link(
     kind: LinkKind,
     *,
     now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> None:
     """Create a link and settle the target's blocked stand-in in the same transaction."""
     conn.execute("BEGIN IMMEDIATE")
@@ -225,8 +167,6 @@ def add_link(
         raise
     else:
         conn.execute("COMMIT")
-    if kind is LinkKind.blocks:
-        automatic_employee_step_eligibility_wake.wake()
 
 
 def remove_link(
@@ -236,7 +176,6 @@ def remove_link(
     kind: LinkKind,
     *,
     now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
 ) -> None:
     """Delete a link and settle the target's blocked stand-in in the same transaction."""
     conn.execute("BEGIN IMMEDIATE")
@@ -249,218 +188,6 @@ def remove_link(
         raise
     else:
         conn.execute("COMMIT")
-    if kind is LinkKind.blocks:
-        automatic_employee_step_eligibility_wake.wake()
-
-
-def file_proposal(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    body: str,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.file_proposal(
-        conn,
-        ticket_id,
-        field=field,
-        body=body,
-        actor=actor,
-        now=now,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def file_current_proposal_with_recap(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    body: str,
-    recap: str,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.file_current_proposal_with_recap(
-        conn,
-        ticket_id,
-        body=body,
-        recap=recap,
-        actor=actor,
-        now=now,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def accept_proposal(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-    edited_body: str | None = None,
-    next_ceiling: NextCeiling | None = None,
-    at_cap: AtCap | None = None,
-) -> Ticket:
-    ticket = tickets_data.accept_proposal(
-        conn,
-        ticket_id,
-        field=field,
-        actor=actor,
-        now=now,
-        edited_body=edited_body,
-        next_ceiling=next_ceiling,
-        at_cap=at_cap,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def edit_field_value(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    new_body: str,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.edit_field_value(
-        conn,
-        ticket_id,
-        field=field,
-        new_body=new_body,
-        actor=actor,
-        now=now,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def change_scope(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    ceiling: str,
-    at_cap: AtCap,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.change_scope(
-        conn,
-        ticket_id,
-        ceiling=ceiling,
-        at_cap=at_cap,
-        actor=actor,
-        now=now,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def set_stage(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    new_stage: str,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.set_stage(
-        conn,
-        ticket_id,
-        new_stage=new_stage,
-        actor=actor,
-        now=now,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def drop_ticket(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.drop_ticket(conn, ticket_id, actor=actor, now=now)
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def take_over_ticket(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    before = tickets_data.read_ticket(conn, ticket_id)
-    ticket = tickets_data.take_over_ticket(conn, ticket_id, now=now)
-    if replace(before, updated_at=ticket.updated_at) != ticket:
-        automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def release_ticket(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    before = tickets_data.read_ticket(conn, ticket_id)
-    ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
-    if replace(before, updated_at=ticket.updated_at) != ticket:
-        automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def request_user_help(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.request_user_help(conn, ticket_id, actor=actor, now=now)
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def set_stage_ownership(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    stage: str,
-    ownership_mode: StageOwnershipMode | None,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    before = tickets_data.read_ticket(conn, ticket_id)
-    ticket = tickets_data.set_stage_ownership(
-        conn,
-        ticket_id,
-        stage=stage,
-        ownership_mode=ownership_mode,
-        now=now,
-    )
-    if replace(before, updated_at=ticket.updated_at) != ticket:
-        automatic_employee_step_eligibility_wake.wake()
-    return ticket
 
 
 def return_ticket_for_revision(

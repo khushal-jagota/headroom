@@ -112,11 +112,9 @@ target Stage's effective ownership then determines whether the Ticket rests read
 the worker, with the user, or paired.
 
 The create or reconciliation writer commits all fields, Kickoff value, recap, Stage,
-scope, ownership-derived resting status, and event signals together. A validation or
-concurrency failure leaves both the ticket and its event history unchanged. The
-surrounding action commits before it calls the best-effort Automatic Employee-step
-eligibility wake after a new imported Ticket or a real reconciliation change. An exact
-replay does not wake discovery.
+scope, and ownership-derived resting status together. A validation or concurrency
+failure leaves the ticket exactly as it was. Committing is itself what tells the
+Automatic Employee-step discovery loop to look again.
 
 Standalone tickets may point at a project by `project_id`. API responses also include
 `project`, the display name, for compatibility. A ticket under a sprint item does not
@@ -125,10 +123,10 @@ store its own project because the parent item owns that classification.
 ### Blockers
 
 An ordinary Ticket create and a Chief external-work Ticket create may name any number
-of existing blocker Ticket ids. Panels creates the dependent Ticket, every directed
-`blocks` link, and their events in one transaction. A missing, invalid, or repeated
-blocker rejects the whole create with a structured error. Nothing is saved. A successful
-create commits once, then wakes Automatic Employee eligibility once.
+of existing blocker Ticket ids. Panels creates the dependent Ticket and every directed
+`blocks` link in one transaction. A missing, invalid, or repeated blocker rejects the
+whole create with a structured error. Nothing is saved. A successful create commits
+once, so Automatic Employee eligibility is nudged once.
 
 A blocker is **live** while the Ticket doing the blocking is neither done nor dropped.
 Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket
@@ -287,32 +285,17 @@ One transaction removes the ticket from days, sprint views, links, Review, Works
 pending worker context, its durable conversation binding, and terminal Employee-step
 rows. Other tickets and day ordering stay intact.
 
-Blocker links are removed in the same transaction. Surviving Ticket and Sprint-item
-endpoints get `link_removed` events, and the delete response lists those affected
-endpoint ids so clients can refresh them.
+Blocker links are removed in the same transaction, and the delete response lists the
+surviving Ticket and Sprint-item endpoints those links pointed at.
 
-The deletion also replaces that ticket's old event history with one small deletion
-record containing its identity, the direct actor, and the time. This is the only
-exception to normal append-only event history. The separate stored Employee session is
-outside Panels' record and is not erased, but Panels removes the binding that could
-resolve or resume it.
+The separate stored Employee session is outside Panels' record and is not erased, but
+Panels removes the binding that could resolve or resume it.
 
-After the whole deletion transaction commits, the Ticket action calls the Automatic
-Employee-step eligibility wake once. It does not wake once per removed day or link.
+The whole deletion is one transaction, so it announces one change — not one per removed
+day or link.
 
 _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 `src/planner/cli/main.py`.
-
-## The event log
-
-Every normal change writes a permanent line into the event log. The records it
-describes _do_ change — a ticket's fields update, taking a ticket off a day's list
-removes that link — but the event lines remain. A permanent ticket deletion is the
-one deliberate exception: that ticket's old lines are replaced by its minimal
-deletion audit. The front end treats the log as a doorbell, not as data: a new line
-tells screens to refetch.
-
-_Code paths:_ `src/planner/core/events.py`.
 
 ## Handoffs
 
@@ -320,8 +303,8 @@ _Code paths:_ `src/planner/core/events.py`.
   set, its gates, fields, default ownership, and worker. The six Stages above are the
   `coding` Worker type's.
 - **The employee runtime** (`employee-runtime.md`) — the worker that files the
-  proposals and does the drafting; eligibility-affecting actions commit before calling
-  its payload-free best-effort wake so discovery can check again at once.
+  proposals and does the drafting; committing a write is what tells discovery to check
+  again at once.
 - **The command-line tool** (`cli.md`) — how a worker files proposals, recaps, and
   notes; it deliberately holds no accept/approve/grant verb.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
@@ -335,4 +318,4 @@ _Code paths:_ `src/planner/core/events.py`.
 
 ---
 
-_Last verified: 2026-07-25 (the eight Ticket statuses and the blocked stand-in)._
+_Last verified: 2026-07-25 (the eight Ticket statuses, and the commit itself as the change signal)._

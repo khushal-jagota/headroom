@@ -2,11 +2,8 @@
 /// <reference types="vite/client" />
 
 interface PlannerDebug {
+  sseOpens: number;
   flushes: number;
-  wsOpens: number;
-  cursor: number;
-  invalidations: Record<string, number>;
-  events: number;
 }
 
 interface Window {

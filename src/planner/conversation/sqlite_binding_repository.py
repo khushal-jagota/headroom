@@ -8,9 +8,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from planner.core.contracts import EventKind
 from planner.core.db import connect
-from planner.core.events import append_event
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
@@ -207,13 +205,6 @@ class SqliteConversationBindingRepository:
                 conn.execute(
                     "UPDATE tickets SET employee_session_id = NULL, updated_at = ? WHERE id = ?",
                     (now, employee_id),
-                )
-                append_event(
-                    conn,
-                    employee_id,
-                    EventKind.employee_session_changed,
-                    {"employee_session_id": None},
-                    now,
                 )
             candidate = EmployeeConversation(
                 employee_id=employee_id,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
+from types import FrameType
 
 import uvicorn
 
@@ -12,6 +13,20 @@ from planner.core.clock import build_clock
 from planner.core.config import HOST, load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.core.sse import close_open_change_streams
+
+
+class ChangeStreamClosingServer(uvicorn.Server):
+    """Close the browser's change streams first, then shut down normally.
+
+    Uvicorn waits for open connections to finish before it stops, and never cuts an
+    HTTP response short. A change stream is idle nearly all the time and only ends when
+    its browser leaves, so left alone it would hold the whole shutdown open.
+    """
+
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        close_open_change_streams()
+        super().handle_exit(sig, frame)
 
 
 def run_application_process() -> None:
@@ -32,9 +47,10 @@ def run_application_process() -> None:
     app = create_app(config, clock, conn_factory)
     listener_fd = os.environ.get("PLAN_SERVER_LISTENER_FD")
     if listener_fd is not None:
-        uvicorn.run(app, fd=int(listener_fd))
+        server_config = uvicorn.Config(app, fd=int(listener_fd))
     else:
-        uvicorn.run(app, host=HOST, port=config.port)
+        server_config = uvicorn.Config(app, host=HOST, port=config.port)
+    ChangeStreamClosingServer(server_config).run()
 
 
 if __name__ == "__main__":
