@@ -13,6 +13,7 @@
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
   import AgentsRoute from "./routes/AgentsRoute.svelte";
+  import DevConversationRoute from "./routes/DevConversationRoute.svelte";
   import VpsStatusPopover from "./components/VpsStatusPopover.svelte";
 
   type Route = {
@@ -88,6 +89,10 @@
         params.roleKind = "unknown";
       }
     }
+    // The conversation system's own page while it is being built. Not in the nav.
+    if (name === "dev" && segments[1]) {
+      params.sub = segments[1];
+    }
     if (name === "sprint" && segments[1]) {
       // Legacy sub-routes redirect to the new split: the old two-tab page became a
       // tracking page (#/sprint) and a documents page (#/sprint/documents).
@@ -119,6 +124,7 @@
       return !route.params.sub || route.params.sub === "documents";
     }
     if (route.name === "agents") return route.params.roleKind !== "unknown";
+    if (route.name === "dev") return route.params.sub === "conversation";
     return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
   }
 
@@ -244,6 +250,8 @@
             />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
+          {:else if route.name === "dev"}
+            <DevConversationRoute />
           {/if}
         </div>
       {/key}
