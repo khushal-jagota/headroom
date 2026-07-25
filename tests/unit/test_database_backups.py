@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from planner.core.db import connect, create_schema
+from planner.environments import backup as backup_module
 from planner.environments.backup import (
     _is_verified_snapshot,
     create_database_backup,
@@ -298,6 +299,59 @@ def test_restore_replacement_failure_preserves_database_and_sidecars(
     assert destination.read_bytes() == b"old database"
     assert wal.read_bytes() == b"old wal"
     assert shm.read_bytes() == b"old shm"
+
+
+def test_restore_removes_temporary_database_sidecars_created_by_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.db"
+    backup_dir = tmp_path / "backups"
+    destination = tmp_path / "live.db"
+    _seed_database(source)
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+    real_verify_database = backup_module._verify_database
+
+    def verify_with_sidecars(database: Path) -> None:
+        real_verify_database(database)
+        if ".restore-tmp-" in database.name:
+            Path(str(database) + "-wal").write_bytes(b"temporary wal")
+            Path(str(database) + "-shm").write_bytes(b"temporary shm")
+
+    monkeypatch.setattr("planner.environments.backup._verify_database", verify_with_sidecars)
+
+    restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    assert list(tmp_path.glob(".live.db.restore-tmp-*")) == []
+    with sqlite3.connect(destination) as connection:
+        assert connection.execute("SELECT value FROM records").fetchone()[0] == "canonical"
+
+
+def test_restore_verification_failure_removes_temporary_database_and_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.db"
+    backup_dir = tmp_path / "backups"
+    destination = tmp_path / "live.db"
+    _seed_database(source)
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+    destination.write_bytes(b"old database")
+    real_verify_database = backup_module._verify_database
+
+    def fail_temporary_verification(database: Path) -> None:
+        if ".restore-tmp-" not in database.name:
+            real_verify_database(database)
+            return
+        Path(str(database) + "-wal").write_bytes(b"temporary wal")
+        Path(str(database) + "-shm").write_bytes(b"temporary shm")
+        raise RuntimeError("verification failed")
+
+    monkeypatch.setattr("planner.environments.backup._verify_database", fail_temporary_verification)
+
+    with pytest.raises(RuntimeError, match="verification failed"):
+        restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    assert destination.read_bytes() == b"old database"
+    assert list(tmp_path.glob(".live.db.restore-tmp-*")) == []
 
 
 def test_restore_rejects_corrupted_snapshot(tmp_path: Path) -> None:

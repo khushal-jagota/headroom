@@ -138,6 +138,11 @@ def restore_database_snapshot(
     temporary_database = destination_db.with_name(
         f".{destination_db.name}.restore-tmp-{uuid.uuid4().hex}"
     )
+    temporary_database_files = (
+        temporary_database,
+        Path(str(temporary_database) + "-wal"),
+        Path(str(temporary_database) + "-shm"),
+    )
     sidecar_backups: list[tuple[Path, Path]] = []
     for suffix in ("-wal", "-shm"):
         sidecar = Path(str(destination_db) + suffix)
@@ -160,7 +165,8 @@ def restore_database_snapshot(
         for _, sidecar_backup in sidecar_backups:
             sidecar_backup.unlink(missing_ok=True)
     finally:
-        temporary_database.unlink(missing_ok=True)
+        for temporary_database_file in temporary_database_files:
+            temporary_database_file.unlink(missing_ok=True)
     if managed is not None:
         _restore_managed_files(snapshot / SNAPSHOT_FILES_DIR_NAME, managed, destination_db)
 
