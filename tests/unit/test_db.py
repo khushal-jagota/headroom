@@ -109,6 +109,9 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(tmp_path) ->
 
     assert _revision(conn) == BASELINE_REVISION
     assert len(_schema_objects(conn)) == 24
+    # Carried so a fresh database is not distinguishable from one the old ladder built.
+    # An older checkout reads this marker to decide what it still has to do.
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
     conn.close()
 
 
@@ -170,6 +173,41 @@ def test_database_marked_at_the_baseline_but_holding_another_schema_is_refused(t
     conn.execute("PRAGMA user_version=37")
 
     with pytest.raises(RuntimeError, match="does not hold that schema"):
+        create_schema(conn)
+
+    conn.close()
+
+
+def test_database_missing_an_index_the_marker_promises_is_refused(tmp_path) -> None:
+    """The old ladder wrote its marker before creating indexes, so the two can disagree."""
+    db_path = tmp_path / "no-alias-index.db"
+    _build_pre_alembic_database(db_path)
+    conn = connect(str(db_path))
+    conn.execute("DROP INDEX idx_tickets_alias")
+
+    with pytest.raises(RuntimeError, match="idx_tickets_alias"):
+        create_schema(conn)
+
+    conn.close()
+
+
+def test_database_with_an_empty_version_table_is_refused(tmp_path) -> None:
+    """Alembic always writes a row, so an empty one says nothing about the schema."""
+    conn = connect(str(tmp_path / "blank-version.db"))
+    create_schema(conn)
+    conn.execute("DELETE FROM alembic_version")
+
+    with pytest.raises(RuntimeError, match="nothing in it"):
+        create_schema(conn)
+
+    conn.close()
+
+
+def test_empty_database_carrying_an_old_marker_is_refused(tmp_path) -> None:
+    conn = connect(str(tmp_path / "emptied.db"))
+    conn.execute("PRAGMA user_version=34")
+
+    with pytest.raises(RuntimeError, match="no tables but is marked"):
         create_schema(conn)
 
     conn.close()
@@ -247,7 +285,17 @@ _FIXTURE_REVISION_HEADER = '''"""Fixture revision."""
 from __future__ import annotations
 
 from alembic import op
-from sqlalchemy import CheckConstraint, Column, Index, Integer, MetaData, Table, Text, text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    Table,
+    Text,
+    text,
+)
 
 revision = "second"
 down_revision = "baseline_v37"
@@ -275,9 +323,9 @@ def tickets_table() -> Table:
         Column("stage", Text, nullable=False, server_default=text("'needs_kickoff'")),
         Column("priority", Text, nullable=False, server_default=text("'P3'")),
         Column("deadline", Text),
-        Column("project_id", Text),
-        Column("sprint_item_id", Text),
-        Column("sprint_id", Text),
+        Column("project_id", Text, ForeignKey("projects.id")),
+        Column("sprint_item_id", Text, ForeignKey("sprint_items.id")),
+        Column("sprint_id", Text, ForeignKey("sprints.id")),
         Column("recap", Text, nullable=False, server_default=text("''")),
         Column("ceiling", Text, nullable=False),
         Column("at_cap", Text, nullable=False, server_default=text("'propose'")),
@@ -303,6 +351,7 @@ def tickets_table() -> Table:
     Index("idx_tickets_worker_type_stage", table.c.worker_type, table.c.stage)
     Index("idx_tickets_project_id", table.c.project_id)
     return table
+
 
 
 def upgrade() -> None:
@@ -373,7 +422,7 @@ def test_rebuilding_a_table_keeps_its_rows_children_checks_and_indexes(
     conn.execute(
         "INSERT INTO ticket_conversation_projections (ticket_id, updated_at) VALUES ('t_parent', 1)"
     )
-    indexes_before = _table_structure(conn, "tickets")["indexes"]
+    structure_before = _table_structure(conn, "tickets")
 
     (tree / "versions" / "second_revision.py").write_text(_REBUILD_TICKETS, encoding="utf-8")
     create_schema(conn)
@@ -389,11 +438,16 @@ def test_rebuilding_a_table_keeps_its_rows_children_checks_and_indexes(
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE tickets SET ticket_status = 'retired' WHERE id = 't_parent'")
 
-    # Dropping and recreating the parent left its own row, its children, and its indexes.
+    # Dropping and recreating the parent left its own row and its children behind, and the
+    # rebuilt table kept every index and outgoing foreign key. Those two are asserted
+    # directly: a dropped constraint leaves nothing dangling, so no integrity check for
+    # the record can notice one going missing.
     assert conn.execute("SELECT title FROM tickets WHERE id = 't_parent'").fetchone()[0] == "Parent"
     assert conn.execute("SELECT count(*) FROM employee_step_runs").fetchone()[0] == 1
     assert conn.execute("SELECT count(*) FROM ticket_conversation_projections").fetchone()[0] == 1
-    assert _table_structure(conn, "tickets")["indexes"] == indexes_before
+    after = _table_structure(conn, "tickets")
+    assert after["indexes"] == structure_before["indexes"]
+    assert after["foreign_keys"] == structure_before["foreign_keys"]
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     conn.close()
 
@@ -413,6 +467,32 @@ def test_a_migration_that_fails_leaves_the_database_as_it_was(
 
     assert (_schema_objects(conn), _revision(conn)) == before
     assert conn.execute("SELECT title FROM tickets WHERE id = 't_kept'").fetchone()[0] == "Kept"
+    conn.close()
+
+
+def test_adopting_a_database_is_undone_when_a_later_migration_fails(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live database is adopted once, in the same breath as everything after it."""
+    tree = _migration_tree(tmp_path, monkeypatch)
+    db_path = tmp_path / "adopted-then-failed.db"
+    _build_pre_alembic_database(db_path)
+    conn = connect(str(db_path))
+    _insert_ticket(conn, "t_old", "Written before Alembic")
+    before = _schema_objects(conn)
+
+    (tree / "versions" / "second_revision.py").write_text(_FAILING_REVISION, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="gave up halfway"):
+        create_schema(conn)
+
+    # No version table, so the database is still the pre-Alembic one it started as.
+    assert not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alembic_version'"
+    ).fetchone()
+    assert _schema_objects(conn) == before
+    assert conn.execute("SELECT title FROM tickets WHERE id = 't_old'").fetchone()[0] == (
+        "Written before Alembic"
+    )
     conn.close()
 
 

@@ -31,9 +31,9 @@ BASELINE_REVISION: Final = "baseline_v37"
 # has the ladder; this build does not carry those steps.
 LAST_HAND_WRITTEN_SCHEMA_VERSION: Final = 37
 
-# What a database the ladder built contains. Frozen alongside the version above: it
-# describes the schema as it was when Alembic took over, and is read only when adopting
-# such a database, so it never follows later schema changes.
+# What a database the ladder built contains. Frozen alongside the version above: these
+# describe the schema as it was when Alembic took over, and are read only when adopting
+# such a database, so they never follow later schema changes.
 PRE_ALEMBIC_TABLE_NAMES: Final = frozenset(
     {
         "conversation_session_bindings",
@@ -51,6 +51,24 @@ PRE_ALEMBIC_TABLE_NAMES: Final = frozenset(
         "sprints",
         "ticket_conversation_projections",
         "tickets",
+    }
+)
+
+# Checked for the same reason as the tables, and worth checking separately: the ladder
+# wrote its version marker before creating indexes, so a database could carry the marker
+# while still missing one. Adopting that quietly would leave `tickets.alias` without the
+# unique index that keeps aliases unique.
+PRE_ALEMBIC_INDEX_NAMES: Final = frozenset(
+    {
+        "idx_employee_step_runs_one_running",
+        "idx_events_entity",
+        "idx_ideas_project_id",
+        "idx_links_to",
+        "idx_sprint_items_project_id",
+        "idx_tickets_alias",
+        "idx_tickets_project_id",
+        "idx_tickets_stage",
+        "idx_tickets_worker_type_stage",
     }
 )
 
@@ -163,21 +181,47 @@ def _adopt_database_built_before_alembic(connection: Connection) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         )
     }
-    if not tables or "alembic_version" in tables:
+    schema_version = int(connection.exec_driver_sql("PRAGMA user_version").scalar() or 0)
+
+    if "alembic_version" in tables:
+        # Alembic writes a row whenever it stamps or upgrades, so an empty version table
+        # is not a database it has seen. Left alone, the upgrade below would take it for
+        # an empty database and lay the baseline over whatever is really there.
+        if not connection.exec_driver_sql("SELECT count(*) FROM alembic_version").scalar():
+            raise RuntimeError(
+                "this database has a version table with nothing in it, so there is no "
+                "saying what schema it holds. Restore it from a backup."
+            )
         return
 
-    schema_version = int(connection.exec_driver_sql("PRAGMA user_version").scalar() or 0)
+    if not tables:
+        if schema_version:
+            raise RuntimeError(
+                f"this database has no tables but is marked as schema version "
+                f"{schema_version}, so it is not the empty database it looks like. "
+                "Restore it from a backup."
+            )
+        return
+
     if schema_version != LAST_HAND_WRITTEN_SCHEMA_VERSION:
         raise RuntimeError(
             f"this database is at schema version {schema_version}, and this build starts at "
             f"version {LAST_HAND_WRITTEN_SCHEMA_VERSION}. Open it once with a checkout that "
             "still has the hand-written migrations, then come back."
         )
-    missing = sorted(PRE_ALEMBIC_TABLE_NAMES - tables)
+    indexes = {
+        str(row[0])
+        for row in connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    missing = sorted(
+        (PRE_ALEMBIC_TABLE_NAMES - tables) | (PRE_ALEMBIC_INDEX_NAMES - indexes)
+    )
     unexpected = sorted(tables - PRE_ALEMBIC_TABLE_NAMES)
     if missing or unexpected:
         raise RuntimeError(
             f"this database is marked as schema version {LAST_HAND_WRITTEN_SCHEMA_VERSION} but "
-            f"does not hold that schema: missing tables {missing}, unexpected tables {unexpected}"
+            f"does not hold that schema: missing {missing}, unexpected tables {unexpected}"
         )
     command.stamp(_alembic_config(connection), BASELINE_REVISION)

@@ -13,6 +13,10 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+# The version the hand-written ladder finished at. Frozen here with the rest of this
+# revision rather than imported, so nothing later can change what this one did.
+LAST_HAND_WRITTEN_SCHEMA_VERSION = 37
+
 # Frozen. This is the text that built a version-37 database and it stays as it is: a
 # revision records what happened, so later schema work adds a new revision rather than
 # editing this one. Statements run one at a time because the driver accepts one at a
@@ -202,6 +206,11 @@ BASELINE_STATEMENTS: tuple[str, ...] = (
 def upgrade() -> None:
     for statement in BASELINE_STATEMENTS:
         op.execute(statement)
+    # The marker the hand-written ladder used. Alembic's own version table is what this
+    # code reads, but a database built here is otherwise indistinguishable from one the
+    # ladder built, and leaving the marker at zero would not keep that true: an older
+    # checkout would read zero and start replaying upgrade steps over a current schema.
+    op.execute(f"PRAGMA user_version={LAST_HAND_WRITTEN_SCHEMA_VERSION}")
 
 
 def downgrade() -> None:
