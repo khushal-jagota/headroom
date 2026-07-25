@@ -20,6 +20,12 @@ from typing import Any
 
 import pytest
 
+from planner.conversation2.backends.claude_model_catalog import (
+    ClaudeModel,
+    ClaudeModelCatalog,
+    ClaudeModelCatalogUnavailable,
+    versioned_display_name,
+)
 from planner.conversation2.backends.codex_app_server.model_catalog import (
     CodexModel,
     CodexModelCatalog,
@@ -33,7 +39,6 @@ from planner.conversation2.snapshot import (
     BackendUpdateOutcome,
     CommandOutcome,
     SubprocessBackendProbeEnvironment,
-    _claude_model_catalog_for_version,
     classify_install_method,
     parse_version,
     probe_backend,
@@ -120,6 +125,52 @@ def _codex_that_answers(*models: CodexModel) -> Callable[[str], Any]:
 async def _codex_that_says_nothing(codex_executable: str) -> CodexModelCatalog:
     del codex_executable
     raise CodexModelCatalogUnavailable("codex app-server would not start")
+
+
+_CLAUDE_HANDSHAKE_MODELS = (
+    ClaudeModel(
+        model_id="opus[1m]",
+        display_name="Opus 5 (1M)",
+        resolved_model_id="claude-opus-5[1m]",
+        reasoning_effort_options=("low", "medium", "high", "xhigh", "max"),
+    ),
+    ClaudeModel(
+        model_id="sonnet",
+        display_name="Sonnet 5",
+        resolved_model_id="claude-sonnet-5",
+        reasoning_effort_options=("low", "medium", "high", "xhigh", "max"),
+    ),
+    ClaudeModel(
+        model_id="haiku",
+        display_name="Haiku 4.5",
+        resolved_model_id="claude-haiku-4-5-20251001",
+        reasoning_effort_options=(),
+    ),
+)
+
+
+def _claude_that_answers(
+    *models: ClaudeModel,
+) -> Callable[[str], Any]:
+    answered = models or _CLAUDE_HANDSHAKE_MODELS
+
+    async def probe(claude_executable: str) -> ClaudeModelCatalog:
+        del claude_executable
+        efforts: list[str] = []
+        for model in answered:
+            for effort in model.reasoning_effort_options:
+                if effort not in efforts:
+                    efforts.append(effort)
+        return ClaudeModelCatalog(
+            models=tuple(answered), reasoning_effort_options=tuple(efforts)
+        )
+
+    return probe
+
+
+async def _claude_that_says_nothing(claude_executable: str) -> ClaudeModelCatalog:
+    del claude_executable
+    raise ClaudeModelCatalogUnavailable("claude would not start")
 
 
 def _installed_codex() -> _FakeMachine:
@@ -261,7 +312,11 @@ def test_claude_reports_its_account_its_models_and_its_effort_levels() -> None:
     async def exercise() -> None:
         machine = _installed_claude()
 
-        card = await probe_backend(ConversationBackendKey.claude, machine)
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
 
         assert card.installed is True
         assert card.version == "2.1.219"
@@ -270,28 +325,50 @@ def test_claude_reports_its_account_its_models_and_its_effort_levels() -> None:
         assert card.identity.account_label == "owner@example.com"
         assert card.identity.detail == "max plan via claude.ai"
         assert card.identity.login_command == "claude auth login"
-        assert [model.model_id for model in card.available_models] == ["fable", "opus", "sonnet"]
-        # The wire keeps the CLI's aliases; the person reads the version this CLI
-        # resolves each alias to, like codex's card.
-        assert [model.display_name for model in card.available_models] == [
-            "Fable 5",
-            "Opus 5",
-            "Sonnet 5",
+        # The catalog is the CLI's own handshake: the value --model takes, the versioned
+        # name of what it reaches, and the resolution spelled out as the detail line.
+        assert [model.model_id for model in card.available_models] == [
+            "opus[1m]",
+            "sonnet",
+            "haiku",
         ]
+        assert [model.display_name for model in card.available_models] == [
+            "Opus 5 (1M)",
+            "Sonnet 5",
+            "Haiku 4.5",
+        ]
+        assert card.available_models[0].detail == "opus[1m] → claude-opus-5[1m]"
         assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh", "max")
         assert card.diagnoses == ()
 
     _run(exercise)
 
 
-def test_an_older_claude_names_the_models_its_aliases_actually_reach() -> None:
-    # At 2.1.160 the CLI predates both the Opus 5 gate (2.1.219) and the Fable 5 gate
-    # (2.1.169): opus still resolves to Opus 4.8, and fable is shown as the bare family
-    # name rather than a guess at which older model the alias would reach.
-    assert [
-        (model.model_id, model.display_name)
-        for model in _claude_model_catalog_for_version("2.1.160")
-    ] == [("fable", "Fable"), ("opus", "Opus 4.8"), ("sonnet", "Sonnet 5")]
+def test_a_resolved_model_id_reads_as_its_versioned_name() -> None:
+    assert versioned_display_name("claude-opus-5[1m]") == "Opus 5 (1M)"
+    assert versioned_display_name("claude-fable-5") == "Fable 5"
+    assert versioned_display_name("claude-sonnet-5") == "Sonnet 5"
+    assert versioned_display_name("claude-haiku-4-5-20251001") == "Haiku 4.5"
+    # An id this cannot make sense of is shown as itself — honest over pretty.
+    assert versioned_display_name("someday-a-new-shape") == "someday-a-new-shape"
+
+
+def test_a_claude_that_will_not_say_what_it_runs_lists_nothing_and_says_why() -> None:
+    async def exercise() -> None:
+        machine = _installed_claude()
+
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_says_nothing,
+        )
+
+        assert card.available_models == ()
+        # The effort picker still has the CLI's documented levels to fall back to.
+        assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh", "max")
+        assert any("did not answer" in diagnosis for diagnosis in card.diagnoses)
+
+    _run(exercise)
 
 
 def test_a_signed_out_cli_is_told_which_command_to_run() -> None:
@@ -302,7 +379,11 @@ def test_a_signed_out_cli_is_told_which_command_to_run() -> None:
             )
         )
 
-        card = await probe_backend(ConversationBackendKey.claude, machine)
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
 
         assert card.identity is not None
         assert card.identity.status is BackendIdentityStatus.unauthenticated
@@ -322,7 +403,11 @@ def test_an_account_that_cannot_be_read_is_unknown_rather_than_invented() -> Non
             )
         )
 
-        card = await probe_backend(ConversationBackendKey.claude, machine)
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
 
         assert card.identity is not None
         assert card.identity.status is BackendIdentityStatus.unknown
@@ -428,7 +513,11 @@ def test_a_version_that_cannot_be_read_is_a_diagnosis_not_a_guess() -> None:
     async def exercise() -> None:
         machine = _installed_claude(version_output="claude: command failed")
 
-        card = await probe_backend(ConversationBackendKey.claude, machine)
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
 
         assert card.version is None
         assert card.diagnoses[0] == (
@@ -447,7 +536,11 @@ def test_a_newer_published_version_is_offered_with_the_command_that_installs_it(
         machine = _installed_claude()
         machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
 
-        card = await probe_backend(ConversationBackendKey.claude, machine)
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
 
         assert card.update_advisory is not None
         assert card.update_advisory.install_method is BackendInstallMethod.npm_global
@@ -469,7 +562,11 @@ def test_the_newest_version_already_installed_offers_no_update() -> None:
         machine = _installed_claude()
         machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.219"
 
-        card = await probe_backend(ConversationBackendKey.claude, machine)
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
 
         assert card.update_advisory is not None
         assert card.update_advisory.update_available is False
@@ -485,7 +582,11 @@ def test_an_older_published_version_is_not_an_update() -> None:
         machine = _installed_claude()
         machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.9"
 
-        card = await probe_backend(ConversationBackendKey.claude, machine)
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
 
         assert card.update_advisory is not None
         assert card.update_advisory.update_available is False
@@ -538,7 +639,9 @@ def test_an_update_that_moves_the_version_succeeded() -> None:
 
         machine.after_run[_claude_update_command()] = the_new_one_is_now_installed
 
-        result = await BackendSnapshotService(machine).update_backend(
+        result = await BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers()
+        ).update_backend(
             ConversationBackendKey.claude
         )
 
@@ -557,7 +660,9 @@ def test_an_update_that_changes_nothing_says_so_rather_than_claiming_success() -
             exit_code=0, standard_output="up to date\n", standard_error=""
         )
 
-        result = await BackendSnapshotService(machine).update_backend(
+        result = await BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers()
+        ).update_backend(
             ConversationBackendKey.claude
         )
 
@@ -577,7 +682,9 @@ def test_an_update_that_failed_carries_the_end_of_what_it_printed() -> None:
             exit_code=1, standard_output="", standard_error="x" * 20_000 + "EACCES at the end"
         )
 
-        result = await BackendSnapshotService(machine).update_backend(
+        result = await BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers()
+        ).update_backend(
             ConversationBackendKey.claude
         )
 
@@ -593,7 +700,9 @@ def test_an_update_with_no_command_to_run_fails_with_the_reason() -> None:
     async def exercise() -> None:
         machine = _FakeMachine()
 
-        result = await BackendSnapshotService(machine).update_backend(
+        result = await BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers()
+        ).update_backend(
             ConversationBackendKey.hermes
         )
 
@@ -626,7 +735,9 @@ def test_two_people_pressing_update_do_not_run_two_installs_at_once() -> None:
             )
 
         machine.after_run[_claude_update_command()] = the_new_one_is_now_installed
-        service = BackendSnapshotService(machine)
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers()
+        )
 
         both = [
             asyncio.create_task(service.update_backend(ConversationBackendKey.claude))
@@ -657,7 +768,9 @@ def test_an_update_on_one_backend_does_not_hold_up_reading_another_ones_card() -
         )
         machine.slow_commands.add(_claude_update_command())
         machine.let_slow_commands_finish = asyncio.Event()
-        service = BackendSnapshotService(machine)
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers()
+        )
 
         updating = asyncio.create_task(service.update_backend(ConversationBackendKey.claude))
         for _ in range(50):
@@ -731,7 +844,9 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
 def test_a_probe_is_run_once_and_again_only_when_asked() -> None:
     async def exercise() -> None:
         machine = _installed_claude()
-        service = BackendSnapshotService(machine)
+        service = BackendSnapshotService(
+            machine, claude_model_catalog_probe=_claude_that_answers()
+        )
 
         first = await service.snapshot(ConversationBackendKey.claude)
         commands_after_the_first = len(machine.run_commands)
@@ -748,7 +863,9 @@ def test_a_probe_is_run_once_and_again_only_when_asked() -> None:
 
 def test_every_backend_has_a_card_whether_or_not_it_is_there() -> None:
     async def exercise() -> None:
-        cards = await BackendSnapshotService(_FakeMachine()).snapshots()
+        cards = await BackendSnapshotService(
+            _FakeMachine(), claude_model_catalog_probe=_claude_that_answers()
+        ).snapshots()
 
         assert [card.backend_key for card in cards] == list(ConversationBackendKey)
         assert all(card.installed is False for card in cards)

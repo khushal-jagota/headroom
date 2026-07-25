@@ -37,6 +37,11 @@ from typing import Any, Final, Protocol
 
 import httpx
 
+from planner.conversation2.backends.claude_model_catalog import (
+    ClaudeModelCatalog,
+    ClaudeModelCatalogUnavailable,
+    probe_claude_model_catalog,
+)
 from planner.conversation2.backends.codex_app_server.model_catalog import (
     CodexModelCatalog,
     CodexModelCatalogUnavailable,
@@ -44,9 +49,10 @@ from planner.conversation2.backends.codex_app_server.model_catalog import (
 )
 from planner.conversation2.contracts import ConversationBackendKey
 
-# How codex is asked what it can be run as. Named as a parameter because asking spawns a
-# child: a test describes the answer instead of spawning one.
+# How codex and claude are asked what they can be run as. Named as parameters because
+# asking spawns a child: a test describes the answer instead of spawning one.
 type CodexModelCatalogProbe = Callable[[str], Awaitable[CodexModelCatalog]]
+type ClaudeModelCatalogProbe = Callable[[str], Awaitable[ClaudeModelCatalog]]
 
 # A probe is a local command. These are generous enough for a cold start and short enough
 # that a card is never left hanging on one.
@@ -108,10 +114,15 @@ class BackendIdentity:
 
 @dataclass(frozen=True, slots=True)
 class BackendModel:
-    """One model a backend can be run as."""
+    """One model a backend can be run as.
+
+    ``detail`` is one honest secondary line where a backend has one — claude's says
+    which concrete model an alias reaches right now.
+    """
 
     model_id: str
     display_name: str | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -379,6 +390,7 @@ class _CatalogRequest:
     version: str | None
     executable_path: str
     codex_model_catalog_probe: CodexModelCatalogProbe
+    claude_model_catalog_probe: ClaudeModelCatalogProbe
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,40 +425,10 @@ class _BackendProbeRecipe:
 # 2.1.219 with every network route blackholed: same answer, in a fifth of a second.
 _CLAUDE_IDENTITY_ARGUMENTS: Final = ("auth", "status", "--json")
 
-# The effort levels `claude --effort` documents on the installed CLI. A picker offering
-# anything else would be offering something the CLI would reject.
-_CLAUDE_REASONING_EFFORT_OPTIONS: Final = ("low", "medium", "high", "xhigh", "max")
-
-# Claude has no cheap way to enumerate models, so the catalog is the aliases its own
-# `--model` help documents. Aliases rather than dated model ids on purpose: an alias keeps
-# naming the current model, so this list does not quietly rot between releases. The shown
-# name carries the version the installed CLI resolves the alias to, so the picker reads
-# like codex's ("Opus 5", not a bare "opus"); below an alias's floor the bare family name
-# is shown rather than guessing which older model the alias would reach. The fable and
-# opus floors are the CLI's own documented model gates; sonnet has resolved to Sonnet 5
-# for every version this catalog admits.
-_CLAUDE_MODEL_ALIAS_VERSION_LADDER: Final[
-    tuple[tuple[str, str, tuple[tuple[tuple[int, int, int], str], ...]], ...]
-] = (
-    ("fable", "Fable", (((2, 1, 169), "Fable 5"),)),
-    ("opus", "Opus", (((2, 1, 219), "Opus 5"), ((2, 1, 154), "Opus 4.8"))),
-    ("sonnet", "Sonnet", (((2, 1, 0), "Sonnet 5"),)),
-)
-
-# Below this the installed CLI is too old for the catalog above to be the truth about it.
-_CLAUDE_MINIMUM_VERSION_FOR_CATALOG: Final = (2, 1, 0)
-
-
-def _claude_model_catalog_for_version(version: str) -> tuple[BackendModel, ...]:
-    models: list[BackendModel] = []
-    for alias, bare_family_name, versioned_names in _CLAUDE_MODEL_ALIAS_VERSION_LADDER:
-        shown = bare_family_name
-        for floor, versioned_name in versioned_names:
-            if _version_at_least(version, floor):
-                shown = versioned_name
-                break
-        models.append(BackendModel(model_id=alias, display_name=shown))
-    return tuple(models)
+# What the effort picker falls back to when claude cannot be asked: the levels
+# `claude --effort` documents on the installed CLI. When the catalog probe answers,
+# the CLI's own per-model levels replace this.
+_CLAUDE_FALLBACK_REASONING_EFFORT_OPTIONS: Final = ("low", "medium", "high", "xhigh", "max")
 
 
 def _read_claude_identity(outcome: CommandOutcome) -> BackendIdentity:
@@ -479,18 +461,33 @@ def _claude_plan_detail(reported: Mapping[str, Any]) -> str | None:
 
 
 async def _claude_catalog(request: _CatalogRequest) -> _CatalogAnswer:
-    version = request.version
-    if version is None or not _version_at_least(version, _CLAUDE_MINIMUM_VERSION_FOR_CATALOG):
+    """Claude's aliases move, so the catalog is read from the CLI's own handshake.
+
+    Each entry says what ``--model`` accepts, which concrete model that value reaches
+    right now, and the effort levels that model takes — the CLI's account, not a list
+    written down here that would quietly rot.
+    """
+    try:
+        catalog = await request.claude_model_catalog_probe(request.executable_path)
+    except ClaudeModelCatalogUnavailable:
         return _CatalogAnswer(
-            reasoning_effort_options=_CLAUDE_REASONING_EFFORT_OPTIONS,
+            reasoning_effort_options=_CLAUDE_FALLBACK_REASONING_EFFORT_OPTIONS,
             diagnoses=(
-                "The installed `claude` is older than the models Panels knows about, "
-                "so none are listed. Update it to choose a model here.",
+                "Claude is installed but did not answer when asked what it can run, so "
+                "no models are listed. Check that `claude` starts from a terminal.",
             ),
         )
     return _CatalogAnswer(
-        models=_claude_model_catalog_for_version(version),
-        reasoning_effort_options=_CLAUDE_REASONING_EFFORT_OPTIONS,
+        models=tuple(
+            BackendModel(
+                model_id=model.model_id,
+                display_name=model.display_name,
+                detail=f"{model.model_id} → {model.resolved_model_id}",
+            )
+            for model in catalog.models
+        ),
+        reasoning_effort_options=catalog.reasoning_effort_options
+        or _CLAUDE_FALLBACK_REASONING_EFFORT_OPTIONS,
     )
 
 
@@ -671,6 +668,7 @@ async def probe_backend(
     environment: BackendProbeEnvironment,
     *,
     codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
+    claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
 ) -> BackendSnapshot:
     """Everything this machine can say about one backend, without touching an agent API."""
     recipe = _BACKEND_PROBE_RECIPES[backend_key]
@@ -716,6 +714,7 @@ async def probe_backend(
             version=version,
             executable_path=executable_path,
             codex_model_catalog_probe=codex_model_catalog_probe,
+            claude_model_catalog_probe=claude_model_catalog_probe,
         )
     )
     diagnoses.extend(catalog.diagnoses)
@@ -845,9 +844,11 @@ class BackendSnapshotService:
         environment: BackendProbeEnvironment | None = None,
         *,
         codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
+        claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
     ) -> None:
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._codex_model_catalog_probe = codex_model_catalog_probe
+        self._claude_model_catalog_probe = claude_model_catalog_probe
         self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
         self._lock = asyncio.Lock()
         # One lock per backend, held for a whole update rather than for a probe. Reading a
@@ -877,6 +878,7 @@ class BackendSnapshotService:
                 backend_key,
                 self._environment,
                 codex_model_catalog_probe=self._codex_model_catalog_probe,
+                claude_model_catalog_probe=self._claude_model_catalog_probe,
             )
             self._snapshots[backend_key] = probed
             return probed

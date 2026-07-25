@@ -29,6 +29,10 @@ from planner.conversation2.api import (
     Conversation2Runtime,
     router,
 )
+from planner.conversation2.backends.claude_model_catalog import (
+    ClaudeModel,
+    ClaudeModelCatalog,
+)
 from planner.conversation2.backends.codex_app_server.model_catalog import (
     CodexModelCatalog,
     CodexModelCatalogUnavailable,
@@ -170,6 +174,27 @@ class _FakeMachine:
         return None
 
 
+async def _claude_from_the_handshake(claude_executable: str) -> ClaudeModelCatalog:
+    del claude_executable
+    models = (
+        ClaudeModel(
+            model_id="opus[1m]",
+            display_name="Opus 5 (1M)",
+            resolved_model_id="claude-opus-5[1m]",
+            reasoning_effort_options=("low", "medium", "high", "xhigh", "max"),
+        ),
+        ClaudeModel(
+            model_id="sonnet",
+            display_name="Sonnet 5",
+            resolved_model_id="claude-sonnet-5",
+            reasoning_effort_options=("low", "medium", "high", "xhigh", "max"),
+        ),
+    )
+    return ClaudeModelCatalog(
+        models=models, reasoning_effort_options=("low", "medium", "high", "xhigh", "max")
+    )
+
+
 async def _no_codex_to_ask(codex_executable: str) -> CodexModelCatalog:
     """No test here spawns a codex app-server to ask it what it runs."""
     del codex_executable
@@ -199,7 +224,9 @@ class _Harness:
             system=self.system,
             live_tail=self.live_tail,
             backend_snapshots=BackendSnapshotService(
-                self.machine, codex_model_catalog_probe=_no_codex_to_ask
+                self.machine,
+                codex_model_catalog_probe=_no_codex_to_ask,
+                claude_model_catalog_probe=_claude_from_the_handshake,
             ),
             sse_heartbeat_ms=HEARTBEAT_MILLISECONDS,
         )
@@ -1092,10 +1119,12 @@ def test_the_backend_cards_are_probed_once_and_again_when_asked(harness: _Harnes
             assert claude["identity"]["account_label"] == "owner@example.com"
             assert claude["identity"]["login_command"] == "claude auth login"
             assert [model["model_id"] for model in claude["available_models"]] == [
-                "fable",
-                "opus",
+                "opus[1m]",
                 "sonnet",
             ]
+            assert claude["available_models"][0]["detail"] == "opus[1m] → claude-opus-5[1m]"
+            assert claude["available_models"][0]["display_name"] == "Opus 5 (1M)"
+
             assert claude["reasoning_effort_options"] == [
                 "low",
                 "medium",
