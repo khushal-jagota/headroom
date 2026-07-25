@@ -1929,11 +1929,40 @@ def test_auto_accepted_closeout_frees_a_blocked_target_and_wakes_once(
     assert _links_from(tmp_db, blocker.id) == []
 
 
-def test_a_rejected_reopen_rolls_back_its_link_settlement_too(
+def test_a_failed_completion_rolls_back_its_link_release_and_settlements(
+    tmp_db: Connection,
+    cfg: Config,
+    fake_clock: TestClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The stage change, the link deletion, its events, and every target settlement
+    # are one transaction: when any part of the completion fails, none of it lands.
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+    stage_before = data.read_ticket(tmp_db, blocker.id).stage
+    target_events_before = len(_events(tmp_db, cfg, target.id))
+
+    def failing_settle(conn: Connection, target_id: str, now: int) -> None:
+        raise RuntimeError("settlement failed mid-completion")
+
+    monkeypatch.setattr(data, "settle_blocked_standin_for_link_target", failing_settle)
+    with pytest.raises(RuntimeError, match="mid-completion"):
+        data.drop_ticket(tmp_db, blocker.id, actor="human", now=now)
+
+    assert data.read_ticket(tmp_db, blocker.id).stage == stage_before
+    assert _links_from(tmp_db, blocker.id) == [(target.id, "blocks")]
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
+    assert _events(tmp_db, cfg, blocker.id, EventKind.link_removed) == []
+    assert len(_events(tmp_db, cfg, target.id)) == target_events_before
+
+
+def test_a_rejected_reopen_leaves_everything_untouched(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
-    # The stage change, the link release and every target settlement are one
-    # transaction: when the reopen is refused for closing a cycle, none of it lands.
+    # A reopen that would close an active cycle is refused before anything is
+    # written: stage, links, statuses, and events all stay exactly as they were.
     now = fake_clock.now_unix()
     first = _create(tmp_db, cfg, fake_clock, title="First")
     second = _create(tmp_db, cfg, fake_clock, title="Second")

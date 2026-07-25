@@ -1289,6 +1289,38 @@ def test_best_effort_wakes_after_ticket_and_day_commits(
     )
 
 
+def test_proposal_wake_sees_the_committed_proposal(tmp_path: Path) -> None:
+    # The proposal actions commit before they wake: the delivery reads the filed
+    # proposal through its own connection, so a wake-before-commit regression
+    # would leave `observed` empty.
+    app, db_path, _clock, _recording = _make_app(tmp_path)
+    ticket_id = _create_direct(db_path, title="Commit before wake")
+    observed: list[str] = []
+
+    def proposal_delivery() -> None:
+        conn = connect(str(db_path))
+        try:
+            persisted = tickets_data.read_ticket(conn, ticket_id)
+        finally:
+            conn.close()
+        slot = fields_codec.get_slot(persisted.fields, "success")
+        assert slot.proposal is not None
+        assert slot.proposal.body == "committed before wake"
+        observed.append("proposal")
+
+    app.state.automatic_employee_step_eligibility_wake = LoopAutomaticEmployeeStepEligibilityWake(
+        proposal_delivery
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/tickets/{ticket_id}/propose/success",
+            json={"body": "committed before wake"},
+            headers=_AGENT,
+        )
+    assert response.status_code == 200, response.text
+    assert observed == ["proposal"]
+
+
 def test_routes_pass_the_wake_port_but_do_not_own_discovery_policy() -> None:
     root = Path(__file__).resolve().parents[2]
     forbidden = {
