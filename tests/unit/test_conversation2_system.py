@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,12 +44,14 @@ from planner.conversation2.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation2.events import (
+    AgentMessageDeltaFrame,
     ConversationEventKind,
     ConversationTurnEnding,
     PermissionAskOption,
     PromptEventPayload,
     TurnEndedEventPayload,
 )
+from planner.conversation2.live_tail import ConversationLiveTail
 from planner.conversation2.storage import ConversationStore, StoredConversationEvent
 from planner.conversation2.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
@@ -103,12 +106,22 @@ class _FakeBackend:
     ends_the_turn_while_writing: bool = False
     writes_raise_something_unnamed: bool = False
 
+    cancels_raise_something_unnamed: bool = False
+    reports_its_ending_during_a_cancel: bool = False
+
+    # How many children of this conversation are alive at once. A conversation has one
+    # agent in it; anything else is two agents reading the same session.
+    live_children: int = 0
+    most_live_children_at_once: int = 0
+
     # Gates, for the tests that need the system to be genuinely part-way through
     # something while another caller arrives.
     writes_wait_for_release: asyncio.Event | None = None
     write_has_begun: asyncio.Event | None = None
     cancels_wait_for_release: asyncio.Event | None = None
     cancel_has_begun: asyncio.Event | None = None
+    stops_wait_for_release: asyncio.Event | None = None
+    stop_has_begun: asyncio.Event | None = None
 
     def written_texts(self) -> tuple[str, ...]:
         return tuple(write.text for write in self.writes)
@@ -130,6 +143,10 @@ class _FakeBackendChild:
         if self._backend.session_load_fails:
             raise SessionLoadFailed(self._backend.conversation_id)
         self._backend.session_starts += 1
+        self._backend.live_children += 1
+        self._backend.most_live_children_at_once = max(
+            self._backend.most_live_children_at_once, self._backend.live_children
+        )
         self._backend.started_from_cursor = vendor_session_cursor
         self._backend.model = resolved_start.model
         self._backend.reasoning_effort = resolved_start.reasoning_effort
@@ -194,8 +211,25 @@ class _FakeBackendChild:
             self._backend.cancel_has_begun.set()
         if self._backend.cancels_wait_for_release is not None:
             await self._backend.cancels_wait_for_release.wait()
+        if self._backend.cancels_raise_something_unnamed:
+            raise RuntimeError("the cancel never got to the child")
         self._backend.cancellations += 1
+        token = self._backend.live_turn_token
         self._backend.live_turn_token = None
+        if self._backend.reports_its_ending_during_a_cancel and token is not None:
+            # What a real agent does: it takes the cancel and says its turn has stopped,
+            # while the core is still part-way through recording the interruption.
+            await self._sink.turn_ended(
+                token,
+                ending=ConversationTurnEnding.completed,
+                error_summary=None,
+                standard_error_tail=None,
+            )
+            # A real cancel waits on its wire, which gives the queue time to work that
+            # report through before the core comes back to record its own ending. Without
+            # this the two never actually race and the report always loses by accident.
+            for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
+                await asyncio.sleep(0)
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         if self._backend.permission_answer_write_fails:
@@ -203,7 +237,12 @@ class _FakeBackendChild:
         self._backend.permission_answers[ask_id] = option_id
 
     async def stop(self) -> None:
+        if self._backend.stop_has_begun is not None:
+            self._backend.stop_has_begun.set()
+        if self._backend.stops_wait_for_release is not None:
+            await self._backend.stops_wait_for_release.wait()
         self._backend.stops += 1
+        self._backend.live_children -= 1
         self._backend.live_turn_token = None
 
 
@@ -1769,6 +1808,240 @@ def test_a_held_message_whose_adapter_falls_over_leaves_the_conversation_usable(
         assert await harness.system.send("c", "after the fault", sender_label="owner") == (
             PromptDeliveryStarted()
         )
+
+    _run(exercise)
+
+
+# --- an ending is one ending, and a cancel that failed is not a cancel --------------------
+
+
+def test_a_backend_reporting_its_own_ending_during_a_cancel_does_not_record_a_second_one(
+    harness: _Harness,
+) -> None:
+    """A turn has one ending. The core asked for this one, so the core's is the one that
+    is written — an interruption, which is what actually happened to the turn."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "incumbent", sender_label="owner")
+        # Let the queue finish with the session cursor first: busy on that, it could not
+        # get to the ending in time and the race the fix is for would not happen.
+        await harness.settle()
+        harness.backend("c").reports_its_ending_during_a_cancel = True
+
+        await harness.system.interrupt("c")
+        await harness.settle()
+
+        assert await harness.recorded_endings("c") == (ConversationTurnEnding.interrupted,)
+        assert await harness.system.is_running("c") is False
+
+    _run(exercise)
+
+
+def test_a_cancel_that_never_reached_the_child_still_records_the_interruption(
+    harness: _Harness, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The ending is the core's and it stands. But a child that cannot be told to stop
+    cannot be trusted to be told anything, so it is thrown away and the next message
+    starts a fresh one."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "incumbent", sender_label="owner")
+        # Let the session cursor the child minted reach the record, so the respawn below
+        # is asked to resume rather than to start something new.
+        await harness.settle()
+        backend = harness.backend("c")
+        backend.cancels_raise_something_unnamed = True
+
+        with caplog.at_level(logging.ERROR, logger="planner.conversation2"):
+            await harness.system.interrupt("c")
+
+        assert await harness.recorded_endings("c") == (ConversationTurnEnding.interrupted,)
+        assert await harness.system.is_running("c") is False
+        # Thrown away: stopped, and no longer the conversation's child.
+        assert backend.stops == 1
+        assert backend.most_live_children_at_once == 1
+
+        lines = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "planner.conversation2"
+        ]
+        assert len(lines) == 1
+        assert "conversation turn cancel failed" in lines[0]
+        assert "conversation_id=c" in lines[0]
+
+        backend.cancels_raise_something_unnamed = False
+        assert await harness.system.send("c", "after the bad cancel", sender_label="owner") == (
+            PromptDeliveryStarted()
+        )
+        assert backend.session_starts == 2
+        assert backend.started_from_cursor == VENDOR_SESSION_CURSOR
+        assert backend.most_live_children_at_once == 1
+
+    _run(exercise)
+
+
+# --- one agent per conversation, even mid-sweep -------------------------------------------
+
+
+def test_a_message_arriving_while_the_janitor_stops_a_child_never_sees_two(
+    harness: _Harness,
+) -> None:
+    """Forgetting the child and stopping it are one act. Done separately, the message
+    below spawns its own child while the one being stopped is still alive."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "first", sender_label="owner")
+        await harness.complete_turn("c")
+        backend = harness.backend("c")
+        backend.stops_wait_for_release = asyncio.Event()
+        backend.stop_has_begun = asyncio.Event()
+        harness.clock.advance(30 * 60 + 1)
+
+        sweeping = asyncio.create_task(harness.system._sweep_idle_children())
+        await backend.stop_has_begun.wait()
+        sending = asyncio.create_task(
+            harness.system.send("c", "during the sweep", sender_label="owner")
+        )
+        for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
+            await asyncio.sleep(0)
+
+        # The message is waiting for the sweep to finish, not spawning beside it.
+        assert backend.session_starts == 1
+        backend.stops_wait_for_release.set()
+
+        await sweeping
+        assert await sending == PromptDeliveryStarted()
+        assert backend.session_starts == 2
+        assert backend.most_live_children_at_once == 1
+
+    _run(exercise)
+
+
+# --- live frames belong to a turn -----------------------------------------------------------
+
+
+def test_a_frame_from_a_turn_the_conversation_has_moved_on_from_is_not_shown(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        live_tail = ConversationLiveTail()
+        harness.system._live_tail = live_tail
+        await _start(harness, "c")
+        await harness.system.send("c", "first", sender_label="owner")
+        backend = harness.backend("c")
+        stale_token = backend.live_turn_token
+        assert stale_token is not None and backend.sink is not None
+        await harness.complete_turn("c")
+        await harness.system.send("c", "second", sender_label="owner")
+        live_token = backend.live_turn_token
+        assert live_token is not None
+
+        with live_tail.subscribe("c") as watching:
+            await backend.sink.agent_message_delta(stale_token, "from the turn before")
+            await backend.sink.tool_call_progress(
+                stale_token, tool_call_id="call-old", detail="still going"
+            )
+            await backend.sink.agent_message_delta(live_token, "from the turn running now")
+
+            # The dead turn's frames were never shown, so the first thing a watcher sees
+            # is the live turn's. Published, they would be sitting in front of it.
+            first_shown = await watching.next_item()
+
+        assert isinstance(first_shown, AgentMessageDeltaFrame)
+        assert first_shown.text_delta == "from the turn running now"
+
+    _run(exercise)
+
+
+# --- starting a conversation a message is already using -------------------------------------
+
+
+def test_starting_a_conversation_never_replaces_one_a_message_is_already_using(
+    harness: _Harness,
+) -> None:
+    """The row exists the moment it is committed, so a send can pick the conversation up
+    before start_conversation has finished. Replacing its state would strand a live child
+    that nothing could reach again."""
+
+    async def exercise() -> None:
+        real_create = harness.store.create_conversation
+        row_is_committed = asyncio.Event()
+        let_start_conversation_finish = asyncio.Event()
+
+        async def gated_create(resolved):  # type: ignore[no-untyped-def]
+            record = await real_create(resolved)
+            row_is_committed.set()
+            await let_start_conversation_finish.wait()
+            return record
+
+        harness.store.create_conversation = gated_create  # type: ignore[method-assign]
+
+        starting = asyncio.create_task(_start(harness, "c"))
+        await row_is_committed.wait()
+
+        # A message arrives for a conversation whose row is there, and runs all the way.
+        assert await harness.system.send("c", "first", sender_label="owner") == (
+            PromptDeliveryStarted()
+        )
+
+        let_start_conversation_finish.set()
+        await starting
+
+        assert await harness.system.is_running("c") is True
+        assert harness.backend("c").written_texts() == ("first",)
+        assert harness.backend("c").session_starts == 1
+
+    _run(exercise)
+
+
+# --- a turn that ended and could not be written down -----------------------------------------
+
+
+def test_a_failed_turn_whose_ending_cannot_be_written_still_says_so_in_the_log(
+    harness: _Harness, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The record and the log are the two ways anyone finds out. Losing the row must not
+    cost the line as well, or a turn ends and leaves no trace anywhere."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "work", sender_label="owner")
+
+        real_append = harness.store.append_event
+
+        async def append_that_cannot_write_an_ending(conversation_id: str, payload):  # type: ignore[no-untyped-def]
+            if isinstance(payload, TurnEndedEventPayload):
+                raise sqlite3.OperationalError("database is locked")
+            return await real_append(conversation_id, payload)
+
+        harness.store.append_event = append_that_cannot_write_an_ending  # type: ignore[method-assign]
+
+        with caplog.at_level(logging.ERROR, logger="planner.conversation2"):
+            await harness.fail_turn(
+                "c", error_summary="the model refused", standard_error_tail="stderr tail"
+            )
+
+        lines = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "planner.conversation2"
+        ]
+        # One line for the ending that could not be recorded, and the failed turn's own
+        # line all the same — saying there is no row to go and look at.
+        assert len(lines) == 2
+        assert "conversation turn ending could not be recorded" in lines[0]
+        assert "ending=failed" in lines[0]
+        assert "conversation turn failed" in lines[1]
+        assert "sequence=None" in lines[1]
+        assert "the model refused" in lines[1]
+
+        assert await harness.recorded_endings("c") == ()
+        # The turn is over even though its ending is not written down.
+        assert await harness.system.is_running("c") is False
 
     _run(exercise)
 

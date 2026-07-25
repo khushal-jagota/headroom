@@ -32,6 +32,8 @@ from planner.conversation2.contracts import (
 from planner.conversation2.events import (
     ConversationEventKind,
     ConversationEventPayload,
+    ModelChangedEventPayload,
+    PromptEventPayload,
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
@@ -134,6 +136,29 @@ class ConversationStore:
         """Write the next row of this conversation's record and return it as written."""
         return await asyncio.to_thread(self._append_event_sync, conversation_id, payload)
 
+    async def append_delivered_prompt(
+        self,
+        conversation_id: str,
+        *,
+        prompt: PromptEventPayload,
+        model_change: ModelChangedEventPayload | None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Write everything one delivery leaves behind, as one thing that either all
+        happened or none of it did.
+
+        A delivery that carried a change leaves three marks: the change is recorded, the
+        conversation is moved onto the new values, and the prompt is recorded. They are one
+        transaction because they are one fact. Written separately, a failure part-way
+        through leaves a notebook nobody can read straight: a change recorded for a prompt
+        that is not there, or a conversation moved onto a model its record never mentions.
+
+        The change is written before the prompt, because it is what the prompt ran under.
+        Returns the rows in the order they were written.
+        """
+        return await asyncio.to_thread(
+            self._append_delivered_prompt_sync, conversation_id, prompt, model_change
+        )
+
     async def read_events_after(
         self, conversation_id: str, after_sequence: int
     ) -> tuple[StoredConversationEvent, ...]:
@@ -156,16 +181,6 @@ class ConversationStore:
     ) -> None:
         await asyncio.to_thread(
             self._update_vendor_session_cursor_sync, conversation_id, vendor_session_cursor
-        )
-
-    async def update_current_model_and_reasoning_effort(
-        self, conversation_id: str, model: str | None, reasoning_effort: str | None
-    ) -> None:
-        await asyncio.to_thread(
-            self._update_current_model_and_reasoning_effort_sync,
-            conversation_id,
-            model,
-            reasoning_effort,
         )
 
     # --- inside the worker thread ---
@@ -231,28 +246,10 @@ class ConversationStore:
     def _append_event_sync(
         self, conversation_id: str, payload: ConversationEventPayload
     ) -> StoredConversationEvent:
-        kind = conversation_event_payload_kind(payload)
-        payload_json = conversation_event_payload_to_canonical_json(payload)
-        created_at = self._integer_now()
         conn = self._connect()
         try:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT latest_sequence FROM conversations WHERE conversation_id = ?",
-                (conversation_id,),
-            ).fetchone()
-            if row is None:
-                raise ConversationRecordMissing(conversation_id)
-            sequence = int(row["latest_sequence"]) + 1
-            conn.execute(
-                "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, "
-                "created_at) VALUES (?, ?, ?, ?, ?)",
-                (conversation_id, sequence, str(kind), payload_json, created_at),
-            )
-            conn.execute(
-                "UPDATE conversations SET latest_sequence = ? WHERE conversation_id = ?",
-                (sequence, conversation_id),
-            )
+            written = self._insert_rows(conn, conversation_id, (payload,))
             conn.execute("COMMIT")
         except BaseException:
             if conn.in_transaction:
@@ -260,13 +257,84 @@ class ConversationStore:
             raise
         finally:
             conn.close()
-        return StoredConversationEvent(
-            conversation_id=conversation_id,
-            sequence=sequence,
-            kind=kind,
-            payload=payload,
-            created_at=created_at,
+        return written[0]
+
+    def _append_delivered_prompt_sync(
+        self,
+        conversation_id: str,
+        prompt: PromptEventPayload,
+        model_change: ModelChangedEventPayload | None,
+    ) -> tuple[StoredConversationEvent, ...]:
+        payloads: tuple[ConversationEventPayload, ...] = (
+            (prompt,) if model_change is None else (model_change, prompt)
         )
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            written = self._insert_rows(conn, conversation_id, payloads)
+            if model_change is not None:
+                conn.execute(
+                    "UPDATE conversations SET model = ?, reasoning_effort = ? "
+                    "WHERE conversation_id = ?",
+                    (model_change.model, model_change.reasoning_effort, conversation_id),
+                )
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
+        return written
+
+    def _insert_rows(
+        self,
+        conn: sqlite3.Connection,
+        conversation_id: str,
+        payloads: tuple[ConversationEventPayload, ...],
+    ) -> tuple[StoredConversationEvent, ...]:
+        """Add rows to the end of a conversation's record. A transaction must be open.
+
+        Where the record has got to is read once and moved once, so a run of rows written
+        together is numbered consecutively with no gap for anyone else to write into: the
+        transaction is immediate, so a second writer is waiting for this one's lock.
+        """
+        created_at = self._integer_now()
+        row = conn.execute(
+            "SELECT latest_sequence FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if row is None:
+            raise ConversationRecordMissing(conversation_id)
+        latest_sequence = int(row["latest_sequence"])
+        written = []
+        for offset, payload in enumerate(payloads, start=1):
+            kind = conversation_event_payload_kind(payload)
+            conn.execute(
+                "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, "
+                "created_at) VALUES (?, ?, ?, ?, ?)",
+                (
+                    conversation_id,
+                    latest_sequence + offset,
+                    str(kind),
+                    conversation_event_payload_to_canonical_json(payload),
+                    created_at,
+                ),
+            )
+            written.append(
+                StoredConversationEvent(
+                    conversation_id=conversation_id,
+                    sequence=latest_sequence + offset,
+                    kind=kind,
+                    payload=payload,
+                    created_at=created_at,
+                )
+            )
+        conn.execute(
+            "UPDATE conversations SET latest_sequence = ? WHERE conversation_id = ?",
+            (latest_sequence + len(payloads), conversation_id),
+        )
+        return tuple(written)
 
     def _read_events_after_sync(
         self, conversation_id: str, after_sequence: int
@@ -302,19 +370,6 @@ class ConversationStore:
             conn.execute(
                 "UPDATE conversations SET vendor_session_cursor = ? WHERE conversation_id = ?",
                 (vendor_session_cursor, conversation_id),
-            )
-        finally:
-            conn.close()
-
-    def _update_current_model_and_reasoning_effort_sync(
-        self, conversation_id: str, model: str | None, reasoning_effort: str | None
-    ) -> None:
-        conn = self._connect()
-        try:
-            conn.execute(
-                "UPDATE conversations SET model = ?, reasoning_effort = ? "
-                "WHERE conversation_id = ?",
-                (model, reasoning_effort, conversation_id),
             )
         finally:
             conn.close()

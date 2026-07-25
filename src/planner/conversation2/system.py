@@ -139,6 +139,12 @@ class _RunningTurn:
     token: TurnToken
     pending_permission_ask_ids: set[str] = field(default_factory=set)
     ended: bool = False
+    # Set when the core is part-way through ending this turn itself — an interrupt, or a
+    # send-now killing the incumbent. The cancel goes out with the lock let go, and the
+    # backend reports the ending it was just asked for while that is happening. Only one
+    # of the two may be recorded, and it is the core's: the core is the side that knows
+    # the turn was interrupted rather than merely over.
+    ending_is_the_cores: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,11 +225,19 @@ class SqliteProcessConversationSystem:
     # --- the contract -------------------------------------------------------------------
 
     async def start_conversation(self, request: ConversationStartRequest) -> None:
-        """Create the conversation. Writing its row is the first thing that happens."""
+        """Create the conversation. Writing its row is the first thing that happens.
+
+        The row exists the moment it is committed, so a message can arrive for this
+        conversation before this call has finished — and that message will have picked the
+        conversation up from its row, and may already have a child running. Which is why
+        what follows only fills a gap: whatever is there is what this process is using, and
+        replacing it would strand a live child that nothing can reach any more.
+        """
         resolved = resolve_conversation_start_request(request)
         record = await self._store.create_conversation(resolved)
         async with self._conversations_lock:
-            self._conversations[record.conversation_id] = _ConversationState(record=record)
+            if record.conversation_id not in self._conversations:
+                self._conversations[record.conversation_id] = _ConversationState(record=record)
 
     async def send(
         self,
@@ -270,8 +284,10 @@ class SqliteProcessConversationSystem:
             running = state.running_turn
             if running is None:
                 return
-            await self._cancel_and_end_running_turn(state, running)
-            self._set_phase(state, _ConversationPhase.idle)
+            try:
+                await self._cancel_and_end_running_turn(state, running)
+            finally:
+                self._settle_phase(state)
         finally:
             state.lock.release()
         await self._drain_held_prompts(state)
@@ -299,11 +315,13 @@ class SqliteProcessConversationSystem:
             running = state.running_turn
             if running is None:
                 return
-            child = state.child
-            if child is not None:
-                await self._cancel_child_turn(state, child)
-            await self._end_turn(state, running, ConversationTurnEnding.interrupted, None)
-            self._set_phase(state, _ConversationPhase.idle)
+            try:
+                child = state.child
+                if child is not None:
+                    await self._cancel_child_turn(state, child)
+                await self._end_turn(state, running, ConversationTurnEnding.interrupted, None)
+            finally:
+                self._settle_phase(state)
         finally:
             state.lock.release()
 
@@ -486,7 +504,14 @@ class SqliteProcessConversationSystem:
         try:
             running = state.running_turn
             if running is not None:
-                await self._cancel_and_end_running_turn(state, running)
+                try:
+                    await self._cancel_and_end_running_turn(state, running)
+                except BaseException:
+                    # The incumbent's ending fell over, so this send never happens. The
+                    # conversation goes back to whichever phase is now true rather than
+                    # staying in an ending nobody is finishing.
+                    self._settle_phase(state)
+                    raise
             reservation = self._reserve_turn(state)
         finally:
             state.lock.release()
@@ -721,30 +746,34 @@ class SqliteProcessConversationSystem:
                     self._set_phase(state, phase_when_not_started)
                     return False
 
+                carried_change: ModelChangedEventPayload | None = None
                 if model_change is not None or reasoning_effort_change is not None:
-                    model = state.record.model if model_change is None else model_change
-                    reasoning_effort = (
-                        state.record.reasoning_effort
-                        if reasoning_effort_change is None
-                        else reasoning_effort_change
-                    )
-                    await self._append_event(
-                        state,
-                        ModelChangedEventPayload(
-                            model=model, reasoning_effort=reasoning_effort
+                    carried_change = ModelChangedEventPayload(
+                        model=state.record.model if model_change is None else model_change,
+                        reasoning_effort=(
+                            state.record.reasoning_effort
+                            if reasoning_effort_change is None
+                            else reasoning_effort_change
                         ),
                     )
-                    await self._store.update_current_model_and_reasoning_effort(
-                        state.record.conversation_id, model, reasoning_effort
-                    )
-                    state.record = replace(
-                        state.record, model=model, reasoning_effort=reasoning_effort
-                    )
 
-                await self._append_event(
-                    state,
-                    PromptEventPayload(text=text, sender_label=sender_label, mode=mode),
+                # One transaction: the change, the conversation's new values and the
+                # prompt are one fact about one delivery, and a half-written one would
+                # leave the record saying something that never happened.
+                written = await self._store.append_delivered_prompt(
+                    state.record.conversation_id,
+                    prompt=PromptEventPayload(
+                        text=text, sender_label=sender_label, mode=mode
+                    ),
+                    model_change=carried_change,
                 )
+                self._take_in_written_rows(state, written)
+                if carried_change is not None:
+                    state.record = replace(
+                        state.record,
+                        model=carried_change.model,
+                        reasoning_effort=carried_change.reasoning_effort,
+                    )
                 state.has_delivered_prompt = True
                 state.running_turn = _RunningTurn(token=reservation.token)
                 self._set_phase(state, _ConversationPhase.running)
@@ -864,9 +893,13 @@ class SqliteProcessConversationSystem:
         """Stop the agent and record the interruption. The lock is held on both sides.
 
         It is let go for the cancel itself, which is a wire call; the conversation is in
-        its ending phase throughout, so nobody else takes it in the meantime.
+        its ending phase throughout, so nobody else takes it in the meantime. The backend
+        will report this turn's ending as soon as it takes the cancel, and that report
+        arrives while the lock is let go — the turn is marked as being ended here first, so
+        the report is dropped and this interruption is the one that gets recorded.
         """
         self._set_phase(state, _ConversationPhase.ending)
+        running.ending_is_the_cores = True
         child = state.child
         state.lock.release()
         try:
@@ -882,13 +915,19 @@ class SqliteProcessConversationSystem:
         running: _RunningTurn,
         ending: ConversationTurnEnding,
         error_summary: str | None,
-    ) -> StoredConversationEvent:
+    ) -> StoredConversationEvent | None:
         """Record a turn's ending, once. The lock must be held.
+
+        Once per turn, whoever gets there first: a turn that has already ended writes
+        nothing and returns nothing. A turn has one ending, and two rows saying it stopped
+        would be two different stories about the same moment.
 
         The turn's permission asks die here: nothing more can be answered on them, and no
         answer is recorded for them. Settling them with the backend belongs to the adapter,
         which is the only side that knows what a withdrawn ask means to its vendor.
         """
+        if running.ended:
+            return None
         running.ended = True
         running.pending_permission_ask_ids.clear()
         state.running_turn = None
@@ -960,15 +999,28 @@ class SqliteProcessConversationSystem:
             )
 
     async def _cancel_child_turn(self, state: _ConversationState, child: BackendChild) -> None:
+        """Tell the child to stop its turn, and deal honestly with a cancel that failed.
+
+        The ending is the core's and it stands either way: an agent that would not take
+        the cancel does not get to keep the turn open in the record. But a cancel that did
+        not reach the child means its wire did not carry it, and a child that cannot be
+        told to stop cannot be trusted to be told anything — it may still be working on a
+        turn this conversation considers over. So it is stopped and thrown away, and the
+        next message spawns a fresh one from the session cursor. The failure gets a line of
+        its own, because "the agent was interrupted" and "the agent was told to stop" have
+        just stopped being the same statement.
+        """
         try:
             await child.cancel_running_turn()
-        except Exception:
-            # The ending is the core's and it stands: an agent that would not take the
-            # cancel does not get to keep the turn open in the record.
-            LOGGER.exception(
-                "conversation %s could not cancel its backend turn cleanly",
+            return
+        except Exception as cancel_failure:
+            LOGGER.error(
+                "conversation turn cancel failed conversation_id=%s backend=%s error=%r",
                 state.record.conversation_id,
+                str(state.record.backend_key),
+                cancel_failure,
             )
+        await self._discard_child(state, child)
 
     async def _compose_prompt_text(self, state: _ConversationState, text: str) -> str:
         """The text as the backend gets it: the role text rides the very first prompt.
@@ -1110,17 +1162,41 @@ class SqliteProcessConversationSystem:
         running = await self._hold_for_the_live_turn(state, turn_token)
         if running is None:
             return
+        if running.ending_is_the_cores:
+            # The core asked for this ending and is part-way through recording it as the
+            # interruption it was. The backend answering "that turn has stopped" is the
+            # cancel landing, not a second thing that happened.
+            state.lock.release()
+            return
+        recorded_at_sequence: int | None = None
         try:
             try:
                 stored = await self._end_turn(state, running, ending, error_summary)
+                recorded_at_sequence = None if stored is None else stored.sequence
+            except Exception as ending_not_written:
+                # Both of the ways a person finds out a turn ended are the record and the
+                # log. Losing the row must not cost the line as well — that would be a
+                # turn that ended and left no trace anywhere.
+                LOGGER.error(
+                    "conversation turn ending could not be recorded conversation_id=%s "
+                    "backend=%s ending=%s error=%r",
+                    state.record.conversation_id,
+                    str(state.record.backend_key),
+                    str(ending),
+                    ending_not_written,
+                )
             finally:
                 # The turn is over whether or not its ending could be written down, and a
                 # conversation whose turn is over is idle.
-                self._set_phase(state, _ConversationPhase.idle)
+                self._settle_phase(state)
         finally:
             state.lock.release()
         if ending is ConversationTurnEnding.failed:
-            self._log_failed_turn(state, stored.sequence, error_summary, standard_error_tail)
+            # Not conditional on the row: a failed turn's line is the one an operator
+            # reads, and it says plainly when there is no row to go and look at.
+            self._log_failed_turn(
+                state, recorded_at_sequence, error_summary, standard_error_tail
+            )
         await self._drain_held_prompts(state)
 
     async def _on_vendor_session_cursor_rebound(
@@ -1134,18 +1210,20 @@ class SqliteProcessConversationSystem:
     def _log_failed_turn(
         self,
         state: _ConversationState,
-        sequence: int,
+        sequence: int | None,
         error_summary: str | None,
         standard_error_tail: str | None,
     ) -> None:
         """One line for a turn that failed, with everything needed to go and look.
 
-        The turn's failure is already a row; this is the conversation system's own record
-        of it, in the place an operator reads. Both free-text pieces go in quoted, so a
-        multi-line stderr tail stays one line.
+        The turn's failure is normally a row too; this is the conversation system's own
+        record of it, in the place an operator reads. ``sequence`` says where to find that
+        row, and is ``None`` when the ending could not be written — the failure still gets
+        its line, saying there is nothing to look up. Both free-text pieces go in quoted,
+        so a multi-line stderr tail stays one line.
         """
         LOGGER.error(
-            "conversation turn failed conversation_id=%s backend=%s sequence=%d error=%r "
+            "conversation turn failed conversation_id=%s backend=%s sequence=%s error=%r "
             "standard_error_tail=%r",
             state.record.conversation_id,
             str(state.record.backend_key),
@@ -1169,6 +1247,12 @@ class SqliteProcessConversationSystem:
 
         A conversation whose lock is held is in the middle of something and is not idle, so
         it is left for the next sweep rather than waited on.
+
+        Stopping happens under the conversation's lock, wire call and all — the same
+        reasoning as a kill, and for the same reason: forgetting the child and stopping it
+        are one act. Done separately, a message arriving in between spawns its own child
+        while the one being stopped is still alive, and the conversation briefly has two
+        agents in it.
         """
         async with self._conversations_lock:
             states = list(self._conversations.values())
@@ -1183,7 +1267,7 @@ class SqliteProcessConversationSystem:
                 if idle_for < self._idle_child_stop_after_seconds:
                     continue
                 state.child = None
-            await self._stop_child(state, child)
+                await self._stop_child(state, child)
 
     # --- shared internals ---------------------------------------------------------------
 
@@ -1209,19 +1293,74 @@ class SqliteProcessConversationSystem:
         self, state: _ConversationState, payload: ConversationEventPayload
     ) -> StoredConversationEvent:
         stored = await self._store.append_event(state.record.conversation_id, payload)
-        state.record = replace(state.record, latest_sequence=stored.sequence)
-        # Shown only once it is committed, so a watcher never sees a row that is not in
-        # the record — which is what lets a reader replay and then carry straight on.
-        if self._live_tail is not None:
-            self._live_tail.publish_event(stored)
+        self._take_in_written_rows(state, (stored,))
         return stored
 
-    def _publish_live_tail_frame(
-        self, conversation_id: str, frame: ConversationLiveTailFrame
+    def _take_in_written_rows(
+        self, state: _ConversationState, written: tuple[StoredConversationEvent, ...]
     ) -> None:
-        """Show something that has not finished arriving. Never waits, never stores."""
+        """Move the conversation on to what has just been written, and show it.
+
+        Rows are shown only once they are committed, so a watcher never sees a row that is
+        not in the record — which is what lets a reader replay and then carry straight on.
+        """
+        if not written:
+            return
+        state.record = replace(state.record, latest_sequence=written[-1].sequence)
         if self._live_tail is not None:
-            self._live_tail.publish_frame(conversation_id, frame)
+            for stored in written:
+                self._live_tail.publish_event(stored)
+
+    def _publish_live_tail_frame(
+        self,
+        state: _ConversationState,
+        turn_token: TurnToken,
+        frame: ConversationLiveTailFrame,
+    ) -> None:
+        """Show something that has not finished arriving. Never waits, never stores.
+
+        A frame from a turn this conversation has moved on from is dropped rather than
+        shown. Rows already answer for themselves — a stale one is refused by its token
+        before it is written — and a frame that skipped that check would put a dead turn's
+        half-finished text into the tail of the turn running now.
+
+        The check takes no lock: it reads what the conversation is on at this instant,
+        which is all a frame with no ordering obligations needs, and an adapter reporting
+        its stream must never be made to wait behind anything.
+        """
+        if self._live_tail is None or not self._names_a_turn_to_show(state, turn_token):
+            return
+        self._live_tail.publish_frame(state.record.conversation_id, frame)
+
+    def _names_a_turn_to_show(
+        self, state: _ConversationState, turn_token: TurnToken
+    ) -> bool:
+        """Whether this token is the turn a watcher should be seeing text from.
+
+        The turn that is running, and also the one being started: between reserving a turn
+        and its prompt row being written, the text is already on the wire and an agent that
+        answers that fast is answering the newest turn, not a dead one. What is refused is
+        a token this conversation has left behind.
+        """
+        running = state.running_turn
+        if running is not None and running.token == turn_token:
+            return True
+        reserved = state.reserved_turn
+        return reserved is not None and reserved.token == turn_token
+
+    def _settle_phase(self, state: _ConversationState) -> None:
+        """Put the conversation into whichever resting phase its facts say it is in.
+
+        Used wherever an ending finishes, including when it finishes badly: a phase left
+        part-way through is a conversation nothing can ever take again, so the phase is
+        put back to what is actually true rather than to what was expected.
+        """
+        self._set_phase(
+            state,
+            _ConversationPhase.idle
+            if state.running_turn is None
+            else _ConversationPhase.running,
+        )
 
     def _set_phase(self, state: _ConversationState, phase: _ConversationPhase) -> None:
         state.phase = phase
@@ -1264,11 +1403,11 @@ class _CoreBackendEventSink:
         Deltas exist to be shown while they arrive; the finished message is what is
         recorded. This one goes straight out to whoever is watching, ahead of the queue
         the rows go through, because it is not a row and has nothing to be ordered
-        against — the message it belongs to is written whole when it finishes.
+        against — the message it belongs to is written whole when it finishes. It still
+        names its turn, and a turn the conversation has moved on from is not shown.
         """
-        del turn_token
         self._system._publish_live_tail_frame(
-            self._state.record.conversation_id, AgentMessageDeltaFrame(text_delta=text_delta)
+            self._state, turn_token, AgentMessageDeltaFrame(text_delta=text_delta)
         )
 
     async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
@@ -1305,10 +1444,11 @@ class _CoreBackendEventSink:
         It goes straight out to whoever is watching rather than through the queue the rows
         go through, for the same reason a message delta does: it is not a row, so there is
         nothing for it to be ordered against. The tool call's finish is what is recorded.
+        A turn the conversation has moved on from is not shown.
         """
-        del turn_token
         self._system._publish_live_tail_frame(
-            self._state.record.conversation_id,
+            self._state,
+            turn_token,
             ToolCallProgressFrame(tool_call_id=tool_call_id, detail=detail),
         )
 

@@ -191,16 +191,105 @@ def test_an_unknown_conversation_reads_as_nothing(store: ConversationStore) -> N
     assert asyncio.run(store.read_conversation("never-started")) is None
 
 
-def test_the_current_model_and_the_session_cursor_move(store: ConversationStore) -> None:
+def test_the_session_cursor_moves(store: ConversationStore) -> None:
     async def exercise() -> None:
         await store.create_conversation(_resolved(model="first-model"))
-        await store.update_current_model_and_reasoning_effort("c", "second-model", "high")
         await store.update_vendor_session_cursor("c", "vendor-session-7")
         read = await store.read_conversation("c")
 
         assert read is not None
-        assert (read.model, read.reasoning_effort) == ("second-model", "high")
         assert read.vendor_session_cursor == "vendor-session-7"
+
+    asyncio.run(exercise())
+
+
+# --- a delivery, written as one thing ------------------------------------------------------
+
+
+def test_a_delivery_carrying_a_change_writes_both_rows_and_moves_the_conversation(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved(model="first-model"))
+
+        written = await store.append_delivered_prompt(
+            "c",
+            prompt=A_PROMPT,
+            model_change=ModelChangedEventPayload(
+                model="second-model", reasoning_effort="high"
+            ),
+        )
+
+        # The change is written before the prompt, because it is what the prompt ran under.
+        assert [(event.sequence, str(event.kind)) for event in written] == [
+            (1, "model_changed"),
+            (2, "prompt"),
+        ]
+        read = await store.read_conversation("c")
+        assert read is not None
+        assert (read.model, read.reasoning_effort) == ("second-model", "high")
+        assert read.latest_sequence == 2
+        assert await store.read_events_after("c", 0) == written
+
+    asyncio.run(exercise())
+
+
+def test_a_delivery_carrying_no_change_writes_only_its_prompt(
+    store: ConversationStore,
+) -> None:
+    async def exercise() -> None:
+        await store.create_conversation(_resolved(model="first-model"))
+
+        written = await store.append_delivered_prompt("c", prompt=A_PROMPT, model_change=None)
+
+        assert [(event.sequence, str(event.kind)) for event in written] == [(1, "prompt")]
+        read = await store.read_conversation("c")
+        assert read is not None
+        assert read.model == "first-model"
+
+    asyncio.run(exercise())
+
+
+def test_a_delivery_that_cannot_be_written_leaves_no_part_of_itself_behind(
+    store: ConversationStore, tmp_path: Path
+) -> None:
+    """All of it or none of it: a change recorded for a prompt that is not there would be
+    a record saying something that never happened."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved(model="first-model"))
+        await store.append_event("c", A_PROMPT)
+
+        # The prompt row cannot be written, because its sequence is already taken.
+        conn: sqlite3.Connection = connect(str(tmp_path / "conversations.db"))
+        try:
+            conn.execute(
+                "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, "
+                "created_at) VALUES ('c', 3, 'agent_message', '{\"text\":\"squatter\"}', 1)"
+            )
+        finally:
+            conn.close()
+
+        with pytest.raises(sqlite3.IntegrityError):
+            await store.append_delivered_prompt(
+                "c",
+                prompt=A_PROMPT,
+                model_change=ModelChangedEventPayload(
+                    model="never-model", reasoning_effort=None
+                ),
+            )
+
+        read = await store.read_conversation("c")
+        assert read is not None
+        # No change recorded, the conversation never moved, and the marker never moved.
+        assert read.model == "first-model"
+        assert read.latest_sequence == 1
+        # Sequence 2 is empty: the change row went in and came back out again with the
+        # prompt row that could not follow it. Only the squatter at 3 is left.
+        assert [
+            (event.sequence, str(event.kind))
+            for event in await store.read_events_after("c", 0)
+        ] == [(1, "prompt"), (3, "agent_message")]
 
     asyncio.run(exercise())
 
@@ -308,7 +397,6 @@ def test_a_written_row_is_never_touched_again(store: ConversationStore, tmp_path
     async def exercise() -> None:
         await store.create_conversation(_resolved())
         await store.append_event("c", A_PROMPT)
-        await store.update_current_model_and_reasoning_effort("c", "second-model", None)
         await store.update_vendor_session_cursor("c", "vendor-session-7")
         await store.append_event("c", AN_AGENT_MESSAGE)
 
