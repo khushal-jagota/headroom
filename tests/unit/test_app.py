@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -78,6 +80,14 @@ def test_export_is_git_free_and_records_exact_checkout(tmp_path: Path) -> None:
     assert manifest.app_sha == sha
     assert len(manifest.source_digest) == 64
     assert not (candidate / ".git").exists()
+    assert (candidate / "bin" / "panels").read_text(encoding="utf-8") == (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)\n'
+        f'export PLAN_APP_ROOT="$root" PLAN_APP_SHA="{sha}"\n'
+        'exec "$root/.venv/bin/python" -I -m planner "$@"\n'
+    )
+    assert os.access(candidate / "bin" / "panels", os.X_OK)
     assert validate_app_manifest(candidate / "manifest.json").app_sha == sha
 
 
@@ -145,6 +155,70 @@ def test_runtime_app_validation_requires_runnable_tree(tmp_path: Path) -> None:
         validate_app_manifest(app / "manifest.json", require_runtime=True)
 
 
+def test_runtime_app_validation_requires_deployed_cli(tmp_path: Path) -> None:
+    app = _runtime_app(tmp_path / "app")
+    (app / "bin" / "panels").unlink()
+    _rewrite_digest(app)
+    with pytest.raises(AppValidationError, match=r"bin/panels"):
+        validate_app_manifest(app / "manifest.json", require_runtime=True)
+
+
+def test_exported_cli_is_relocatable_and_preserves_caller_context(
+    tmp_path: Path,
+) -> None:
+    source, sha = _git_source(tmp_path)
+    candidate = tmp_path / "candidate"
+    build_exported_app(source, requested_sha=sha, candidate_app=candidate)
+    python = candidate / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' \"$PLAN_APP_ROOT\" \"$PLAN_APP_SHA\" \"$PLAN_SERVER_URL\" "
+        "\"$PLAN_TICKET_ID\" \"$PLAN_ACTOR\" \"$PYTHONPATH\" \"$@\"\n"
+        "exit 23\n",
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    deployed = tmp_path / "installed" / "app"
+    deployed.parent.mkdir()
+    shutil.move(candidate, deployed)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    result = subprocess.run(
+        [str(deployed / "bin" / "panels"), "worker", "my-ticket", "--json"],
+        cwd=outside,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PLAN_SERVER_URL": "http://panels.test",
+            "PLAN_TICKET_ID": "t_worker",
+            "PLAN_ACTOR": "worker",
+            "PLAN_APP_ROOT": "/ambient/wrong-app",
+            "PLAN_APP_SHA": SHA,
+            "PYTHONPATH": "/ambient/package",
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 23
+    assert result.stdout.splitlines() == [
+        str(deployed.resolve()),
+        sha,
+        "http://panels.test",
+        "t_worker",
+        "worker",
+        "/ambient/package",
+        "-I",
+        "-m",
+        "planner",
+        "worker",
+        "my-ticket",
+        "--json",
+    ]
+
+
 def _git_source(tmp_path: Path) -> tuple[Path, str]:
     source = tmp_path / "source"
     source.mkdir()
@@ -188,6 +262,9 @@ def _runtime_app(app: Path) -> Path:
     launcher.parent.mkdir()
     launcher.write_text("#!/bin/sh\n", encoding="utf-8")
     launcher.chmod(0o755)
+    cli = app / "bin" / "panels"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    cli.chmod(0o755)
     (app / "web" / "dist").mkdir(parents=True)
     (app / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
     (app / "agent_backends" / "node_modules").mkdir(parents=True)

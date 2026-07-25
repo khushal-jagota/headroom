@@ -129,7 +129,11 @@ def _validate_app_tree(root: Path) -> None:
 
 def _validate_runtime_tree(root: Path) -> None:
     python = root / ".venv" / "bin" / "python"
-    required_files = (python, root / "bin" / "panels-launcher")
+    required_files = (
+        python,
+        root / "bin" / "panels",
+        root / "bin" / "panels-launcher",
+    )
     for path in required_files:
         if not path.is_file():
             raise AppValidationError(f"runtime file is missing: {path.relative_to(root)}")
@@ -199,7 +203,7 @@ def build_exported_app(
         source_digest = digest_app_source(staging)
         if install_dependencies:
             _install_app_dependencies(staging)
-        _write_stable_launcher(staging)
+        _write_app_entrypoints(staging, app_sha=requested_sha)
         manifest = AppManifest(requested_sha, source_digest, digest_app_artifact(staging))
         (staging / "manifest.json").write_text(
             json.dumps(manifest.as_dict(), sort_keys=True, indent=2) + "\n",
@@ -245,9 +249,21 @@ def _install_app_dependencies(app_root: Path) -> None:
         subprocess.run(["npm", "run", "build", "--prefix", str(app_root / "web")], check=True)
 
 
-def _write_stable_launcher(app_root: Path) -> None:
-    launcher = app_root / "bin" / "panels-launcher"
-    launcher.parent.mkdir(parents=True, exist_ok=True)
+def _write_app_entrypoints(app_root: Path, *, app_sha: str) -> None:
+    app_sha = validate_app_sha(app_sha)
+    bin_directory = app_root / "bin"
+    bin_directory.mkdir(parents=True, exist_ok=True)
+    cli = bin_directory / "panels"
+    cli.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)\n'
+        f'export PLAN_APP_ROOT="$root" PLAN_APP_SHA="{app_sha}"\n'
+        'exec "$root/.venv/bin/python" -I -m planner "$@"\n',
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+    launcher = bin_directory / "panels-launcher"
     launcher.write_text(
         "#!/bin/sh\n"
         "set -eu\n"

@@ -21,7 +21,7 @@ def test_panels_wrapper_uses_the_vps_users_current_app_and_preserves_arguments(
         "#!/bin/sh\n"
         "set -eu\n"
         "\n"
-        'exec "$HOME/Deployments/Panels/current/app/bin/panels-launcher" "$@"\n'
+        'exec "$HOME/Deployments/Panels/current/app/bin/panels" "$@"\n'
     )
 
     command_directory = tmp_path / "command-bin"
@@ -31,14 +31,14 @@ def test_panels_wrapper_uses_the_vps_users_current_app_and_preserves_arguments(
     current_app = tmp_path / "Deployments" / "Panels" / "current" / "app"
     current_app.parent.mkdir(parents=True)
     for release_name in ("release-a", "release-b"):
-        launcher = tmp_path / release_name / "bin" / "panels-launcher"
-        launcher.parent.mkdir(parents=True)
-        launcher.write_text(
+        cli = tmp_path / release_name / "bin" / "panels"
+        cli.parent.mkdir(parents=True)
+        cli.write_text(
             "#!/bin/sh\n"
             f"printf '%s\\n' '{release_name}' \"$@\"\n",
             encoding="utf-8",
         )
-        launcher.chmod(0o755)
+        cli.chmod(0o755)
 
     current_app.symlink_to(tmp_path / "release-a", target_is_directory=True)
     environment = {
