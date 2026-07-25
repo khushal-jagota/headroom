@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
 from pathlib import Path
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.runtime.employee_step_repository import EmployeeStepRun
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -69,19 +67,6 @@ def test_fresh_schema_has_employee_correctness_without_legacy_chat_tables(
         assert "chat_session_key" not in day_columns
     finally:
         conn.close()
-
-
-def test_employee_step_record_is_exact_and_contains_no_conversation_content() -> None:
-    assert [field.name for field in fields(EmployeeStepRun)] == [
-        "employee_step_id",
-        "ticket_id",
-        "status",
-        "employee_session_id",
-        "error",
-        "started_at",
-        "updated_at",
-        "completed_at",
-    ]
 
 
 def test_deleted_python_owners_and_live_imports_are_absent() -> None:

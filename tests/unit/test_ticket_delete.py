@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -7,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.conversation2.contracts import ConversationStartRequest
 from planner.core import change_signal
 from planner.core import links as core_links
 from planner.core.clock import TestClock as PlannerTestClock
@@ -17,8 +19,7 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.days import data as days_data
-from planner.runtime import automatic_employee_step_eligibility
-from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
+from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap
 
@@ -84,17 +85,6 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
     core_links.add_link(tmp_db, blocked_item.id, "si_delete_parent", LinkKind.blocks, now)
     core_links.add_link(tmp_db, target.id, "si_delete_parent", LinkKind.blocks, now)
 
-    repository = SqliteEmployeeStepRepository()
-    run = repository.start(tmp_db, target.id, now=now)
-    repository.settle(
-        tmp_db,
-        run.employee_step_id,
-        ticket_id=target.id,
-        status="complete",
-        error=None,
-        now=now,
-    )
-
     deleted = tickets_data.delete_ticket(tmp_db, target.id, actor="human", now=now)
 
     assert deleted.ticket_id == target.id
@@ -119,10 +109,6 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
         ).fetchone()
         is None
     )
-    assert tmp_db.execute(
-        "SELECT 1 FROM employee_step_runs WHERE ticket_id = ?", (target.id,)
-    ).fetchone() is None
-
     # Nothing anywhere still refers to the deleted Ticket.
     assert tmp_db.execute(
         "SELECT 1 FROM day_tickets WHERE ticket_id = ?", (target.id,)
@@ -146,26 +132,17 @@ def test_delete_ticket_rejects_agent_and_each_active_worker_invariant(
     controlled = _create(tmp_db, cfg, fake_clock, "Controlled running")
     planning_day_id = "day_2099-01-01"
     days_data.add_day_ticket(tmp_db, planning_day_id, controlled.id, now)
-    assert tickets_data.claim_automatic_employee_step(
+    assert tickets_data.claim_ticket_for_worker_step(
         tmp_db,
         controlled.id,
         planning_day_id_resolver=lambda: planning_day_id,
-        eligibility_check=(
-            automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
-        ),
+        readiness_check=worker_step_readiness.is_ready_for_worker_step,
         now=now,
     )
     with pytest.raises(PlannerError) as controlled_exc:
         tickets_data.delete_ticket(tmp_db, controlled.id, actor="human", now=now)
     assert controlled_exc.value.code is ErrorCode.already_running
     assert tickets_data.read_ticket(tmp_db, controlled.id).id == controlled.id
-
-    turn_target = _create(tmp_db, cfg, fake_clock, "Employee step running")
-    SqliteEmployeeStepRepository().start(tmp_db, turn_target.id, now=now)
-    with pytest.raises(PlannerError) as turn_exc:
-        tickets_data.delete_ticket(tmp_db, turn_target.id, actor="human", now=now)
-    assert turn_exc.value.code is ErrorCode.already_running
-    assert tickets_data.read_ticket(tmp_db, turn_target.id).id == turn_target.id
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -186,6 +163,43 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
         return connect(str(db_path))
 
     return create_app(config, clock, conn_factory), db_path
+
+
+def test_delete_route_refuses_a_ticket_whose_conversation_is_running(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    target = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Live worker",
+        actor="human",
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+    )
+    conn.execute(
+        "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+        ("conv-live", target.id),
+    )
+    conn.commit()
+    conn.close()
+
+    with TestClient(app) as client:
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(conversation_id="conv-live")
+            )
+        )
+        asyncio.run(
+            app.state.conversation_system.send("conv-live", "working", sender_label="loop")
+        )
+        blocked = client.delete(f"/api/tickets/{target.id}")
+        assert blocked.status_code == 409
+        assert blocked.json()["error"]["code"] == "already_running"
+
+        # The turn ends; the same Ticket deletes cleanly.
+        app.state.conversation_system.complete_running_turn("conv-live")
+        deleted = client.delete(f"/api/tickets/{target.id}")
+        assert deleted.status_code == 200, deleted.text
 
 
 def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path: Path) -> None:

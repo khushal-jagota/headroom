@@ -19,7 +19,6 @@ from planner.core.contracts import EventKind, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
-from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
@@ -57,7 +56,7 @@ from planner.worker_types.configuration import (
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
-class _AutomaticEmployeeStepEligibilityCheck(Protocol):
+class _WorkerStepReadinessCheck(Protocol):
     def __call__(
         self,
         conn: sqlite3.Connection,
@@ -133,6 +132,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
+        ticket_status_changed_at=int(row["ticket_status_changed_at"]),
         backend_error=(
             str(row["backend_error"]) if row["backend_error"] is not None else None
         ),
@@ -510,30 +510,6 @@ def write_employee_session_id_in_transaction(
         (effective_employee_session_id, now, ticket_id),
     )
     return effective_employee_session_id
-
-
-def claim_running_step_employee_session_id(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    transition: EmployeeSessionIdTransition,
-    now: int,
-) -> Ticket:
-    """Persist or adopt the durable Employee session for the active worker step."""
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        if ticket.ticket_status is not TicketStatus.agent:
-            return ticket
-        write_employee_session_id_in_transaction(
-            conn,
-            ticket_id,
-            transition=transition,
-            force_fresh_employee_session=False,
-            now=now,
-        )
-        return _load_ticket_for_write(conn, ticket_id)
 
 
 def write_ticket_conversation_start(
@@ -1037,12 +1013,6 @@ def reconcile_ticket_from_external_work(
                 "ticket control is active",
                 {"ticket_id": ticket_id, "ticket_status": ticket.ticket_status.value},
             )
-        if SqliteEmployeeStepRepository().running_exists(conn, ticket_id):
-            raise PlannerError(
-                ErrorCode.already_running,
-                "ticket Employee step is running",
-                {"ticket_id": ticket_id},
-            )
 
         values_decision, position_decision = external_work.decide_external_work(
             ticket,
@@ -1167,79 +1137,83 @@ def get_effective_sprint_id(conn: sqlite3.Connection, ticket_id: str) -> str | N
     return sprint_id
 
 
-def claim_automatic_employee_step(
+def claim_ticket_for_worker_step(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     planning_day_id_resolver: Callable[[], str],
-    eligibility_check: _AutomaticEmployeeStepEligibilityCheck,
+    readiness_check: _WorkerStepReadinessCheck,
     now: int,
 ) -> Ticket | None:
+    """Take this Ticket out of ``empty`` for one worker step, or report it is not ready.
+
+    The status flip IS the claim: there is no claim stamp and no separate run row. The
+    readiness check runs again here, inside the write transaction, where its answer is
+    final — two racing callers both re-check under the same write lock and only the one
+    that finds the Ticket still at ``empty`` writes.
+
+    Returns the claimed Ticket, whose ``ticket_status`` and ``ticket_status_changed_at``
+    are what ``release_worker_step_claim`` must be given to give the claim back.
+    """
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
         planning_day_id = planning_day_id_resolver()
-        if not eligibility_check(
+        if not readiness_check(
             conn,
             ticket,
             planning_day_id=planning_day_id,
             worker_type_definition=worker_type_definition,
         ):
             return None
-        _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def finish_run_if_still_running_step(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    employee_session_transition: EmployeeSessionIdTransition | None = None,
-    now: int,
-) -> Ticket:
-    with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ownership_mode = machine.effective_stage_ownership_mode(
+            ticket.stage,
+            ticket.stage_ownership_overrides,
+            worker_type_definition=worker_type_definition,
+            default_stage_ownership_mode=ticket.default_stage_ownership_mode,
         )
-        if employee_session_transition is not None:
-            write_employee_session_id_in_transaction(
-                conn,
-                ticket_id,
-                transition=employee_session_transition,
-                force_fresh_employee_session=False,
-                now=now,
+        if ownership_mode is None:
+            raise PlannerError(
+                ErrorCode.validation,
+                "a terminal stage has no worker step to claim",
+                {"ticket_id": ticket_id, "stage": ticket.stage},
             )
-        if ticket.ticket_status is TicketStatus.agent:
-            _write_resting_ticket_status(
-                conn,
-                ticket,
-                worker_type_definition=worker_type_definition,
-                now=now,
-            )
+        _write_ticket_status(
+            conn,
+            ticket_id,
+            machine.worker_step_departure_status(ownership_mode),
+            now,
+        )
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def release_run_claim_to_empty_if_still_running_step(
+def release_worker_step_claim(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
-    employee_session_transition: EmployeeSessionIdTransition | None = None,
+    expected_status: TicketStatus,
+    expected_status_changed_at: int,
     now: int,
-) -> Ticket:
+) -> bool:
+    """Give a worker-step claim back, but only if the Ticket has not moved on since.
+
+    Both halves of the claim have to still match: the departure status AND the moment it
+    was written. Comparing the status alone would let a late release erase a later,
+    legitimate transition that happened to land on the same status value.
+
+    Reports whether the release actually fired. The flip goes back through the one status
+    write door, so a Ticket that has since acquired a live blocker lands on ``blocked``
+    rather than ``empty``, exactly as any other return to rest does.
+    """
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.agent:
-            if employee_session_transition is not None:
-                write_employee_session_id_in_transaction(
-                    conn,
-                    ticket_id,
-                    transition=employee_session_transition,
-                    force_fresh_employee_session=False,
-                    now=now,
-                )
-            _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
-        return _load_ticket_for_write(conn, ticket_id)
+        if ticket.ticket_status is not expected_status:
+            return False
+        if ticket.ticket_status_changed_at != expected_status_changed_at:
+            return False
+        _write_ticket_status(conn, ticket_id, TicketStatus.empty, now)
+        return True
 
 
 def mark_run_errored(
@@ -1261,29 +1235,6 @@ def mark_run_errored(
                 now=now,
             )
         _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
-        return _load_ticket_for_write(conn, ticket_id)
-
-
-def mark_run_errored_if_still_running_step(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    error: str,
-    employee_session_transition: EmployeeSessionIdTransition | None = None,
-    now: int,
-) -> Ticket:
-    with _txn(conn):
-        ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.agent:
-            if employee_session_transition is not None:
-                write_employee_session_id_in_transaction(
-                    conn,
-                    ticket_id,
-                    transition=employee_session_transition,
-                    force_fresh_employee_session=False,
-                    now=now,
-                )
-            _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1692,12 +1643,6 @@ def return_for_revision(
             actor,
             worker_type_definition=worker_type_definition,
         )
-        if SqliteEmployeeStepRepository().running_exists(conn, ticket_id):
-            raise PlannerError(
-                ErrorCode.already_running,
-                "ticket Employee step is running",
-                {"ticket_id": ticket_id},
-            )
         _apply_decision(conn, ticket, decision, now)
         _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
         return _load_ticket_for_write(conn, ticket_id)
@@ -1746,14 +1691,14 @@ def delete_ticket(
 ) -> TicketDeletion:
     """Permanently remove a mistaken ticket and its product footprint in one transaction.
 
-    Deletion is blocked while a durable Employee step is running. The check is
-    made under the same write lock before cleanup.
+    Deletion is blocked while the Ticket's status says a worker step is out. Whether the
+    Ticket's conversation is live is a question for the conversation system, so the route
+    asks it before calling this writer; this writer stays a pure database transaction.
     """
     admission.require_direct_actor(actor, "delete_ticket")
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        running_step = SqliteEmployeeStepRepository().running_exists(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.agent or running_step:
+        if ticket.ticket_status is TicketStatus.agent:
             raise PlannerError(
                 ErrorCode.already_running,
                 "ticket activity is still running",

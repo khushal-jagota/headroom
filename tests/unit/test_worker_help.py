@@ -8,9 +8,7 @@ import pytest
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.days import data as days_data
-from planner.runtime.automatic_employee_step_eligibility import (
-    is_eligible_for_automatic_employee_step,
-)
+from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data
 from planner.tickets.contracts import (
     AtCap,
@@ -53,7 +51,7 @@ def test_worker_help_pauses_dispatch_and_requires_explicit_release(tmp_db: Conne
 
     requested = data.request_user_help(tmp_db, ticket.id, actor="agent", now=4)
     assert requested.ticket_status is TicketStatus.needs_user
-    assert not is_eligible_for_automatic_employee_step(
+    assert not is_ready_for_worker_step(
         tmp_db,
         requested,
         planning_day_id=DAY_ID,

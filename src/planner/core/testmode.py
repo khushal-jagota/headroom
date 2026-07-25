@@ -6,7 +6,6 @@ FastAPI appears here because this is part of the server shell (the server.py fam
 
 from __future__ import annotations
 
-import threading
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -15,63 +14,8 @@ from planner.core.clock import Clock, TestClock, parse_fake_now
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import planning_date
-
-
-class _TestModeEmployeeRevisionHandoff:
-    def __init__(
-        self,
-        decision: threading.Event,
-        choose: list[str],
-        choice_lock: threading.Lock,
-    ) -> None:
-        self._decision = decision
-        self._choose = choose
-        self._choice_lock = choice_lock
-
-    def _finish(self, choice: str) -> None:
-        with self._choice_lock:
-            if not self._choose:
-                self._choose.append(choice)
-                self._decision.set()
-
-    def release(self) -> None:
-        self._finish("released")
-
-    def cancel(self) -> None:
-        self._finish("cancelled")
-
-
-class TestModeAcceptingEmployeeRevisionRunner:
-    """Hermetic handoff acceptance for browser tests; it performs no Hermes work."""
-
-    __test__ = False
-
-    def __init__(self) -> None:
-        self.decisions: list[tuple[str, str, str]] = []
-        self._decisions_lock = threading.Lock()
-
-    def reserve_revision(
-        self, ticket_id: str, guidance: str
-    ) -> _TestModeEmployeeRevisionHandoff:
-        parked = threading.Event()
-        decision = threading.Event()
-        choice: list[str] = []
-        choice_lock = threading.Lock()
-
-        def wait_for_decision() -> None:
-            parked.set()
-            decision.wait()
-            with self._decisions_lock:
-                self.decisions.append((ticket_id, guidance, choice[0]))
-
-        threading.Thread(
-            target=wait_for_decision,
-            name=f"test-employee-revision-{ticket_id}",
-            daemon=True,
-        ).start()
-        parked.wait()
-        return _TestModeEmployeeRevisionHandoff(decision, choice, choice_lock)
+from planner.days.logic.dates import planning_date, resolve_day_id
+from planner.worker_types.configuration import configured_worker_type_registry
 
 
 def build_test_router(config: Config, clock: Clock) -> APIRouter:
@@ -98,18 +42,26 @@ def build_test_router(config: Config, clock: Clock) -> APIRouter:
 
     @router.post("/test/run-step/{ticket_id}")
     async def run_step(ticket_id: str, request: Request) -> JsonDict:
-        """Dispatch ONE real automatic Employee step for `ticket_id` through the composed
-        ACP EmployeeStepRunner and scripted ACP backend. The discovery loop is not needed.
-        Test-gated: the router is mounted only when
+        """Run ONE worker step for `ticket_id` against the composed conversation system.
+
+        The same per-Ticket flow the readiness loop runs, driven by hand so a browser test
+        does not have to wait for a poll. Test-gated: the router is mounted only when
         config.test_mode, so /api/test/* is a plain 404 otherwise."""
-        runner = getattr(request.app.state, "employee_step_runner", None)
-        if runner is None or not hasattr(runner, "try_run_automatic_step"):
-            raise PlannerError(
-                ErrorCode.gateway_offline,
-                "no composed employee step runner in this test composition",
-                {"ticket_id": ticket_id},
-            )
-        runner.try_run_automatic_step(ticket_id)
-        return {"dispatched": True, "ticket_id": ticket_id}
+        # Imported at call time: the server module builds this router, and the flow
+        # reaches back into the server module for the workspace folder.
+        from planner.runtime.worker_step_readiness_loop import start_ready_worker_step
+
+        started = await start_ready_worker_step(
+            ticket_id,
+            connect_database=request.app.state.conn_factory,
+            conversation_system=request.app.state.conversation_system,
+            worker_context_service=request.app.state.worker_context_service,
+            worker_type_registry=configured_worker_type_registry(),
+            planning_day_id_resolver=lambda: resolve_day_id(
+                "today", clock.now(), config.boundary_hour
+            ),
+            now=clock.now_unix,
+        )
+        return {"dispatched": started, "ticket_id": ticket_id}
 
     return router

@@ -19,7 +19,6 @@ from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.days import data as days_data
-from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -106,15 +105,13 @@ def _create_direct(db_path: Path, *, title: str = "Ready") -> str:
 
 
 def _is_eligible_today(db_path: Path, ticket_id: str) -> bool:
-    from planner.runtime.automatic_employee_step_eligibility import (
-        is_eligible_for_automatic_employee_step,
-    )
+    from planner.runtime.worker_step_readiness import is_ready_for_worker_step
     from planner.worker_types.configuration import configured_worker_type_registry
 
     conn = connect(str(db_path))
     try:
         ticket = tickets_data.read_ticket(conn, ticket_id)
-        return is_eligible_for_automatic_employee_step(
+        return is_ready_for_worker_step(
             conn,
             ticket,
             planning_day_id="day_2099-01-01",
@@ -457,16 +454,6 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
 
         conn = connect(str(db_path))
         try:
-            repository = SqliteEmployeeStepRepository()
-            run = repository.start(conn, ticket_id, now=3)
-            repository.settle(
-                conn,
-                run.employee_step_id,
-                ticket_id=ticket_id,
-                status="complete",
-                error=None,
-                now=4,
-            )
             conn.execute(
                 "UPDATE tickets SET ticket_status = 'paired', employee_session_id = ? "
                 "WHERE id = ?",
@@ -1310,12 +1297,12 @@ def test_proposal_change_signal_sees_the_committed_proposal(tmp_path: Path) -> N
 def test_routes_do_not_own_discovery_policy() -> None:
     root = Path(__file__).resolve().parents[2]
     forbidden = {
-        "AutomaticEmployeeStepDiscoveryLoop",
+        "WorkerStepReadinessLoop",
         "get_system_a",
         "Sa",
         "_poke",
         "system_a",
-        "automatic_employee_step_discovery_loop",
+        "worker_step_readiness_loop",
     }
     for relative in ("src/planner/tickets/api.py", "src/planner/days/api.py"):
         source = (root / relative).read_text(encoding="utf-8")

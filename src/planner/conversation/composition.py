@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -19,10 +18,7 @@ from acp.schema import (
 
 from planner.conversation.backend_catalog import EmployeeBackendBuildContext
 from planner.core.clock import Clock
-from planner.core.db import connect
-from planner.runtime.acp_step_gateway import AcpStepGateway
 from planner.tickets.conversation_projection import TicketConversationProjection
-from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_types.configuration import (
     ConfiguredEmployeeRuntimeDefinitions,
     configured_employee_runtime_definitions,
@@ -36,7 +32,7 @@ from .employee_registry import (
     ConversationIngressSource,
 )
 from .hub import ConversationHub
-from .permission_broker import ConversationPermissionBroker
+from .permission_broker import ConversationPermissionBroker, PendingPermissionSnapshot
 from .role_skill_kickoff import RoleSkillKickoffAcpEmployeeChildFactory
 from .runtime_ports import ConversationRuntimeHandle
 from .sqlite_binding_repository import SqliteConversationBindingRepository
@@ -70,6 +66,23 @@ class _BindOnceAsyncCallback[**CallbackParams, CallbackResult]:
         return await callback(*args, **kwargs)
 
 
+def _permit_worker_permission_settlement(
+    snapshot: PendingPermissionSnapshot,
+    mark_settling: Callable[[], None],
+) -> bool:
+    """Let a worker-origin permission answer settle. Interim, until the swap.
+
+    The broker rejects worker-origin answers outright when no settlement guard is
+    installed, so a guard has to exist. The cross-check the old one did — is this Ticket
+    in a state where its worker may be answered for — is ruled dead, and this whole layer
+    is deleted when the new conversation system takes over, so it is not reimplemented
+    here.
+    """
+    del snapshot
+    mark_settling()
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationTestOptions:
     """Explicit test-only runtime substitution; production never imports test subjects."""
@@ -82,7 +95,6 @@ class ConversationTestOptions:
     connection_id_factory: Callable[[], str] | None = None
     worker_client_message_id_factory: Callable[[], str] | None = None
     permission_request_id_factory: Callable[[], str] | None = None
-    backend_available: Callable[[], bool] | None = None
 
 
 @dataclass(slots=True)
@@ -93,7 +105,6 @@ class ConversationComposition:
     registry: AcpEmployeeRegistry
     broker: ConversationTurnBroker
     permission_broker: ConversationPermissionBroker
-    step_gateway: AcpStepGateway
     employee_configuration_catalog: EmployeeConfigurationCatalogService
     ticket_conversation_projection: TicketConversationProjection
     employee_backend_startup_preflights: tuple[Callable[[], Awaitable[None]], ...]
@@ -161,11 +172,6 @@ class ConversationComposition:
                 )
             )
         )
-
-        def backend_available() -> bool:
-            if test_options is not None and test_options.backend_available is not None:
-                return test_options.backend_available()
-            return any(backend.is_executable() for backend in materialized_backends)
 
         repository = SqliteConversationBindingRepository(
             db_path,
@@ -251,22 +257,7 @@ class ConversationComposition:
         source_ingress.bind(hub.registry_conversation_ingress)
         source_permission.bind(broker.request_permission)
         source_death.bind(hub.registry_child_died)
-        worker_context_service = SqliteWorkerContextService(
-            lambda: connect(db_path, busy_timeout_ms)
-        )
-        step_gateway = AcpStepGateway(
-            hub=hub,
-            broker=broker,
-            loop=loop,
-            owner_thread_id=threading.get_ident(),
-            db_path=db_path,
-            worker_context_service=worker_context_service,
-            busy_timeout_ms=busy_timeout_ms,
-            backend_available=backend_available,
-        )
-        permission_broker.set_worker_settlement_guard(
-            step_gateway.guard_worker_permission_settlement
-        )
+        permission_broker.set_worker_settlement_guard(_permit_worker_permission_settlement)
         employee_configuration_catalog = EmployeeConfigurationCatalogService(
             {
                 backend.definition.backend_key: (
@@ -283,7 +274,6 @@ class ConversationComposition:
             registry=registry,
             broker=broker,
             permission_broker=permission_broker,
-            step_gateway=step_gateway,
             employee_configuration_catalog=employee_configuration_catalog,
             ticket_conversation_projection=ticket_conversation_projection,
             employee_backend_startup_preflights=tuple(

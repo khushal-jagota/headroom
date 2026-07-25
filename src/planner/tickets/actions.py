@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Mapping
 from datetime import datetime
+from typing import Final
 
+from planner.conversation2.contracts import ConversationSystem, PromptDeliveryRefused
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
-from planner.runtime.contracts import EmployeeRevisionRunner
+from planner.runtime.conversation_start import send_to_ticket_conversation
+from planner.runtime.logic.worker_step_prompt import revision_guidance_prompt
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import Ticket
-from planner.tickets.logic import admission
+from planner.tickets.logic import admission, resolution
+from planner.worker_context.contracts import WorkerContextService
+from planner.worker_types.configuration import configured_worker_type_registry
+
+_log = logging.getLogger(__name__)
+
+OWNER_SENDER_LABEL: Final = "owner"
 
 
 def resolve_creation_placement(
@@ -190,34 +200,69 @@ def remove_link(
         conn.execute("COMMIT")
 
 
-def return_ticket_for_revision(
+async def return_ticket_for_revision(
+    conversation_system: ConversationSystem,
+    worker_context_service: WorkerContextService,
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     message: str,
     actor: str,
     now: int,
-    employee_revision_runner: EmployeeRevisionRunner | None,
 ) -> Ticket:
-    """Accept a revision handoff before changing the canonical Ticket."""
+    """Send the owner's guidance to the worker, then hand the Ticket back to it.
+
+    The order is validate, send, and only then write, because the write is the one thing
+    that cannot be undone honestly: the decision deletes the pending proposal, so a revert
+    after a failed send would leave nothing to approve. Everything that can be checked
+    without changing anything is checked first, against a read of the Ticket.
+
+    A refused delivery changes nothing at all and is reported as the error it is. The one
+    residue is a send that succeeded and a write that then failed: the guidance is out and
+    the proposal is intact, so a retry may deliver the same guidance twice — visible,
+    harmless, and far better than losing the proposal.
+    """
     admission.validate_body(message, "revision guidance")
-    if employee_revision_runner is None:
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    # The decision is the whole check, run here on a read of the Ticket: wrong actor,
+    # wrong status, terminal stage, and no conversation to send into all fail here,
+    # before a word has been sent and before anything has been written.
+    resolution.decide_return_for_revision(
+        ticket,
+        actor,
+        worker_type_definition=configured_worker_type_registry().require(ticket.worker_type),
+    )
+    prepared = worker_context_service.prepare(
+        ticket_id,
+        revision_guidance_prompt(message.strip()),
+    )
+    fate = await send_to_ticket_conversation(
+        conversation_system,
+        conn,
+        ticket_id,
+        prepared.model_text,
+        sender_label=OWNER_SENDER_LABEL,
+        now=now,
+    )
+    if isinstance(fate, PromptDeliveryRefused):
         raise PlannerError(
             ErrorCode.gateway_offline,
-            "employee runner is unavailable",
-            {"ticket_id": ticket_id},
+            "revision guidance could not be delivered",
+            {"ticket_id": ticket_id, "refusal_reason": fate.refusal_reason.value},
         )
-    handoff = employee_revision_runner.reserve_revision(ticket_id, message.strip())
     try:
-        ticket = tickets_data.return_for_revision(
-            conn,
+        worker_context_service.acknowledge(ticket_id, prepared.receipts)
+    except Exception:
+        # The guidance is delivered; failing to tick the context off is reported and
+        # otherwise left alone, because nothing here can un-send it.
+        _log.exception(
+            "delivered worker context could not be acknowledged (ticket=%s)",
             ticket_id,
-            message=message,
-            actor=actor,
-            now=now,
         )
-    except BaseException:
-        handoff.cancel()
-        raise
-    handoff.release()
-    return ticket
+    return tickets_data.return_for_revision(
+        conn,
+        ticket_id,
+        message=message,
+        actor=actor,
+        now=now,
+    )

@@ -600,6 +600,7 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             ceiling="needs_alpha",
             at_cap=AtCap.propose,
             ticket_status=TicketStatus.empty,
+            ticket_status_changed_at=0,
             backend_error=None,
             stage_ownership_overrides={},
             default_stage_ownership_mode=StageOwnershipMode.worker,

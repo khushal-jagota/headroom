@@ -28,6 +28,7 @@ from planner.conversation.employee_configuration import (
     EmployeeConfigurationCatalog,
     EmployeeConfigurationCatalogService,
 )
+from planner.conversation2.contracts import ConversationSystem
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
@@ -41,7 +42,6 @@ from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.projects import data as projects_data
-from planner.runtime.contracts import EmployeeRevisionRunner
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -69,6 +69,7 @@ from planner.tickets.contracts import (
     ValueEditBody,
 )
 from planner.tickets.conversation_projection import TicketConversationProjection
+from planner.worker_context.contracts import WorkerContextService
 from planner.worker_types.configuration import (
     configured_employee_runtime_definitions,
     configured_worker_type_registry,
@@ -105,16 +106,43 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_employee_revision_runner(request: Request) -> EmployeeRevisionRunner | None:
-    runner: EmployeeRevisionRunner | None = getattr(request.app.state, "employee_step_runner", None)
-    return runner
+def get_conversation_system(request: Request) -> ConversationSystem:
+    return cast(ConversationSystem, request.app.state.conversation_system)
+
+
+def get_worker_context_service(request: Request) -> WorkerContextService:
+    return cast(WorkerContextService, request.app.state.worker_context_service)
 
 
 DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-EmployeeRunner = Annotated[EmployeeRevisionRunner | None, Depends(get_employee_revision_runner)]
+Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
+WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
+
+
+async def reject_while_the_conversation_is_running(
+    conn: sqlite3.Connection,
+    conversation_system: ConversationSystem,
+    ticket_id: str,
+) -> None:
+    """Refuse to write over a Ticket whose worker is mid-turn.
+
+    Whether a conversation is live is the conversation system's fact, and asking it is
+    awaited, so the question belongs in the route rather than inside a writer. Checking
+    here and writing after is racy by nature; for one person driving one workspace that
+    is the honest cost of keeping the writers pure database transactions.
+    """
+    conversation_id = tickets_data.read_ticket(conn, ticket_id).employee_session_id
+    if conversation_id is None:
+        return
+    if await conversation_system.is_running(conversation_id):
+        raise PlannerError(
+            ErrorCode.already_running,
+            "ticket conversation is still running",
+            {"ticket_id": ticket_id},
+        )
 
 
 @contextmanager
@@ -484,8 +512,10 @@ async def reconcile_ticket_from_external_work(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
     require_chief(ctx)
+    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     body = _marshal_external_reconcile(raw, worker_type_definition)
     target_stage = _validate_external_stage(body["stage"], worker_type_definition)
@@ -726,8 +756,10 @@ async def delete_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
+    conversations: Conversations,
 ) -> JsonDict:
     require_direct_write(ctx)
+    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     deleted = tickets_data.delete_ticket(
         conn,
         ticket_id,
@@ -878,18 +910,20 @@ async def return_ticket_for_revision(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    employee_runner: EmployeeRunner,
+    conversations: Conversations,
+    worker_context: WorkerContext,
 ) -> JsonDict:
     body = RevisionMessageBody(message=body_str(raw, "message"))
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_actions.return_ticket_for_revision(
+    ticket = await tickets_actions.return_ticket_for_revision(
+        conversations,
+        worker_context,
         conn,
         ticket_id,
         message=body["message"],
         actor=ctx.actor,
         now=now,
-        employee_revision_runner=employee_runner,
     )
     return tickets_views.ticket_json(ticket, now)
 

@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Mapping
 from typing import assert_type
 
-from planner.runtime import automatic_employee_step_eligibility
+from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket
 from planner.tickets.logic import admission, external_work, resolution
@@ -89,7 +89,7 @@ def _cases(
         worker_type_definition=definition,
     )
     assert_type(
-        automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step(
+        worker_step_readiness.is_ready_for_worker_step(
             conn,
             ticket,
             planning_day_id="day_2099-01-01",
@@ -98,13 +98,11 @@ def _cases(
         bool,
     )
     assert_type(
-        tickets_data.claim_automatic_employee_step(
+        tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket.id,
             planning_day_id_resolver=lambda: "day_2099-01-01",
-            eligibility_check=(
-                automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
-            ),
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=0,
         ),
         Ticket | None,

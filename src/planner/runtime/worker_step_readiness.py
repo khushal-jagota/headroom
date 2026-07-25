@@ -1,10 +1,14 @@
-"""The complete Automatic Employee-step eligibility decision."""
+"""Whether Panels may start this Ticket's next worker step right now.
+
+This is the whole readiness decision and nothing else: it reads, it decides, and it
+writes nothing. The loop runs it as a pre-filter and the claim writer runs it again
+inside its write transaction, where the answer is final.
+"""
 
 from __future__ import annotations
 
 import sqlite3
 
-from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -62,21 +66,19 @@ def _closeout_lane_is_occupied(
     )
 
 
-def is_eligible_for_automatic_employee_step(
+def is_ready_for_worker_step(
     conn: sqlite3.Connection,
     ticket: Ticket,
     *,
     planning_day_id: str,
     worker_type_definition: WorkerTypeDefinition,
 ) -> bool:
-    """Whether Planner may automatically start this Ticket's next Employee step now."""
+    """Whether Panels may automatically start this Ticket's next worker step now."""
     membership = conn.execute(
         "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
         (planning_day_id, ticket.id),
     ).fetchone()
     if membership is None:
-        return False
-    if SqliteEmployeeStepRepository().running_exists(conn, ticket.id):
         return False
     if worker_type_definition.is_terminal(ticket.stage):
         return False

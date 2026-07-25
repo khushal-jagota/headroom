@@ -49,7 +49,6 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
-from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_types.configuration import (
     ConfiguredEmployeeRuntimeDefinitions,
     build_employee_runtime_definitions,
@@ -306,12 +305,10 @@ def test_single_conversation_composition_owns_runtime_and_closes_browser_admissi
         assert composition.registry is composition.broker._runtime
         assert composition.hub is composition.broker._publisher
         assert composition.hub is composition.broker._requested_cancel_transition_port
-        assert composition.step_gateway.status().available is True
 
         subscription = await composition.hub.attach_browser(ticket_id)
         assert subscription.closed.is_set() is False
         await composition.close_admission()
-        assert composition.step_gateway.status().available is False
         assert subscription.closed.is_set() is True
         with pytest.raises(RuntimeError, match="closing"):
             await composition.hub.attach_browser(ticket_id, connection_id="browser-two")
@@ -383,33 +380,6 @@ def test_real_composition_keeps_new_empty_until_the_first_prompt(tmp_path: Path)
         assert second is not None
         assert second.binding_generation == 2
         assert len(factory.children) == 2
-        await composition.shutdown(asyncio.get_running_loop().time() + 1)
-
-    asyncio.run(exercise())
-
-
-def test_conversation_composition_injects_sqlite_worker_context_into_step_gateway(
-    tmp_path: Path,
-) -> None:
-    async def exercise() -> None:
-        db_path, clock, _ticket_id = _database(tmp_path)
-        definition = _definition()
-        composition = ConversationComposition.build(
-            db_path=db_path,
-            busy_timeout_ms=3210,
-            clock=clock,
-            repository_root=tmp_path,
-            employee_workspace_root=tmp_path,
-            loop=asyncio.get_running_loop(),
-            test_options=ConversationTestOptions(
-                employee_runtime_definitions=_runtime_definitions(definition, _Factory(definition)),
-            ),
-        )
-
-        assert isinstance(
-            composition.step_gateway._worker_context_service,  # noqa: SLF001
-            SqliteWorkerContextService,
-        )
         await composition.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -504,7 +474,7 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
     asyncio.run(exercise())
 
 
-def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadline(
+def test_production_composes_the_conversation_and_the_loop_under_one_shutdown_deadline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -519,7 +489,6 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
     )
     order: list[tuple[str, float | None]] = []
     composition_build_kwargs: dict[str, Any] = {}
-    step_gateway = object()
     preferred_employee_workspace_root = tmp_path / "Coding"
     preferred_employee_workspace_root.mkdir()
 
@@ -530,7 +499,6 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
     class _FakeComposition:
         def __init__(self) -> None:
             self.hub = _FakeHub()
-            self.step_gateway = step_gateway
 
         async def close_admission(self) -> None:
             order.append(("conversation.close_admission", None))
@@ -544,8 +512,6 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
     composition = _FakeComposition()
 
     class _Runtime:
-        employee_step_runner = object()
-
         async def stop(self, *, deadline: float | None = None) -> None:
             order.append(("runtime.stop", deadline))
 
@@ -559,12 +525,17 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
         runtime_config: Any,
         runtime_clock: Any,
         *,
-        step_gateway: object,
+        conversation_system: object,
+        worker_context_service: object,
+        asyncio_loop: object,
         **kwargs: Any,
     ) -> _Runtime:
-        del runtime_config, runtime_clock
+        del runtime_config, runtime_clock, asyncio_loop
         assert kwargs == {}
-        assert step_gateway is composition.step_gateway
+        # The loop is handed the interim conversation system the app composed, not the
+        # old browser-facing composition.
+        assert conversation_system is app.state.conversation_system
+        assert worker_context_service is app.state.worker_context_service
         order.append(("runtime.start", None))
         return _Runtime()
 
@@ -642,8 +613,6 @@ def test_production_loop_start_failure_closes_conversation_composition(
     order: list[tuple[str, float | None]] = []
 
     class _FailedStartupComposition:
-        step_gateway = object()
-
         async def run_employee_backend_startup_preflights(self) -> None:
             order.append(("preflight", None))
 
@@ -707,8 +676,6 @@ def test_production_backend_preflight_failure_closes_before_runtime_or_routes_st
     order: list[tuple[str, float | None]] = []
 
     class _FailedPreflightComposition:
-        step_gateway = object()
-
         async def run_employee_backend_startup_preflights(self) -> None:
             order.append(("preflight", None))
             raise RuntimeError("backend preflight failed")

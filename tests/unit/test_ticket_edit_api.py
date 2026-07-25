@@ -32,8 +32,7 @@ from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.days import data as days_data
-from planner.runtime import automatic_employee_step_eligibility
-from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
+from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -1148,7 +1147,7 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
             assert _snapshot(db_path, ticket_id) == before
 
 
-def test_active_worker_and_running_employee_step_do_not_block_an_ordinary_edit(
+def test_an_active_worker_does_not_block_an_ordinary_edit(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -1157,17 +1156,14 @@ def test_active_worker_and_running_employee_step_do_not_block_an_ordinary_edit(
     try:
         planning_day_id = "day_2026-07-10"
         days_data.add_day_ticket(conn, planning_day_id, ticket_id, 2)
-        started = tickets_data.claim_automatic_employee_step(
+        started = tickets_data.claim_ticket_for_worker_step(
             conn,
             ticket_id,
             planning_day_id_resolver=lambda: planning_day_id,
-            eligibility_check=(
-                automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
-            ),
+            readiness_check=worker_step_readiness.is_ready_for_worker_step,
             now=2,
         )
         assert started is not None
-        SqliteEmployeeStepRepository().start(conn, ticket_id, now=3)
     finally:
         conn.close()
 

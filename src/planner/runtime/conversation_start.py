@@ -29,7 +29,6 @@ from planner.conversation2.contracts import (
     PromptDeliveryStarted,
 )
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.server import resolve_employee_workspace_root
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
     ConversationStartConfiguration,
@@ -49,6 +48,18 @@ from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
 CONVERSATION_ID_PREFIX: Final = "conv_"
+
+
+def _default_workspace_folder() -> Path:
+    """The folder an agent runs in, from the server module that owns application paths.
+
+    Imported at call time rather than at module level: the server module reaches this
+    package through the Ticket routes, so a top-level import here would run while the
+    server module is still being built.
+    """
+    from planner.core.server import resolve_employee_workspace_root
+
+    return resolve_employee_workspace_root()
 
 
 def new_conversation_id() -> str:
@@ -89,7 +100,7 @@ def worker_resolve(
         ),
         overrides=overrides,
         workspace_folder=(
-            resolve_employee_workspace_root() if workspace_folder is None else workspace_folder
+            _default_workspace_folder() if workspace_folder is None else workspace_folder
         ),
     )
 
@@ -117,7 +128,7 @@ def agent_resolve(
         ),
         overrides=overrides,
         workspace_folder=(
-            resolve_employee_workspace_root() if workspace_folder is None else workspace_folder
+            _default_workspace_folder() if workspace_folder is None else workspace_folder
         ),
     )
 

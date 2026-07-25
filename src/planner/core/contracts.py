@@ -69,10 +69,9 @@ class EventKind(StrEnum):
     worker_settings_changed = "worker_settings_changed"  # Worker management settings changed
     ticket_conversation_projection_changed = "ticket_conversation_projection_changed"
 
-    # --- supplemental: links and Employee execution ---
+    # --- supplemental: links ---
     link_added = "link_added"                        # {from_id, to_id, kind}
     link_removed = "link_removed"
-    employee_step_started = "employee_step_started"  # {employee_step_id}
 
 
 @dataclass(frozen=True)

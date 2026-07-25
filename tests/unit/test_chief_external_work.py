@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import queue
 import threading
@@ -11,13 +12,13 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
+from planner.conversation2.contracts import ConversationStartRequest
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.projects import data as projects_data
-from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -337,20 +338,35 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
             )
         assert response.status_code == 409
 
-    running_id = _ordinary_ticket(db_path)
+    # A live conversation is the conversation system's fact, so the route asks it before
+    # the writer runs: a Ticket whose worker is mid-turn is refused even at an admitted
+    # status like `paired`.
+    live_id = _ordinary_ticket(db_path)
     conn = connect(str(db_path))
     try:
-        SqliteEmployeeStepRepository().start(conn, running_id, now=1)
+        conn.execute(
+            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            ("conv-live", live_id),
+        )
         conn.commit()
     finally:
         conn.close()
     with TestClient(app) as client:
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(conversation_id="conv-live")
+            )
+        )
+        asyncio.run(
+            app.state.conversation_system.send("conv-live", "working", sender_label="loop")
+        )
         running = client.post(
-            f"/api/chief/tickets/{running_id}/reconcile-from-external-work",
+            f"/api/chief/tickets/{live_id}/reconcile-from-external-work",
             json=_external_body("needs_success"),
             headers=_CHIEF,
         )
     assert running.status_code == 409
+    assert running.json()["error"]["code"] == "already_running"
 
 
 def test_reconcile_is_atomic_and_normalizes_an_errored_ticket(

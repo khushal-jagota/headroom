@@ -16,19 +16,21 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.composition import ConversationComposition, ConversationTestOptions
+from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import Clock
 from planner.core.config import Config
+from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.sse import change_stream
-from planner.core.testmode import TestModeAcceptingEmployeeRevisionRunner, build_test_router
+from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.days.api import router as days_router
 from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
-from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
+from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_settings.api import router as worker_settings_router
 from planner.worker_types.configuration import (
     configured_employee_runtime_definitions,
@@ -114,7 +116,6 @@ def create_app(
             audit_conn.close()
 
         loops: Any = None
-        test_runner: EmployeeStepRunner | None = None
         conversation: ConversationComposition | None = None
         if conversation_test_options is not None:
             conversation = ConversationComposition.build(
@@ -127,14 +128,6 @@ def create_app(
                 test_options=conversation_test_options,
             )
             app.state.conversation = conversation
-            test_runner = EmployeeStepRunner(
-                config.db_path,
-                clock,
-                gateway=conversation.step_gateway,
-                boundary_hour=config.boundary_hour,
-                busy_timeout_ms=config.db_busy_timeout_ms,
-            )
-            app.state.employee_step_runner = test_runner
         elif not config.test_mode:
             from planner.core.loops import start_background_loops
 
@@ -152,7 +145,9 @@ def create_app(
                 loops = start_background_loops(
                     config,
                     clock,
-                    step_gateway=conversation.step_gateway,
+                    conversation_system=app.state.conversation_system,
+                    worker_context_service=app.state.worker_context_service,
+                    asyncio_loop=asyncio.get_running_loop(),
                 )
             except BaseException:
                 deadline = _monotonic() + float(config.shutdown_grace_seconds)
@@ -160,7 +155,6 @@ def create_app(
                 await conversation.shutdown(deadline)
                 app.state.conversation = None
                 raise
-            app.state.employee_step_runner = loops.employee_step_runner
         try:
             yield
         finally:
@@ -170,8 +164,6 @@ def create_app(
             try:
                 if loops is not None:
                     await _stop_runtime_with_deadline(loops, deadline)
-                if test_runner is not None:
-                    await asyncio.to_thread(test_runner.stop, deadline=deadline)
             finally:
                 if conversation is not None:
                     await conversation.shutdown(deadline)
@@ -195,8 +187,14 @@ def create_app(
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    app.state.employee_step_runner = (
-        TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
+    # THE INTERIM STAND-IN. Everything that starts or steers a worker goes through this
+    # one ConversationSystem, and until the program's swap step it is the in-memory fake:
+    # real enough to prove the wiring, backed by dictionaries rather than agents. The real
+    # conversation system replaces this line and nothing else. Composed for production and
+    # test mode alike, because the readiness loop and the Ticket routes need it in both.
+    app.state.conversation_system = InMemoryConversationSystem()
+    app.state.worker_context_service = SqliteWorkerContextService(
+        lambda: connect(config.db_path, config.db_busy_timeout_ms)
     )
     app.state.conversation = None
     configured_vps_status_collector = vps_status_collector or (
