@@ -6,12 +6,13 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node tests/resource-catalogue.test.mjs && node tests/resource-cache.test.mjs && node tests/ws-connection.test.mjs && node tests/file-preview.test.mjs && node tests/lifecycle.test.mjs && node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/acp-images.test.mjs && node tests/acp-contracts.test.mjs && node tests/acp-browser-state.test.mjs && node tests/acp-browser-conformance.test.mjs && node tests/acp-browser-components.test.mjs && node tests/acp-components.test.mjs && node tests/employee-configuration-setup.test.mjs && node tests/acp-production-mount.test.mjs && node tests/vps-status.test.mjs"
+    "test": "node tests/query-catalogue.test.mjs && node tests/mutate.test.mjs && node tests/change-stream.test.mjs && node tests/file-preview.test.mjs && node tests/lifecycle.test.mjs && node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/acp-images.test.mjs && node tests/acp-contracts.test.mjs && node tests/acp-browser-state.test.mjs && node tests/acp-browser-conformance.test.mjs && node tests/acp-browser-components.test.mjs && node tests/acp-components.test.mjs && node tests/employee-configuration-setup.test.mjs && node tests/acp-production-mount.test.mjs && node tests/vps-status.test.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.2.1",
     "@fontsource/newsreader": "^5.2.10",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tanstack/svelte-query": "6.1.38",
     "rehype-remark": "10.0.1",
     "rehype-sanitize": "6.0.0",
     "remark-gfm": "4.0.1",

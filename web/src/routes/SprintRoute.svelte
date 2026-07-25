@@ -1,10 +1,9 @@
 <script lang="ts">
-  import { onDestroy, tick } from "svelte";
+  import { tick } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
   import { shortMonthDayLabel } from "../lib/dates";
-  import {
-    mutateJsonWithResourceEffect,
-    resourceCatalogue
-  } from "../lib/resourceCatalogue";
+  import { mutateJson } from "../lib/mutate";
+  import { queries } from "../lib/queryCatalogue";
   import { labelize } from "../lib/ui";
   import type { AnyRecord } from "../lib/types";
   import Chip from "../components/Chip.svelte";
@@ -17,7 +16,7 @@
     sub = "tracking",
     selectedItemId = null
   }: { sub?: string; selectedItemId?: string | null } = $props();
-  const current = resourceCatalogue.currentSprint();
+  const current = createQuery(() => queries.currentSprint());
 
   const noProjectKey = "__no_project__";
   const itemStatusWord: Record<string, string> = {
@@ -48,11 +47,7 @@
   let documents = $derived(sub === "documents");
 
   function saveSprint(sprintId: string, field: string, raw: string): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/sprints/${sprintId}`,
-      { method: "PATCH", body: { [field]: raw } },
-      { kind: "currentSprintChanged" }
-    );
+    return mutateJson(`/api/sprints/${sprintId}`, { method: "PATCH", body: { [field]: raw } });
   }
 
   function allItems(groups: Record<string, AnyRecord[]>): AnyRecord[] {
@@ -159,12 +154,10 @@
     void documents;
     void focusSelectedItem();
   });
-
-  onDestroy(() => current.dispose());
 </script>
 
 <section class="sprint-screen" data-screen="sprint">
-  <ResourceState error={current.error} loading={current.loading} hasData={Boolean(current.data)} loadingText="Loading sprint...">
+  <ResourceState error={current.error} loading={current.isFetching} hasData={Boolean(current.data)} loadingText="Loading sprint...">
     {#if !current.data?.sprint}
       <div class="quiet-line">No current sprint.</div>
     {:else}

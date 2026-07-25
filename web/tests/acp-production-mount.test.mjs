@@ -24,7 +24,8 @@ assert.match(wrapperSource, /<AcpConversationPane \{controller\} \{employeeLabel
 assert.doesNotMatch(wrapperSource, /<style>|ChatPanel|ChiefNeutralPane|relayChief|\/api\/chat|\/api\/relay/);
 
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
-assert.match(appSource, /fetchJson<\{ ui_debounce_ms: number; ws_heartbeat_ms: number \}>\("\/api\/meta"\)/);
+assert.match(appSource, /startChangeStream\(\);/);
+assert.doesNotMatch(appSource, /\/api\/meta/);
 assert.doesNotMatch(
   appSource,
   /capabilities|relay_chief_enabled|resolveRelayChiefFromMeta|markRelayChiefMetaError/
