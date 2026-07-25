@@ -58,6 +58,7 @@ class RecordedFactKind(StrEnum):
 
     prompt_delivered = "prompt_delivered"
     prompt_delivery_refused = "prompt_delivery_refused"
+    prompt_discarded = "prompt_discarded"
     turn_ended = "turn_ended"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
@@ -1307,6 +1308,57 @@ class ConversationContractConformanceSuite:
             assert await subject.system.has_pending_permission_ask("c")
             await subject.system.interrupt("c")
             assert not await subject.system.has_pending_permission_ask("c")
+
+        self._run(exercise)
+
+    def test_kill_stops_the_turn_and_discards_every_held_message(self) -> None:
+        """Coverage 49: kill silences the running turn AND the queue — the agent is
+        really cancelled, nothing held ever reaches the backend, each discard is
+        recorded, and a pending ask dies with the killed turn."""
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(_start_request("c"))
+            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", "held one", sender_label="owner")
+            await subject.system.send("c", "held two", sender_label="owner")
+            await subject.raise_permission_ask("c")
+
+            await subject.system.kill("c")
+            await subject.settle()
+
+            assert not await subject.system.is_running("c")
+            assert not await subject.system.has_pending_permission_ask("c")
+            assert await subject.backend_cancellations("c") == 1
+            written = _written_texts(await subject.backend_writes("c"))
+            assert "held one" not in written and "held two" not in written
+
+            facts = await subject.recorded_facts("c")
+            discards = _facts_of_kind(facts, RecordedFactKind.prompt_discarded)
+            assert tuple(fact.text for fact in discards) == ("held one", "held two")
+            endings = _facts_of_kind(facts, RecordedFactKind.turn_ended)
+            assert tuple(fact.turn_ending for fact in endings) == (
+                RecordedTurnEnding.interrupted,
+            )
+
+        self._run(exercise)
+
+    def test_kill_is_not_the_end_of_the_conversation(self) -> None:
+        """Coverage 50: killed is not closed — the conversation stays addressable and a
+        later send starts a turn exactly as always. Kill on idle-with-nothing-held and
+        on an unknown id are no-ops."""
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.kill("never-started")
+
+            await subject.system.start_conversation(_start_request("c"))
+            await subject.system.kill("c")
+
+            await subject.system.send("c", "work", sender_label="owner")
+            await subject.system.kill("c")
+            fate = await subject.system.send("c", "after the kill", sender_label="owner")
+            assert isinstance(fate, PromptDeliveryStarted)
+            assert await subject.system.is_running("c")
+            assert "after the kill" in _written_texts(await subject.backend_writes("c"))
 
         self._run(exercise)
 
