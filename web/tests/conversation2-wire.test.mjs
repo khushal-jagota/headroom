@@ -461,7 +461,9 @@ const TURN_ENDED = (sequence, ending = "completed", error_summary = null) =>
 }
 
 {
-  assert.equal(fateSentence({ fate: "started" }), "running");
+  // A started fate carries no note: the running turn shows as itself, and a note
+  // repeating it would outlive the turn and go stale (found in dogfooding).
+  assert.equal(fateSentence({ fate: "started" }), null);
   assert.equal(fateSentence({ fate: "queued", queue_position: 2 }), "queued · position 2");
   assert.equal(fateSentence({ fate: "injected" }), "steered into the running turn");
   assert.match(

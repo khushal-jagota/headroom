@@ -222,13 +222,16 @@ export function sendBodyFor(input: {
 
 /** What a delivery's fate says, in the words a person reads under the composer.
  *
- * A refusal is a fate like any other and is reported as one — the text did not get
- * anywhere, and the sentence says why. It is never dressed up as a failed request.
+ * A started fate says nothing: the turn is already visible as itself — the prompt row,
+ * the working header, the stop button — and a note repeating it would outlive the turn
+ * and go stale. A refusal is a fate like any other and is reported as one — the text
+ * did not get anywhere, and the sentence says why. It is never dressed up as a failed
+ * request.
  */
-export function fateSentence(fate: PromptDeliveryFate): string {
+export function fateSentence(fate: PromptDeliveryFate): string | null {
   switch (fate.fate) {
     case "started":
-      return "running";
+      return null;
     case "queued":
       return `queued · position ${fate.queue_position}`;
     case "injected":

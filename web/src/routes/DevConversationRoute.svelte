@@ -50,6 +50,7 @@
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
+  let fateNoteIsRefusal = $state(false);
   let errorNote = $state<string | null>(null);
   let askNote = $state<string | null>(null);
   let busy = $state(false);
@@ -67,6 +68,13 @@
   let rows = $derived(transcriptRows(feed));
   let ask = $derived(liveAskFrom(rows));
   let running = $derived(conversationIsRunning(feed));
+
+  // A queued or steered note describes traffic that a turn ending settles — the held
+  // message has run, the steered text was taken. A refusal outlives endings: it is
+  // cleared by the next send, not by a turn it never touched.
+  $effect(() => {
+    if (!running && fateNote !== null && !fateNoteIsRefusal) fateNote = null;
+  });
   let backendKey = $derived<ConversationBackendKey>(view?.backend_key ?? newBackendKey);
   let backendSnapshot = $derived(
     backends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
@@ -183,6 +191,7 @@
         sendBodyFor({ text, senderLabel: SENDER_LABEL, mode, current, picked })
       );
       fateNote = fateSentence(fate);
+      fateNoteIsRefusal = fate.fate === "refused";
       await refreshView();
       return true;
     } catch (error) {
