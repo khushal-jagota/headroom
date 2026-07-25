@@ -11,7 +11,9 @@ export type FieldStageVisualState =
   | "current-awaiting-approval"
   | "errored"
   | "upcoming"
-  | "reply-seen";
+  | "reply-seen"
+  // A worker waiting on a permission ask only the user can answer: the pure white dot.
+  | "needs-me";
 
 export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");

@@ -10,13 +10,7 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data
-from planner.tickets.contracts import (
-    AtCap,
-    TicketStatus,
-    WorkspaceAgentReplyState,
-    WorkspaceSignalFacts,
-)
-from planner.tickets.logic.workspace_signals import workspace_signals
+from planner.tickets.contracts import AtCap, TicketStatus
 from planner.tickets.views import review_view
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -57,11 +51,6 @@ def test_worker_help_pauses_dispatch_and_requires_explicit_release(tmp_db: Conne
         planning_day_id=DAY_ID,
         worker_type_definition=definition,
     )
-    help_signals = workspace_signals(
-        WorkspaceSignalFacts(ticket_status=TicketStatus.needs_user)
-    )
-    assert help_signals.agent_working is False
-    assert help_signals.agent_reply_state is WorkspaceAgentReplyState.none
     assert review_view(tmp_db, day_id=DAY_ID)["user_help_requests"] == [
         {"ticket_id": ticket.id, "title": "Worker help", "waiting_since": 4}
     ]

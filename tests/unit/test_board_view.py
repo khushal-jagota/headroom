@@ -15,6 +15,8 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
+from planner.conversation2.contracts import ConversationStartRequest
+from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind, Priority
 from planner.days.data import add_day_ticket
@@ -66,9 +68,13 @@ _ENRICHMENT_CARD_KEYS = [
     "is_done",
     "is_dropped",
     "blocked",
-    "agent_working",
+    "conversation_id",
     "agent_reply_state",
 ]
+
+# The two signals the async route asks the conversation system for and appends after
+# everything the pure view read out of the database.
+_ROUTE_SIGNAL_KEYS = ["agent_working", "needs_me"]
 
 
 @pytest.fixture
@@ -102,7 +108,7 @@ def _ticket(
     return ticket.id
 
 
-def _board(conn: Connection) -> dict:
+def _put_every_ticket_on_today(conn: Connection) -> str:
     day_id = "day_2026-07-04"
     ticket_ids = conn.execute("SELECT id FROM tickets").fetchall()
     for row in ticket_ids:
@@ -113,7 +119,25 @@ def _board(conn: Connection) -> dict:
         ).fetchone()
         if exists is None:
             add_day_ticket(conn, day_id, ticket_id, 10)
-    return board_view(conn, day_id=day_id)
+    return day_id
+
+
+def _board(conn: Connection) -> dict:
+    return board_view(conn, day_id=_put_every_ticket_on_today(conn))
+
+
+def _link_conversation(conn: Connection, ticket_id: str, conversation_id: str) -> None:
+    conn.execute(
+        "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+        (conversation_id, ticket_id),
+    )
+
+
+def _enriched_board(conn: Connection, conversations: InMemoryConversationSystem) -> dict:
+    _put_every_ticket_on_today(conn)
+    clock = SimpleNamespace(now=lambda: datetime(2026, 7, 4, 12, 0))
+    config = SimpleNamespace(boundary_hour=5)
+    return asyncio.run(board_route(conn, config, clock, conversations))
 
 
 def test_board_view_carries_only_the_requested_days_non_dropped_tickets(
@@ -153,8 +177,9 @@ def test_board_route_resolves_the_5am_planning_day(
     monkeypatch.setattr("planner.tickets.api.tickets_views.board_view", capture_board)
     clock = SimpleNamespace(now=lambda: now)
     config = SimpleNamespace(boundary_hour=5)
+    conversations = InMemoryConversationSystem()
 
-    assert asyncio.run(board_route(tmp_db, config, clock)) == {"columns": []}
+    assert asyncio.run(board_route(tmp_db, config, clock, conversations)) == {"columns": []}
     assert resolved_day_ids == [expected_day_id]
 
 
@@ -211,7 +236,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connectio
     assert card["is_done"] is False
     assert card["is_dropped"] is False
     assert card["blocked"] is False
-    assert card["agent_working"] is False
+    assert card["conversation_id"] is None
     assert card["agent_reply_state"] == "none"
 
 
@@ -262,7 +287,7 @@ def test_board_mixed_coding_probe_does_not_throw(
     assert probe_card["is_dropped"] is False
 
 
-def test_board_card_uses_the_canonical_workspace_signals(tmp_db: Connection) -> None:
+def test_board_card_carries_the_canonical_reply_state(tmp_db: Connection) -> None:
     ticket_id = _ticket(tmp_db, "Active projection", 1)
     db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
     projection = TicketConversationProjection(db_path, now=lambda: 2)
@@ -270,21 +295,19 @@ def test_board_card_uses_the_canonical_workspace_signals(tmp_db: Connection) -> 
 
     board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
-    assert card["agent_working"] is True
+    # A turn still running has produced no reply yet.
     assert card["agent_reply_state"] == "none"
 
     # A completed reply awaiting the user reads as an unseen reply on the card.
     projection.record_activity(ticket_id, "idle")
     board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
-    assert card["agent_working"] is False
     assert card["agent_reply_state"] == "unseen"
 
     # Acknowledging the reply moves it to seen, not back to none.
     projection.acknowledge_completed_response(ticket_id)
     board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
-    assert card["agent_working"] is False
     assert card["agent_reply_state"] == "seen"
 
 
@@ -304,8 +327,7 @@ def test_board_card_carries_canonical_ticket_backend_error(
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["backend_error"] == "Provider exploded"
     assert card["ticket_status"] == "errored"
-    # An errored, interrupted Ticket is neither working nor holding a reply.
-    assert card["agent_working"] is False
+    # An errored, interrupted Ticket holds no reply.
     assert card["agent_reply_state"] == "none"
 
     tmp_db.execute(
@@ -345,6 +367,82 @@ def test_board_cards_expose_active_incoming_blocking_without_changing_real_stage
     assert cards[later_dependent]["blocked"] is True
 
 
+def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
+    tmp_db: Connection,
+) -> None:
+    running = _ticket(tmp_db, "Worker mid-turn", 1)
+    asking = _ticket(tmp_db, "Worker asking permission", 2)
+    answered = _ticket(tmp_db, "Ask already answered", 3)
+    unlinked = _ticket(tmp_db, "No conversation at all", 4)
+    _link_conversation(tmp_db, running, "conv-running")
+    _link_conversation(tmp_db, asking, "conv-asking")
+    _link_conversation(tmp_db, answered, "conv-answered")
+
+    conversations = InMemoryConversationSystem()
+
+    async def start_turns() -> None:
+        for conversation_id in ("conv-running", "conv-asking", "conv-answered"):
+            await conversations.start_conversation(
+                ConversationStartRequest(conversation_id=conversation_id)
+            )
+            await conversations.send(conversation_id, "next step", sender_label="loop")
+
+    asyncio.run(start_turns())
+    conversations.raise_permission_ask("conv-asking")
+    already_answered = conversations.raise_permission_ask("conv-answered")
+    conversations.answer_permission_ask("conv-answered", already_answered, "allow")
+
+    board = _enriched_board(tmp_db, conversations)
+    cards = {card["id"]: card for column in board["columns"] for card in column["cards"]}
+
+    # The card carries the link the signals were read against, and the browser keys its
+    # reply watermark by.
+    assert cards[running]["conversation_id"] == "conv-running"
+    assert cards[unlinked]["conversation_id"] is None
+
+    # A running turn is the whole of agent_working; the ask is a separate signal.
+    assert cards[running]["agent_working"] is True
+    assert cards[running]["needs_me"] is False
+
+    # A turn waiting on an ask is still running, and it needs the owner.
+    assert cards[asking]["agent_working"] is True
+    assert cards[asking]["needs_me"] is True
+
+    # An answered ask is no longer pending; the turn it belongs to still runs.
+    assert cards[answered]["agent_working"] is True
+    assert cards[answered]["needs_me"] is False
+
+    # No link means no conversation to ask about: both signals read false.
+    assert cards[unlinked]["agent_working"] is False
+    assert cards[unlinked]["needs_me"] is False
+
+    # Both signals are appended after everything the pure view read.
+    assert list(cards[running].keys())[-len(_ROUTE_SIGNAL_KEYS) :] == _ROUTE_SIGNAL_KEYS
+
+
+def test_board_route_stops_working_when_the_conversation_turn_ends(
+    tmp_db: Connection,
+) -> None:
+    ticket_id = _ticket(tmp_db, "Worker finishing", 1)
+    _link_conversation(tmp_db, ticket_id, "conv-finishing")
+    conversations = InMemoryConversationSystem()
+
+    async def start_turn() -> None:
+        await conversations.start_conversation(
+            ConversationStartRequest(conversation_id="conv-finishing")
+        )
+        await conversations.send("conv-finishing", "next step", sender_label="loop")
+
+    asyncio.run(start_turn())
+    assert _enriched_board(tmp_db, conversations)["columns"][0]["cards"][0]["agent_working"] is True
+
+    conversations.complete_running_turn("conv-finishing")
+
+    card = _enriched_board(tmp_db, conversations)["columns"][0]["cards"][0]
+    assert card["agent_working"] is False
+    assert card["needs_me"] is False
+
+
 def test_completed_board_card_is_done_with_quiet_signals(tmp_db: Connection) -> None:
     ticket_id = _ticket(tmp_db, "Completed projection", 1)
     tmp_db.execute(
@@ -355,5 +453,4 @@ def test_completed_board_card_is_done_with_quiet_signals(tmp_db: Connection) -> 
     board = _board(tmp_db)
     card = next(card for column in board["columns"] for card in column["cards"])
     assert card["is_done"] is True
-    assert card["agent_working"] is False
     assert card["agent_reply_state"] == "none"

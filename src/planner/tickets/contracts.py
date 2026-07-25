@@ -61,22 +61,16 @@ class WorkspaceAgentReplyState(StrEnum):
 
 
 @dataclass(frozen=True)
-class WorkspaceSignalFacts:
-    """Factual Ticket and ACP inputs for the two Workspace row signals."""
+class WorkspaceAgentReplyFacts:
+    """The conversation-projection flags a Ticket's reply dot is derived from.
 
-    ticket_status: TicketStatus
-    latest_activity_state: WorkspaceActivityState | None = None
+    Whether a worker is running now, and whether it is waiting on a permission ask, are
+    the conversation system's facts and are read in the board route, not here.
+    """
+
     has_completed_response_awaiting_user: bool = False
     has_completed_response: bool = False
     has_pending_permission: bool = False
-
-
-@dataclass(frozen=True)
-class WorkspaceSignals:
-    """The two Workspace row signals: an agent working now, and a reply waiting."""
-
-    agent_working: bool
-    agent_reply_state: WorkspaceAgentReplyState
 
 
 @dataclass(frozen=True)

@@ -85,10 +85,14 @@
     ariaLabel: string;
   };
 
-  // The row mark carries only the two signals: an agent working now wins the
-  // mark; otherwise the reply state shows — accent while unseen, grey once
-  // seen, the reduced ring when nothing is waiting.
+  // The row mark carries three signals in one precedence. A permission ask wins: a
+  // turn waiting on an ask is still running, and the ask is the part only the user can
+  // clear. Then an agent working now. Otherwise the reply state shows — accent while
+  // unseen, grey once seen, the reduced ring when nothing is waiting.
   function signalPresentation(card: Record<string, any>): SignalPresentation {
+    if (card.needs_me) {
+      return { state: "needs-me", ariaLabel: "Needs you" };
+    }
     if (card.agent_working) {
       return { state: "current-running", ariaLabel: "Agent working" };
     }
@@ -222,6 +226,7 @@
                       state={presentation.state}
                       class="board-workspace-stage-mark"
                       data-stage-state={presentation.state}
+                      data-needs-me={card.needs_me ? "true" : "false"}
                       data-agent-working={card.agent_working ? "true" : "false"}
                       data-reply-state={card.agent_reply_state}
                       aria-label={presentation.ariaLabel}

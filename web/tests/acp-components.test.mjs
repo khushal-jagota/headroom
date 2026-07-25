@@ -28,6 +28,7 @@ assert.match(ticketRouteSource, /contextRow=\{name === "kickoff" && kickoffCardS
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-configuration/);
 assert.match(ticketRouteSource, /mutateJson<TicketDetail>\(/);
 assert.match(ticketRouteSource, /\/acknowledge-completed-response/);
+assert.match(boardRouteSource, /state: "needs-me", ariaLabel: "Needs you"/);
 assert.match(boardRouteSource, /state: "current-running", ariaLabel: "Agent working"/);
 assert.match(boardRouteSource, /state: "reply-seen", ariaLabel: "Agent reply seen"/);
 assert.match(ticketRouteSource, /deferInitialAttach=\{detail\.employee_configuration_editable\}/);

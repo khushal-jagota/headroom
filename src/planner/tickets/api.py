@@ -1204,10 +1204,43 @@ async def remove_link(
     return {"ok": True}
 
 
+async def add_conversation_row_signals(
+    board: JsonDict,
+    conversation_system: ConversationSystem,
+) -> JsonDict:
+    """Add the two conversation-owned row signals to every card on the board.
+
+    ``agent_working`` is whether the Ticket's conversation has a turn running right now,
+    and ``needs_me`` is whether that turn is waiting on a permission ask only the owner
+    can answer. Neither is a database fact and both are awaited, so ``board_view`` cannot
+    answer them and they are added here instead. A Ticket with no conversation link has
+    no conversation to ask about: both read false.
+
+    This reads and writes nothing but the payload it was handed — no transaction, no
+    connection.
+    """
+    for column in board["columns"]:
+        for card in column["cards"]:
+            conversation_id = card["conversation_id"]
+            card["agent_working"] = (
+                await conversation_system.is_running(conversation_id)
+                if conversation_id is not None
+                else False
+            )
+            card["needs_me"] = (
+                await conversation_system.has_pending_permission_ask(conversation_id)
+                if conversation_id is not None
+                else False
+            )
+    return board
+
+
 @router.get("/board")
-async def board(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+async def board(conn: DbConn, cfg: Cfg, clk: Clk, conversations: Conversations) -> JsonDict:
     day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
-    return tickets_views.board_view(conn, day_id=day_id)
+    return await add_conversation_row_signals(
+        tickets_views.board_view(conn, day_id=day_id), conversations
+    )
 
 
 @router.get("/review")

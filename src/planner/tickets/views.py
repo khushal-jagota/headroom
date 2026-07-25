@@ -14,11 +14,10 @@ from planner.tickets.contracts import (
     FieldSlot,
     Ticket,
     TicketStatus,
-    WorkspaceActivityState,
-    WorkspaceSignalFacts,
+    WorkspaceAgentReplyFacts,
 )
 from planner.tickets.logic import fields_codec, machine
-from planner.tickets.logic.workspace_signals import workspace_signals
+from planner.tickets.logic.workspace_signals import workspace_agent_reply_state
 from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -197,18 +196,30 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 
 
 def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
-    # Workspace is the current planning day's roster. Ticket detail remains a
-    # separate resource, so narrowing this projection does not constrain direct
-    # Ticket routes or an already-open inspector.
+    """The current planning day's roster of Ticket cards, read straight from the database.
+
+    Ticket detail remains a separate resource, so narrowing this projection does not
+    constrain direct Ticket routes or an already-open inspector.
+
+    Each card carries ``conversation_id``: the Ticket's conversation link, which under
+    the new conversation system is the caller-owned conversation id stored in the
+    ``employee_session_id`` column. It is what the board route asks the conversation
+    system about, and what the browser keys its reply watermark by.
+
+    Two of the three row signals are not database facts and are therefore not answered
+    here: whether the worker is running (``agent_working``) and whether it is waiting on
+    a permission ask (``needs_me``) are added by the async board route, which can await
+    the conversation system.
+    """
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.project_id AS parent_project_id, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
         "tickets.employee_backend, "
+        "tickets.employee_session_id, "
         "tickets.ticket_status, "
         "tickets.backend_error, "
-        "ticket_conversation_projections.latest_activity_state, "
         "ticket_conversation_projections.has_completed_response_awaiting_user, "
         "ticket_conversation_projections.has_completed_response, "
         "ticket_conversation_projections.has_pending_permission, "
@@ -283,24 +294,19 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "is_done": stage == worker_type_definition.completed_stage(),
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
             "blocked": str(row["id"]) in blocked_target_ids,
+            "conversation_id": (
+                str(row["employee_session_id"]) if row["employee_session_id"] is not None else None
+            ),
+            "agent_reply_state": workspace_agent_reply_state(
+                WorkspaceAgentReplyFacts(
+                    has_completed_response_awaiting_user=bool(
+                        row["has_completed_response_awaiting_user"] or 0
+                    ),
+                    has_completed_response=bool(row["has_completed_response"] or 0),
+                    has_pending_permission=bool(row["has_pending_permission"] or 0),
+                )
+            ).value,
         }
-        signals = workspace_signals(
-            WorkspaceSignalFacts(
-                ticket_status=TicketStatus(str(row["ticket_status"])),
-                latest_activity_state=(
-                    WorkspaceActivityState(str(row["latest_activity_state"]))
-                    if row["latest_activity_state"] is not None
-                    else None
-                ),
-                has_completed_response_awaiting_user=bool(
-                    row["has_completed_response_awaiting_user"] or 0
-                ),
-                has_completed_response=bool(row["has_completed_response"] or 0),
-                has_pending_permission=bool(row["has_pending_permission"] or 0),
-            )
-        )
-        card["agent_working"] = signals.agent_working
-        card["agent_reply_state"] = signals.agent_reply_state.value
         sort_key = (
             _prio_rank(priority),
             0 if deadline is not None else 1,

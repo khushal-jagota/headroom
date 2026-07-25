@@ -3461,6 +3461,14 @@ select {
   opacity: 0.56;
 }
 
+/* A Worker waiting on a permission ask: the same dot, filled pure white. It is the
+ * brightest mark on the row and the only one that is not the accent, done, error or
+ * grey, so an ask only the user can answer never reads as ordinary agent activity. */
+.stage-mark--needs-me {
+  background: var(--accent-needs-me);
+  border-color: var(--accent-needs-me);
+}
+
 /* A Worker reply the user has already opened: the same dot, greyed. */
 .stage-mark--reply-seen {
   background: var(--text-faintest);

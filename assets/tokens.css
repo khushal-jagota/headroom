@@ -25,6 +25,9 @@
   --accent-ink: #111318;   /* dark text on the accent fill (e.g. Approve) */
   --accent-done: #7fa564;  /* the green done marks */
   --accent-error: #d85d5d; /* red marks for errored ticket stages */
+  /* The one pure white in the palette: the row dot for a worker waiting on a permission
+   * ask. Nothing else is this bright, so "only you can answer this" reads at a glance. */
+  --accent-needs-me: #fff;
 
   /* Radius scale — even 4/8/12 progression */
   --radius-sm: 4px;
