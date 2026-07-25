@@ -101,7 +101,7 @@ def add_link(
     # 1. Self-link (§3.6): the two endpoints must differ. Pure check, outside the txn.
     if from_id == to_id:
         raise PlannerError(ErrorCode.link_invalid, "self-links are not allowed", detail)
-    # 2. Endpoint kinds (D8): the prefix fixes each side. Pure check, outside the txn.
+    # 2. Endpoint kinds: the prefix fixes each side. Pure check, outside the txn.
     from_rule, to_rule = _ENDPOINT_RULES[kind]
     if from_rule is not None and _prefix(from_id) not in from_rule:
         raise PlannerError(
@@ -133,7 +133,7 @@ def add_link(
                 detail,
             )
         # 5. Insert; any IntegrityError (PK dup, partial unique index race, CHECK) is
-        # re-raised as link_invalid (D9) — a raw IntegrityError never escapes.
+        # re-raised as link_invalid — a raw IntegrityError never escapes.
         try:
             conn.execute(
                 "INSERT INTO links (from_id, to_id, kind) VALUES (?, ?, ?)",
@@ -158,7 +158,7 @@ def add_link(
 def remove_link(
     conn: sqlite3.Connection, from_id: str, to_id: str, kind: LinkKind, now: int
 ) -> None:
-    """Delete a link; a missing link is not_found (D12)."""
+    """Delete a link; a missing link is not_found."""
     detail = {"from_id": from_id, "to_id": to_id, "kind": kind.value}
     cursor = conn.execute(
         "DELETE FROM links WHERE from_id=? AND to_id=? AND kind=?",

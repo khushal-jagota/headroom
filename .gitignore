@@ -12,3 +12,5 @@ playwright-report/
 .gstack/
 agent_backends/node_modules/
 web/node_modules/
+.worktrees/
+.claude/worktrees/

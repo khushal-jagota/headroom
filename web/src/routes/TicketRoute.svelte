@@ -10,8 +10,7 @@
     ceilingOptionsFor,
     fieldStageVisualStateFor,
     gatingFieldFor,
-    lifecycleFor,
-    recapVisibleFor
+    lifecycleFor
   } from "../lib/lifecycle";
   import type {
     EmployeeConfigurationSnapshot,
@@ -26,7 +25,6 @@
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
-  import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
@@ -54,7 +52,6 @@
     )
   );
   const emptyTicketFieldText = "Not written yet.";
-  const emptyTicketRecapText = "No recap yet.";
 
   const stageOwnerOptions = [
     { value: "", label: "default" },
@@ -419,22 +416,18 @@
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
             <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
-              {#if recapVisibleFor(lc, detail.stage)}
-                <InlineEdit
-                  value={detail.recap}
-                  markdown
-                  multiline
-                  placeholder="Short orientation for a cold reader..."
-                  onSave={(raw) =>
-                    mutateJsonWithResourceEffect(
-                      `/api/tickets/${stableId}/recap`,
-                      { method: "PUT", body: { body: raw } },
-                      { kind: "ticketChanged", ticketId: stableId }
-                    )}
-                />
-              {:else}
-                <MarkdownBlock text={detail.recap} quiet={emptyTicketRecapText} />
-              {/if}
+              <InlineEdit
+                value={detail.recap}
+                markdown
+                multiline
+                placeholder="Short orientation for a cold reader..."
+                onSave={(raw) =>
+                  mutateJsonWithResourceEffect(
+                    `/api/tickets/${stableId}/recap`,
+                    { method: "PUT", body: { body: raw } },
+                    { kind: "ticketChanged", ticketId: stableId }
+                  )}
+              />
             </Disclosure>
           </div>
 
