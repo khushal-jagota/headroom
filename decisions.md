@@ -3716,3 +3716,19 @@ agent ask the user has not handled. The seen marker generalizes the existing ack
 (`has_completed_response` remembered past acknowledge) instead of adding a parallel tracker,
 and rides the existing `ticket_conversation_projection_changed` event, so the reactivity
 completeness test needs no new mapping.
+
+## Workspace filter — mini-header dropdown (t_nup9skrv, 2026-07-25)
+The Workspace project filter moved below Chief of Staff and stopped being a native
+`<select>`. Owner direction over two rounds: first "just the dropdown, no header
+label", then "make it a mini header at rest and a dropdown when clicked, stop
+polishing a turd". Built as a custom trigger + popover menu reusing the existing
+`AcpConversationPane` menu idiom (bound menu element, `svelte:window`
+pointerdown/keydown to close on click-outside/Escape) rather than inventing a new
+pattern. It keeps the existing `selectedProjectId` state and its stale-project reset
+`$effect`, so filtering behavior and live-invalidation recovery are unchanged — only
+placement, presentation, and the open/close interaction are new. No box/border at
+rest: the trigger is the active project in the serif header voice one step below the
+bucket titles. Dropped the retired `.board-workspace-chief-peer +
+.disclosure--workspace-bucket` gap rule; the filter's own margin-bottom now carries
+that top-of-buckets gap. The menu matches the app's existing `chat-overflow-menu`
+(border, no shadow) because shadows are not a token category here.

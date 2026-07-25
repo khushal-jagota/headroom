@@ -74,6 +74,47 @@
     window.location.hash = "#/workspace";
   }
 
+  // The project filter is a mini header that opens a dropdown menu, not a form
+  // control. The trigger shows the active project; the menu picks a new one.
+  let projectMenuOpen = $state(false);
+  let projectMenuElement = $state<HTMLDivElement | null>(null);
+  let projectMenuButton = $state<HTMLButtonElement | null>(null);
+  let activeProjectLabel = $derived(
+    selectedProjectId === ALL_PROJECTS
+      ? "All projects"
+      : selectedProjectId === NO_PROJECT
+        ? "No project"
+        : projectOptions.find((project) => project.id === selectedProjectId)?.name ??
+          "All projects"
+  );
+
+  function closeProjectMenu(): void {
+    projectMenuOpen = false;
+  }
+
+  function chooseProject(projectId: string): void {
+    selectedProjectId = projectId;
+    closeProjectMenu();
+    projectMenuButton?.focus();
+  }
+
+  function onProjectMenuWindowPointerDown(event: PointerEvent): void {
+    if (
+      projectMenuOpen &&
+      projectMenuElement &&
+      !projectMenuElement.contains(event.target as Node)
+    ) {
+      closeProjectMenu();
+    }
+  }
+
+  function onProjectMenuWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && projectMenuOpen) {
+      closeProjectMenu();
+      projectMenuButton?.focus();
+    }
+  }
+
   type AgentReplyState = "none" | "unseen" | "seen";
 
   type SignalPresentation = {
@@ -185,6 +226,11 @@
   });
 </script>
 
+<svelte:window
+  onpointerdown={onProjectMenuWindowPointerDown}
+  onkeydown={onProjectMenuWindowKeydown}
+/>
+
 <section class="board-screen" data-screen="workspace">
   <ResourceState
     error={board.error}
@@ -195,17 +241,6 @@
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
         <section class="board-workspace-left" aria-label="Workspace tickets by status">
-          <label class="board-workspace-project-filter">
-            <span>Project</span>
-            <select bind:value={selectedProjectId} data-project-filter>
-              <option value={ALL_PROJECTS}>All projects</option>
-              {#each projectOptions as project (project.id)}
-                <option value={project.id}>{project.name}</option>
-              {/each}
-              <option value={NO_PROJECT}>No project</option>
-            </select>
-          </label>
-
           <button
             type="button"
             class="board-workspace-chief-peer"
@@ -216,6 +251,63 @@
           >
             <span class="board-workspace-chief-peer-label">Chief of Staff</span>
           </button>
+
+          <div class="board-workspace-project-filter" bind:this={projectMenuElement}>
+            <button
+              type="button"
+              class="board-workspace-project-filter-trigger"
+              bind:this={projectMenuButton}
+              aria-haspopup="menu"
+              aria-expanded={projectMenuOpen}
+              data-project-filter
+              data-active-project-id={selectedProjectId}
+              onclick={() =>
+                projectMenuOpen ? closeProjectMenu() : (projectMenuOpen = true)}
+            >
+              <span class="board-workspace-project-filter-value">{activeProjectLabel}</span>
+              <span class="board-workspace-project-filter-caret" aria-hidden="true"></span>
+            </button>
+
+            {#if projectMenuOpen}
+              <div class="board-workspace-project-filter-menu" role="menu" data-project-menu>
+                <button
+                  type="button"
+                  class="board-workspace-project-filter-item"
+                  role="menuitemradio"
+                  aria-checked={selectedProjectId === ALL_PROJECTS}
+                  data-project-option={ALL_PROJECTS}
+                  onclick={() => chooseProject(ALL_PROJECTS)}
+                >
+                  <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
+                  All projects
+                </button>
+                {#each projectOptions as project (project.id)}
+                  <button
+                    type="button"
+                    class="board-workspace-project-filter-item"
+                    role="menuitemradio"
+                    aria-checked={selectedProjectId === project.id}
+                    data-project-option={project.id}
+                    onclick={() => chooseProject(project.id)}
+                  >
+                    <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
+                    {project.name}
+                  </button>
+                {/each}
+                <button
+                  type="button"
+                  class="board-workspace-project-filter-item"
+                  role="menuitemradio"
+                  aria-checked={selectedProjectId === NO_PROJECT}
+                  data-project-option={NO_PROJECT}
+                  onclick={() => chooseProject(NO_PROJECT)}
+                >
+                  <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
+                  No project
+                </button>
+              </div>
+            {/if}
+          </div>
 
           {#each buckets as bucket (bucket.key)}
             <Disclosure
