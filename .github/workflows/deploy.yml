@@ -13,12 +13,14 @@ concurrency:
   cancel-in-progress: false
 env:
   PANELS_REQUESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
-  PANELS_CANDIDATE_APP: ${{ runner.temp }}/panels-candidate-${{ github.run_id }}-${{ github.run_attempt }}
-  PANELS_DEPLOY_VENV: ${{ runner.temp }}/panels-deploy-venv-${{ github.run_id }}-${{ github.run_attempt }}
 jobs:
   deploy:
     runs-on: [self-hosted, linux, production, panels-deploy]
     steps:
+      - name: Set runner-temporary deployment paths
+        run: |
+          echo "PANELS_CANDIDATE_APP=$RUNNER_TEMP/panels-candidate-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
+          echo "PANELS_DEPLOY_VENV=$RUNNER_TEMP/panels-deploy-venv-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
