@@ -42,6 +42,7 @@ class InMemoryConversationObservationKind(StrEnum):
     turn_ended = "turn_ended"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
+    model_changed = "model_changed"
 
 
 class InMemoryConversationTurnEnding(StrEnum):
@@ -63,6 +64,8 @@ class InMemoryConversationObservation:
     turn_ending: InMemoryConversationTurnEnding | None = None
     refusal_reason: PromptDeliveryRefusalReason | None = None
     permission_ask_id: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +99,8 @@ class _InMemoryBackendSession:
     prompt_writes: list[InMemoryBackendPromptWrite] = field(default_factory=list)
     pending_permission_answers: dict[str, str | None] = field(default_factory=dict)
     cancellations: int = 0
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass
@@ -107,11 +112,15 @@ class _RunningTurn:
 class _HeldPrompt:
     text: str
     sender_label: str
+    model_change: str | None = None
+    reasoning_effort_change: str | None = None
 
 
 @dataclass
 class _ConversationState:
     resolved_start: ResolvedConversationStart
+    current_model: str | None = None
+    current_reasoning_effort: str | None = None
     backend_session: _InMemoryBackendSession | None = None
     running_turn: _RunningTurn | None = None
     held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
@@ -134,7 +143,11 @@ class InMemoryConversationSystem:
         resolved = resolve_conversation_start_request(request)
         if resolved.conversation_id in self._conversations:
             raise ConversationAlreadyStarted(resolved.conversation_id)
-        self._conversations[resolved.conversation_id] = _ConversationState(resolved_start=resolved)
+        self._conversations[resolved.conversation_id] = _ConversationState(
+            resolved_start=resolved,
+            current_model=resolved.model,
+            current_reasoning_effort=resolved.reasoning_effort,
+        )
 
     async def send(
         self,
@@ -143,7 +156,17 @@ class InMemoryConversationSystem:
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
     ) -> PromptDeliveryFate:
+        if mode is PromptDeliveryMode.steer and (
+            model_change is not None or reasoning_effort_change is not None
+        ):
+            raise ValueError(
+                "a steer cannot carry a model or reasoning-effort change: the turn it "
+                "joins is already running"
+            )
+
         state = self._conversations.get(conversation_id)
         if state is None:
             return PromptDeliveryRefused(
@@ -154,16 +177,27 @@ class InMemoryConversationSystem:
             return self._steer(state, text, sender_label)
 
         if mode is PromptDeliveryMode.run_when_free and state.running_turn is not None:
-            state.held_prompts.append(_HeldPrompt(text=text, sender_label=sender_label))
+            state.held_prompts.append(
+                _HeldPrompt(
+                    text=text,
+                    sender_label=sender_label,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                )
+            )
             return PromptDeliveryQueued(queue_position=len(state.held_prompts))
 
         if state.running_turn is None:
-            return self._start_turn(state, text, sender_label, mode)
+            return self._start_turn(
+                state, text, sender_label, mode, model_change, reasoning_effort_change
+            )
 
         # send-now against a busy agent: the incumbent dies first, and this message runs
         # next — ahead of everything already held, which keeps its order behind it.
         self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
-        fate = self._start_turn(state, text, sender_label, mode)
+        fate = self._start_turn(
+            state, text, sender_label, mode, model_change, reasoning_effort_change
+        )
         if isinstance(fate, PromptDeliveryRefused):
             # The incumbent is already dead and the agent is free, so the held prompts
             # are owed their run even though this delivery could not happen.
@@ -276,6 +310,20 @@ class InMemoryConversationSystem:
             return 0
         return state.backend_session.cancellations
 
+    def backend_model(self, conversation_id: str) -> str | None:
+        """The model the backend stand-in's session currently runs on — its own account."""
+        state = self._conversations.get(conversation_id)
+        if state is None or state.backend_session is None:
+            return None
+        return state.backend_session.model
+
+    def backend_reasoning_effort(self, conversation_id: str) -> str | None:
+        """The reasoning effort the backend stand-in's session currently runs on."""
+        state = self._conversations.get(conversation_id)
+        if state is None or state.backend_session is None:
+            return None
+        return state.backend_session.reasoning_effort
+
     def observations(self, conversation_id: str) -> tuple[InMemoryConversationObservation, ...]:
         state = self._conversations.get(conversation_id)
         if state is None:
@@ -294,7 +342,9 @@ class InMemoryConversationSystem:
             return PromptDeliveryRefusalReason.backend_did_not_start
         if state.armed_session_load_failure:
             return PromptDeliveryRefusalReason.session_did_not_load
-        session = _InMemoryBackendSession()
+        session = _InMemoryBackendSession(
+            model=state.current_model, reasoning_effort=state.current_reasoning_effort
+        )
         state.backend_session = session
         return session
 
@@ -304,6 +354,8 @@ class InMemoryConversationSystem:
         text: str,
         sender_label: str,
         mode: PromptDeliveryMode,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
     ) -> _InMemoryBackendSession | PromptDeliveryRefused:
         established = self._establish_backend_session(state)
         if isinstance(established, PromptDeliveryRefusalReason):
@@ -311,6 +363,22 @@ class InMemoryConversationSystem:
         if state.armed_backend_write_failure:
             return PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
+            )
+        if model_change is not None or reasoning_effort_change is not None:
+            # The change lands with the delivery, so it is applied only once the write
+            # is known to go through — a refused delivery must change nothing.
+            if model_change is not None:
+                state.current_model = model_change
+                established.model = model_change
+            if reasoning_effort_change is not None:
+                state.current_reasoning_effort = reasoning_effort_change
+                established.reasoning_effort = reasoning_effort_change
+            state.observations.append(
+                InMemoryConversationObservation(
+                    kind=InMemoryConversationObservationKind.model_changed,
+                    model=state.current_model,
+                    reasoning_effort=state.current_reasoning_effort,
+                )
             )
         established.prompt_writes.append(
             InMemoryBackendPromptWrite(text=text, sender_label=sender_label, mode=mode)
@@ -331,8 +399,12 @@ class InMemoryConversationSystem:
         text: str,
         sender_label: str,
         mode: PromptDeliveryMode,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
-        written = self._write_to_backend(state, text, sender_label, mode)
+        written = self._write_to_backend(
+            state, text, sender_label, mode, model_change, reasoning_effort_change
+        )
         if isinstance(written, PromptDeliveryRefused):
             return written
         state.running_turn = _RunningTurn()
@@ -380,7 +452,12 @@ class InMemoryConversationSystem:
         while state.running_turn is None and state.held_prompts:
             held = state.held_prompts.popleft()
             fate = self._start_turn(
-                state, held.text, held.sender_label, PromptDeliveryMode.run_when_free
+                state,
+                held.text,
+                held.sender_label,
+                PromptDeliveryMode.run_when_free,
+                held.model_change,
+                held.reasoning_effort_change,
             )
             if isinstance(fate, PromptDeliveryRefused):
                 state.observations.append(

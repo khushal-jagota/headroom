@@ -40,6 +40,8 @@ def _recorded_fact(observation: InMemoryConversationObservation) -> RecordedFact
         ),
         refusal_reason=observation.refusal_reason,
         permission_ask_id=observation.permission_ask_id,
+        model=observation.model,
+        reasoning_effort=observation.reasoning_effort,
     )
 
 
@@ -69,6 +71,12 @@ class InMemoryConversationSystemUnderTest:
 
     async def backend_cancellations(self, conversation_id: str) -> int:
         return self._system.backend_cancellations(conversation_id)
+
+    async def backend_model(self, conversation_id: str) -> str | None:
+        return self._system.backend_model(conversation_id)
+
+    async def backend_reasoning_effort(self, conversation_id: str) -> str | None:
+        return self._system.backend_reasoning_effort(conversation_id)
 
     # The fake does all of its reacting inside the call, so these already satisfy the
     # harness's timing obligation: there is nothing left in flight when they return.

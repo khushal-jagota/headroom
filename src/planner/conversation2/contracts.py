@@ -312,12 +312,26 @@ class ConversationSystem(Protocol):
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
     ) -> PromptDeliveryFate:
         """Send text into a conversation. This is the only way text gets to an agent.
 
         ``mode`` decides how the text meets the agent — run when free, send now, or
         steer into the running turn — and defaults to run-when-free. See
         ``PromptDeliveryMode`` for what each one does against an idle and a busy agent.
+
+        ``model_change`` and ``reasoning_effort_change`` let this message carry a
+        change: from this delivery on, the conversation runs on the named model or
+        reasoning effort. Absent means the conversation stays on what it is — there is
+        no other way to change either, so browsing a picker changes nothing and an
+        abandoned choice never touches the conversation. The change lands with the
+        delivery: a held message applies it when it runs, and a refused delivery
+        changes nothing. How a backend realizes it — a per-turn parameter, or
+        restarting the backend session under the same conversation id — is internal,
+        and the change is recorded as an event. A steer cannot carry a change, because
+        the turn it joins is already running; that is a caller error (``ValueError``),
+        not a delivery fate.
 
         The return value is the fate of this delivery, and fate means it happened, never
         that it was attempted. See ``PromptDeliveryFate``: started, queued, injected, or

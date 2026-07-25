@@ -29,6 +29,11 @@ of the backend is internal to the conversation system and appears nowhere here.
 Permissions are internal too — they have no method, only rules, and those rules are on
 the Protocol's docstring.
 
+A send may carry a model or reasoning-effort change: from that delivery on, the
+conversation runs on the named value. There is no separate set-model operation — the
+change rides the message (commit-on-send), a held message applies it when it runs, and a
+refused delivery changes nothing. How a backend realizes the change is internal.
+
 ## What is deferred
 
 These are ruled to belong to the real build, and are deliberately absent rather than
@@ -53,13 +58,14 @@ the real build's to keep, because no external observer can see them:
   a turn's failure needs no return channel; it is not a surface the seam exposes, and the
   conformance suite does not reach into an implementation's logging to check it.
 - **The start request's values are actually used.** Of everything a start request carries,
-  the only value conformance can show was honoured is the backend key, and only indirectly:
-  a steer is refused on codex and claude and accepted on hermes. The role text, the identity
-  environment variables, the model, the reasoning effort, the workspace folder and the
-  access posture have no observation path at this seam at all — an implementation that
-  threw the role materials away entirely would pass every conformance test. Honouring them
-  is the real build's obligation, and proving it belongs to that build's own tests, close
-  to where the values are applied. No observation surface has been invented for them here.
+  conformance can show three were honoured: the backend key (indirectly — a steer is
+  refused on codex and claude and accepted on hermes), and the model and reasoning effort
+  (directly — the harness reads the backend side's own account of what its session runs
+  on, added with the model-change extension). The role text, the identity environment
+  variables, the workspace folder and the access posture have no observation path at this
+  seam at all — an implementation that threw the role materials away entirely would still
+  pass every conformance test. Honouring them is the real build's obligation, and proving
+  it belongs to that build's own tests, close to where the values are applied.
 
 ## Two vocabularies, on purpose
 

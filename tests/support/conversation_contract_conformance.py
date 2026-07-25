@@ -61,6 +61,7 @@ class RecordedFactKind(StrEnum):
     turn_ended = "turn_ended"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
+    model_changed = "model_changed"
 
 
 class RecordedTurnEnding(StrEnum):
@@ -82,6 +83,8 @@ class RecordedFact:
     turn_ending: RecordedTurnEnding | None = None
     refusal_reason: PromptDeliveryRefusalReason | None = None
     permission_ask_id: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 class ConversationSystemUnderTest(Protocol):
@@ -126,6 +129,15 @@ class ConversationSystemUnderTest(Protocol):
         that really stops its agent from one that merely records an interruption and
         leaves the agent running.
         """
+
+    async def backend_model(self, conversation_id: str) -> str | None:
+        """The model the backend side's session currently runs on — the backend's own
+        account, which is what proves a carried model change actually reached it rather
+        than being recorded and dropped. None when no session exists yet."""
+
+    async def backend_reasoning_effort(self, conversation_id: str) -> str | None:
+        """The reasoning effort the backend side's session currently runs on — the
+        backend's own account. None when no session exists yet."""
 
     # Driving the backend. Each returns only after the implementation has fully
     # processed the event — see the timing obligation on this class.
@@ -1182,5 +1194,113 @@ class ConversationContractConformanceSuite:
                 "PromptDeliveryInjected": (),
                 "PromptDeliveryRefused": ("refusal_reason",),
             }
+
+        self._run(exercise)
+
+    # --- A send can carry a model or reasoning-effort change (commit-on-send) ---
+
+    def test_a_send_carrying_a_model_change_changes_the_model_from_that_delivery_on(
+        self,
+    ) -> None:
+        """Coverage 43: the change lands with the delivery, reaches the backend side,
+        persists for later sends, and is recorded."""
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(
+                ConversationStartRequest(conversation_id="c", model="first-model")
+            )
+            fate = await subject.system.send(
+                "c", "switch here", sender_label="owner", model_change="second-model"
+            )
+            assert isinstance(fate, PromptDeliveryStarted)
+            assert await subject.backend_model("c") == "second-model"
+            changes = _facts_of_kind(
+                await subject.recorded_facts("c"), RecordedFactKind.model_changed
+            )
+            assert tuple(fact.model for fact in changes) == ("second-model",)
+
+            await subject.complete_running_turn("c")
+            await subject.system.send("c", "plain send after", sender_label="owner")
+            assert await subject.backend_model("c") == "second-model"
+
+        self._run(exercise)
+
+    def test_a_send_without_a_change_leaves_model_and_effort_alone(self) -> None:
+        """Coverage 44: absent means the conversation stays on what it is."""
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="c", model="start-model", reasoning_effort="start-effort"
+                )
+            )
+            await subject.system.send("c", "plain", sender_label="owner")
+            assert await subject.backend_model("c") == "start-model"
+            assert await subject.backend_reasoning_effort("c") == "start-effort"
+            facts = await subject.recorded_facts("c")
+            assert _facts_of_kind(facts, RecordedFactKind.model_changed) == ()
+
+        self._run(exercise)
+
+    def test_a_change_held_behind_a_busy_agent_lands_when_its_message_runs(self) -> None:
+        """Coverage 45: the change rides the message, not the moment of sending."""
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(
+                ConversationStartRequest(conversation_id="c", model="start-model")
+            )
+            await subject.system.send("c", "incumbent", sender_label="owner")
+            fate = await subject.system.send(
+                "c", "held with change", sender_label="owner", model_change="next-model"
+            )
+            assert isinstance(fate, PromptDeliveryQueued)
+            assert await subject.backend_model("c") == "start-model"
+
+            await subject.complete_running_turn("c")
+            assert await subject.backend_model("c") == "next-model"
+            assert "held with change" in _written_texts(await subject.backend_writes("c"))
+
+        self._run(exercise)
+
+    def test_a_refused_delivery_carrying_a_change_changes_nothing(self) -> None:
+        """Coverage 46: the change lands with the delivery, so no delivery, no change."""
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(
+                ConversationStartRequest(conversation_id="c", model="start-model")
+            )
+            await subject.system.send("c", "make the session exist", sender_label="owner")
+            await subject.complete_running_turn("c")
+            await subject.arm_backend_write_failure("c")
+
+            fate = await subject.system.send(
+                "c", "doomed", sender_label="owner", model_change="never-model"
+            )
+            assert isinstance(fate, PromptDeliveryRefused)
+            assert fate.refusal_reason is PromptDeliveryRefusalReason.write_to_backend_failed
+            assert await subject.backend_model("c") == "start-model"
+            facts = await subject.recorded_facts("c")
+            assert _facts_of_kind(facts, RecordedFactKind.model_changed) == ()
+
+        self._run(exercise)
+
+    def test_a_steer_cannot_carry_a_change(self) -> None:
+        """Coverage 47: the turn a steer joins is already running — caller error, not
+        a delivery fate."""
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(
+                _start_request("c", backend_key=ConversationBackendKey.hermes)
+            )
+            await subject.system.send("c", "incumbent", sender_label="owner")
+            with pytest.raises(ValueError):
+                await subject.system.send(
+                    "c",
+                    "steered",
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
+                    model_change="other-model",
+                )
+            assert await subject.system.is_running("c")
 
         self._run(exercise)
