@@ -6,10 +6,11 @@ the same rows the browser saw as they happened.
 
 Two kinds of thing travel through the conversation system and only one of them is a row:
 
-- **Event kinds** — the nine below. Each has a payload type and a canonical JSON form, and
+- **Event kinds** — the ten below. Each has a payload type and a canonical JSON form, and
   each is written to ``conversation_events`` when the thing it names has finished
   happening: the prompt reached the backend, the agent's message is complete, the tool
-  call started, the tool call finished, the turn ended.
+  call started, the tool call finished, the turn ended, the message that was waiting was
+  thrown away.
 - **Live tail frames** — the half-finished text a backend streams while it works. They are
   shown and then forgotten. They are not rows, they have no kind, and nothing stores them.
 
@@ -40,6 +41,7 @@ class ConversationEventKind(StrEnum):
 
     prompt = "prompt"
     prompt_delivery_refused = "prompt_delivery_refused"
+    prompt_discarded = "prompt_discarded"
     agent_message = "agent_message"
     tool_call_started = "tool_call_started"
     tool_call_finished = "tool_call_finished"
@@ -106,6 +108,24 @@ class PromptDeliveryRefusedEventPayload:
     sender_label: str
     mode: PromptDeliveryMode
     refusal_reason: PromptDeliveryRefusalReason
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDiscardedEventPayload:
+    """A held message that was thrown away without ever being delivered.
+
+    Killing a conversation's activity empties its queue, and text a caller handed over
+    must never disappear without a trace — so each discarded message is written down,
+    with who sent it, in the order it was waiting in.
+
+    There is no mode: only a run-when-free message is ever held, so there is nothing a
+    mode could tell anyone here.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_discarded
+
+    text: str
+    sender_label: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +213,7 @@ class TurnEndedEventPayload:
 type ConversationEventPayload = (
     PromptEventPayload
     | PromptDeliveryRefusedEventPayload
+    | PromptDiscardedEventPayload
     | AgentMessageEventPayload
     | ToolCallStartedEventPayload
     | ToolCallFinishedEventPayload
@@ -270,6 +291,8 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "mode": str(payload.mode),
                 "refusal_reason": str(payload.refusal_reason),
             }
+        case PromptDiscardedEventPayload():
+            return {"text": payload.text, "sender_label": payload.sender_label}
         case AgentMessageEventPayload():
             return {"text": payload.text}
         case ToolCallStartedEventPayload():
@@ -325,6 +348,10 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=PromptDeliveryMode(_text(stored, "mode")),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
+            )
+        case ConversationEventKind.prompt_discarded:
+            return PromptDiscardedEventPayload(
+                text=_text(stored, "text"), sender_label=_text(stored, "sender_label")
             )
         case ConversationEventKind.agent_message:
             return AgentMessageEventPayload(text=_text(stored, "text"))

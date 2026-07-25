@@ -103,6 +103,13 @@ class _FakeBackend:
     ends_the_turn_while_writing: bool = False
     writes_raise_something_unnamed: bool = False
 
+    # Gates, for the tests that need the system to be genuinely part-way through
+    # something while another caller arrives.
+    writes_wait_for_release: asyncio.Event | None = None
+    write_has_begun: asyncio.Event | None = None
+    cancels_wait_for_release: asyncio.Event | None = None
+    cancel_has_begun: asyncio.Event | None = None
+
     def written_texts(self) -> tuple[str, ...]:
         return tuple(write.text for write in self.writes)
 
@@ -143,6 +150,10 @@ class _FakeBackendChild:
         ):
             self._backend.needs_rebind_once = False
             raise NeedsRebind(self._backend.conversation_id)
+        if self._backend.write_has_begun is not None:
+            self._backend.write_has_begun.set()
+        if self._backend.writes_wait_for_release is not None:
+            await self._backend.writes_wait_for_release.wait()
         if self._backend.writes_raise_something_unnamed:
             raise RuntimeError("the adapter fell over")
         if self._backend.write_fails:
@@ -173,6 +184,10 @@ class _FakeBackendChild:
         self._backend.writes.append(_FakeBackendWrite(text=text, steered=True))
 
     async def cancel_running_turn(self) -> None:
+        if self._backend.cancel_has_begun is not None:
+            self._backend.cancel_has_begun.set()
+        if self._backend.cancels_wait_for_release is not None:
+            await self._backend.cancels_wait_for_release.wait()
         self._backend.cancellations += 1
         self._backend.live_turn_token = None
 
@@ -1119,6 +1134,37 @@ def test_a_rebind_whose_write_still_fails_changes_nothing(harness: _Harness) -> 
     _run(exercise)
 
 
+def test_a_rebound_child_that_was_never_written_to_is_thrown_away(harness: _Harness) -> None:
+    """It was started on values that did not stand, so keeping it would leave the
+    record and the live agent saying different things about what this runs on."""
+
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.claude, model="start-model")
+        await harness.system.send("c", "first", sender_label="owner")
+        await harness.complete_turn("c")
+        backend = harness.backend("c")
+        backend.needs_rebind_once = True
+        backend.write_fails = True
+
+        await harness.system.send(
+            "c", "doomed", sender_label="owner", model_change="second-model"
+        )
+        assert backend.session_starts == 2
+        assert backend.stops == 2
+
+        backend.write_fails = False
+        assert await harness.system.send("c", "plain send after", sender_label="owner") == (
+            PromptDeliveryStarted()
+        )
+
+        # A fresh child, started from the cursor on the values the record actually holds.
+        assert backend.session_starts == 3
+        assert backend.started_from_cursor == VENDOR_SESSION_CURSOR
+        assert backend.model == "start-model"
+
+    _run(exercise)
+
+
 # --- permission asks ----------------------------------------------------------------------
 
 
@@ -1487,6 +1533,190 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
             ] == ["prompt", "prompt"]
         finally:
             await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+# --- killing a conversation's activity ----------------------------------------------------
+
+
+def test_kill_stops_the_turn_and_throws_away_everything_that_was_waiting(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "incumbent", sender_label="owner")
+        await harness.system.send("c", "held one", sender_label="owner")
+        await harness.system.send("c", "held two", sender_label="automatic-loop")
+        await harness.raise_permission_ask("c")
+
+        await harness.system.kill("c")
+        await harness.settle()
+
+        assert await harness.system.is_running("c") is False
+        assert await harness.system.has_pending_permission_ask("c") is False
+        assert harness.backend("c").cancellations == 1
+        assert harness.backend("c").written_texts() == ("incumbent",)
+
+        # Each discard written down, in the order they were waiting in, before the
+        # ending of the turn they were waiting behind.
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.permission_asked,
+            ConversationEventKind.prompt_discarded,
+            ConversationEventKind.prompt_discarded,
+            ConversationEventKind.turn_ended,
+        )
+        discarded = [
+            (event.payload.text, event.payload.sender_label)
+            for event in await harness.events("c")
+            if event.kind is ConversationEventKind.prompt_discarded
+        ]
+        assert discarded == [("held one", "owner"), ("held two", "automatic-loop")]
+        assert await harness.recorded_endings("c") == (ConversationTurnEnding.interrupted,)
+
+    _run(exercise)
+
+
+def test_nothing_runs_after_a_kill(harness: _Harness) -> None:
+    """The difference from an interrupt: the queue is silenced rather than let run."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "incumbent", sender_label="owner")
+        await harness.system.send("c", "held", sender_label="owner")
+
+        await harness.system.kill("c")
+        await harness.settle()
+
+        assert harness.backend("c").written_texts() == ("incumbent",)
+        assert await harness.system.is_running("c") is False
+
+    _run(exercise)
+
+
+def test_an_ask_of_a_killed_turn_can_no_longer_be_answered(harness: _Harness) -> None:
+    """The ask dies with the turn, and the agent is told so by the cancel."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "work", sender_label="owner")
+        ask_id = await harness.raise_permission_ask("c")
+
+        await harness.system.kill("c")
+
+        assert harness.backend("c").cancellations == 1
+        assert await harness.system.answer_permission_ask("c", ask_id, "allow-once") is False
+        assert harness.backend("c").permission_answers == {}
+        assert ConversationEventKind.permission_answered not in await harness.recorded_kinds("c")
+
+    _run(exercise)
+
+
+def test_a_kill_with_nothing_to_kill_does_nothing_at_all(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await harness.system.kill("never-started")
+
+        await _start(harness, "c")
+        await harness.system.kill("c")
+
+        assert await harness.events("c") == ()
+        assert harness.spawned_conversation_ids == []
+        assert harness.backend("c").cancellations == 0
+
+    _run(exercise)
+
+
+def test_a_killed_conversation_is_not_a_closed_one(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "work", sender_label="owner")
+        await harness.system.send("c", "held", sender_label="owner")
+        await harness.system.kill("c")
+
+        fate = await harness.system.send("c", "after the kill", sender_label="owner")
+
+        assert fate == PromptDeliveryStarted()
+        assert await harness.system.is_running("c") is True
+        assert harness.backend("c").written_texts() == ("work", "after the kill")
+        # The same conversation, carrying on from the record it already had.
+        assert [str(event.kind) for event in await harness.events("c")] == [
+            "prompt",
+            "prompt_discarded",
+            "turn_ended",
+            "prompt",
+        ]
+
+    _run(exercise)
+
+
+def test_a_kill_waits_for_a_turn_that_is_still_being_started(harness: _Harness) -> None:
+    """A kill cannot stop a turn that has not started yet, so it waits for the one on
+    its way and stops that."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        # A turn first, so the child exists and the send below waits only at the write.
+        await harness.system.send("c", "first", sender_label="owner")
+        await harness.complete_turn("c")
+        backend = harness.backend("c")
+        backend.writes_wait_for_release = asyncio.Event()
+        backend.write_has_begun = asyncio.Event()
+
+        sending = asyncio.create_task(
+            harness.system.send("c", "starting", sender_label="owner")
+        )
+        await backend.write_has_begun.wait()
+        killing = asyncio.create_task(harness.system.kill("c"))
+        for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
+            await asyncio.sleep(0)
+
+        # The kill is waiting rather than racing: the turn is neither started nor killed.
+        assert not killing.done()
+        backend.writes_wait_for_release.set()
+
+        assert await sending == PromptDeliveryStarted()
+        await killing
+        await harness.settle()
+
+        assert await harness.system.is_running("c") is False
+        assert backend.cancellations == 1
+        assert await harness.recorded_endings("c") == (
+            ConversationTurnEnding.completed,
+            ConversationTurnEnding.interrupted,
+        )
+
+    _run(exercise)
+
+
+def test_a_message_sent_while_a_kill_is_running_is_not_swallowed_by_it(
+    harness: _Harness,
+) -> None:
+    """A kill holds the conversation still, so a send either loses its message to the
+    kill or starts a turn — never waits behind a queue nothing will ever drain."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "incumbent", sender_label="owner")
+        backend = harness.backend("c")
+        backend.cancels_wait_for_release = asyncio.Event()
+        backend.cancel_has_begun = asyncio.Event()
+
+        killing = asyncio.create_task(harness.system.kill("c"))
+        await backend.cancel_has_begun.wait()
+        sending = asyncio.create_task(
+            harness.system.send("c", "sent during the kill", sender_label="owner")
+        )
+        for _ in range(_SCHEDULING_TURNS_TO_LET_THE_QUEUE_CATCH_UP):
+            await asyncio.sleep(0)
+        backend.cancels_wait_for_release.set()
+
+        await killing
+        assert await sending == PromptDeliveryStarted()
+        await harness.settle()
+
+        assert await harness.system.is_running("c") is True
+        assert backend.written_texts() == ("incumbent", "sent during the kill")
 
     _run(exercise)
 

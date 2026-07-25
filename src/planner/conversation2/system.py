@@ -69,6 +69,7 @@ from planner.conversation2.events import (
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
     PromptDeliveryRefusedEventPayload,
+    PromptDiscardedEventPayload,
     PromptEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallStartedEventPayload,
@@ -266,6 +267,37 @@ class SqliteProcessConversationSystem:
         finally:
             state.lock.release()
         await self._drain_held_prompts(state)
+
+    async def kill(self, conversation_id: str) -> None:
+        """Stop the running turn and throw away everything that was waiting behind it.
+
+        Unlike an interrupt, this is the end of the conversation's traffic: the queue is
+        emptied rather than let run, so nothing happens afterwards until someone sends
+        again. Each discarded message is written down before the turn's ending, because
+        text a caller handed over must never disappear without a trace.
+
+        The whole of it happens under the conversation's lock, including the cancel — the
+        one place wire I/O is held under it, because being one act is the point. A queue
+        that could take on a message between the turn dying and the queue emptying would
+        leave something running after a kill, which is what a kill is for stopping.
+        """
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return
+        state.last_touched_monotonic = self._monotonic_now()
+        await self._acquire_settled(state)
+        try:
+            await self._discard_held_prompts(state)
+            running = state.running_turn
+            if running is None:
+                return
+            child = state.child
+            if child is not None:
+                await self._cancel_child_turn(state, child)
+            await self._end_turn(state, running, ConversationTurnEnding.interrupted, None)
+            self._set_phase(state, _ConversationPhase.idle)
+        finally:
+            state.lock.release()
 
     async def is_running(self, conversation_id: str) -> bool:
         """Whether a turn is running right now.
@@ -578,6 +610,12 @@ class SqliteProcessConversationSystem:
         starting over. The conversation is the same one — it resumes from the session
         cursor it already has — and if any of it fails, the change has not happened and
         neither has the delivery.
+
+        A rebound child that is then not written to is thrown away rather than kept. It
+        was started on the values the failed delivery was carrying, and those values did
+        not stand, so keeping it would leave the conversation's record and its live agent
+        saying two different things about what it is running on. Dropping it costs one
+        lazy respawn and keeps the record the only answer.
         """
         old_child = state.child
         state.child = None
@@ -599,7 +637,11 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change=reasoning_effort_change,
             )
         except (PromptWriteFailed, NeedsRebind):
+            await self._discard_child(state, child)
             return PromptDeliveryRefusalReason.write_to_backend_failed
+        except BaseException:
+            await self._discard_child(state, child)
+            raise
         return None
 
     async def _finalize_delivery(
@@ -723,6 +765,21 @@ class SqliteProcessConversationSystem:
             if started:
                 return
 
+    async def _discard_held_prompts(self, state: _ConversationState) -> None:
+        """Throw away everything waiting, writing each one down. The lock must be held.
+
+        Each message leaves the queue before its row is written, so a write that falls
+        over part-way leaves the rest of the queue discarded rather than delivered.
+        """
+        while state.held_prompts:
+            discarded = state.held_prompts.popleft()
+            await self._append_event(
+                state,
+                PromptDiscardedEventPayload(
+                    text=discarded.text, sender_label=discarded.sender_label
+                ),
+            )
+
     # --- turns --------------------------------------------------------------------------
 
     def _reserve_turn(self, state: _ConversationState) -> _ReservedTurn:
@@ -838,6 +895,16 @@ class SqliteProcessConversationSystem:
         )
         state.child = child
         return child
+
+    async def _discard_child(self, state: _ConversationState, child: BackendChild) -> None:
+        """Stop a child and forget it, so the next message starts a fresh one.
+
+        The new one resumes from the stored session cursor on the values the record
+        holds, which is how a conversation gets back to one answer about itself.
+        """
+        if state.child is child:
+            state.child = None
+        await self._stop_child(state, child)
 
     async def _stop_child(self, state: _ConversationState, child: BackendChild) -> None:
         try:

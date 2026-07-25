@@ -27,6 +27,7 @@ from planner.conversation2.events import (
     PermissionAskedEventPayload,
     PermissionAskOption,
     PromptDeliveryRefusedEventPayload,
+    PromptDiscardedEventPayload,
     PromptEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallStartedEventPayload,
@@ -39,15 +40,25 @@ from planner.conversation2.events import (
 from planner.conversation2.storage import ConversationRecordMissing, ConversationStore
 from planner.core.db import connect, create_schema
 
+A_PROMPT = PromptEventPayload(
+    text="hello", sender_label="owner", mode=PromptDeliveryMode.run_when_free
+)
+A_REFUSED_DELIVERY = PromptDeliveryRefusedEventPayload(
+    text="held",
+    sender_label="automatic-loop",
+    mode=PromptDeliveryMode.run_when_free,
+    refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed,
+)
+AN_AGENT_MESSAGE = AgentMessageEventPayload(
+    text="# heading\n\nbody with an em dash — and 日本語"
+)
+
+# One of every kind, so the codec tests below cover the whole enum rather than a sample.
 EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
-    PromptEventPayload(text="hello", sender_label="owner", mode=PromptDeliveryMode.run_when_free),
-    PromptDeliveryRefusedEventPayload(
-        text="held",
-        sender_label="automatic-loop",
-        mode=PromptDeliveryMode.run_when_free,
-        refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed,
-    ),
-    AgentMessageEventPayload(text="# heading\n\nbody with an em dash — and 日本語"),
+    A_PROMPT,
+    A_REFUSED_DELIVERY,
+    PromptDiscardedEventPayload(text="never ran", sender_label="owner"),
+    AN_AGENT_MESSAGE,
     ToolCallStartedEventPayload(
         tool_call_id="call-1", title="Read file", tool_kind="read", detail="/tmp/x"
     ),
@@ -203,8 +214,8 @@ def test_rows_are_numbered_from_one_and_move_the_conversations_marker(
     async def exercise() -> None:
         await store.create_conversation(_resolved())
 
-        first = await store.append_event("c", EVERY_PAYLOAD[0])
-        second = await store.append_event("c", EVERY_PAYLOAD[2])
+        first = await store.append_event("c", A_PROMPT)
+        second = await store.append_event("c", AN_AGENT_MESSAGE)
 
         assert (first.sequence, second.sequence) == (1, 2)
         assert first.created_at == 1_700_000_000
@@ -232,9 +243,9 @@ def test_one_conversations_record_never_shows_up_in_anothers(store: Conversation
         await store.create_conversation(_resolved("first"))
         await store.create_conversation(_resolved("second"))
 
-        await store.append_event("first", EVERY_PAYLOAD[0])
-        await store.append_event("second", EVERY_PAYLOAD[0])
-        await store.append_event("second", EVERY_PAYLOAD[2])
+        await store.append_event("first", A_PROMPT)
+        await store.append_event("second", A_PROMPT)
+        await store.append_event("second", AN_AGENT_MESSAGE)
 
         assert [event.sequence for event in await store.read_events_after("first", 0)] == [1]
         assert [event.sequence for event in await store.read_events_after("second", 0)] == [1, 2]
@@ -270,7 +281,7 @@ def test_a_row_cannot_be_appended_to_a_conversation_that_is_not_there(
 ) -> None:
     async def exercise() -> None:
         with pytest.raises(ConversationRecordMissing):
-            await store.append_event("never-started", EVERY_PAYLOAD[0])
+            await store.append_event("never-started", A_PROMPT)
 
     asyncio.run(exercise())
 
@@ -282,10 +293,10 @@ def test_a_delivered_prompt_is_what_counts_as_a_first_prompt(store: Conversation
         await store.create_conversation(_resolved())
         assert await store.has_delivered_prompt("c") is False
 
-        await store.append_event("c", EVERY_PAYLOAD[1])
+        await store.append_event("c", A_REFUSED_DELIVERY)
         assert await store.has_delivered_prompt("c") is False
 
-        await store.append_event("c", EVERY_PAYLOAD[0])
+        await store.append_event("c", A_PROMPT)
         assert await store.has_delivered_prompt("c") is True
 
     asyncio.run(exercise())
@@ -296,10 +307,10 @@ def test_a_written_row_is_never_touched_again(store: ConversationStore, tmp_path
 
     async def exercise() -> None:
         await store.create_conversation(_resolved())
-        await store.append_event("c", EVERY_PAYLOAD[0])
+        await store.append_event("c", A_PROMPT)
         await store.update_current_model_and_reasoning_effort("c", "second-model", None)
         await store.update_vendor_session_cursor("c", "vendor-session-7")
-        await store.append_event("c", EVERY_PAYLOAD[2])
+        await store.append_event("c", AN_AGENT_MESSAGE)
 
         conn: sqlite3.Connection = connect(str(tmp_path / "conversations.db"))
         try:
@@ -315,7 +326,7 @@ def test_a_written_row_is_never_touched_again(store: ConversationStore, tmp_path
             (2, "agent_message"),
         ]
         assert str(rows[0]["payload"]) == conversation_event_payload_to_canonical_json(
-            EVERY_PAYLOAD[0]
+            A_PROMPT
         )
 
     asyncio.run(exercise())
