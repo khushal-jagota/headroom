@@ -161,16 +161,14 @@ New module(s) under `src/planner/runtime/`:
   never adopts. Conservative deviation from the brief's looser "reports success",
   recorded; latent either way (no production caller passes changes in this package —
   the UI does at swap, where queued-change reporting can be revisited).
-- New-conversation reset: `interrupt(old_id)` + clear the ticket's link immediately and
+- New-conversation reset: `kill(old_id)` + clear the ticket's link immediately and
   durably (last-chosen columns are NOT cleared — they are exactly what New starts
   from). No UI caller until swap; built and tested now because it is the ruled New
-  semantics of this wiring. CONTRACT GAP, flagged prominently: the ruled New ("kills
-  the worker … never the old worker") cannot be fully satisfied by the frozen
-  contract — `interrupt` frees the agent and held prompts then RUN, so a New against a
-  conversation with held traffic leaves the old worker running, unlinked. No
-  discard-held-prompts operation exists; adding one is the sibling's contract call at
-  integration. Until then this wiring implements the best available reading and the
-  gap is on the record.
+  semantics of this wiring. The contract gap originally flagged here (interrupt lets
+  held prompts run, so New could not fully kill the old worker) was CLOSED mid-package:
+  staging commit f6d7d737 added `kill(conversation_id)` — stop the turn AND discard
+  held messages, docstring naming New as its caller — merged into this branch as
+  0c5a1b44, and the wiring adopted it.
 
 Storage decision (no migration available, and none needed): the ticket's conversation
 link IS the existing `employee_session_id` column — under the new system it stores the
@@ -376,8 +374,8 @@ swap/integration (carry-forward, same posture the statuses package recorded).
 Blockers: B2 (occupancy check) ACCEPTED → choice 11. B3 (ack on queued) REFUTED AS
 RULED — the package brief states "acknowledged only after the send reports started or
 queued"; residual dequeue-loss risk recorded in §1 step 6. B4 (queued model changes)
-ACCEPTED → choice 13. B5 (New vs held prompts) ACCEPTED AS CONTRACT GAP → flagged in
-§2, sibling's call. B6 (paired guards) ACCEPTED → choice 4. B7 (revision revert loses
+ACCEPTED → choice 13. B5 (New vs held prompts) ACCEPTED AS CONTRACT GAP, then CLOSED
+mid-package by the sibling's `kill` extension (staging f6d7d737; wiring adopted it). B6 (paired guards) ACCEPTED → choice 4. B7 (revision revert loses
 proposal) ACCEPTED → choice 3. B8 (catch-all revert crosses delivery boundary)
 ACCEPTED → choice 12. B9 (editable-again claim) ACCEPTED — factual overstatement
 removed. B1 (start not atomic with link) REFUTED AS RULED — the package brief
