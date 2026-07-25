@@ -267,10 +267,11 @@ class ConversationAlreadyStarted(Exception):
 class ConversationSystem(Protocol):
     """Everything the rest of Panels can do to a conversation.
 
-    Four operations: start one, send text into it, interrupt it, and ask whether it is
-    running. There is no read of a conversation's backend or model — those are values
-    the caller passed in, not questions this contract answers. The transcript read is
-    deferred to the real build and is deliberately absent.
+    Four operations — start one, send text into it, interrupt it, ask whether it is
+    running — plus one more read: whether a permission ask is waiting. There is no read
+    of a conversation's backend or model — those are values the caller passed in, not
+    questions this contract answers. The transcript read is deferred to the real build
+    and is deliberately absent.
 
     Permissions are internal to the conversation system. They have no method here, only
     rules. When an agent asks for permission the ask always shows and always waits:
@@ -368,8 +369,17 @@ class ConversationSystem(Protocol):
     async def is_running(self, conversation_id: str) -> bool:
         """Whether a turn is running in this conversation right now.
 
-        This is the one read the contract carries. A conversation that has not been
-        started is not running. A turn that is waiting on a permission ask is still
-        running.
+        A conversation that has not been started is not running. A turn that is
+        waiting on a permission ask is still running.
+        """
+        ...
+
+    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+        """Whether the running turn has a permission ask waiting for an answer right now.
+
+        This exists for the surfaces that tell the owner a conversation needs them.
+        Pending means raised on the turn that is live now and not yet answered: an
+        answered ask is no longer pending, and an ask dies with its turn, so an idle
+        conversation — or one that has never been started — has no pending ask.
         """
         ...

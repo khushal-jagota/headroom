@@ -542,6 +542,27 @@ it's settled"). Rulings so far (2026-07-25):
 WALK COMPLETE (all topics been through: selection, snapshot, ask flow,
 event record incl. tool-calls/thinking, process model). Remaining
 build-time verify: hermes per-turn switch mechanics.
+RESERVED DISCUSSIONS CLOSED (owner, 2026-07-25):
+- DOGFOODING: browser dogfooding is the required gate — hold real
+  conversations through the new pane on a dev route, fix what it
+  reveals ("we do need to dogfood in the browser and fix"); the
+  mechanical tiers (scripted-agent conformance subject, real-CLI
+  exercises) ride on trusting T3-proven event handling. DESIGN
+  CONTINUITY constraint: the new pane RETAINS THE ROUGH LOOK of
+  today's conversation UI — intelligent adapting of the existing
+  design, holistic redesign explicitly not the intention. BUILD
+  STRUCTURE: shared core first, then the build orchestrator may spawn
+  THREE CHILD ORCHESTRATORS (one per backend) for adapter parallelism.
+- NEEDS-ME DOT: computed on read (pending ask = ask line with no
+  answer line in the live turn; freshness rides the live-update
+  signal; no watch machinery, no status writer). Appearance: PURE
+  WHITE dot, for now. Three row signals: working / reply waiting /
+  needs-me.
+- SEAM EXTENSION LANDED on staging (caa6f6f5): send carries optional
+  model_change / reasoning_effort_change (commit-on-send, ruled
+  semantics), fake + 5 conformance tests + README updated; model and
+  effort now conformance-observable from the backend side. uv.lock
+  leftover deleted (owner: "figure it out").
 BUILD-PACKAGE ADDITIONS (owner, 2026-07-25): the build orchestrator's
 job includes TESTING AND DOGFOODING — real conversations against real
 backends (local hermes at minimum), not just conformance/unit suites;

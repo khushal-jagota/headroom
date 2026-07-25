@@ -1284,6 +1284,32 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
+    def test_the_pending_ask_read_tracks_the_ask_through_its_whole_life(self) -> None:
+        """Coverage 48: False before and after — pending only while an unanswered ask
+        sits on the live turn, and an ask dies with its turn."""
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            assert not await subject.system.has_pending_permission_ask("never-started")
+
+            await subject.system.start_conversation(_start_request("c"))
+            assert not await subject.system.has_pending_permission_ask("c")
+
+            await subject.system.send("c", "work", sender_label="owner")
+            assert not await subject.system.has_pending_permission_ask("c")
+
+            ask_id = await subject.raise_permission_ask("c")
+            assert await subject.system.has_pending_permission_ask("c")
+
+            assert await subject.answer_permission_ask("c", ask_id, "allow")
+            assert not await subject.system.has_pending_permission_ask("c")
+
+            await subject.raise_permission_ask("c")
+            assert await subject.system.has_pending_permission_ask("c")
+            await subject.system.interrupt("c")
+            assert not await subject.system.has_pending_permission_ask("c")
+
+        self._run(exercise)
+
     def test_a_steer_cannot_carry_a_change(self) -> None:
         """Coverage 47: the turn a steer joins is already running — caller error, not
         a delivery fate."""

@@ -215,6 +215,12 @@ class InMemoryConversationSystem:
         state = self._conversations.get(conversation_id)
         return state is not None and state.running_turn is not None
 
+    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+        state = self._conversations.get(conversation_id)
+        if state is None or state.running_turn is None:
+            return False
+        return bool(state.running_turn.pending_permission_ask_ids)
+
     # --- driving the backend stand-in ---
 
     def complete_running_turn(self, conversation_id: str) -> None:
