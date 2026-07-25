@@ -234,16 +234,10 @@ HTML, image, audio, video, download, and external-link safety remains owned by t
 shared file-preview code.
 
 There is no Day conversation, conversation-file route, or Employee-session-history
-HTTP route. The ACP pane and backend replay are the one conversation view.
-
-## One-way database cutover
-
-Schema version 25 performs the one-time removal of the former Chat/session tables and
-Day conversation field. It preserves only worker-step correctness history in
-`employee_step_runs`, interrupts a row that was running during migration, clears old
-session bindings and Ticket mirrors, and starts later conversation demand fresh.
-Fresh databases contain only the ACP-era schema. This migration is not a compatibility
-mode and no runtime code reads the removed tables.
+HTTP route. The ACP pane and backend replay are the one conversation view. The database
+holds no former Chat or session tables either, and no runtime code looks for them: the
+only conversation history the record keeps is worker-step correctness in
+`employee_step_runs`.
 
 ## Handoffs
 
@@ -255,4 +249,4 @@ mode and no runtime code reads the removed tables.
 
 ---
 
-_Last verified: 2026-07-22 (single ACP conversation with shared semantic browser replay)._
+_Last verified: 2026-07-25 (single ACP conversation with shared semantic browser replay)._

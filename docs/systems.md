@@ -24,27 +24,32 @@ durable ACP conversation for an employee.
 
 ### 1. The Record System
 
-SQLite is the canonical product record. `src/planner/core/db.py` creates the schema,
-owns versioned migrations, and opens connections with foreign keys enabled. Domain
-writers group related record and event changes in one transaction.
+SQLite is the canonical product record. `src/planner/core/db.py` opens connections with
+foreign keys enabled and brings a database up to the current schema. Domain writers group
+related record and event changes in one transaction.
 
 The record contains planning objects, Ticket fields and status, proposals, Stage
 ownership and scope, links, the event log, pending worker context, durable ACP session
 bindings, and correctness-only Employee-step runs. Conversation transcript content
 belongs to the ACP backend and typed replay, not to duplicate Panels message tables.
 
-Schema version 25 is the one-way conversation cutover. It converts only former worker
-step correctness rows, interrupts a row that was running, removes the old conversation
-tables and Day conversation field, clears former bindings and Ticket mirrors, and then
-commits the version marker in the same transaction. Fresh schema has only the ACP-era
-owners. Runtime code does not retain a compatibility path.
+The schema is not written out in one place. It is a numbered history of changes, kept
+under `src/planner/core/migrations/`, starting from a first entry that holds the schema as
+it stood when the history began. Changing the schema means adding an entry, never editing
+an old one. Every open brings the database forward through whichever entries it has not
+seen yet: a new database is built from the whole history, a current one is left alone, and
+a database that predates the history is recorded as starting at the first entry, its rows
+untouched. A database older than that is refused by name rather than half-upgraded — an
+older checkout is what brings those forward. The whole step is all-or-nothing, so a change
+that fails leaves the database exactly as it was.
 
 The event log is normally append-only. It is a doorbell and audit trail, not the source
 for rebuilding the whole product. Permanent Ticket deletion is the deliberate
 exception: old events for that Ticket are replaced by one deletion audit while
 surviving related objects receive their own cleanup events.
 
-_Code paths:_ `src/planner/core/db.py`, `src/planner/core/events.py`.
+_Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`,
+`src/planner/core/events.py`.
 
 ### 2. The Planning Objects
 
@@ -247,4 +252,4 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ---
 
-_Last verified: 2026-07-21 (three-backend ACP conversation, GFM rendering, and Employee-step runtime)._
+_Last verified: 2026-07-25 (schema history replaces the hand-written upgrade steps)._

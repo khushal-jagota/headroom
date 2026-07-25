@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from planner.core.db import connect, create_schema
 from planner.environments.backup import (
     _is_verified_snapshot,
     create_database_backup,
@@ -322,69 +321,6 @@ def test_restore_ignores_non_object_metadata(tmp_path: Path, metadata: object) -
 
     with pytest.raises(ValueError, match="verified"):
         restore_database_snapshot(snapshot, tmp_path / "restored.db", live_stopped=True)
-
-
-def test_restored_old_schema_can_migrate_and_preserves_data(tmp_path: Path) -> None:
-    source = tmp_path / "old.db"
-    backup_dir = tmp_path / "backups"
-    with connect(str(source)) as connection:
-        create_schema(connection)
-        connection.execute(
-            "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, ceiling, "
-            "fields, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                "t_backup_migration",
-                "Preserve this Ticket",
-                "coding",
-                "hermes",
-                "needs_kickoff",
-                "needs_success",
-                json.dumps({"kickoff": {"value": "canonical data"}}),
-                1,
-                1,
-            ),
-        )
-        ticket_sql = str(
-            connection.execute(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tickets'"
-            ).fetchone()[0]
-        )
-        old_ticket_sql = ticket_sql.replace("'needs_user',", "", 1)
-        connection.execute("DROP TABLE ticket_conversation_projections")
-        for index_name in (
-            "idx_tickets_alias",
-            "idx_tickets_stage",
-            "idx_tickets_worker_type_stage",
-            "idx_tickets_project_id",
-        ):
-            connection.execute(f"DROP INDEX IF EXISTS {index_name}")
-        connection.execute("ALTER TABLE tickets RENAME TO tickets_current")
-        connection.execute(old_ticket_sql)
-        connection.execute("INSERT INTO tickets SELECT * FROM tickets_current")
-        connection.execute("DROP TABLE tickets_current")
-        connection.execute(
-            "CREATE TABLE ticket_conversation_projections ("
-            "ticket_id TEXT PRIMARY KEY REFERENCES tickets(id) ON DELETE CASCADE, "
-            "latest_activity_state TEXT, "
-            "has_completed_response_awaiting_user INTEGER NOT NULL DEFAULT 0 "
-            "CHECK (has_completed_response_awaiting_user IN (0,1)), "
-            "has_pending_permission INTEGER NOT NULL DEFAULT 0 "
-            "CHECK (has_pending_permission IN (0,1)), updated_at INTEGER NOT NULL)"
-        )
-        connection.execute("PRAGMA user_version=34")
-    snapshot = create_database_backup(source, backup_dir, "old-revision")
-    restored = tmp_path / "restored.db"
-    restore_database_snapshot(snapshot, restored, live_stopped=True)
-
-    with connect(str(restored)) as connection:
-        create_schema(connection)
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 37
-        assert (
-            connection.execute(
-                "SELECT fields FROM tickets WHERE id = 't_backup_migration'"
-            ).fetchone()[0]
-            == json.dumps({"kickoff": {"value": "canonical data"}})
-        )
 
 
 def test_environment_commands_expose_backup_and_stopped_restore(tmp_path: Path) -> None:

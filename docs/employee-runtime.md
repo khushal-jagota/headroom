@@ -124,11 +124,7 @@ then applies the Ticket outcome:
   existing non-error Ticket behavior;
 - takeover or a lost claim cannot be undone by a late worker completion.
 
-Every non-error Ticket status transition clears `backend_error` in the same write. The
-v32 migration also clears old errored Ticket states back to each current Stage's existing
-resting control status. It uses the current-Stage ownership override when present and
-otherwise the ownership default captured by v30, because the older correctness rows did
-not record provenance and cannot confirm that their failures came from the backend.
+Every non-error Ticket status transition clears `backend_error` in the same write.
 
 On startup, a stranded running row is not treated as a new prompt. Recovery requires
 the same Ticket session binding, interrupts the old correctness row, creates one
@@ -211,4 +207,4 @@ startup behavior changes the Ticket's durable backend choice or session identity
 
 ---
 
-_Last verified: 2026-07-23 (Employee workspace and repository infrastructure roots split)._
+_Last verified: 2026-07-25 (Employee workspace and repository infrastructure roots split)._

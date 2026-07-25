@@ -42,7 +42,7 @@ def test_fake_fixture_builds_current_schema_with_registered_worker_types(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] > 0
+        assert conn.execute("SELECT count(*) FROM alembic_version").fetchone()[0] == 1
         worker_types = {
             str(row["worker_type"])
             for row in conn.execute("SELECT DISTINCT worker_type FROM tickets")

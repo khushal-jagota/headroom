@@ -9,6 +9,7 @@ description = "Planning system v2 — database-backed personal planning server a
 requires-python = ">=3.12"
 dependencies = [
   "agent-client-protocol==0.11.0",
+  "alembic",
   "fastapi",
   "uvicorn",
   "click",
@@ -26,6 +27,12 @@ where = ["src"]
 [tool.setuptools.package-data]
 planner = [
   "py.typed",
+  # The migrations directory is not an importable package (Alembic loads it by path), so
+  # its files ship only because they are named here. Without them an installed Panels
+  # cannot build or upgrade a database.
+  "core/migrations/env.py",
+  "core/migrations/script.py.mako",
+  "core/migrations/versions/*.py",
   "skills/*/SKILL.md",
   "skills/*/agents/*.yaml",
   "skills/*/references/*.md",
@@ -41,8 +48,9 @@ exclude = [".worktrees"]
 select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
-# The schema DDL is a single SQL string; its column definitions run past 100 cols.
-"src/planner/core/db.py" = ["E501"]
+# Migrations hold SQL verbatim, and some column definitions run past 100 cols. Rewrapping
+# them would change text that is meant to stay exactly as it was applied.
+"src/planner/core/migrations/versions/*.py" = ["E501"]
 
 [tool.mypy]
 strict = true

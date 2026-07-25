@@ -46,10 +46,6 @@ def _ticket(conn: Connection):
     )
 
 
-def test_fresh_schema_is_marked_at_current_version(tmp_db: Connection) -> None:
-    assert int(tmp_db.execute("PRAGMA user_version").fetchone()[0]) == 37
-
-
 def test_worker_help_pauses_dispatch_and_requires_explicit_release(tmp_db: Connection) -> None:
     ticket = _ticket(tmp_db)
     days_data.add_day_ticket(tmp_db, DAY_ID, ticket.id, 3)
