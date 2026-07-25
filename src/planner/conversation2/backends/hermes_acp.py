@@ -726,8 +726,15 @@ class HermesAcpBackendChild:
             case ToolCallProgress():
                 status = _FINISHED_TOOL_CALL_STATUSES.get(str(update.status))
                 if status is None:
-                    # Still running. Its progress is a live frame, not a row, and there is
-                    # nowhere for one to go yet.
+                    # Still running, so this is progress: shown while it happens and then
+                    # forgotten. Only the parts that say something are worth showing — an
+                    # update that carries no readable content is a status change nobody
+                    # can read, and there is nothing to show for it.
+                    detail = _tool_call_detail(update.content)
+                    if detail is not None:
+                        await self._sink.tool_call_progress(
+                            turn.token, tool_call_id=update.tool_call_id, detail=detail
+                        )
                     return
                 await self._sink.tool_call_finished(
                     turn.token,

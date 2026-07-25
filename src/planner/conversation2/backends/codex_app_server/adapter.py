@@ -553,6 +553,14 @@ class CodexAppServerBackendChild:
                 await self._on_agent_message_delta(notification)
             case bindings.ItemStartedNotification():
                 await self._on_item_started(notification)
+            case bindings.CommandExecutionOutputDeltaNotification():
+                await self._on_tool_call_progress(
+                    notification.turnId, notification.itemId, notification.delta
+                )
+            case bindings.McpToolCallProgressNotification():
+                await self._on_tool_call_progress(
+                    notification.turnId, notification.itemId, notification.message
+                )
             case bindings.ItemCompletedNotification():
                 await self._on_item_completed(notification)
             case bindings.ErrorNotification():
@@ -591,6 +599,18 @@ class CodexAppServerBackendChild:
             return
         turn.agent_message_texts.setdefault(notification.itemId, []).append(notification.delta)
         await self._sink.agent_message_delta(turn.token, notification.delta)
+
+    async def _on_tool_call_progress(self, turn_id: str, item_id: str, detail: str) -> None:
+        """A tool call that has started is getting on with it.
+
+        Codex says this two ways — a shell command's output as it is written, and an MCP
+        call's own progress message — and they mean the same thing to a reader, so they
+        arrive here as the same frame. Both name the item the call was started under.
+        """
+        turn = self._turn_this_is_about(turn_id)
+        if turn is None or not detail:
+            return
+        await self._sink.tool_call_progress(turn.token, tool_call_id=item_id, detail=detail)
 
     async def _on_item_started(self, notification: bindings.ItemStartedNotification) -> None:
         turn = self._turn_this_is_about(notification.turnId)

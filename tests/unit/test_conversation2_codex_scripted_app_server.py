@@ -216,6 +216,16 @@ class ScriptedAppServer:
                 await self._notify(
                     "item/agentMessage/delta", {**route, "itemId": action["item_id"]}
                 )
+            case "command_output_delta":
+                await self._notify(
+                    "item/commandExecution/outputDelta",
+                    {**route, "itemId": action["item_id"], "delta": action["text"]},
+                )
+            case "mcp_progress":
+                await self._notify(
+                    "item/mcpToolCall/progress",
+                    {**route, "itemId": action["item_id"], "message": action["text"]},
+                )
             case "item_started":
                 await self._notify(
                     "item/started", {**route, "item": action["item"], "startedAtMs": 0}

@@ -11,8 +11,8 @@ The pin these models were generated under:
     from the dump's        codex_app_server_protocol.schemas.json
     dump digest (sha256)   5469280cfbdaa12f6d28e2206f942da808f8b699ce6c43b13f2439d843432f38
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) 898b70377198fc0d4a88dc574b6232595f3ff5a9404bfe670c565f2bad6681c3
-    definitions generated  94
+    subset digest (sha256) 77ea9fb7f1be420c1478e58763cae7d2bf8b85eb1aac13a21bd73c33683cf832
+    definitions generated  96
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -178,6 +178,13 @@ class UnknownCommandAction(BaseModel):
     type: Annotated[Literal["unknown"], Field(title="UnknownCommandActionType")]
 
 
+class CommandExecutionOutputDeltaNotification(BaseModel):
+    delta: str
+    itemId: str
+    threadId: str
+    turnId: str
+
+
 class InputTextDynamicToolCallOutputContentItem(BaseModel):
     text: str
     type: Annotated[
@@ -224,6 +231,13 @@ class McpToolCallAppContext(BaseModel):
 
 class McpToolCallError(BaseModel):
     message: str
+
+
+class McpToolCallProgressNotification(BaseModel):
+    itemId: str
+    message: str
+    threadId: str
+    turnId: str
 
 
 class McpToolCallResult(BaseModel):

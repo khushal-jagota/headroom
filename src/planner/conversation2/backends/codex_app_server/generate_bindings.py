@@ -90,6 +90,12 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     (_V2_NAMESPACE, "ItemStartedNotification"),
     (_V2_NAMESPACE, "ItemCompletedNotification"),
     (_V2_NAMESPACE, "ErrorNotification"),
+    # The two ways codex says a tool call that has started is getting on with it. There is
+    # a third, ``item/fileChange/outputDelta``, which the schema itself documents as no
+    # longer emitted — a binding for a message the server never sends would be a shape
+    # nobody here could have checked.
+    (_V2_NAMESPACE, "CommandExecutionOutputDeltaNotification"),
+    (_V2_NAMESPACE, "McpToolCallProgressNotification"),
     # The two snapshot probes, which are requests like any other.
     (_V2_NAMESPACE, "GetAccountParams"),
     (_V2_NAMESPACE, "GetAccountResponse"),

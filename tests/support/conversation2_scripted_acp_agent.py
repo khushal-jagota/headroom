@@ -258,6 +258,9 @@ class ScriptedAcpAgent:
             case "emit_tool_call":
                 await self._emit_tool_call(command)
                 return {"ok": True}
+            case "emit_tool_call_progress":
+                await self._emit_tool_call_progress(command)
+
             case "emit_tool_call_finished":
                 await self._emit_tool_call_finished(command)
                 return {"ok": True}
@@ -379,6 +382,22 @@ class ScriptedAcpAgent:
                 tool_call_id=str(command.get("tool_call_id", "scripted-tool-call")),
                 title=str(command.get("title", "A scripted tool call")),
                 kind=command.get("tool_kind", "execute"),
+                status="in_progress",
+                content=[
+                    ContentToolCallContent(
+                        type="content",
+                        content=TextContentBlock(type="text", text=str(command.get("detail", ""))),
+                    )
+                ],
+            )
+        )
+
+    async def _emit_tool_call_progress(self, command: dict[str, Any]) -> None:
+        """A tool call that has started saying how it is getting on, without finishing."""
+        await self._notify_session_update(
+            ToolCallProgress(
+                session_update="tool_call_update",
+                tool_call_id=str(command.get("tool_call_id", "scripted-tool-call")),
                 status="in_progress",
                 content=[
                     ContentToolCallContent(

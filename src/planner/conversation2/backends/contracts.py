@@ -132,6 +132,20 @@ class BackendEventSink(Protocol):
         detail: str | None,
     ) -> None: ...
 
+    async def tool_call_progress(
+        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
+    ) -> None:
+        """Output from a tool call that has started and has not finished.
+
+        Shown live and then forgotten, exactly like a message delta: it is not a row, and
+        the tool call's own finish is what the record keeps. ``tool_call_id`` is the id the
+        call was reported started under, so a surface can put the output where it belongs.
+
+        An adapter reports this only where its wire genuinely carries in-progress output.
+        Saying nothing is a perfectly good answer — a tool call that shows nothing until it
+        finishes is not a gap, it is a backend that streams nothing.
+        """
+
     async def tool_call_finished(
         self,
         turn_token: TurnToken,

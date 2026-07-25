@@ -51,12 +51,15 @@ from planner.conversation2.contracts import (
 )
 from planner.conversation2.events import (
     AgentMessageEventPayload,
+    ConversationEventKind,
     ConversationTurnEnding,
     ToolCallFinishedEventPayload,
+    ToolCallProgressFrame,
     ToolCallStartedEventPayload,
     ToolCallStatus,
     TurnEndedEventPayload,
 )
+from planner.conversation2.live_tail import ConversationTailSubscription
 
 ROLE_TEXT = "You are the worker on ticket t-1."
 IDENTITY_VARIABLE = ("PANELS_IDENTITY_TICKET_ID", "t-1")
@@ -240,6 +243,56 @@ def test_a_tool_call_is_recorded_starting_and_finishing(tmp_path: Path) -> None:
             assert finished[0].detail == "read it"
 
     _run(exercise)
+
+
+def test_a_tool_call_getting_on_with_it_is_shown_and_not_kept(tmp_path: Path) -> None:
+    """Progress is a live frame, not a row: shown while it happens, then gone.
+
+    The record keeps the call starting and the call finishing. What it said in between is
+    the same kind of thing as half-finished text — worth watching, worth nothing later.
+    """
+
+    async def exercise() -> None:
+        async with open_conversation2_system_under_test() as subject:
+            await _start_and_send(subject, tmp_path)
+            with subject.watch("c") as watching:
+                await subject.tell_agent(
+                    "c",
+                    {
+                        "command": "emit_tool_call",
+                        "tool_call_id": "t-9",
+                        "title": "Run a command",
+                        "tool_kind": "execute",
+                        "detail": "starting",
+                    },
+                )
+                await subject.tell_agent(
+                    "c",
+                    {
+                        "command": "emit_tool_call_progress",
+                        "tool_call_id": "t-9",
+                        "detail": "half the output so far",
+                    },
+                )
+                shown = await _next_frame(watching)
+
+            assert isinstance(shown, ToolCallProgressFrame)
+            assert shown.tool_call_id == "t-9"
+            assert shown.detail == "half the output so far"
+
+            await subject.complete_running_turn("c")
+            kinds = [event.kind for event in await subject.recorded_events("c")]
+            assert ConversationEventKind.tool_call_started in kinds
+            # Nothing was written for the progress itself.
+            assert kinds.count(ConversationEventKind.tool_call_started) == 1
+            assert ConversationEventKind.tool_call_finished not in kinds
+
+    _run(exercise)
+
+
+async def _next_frame(watching: ConversationTailSubscription) -> object:
+    """The next thing shown on a watch, giving up rather than hanging if none comes."""
+    return await asyncio.wait_for(watching.next_item(), 30.0)
 
 
 def test_a_failed_turn_is_recorded_as_a_failure_with_what_went_wrong(tmp_path: Path) -> None:

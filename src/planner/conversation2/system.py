@@ -74,6 +74,7 @@ from planner.conversation2.events import (
     PromptDiscardedEventPayload,
     PromptEventPayload,
     ToolCallFinishedEventPayload,
+    ToolCallProgressFrame,
     ToolCallStartedEventPayload,
     ToolCallStatus,
     TurnEndedEventPayload,
@@ -1294,6 +1295,21 @@ class _CoreBackendEventSink:
                 tool_kind,
                 detail,
             )
+        )
+
+    async def tool_call_progress(
+        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
+    ) -> None:
+        """Shown on the live tail and never stored: progress is not a row.
+
+        It goes straight out to whoever is watching rather than through the queue the rows
+        go through, for the same reason a message delta does: it is not a row, so there is
+        nothing for it to be ordered against. The tool call's finish is what is recorded.
+        """
+        del turn_token
+        self._system._publish_live_tail_frame(
+            self._state.record.conversation_id,
+            ToolCallProgressFrame(tool_call_id=tool_call_id, detail=detail),
         )
 
     async def tool_call_finished(

@@ -315,6 +315,49 @@ def test_the_work_codex_does_becomes_tool_calls(tmp_path: Path) -> None:
     _run(exercise)
 
 
+def test_both_ways_codex_says_a_tool_call_is_getting_on_become_the_same_frame(
+    tmp_path: Path,
+) -> None:
+    """A shell command writing output and an MCP call reporting progress read the same.
+
+    Codex has two notifications for it, keyed by the item the call was started under, and
+    a reader watching the call does not care which one it was.
+    """
+
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "item_started", "item": COMMAND_ITEM},
+                        {
+                            "do": "command_output_delta",
+                            "item_id": "cmd-1",
+                            "text": "total 0\n",
+                        },
+                        {"do": "mcp_progress", "item_id": "cmd-1", "text": "halfway"},
+                        {"do": "item_completed", "item": COMMAND_ITEM_DONE},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, "do some work")
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.tool_calls_progressed == [
+                ("cmd-1", "total 0\n"),
+                ("cmd-1", "halfway"),
+            ]
+            # The call still starts and finishes exactly once: progress is neither.
+            assert scripted.sink.tool_calls_started == [("cmd-1", "ls -la", "execute")]
+            assert scripted.sink.tool_calls_finished == [("cmd-1", ToolCallStatus.completed)]
+
+    _run(exercise)
+
+
 def test_a_turn_still_running_reports_nothing_finished_for_it(tmp_path: Path) -> None:
     async def exercise() -> None:
         script = {
@@ -747,6 +790,7 @@ class _RecordingSink:
         self.deltas: list[str] = []
         self.agent_messages: list[str] = []
         self.tool_calls_started: list[tuple[str, str, str]] = []
+        self.tool_calls_progressed: list[tuple[str, str]] = []
         self.tool_calls_finished: list[tuple[str, ToolCallStatus]] = []
         self.asks: list[BackendPermissionAsk] = []
         self.endings: list[ConversationTurnEnding] = []
@@ -783,6 +827,11 @@ class _RecordingSink:
         detail: str | None,
     ) -> None:
         self.tool_calls_started.append((tool_call_id, title, tool_kind))
+
+    async def tool_call_progress(
+        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
+    ) -> None:
+        self.tool_calls_progressed.append((tool_call_id, detail))
 
     async def tool_call_finished(
         self,

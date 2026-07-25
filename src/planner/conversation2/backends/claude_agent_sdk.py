@@ -587,9 +587,13 @@ class ClaudeAgentSdkBackendChild:
         )
 
     async def _on_stream_event(self, turn: _TurnInFlight, message: StreamEvent) -> None:
-        """The half-finished text of a message, shown live and then forgotten."""
-        if message.parent_tool_use_id is not None:
-            return
+        """The half-finished text of a message, shown live and then forgotten.
+
+        Text written inside a tool call belongs to that call rather than to the agent: a
+        subagent talking is what the call is doing while it runs. It is shown against the
+        call it came from, and it is just as ephemeral as the agent's own half-finished
+        text — the call's result is what the record keeps.
+        """
         event = message.event
         if event.get("type") != "content_block_delta":
             return
@@ -601,8 +605,15 @@ class ClaudeAgentSdkBackendChild:
         if delta.get("type") != "text_delta":
             return
         text = delta.get("text")
-        if isinstance(text, str) and text:
-            await self._sink.agent_message_delta(turn.token, text)
+        if not isinstance(text, str) or not text:
+            return
+        inside_a_tool_call = message.parent_tool_use_id
+        if inside_a_tool_call is not None:
+            await self._sink.tool_call_progress(
+                turn.token, tool_call_id=inside_a_tool_call, detail=text
+            )
+            return
+        await self._sink.agent_message_delta(turn.token, text)
 
     async def _on_assistant_message(self, turn: _TurnInFlight, message: AssistantMessage) -> None:
         """A finished message from the agent, and the tool calls it made in it.
@@ -645,7 +656,15 @@ class ClaudeAgentSdkBackendChild:
         await self._sink.agent_message_completed(turn.token, text)
 
     async def _on_user_message(self, turn: _TurnInFlight, message: UserMessage) -> None:
-        """What the tools gave back. Their results arrive as a message from the user side."""
+        """What the tools gave back. Their results arrive as a message from the user side.
+
+        Results from inside a tool call are that call's own business. The tool calls a
+        subagent makes are never reported as started — they belong to its inner
+        conversation, not to this one — so reporting their finishes would be telling the
+        record that calls it never saw have ended.
+        """
+        if message.parent_tool_use_id is not None:
+            return
         content = message.content
         if isinstance(content, str):
             return

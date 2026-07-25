@@ -156,6 +156,7 @@ class _RecordingSink:
         self.messages: list[tuple[TurnToken, str]] = []
         self.tools_started: list[dict[str, Any]] = []
         self.tools_finished: list[dict[str, Any]] = []
+        self.tools_progressed: list[tuple[str, str]] = []
         self.asks: list[BackendPermissionAsk] = []
         self.endings: list[dict[str, Any]] = []
         self.cursors: list[str] = []
@@ -184,6 +185,11 @@ class _RecordingSink:
                 "detail": detail,
             }
         )
+
+    async def tool_call_progress(
+        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
+    ) -> None:
+        self.tools_progressed.append((tool_call_id, detail))
 
     async def tool_call_finished(
         self,
@@ -827,7 +833,11 @@ def test_a_tool_call_that_went_wrong_is_recorded_as_a_failure(tmp_path: Path) ->
 
 
 def test_a_subagents_own_talk_stays_inside_its_tool_call(tmp_path: Path) -> None:
-    """It is the tool call that happened; its inner conversation is nobody's message."""
+    """It is the tool call that happened; its inner conversation is nobody's message.
+
+    What it says while it works is shown against the call it is happening inside — live,
+    like any other half-finished text, and kept no more than that.
+    """
 
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
@@ -851,6 +861,39 @@ def test_a_subagents_own_talk_stays_inside_its_tool_call(tmp_path: Path) -> None
 
         assert sink.messages == []
         assert sink.deltas == []
+        # Shown against the call it came from, under the id that call started under.
+        assert sink.tools_progressed == [("tool-1", "inner")]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_subagents_own_tool_results_are_not_this_conversations_finishes(
+    tmp_path: Path,
+) -> None:
+    """A finish for a call that never started would be a record about nothing.
+
+    The tool calls a subagent makes belong to its inner conversation and are never
+    reported as started here, so their results are not reported as finished either.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        clients[0].say(
+            UserMessage(
+                content=[
+                    ToolResultBlock(tool_use_id="inner-1", content="done", is_error=False)
+                ],
+                parent_tool_use_id="tool-1",
+            ),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.tools_finished == []
         await child.stop()
 
     _run(exercise)

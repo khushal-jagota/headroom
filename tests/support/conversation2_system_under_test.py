@@ -78,6 +78,7 @@ from planner.conversation2.events import (
     ToolCallStatus,
     TurnEndedEventPayload,
 )
+from planner.conversation2.live_tail import ConversationLiveTail, ConversationTailSubscription
 from planner.conversation2.storage import ConversationStore, StoredConversationEvent
 from planner.conversation2.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
@@ -164,6 +165,13 @@ class _ObservingSink:
             title=title,
             tool_kind=tool_kind,
             detail=detail,
+        )
+
+    async def tool_call_progress(
+        self, turn_token: TurnToken, *, tool_call_id: str, detail: str
+    ) -> None:
+        await self._sink.tool_call_progress(
+            turn_token, tool_call_id=tool_call_id, detail=detail
         )
 
     async def tool_call_finished(
@@ -274,15 +282,21 @@ class Conversation2SystemUnderTest:
         system: SqliteProcessConversationSystem,
         store: ConversationStore,
         socket_directory: Path,
+        live_tail: ConversationLiveTail,
     ) -> None:
         self._system = system
         self._store = store
         self._socket_directory = socket_directory
+        self._live_tail = live_tail
         self._conversations: dict[str, _ScriptedConversation] = {}
 
     @property
     def system(self) -> ConversationSystem:
         return self._system
+
+    def watch(self, conversation_id: str) -> ConversationTailSubscription:
+        """Watch a conversation the way the browser does, for what is shown and not kept."""
+        return self._live_tail.subscribe(conversation_id)
 
     # --- making the children ---------------------------------------------------------------
 
@@ -538,11 +552,13 @@ async def open_conversation2_system_under_test() -> AsyncIterator[Conversation2S
         assert subject is not None
         return subject.make_child(resolved_start=resolved_start, event_sink=event_sink)
 
+    live_tail = ConversationLiveTail()
     system = SqliteProcessConversationSystem(
         store=store,
         backend_child_factories={key: make_child for key in ConversationBackendKey},
+        live_tail=live_tail,
     )
-    subject = Conversation2SystemUnderTest(system, store, socket_directory)
+    subject = Conversation2SystemUnderTest(system, store, socket_directory, live_tail)
     try:
         yield subject
     finally:

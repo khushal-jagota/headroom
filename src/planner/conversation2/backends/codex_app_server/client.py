@@ -50,6 +50,8 @@ CONSUMED_SERVER_NOTIFICATIONS: dict[str, type[BaseModel]] = {
     "item/agentMessage/delta": bindings.AgentMessageDeltaNotification,
     "item/started": bindings.ItemStartedNotification,
     "item/completed": bindings.ItemCompletedNotification,
+    "item/commandExecution/outputDelta": bindings.CommandExecutionOutputDeltaNotification,
+    "item/mcpToolCall/progress": bindings.McpToolCallProgressNotification,
     "error": bindings.ErrorNotification,
 }
 
