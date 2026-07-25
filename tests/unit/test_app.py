@@ -114,6 +114,24 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
     }
 
 
+def test_app_launcher_carries_user_service_manager_environment(tmp_path: Path) -> None:
+    app = _runtime_app(tmp_path / "app")
+    env = build_app_launch_env(
+        app,
+        ambient={
+            "XDG_RUNTIME_DIR": "/run/user/1000",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+            "UNRELATED_AMBIENT_VALUE": "strip-me",
+        },
+    )
+    assert env == {
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        "PLAN_APP_SHA": SHA,
+        "PLAN_APP_ROOT": str(app),
+    }
+
+
 def test_config_keeps_development_identity_explicit() -> None:
     assert load_config(env={"PLAN_TEST_MODE": "1"}).app_sha is None
     assert load_config(env={"PLAN_TEST_MODE": "1", "PLAN_APP_SHA": SHA}).app_sha == SHA

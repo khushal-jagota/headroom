@@ -19,6 +19,8 @@ EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
         "TERM",
         "TMPDIR",
         "USER",
+        "XDG_RUNTIME_DIR",
+        "DBUS_SESSION_BUS_ADDRESS",
         "PLAN_CONFIG_PATH",
         "PLAN_DB_PATH",
         "PLAN_PORT",
