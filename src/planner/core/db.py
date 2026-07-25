@@ -4,6 +4,9 @@ WAL mode, foreign keys on. Booleans are INTEGER 0/1; JSON is TEXT holding canoni
 all times are INTEGER unix seconds; all dates are TEXT ISO. Column names match the
 contract dataclass field names one-for-one.
 
+Every connection opened here also announces its own commits on the process-wide change
+signal, so nothing a writer does has to remember to say it wrote.
+
 The schema itself is not written here. It lives in the migration history under
 ``migrations/``, whose first revision is the schema as the old hand-written migration
 ladder left it.
@@ -20,6 +23,7 @@ from alembic.config import Config
 from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
+from planner.core import change_signal
 from planner.projects import data as projects_data
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
@@ -73,11 +77,44 @@ PRE_ALEMBIC_INDEX_NAMES: Final = frozenset(
 )
 
 
+def _statement_commits(sql: str) -> bool:
+    """Whether this statement is the one that ends a transaction by keeping its work.
+
+    Transactions here always end with a literal ``COMMIT``; a ``ROLLBACK`` throws the
+    work away and must stay silent.
+    """
+    return sql.strip().lower().startswith("commit")
+
+
+class ChangeSignallingConnection(sqlite3.Connection):
+    """A connection that announces its own commits, once each.
+
+    This is the single door every writer already goes through, so no writer has to
+    remember to announce anything. The announcement happens after the statement
+    returns, when the write lock is already released and the new rows are readable.
+    A rollback, or a commit that fails, announces nothing.
+    """
+
+    def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+        had_open_transaction = self.in_transaction
+        cursor = super().execute(sql, parameters)
+        if had_open_transaction and not self.in_transaction and _statement_commits(sql):
+            change_signal.emit()
+        return cursor
+
+    def commit(self) -> None:
+        had_open_transaction = self.in_transaction
+        super().commit()
+        if had_open_transaction:
+            change_signal.emit()
+
+
 def connect(db_path: str, busy_timeout_ms: int = 5000) -> sqlite3.Connection:
     conn = sqlite3.connect(
         db_path,
         isolation_level=None,
         timeout=busy_timeout_ms / 1000,
+        factory=ChangeSignallingConnection,
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")

@@ -1,22 +1,18 @@
 """The day data layer. Materializes a day on first read/write (no "missing day"
 state), owns the ordered day-ticket list (contiguous positions from 0), and the
-overview-field/notes writes. Every state transition here appends exactly one
-canonical event. No FastAPI/pydantic; times come in as unix-second ints from the
-caller's clock."""
+overview-field/notes writes. No FastAPI/pydantic; times come in as unix-second
+ints from the caller's clock."""
 
 from __future__ import annotations
 
 import sqlite3
 
-from planner.core.contracts import EventKind
-from planner.core.events import append_event
 from planner.days.contracts import Day, DayTicket
 
 
 def materialize_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> None:
     """§3.4: create the day row if absent (all overview fields + notes = '',
-    created_at=updated_at=now_unix) and append a
-    day_created event. Idempotent: a present day → no write, no event."""
+    created_at=updated_at=now_unix). Idempotent: a present day → no write."""
     if conn.execute("SELECT 1 FROM days WHERE id = ?", (day_id,)).fetchone() is not None:
         return
     conn.execute(
@@ -24,7 +20,6 @@ def materialize_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Non
         "created_at, updated_at) VALUES (?, '', '', '', '', '', ?, ?)",
         (day_id, now_unix, now_unix),
     )
-    append_event(conn, day_id, EventKind.day_created, {}, now_unix)
 
 
 def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
@@ -63,12 +58,12 @@ def list_day_tickets(conn: sqlite3.Connection, day_id: str) -> list[DayTicket]:
 
 
 def add_day_ticket(
-    conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int, cause: str = "manual"
+    conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int
 ) -> bool:
     """§3.4: append at end with the next contiguous position (= current count).
-    Idempotent: if (day_id, ticket_id) already present → return False, no event.
-    On add → INSERT, append day_ticket_added {ticket_id, position, cause}, bump
-    updated_at, return True. Materializes the day first (write path)."""
+    Idempotent: if (day_id, ticket_id) already present → return False, no write.
+    On add → INSERT, bump updated_at, return True. Materializes the day first
+    (write path)."""
     materialize_day(conn, day_id, now_unix)
     present = conn.execute(
         "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
@@ -83,13 +78,6 @@ def add_day_ticket(
         "INSERT INTO day_tickets (day_id, ticket_id, position) VALUES (?, ?, ?)",
         (day_id, ticket_id, position),
     )
-    append_event(
-        conn,
-        day_id,
-        EventKind.day_ticket_added,
-        {"ticket_id": ticket_id, "position": position, "cause": cause},
-        now_unix,
-    )
     conn.execute("UPDATE days SET updated_at = ? WHERE id = ?", (now_unix, day_id))
     return True
 
@@ -98,9 +86,9 @@ def remove_day_ticket(
     conn: sqlite3.Connection, day_id: str, ticket_id: str, now_unix: int
 ) -> bool:
     """§3.4: delete the association only (Ticket untouched). If nothing was
-    deleted (rowcount 0) → no-op, no event, no re-pack. Else re-pack remaining
-    positions to 0..n-1 in existing position order, append day_ticket_removed
-    {ticket_id}, bump updated_at, and return True. The absent-row no-op returns False."""
+    deleted (rowcount 0) → no-op, no re-pack. Else re-pack remaining positions to
+    0..n-1 in existing position order, bump updated_at, and return True. The
+    absent-row no-op returns False."""
     cursor = conn.execute(
         "DELETE FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
         (day_id, ticket_id),
@@ -116,7 +104,6 @@ def remove_day_ticket(
             "UPDATE day_tickets SET position = ? WHERE day_id = ? AND ticket_id = ?",
             (new_position, day_id, row["ticket_id"]),
         )
-    append_event(conn, day_id, EventKind.day_ticket_removed, {"ticket_id": ticket_id}, now_unix)
     conn.execute("UPDATE days SET updated_at = ? WHERE id = ?", (now_unix, day_id))
     return True
 
@@ -139,4 +126,4 @@ def set_day_field(
     conn.execute(
         f"UPDATE days SET {field} = ?, updated_at = ? WHERE id = ?", (value, now_unix, day_id)
     )
-    append_event(conn, day_id, EventKind.day_updated, {"field": field}, now_unix)
+

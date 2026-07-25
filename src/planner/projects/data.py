@@ -7,9 +7,8 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from planner.core.contracts import EventKind, JsonDict
+from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
 from planner.projects.contracts import Project
 
 DEFAULT_PROJECTS: tuple[tuple[str, str], ...] = (
@@ -146,7 +145,6 @@ def create_project(conn: sqlite3.Connection, *, name: str, summary: str = "", no
             "VALUES (?, ?, ?, ?, ?)",
             (project_id, clean_name, clean_summary, now, now),
         )
-        append_event(conn, project_id, EventKind.project_created, {"name": clean_name}, now)
     return read_project(conn, project_id)
 
 
@@ -185,11 +183,4 @@ def update_project(
         assignments = ", ".join(f"{field} = ?" for field in updates)
         params = [*updates.values(), now, project_id]
         conn.execute(f"UPDATE projects SET {assignments}, updated_at = ? WHERE id = ?", params)
-        append_event(
-            conn,
-            project_id,
-            EventKind.project_updated,
-            {"fields": sorted(updates)},
-            now,
-        )
     return read_project(conn, project_id)

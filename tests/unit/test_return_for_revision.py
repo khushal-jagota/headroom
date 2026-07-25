@@ -9,9 +9,6 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.step_gateway import EmployeeStepRunResult
@@ -137,7 +134,6 @@ def _install_runner(app: FastAPI, db_path: Path, gateway: _RevisionGateway) -> E
         str(db_path),
         app.state.clock,
         gateway=gateway,
-        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
         boundary_hour=app.state.config.boundary_hour,
     )
     app.state.employee_step_runner = runner

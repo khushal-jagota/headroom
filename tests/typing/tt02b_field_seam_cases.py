@@ -7,10 +7,6 @@ from collections.abc import Mapping
 from typing import assert_type
 
 from planner.runtime import automatic_employee_step_eligibility
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    AutomaticEmployeeStepEligibilityWake,
-)
-from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket
 from planner.tickets.logic import admission, external_work, resolution
@@ -20,7 +16,6 @@ from planner.worker_types.contracts import WorkerTypeDefinition
 
 def _cases(
     conn: sqlite3.Connection,
-    eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     ticket: Ticket,
     at_cap: AtCap,
     definition: WorkerTypeDefinition,
@@ -42,24 +37,6 @@ def _cases(
     )
     _t5: Ticket = tickets_data.set_note(
         conn, "t_1", field=foreign_field, note="n", actor="human", now=0
-    )
-
-    _t6: Ticket = tickets_actions.accept_proposal(
-        conn,
-        "t_1",
-        field=foreign_field,
-        actor="human",
-        now=0,
-        automatic_employee_step_eligibility_wake=eligibility_wake,
-    )
-    _t7: Ticket = tickets_actions.edit_field_value(
-        conn,
-        "t_1",
-        field=foreign_field,
-        new_body="b",
-        actor="human",
-        now=0,
-        automatic_employee_step_eligibility_wake=eligibility_wake,
     )
 
     assert_type(

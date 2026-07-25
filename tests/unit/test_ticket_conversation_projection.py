@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from planner.core.db import connect, create_schema
-from planner.core.events import read_events_since
 from planner.tickets import data as tickets_data
 from planner.tickets.conversation_projection import (
     TicketConversationProjection,
 )
 
 
-def test_projection_updates_facts_and_emits_only_on_change(tmp_path) -> None:
+def test_projection_updates_facts_and_writes_only_on_change(tmp_path) -> None:
     db_path = str(tmp_path / "projection.db")
     conn = connect(db_path)
     create_schema(conn)
@@ -22,35 +21,23 @@ def test_projection_updates_facts_and_emits_only_on_change(tmp_path) -> None:
     )
     projection = TicketConversationProjection(db_path, now=lambda: 2)
 
-    projection.record_activity(ticket.id, "thinking")
-    projection.record_activity(ticket.id, "thinking")
-    projection.record_permission(ticket.id, True)
-    projection.record_activity(ticket.id, "waiting_for_permission")
+    # Each writer answers True only when it actually changed the stored facts.
+    assert projection.record_activity(ticket.id, "thinking") is True
+    assert projection.record_activity(ticket.id, "thinking") is False
+    assert projection.record_permission(ticket.id, True) is True
+    assert projection.record_activity(ticket.id, "waiting_for_permission") is True
     waiting = projection.read(ticket.id)
     assert waiting.has_pending_permission is True
-    projection.record_permission(ticket.id, True)
-    projection.record_permission(ticket.id, False)
-    projection.record_activity(ticket.id, "thinking")
-    projection.record_activity(ticket.id, "idle")
+    assert projection.record_permission(ticket.id, True) is False
+    assert projection.record_permission(ticket.id, False) is True
+    assert projection.record_activity(ticket.id, "thinking") is True
+    assert projection.record_activity(ticket.id, "idle") is True
 
     row = projection.read(ticket.id)
     assert row.latest_activity_state == "idle"
     assert row.has_completed_response_awaiting_user is True
     assert row.has_completed_response is True
     assert row.has_pending_permission is False
-    events = [
-        event
-        for event in read_events_since(conn, 0, 100)
-        if event.kind == "ticket_conversation_projection_changed"
-    ]
-    assert [event.payload for event in events] == [
-        {"changed": ["latest_activity_state"]},
-        {"changed": ["permission"]},
-        {"changed": ["latest_activity_state"]},
-        {"changed": ["permission"]},
-        {"changed": ["latest_activity_state"]},
-        {"changed": ["latest_activity_state", "response"]},
-    ]
     conn.close()
 
 
@@ -153,12 +140,6 @@ def test_acknowledgement_clears_only_completed_response_and_is_idempotent(tmp_pa
     # Acknowledging clears only the awaiting bit; the reply stays remembered.
     assert row.has_completed_response is True
     assert row.has_pending_permission is True
-    projection_events = [
-        event
-        for event in read_events_since(conn, 0, 100)
-        if event.kind == "ticket_conversation_projection_changed"
-    ]
-    assert projection_events[-1].payload == {"changed": ["response"]}
     conn.close()
 
 
@@ -191,18 +172,9 @@ def test_has_completed_response_survives_acknowledgement_until_reset(tmp_path) -
     assert acknowledged.has_completed_response_awaiting_user is False
     assert acknowledged.has_completed_response is True
 
-    # Reset deletes the row, so the memory clears, and the changed-fields event
-    # reports "response" for the has_completed_response flip alone.
-    projection.reset(ticket.id)
+    # Reset deletes the row, so the memory clears.
+    assert projection.reset(ticket.id) is True
     assert projection.read(ticket.id).has_completed_response is False
-    projection_events = [
-        event
-        for event in read_events_since(conn, 0, 100)
-        if event.kind == "ticket_conversation_projection_changed"
-    ]
-    assert projection_events[-1].payload == {
-        "changed": ["latest_activity_state", "response"]
-    }
     conn.close()
 
 
@@ -284,12 +256,4 @@ def test_projection_reset_clears_stale_conversation_facts(tmp_path) -> None:
     assert row.has_completed_response_awaiting_user is False
     assert row.has_completed_response is False
     assert row.has_pending_permission is False
-    projection_events = [
-        event
-        for event in read_events_since(conn, 0, 100)
-        if event.kind == "ticket_conversation_projection_changed"
-    ]
-    assert projection_events[-1].payload == {
-        "changed": ["latest_activity_state", "permission"]
-    }
     conn.close()

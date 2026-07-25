@@ -9,9 +9,6 @@ from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.days.logic.dates import resolve_day_id
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.step_gateway import EmployeeStepRunResult
 from planner.tickets import data as tickets_data
@@ -96,7 +93,6 @@ def test_shutdown_interrupts_exact_bound_employee_step_without_partial_output(
         db_path,
         clock,
         gateway=gateway,
-        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
         boundary_hour=5,
     )
     runner.try_run_automatic_step(ticket.id)

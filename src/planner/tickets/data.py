@@ -2,7 +2,7 @@
 value mutations happen in exactly one function (_apply_decision); every public
 writer is one BEGIN IMMEDIATE transaction. An ordinary Ticket edit validates and
 writes its requested plain attributes together. Other semantic writers remain
-separate. sqlite3, events and ids live here only; the clock arrives as now (unix
+separate. sqlite3 and ids live here only; the clock arrives as now (unix
 seconds) and the title limit as an argument."""
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from planner.conversation.backend_catalog import EmployeeBackendCatalog
 from planner.core import links as core_links
 from planner.core.contracts import EventKind, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event, delete_entity_history
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.days import data as days_data
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
@@ -290,13 +289,6 @@ def _release_outgoing_blocks_links(
             "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
             (ticket_id, target_id, LinkKind.blocks.value),
         )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.link_removed,
-            {"from_id": ticket_id, "to_id": target_id, "kind": LinkKind.blocks.value},
-            now,
-        )
     for target_id in target_ids:
         settle_blocked_standin_for_link_target(conn, target_id, now)
 
@@ -347,16 +339,6 @@ def _apply_decision(
             ticket.id,
         ),
     )
-    for spec in decision.events:
-        payload = spec.payload
-        if spec.kind is EventKind.stage_changed and affected_blocked_target_ids:
-            payload = {
-                **payload,
-                "affected_blocked_target_ids": list(affected_blocked_target_ids),
-            }
-        append_event(conn, ticket.id, spec.kind, payload, now)
-    if any(spec.kind is EventKind.stage_changed for spec in decision.events):
-        _append_item_children_changed(conn, ticket.sprint_item_id, ticket.id, "stage", now)
     if active_before != active_after:
         if active_after:
             # Reopened out of done: the links this Ticket still holds block again, so
@@ -368,24 +350,6 @@ def _apply_decision(
             # rewrite each named target's status in this same transaction.
             _release_outgoing_blocks_links(conn, ticket.id, affected_blocked_target_ids, now)
     return _load_ticket(conn, ticket.id)
-
-
-def _append_item_children_changed(
-    conn: sqlite3.Connection,
-    sprint_item_id: str | None,
-    ticket_id: str,
-    reason: str,
-    now: int,
-) -> None:
-    if sprint_item_id is None:
-        return
-    append_event(
-        conn,
-        sprint_item_id,
-        EventKind.item_children_changed,
-        {"ticket_id": ticket_id, "reason": reason},
-        now,
-    )
 
 
 def _write_ticket_status(
@@ -402,23 +366,14 @@ def _write_ticket_status(
     backend_error = error if ticket_status is TicketStatus.errored else None
     if ticket_status is TicketStatus.errored and not backend_error:
         raise ValueError("errored Ticket status requires a concrete backend error")
-    row = conn.execute("SELECT sprint_item_id FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    # ticket_status_changed_at answers "how long has this Ticket been where it is",
+    # so it moves only when the value really moves — rewriting the same status is not a
+    # change. The CASE keeps that comparison against the stored row, in the one write.
     conn.execute(
-        "UPDATE tickets SET ticket_status = ?, backend_error = ?, updated_at = ? WHERE id = ?",
-        (ticket_status.value, backend_error, now, ticket_id),
-    )
-    payload: dict[str, object] = {"ticket_status": ticket_status.value}
-    if error is not None:
-        payload["error"] = error
-    append_event(conn, ticket_id, EventKind.ticket_status_changed, payload, now)
-    _append_item_children_changed(
-        conn,
-        str(row["sprint_item_id"])
-        if row is not None and row["sprint_item_id"] is not None
-        else None,
-        ticket_id,
-        "ticket_status",
-        now,
+        "UPDATE tickets SET ticket_status = ?, backend_error = ?, updated_at = ?, "
+        "ticket_status_changed_at = CASE WHEN ticket_status = ? "
+        "THEN ticket_status_changed_at ELSE ? END WHERE id = ?",
+        (ticket_status.value, backend_error, now, ticket_status.value, now, ticket_id),
     )
 
 
@@ -554,13 +509,6 @@ def write_employee_session_id_in_transaction(
         "UPDATE tickets SET employee_session_id = ?, updated_at = ? WHERE id = ?",
         (effective_employee_session_id, now, ticket_id),
     )
-    append_event(
-        conn,
-        ticket_id,
-        EventKind.employee_session_changed,
-        {"employee_session_id": effective_employee_session_id},
-        now,
-    )
     return effective_employee_session_id
 
 
@@ -679,29 +627,6 @@ def write_employee_configuration(
                 ticket_id,
             ),
         )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {
-                "field": "employee_configuration",
-                "from": {
-                    "employee_backend": current.employee_backend,
-                    "employee_launch_model": current.employee_launch_model,
-                    "employee_launch_reasoning_effort": (
-                        current.employee_launch_reasoning_effort
-                    ),
-                },
-                "to": {
-                    "employee_backend": normalized.employee_backend,
-                    "employee_launch_model": normalized.employee_launch_model,
-                    "employee_launch_reasoning_effort": (
-                        normalized.employee_launch_reasoning_effort
-                    ),
-                },
-            },
-            now,
-        )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -799,8 +724,10 @@ def create_ticket(
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
-            "employee_session_id, alias, fields, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "employee_session_id, alias, fields, created_at, updated_at, "
+            "ticket_status_changed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -826,35 +753,9 @@ def create_ticket(
                 fields_json,
                 now,
                 now,
+                now,
             ),
         )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_created,
-            {
-                "stage": initial_stage,
-                "employee_backend": selected_employee_backend,
-                "employee_launch_model": selected_employee_launch_model,
-                "employee_launch_reasoning_effort": selected_employee_launch_reasoning_effort,
-            },
-            now,
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.proposal_filed,
-            {"field": "kickoff", "body": kickoff_note, "proposed_by": actor},
-            now,
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_status_changed,
-            {"ticket_status": TicketStatus.awaiting_approval.value},
-            now,
-        )
-        _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
         if day_id is not None:
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
@@ -964,8 +865,9 @@ def create_ticket_from_external_work(
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
             "default_stage_ownership_mode, employee_session_id, alias, fields, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)",
+            "created_at, updated_at, ticket_status_changed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "?, ?, ?, ?)",
             (
                 ticket_id,
                 title,
@@ -996,21 +898,9 @@ def create_ticket_from_external_work(
                 fields_codec.fields_to_json(initial_fields),
                 now,
                 now,
+                now,
             ),
         )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_created,
-            {
-                "stage": first_worker,
-                "employee_backend": selected_employee_backend,
-                "employee_launch_model": selected_employee_launch_model,
-                "employee_launch_reasoning_effort": selected_employee_launch_reasoning_effort,
-            },
-            now,
-        )
-        _append_item_children_changed(conn, sprint_item_id, ticket_id, "created", now)
         if day_id is not None:
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
@@ -1030,7 +920,6 @@ def create_ticket_from_external_work(
                 "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
                 (recap, now, ticket_id),
             )
-            append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
             ticket = _load_ticket_for_write(conn, ticket_id)
         ticket = _apply_decision(conn, ticket, position_decision, now)
         _write_entered_stage_ticket_status(
@@ -1093,7 +982,6 @@ def reconcile_ticket_from_external_work(
                 "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
                 (recap, now, ticket_id),
             )
-            append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
             ticket = _load_ticket_for_write(conn, ticket_id)
         stage_before_position = ticket.stage
         ticket = _apply_decision(conn, ticket, position_decision, now)
@@ -1410,7 +1298,6 @@ def file_current_proposal_with_recap(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
             (recap, now, ticket_id),
         )
-        append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
         if any(spec.kind is EventKind.proposal_filed for spec in decision.events):
             _write_ticket_status(conn, ticket_id, TicketStatus.awaiting_approval, now)
         else:
@@ -1530,18 +1417,6 @@ def set_stage_ownership(
         )
         updated = _load_ticket_for_write(conn, ticket_id)
         assert effective_after is not None
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.stage_ownership_changed,
-            {
-                "stage": stage,
-                "ownership_mode": ownership_mode.value if ownership_mode is not None else None,
-                "previous_effective_ownership_mode": effective_before.value,
-                "effective_ownership_mode": effective_after.value,
-            },
-            now,
-        )
         if (
             stage == ticket.stage
             and effective_before is not effective_after
@@ -1589,20 +1464,6 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
             (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.stage_ownership_changed,
-            {
-                "stage": ticket.stage,
-                "ownership_mode": StageOwnershipMode.user.value,
-                "previous_effective_ownership_mode": (
-                    effective_before.value if effective_before is not None else None
-                ),
-                "effective_ownership_mode": StageOwnershipMode.user.value,
-            },
-            now,
-        )
         if effective_before is not StageOwnershipMode.user and updated.ticket_status not in (
             TicketStatus.agent,
             TicketStatus.awaiting_approval,
@@ -1662,24 +1523,6 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.stage_ownership_changed,
-            {
-                "stage": ticket.stage,
-                "ownership_mode": None,
-                "previous_effective_ownership_mode": (
-                    effective_before.value if effective_before is not None else None
-                ),
-                "effective_ownership_mode": (
-                    updated.effective_stage_ownership_mode.value
-                    if updated.effective_stage_ownership_mode is not None
-                    else None
-                ),
-            },
-            now,
-        )
         if effective_before is not effective_after and updated.ticket_status not in (
             TicketStatus.agent,
             TicketStatus.awaiting_approval,
@@ -1875,10 +1718,6 @@ def delete_ticket(
                 effective_sprint_id = str(item_row["sprint_id"])
         sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
 
-        # Prune only pre-delete history. The cleanup events written below stay as
-        # doorbells on the surviving day, item, and link endpoints.
-        delete_entity_history(conn, ticket_id)
-
         conn.execute("DELETE FROM pending_worker_context WHERE worker_entity_id = ?", (ticket_id,))
 
         for day_id in day_ids:
@@ -1891,14 +1730,6 @@ def delete_ticket(
                 "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
                 (from_id, to_id, kind),
             )
-            survivor_id = to_id if from_id == ticket_id else from_id
-            append_event(
-                conn,
-                survivor_id,
-                EventKind.link_removed,
-                {"from_id": from_id, "to_id": to_id, "kind": kind},
-                now,
-            )
         # The deleted Ticket held those blocks links; every target it named re-derives
         # its stand-in now that they are gone.
         for row in link_rows:
@@ -1906,19 +1737,6 @@ def delete_ticket(
                 settle_blocked_standin_for_link_target(conn, str(row["to_id"]), now)
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
-        for sprint_item_id in sprint_item_ids:
-            _append_item_children_changed(conn, sprint_item_id, ticket_id, "deleted", now)
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_deleted,
-            {
-                "ticket_id": ticket_id,
-                "title": ticket.title,
-                "actor": actor,
-            },
-            now,
-        )
         return TicketDeletion(
             ticket_id=ticket_id,
             title=ticket.title,
@@ -1976,7 +1794,6 @@ def set_field_user_note(
             "UPDATE tickets SET fields = ?, updated_at = ? WHERE id = ?",
             (fields_codec.fields_to_json(new_fields), now, ticket_id),
         )
-        append_event(conn, ticket_id, EventKind.note_updated, {"field": str(field)}, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -2053,14 +1870,6 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
-        for field, _column, previous, updated in changes:
-            append_event(
-                conn,
-                ticket_id,
-                EventKind.ticket_updated,
-                {"field": field, "from": previous, "to": updated},
-                now,
-            )
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -2073,7 +1882,6 @@ def write_recap(
         conn.execute(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?", (body, now, ticket_id)
         )
-        append_event(conn, ticket_id, EventKind.recap_updated, {}, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -2096,30 +1904,11 @@ def assign_ticket_to_sprint_item(
                 "ticket is already assigned to a sprint item",
                 {"ticket_id": ticket_id, "sprint_item_id": ticket.sprint_item_id},
             )
-        prev_item = ticket.sprint_item_id
-        prev_sprint = ticket.sprint_id
-        prev_project = ticket.project_id
         conn.execute(
             "UPDATE tickets SET sprint_item_id = ?, sprint_id = NULL, project_id = NULL, "
             "updated_at = ? WHERE id = ?",
             (sprint_item_id, now, ticket_id),
         )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {
-                "field": "sprint_item_id",
-                "from": prev_item,
-                "to": sprint_item_id,
-                "cleared_sprint_id": prev_sprint,
-                "cleared_project": prev_project,
-            },
-            now,
-        )
-        if prev_item != sprint_item_id:
-            _append_item_children_changed(conn, prev_item, ticket_id, "parentage", now)
-            _append_item_children_changed(conn, sprint_item_id, ticket_id, "parentage", now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -2150,17 +1939,4 @@ def remove_ticket_from_sprint_item(
             "UPDATE tickets SET sprint_item_id = NULL, sprint_id = ?, updated_at = ? WHERE id = ?",
             (parent_sprint_id, now, ticket_id),
         )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_updated,
-            {
-                "field": "sprint_item_id",
-                "from": sprint_item_id,
-                "to": None,
-                "sprint_id": parent_sprint_id,
-            },
-            now,
-        )
-        _append_item_children_changed(conn, sprint_item_id, ticket_id, "parentage", now)
         return _load_ticket_for_write(conn, ticket_id)

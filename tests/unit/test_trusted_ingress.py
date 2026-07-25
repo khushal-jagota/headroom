@@ -218,27 +218,31 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(tmp_path: Path) -
     assert allowed_ticket_file.status_code == 200
 
 
-def test_events_websocket_trusted_ingress_and_origin_policy(tmp_path: Path) -> None:
+def test_websocket_trusted_ingress_and_origin_policy(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 
     with TestClient(app) as client:
-        with client.websocket_connect("/api/events", headers=REMOTE) as websocket:
-            websocket.close()
+        with pytest.raises(WebSocketDisconnect) as admitted:
+            with client.websocket_connect("/api/conversation", headers=REMOTE):
+                pass
         with pytest.raises(WebSocketDisconnect) as wrong_login:
-            with client.websocket_connect("/api/events", headers=REMOTE_WRONG):
+            with client.websocket_connect("/api/conversation", headers=REMOTE_WRONG):
                 pass
         with pytest.raises(WebSocketDisconnect) as wrong_origin:
             with client.websocket_connect(
-                "/api/events",
+                "/api/conversation",
                 headers={**REMOTE, "Origin": "https://evil.example"},
             ):
                 pass
 
+    # An admitted connection reaches the application, which closes it here only because
+    # this test app composes no conversation service. A rejected one never gets that far.
+    assert admitted.value.code == 1013
     assert wrong_login.value.code == 1008
     assert wrong_origin.value.code == 1008
 
 
-def test_events_websocket_rejects_duplicate_tailscale_login(tmp_path: Path) -> None:
+def test_websocket_rejects_duplicate_tailscale_login(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 
     messages = asyncio.run(
@@ -260,7 +264,7 @@ def test_events_websocket_rejects_duplicate_tailscale_login(tmp_path: Path) -> N
     ]
 
 
-def test_events_websocket_rejects_duplicate_origin(tmp_path: Path) -> None:
+def test_websocket_rejects_duplicate_origin(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 
     messages = asyncio.run(

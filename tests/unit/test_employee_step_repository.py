@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from planner.core.db import connect, create_schema
-from planner.core.events import read_events_since
 from planner.runtime.employee_step_repository import (
     EmployeeStepRun,
     SqliteEmployeeStepRepository,
@@ -84,10 +83,6 @@ def test_start_bind_and_first_wins_settlement(tmp_path: Path) -> None:
         error="late",
         now=5,
     ) is None
-    events = read_events_since(conn, 0, 100)
-    started = [event for event in events if event.kind == "employee_step_started"]
-    assert len(started) == 1
-    assert started[0].payload == {"employee_step_id": step.employee_step_id}
 
 
 def test_one_running_step_and_restart_replacement(tmp_path: Path) -> None:

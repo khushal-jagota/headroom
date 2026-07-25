@@ -12,23 +12,20 @@ from time import monotonic as _monotonic
 from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.composition import ConversationComposition, ConversationTestOptions
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.sse import change_stream
 from planner.core.testmode import TestModeAcceptingEmployeeRevisionRunner, build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
-from planner.core.ws import tail_events
 from planner.days.api import router as days_router
 from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
@@ -134,9 +131,6 @@ def create_app(
                 config.db_path,
                 clock,
                 gateway=conversation.step_gateway,
-                automatic_employee_step_eligibility_wake=(
-                    NoOpAutomaticEmployeeStepEligibilityWake()
-                ),
                 boundary_hour=config.boundary_hour,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
@@ -167,9 +161,6 @@ def create_app(
                 app.state.conversation = None
                 raise
             app.state.employee_step_runner = loops.employee_step_runner
-            app.state.automatic_employee_step_eligibility_wake = (
-                loops.automatic_employee_step_eligibility_wake
-            )
         try:
             yield
         finally:
@@ -204,7 +195,6 @@ def create_app(
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    app.state.automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
     app.state.employee_step_runner = (
         TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
     )
@@ -230,9 +220,6 @@ def create_app(
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:
         return {
-            "ui_debounce_ms": config.ui_debounce_ms,
-            "ws_poll_ms": config.ws_poll_ms,
-            "ws_heartbeat_ms": config.ws_heartbeat_ms,
             "test_mode": config.test_mode,
             "release_sha": config.release_sha,
         }
@@ -269,15 +256,11 @@ def create_app(
             ],
         }
 
-    @app.websocket("/api/events")
-    async def events_ws(websocket: WebSocket, since: int = 0) -> None:
-        await tail_events(
-            websocket,
-            since,
-            conn_factory,
-            config.ws_poll_ms,
-            config.events_read_limit,
-            config.ws_heartbeat_ms,
+    @app.get("/api/changes")
+    async def changes() -> StreamingResponse:
+        return StreamingResponse(
+            change_stream(config.sse_heartbeat_ms),
+            media_type="text/event-stream",
         )
 
     @app.websocket("/api/conversation")

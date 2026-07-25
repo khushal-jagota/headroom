@@ -11,9 +11,6 @@ from planner.environments.logic.credentials import validate_environment_values
 _AMBIENT_ALLOWLIST = frozenset({"LANG", "LANGUAGE", "PATH", "TERM", "TMPDIR"})
 _TEST_FAKE_NOW = "2026-07-04T12:00:00+00:00"
 _TEST_TIMING_ENV = {
-    "PLAN_WS_POLL_MS": "50",
-    "PLAN_WS_HEARTBEAT_MS": "500",
-    "PLAN_UI_DEBOUNCE_MS": "50",
     "PLAN_TICK_SECONDS": "1",
 }
 

@@ -256,12 +256,6 @@ def test_metadata_write_rejects_invalid_stored_tuple_before_durable_effect(
         )
         == before
     )
-    assert (
-        tmp_db.execute(
-            "SELECT COUNT(*) FROM events WHERE entity_id = 't_invalid_write'"
-        ).fetchone()[0]
-        == 0
-    )
 
 
 def test_metadata_write_rejects_missing_declared_field_before_durable_effect(
@@ -289,12 +283,6 @@ def test_metadata_write_rejects_missing_declared_field_before_durable_effect(
     assert (
         tmp_db.execute("SELECT title FROM tickets WHERE id = 't_missing_field_write'").fetchone()[0]
         == "T"
-    )
-    assert (
-        tmp_db.execute(
-            "SELECT COUNT(*) FROM events WHERE entity_id = 't_missing_field_write'"
-        ).fetchone()[0]
-        == 0
     )
 
 

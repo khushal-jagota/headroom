@@ -6,14 +6,10 @@ from typing import Any, cast
 
 import pytest
 
-from planner.core import loops
+from planner.core import change_signal, loops
 from planner.core.clock import TestClock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    LoopAutomaticEmployeeStepEligibilityWake,
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.runtime.step_gateway import StepGateway
 from planner.tickets import data as tickets_data
@@ -49,13 +45,11 @@ def test_dispatch_disabled_keeps_runner_without_acquiring_lock(
         raise AssertionError(f"disabled discovery must not acquire {path}")
 
     monkeypatch.setattr(loops, "ensure_machine_lock", fail_if_called)
+    subscribers_before = change_signal.subscriber_count()
     handle = loops.start_background_loops(config, fake_clock, step_gateway=_gateway())
     try:
         assert handle.automatic_employee_step_discovery_loop is None
-        assert isinstance(
-            handle.automatic_employee_step_eligibility_wake,
-            NoOpAutomaticEmployeeStepEligibilityWake,
-        )
+        assert change_signal.subscriber_count() == subscribers_before
     finally:
         asyncio.run(handle.stop())
 
@@ -72,18 +66,16 @@ def test_polling_lock_loser_keeps_runner_and_does_not_release_foreign_lock(
         "release_machine_lock",
         lambda path: (_ for _ in ()).throw(AssertionError(path)),
     )
+    subscribers_before = change_signal.subscriber_count()
     handle = loops.start_background_loops(config, fake_clock, step_gateway=_gateway())
     try:
         assert handle.automatic_employee_step_discovery_loop is None
-        assert isinstance(
-            handle.automatic_employee_step_eligibility_wake,
-            NoOpAutomaticEmployeeStepEligibilityWake,
-        )
+        assert change_signal.subscriber_count() == subscribers_before
     finally:
         asyncio.run(handle.stop())
 
 
-def test_lock_winner_composes_discovery_and_payload_free_wake(
+def test_lock_winner_composes_discovery_and_wakes_it_from_the_change_signal(
     tmp_path: Path,
     fake_clock: TestClock,
     monkeypatch: pytest.MonkeyPatch,
@@ -116,14 +108,13 @@ def test_lock_winner_composes_discovery_and_payload_free_wake(
         assert handle.automatic_employee_step_discovery_loop is constructed[0]
         assert constructed[0].runner is handle.employee_step_runner
         assert constructed[0].started == [config.tick_seconds]
-        assert isinstance(
-            handle.automatic_employee_step_eligibility_wake,
-            LoopAutomaticEmployeeStepEligibilityWake,
-        )
-        handle.automatic_employee_step_eligibility_wake.wake()
+        change_signal.emit()
         assert constructed[0].wakes == 1
     finally:
         asyncio.run(handle.stop())
+    # Stopping takes the loop off the signal, so a later commit cannot wake a stopped loop.
+    change_signal.emit()
+    assert constructed[0].wakes == 1
     assert released == [config.dispatcher_lock_path]
 
 
@@ -138,8 +129,7 @@ def test_partial_discovery_start_failure_stops_candidates_and_rebuilds_runner(
     released: list[str] = []
 
     class RecordingRunner:
-        def __init__(self, *_args, automatic_employee_step_eligibility_wake, **_kwargs) -> None:
-            self.wake = automatic_employee_step_eligibility_wake
+        def __init__(self, *_args, **_kwargs) -> None:
             runners.append(self)
 
         def recover_running_step(self, _ticket_id: str) -> None:
@@ -167,14 +157,15 @@ def test_partial_discovery_start_failure_stops_candidates_and_rebuilds_runner(
     monkeypatch.setattr(loops, "release_machine_lock", released.append)
     monkeypatch.setattr(loops, "EmployeeStepRunner", RecordingRunner)
     monkeypatch.setattr(loops, "AutomaticEmployeeStepDiscoveryLoop", BrokenLoop)
+    subscribers_before = change_signal.subscriber_count()
     handle = loops.start_background_loops(config, fake_clock, step_gateway=_gateway())
     try:
         assert len(runners) == 2
-        assert isinstance(runners[0].wake, LoopAutomaticEmployeeStepEligibilityWake)
-        assert isinstance(runners[1].wake, NoOpAutomaticEmployeeStepEligibilityWake)
         assert handle.employee_step_runner is runners[1]
         assert stopped == ["loop", "runner-0"]
         assert released == [config.dispatcher_lock_path]
+        # A discovery loop that never started is not left listening for commits.
+        assert change_signal.subscriber_count() == subscribers_before
     finally:
         asyncio.run(handle.stop())
 

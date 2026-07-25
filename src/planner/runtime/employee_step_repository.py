@@ -10,8 +10,6 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
-from planner.core.contracts import EventKind
-from planner.core.events import append_event
 from planner.core.ids import new_id
 
 EmployeeStepStatus = Literal["running", "complete", "interrupted", "errored"]
@@ -65,13 +63,6 @@ class SqliteEmployeeStepRepository:
             "started_at, updated_at, completed_at"
             ") VALUES (?, ?, 'running', ?, NULL, ?, ?, NULL)",
             (employee_step_id, ticket_id, employee_session_id, now, now),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.employee_step_started,
-            {"employee_step_id": employee_step_id},
-            now,
         )
         return self.require(conn, employee_step_id)
 

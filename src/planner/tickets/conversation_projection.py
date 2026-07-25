@@ -6,9 +6,7 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from planner.core.contracts import EventKind
 from planner.core.db import connect
-from planner.core.events import append_event
 from planner.tickets.contracts import WorkspaceActivityState
 
 _RESPONSE_COMPLETING_ACTIVITY_STATES = frozenset(
@@ -18,24 +16,6 @@ _RESPONSE_COMPLETING_ACTIVITY_STATES = frozenset(
         WorkspaceActivityState.compacting,
     }
 )
-
-
-def _changed_fields(
-    previous: TicketConversationProjectionSnapshot,
-    current: TicketConversationProjectionSnapshot,
-) -> list[str]:
-    changed: list[str] = []
-    if current.latest_activity_state != previous.latest_activity_state:
-        changed.append("latest_activity_state")
-    if (
-        current.has_completed_response_awaiting_user
-        != previous.has_completed_response_awaiting_user
-        or current.has_completed_response != previous.has_completed_response
-    ):
-        changed.append("response")
-    if current.has_pending_permission != previous.has_pending_permission:
-        changed.append("permission")
-    return changed
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,20 +73,10 @@ class TicketConversationProjection:
             if previous is None:
                 conn.execute("COMMIT")
                 return False
-            empty = TicketConversationProjectionSnapshot()
-            changed = _changed_fields(previous, empty)
             conn.execute(
                 "DELETE FROM ticket_conversation_projections WHERE ticket_id = ?",
                 (ticket_id,),
             )
-            if changed:
-                append_event(
-                    conn,
-                    ticket_id,
-                    EventKind.ticket_conversation_projection_changed,
-                    {"changed": changed},
-                    self._now(),
-                )
             conn.execute("COMMIT")
             return True
         except BaseException:
@@ -195,14 +165,6 @@ class TicketConversationProjection:
                     int(current.has_pending_permission),
                     self._now(),
                 ),
-            )
-            changed = _changed_fields(previous, current)
-            append_event(
-                conn,
-                ticket_id,
-                EventKind.ticket_conversation_projection_changed,
-                {"changed": changed},
-                self._now(),
             )
             conn.execute("COMMIT")
             return True

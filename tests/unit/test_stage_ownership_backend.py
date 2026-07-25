@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 
 import pytest
@@ -263,7 +262,7 @@ def test_ticket_current_stage_default_is_captured_until_next_stage_entry(
     assert second.effective_stage_ownership_mode is StageOwnershipMode.user
 
 
-def test_future_stage_ownership_event_reports_that_stages_effective_mode(tmp_db) -> None:
+def test_future_stage_ownership_override_leaves_the_current_stage_alone(tmp_db) -> None:
     ticket = data.create_ticket(
         tmp_db,
         actor="human",
@@ -294,18 +293,7 @@ def test_future_stage_ownership_event_reports_that_stages_effective_mode(tmp_db)
     assert updated.stage == "needs_success"
     assert updated.effective_stage_ownership_mode is StageOwnershipMode.worker
     assert updated.ticket_status is TicketStatus.empty
-    row = tmp_db.execute(
-        "SELECT payload FROM events "
-        "WHERE entity_id = ? AND kind = 'stage_ownership_changed' ORDER BY id DESC LIMIT 1",
-        (ticket.id,),
-    ).fetchone()
-    assert row is not None
-    assert json.loads(row["payload"]) == {
-        "stage": "needs_plan",
-        "ownership_mode": "paired",
-        "previous_effective_ownership_mode": "worker",
-        "effective_ownership_mode": "paired",
-    }
+    assert updated.stage_ownership_overrides == {"needs_plan": StageOwnershipMode.paired}
 
 
 def test_current_stage_same_effective_explicit_override_persists_without_status_change(
@@ -346,18 +334,6 @@ def test_current_stage_same_effective_explicit_override_persists_without_status_
     }
     assert updated.effective_stage_ownership_mode is StageOwnershipMode.paired
     assert updated.ticket_status is TicketStatus.empty
-    row = tmp_db.execute(
-        "SELECT payload FROM events "
-        "WHERE entity_id = ? AND kind = 'stage_ownership_changed' ORDER BY id DESC LIMIT 1",
-        (ticket.id,),
-    ).fetchone()
-    assert row is not None
-    assert json.loads(row["payload"]) == {
-        "stage": "needs_understanding",
-        "ownership_mode": "paired",
-        "previous_effective_ownership_mode": "paired",
-        "effective_ownership_mode": "paired",
-    }
 
     again = data.set_stage_ownership(
         tmp_db,
@@ -367,14 +343,6 @@ def test_current_stage_same_effective_explicit_override_persists_without_status_
         now=4,
     )
     assert again == updated
-    assert (
-        tmp_db.execute(
-            "SELECT COUNT(*) FROM events "
-            "WHERE entity_id = ? AND kind = 'stage_ownership_changed'",
-            (ticket.id,),
-        ).fetchone()[0]
-        == 1
-    )
 
 
 def test_takeover_and_release_persist_explicit_user_override_when_default_is_user(
@@ -418,27 +386,5 @@ def test_takeover_and_release_persist_explicit_user_override_when_default_is_use
         assert released.ticket_status is TicketStatus.empty
 
         assert data.release_ticket(tmp_db, ticket.id, now=5) == released
-        payloads = [
-            json.loads(row["payload"])
-            for row in tmp_db.execute(
-                "SELECT payload FROM events "
-                "WHERE entity_id = ? AND kind = 'stage_ownership_changed' ORDER BY id",
-                (ticket.id,),
-            )
-        ]
-        assert payloads == [
-            {
-                "stage": NEEDS_ALPHA,
-                "ownership_mode": "user",
-                "previous_effective_ownership_mode": "user",
-                "effective_ownership_mode": "user",
-            },
-            {
-                "stage": NEEDS_ALPHA,
-                "ownership_mode": None,
-                "previous_effective_ownership_mode": "user",
-                "effective_ownership_mode": "user",
-            },
-        ]
     finally:
         uninstall_probe_registry()

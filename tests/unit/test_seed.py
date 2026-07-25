@@ -127,7 +127,6 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "tickets") == 4
     assert _count(tmp_db, "ideas") == 3
     assert _count(tmp_db, "links") == 0
-    assert _count(tmp_db, "events") == 17
     imported_projects = _rows_by(tmp_db, "SELECT id, name FROM projects", "id")
     assert imported_projects["project_vylo"]["name"] == "Vylo"
     assert imported_projects["project_tribe"]["name"] == "Tribe"
@@ -347,7 +346,6 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "tickets") == 4
     assert _count(tmp_db, "ideas") == 3
     assert _count(tmp_db, "links") == 0
-    assert _count(tmp_db, "events") == 17
 
 
 def test_legacy_project_materialization_rolls_back_with_failed_import(
@@ -363,7 +361,7 @@ def test_legacy_project_materialization_rolls_back_with_failed_import(
         seed_from_source(tmp_db, FIXTURE, worker_type="coding", now=_FIXED_NOW)
 
     assert tmp_db.execute("SELECT 1 FROM projects WHERE id = 'project_learning'").fetchone() is None
-    for table in ("sprints", "sprint_items", "tickets", "ideas", "events"):
+    for table in ("sprints", "sprint_items", "tickets", "ideas"):
         assert _count(tmp_db, table) == 0
 
 
@@ -558,17 +556,11 @@ def test_seed_backend_default_override_and_unknown_roll_back(
             str(row["employee_backend"])
             for row in override_conn.execute("SELECT employee_backend FROM tickets")
         } == {"hermes"}
-        assert {
-            json.loads(str(row["payload"]))["employee_backend"]
-            for row in default_conn.execute(
-                "SELECT payload FROM events WHERE kind = 'ticket_created'"
-            )
-        } == {"probe-backend"}
         assert raised.value.code is ErrorCode.validation
         assert tuple(
             rejected_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
-        ) == (0, 0, 0, 0, 0)
+            for table in ("sprints", "sprint_items", "tickets", "ideas")
+        ) == (0, 0, 0, 0)
     finally:
         for conn in connections:
             conn.close()
@@ -578,7 +570,7 @@ def test_seed_backend_default_override_and_unknown_roll_back(
 def test_unknown_seed_worker_type_fails_before_any_import_write(tmp_db: Connection) -> None:
     before = {
         table: _count(tmp_db, table)
-        for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
+        for table in ("sprints", "sprint_items", "tickets", "ideas")
     }
     with pytest.raises(PlannerError) as raised:
         seed_from_source(tmp_db, FIXTURE, worker_type="ghost", now=_FIXED_NOW)
@@ -586,7 +578,7 @@ def test_unknown_seed_worker_type_fails_before_any_import_write(tmp_db: Connecti
     assert raised.value.detail == {"worker_type": "ghost"}
     assert {
         table: _count(tmp_db, table)
-        for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
+        for table in ("sprints", "sprint_items", "tickets", "ideas")
     } == before
 
 
@@ -688,7 +680,7 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
         restore_employee_runtime_definitions_for_test(previous_definitions)
     assert raised.value.code is ErrorCode.validation
     assert raised.value.message == "stage outside the linear order"
-    for table in ("sprints", "sprint_items", "tickets", "ideas", "events"):
+    for table in ("sprints", "sprint_items", "tickets", "ideas"):
         assert _count(tmp_db, table) == 0
 
 

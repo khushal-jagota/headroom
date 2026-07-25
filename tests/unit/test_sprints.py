@@ -22,7 +22,6 @@ import pytest
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import read_events_since
 from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import (
     create_idea,
@@ -64,14 +63,6 @@ def _set_ticket_state(conn, ticket_id: str, stage: str) -> None:
     # Same sanction as _insert_ticket: blocker ticket-states are test fixtures here,
     # not exercises of T04's writers.
     conn.execute("UPDATE tickets SET stage = ? WHERE id = ?", (stage, ticket_id))
-
-
-def _events(conn, entity_id: str, kind: str) -> list[dict]:
-    return [
-        e.payload
-        for e in read_events_since(conn, 0, 100_000)
-        if e.entity_id == entity_id and e.kind == kind
-    ]
 
 
 # --- item 10: sprint-item permissions (single anchored test) ----------------------
@@ -243,9 +234,6 @@ def test_x06_create_idea_writer_logs_event(tmp_db, fake_clock) -> None:
     assert idea["body"] == "Worth exploring."
     assert idea["project_id"] == "project_vylo"
     assert idea["project_name"] == "Vylo"
-    assert _events(tmp_db, idea["id"], "idea_created") == [
-        {"title": "Maybe later", "source": "api"}
-    ]
 
 
 def test_x06_set_sprint_dates_writer_updates_and_rejects_overlap(tmp_db, fake_clock) -> None:
@@ -266,10 +254,8 @@ def test_x06_set_sprint_dates_writer_updates_and_rejects_overlap(tmp_db, fake_cl
 
     assert updated.date_start == "2026-07-02"
     assert updated.date_end == "2026-07-15"
-    assert _events(tmp_db, sprint.id, "sprint_updated") == [
-        {"field": "date_start", "from": "2026-07-01", "to": "2026-07-02"},
-        {"field": "date_end", "from": "2026-07-14", "to": "2026-07-15"},
-    ]
+    assert read_sprint(tmp_db, sprint.id).date_start == "2026-07-02"
+    assert read_sprint(tmp_db, sprint.id).date_end == "2026-07-15"
 
     with pytest.raises(PlannerError) as exc:
         set_sprint_dates(

@@ -20,9 +20,6 @@ from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic import dates
 from planner.runtime import automatic_employee_step_eligibility
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    AutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.runtime.step_gateway import EmployeeStepGatewayBusy, StepGateway
 from planner.tickets import data as tickets_data
@@ -134,14 +131,12 @@ class EmployeeStepRunner:
         clock: Clock,
         *,
         gateway: StepGateway,
-        automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
         boundary_hour: int,
         busy_timeout_ms: int = 5000,
     ) -> None:
         self._db_path = db_path
         self._clock = clock
         self._gateway = gateway
-        self._automatic_employee_step_eligibility_wake = automatic_employee_step_eligibility_wake
         self._boundary_hour = boundary_hour
         self._busy_timeout_ms = busy_timeout_ms
         self._accepting = True
@@ -327,26 +322,24 @@ class EmployeeStepRunner:
             return False
 
     def _run_automatic_step_thread(self, ticket_id: str) -> None:
-        settled = False
         try:
-            settled = self._run(
+            self._run(
                 ticket_id,
                 revision_guidance=None,
                 restart_recovery=False,
             )
         finally:
-            self._finish_active(ticket_id, settled)
+            self._finish_active(ticket_id)
 
     def _run_recovery_thread(self, ticket_id: str) -> None:
-        settled = False
         try:
-            settled = self._run(
+            self._run(
                 ticket_id,
                 revision_guidance=None,
                 restart_recovery=True,
             )
         finally:
-            self._finish_active(ticket_id, settled)
+            self._finish_active(ticket_id)
 
     def _run_reserved_revision(
         self,
@@ -355,23 +348,20 @@ class EmployeeStepRunner:
         handoff: _EmployeeRevisionHandoff,
     ) -> None:
         handoff._mark_parked()
-        settled = False
         try:
             if handoff._wait_for_decision():
-                settled = self._run(
+                self._run(
                     ticket_id,
                     revision_guidance=guidance,
                     restart_recovery=False,
                 )
         finally:
-            self._finish_active(ticket_id, settled)
+            self._finish_active(ticket_id)
 
-    def _finish_active(self, ticket_id: str, settled: bool) -> None:
+    def _finish_active(self, ticket_id: str) -> None:
         with self._active_cond:
             self._active_ticket_ids.discard(ticket_id)
             self._active -= 1
-            if settled:
-                self._automatic_employee_step_eligibility_wake.wake()
             self._active_cond.notify_all()
 
     def _run(

@@ -6,8 +6,6 @@ from datetime import date, datetime
 from sqlite3 import Connection
 
 from planner.core.config import Config
-from planner.core.contracts import EventKind
-from planner.core.events import read_events_since
 from planner.days.data import (
     add_day_ticket,
     list_day_tickets,
@@ -80,11 +78,3 @@ def test_a12_day_ticket_removal(tmp_db: Connection) -> None:
     # Ticket Stage is untouched (this is "deferring").
     stage = conn.execute("SELECT stage FROM tickets WHERE id = 't1'").fetchone()["stage"]
     assert stage == "needs_implementation"
-    # Exactly one day_ticket_removed event, payload {ticket_id: t1}.
-    removed = [
-        e
-        for e in read_events_since(conn, 0, 1000)
-        if e.kind == EventKind.day_ticket_removed.value and e.entity_id == "day_2026-07-04"
-    ]
-    assert len(removed) == 1
-    assert removed[0].payload == {"ticket_id": "t1"}

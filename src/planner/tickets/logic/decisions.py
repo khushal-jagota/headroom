@@ -1,5 +1,6 @@
 """Internal decision shapes: a Decision is what a resolution function returns —
-the replacement fields/stage/scope plus the ordered events to append. These are
+the replacement fields/stage/scope plus the engine's own ordered statement of what
+the write does, which the write path reads to settle the consequences. These are
 logic-layer only, never exposed over the wire."""
 
 from __future__ import annotations

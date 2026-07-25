@@ -1,7 +1,7 @@
 """Ticket routes (§9), plus the ticket-anchored links and the ticket-centric
 derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
-re-implements a domain rule and no route appends events.
+re-implements a domain rule.
 
 This module also homes the shared request plumbing (config/clock accessors, the
 per-request connection dependency, the transaction context manager, and the enum
@@ -41,9 +41,6 @@ from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.projects import data as projects_data
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    AutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.contracts import EmployeeRevisionRunner
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
@@ -108,15 +105,6 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_automatic_employee_step_eligibility_wake(
-    request: Request,
-) -> AutomaticEmployeeStepEligibilityWake:
-    return cast(
-        AutomaticEmployeeStepEligibilityWake,
-        request.app.state.automatic_employee_step_eligibility_wake,
-    )
-
-
 def get_employee_revision_runner(request: Request) -> EmployeeRevisionRunner | None:
     runner: EmployeeRevisionRunner | None = getattr(request.app.state, "employee_step_runner", None)
     return runner
@@ -126,9 +114,6 @@ DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-AutomaticEmployeeStepEligibilityWakeDependency = Annotated[
-    AutomaticEmployeeStepEligibilityWake, Depends(get_automatic_employee_step_eligibility_wake)
-]
 EmployeeRunner = Annotated[EmployeeRevisionRunner | None, Depends(get_employee_revision_runner)]
 
 
@@ -409,7 +394,6 @@ async def create_ticket(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
@@ -441,7 +425,6 @@ async def create_ticket(
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
         sprint_id_explicit="sprint_id" in raw,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -453,7 +436,6 @@ async def create_ticket_from_external_work(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_chief(ctx)
     worker_type = _require_create_worker_type(raw)
@@ -491,7 +473,6 @@ async def create_ticket_from_external_work(
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
         sprint_id_explicit="sprint_id" in raw,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -503,14 +484,13 @@ async def reconcile_ticket_from_external_work(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_chief(ctx)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     body = _marshal_external_reconcile(raw, worker_type_definition)
     target_stage = _validate_external_stage(body["stage"], worker_type_definition)
     now = clk.now_unix()
-    ticket = tickets_actions.reconcile_ticket_from_external_work(
+    ticket = tickets_data.reconcile_ticket_from_external_work(
         conn,
         ticket_id,
         kickoff_note=body["kickoff_note"],
@@ -519,7 +499,6 @@ async def reconcile_ticket_from_external_work(
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -747,15 +726,13 @@ async def delete_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
-    deleted = tickets_actions.delete_ticket(
+    deleted = tickets_data.delete_ticket(
         conn,
         ticket_id,
         actor=ctx.actor,
         now=clk.now_unix(),
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {
         "ok": True,
@@ -824,21 +801,19 @@ async def propose_current_field(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ProposeWithRecapBody(
         body=body_str(raw, "body"),
         recap=body_str(raw, "recap"),
     )
     now = clk.now_unix()
-    ticket = tickets_actions.file_current_proposal_with_recap(
+    ticket = tickets_data.file_current_proposal_with_recap(
         conn,
         ticket_id,
         body=body["body"],
         recap=body["recap"],
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -851,20 +826,18 @@ async def propose_field(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ProposeBody(body=body_str(raw, "body"))
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    ticket = tickets_actions.file_proposal(
+    ticket = tickets_data.file_proposal(
         conn,
         ticket_id,
         field=field,
         body=body["body"],
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -877,7 +850,6 @@ async def accept_field(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
@@ -886,7 +858,7 @@ async def accept_field(
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
     at_cap = _parse_scope_at_cap(body["at_cap"])
-    ticket = tickets_actions.accept_proposal(
+    ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
         field=field,
@@ -895,7 +867,6 @@ async def accept_field(
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -962,21 +933,19 @@ async def put_value(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     require_direct_write(ctx)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    ticket = tickets_actions.edit_field_value(
+    ticket = tickets_data.edit_field_value(
         conn,
         ticket_id,
         field=field,
         new_body=body["body"],
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -988,7 +957,6 @@ async def scope_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     require_direct_write(ctx)
@@ -1013,14 +981,13 @@ async def scope_ticket(
         raise PlannerError(
             ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
         ) from None
-    ticket = tickets_actions.change_scope(
+    ticket = tickets_data.change_scope(
         conn,
         ticket_id,
         ceiling=ceiling_raw,
         at_cap=at_cap,
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1032,7 +999,6 @@ async def set_stage(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = StageBody(to_stage=body_str(raw, "to_stage"))
     require_direct_write(ctx)
@@ -1043,13 +1009,12 @@ async def set_stage(
     if to_stage != worker_type_definition.dropped_stage.id:
         worker_type_definition.stage_index(to_stage)
     now = clk.now_unix()
-    ticket = tickets_actions.set_stage(
+    ticket = tickets_data.set_stage(
         conn,
         ticket_id,
         new_stage=to_stage,
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1060,16 +1025,14 @@ async def drop_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_actions.drop_ticket(
+    ticket = tickets_data.drop_ticket(
         conn,
         ticket_id,
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1080,15 +1043,13 @@ async def take_over_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_actions.take_over_ticket(
+    ticket = tickets_data.take_over_ticket(
         conn,
         ticket_id,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1099,15 +1060,13 @@ async def release_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_actions.release_ticket(
+    ticket = tickets_data.release_ticket(
         conn,
         ticket_id,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1118,12 +1077,10 @@ async def request_user_help(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     now = clk.now_unix()
-    ticket = tickets_actions.request_user_help(
+    ticket = tickets_data.request_user_help(
         conn, ticket_id, actor=ctx.actor, now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1136,7 +1093,6 @@ async def put_stage_ownership(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) != {"ownership_mode"}:
@@ -1152,21 +1108,14 @@ async def put_stage_ownership(
         else None
     )
     now = clk.now_unix()
-    ticket = tickets_actions.set_stage_ownership(
+    ticket = tickets_data.set_stage_ownership(
         conn,
         ticket_id,
         stage=stage,
         ownership_mode=ownership_mode,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
-
-
-@router.get("/tickets/{ticket_id}/events")
-async def ticket_events(ticket_id: str, conn: DbConn, cfg: Cfg) -> JsonDict:
-    tickets_data.read_ticket(conn, ticket_id)
-    return {"events": tickets_views.list_events_for_entity(conn, ticket_id, cfg.events_read_limit)}
 
 
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
@@ -1180,7 +1129,6 @@ async def add_link(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     body = LinkBody(
@@ -1196,7 +1144,6 @@ async def add_link(
         body["to_id"],
         kind,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
 
@@ -1206,7 +1153,6 @@ async def remove_link(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
     from_id: str,
     to_id: str,
     kind: str,
@@ -1220,7 +1166,6 @@ async def remove_link(
         to_id,
         kind_enum,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {"ok": True}
 

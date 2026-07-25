@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from planner.core import db as db_module
-from planner.core.db import BASELINE_REVISION, connect, create_schema
+from planner.core.db import BASELINE_REVISION, ChangeSignallingConnection, connect, create_schema
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {
@@ -26,6 +26,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
+HEAD_REVISION = "ticket_status_changed_at"
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -68,6 +69,18 @@ def _table_structure(conn: sqlite3.Connection, table: str) -> dict[str, object]:
             for i in conn.execute(f"PRAGMA index_list({table})")
         ),
     }
+
+
+# What the ticket_status_changed_at revision adds to `tickets`: name, type, NOT NULL,
+# default, primary-key position, in PRAGMA table_info's shape.
+STATUS_CHANGED_AT_COLUMN = ("ticket_status_changed_at", "INTEGER", 1, "0", 0)
+
+
+def _table_structure_before_status_changed_at(structure: dict[str, object]) -> dict[str, object]:
+    """The tickets structure with the one column this revision adds taken back off."""
+    columns = list(structure["columns"])  # type: ignore[arg-type]
+    assert columns[-1] == STATUS_CHANGED_AT_COLUMN
+    return {**structure, "columns": columns[:-1]}
 
 
 def _revision(conn: sqlite3.Connection) -> str:
@@ -117,7 +130,16 @@ def test_connect_applies_busy_timeout_to_initial_connect_and_pragma(
     db_path = str(tmp_path / "bounded-connect.db")
     conn = connect(db_path, busy_timeout_ms=275)
     try:
-        assert initial_connect_calls == [((db_path,), {"isolation_level": None, "timeout": 0.275})]
+        assert initial_connect_calls == [
+            (
+                (db_path,),
+                {
+                    "isolation_level": None,
+                    "timeout": 0.275,
+                    "factory": ChangeSignallingConnection,
+                },
+            )
+        ]
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 275
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -132,8 +154,8 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(tmp_path) ->
     conn = connect(str(tmp_path / "fresh.db"))
     create_schema(conn)
 
-    assert _revision(conn) == RESHAPE_REVISION
-    assert len(_schema_objects(conn)) == 24
+    assert _revision(conn) == HEAD_REVISION
+    assert len(_schema_objects(conn)) == 22
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
@@ -173,9 +195,12 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_pa
     # afterwards is the current one rather than the one the ladder left. What the adoption
     # promises is that the table keeps its shape and the rows are still there, brought onto
     # the values the revisions since the baseline moved them to.
-    assert _revision(conn) == RESHAPE_REVISION
-    assert _table_structure(conn, "tickets") == structure_before
-    assert len(_schema_objects(conn)) == 24
+    assert _revision(conn) == HEAD_REVISION
+    assert (
+        _table_structure_before_status_changed_at(_table_structure(conn, "tickets"))
+        == structure_before
+    )
+    assert len(_schema_objects(conn)) == 22
     assert tuple(
         conn.execute("SELECT title, ticket_status FROM tickets WHERE id = 't_old'").fetchone()
     ) == ("Written before Alembic", "agent")
@@ -225,7 +250,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path) 
 
     create_schema(conn)
 
-    assert _revision(conn) == RESHAPE_REVISION
+    assert _revision(conn) == HEAD_REVISION
     assert {
         str(row[0]): str(row[1]) for row in conn.execute("SELECT id, ticket_status FROM tickets")
     } == {
@@ -251,7 +276,10 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path) 
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     # Columns, outgoing foreign keys and indexes, including the unique one on alias: a
     # rebuild recreates only what it was handed, and drops the rest without a trace.
-    assert _table_structure(conn, "tickets") == structure_before
+    assert (
+        _table_structure_before_status_changed_at(_table_structure(conn, "tickets"))
+        == structure_before
+    )
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -393,8 +421,8 @@ def test_processes_starting_at_once_agree_on_one_database(tmp_path) -> None:
     conn = connect(str(db_path))
     assert [
         str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")
-    ] == [RESHAPE_REVISION]
-    assert len(_schema_objects(conn)) == 24
+    ] == [HEAD_REVISION]
+    assert len(_schema_objects(conn)) == 22
     conn.close()
 
 

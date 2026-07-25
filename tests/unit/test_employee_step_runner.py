@@ -19,9 +19,6 @@ from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
 from planner.days.logic import dates
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.step_gateway import (
@@ -141,9 +138,6 @@ def _runner(db_path: str, gateway: _Gateway) -> EmployeeStepRunner:
         db_path,
         RealClock(),
         gateway=gateway,
-        automatic_employee_step_eligibility_wake=(
-            NoOpAutomaticEmployeeStepEligibilityWake()
-        ),
         boundary_hour=BOUNDARY_HOUR,
     )
 
@@ -254,9 +248,6 @@ def test_first_automatic_prompt_uses_selected_model_then_reasoning(
             db_path,
             RealClock(),
             gateway=composition.step_gateway,
-            automatic_employee_step_eligibility_wake=(
-                NoOpAutomaticEmployeeStepEligibilityWake()
-            ),
             boundary_hour=BOUNDARY_HOUR,
         )
 

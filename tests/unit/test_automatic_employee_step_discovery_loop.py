@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from planner.core import change_signal
 from planner.core.clock import TestClock
 from planner.core.config import load_config
 from planner.core.contracts import LinkKind
@@ -28,10 +29,6 @@ from planner.projects import data as projects_data
 from planner.runtime import automatic_employee_step_eligibility
 from planner.runtime.automatic_employee_step_discovery_loop import (
     AutomaticEmployeeStepDiscoveryLoop,
-)
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    LoopAutomaticEmployeeStepEligibilityWake,
-    NoOpAutomaticEmployeeStepEligibilityWake,
 )
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.runtime.employee_step_runner import EmployeeStepRunner
@@ -210,16 +207,7 @@ def _add_block(db: str, blocker_id: str, target_id: str) -> None:
     """Block a Ticket the way the API does, so its status settles to `blocked`."""
     conn = connect(db)
     try:
-        tickets_actions.add_link(
-            conn,
-            blocker_id,
-            target_id,
-            LinkKind.blocks,
-            now=0,
-            automatic_employee_step_eligibility_wake=(
-                NoOpAutomaticEmployeeStepEligibilityWake()
-            ),
-        )
+        tickets_actions.add_link(conn, blocker_id, target_id, LinkKind.blocks, now=0)
     finally:
         conn.close()
 
@@ -313,7 +301,6 @@ def _runner(db: str, fake: _ProposingFake) -> EmployeeStepRunner:
         db,
         TestClock(FIXED_NOW),
         gateway=fake,
-        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
         boundary_hour=BOUNDARY_HOUR,
     )
 
@@ -755,9 +742,10 @@ def test_fast_path_wake_sets_off_before_the_timer(tmp_path: Path) -> None:
         loop.stop()
 
 
-def test_settlement_eligibility_wake_drives_the_auto_advance_chain(tmp_path: Path) -> None:
-    # ceiling=needs_approach: step 0 (success) auto-accepts and its settlement eligibility_wake
-    # drives step 1 (approach) automatically, which parks at the ceiling and stops the chain.
+def test_settlement_change_signal_drives_the_auto_advance_chain(tmp_path: Path) -> None:
+    # ceiling=needs_approach: step 0 (success) auto-accepts and the commit that settles it
+    # wakes discovery through the change signal, which drives step 1 (approach)
+    # automatically; step 1 parks at the ceiling and stops the chain.
     db = _db(tmp_path)
     tid = _new_ticket(db, ceiling="needs_approach")
     _add_to_day(db, tid)  # on today -> in scope
@@ -768,25 +756,22 @@ def test_settlement_eligibility_wake_drives_the_auto_advance_chain(tmp_path: Pat
             lambda: _file_proposal(db, tid, "approach", "a"),
         ],
     )
-    loop_box: list[AutomaticEmployeeStepDiscoveryLoop] = []
     runner = EmployeeStepRunner(
         db,
         TestClock(FIXED_NOW),
         gateway=fake,
-        automatic_employee_step_eligibility_wake=LoopAutomaticEmployeeStepEligibilityWake(
-            lambda: loop_box[0].wake()
-        ),
         boundary_hour=BOUNDARY_HOUR,
     )
     loop = _loop(db, runner)
-    loop_box.append(loop)
-    loop.start(30)  # the settlement wake, not the timer, advances the chain
+    loop.start(30)  # the change signal, not the timer, advances the chain
+    unsubscribe = change_signal.subscribe(loop.wake)
     try:
         assert _wait_until(
             lambda: fields_codec.get_slot(_read(db, tid).fields, "approach").proposal is not None,
             10.0,
         )
     finally:
+        unsubscribe()
         loop.stop()
 
     ticket = _read(db, tid)
@@ -800,7 +785,7 @@ def test_settlement_eligibility_wake_drives_the_auto_advance_chain(tmp_path: Pat
     assert fake.sent_methods().count("session.resume") == 1
 
 
-def test_fastapi_day_action_wakes_real_loop_without_waiting_for_long_timer(
+def test_fastapi_day_action_wakes_real_loop_through_the_change_signal(
     tmp_path: Path,
 ) -> None:
     db = _db(tmp_path)
@@ -839,10 +824,8 @@ def test_fastapi_day_action_wakes_real_loop_without_waiting_for_long_timer(
         return connect(db)
 
     app = create_app(config, TestClock(FIXED_NOW), conn_factory)
-    app.state.automatic_employee_step_eligibility_wake = LoopAutomaticEmployeeStepEligibilityWake(
-        loop.wake
-    )
     loop.start(3600)
+    unsubscribe = change_signal.subscribe(loop.wake)
     try:
         assert first_scan.wait(3.0)
         tid = _new_ticket(db)
@@ -852,6 +835,7 @@ def test_fastapi_day_action_wakes_real_loop_without_waiting_for_long_timer(
         assert dispatched.wait(3.0)
         assert dispatched_ids == [tid]
     finally:
+        unsubscribe()
         loop.stop()
 
 
@@ -1291,65 +1275,5 @@ def test_live_runtime_docs_and_root_instructions_use_the_new_names() -> None:
         assert old_name not in combined, old_name
     assert "Automatic Employee-step eligibility" in combined
     assert "AutomaticEmployeeStepDiscoveryLoop" in combined
-    assert "AutomaticEmployeeStepEligibilityWake" in combined
     assert "automatic_employee_step_discovery_loop.py" in combined
-    assert "commit -> wake" in combined
 
-
-def test_allowed_wake_test_helpers_use_eligibility_wake_names() -> None:
-    root = Path(__file__).resolve().parents[2]
-    paths = (
-        root / "tests/typing/tt02b_field_seam_cases.py",
-        root / "tests/unit/test_chief_external_work.py",
-        root / "tests/unit/test_core_loops.py",
-        root / "tests/unit/test_day_api.py",
-        root / "tests/unit/test_employee_step_runner.py",
-        root / "tests/unit/test_return_for_revision.py",
-        root / "tests/unit/test_ticket_delete.py",
-        root / "tests/unit/test_tickets_engine.py",
-        root / "tests/unit/test_value_edit_api.py",
-        root / "tests/unit/test_automatic_employee_step_discovery_loop.py",
-        root / "tests/unit/test_automatic_employee_step_eligibility_wake.py",
-        root / "tests/unit/test_automatic_employee_step_eligibility_actions.py",
-    )
-    for path in paths:
-        tree = ast.parse(path.read_text(), filename=str(path))
-        identifiers = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} | {
-            node.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        }
-        assert not {
-            name
-            for name in identifiers
-            if "doorbell" in name.lower() or "ring_count" in name.lower() or name.lower() == "rings"
-        }, path
-
-
-def test_wake_contract_is_payload_free_and_has_no_delivery_infrastructure() -> None:
-    root = Path(__file__).resolve().parents[2]
-    path = root / "src/planner/runtime/automatic_employee_step_eligibility_wake.py"
-    source = path.read_text()
-    for forbidden in (
-        "ticket_id",
-        "sqlite",
-        "queue",
-        "socket",
-        "multiprocessing",
-        "subprocess",
-        "ipc",
-    ):
-        assert forbidden not in source.lower()
-    tree = ast.parse(source, filename=str(path))
-    wake_functions = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "wake"
-    ]
-    assert wake_functions
-    assert all(
-        [argument.arg for argument in function.args.args] == ["self"]
-        and not function.args.vararg
-        and not function.args.kwarg
-        for function in wake_functions
-    )

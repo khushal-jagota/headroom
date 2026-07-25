@@ -48,9 +48,6 @@ from planner.core.clock import TestClock as MutableTestClock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
 from planner.tickets import data as tickets_data
 from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_types.configuration import (
@@ -548,7 +545,6 @@ def test_production_uses_only_conversation_step_gateway_and_one_shutdown_deadlin
 
     class _Runtime:
         employee_step_runner = object()
-        automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
 
         async def stop(self, *, deadline: float | None = None) -> None:
             order.append(("runtime.stop", deadline))
