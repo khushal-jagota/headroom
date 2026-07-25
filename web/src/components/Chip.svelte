@@ -10,12 +10,12 @@
 
   const markerVariants = new Set([
     "pending-proposal",
-    "agent-running-step",
     "blockers-cleared",
-    "errored",
     "frozen",
-    "paired-work",
-    "user-takeover"
+    "agent",
+    "errored",
+    "user",
+    "paired"
   ]);
 
   let classes = $derived.by(() => {

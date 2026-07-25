@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { resourceCatalogue } from "../lib/resourceCatalogue";
-  import type { FieldStageVisualState } from "../lib/ui";
+  import { labelize, type FieldStageVisualState } from "../lib/ui";
   import AcpConversation from "../components/AcpConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -45,7 +45,7 @@
             : card.group_project_id === selectedProjectId
         )
   );
-  let buckets = $derived(buildBuckets(rosterCards));
+  let groups = $derived(buildGroups(rosterCards));
 
   $effect(() => {
     const selectedProjectStillExists = projectOptions.some(
@@ -98,86 +98,60 @@
     return { state: "upcoming", ariaLabel: "Nothing waiting" };
   }
 
-  type BucketKey =
-    | "errored"
-    | "needs_you"
-    | "kickoff"
-    | "stopped"
-    | "taken_over"
-    | "paired"
-    | "agent_working"
-    | "needs_approval"
-    | "closing_out"
-    | "blocked"
-    | "done";
-
-  type BucketDefinition = {
-    key: BucketKey;
-    label: string;
-    defaultCollapsed: boolean;
-  };
-
-  // Canonical order, top to bottom. A bucket with no tickets is not rendered.
-  const BUCKET_DEFINITIONS: readonly BucketDefinition[] = [
-    { key: "errored", label: "Errored", defaultCollapsed: false },
-    { key: "needs_you", label: "Needs you", defaultCollapsed: false },
-    { key: "kickoff", label: "Kickoff", defaultCollapsed: false },
-    { key: "stopped", label: "Stopped", defaultCollapsed: false },
-    { key: "taken_over", label: "Taken over", defaultCollapsed: false },
-    { key: "paired", label: "Paired", defaultCollapsed: false },
-    { key: "agent_working", label: "Agent working", defaultCollapsed: false },
-    { key: "needs_approval", label: "Needs approval", defaultCollapsed: false },
-    { key: "closing_out", label: "Closing out", defaultCollapsed: false },
-    { key: "blocked", label: "Blocked", defaultCollapsed: true },
-    { key: "done", label: "Done", defaultCollapsed: true }
-  ];
-
-  // Every ticket sits in exactly one bucket. Status decides first; Blocked
-  // claims only idle tickets. The one exception: a kickoff-stage ticket with a
-  // parked proposal belongs in Kickoff, not Needs approval.
-  function bucketFor(card: Record<string, any>): BucketKey {
-    if (card.is_done) return "done";
-    const status = String(card.ticket_status);
-    if (status === "errored") return "errored";
-    if (status === "needs_user") return "needs_you";
-    if (status === "awaiting_approval") {
-      return card.stage === "needs_kickoff" ? "kickoff" : "needs_approval";
-    }
-    if (status === "proposal_discussion" || status === "paired_work") return "paired";
-    if (status === "agent_running_step") return "agent_working";
-    if (status === "user_takeover") return "taken_over";
-    if (card.blocked) return "blocked";
-    if (card.stage === "needs_kickoff") return "kickoff";
-    if (card.stage === "needs_closeout") return "closing_out";
-    return "stopped";
+  // Every ticket sits in exactly one group: its own ticket status, except a done
+  // ticket, which groups as done.
+  function groupKeyFor(card: Record<string, any>): string {
+    return card.is_done ? "done" : String(card.ticket_status);
   }
 
-  type BucketSection = {
-    key: BucketKey;
+  // Presentation only: the top-to-bottom order of the status groups. A group with
+  // no tickets is not rendered, and a status not named here appends as its own
+  // group after these, in the order first seen.
+  const GROUP_ORDER: readonly string[] = [
+    "errored",
+    "needs_user",
+    "empty",
+    "user",
+    "paired",
+    "agent",
+    "awaiting_approval",
+    "blocked",
+    "done"
+  ];
+
+  const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set(["blocked", "done"]);
+
+  type GroupSection = {
+    key: string;
     label: string;
     defaultCollapsed: boolean;
     cards: Record<string, any>[];
   };
 
-  function buildBuckets(cards: Record<string, any>[]): BucketSection[] {
-    const byBucket = new Map<BucketKey, Record<string, any>[]>();
+  function buildGroups(cards: Record<string, any>[]): GroupSection[] {
+    const byGroup = new Map<string, Record<string, any>[]>();
+    const firstSeen: string[] = [];
     for (const card of cards) {
-      const key = bucketFor(card);
-      if (!byBucket.has(key)) byBucket.set(key, []);
-      byBucket.get(key)?.push(card);
+      const key = groupKeyFor(card);
+      if (!byGroup.has(key)) {
+        byGroup.set(key, []);
+        firstSeen.push(key);
+      }
+      byGroup.get(key)?.push(card);
     }
-    return BUCKET_DEFINITIONS.filter((definition) => byBucket.has(definition.key)).map(
-      (definition) => ({
-        key: definition.key,
-        label: definition.label,
-        defaultCollapsed: definition.defaultCollapsed,
-        cards: (byBucket.get(definition.key) ?? []).sort((left, right) => {
-          const activityDelta =
-            Number(right.activity_at ?? 0) - Number(left.activity_at ?? 0);
-          return activityDelta || String(left.id).localeCompare(String(right.id));
-        })
-      })
+    const orderedKeys = GROUP_ORDER.filter((key) => byGroup.has(key)).concat(
+      firstSeen.filter((key) => !GROUP_ORDER.includes(key))
     );
+    return orderedKeys.map((key) => ({
+      key,
+      label: labelize(key),
+      defaultCollapsed: DEFAULT_COLLAPSED_GROUPS.has(key),
+      cards: (byGroup.get(key) ?? []).sort((left, right) => {
+        const activityDelta =
+          Number(right.activity_at ?? 0) - Number(left.activity_at ?? 0);
+        return activityDelta || String(left.id).localeCompare(String(right.id));
+      })
+    }));
   }
 
   onDestroy(() => {
@@ -217,20 +191,20 @@
             <span class="board-workspace-chief-peer-label">Chief of Staff</span>
           </button>
 
-          {#each buckets as bucket (bucket.key)}
+          {#each groups as group (group.key)}
             <Disclosure
               variant="workspace-bucket"
               chevron="trailing"
-              defaultOpen={!bucket.defaultCollapsed}
+              defaultOpen={!group.defaultCollapsed}
               data-bucket-section=""
-              data-bucket-key={bucket.key}
+              data-bucket-key={group.key}
             >
               {#snippet summary()}
-                <span class="board-workspace-bucket-label">{bucket.label}</span>
+                <span class="board-workspace-bucket-label">{group.label}</span>
               {/snippet}
 
               <div class="board-workspace-bucket-tickets">
-                {#each bucket.cards as card (card.id)}
+                {#each group.cards as card (card.id)}
                   {@const presentation = signalPresentation(card)}
                   <button
                     type="button"

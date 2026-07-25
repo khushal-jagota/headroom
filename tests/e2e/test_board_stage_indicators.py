@@ -1,4 +1,4 @@
-"""Focused Workspace status-bucket and row-signal regressions."""
+"""Focused Workspace status-group and row-signal regressions."""
 
 from __future__ import annotations
 
@@ -8,31 +8,29 @@ from planner.tickets.conversation_projection import TicketConversationProjection
 
 WAIT_MS = 10_000
 
-# The full canonical bucket order, top to bottom.
+# Workspace groups by the Ticket's own status, except a done Ticket, which groups
+# as done. This is the full display order, top to bottom.
 BUCKET_ORDER = [
     "errored",
-    "needs_you",
-    "kickoff",
-    "stopped",
-    "taken_over",
+    "needs_user",
+    "empty",
+    "user",
     "paired",
-    "agent_working",
-    "needs_approval",
-    "closing_out",
+    "agent",
+    "awaiting_approval",
     "blocked",
     "done",
 ]
 
+# The label is the humanized status name.
 BUCKET_LABELS = {
     "errored": "Errored",
-    "needs_you": "Needs you",
-    "kickoff": "Kickoff",
-    "stopped": "Stopped",
-    "taken_over": "Taken over",
+    "needs_user": "Needs user",
+    "empty": "Empty",
+    "user": "User",
     "paired": "Paired",
-    "agent_working": "Agent working",
-    "needs_approval": "Needs approval",
-    "closing_out": "Closing out",
+    "agent": "Agent",
+    "awaiting_approval": "Awaiting approval",
     "blocked": "Blocked",
     "done": "Done",
 }
@@ -96,7 +94,7 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     for ticket_id in (waiting, running, errored, completed):
         _add_today(api, server, ticket_id)
         _set_ticket_stage(server, ticket_id, "needs_success")
-    _set_ticket_status(server, running, "agent_running_step")
+    _set_ticket_status(server, running, "agent")
     _set_ticket_status(
         server, errored, "errored", backend_error="Provider process exited unexpectedly"
     )
@@ -107,7 +105,7 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
         context_factory(),
         server,
         "#/workspace",
-        _bucket("stopped"),
+        _bucket("empty"),
         settled=True,
     )
 
@@ -116,20 +114,20 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     errored_card = f'[data-card][data-ticket-id="{errored}"]'
     completed_card = f'[data-card][data-ticket-id="{completed}"]'
 
-    # Only the populated buckets render, in canonical order; the old
+    # Only the populated status groups render, in display order; the old
     # Project -> Worker type -> Stage tree is gone.
     rendered = page.eval_on_selector_all(
         "[data-bucket-section]",
         "els => els.map(el => el.getAttribute('data-bucket-key'))",
     )
-    assert rendered == ["errored", "stopped", "agent_working", "done"]
+    assert rendered == ["errored", "empty", "agent", "done"]
     assert page.locator("[data-project-section]").count() == 0
     assert page.locator("[data-worker-section]").count() == 0
     assert page.locator("[data-stage-section]").count() == 0
 
-    # Each card sits in exactly one bucket.
-    assert page.locator(f'{_bucket("stopped")} {waiting_card}').count() == 1
-    assert page.locator(f'{_bucket("agent_working")} {running_card}').count() == 1
+    # Each card sits in exactly one group.
+    assert page.locator(f'{_bucket("empty")} {waiting_card}').count() == 1
+    assert page.locator(f'{_bucket("agent")} {running_card}').count() == 1
     assert page.locator(f'{_bucket("errored")} {errored_card}').count() == 1
     assert page.locator(f'{_bucket("done")} {completed_card}').count() == 1
 
@@ -327,7 +325,7 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
     page.reload()
     page.wait_for_selector(mark, timeout=WAIT_MS)
     assert page.locator(reason).count() == 0
-    assert page.locator(f'{_bucket("stopped")} {card}').count() == 1
+    assert page.locator(f'{_bucket("empty")} {card}').count() == 1
     assert page.locator(_bucket("errored")).count() == 0
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
     assert page.get_attribute(mark, "data-reply-state") == "none"
@@ -435,18 +433,17 @@ def test_workspace_signals_follow_projection_activity_reply_and_acknowledgement(
 def test_workspace_buckets_render_membership_in_canonical_order(
     server, context_factory, open_page, cli, api
 ) -> None:
-    errored = _create_ticket(cli, server, "Errored bucket ticket")
-    needs_you = _create_ticket(cli, server, "Needs you ticket")
+    errored = _create_ticket(cli, server, "Errored group ticket")
+    needs_user_ticket = _create_ticket(cli, server, "Needs user ticket")
     kickoff_idle = _create_ticket(cli, server, "Kickoff idle ticket")
     kickoff_awaiting = _create_ticket(cli, server, "Kickoff awaiting ticket")
-    stopped_older = _create_ticket(cli, server, "Stopped older ticket")
-    stopped_newer = _create_ticket(cli, server, "Stopped newer ticket")
-    taken_over = _create_ticket(cli, server, "Taken over ticket")
-    discussion = _create_ticket(cli, server, "Proposal discussion ticket")
-    paired = _create_ticket(cli, server, "Paired work ticket")
-    running = _create_ticket(cli, server, "Agent working ticket")
-    approval = _create_ticket(cli, server, "Needs approval ticket")
-    closing = _create_ticket(cli, server, "Closing out ticket")
+    empty_older = _create_ticket(cli, server, "Empty older ticket")
+    empty_newer = _create_ticket(cli, server, "Empty newer ticket")
+    user_owned = _create_ticket(cli, server, "User ticket")
+    paired = _create_ticket(cli, server, "Paired ticket")
+    running = _create_ticket(cli, server, "Agent ticket")
+    approval = _create_ticket(cli, server, "Awaiting approval ticket")
+    closing = _create_ticket(cli, server, "Closeout idle ticket")
     done = _create_ticket(cli, server, "Done ticket")
     blocked_idle = cli(
         server,
@@ -459,7 +456,7 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         "--project-id",
         "project_vylo",
         "--blocked-by",
-        stopped_older,
+        empty_older,
     )["id"]
     blocked_running = cli(
         server,
@@ -472,40 +469,41 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         "--project-id",
         "project_vylo",
         "--blocked-by",
-        stopped_older,
+        empty_older,
     )["id"]
 
     _set_ticket_status(server, errored, "errored", backend_error="boom")
-    _set_ticket_status(server, needs_you, "needs_user")
+    _set_ticket_status(server, needs_user_ticket, "needs_user")
     _set_ticket_stage(server, kickoff_idle, "needs_kickoff")
     _set_ticket_stage(server, kickoff_awaiting, "needs_kickoff")
     _set_ticket_status(server, kickoff_awaiting, "awaiting_approval")
-    for ticket_id in (stopped_older, stopped_newer):
+    for ticket_id in (empty_older, empty_newer):
         _set_ticket_stage(server, ticket_id, "needs_success")
-    _set_ticket_updated_at(server, stopped_older, 10)
-    _set_ticket_updated_at(server, stopped_newer, 30)
-    _set_ticket_status(server, taken_over, "user_takeover")
-    _set_ticket_status(server, discussion, "proposal_discussion")
-    _set_ticket_status(server, paired, "paired_work")
-    _set_ticket_status(server, running, "agent_running_step")
+    _set_ticket_updated_at(server, empty_older, 10)
+    _set_ticket_updated_at(server, kickoff_idle, 20)
+    _set_ticket_updated_at(server, empty_newer, 30)
+    _set_ticket_status(server, user_owned, "user")
+    _set_ticket_status(server, paired, "paired")
+    _set_ticket_status(server, running, "agent")
     _set_ticket_stage(server, approval, "needs_plan")
     _set_ticket_status(server, approval, "awaiting_approval")
     _set_ticket_stage(server, closing, "needs_closeout")
+    _set_ticket_updated_at(server, closing, 40)
     _set_ticket_stage(server, done, "done")
     _set_ticket_stage(server, blocked_idle, "needs_success")
     _set_ticket_stage(server, blocked_running, "needs_success")
-    _set_ticket_status(server, blocked_running, "agent_running_step")
+    _set_ticket_status(server, blocked_running, "agent")
 
     page = open_page(
         context_factory(),
         server,
         "#/workspace",
-        _bucket("stopped"),
+        _bucket("empty"),
         settled=True,
     )
 
-    # All eleven buckets are populated, so all render, in canonical order with
-    # their canonical labels.
+    # All nine status groups are populated, so all render, in display order with
+    # the humanized status names as labels.
     rendered = page.eval_on_selector_all(
         "[data-bucket-section]",
         "els => els.map(el => el.getAttribute('data-bucket-key'))",
@@ -517,29 +515,32 @@ def test_workspace_buckets_render_membership_in_canonical_order(
     )
     assert labels == [BUCKET_LABELS[key] for key in BUCKET_ORDER]
 
-    # Blocked and Done are collapsed by default; every other bucket is open.
+    # Blocked and Done are collapsed by default; every other group is open.
     for key in BUCKET_ORDER:
         is_open = page.get_attribute(_bucket(key), "open") is not None
         assert is_open is (key not in ("blocked", "done")), key
 
-    # Membership: exactly one bucket per ticket.
+    # Membership: exactly one group per ticket, and the group is the status.
     memberships = {
         errored: "errored",
-        needs_you: "needs_you",
-        kickoff_idle: "kickoff",
-        # A kickoff-stage parked proposal belongs in Kickoff, not Needs approval.
-        kickoff_awaiting: "kickoff",
-        stopped_older: "stopped",
-        stopped_newer: "stopped",
-        taken_over: "taken_over",
-        discussion: "paired",
+        needs_user_ticket: "needs_user",
+        # Stage no longer subdivides a group: an idle Ticket resting at the
+        # Kickoff or the Closeout stage is just empty.
+        kickoff_idle: "empty",
+        closing: "empty",
+        empty_older: "empty",
+        empty_newer: "empty",
+        # ...and an awaiting-approval Ticket is one group whatever its stage.
+        kickoff_awaiting: "awaiting_approval",
+        approval: "awaiting_approval",
+        user_owned: "user",
         paired: "paired",
-        running: "agent_working",
-        approval: "needs_approval",
-        closing: "closing_out",
+        running: "agent",
+        # A Ticket resting with a live blocker carries the blocked status.
         blocked_idle: "blocked",
-        # Blocked claims only idle tickets: a real status wins.
-        blocked_running: "agent_working",
+        # The blocker link no longer groups anything on its own: this Ticket has
+        # the same live blocker and groups by its status.
+        blocked_running: "agent",
         done: "done",
     }
     for ticket_id, bucket_key in memberships.items():
@@ -552,19 +553,18 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         ).count()
         == 0
     )
-    assert (
-        page.locator(
-            f'{_bucket("needs_approval")} [data-card][data-ticket-id="{kickoff_awaiting}"]'
-        ).count()
-        == 0
-    )
 
-    # Rows within a bucket sort by activity, newest first, and carry no chips.
-    stopped_titles = page.eval_on_selector_all(
-        f'{_bucket("stopped")} [data-card] .list-row-title',
+    # Rows within a group sort by activity, newest first, and carry no chips.
+    empty_titles = page.eval_on_selector_all(
+        f'{_bucket("empty")} [data-card] .list-row-title',
         "els => els.map(el => el.textContent.trim())",
     )
-    assert stopped_titles == ["Stopped newer ticket", "Stopped older ticket"]
+    assert empty_titles == [
+        "Closeout idle ticket",
+        "Empty newer ticket",
+        "Kickoff idle ticket",
+        "Empty older ticket",
+    ]
     assert page.locator("[data-card] .chip").count() == 0
     row_child_counts = page.eval_on_selector_all(
         "[data-card]",
@@ -584,11 +584,11 @@ def test_workspace_bucket_disclosures_collapse_and_chevrons_reveal_on_intent(
         context_factory(),
         server,
         "#/workspace",
-        _bucket("stopped"),
+        _bucket("empty"),
         settled=True,
     )
 
-    bucket = _bucket("stopped")
+    bucket = _bucket("empty")
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
     assert page.locator(bucket).get_attribute("open") == ""
 

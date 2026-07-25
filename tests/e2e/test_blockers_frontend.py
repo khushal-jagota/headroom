@@ -73,7 +73,7 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
             (later_dependent,),
         )
         conn.execute(
-            "UPDATE tickets SET stage = 'needs_approach', ticket_status = 'empty' WHERE id = ?",
+            "UPDATE tickets SET stage = 'needs_approach', ticket_status = 'blocked' WHERE id = ?",
             (shared_dependent,),
         )
     for ticket_id in (blocker, kickoff_dependent, later_dependent, shared_dependent):
@@ -87,24 +87,24 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         settled=True,
     )
     blocked = '[data-bucket-section][data-bucket-key="blocked"]'
-    stopped = '[data-bucket-section][data-bucket-key="stopped"]'
-    kickoff = '[data-bucket-section][data-bucket-key="kickoff"]'
-    approval = '[data-bucket-section][data-bucket-key="needs_approval"]'
+    empty = '[data-bucket-section][data-bucket-key="empty"]'
+    approval = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
     active_card = f'[data-card][data-ticket-id="{blocker}"]'
     later_card = f'[data-card][data-ticket-id="{later_dependent}"]'
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
-    # Blocked collapses by default and claims only idle blocked tickets; a
-    # blocked ticket with a real status keeps its status bucket, and a blocked
-    # kickoff-stage parked proposal stays in Kickoff.
+    # Blocked is the resting status of a ticket held by a live blocker, and its
+    # group collapses by default. A ticket with a live blocker that carries any
+    # other status — a parked kickoff proposal, a later approval — groups by
+    # that status instead.
     assert page.locator(blocked).get_attribute("open") is None
-    assert page.locator(stopped).get_attribute("open") is not None
-    assert page.locator(f"{stopped} {active_card}").is_visible()
+    assert page.locator(empty).get_attribute("open") is not None
+    assert page.locator(f"{empty} {active_card}").is_visible()
     assert page.locator(approval).get_attribute("open") is not None
     assert page.locator(f"{approval} {later_card}").is_visible()
     assert page.locator(f"{blocked} {later_card}").count() == 0
-    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
+    assert page.locator(f"{approval} {kickoff_card}").count() == 1
     assert page.locator(f"{blocked} {kickoff_card}").count() == 0
     assert not page.locator(f"{blocked} {shared_card}").is_visible()
     page.locator(f"{blocked} > summary").click()
@@ -117,8 +117,10 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
     ) == "false"
     assert "Prerequisite" not in page.inner_text(f"{blocked} > .disclosure-body")
 
+    # Removing the last live blocker settles the ticket back to empty, so the
+    # card moves out of Blocked and the emptied group stops rendering.
     cli(server, "ticket", "unblock", shared_dependent, "--by", blocker)
-    page.wait_for_selector(f"{stopped} {shared_card}", timeout=WAIT_MS)
+    page.wait_for_selector(f"{empty} {shared_card}", timeout=WAIT_MS)
     assert page.locator(blocked).count() == 0
 
     _post_stage(server, blocker, "done")
@@ -127,7 +129,7 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         state="attached",
         timeout=WAIT_MS,
     )
-    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
+    assert page.locator(f"{approval} {kickoff_card}").count() == 1
     assert _get_ticket(server, later_dependent)["stage"] == "needs_plan"
     assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 

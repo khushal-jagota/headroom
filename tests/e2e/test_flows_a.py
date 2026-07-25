@@ -393,7 +393,7 @@ def test_review_return_for_revision_starts_agent_without_chat_copy(
 
     ticket = api.get(server, f"/api/tickets/{tid}")
     assert ticket["stage"] == "needs_success"
-    assert ticket["ticket_status"] == "agent_running_step"
+    assert ticket["ticket_status"] == "agent"
     assert ticket["fields"]["success"]["value"] is None
     assert ticket["fields"]["success"]["proposal"] is None
     assert api.get(server, "/api/review")["ticket_decisions"] == []

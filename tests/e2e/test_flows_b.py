@@ -129,7 +129,7 @@ def _snap_ticket(p: Page):
 
 def _snap_board(p: Page, mid):
     card = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
-    bucket = '[data-bucket-section][data-bucket-key="needs_approval"]'
+    bucket = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
         "bucket": p.inner_text(f"{bucket} > summary .board-workspace-bucket-label"),
@@ -292,7 +292,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
         page.get_attribute('section[data-screen="ticket"]', "data-stage")
         == "needs_implementation"
     )
-    assert page.query_selector('[data-marker="agent-running-step"]') is None
+    assert page.query_selector('[data-marker="agent"]') is None
 
     # Worker files implementation claimless; ceiling needs_implementation ⇒ it PARKS
     # pending (nothing auto-accepts past the ceiling).
@@ -451,7 +451,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     after_b = _snap_board(page_b, mid)
     expected_b = {
         "title": E31_TITLE,
-        "bucket": "Needs approval",
+        "bucket": "Awaiting approval",
         "nested": 1,
         "marks": 1,
         "agent_working": "false",

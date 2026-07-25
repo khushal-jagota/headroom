@@ -5,7 +5,7 @@
     mutateJsonWithResourceEffect,
     resourceCatalogue
   } from "../lib/resourceCatalogue";
-  import { PRIORITIES, fieldSlot, labelize } from "../lib/ui";
+  import { PRIORITIES, fieldSlot, labelize, ticketStatusText } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -203,27 +203,12 @@
 
   function markerFor(detail: TicketDetail): string[] {
     const markers: string[] = [];
-    if (detail.ticket_status === "agent_running_step") markers.push("agent-running-step");
+    if (detail.ticket_status === "agent") markers.push("agent");
     if (detail.ticket_status === "errored") markers.push("errored");
-    if (detail.ticket_status === "user_takeover") markers.push("user-takeover");
-    if (detail.ticket_status === "paired_work") markers.push("paired-work");
+    if (detail.ticket_status === "user") markers.push("user");
+    if (detail.ticket_status === "paired") markers.push("paired");
     if (detail.blocked) markers.push("blocked");
     return markers;
-  }
-
-  const STATUS_DISPLAY: Record<string, string> = {
-    empty: "empty",
-    agent_running_step: "running step",
-    awaiting_approval: "awaiting approval",
-    proposal_discussion: "in discussion",
-    paired_work: "paired work",
-    user_takeover: "user takeover",
-    needs_user: "needs user",
-    errored: "errored"
-  };
-
-  function statusDisplay(status: string): string {
-    return STATUS_DISPLAY[status] || status.replace(/_/g, " ");
   }
 
   function conversationEmployeeLabel(detail: TicketDetail): string {
@@ -309,11 +294,11 @@
             <span
               class="ticket-status-display"
               class:ticket-status-display--attention={
-                ["awaiting_approval", "proposal_discussion", "needs_user"].includes(detail.ticket_status || "empty")
+                ["awaiting_approval", "needs_user"].includes(detail.ticket_status || "empty")
               }
               data-ticket-status={detail.ticket_status || "empty"}
             >
-              <span class="ticket-status-dot"></span>{statusDisplay(detail.ticket_status || "empty")}
+              <span class="ticket-status-dot"></span>{ticketStatusText(detail.ticket_status || "empty")}
             </span>
             <EnumPill
               value={detail.priority}
