@@ -159,12 +159,27 @@ export function askIsGeneric(ask: { options?: readonly PermissionAskOption[] } |
   return askActions(ask).some((action) => !action.supplied);
 }
 
-/** The ask's own words, used as the composer's placeholder while it takes over. */
+/** The ask's own words, used as the composer's placeholder while it takes over.
+ *
+ * A placeholder is one line of grey text, so only a detail that is genuinely one short
+ * line is used as one. Anything longer — and anything structured — belongs in the card,
+ * where it can be read and scrolled; squeezing it in here produced the JSON-in-a-
+ * placeholder the owner saw.
+ */
+const LONGEST_DETAIL_WORTH_A_PLACEHOLDER = 80;
+
 export function askPlaceholder(
   ask: { title: string; detail?: string | null } | null
 ): string {
   if (ask === null) return "";
-  return ask.detail && ask.detail !== "" ? ask.detail : ask.title;
+  const detail = ask.detail?.trim() ?? "";
+  const isOneShortLine =
+    detail !== ""
+    && !detail.includes("\n")
+    && detail.length <= LONGEST_DETAIL_WORTH_A_PLACEHOLDER
+    && !detail.startsWith("{")
+    && !detail.startsWith("[");
+  return isOneShortLine ? detail : ask.title;
 }
 
 // --- what a picker changes ---------------------------------------------------------------
@@ -233,6 +248,62 @@ export function modelDisplayName(
   if (value === null) return null;
   const match = models.find((model) => model.model_id === value);
   return match?.display_name ?? value;
+}
+
+/** What this model really is, when the catalog says. Absent stays absent. */
+export function modelDetail(
+  models: readonly { model_id: string; detail?: string | null }[],
+  value: string | null
+): string | null {
+  if (value === null) return null;
+  return models.find((model) => model.model_id === value)?.detail ?? null;
+}
+
+// --- what shape of ask this is -------------------------------------------------------------
+
+/** The three kinds of thing an agent can stop and wait for.
+ *
+ * ``permission`` is the ask this pane was built for: the backend offers answers that
+ * allow or refuse something. ``question`` is an ask whose options are real choices —
+ * answering it is picking one, not approving it, so approving language would be wrong.
+ * ``shapeless`` is an ask carrying nothing to pick at all, which must still be escapable.
+ */
+export type AskShape = "permission" | "question" | "shapeless";
+
+export function askShape(ask: { options?: readonly PermissionAskOption[] } | null): AskShape {
+  const options = ask?.options ?? [];
+  if (options.length === 0) return "shapeless";
+  const offersPermission = options.some(
+    (option) => option.option_kind.startsWith("allow") || option.option_kind.startsWith("reject")
+  );
+  return offersPermission ? "permission" : "question";
+}
+
+export type AskQuestionChoice = {
+  optionId: string;
+  label: string;
+  /** The number key that picks this one, for the first nine. Past that there is no key —
+   *  the choice is still there and still clickable, it just has no shortcut. */
+  shortcutDigit: number | null;
+};
+
+export function askQuestionChoices(
+  ask: { options?: readonly PermissionAskOption[] } | null
+): AskQuestionChoice[] {
+  return (ask?.options ?? []).map((option, index) => ({
+    optionId: option.option_id,
+    label: option.label,
+    shortcutDigit: index < 9 ? index + 1 : null
+  }));
+}
+
+/** The choice a number key picks, or nothing if that key picks none. */
+export function askChoiceForDigit(
+  ask: { options?: readonly PermissionAskOption[] } | null,
+  digit: number
+): AskQuestionChoice | null {
+  if (!Number.isInteger(digit) || digit < 1 || digit > 9) return null;
+  return askQuestionChoices(ask)[digit - 1] ?? null;
 }
 
 /** What a delivery's fate says, in the words a person reads under the composer.

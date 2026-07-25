@@ -7,11 +7,13 @@
    * was. When an ask is waiting the whole box gives way to it, because until it is
    * answered there is nothing else this composer could usefully do.
    */
+  import PermissionAskActions from "./PermissionAskActions.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
   import {
     askPlaceholder,
     deliveryOptionsFor,
     hasArmedChange,
+    modelDetail,
     modelDisplayName
   } from "../../lib/conversation2/composer";
   import type { RunValues } from "../../lib/conversation2/composer";
@@ -67,7 +69,6 @@
   let mode = $state<PromptDeliveryMode>("run_when_free");
   let pickedModel = $state<string | null>(null);
   let pickedEffort = $state<string | null>(null);
-  let pickerOpen = $state(false);
   let sending = $state(false);
 
   let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
@@ -77,21 +78,14 @@
   let takenOver = $derived(ask !== null);
   let inputDisabled = $derived(disabled || takenOver || sending);
   let livePlaceholder = $derived(takenOver ? askPlaceholder(ask) : placeholder);
-  let modelLabel = $derived(
-    modelDisplayName(models, pickedModel ?? current.model) ?? "the backend's own model"
-  );
-  let effortLabel = $derived(pickedEffort ?? current.reasoningEffort);
-  let pickerLabel = $derived(
-    [modelLabel, effortLabel, armed ? "next message" : null]
-      .filter((part) => part)
-      .join(" · ")
-  );
-
-  function abandonPicker(): void {
-    pickedModel = null;
-    pickedEffort = null;
-    pickerOpen = false;
-  }
+  // What the chosen model really is, when the catalog says — an alias and the version it
+  // reaches. A native select has nowhere to put a second line, so it is the tooltip.
+  let modelTitle = $derived.by(() => {
+    const value = pickedModel ?? current.model;
+    const name = modelDisplayName(models, value) ?? "the backend's own model";
+    const detail = modelDetail(models, value);
+    return detail === null ? name : `${name} — ${detail}`;
+  });
 
   async function send(): Promise<void> {
     const trimmed = text.trim();
@@ -101,10 +95,10 @@
       const delivered = await onSend(trimmed, effectiveMode, picked);
       if (!delivered) return;
       text = "";
-      // The change rode out with the message, so it is no longer pending.
+      // The change rode out with the message, so it is no longer pending: the selects
+      // fall back to showing what the conversation now runs on.
       pickedModel = null;
       pickedEffort = null;
-      pickerOpen = false;
     } finally {
       sending = false;
     }
@@ -131,11 +125,21 @@
 
     <div
       class="chat-box"
+      class:has-ask={takenOver}
       data-conversation2-box
       data-conversation2-taken-over={takenOver ? "true" : undefined}
       role="group"
       aria-label="Conversation composer"
     >
+      {#if takenOver && ask}
+        <PermissionAskCard
+          ask={ask}
+          busy={disabled}
+          note={askNote}
+          onAnswer={(optionId) => onAnswer?.(optionId)}
+        />
+      {/if}
+
       <textarea
         class="chat-ta"
         data-conversation2-input
@@ -146,26 +150,57 @@
         onkeydown={onKeydown}
       ></textarea>
 
-      {#if takenOver && ask}
-        <PermissionAskCard
-          ask={ask}
-          busy={disabled}
-          note={askNote}
-          onAnswer={(optionId) => onAnswer?.(optionId)}
-          onCancelTurn={() => onCancelTurn?.()}
-        />
-      {:else}
-        <div class="chat-foot">
-          <button
-            type="button"
-            class="c2-picker-btn"
-            class:on={armed}
-            data-conversation2-picker-toggle
-            aria-expanded={pickerOpen}
-            onclick={() => (pickerOpen = !pickerOpen)}
-          >
-            {pickerLabel}
-          </button>
+      <div class="chat-foot">
+        {#if takenOver && ask}
+          <PermissionAskActions
+            ask={ask}
+            busy={disabled}
+            onAnswer={(optionId) => onAnswer?.(optionId)}
+            onCancelTurn={() => onCancelTurn?.()}
+          />
+        {:else}
+          <label class="c2-pick" data-conversation2-pick-model-field>
+            <span class="c2-pick-name">model</span>
+            <select
+              class="c2-pick-select"
+              class:on={pickedModel !== null && pickedModel !== current.model}
+              data-conversation2-picker-model
+              disabled={inputDisabled}
+              value={pickedModel ?? current.model ?? ""}
+              title={modelTitle}
+              onchange={(event) => (pickedModel = event.currentTarget.value || null)}
+            >
+              <option value="">backend default</option>
+              {#each models as model (model.model_id)}
+                <option value={model.model_id} title={model.detail ?? undefined}>
+                  {model.display_name ?? model.model_id}
+                </option>
+              {/each}
+            </select>
+          </label>
+
+          {#if effortOptions.length > 0}
+            <label class="c2-pick" data-conversation2-pick-effort-field>
+              <span class="c2-pick-name">effort</span>
+              <select
+                class="c2-pick-select"
+                class:on={pickedEffort !== null && pickedEffort !== current.reasoningEffort}
+                data-conversation2-picker-effort
+                disabled={inputDisabled}
+                value={pickedEffort ?? current.reasoningEffort ?? ""}
+                onchange={(event) => (pickedEffort = event.currentTarget.value || null)}
+              >
+                <option value="">backend default</option>
+                {#each effortOptions as effort (effort)}
+                  <option value={effort}>{effort}</option>
+                {/each}
+              </select>
+            </label>
+          {/if}
+
+          {#if armed}
+            <span class="c2-armed" data-conversation2-picker-armed>next message</span>
+          {/if}
 
           {#if running}
             <div class="chat-seg" data-conversation2-delivery role="group" aria-label="Delivery">
@@ -192,49 +227,8 @@
             aria-label={running ? "Stop the turn" : "Send"}
             onclick={() => (running ? onStop?.() : void send())}
           >{running ? "■" : "↑"}</button>
-        </div>
-      {/if}
-
-      {#if pickerOpen && !takenOver}
-        <div class="c2-picker" data-conversation2-picker>
-          <label class="c2-picker-field">
-            <span>model</span>
-            <select
-              data-conversation2-picker-model
-              value={pickedModel ?? current.model ?? ""}
-              onchange={(event) => (pickedModel = event.currentTarget.value || null)}
-            >
-              <option value="">the backend's own model</option>
-              {#each models as model (model.model_id)}
-                <option value={model.model_id}>{model.display_name ?? model.model_id}</option>
-              {/each}
-            </select>
-          </label>
-          {#if effortOptions.length > 0}
-            <label class="c2-picker-field">
-              <span>reasoning effort</span>
-              <select
-                data-conversation2-picker-effort
-                value={pickedEffort ?? current.reasoningEffort ?? ""}
-                onchange={(event) => (pickedEffort = event.currentTarget.value || null)}
-              >
-                <option value="">the backend's own effort</option>
-                {#each effortOptions as effort (effort)}
-                  <option value={effort}>{effort}</option>
-                {/each}
-              </select>
-            </label>
-          {/if}
-          <div class="c2-picker-foot">
-            <span class="c2-picker-hint">
-              {armed ? "rides the next message" : "nothing changes until you send"}
-            </span>
-            <button type="button" data-conversation2-picker-abandon onclick={abandonPicker}>
-              Leave as it is
-            </button>
-          </div>
-        </div>
-      {/if}
+        {/if}
+      </div>
     </div>
   </div>
 
@@ -247,61 +241,43 @@
 
 <style>
   .c2-composer { display: grid; gap: var(--space-2); }
-  .c2-picker-btn {
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-sm);
+  /* An ask is a band on top of the box, not a replacement for it: the input keeps its
+     resting height underneath, so the composer stays exactly the size it always was. */
+  :global(.chat-box.has-ask) { padding-top: 0; }
+  .c2-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .c2-pick-name {
     color: var(--text-faintest);
-    cursor: pointer;
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     letter-spacing: var(--tracking-mono);
-    padding: var(--space-1) var(--space-2);
   }
-  .c2-picker-btn:hover { color: var(--text-muted); background: var(--surface-overlay); }
-  .c2-picker-btn.on { color: var(--accent-bright); }
-  .c2-picker {
-    display: grid;
-    gap: var(--space-2);
-    margin-top: var(--space-2);
-    padding-top: var(--space-2);
-    border-top: var(--border-hairline) solid var(--border-color);
-  }
-  .c2-picker-field {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-  }
-  .c2-picker-field select {
-    flex: 1;
+  .c2-pick-select {
     min-width: 0;
-    background: var(--surface-raised);
-    border: var(--border-hairline) solid var(--border-color);
-    border-radius: var(--radius-sm);
-    color: var(--text-default);
-    font: inherit;
-    padding: var(--space-1) var(--space-2);
-  }
-  .c2-picker-foot {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .c2-picker-hint { color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs); }
-  .c2-picker-foot button {
+    max-width: calc(var(--space-page-tail) * 1.25);
     background: transparent;
-    border: 0;
-    color: var(--text-faint);
+    border: var(--border-hairline) solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
     cursor: pointer;
     font-family: var(--font-mono);
     font-size: var(--type-xs);
-    padding: 0;
+    padding: var(--space-1);
+    text-overflow: ellipsis;
   }
-  .c2-picker-foot button:hover { color: var(--text-strong); }
+  .c2-pick-select:hover { border-color: var(--border-color); color: var(--text-strong); }
+  .c2-pick-select.on { color: var(--accent-bright); border-color: var(--border-color); }
+  .c2-pick-select:disabled { cursor: default; opacity: 0.5; }
+  .c2-armed {
+    color: var(--accent-bright);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    letter-spacing: var(--tracking-mono);
+  }
   .c2-fate {
     color: var(--text-faint);
     font-family: var(--font-mono);

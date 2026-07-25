@@ -132,7 +132,14 @@ export type BackendIdentity = {
   login_command: string | null;
 };
 
-export type BackendModel = { model_id: string; display_name: string | null };
+export type BackendModel = {
+  model_id: string;
+  display_name: string | null;
+  /** What this model really is, when the name alone does not say — an alias and the
+   *  version it reaches, for instance. Optional: a catalog that offers none is read the
+   *  same way as one that has not started offering them yet. */
+  detail?: string | null;
+};
 
 export type BackendUpdateAdvisory = {
   install_method: string;

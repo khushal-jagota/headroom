@@ -59,9 +59,20 @@
       <dd data-conversation2-backend-identity>{identityLine}</dd>
       <dt>models</dt>
       <dd data-conversation2-backend-models>
-        {snapshot.available_models.length > 0
-          ? snapshot.available_models.map((model) => model.display_name ?? model.model_id).join(", ")
-          : "none offered here"}
+        {#if snapshot.available_models.length === 0}
+          none offered here
+        {:else}
+          {#each snapshot.available_models as model (model.model_id)}
+            <span class="c2-backend-model">
+              {model.display_name ?? model.model_id}
+              {#if model.detail}
+                <span class="c2-backend-model-detail" data-conversation2-backend-model-detail>
+                  {model.detail}
+                </span>
+              {/if}
+            </span>
+          {/each}
+        {/if}
       </dd>
       <dt>reasoning effort</dt>
       <dd data-conversation2-backend-efforts>
@@ -135,6 +146,13 @@
   }
   .c2-backend-facts dt { color: var(--text-faintest); font-family: var(--font-mono); }
   .c2-backend-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .c2-backend-model { display: block; }
+  /* What the name reaches, when the name alone does not say. */
+  .c2-backend-model-detail {
+    display: block;
+    color: var(--text-faintest);
+    font-family: var(--font-mono);
+  }
   .c2-backend-advisory {
     display: flex;
     align-items: center;

@@ -49,11 +49,27 @@ const {
   currentRunValues,
   createConversationStream
 } = await import(join(directory, "feed.mjs"));
-const { transcriptRows, liveAskFrom, askDeadSentence, refusalSentence, turnEndingSentence } =
-  await import(join(directory, "transcript.mjs"));
+const {
+  transcriptRows,
+  threadItems,
+  liveAskFrom,
+  askDeadSentence,
+  hiddenWorkSentence,
+  promptLabelFor,
+  readableDetail,
+  refusalSentence,
+  toolGlyphKind,
+  turnEndingSentence,
+  workedSentence,
+  VISIBLE_RUNNING_WORK_ENTRIES
+} = await import(join(directory, "transcript.mjs"));
 const {
   askActions,
+  askChoiceForDigit,
   askIsGeneric,
+  askQuestionChoices,
+  askShape,
+  modelDetail,
   askPlaceholder,
   armedChangeFor,
   deliveryOptionsFor,
@@ -72,6 +88,10 @@ const PROMPT = (sequence, text = "hello", mode = "run_when_free") =>
 const AGENT = (sequence, text) => event(sequence, "agent_message", { text });
 const TURN_ENDED = (sequence, ending = "completed", error_summary = null) =>
   event(sequence, "turn_ended", { ending, error_summary });
+const TOOL_STARTED = (sequence, tool_call_id, title, tool_kind = "read") =>
+  event(sequence, "tool_call_started", { tool_call_id, title, tool_kind, detail: null });
+const TOOL_FINISHED = (sequence, tool_call_id, tool_call_status = "completed", detail = null) =>
+  event(sequence, "tool_call_finished", { tool_call_id, tool_call_status, detail });
 
 // --- the record a reader holds ------------------------------------------------------------
 
@@ -578,6 +598,172 @@ const TURN_ENDED = (sequence, ending = "completed", error_summary = null) =>
     fateSentence({ fate: "refused", refusal_reason: "backend_cannot_steer" }),
     /^not delivered · .*running turn$/
   );
+}
+
+// --- the space between a message and its reply -------------------------------------------------
+
+{
+  // While a turn runs, one line is what is happening; the rest wait behind a count.
+  let feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    PROMPT(1, "do the thing"),
+    TOOL_STARTED(2, "t1", "Read one"),
+    TOOL_FINISHED(3, "t1"),
+    TOOL_STARTED(4, "t2", "Read two"),
+    TOOL_FINISHED(5, "t2"),
+    TOOL_STARTED(6, "t3", "Read three")
+  ]);
+  const items = threadItems(transcriptRows(feed));
+  const work = items.filter((item) => item.kind === "work");
+  assert.equal(work.length, 1, "a turn's tool calls are one thing, not a run of lines");
+  assert.equal(work[0].entries.length, 3);
+  assert.equal(work[0].settled, false);
+  assert.equal(VISIBLE_RUNNING_WORK_ENTRIES, 1);
+  assert.equal(hiddenWorkSentence(2), "+2 previous tool calls");
+  assert.equal(hiddenWorkSentence(1), "+1 previous tool call");
+  // The conversation itself is still made of rows: only the work was gathered up.
+  assert.deepEqual(
+    items.filter((item) => item.kind === "row").map((item) => item.row.kind),
+    ["prompt"]
+  );
+}
+
+{
+  // When the turn settles the whole log folds, and the fold says how long it took.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    { ...PROMPT(1, "do the thing"), created_at: 1_000 },
+    { ...TOOL_STARTED(2, "t1", "Read one"), created_at: 1_002 },
+    { ...TOOL_FINISHED(3, "t1"), created_at: 1_003 },
+    { ...AGENT(4, "here you go"), created_at: 1_011 },
+    { ...TURN_ENDED(5), created_at: 1_012 }
+  ]);
+  const items = threadItems(transcriptRows(feed));
+  const work = items.find((item) => item.kind === "work");
+  assert.equal(work.settled, true);
+  assert.equal(work.durationSeconds, 12, "start of the turn to its ending, in whole seconds");
+  assert.equal(workedSentence(work.durationSeconds), "worked for 12s");
+  // The work is anchored where it began, so the thread still reads in order.
+  assert.deepEqual(
+    items.map((item) => (item.kind === "work" ? "work" : item.row.kind)),
+    ["prompt", "work", "agent_message", "turn_ended"]
+  );
+}
+
+{
+  // The record keeps whole seconds, so a turn too short to measure claims no duration.
+  assert.equal(workedSentence(0), "worked");
+  assert.equal(workedSentence(null), "worked");
+  assert.equal(workedSentence(1), "worked for 1s");
+  assert.equal(workedSentence(59), "worked for 59s");
+  assert.equal(workedSentence(60), "worked for 1m");
+  assert.equal(workedSentence(80), "worked for 1m 20s");
+  assert.equal(workedSentence(3_600), "worked for 60m");
+}
+
+{
+  // Two turns keep their own work and their own durations.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    { ...PROMPT(1), created_at: 100 },
+    { ...TOOL_STARTED(2, "t1", "One"), created_at: 101 },
+    { ...TURN_ENDED(3), created_at: 105 },
+    { ...PROMPT(4, "again"), created_at: 200 },
+    { ...TOOL_STARTED(5, "t2", "Two"), created_at: 201 }
+  ]);
+  const work = threadItems(transcriptRows(feed)).filter((item) => item.kind === "work");
+  assert.equal(work.length, 2);
+  assert.deepEqual(work.map((item) => item.settled), [true, false]);
+  assert.equal(work[0].durationSeconds, 5);
+  assert.equal(work[1].durationSeconds, null, "a turn still running has no length yet");
+}
+
+{
+  // A payload is laid out to be read; prose is left exactly as it was written.
+  assert.equal(readableDetail('{"a":1,"b":[2,3]}'), '{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}');
+  assert.equal(readableDetail("ls -la /tmp"), "ls -la /tmp");
+  assert.equal(readableDetail("{not actually json"), "{not actually json");
+  assert.equal(readableDetail(""), null);
+  assert.equal(readableDetail(null), null);
+  assert.equal(readableDetail(undefined), null);
+}
+
+{
+  // Your own messages are not labelled as yours; everyone else's are.
+  assert.equal(promptLabelFor("owner", "owner"), null);
+  assert.equal(promptLabelFor("the automatic loop", "owner"), "the automatic loop");
+  assert.equal(promptLabelFor("owner", null), "owner", "with no pane label nothing is suppressed");
+}
+
+{
+  // What a tool did, read from what it is called — the backends do not agree on this field.
+  assert.equal(toolGlyphKind("read"), "read", "the protocol's own kinds pass straight through");
+  assert.equal(toolGlyphKind("switch_mode"), "switch_mode");
+  assert.equal(toolGlyphKind("Bash"), "execute", "a tool name is read by what the word means");
+  assert.equal(toolGlyphKind("Grep"), "search");
+  assert.equal(toolGlyphKind("WebFetch"), "fetch");
+  assert.equal(toolGlyphKind("NotebookEdit"), "edit");
+  assert.equal(toolGlyphKind("Read"), "read");
+  assert.equal(toolGlyphKind("something nobody has heard of"), "other");
+}
+
+// --- the three shapes of ask -------------------------------------------------------------------
+
+{
+  const permission = {
+    options: [
+      { option_id: "o-reject", label: "Decline", option_kind: "reject_once" },
+      { option_id: "o-allow", label: "Approve once", option_kind: "allow_once" }
+    ]
+  };
+  const question = {
+    options: [
+      { option_id: "q-a", label: "Rewrite it", option_kind: "choice" },
+      { option_id: "q-b", label: "Leave it", option_kind: "choice" }
+    ]
+  };
+  assert.equal(askShape(permission), "permission");
+  assert.equal(askShape(question), "question", "options that are choices are not approvals");
+  assert.equal(askShape({ options: [] }), "shapeless");
+  assert.equal(askShape(null), "shapeless");
+
+  // A question is answered by picking, and the first nine picks have a number key.
+  const many = {
+    options: Array.from({ length: 11 }, (_unused, index) => ({
+      option_id: `q${index}`,
+      label: `Choice ${index}`,
+      option_kind: "choice"
+    }))
+  };
+  const choices = askQuestionChoices(many);
+  assert.equal(choices.length, 11, "nothing is dropped for want of a key");
+  assert.deepEqual(choices.slice(0, 9).map((choice) => choice.shortcutDigit), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(choices[9].shortcutDigit, null);
+  assert.equal(askChoiceForDigit(many, 3).optionId, "q2");
+  assert.equal(askChoiceForDigit(question, 3), null, "a key past the choices picks nothing");
+  assert.equal(askChoiceForDigit(question, 0), null);
+  assert.equal(askChoiceForDigit(question, Number.NaN), null);
+}
+
+{
+  // A placeholder is one line of grey text, so a payload never becomes one.
+  assert.equal(askPlaceholder({ title: "Run ls", detail: "ls -la /tmp" }), "ls -la /tmp");
+  assert.equal(
+    askPlaceholder({ title: "Which way?", detail: '{"questions":[{"q":"a"}]}' }),
+    "Which way?",
+    "structured detail belongs in the card, not in a placeholder"
+  );
+  assert.equal(askPlaceholder({ title: "Run it", detail: "line one\nline two" }), "Run it");
+  assert.equal(askPlaceholder({ title: "Run it", detail: "x".repeat(200) }), "Run it");
+  assert.equal(askPlaceholder({ title: "Run ls", detail: null }), "Run ls");
+}
+
+{
+  const models = [
+    { model_id: "opus", display_name: "Opus 5", detail: "opus → claude-opus-5" },
+    { model_id: "plain", display_name: "Plain" }
+  ];
+  assert.equal(modelDetail(models, "opus"), "opus → claude-opus-5");
+  assert.equal(modelDetail(models, "plain"), null, "a catalog that offers none reads as absent");
+  assert.equal(modelDetail(models, "unknown"), null);
+  assert.equal(modelDetail(models, null), null);
 }
 
 // --- the wire's own names --------------------------------------------------------------------

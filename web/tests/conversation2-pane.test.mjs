@@ -34,7 +34,10 @@ const expectedInventory = [
   "ConversationPane.svelte",
   "ConversationTranscript.svelte",
   "NewConversationForm.svelte",
-  "PermissionAskCard.svelte"
+  "PermissionAskActions.svelte",
+  "PermissionAskCard.svelte",
+  "ToolCallRow.svelte",
+  "WorkLog.svelte"
 ];
 const inventory = (await readdir(componentDirectory))
   .filter((name) => name.endsWith(".svelte"))
@@ -83,8 +86,12 @@ assert.match(sources["ConversationComposer.svelte"], /chat-seg/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
 // Nothing in the new pane reaches into the components serving production today.
+const ALLOWED_ACP_LEAF = "../../lib/acp/stepIcons";
 for (const [fileName, source] of Object.entries(sources)) {
-  assert.doesNotMatch(source, /lib\/acp\/|components\/acp\//, `${fileName} must not use the acp layer`);
+  const reaches = [...source.matchAll(/["'][^"']*(?:lib\/acp\/|components\/acp\/)[^"']*["']/g)]
+    .map((found) => found[0].slice(1, -1))
+    .filter((specifier) => specifier !== ALLOWED_ACP_LEAF);
+  assert.deepEqual(reaches, [], `${fileName} may reuse only the wire-agnostic step glyphs`);
 }
 assert.doesNotMatch(routeSource, /lib\/acp\/|components\/acp\//);
 
@@ -138,6 +145,8 @@ try {
       'export { default as Composer } from "../src/components/conversation2/ConversationComposer.svelte";',
       'export { default as AskCard } from "../src/components/conversation2/PermissionAskCard.svelte";',
       'export { default as BackendCard } from "../src/components/conversation2/BackendCard.svelte";',
+      'export { default as AskActions } from "../src/components/conversation2/PermissionAskActions.svelte";',
+      'export { default as WorkLog } from "../src/components/conversation2/WorkLog.svelte";',
       ""
     ].join("\n"),
     "utf8"
@@ -154,7 +163,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskCard, BackendCard, Composer, Transcript } = await import(
+  const { AskActions, AskCard, BackendCard, Composer, Transcript, WorkLog } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -167,6 +176,7 @@ try {
       key: "e2",
       kind: "permission_ask",
       sequence: 2,
+      createdAt: 1_000,
       askId: "a1",
       title: "Run rm -rf",
       detail: "in ~/Coding",
@@ -196,7 +206,7 @@ try {
   const stoppedThread = drawn(Transcript, {
     rows: [
       askRow("dead", "no_ending_recorded"),
-      { key: "turn-stopped", kind: "turn_stopped", sequence: 3 }
+      { key: "turn-stopped", kind: "turn_stopped", sequence: 3, createdAt: 1_000 }
     ]
   });
   assert.match(stoppedThread, /data-conversation2-ask-state="dead"/);
@@ -208,11 +218,20 @@ try {
   // The thread's other lines: a prompt says how it was sent, a turn ending carries its reason.
   const mixedThread = drawn(Transcript, {
     rows: [
-      { key: "e1", kind: "prompt", sequence: 1, text: "go", senderLabel: "owner", mode: "steer" },
+      {
+        key: "e1",
+        kind: "prompt",
+        sequence: 1,
+        createdAt: 1_000,
+        text: "go",
+        senderLabel: "the automatic loop",
+        mode: "steer"
+      },
       {
         key: "e2",
         kind: "tool_call",
         sequence: 2,
+        createdAt: 1_001,
         toolCallId: "t1",
         title: "Read file",
         toolKind: "read",
@@ -224,6 +243,7 @@ try {
         key: "e3",
         kind: "model_changed",
         sequence: 3,
+        createdAt: 1_002,
         model: "sonnet",
         reasoningEffort: "low"
       },
@@ -231,20 +251,103 @@ try {
         key: "e4",
         kind: "turn_ended",
         sequence: 4,
+        createdAt: 1_003,
         ending: "failed",
         errorSummary: "the child stopped"
       }
     ]
   });
   assert.match(mixedThread, /steered/);
-  assert.match(mixedThread, /acp-step/, "a tool call keeps the step row look");
+  assert.match(mixedThread, /the automatic loop/, "somebody else's message says who sent it");
   assert.match(mixedThread, /now running on sonnet · low/);
   assert.match(mixedThread, /turn failed · the child stopped/);
+  // The turn is over, so its one tool call is behind the fold rather than in the thread.
+  assert.match(mixedThread, /worked for 3s · 1 tool call/);
+  assert.doesNotMatch(mixedThread, /acp-step/);
+
+  // FINDING 2: your own messages are not labelled as yours.
+  function promptThread(senderLabel, ownSenderLabel) {
+    return drawn(Transcript, {
+      ownSenderLabel,
+      rows: [
+        {
+          key: "e1",
+          kind: "prompt",
+          sequence: 1,
+          createdAt: 1_000,
+          text: "go",
+          senderLabel,
+          mode: "run_when_free"
+        }
+      ]
+    });
+  }
+  assert.doesNotMatch(
+    promptThread("owner", "owner"),
+    /data-conversation2-prompt-label/,
+    "the pane's own messages carry no label"
+  );
+  assert.match(promptThread("the automatic loop", "owner"), /the automatic loop/);
+  assert.match(promptThread("owner", null), /owner/, "with no pane label nothing is suppressed");
 
   const completedThread = drawn(Transcript, {
-    rows: [{ key: "e1", kind: "turn_ended", sequence: 1, ending: "completed", errorSummary: null }]
+    rows: [
+      { key: "e1", kind: "turn_ended", sequence: 1, createdAt: 1_000, ending: "completed", errorSummary: null }
+    ]
   });
   assert.doesNotMatch(completedThread, /turn complete/, "a turn that simply finished says nothing");
+
+  // FINDING 6: while a turn runs, one line is what is happening; the rest wait behind a count.
+  function toolRow(index, status = "completed", detail = null) {
+    return {
+      key: `t${index}`,
+      kind: "tool_call",
+      sequence: index,
+      createdAt: 1_000 + index,
+      toolCallId: `t${index}`,
+      title: `Tool ${index}`,
+      toolKind: "read",
+      detail,
+      status,
+      progress: null
+    };
+  }
+  const runningWork = drawn(WorkLog, { entries: [toolRow(1), toolRow(2), toolRow(3)], settled: false });
+  assert.match(runningWork, /\+2 previous tool calls/);
+  assert.equal(
+    (runningWork.match(/data-conversation2-tool="/g) ?? []).length,
+    1,
+    "exactly one activity line while the turn runs"
+  );
+  assert.match(runningWork, /Tool 3/, "and it is the newest one");
+  assert.doesNotMatch(runningWork, /Tool 1/);
+
+  const oneEntryWork = drawn(WorkLog, { entries: [toolRow(1)], settled: false });
+  assert.doesNotMatch(oneEntryWork, /previous tool call/, "nothing is hidden when nothing is behind");
+
+  // Settled: the whole log folds to a line, and no tool row is in the thread at all.
+  const settledWork = drawn(WorkLog, {
+    entries: [toolRow(1), toolRow(2)],
+    settled: true,
+    durationSeconds: 80
+  });
+  assert.match(settledWork, /worked for 1m 20s · 2 tool calls/);
+  assert.match(settledWork, /data-conversation2-work-settled="true"/);
+  assert.equal((settledWork.match(/data-conversation2-tool="/g) ?? []).length, 0);
+
+  // A row's own output is behind the row, capped, and never pasted into the thread.
+  const withOutput = drawn(WorkLog, {
+    entries: [toolRow(1, "completed", "line one\nline two\nline three")],
+    settled: false
+  });
+  assert.match(withOutput, /aria-expanded="false"/, "a tool row starts closed");
+  assert.doesNotMatch(withOutput, /line three/, "its output is not in the thread");
+  const withSummary = drawn(WorkLog, {
+    entries: [toolRow(1, "completed", "ls -la /tmp")],
+    settled: false
+  });
+  assert.match(withSummary, /data-conversation2-tool-summary/);
+  assert.match(withSummary, /ls -la \/tmp/, "a one-line detail is the summary itself");
 
   // Steering is offered to hermes and to nobody else.
   const hermesComposer = drawn(Composer, {
@@ -302,24 +405,89 @@ try {
     ["cancel_turn", "o-reject", "o-allow-always", "o-allow"],
     "the answers run in the order of how much they commit to"
   );
-  assert.doesNotMatch(askedComposer, /data-conversation2-ask-generic/);
+  assert.match(askedComposer, /data-conversation2-ask-shape="permission"/);
+  assert.doesNotMatch(askedComposer, /data-conversation2-ask-fallback/);
+
+  // FINDING 5: the ask is a band on top of a composer that keeps its resting height, and
+  // everything the backend sent is bounded and scrolls inside it. That is the whole of
+  // why the card is the composer's size rather than the request's size.
+  const askedPanel = askedComposer.slice(askedComposer.indexOf("c2-ask"));
+  assert.match(askedComposer, /class="chat-box has-ask"/);
+  assert.match(askedComposer, /<textarea/, "the input stays where it was, at its own height");
+  assert.match(askedComposer, /pending approval/, "an eyebrow, as T3 has");
+  const bigDetailComposer = drawn(Composer, {
+    backendKey: "codex",
+    running: true,
+    ask: {
+      askId: "a1",
+      title: "Run something enormous",
+      detail: "x".repeat(20_000),
+      options: []
+    },
+    onSend: async () => true
+  });
+  const askStyles = sources["PermissionAskCard.svelte"];
+  assert.match(askStyles, /max-height:[^;]+;\s*\n\s*overflow: auto;/, "the detail is bounded and scrolls");
+  assert.match(askStyles, /white-space: pre-wrap;/);
+  assert.match(askStyles, /overflow-wrap: anywhere;/, "so a single enormous line cannot widen it");
+  assert.match(bigDetailComposer, /data-conversation2-ask-detail/);
+  assert.ok(askedPanel.length > 0);
 
   // An ask nobody understands still leaves a person three real things to do.
   const genericCard = drawn(AskCard, {
     ask: { askId: "a9", title: "Something the backend did not describe", detail: null, options: [] },
+    onAnswer() {}
+  });
+  assert.match(genericCard, /data-conversation2-ask-shape="shapeless"/);
+  assert.match(genericCard, /data-conversation2-ask-fallback/);
+  const genericActions = drawn(AskActions, {
+    ask: { options: [] },
     onAnswer() {},
     onCancelTurn() {}
   });
-  assert.match(genericCard, /data-conversation2-ask-generic="true"/);
-  assert.match(genericCard, /data-conversation2-ask-fallback/);
   assert.deepEqual(
-    [...genericCard.matchAll(/data-conversation2-ask-action="([^"]+)"/g)].map((found) => found[1]),
+    [...genericActions.matchAll(/data-conversation2-ask-action="([^"]+)"/g)].map((found) => found[1]),
     ["cancel_turn", "reject_once", "allow_once"]
   );
   assert.equal(
-    (genericCard.match(/data-conversation2-ask-supplied="false"/g) ?? []).length,
+    (genericActions.match(/data-conversation2-ask-supplied="false"/g) ?? []).length,
     2,
     "the answers Panels had to supply say so"
+  );
+
+  // FINDING 6: a question is answered by picking, not by approving.
+  const questionAsk = {
+    askId: "q1",
+    title: "Which way should this go?",
+    detail: '{"questions":[{"header":"plan","question":"Which way should this go?"}]}',
+    options: [
+      { option_id: "q-a", label: "Rewrite it", option_kind: "choice" },
+      { option_id: "q-b", label: "Leave it", option_kind: "choice" }
+    ]
+  };
+  const questionCard = drawn(AskCard, { ask: questionAsk, onAnswer() {} });
+  assert.match(questionCard, /data-conversation2-ask-shape="question"/);
+  assert.match(questionCard, /class="c2-ask-eyebrow[^"]*">question</);
+  assert.deepEqual(
+    [...questionCard.matchAll(/data-conversation2-ask-choice="([^"]+)"/g)].map((found) => found[1]),
+    ["q-a", "q-b"],
+    "the backend's own choices, numbered"
+  );
+  assert.match(questionCard, /<kbd[^>]*>1<\/kbd>/);
+  assert.match(questionCard, /<kbd[^>]*>2<\/kbd>/);
+  // The payload does not sit on the face of the card, and it is never raw when shown.
+  assert.doesNotMatch(questionCard, /\{"questions"/, "no raw JSON on the card");
+  assert.match(questionCard, /data-conversation2-ask-raw-toggle/);
+  assert.match(questionCard, /Show the request/);
+  const questionActions = drawn(AskActions, {
+    ask: questionAsk,
+    onAnswer() {},
+    onCancelTurn() {}
+  });
+  assert.deepEqual(
+    [...questionActions.matchAll(/data-conversation2-ask-action="([^"]+)"/g)].map((found) => found[1]),
+    ["cancel_turn"],
+    "a question offers no approving language, only the escape hatch"
   );
 
   // The effort picker exists only where the backend has such a setting.
@@ -331,24 +499,29 @@ try {
     onSend: async () => true
   });
   assert.doesNotMatch(hermesPicker, /data-conversation2-picker-effort/);
+  assert.match(hermesPicker, /data-conversation2-picker-model/, "hermes still picks a model");
+
+  // FINDING 4: the selectors are in the footer, in place. There is nowhere to navigate to.
   const claudePicker = drawn(Composer, {
     backendKey: "claude",
     running: false,
     effortOptions: ["low", "high"],
-    models: [{ model_id: "opus", display_name: "Opus" }],
+    models: [{ model_id: "opus", display_name: "Opus 5", detail: "opus → claude-opus-5" }],
+    current: { model: "opus", reasoningEffort: "high" },
     onSend: async () => true
   });
-  assert.doesNotMatch(claudePicker, /data-conversation2-picker-effort/, "the picker starts closed");
-  assert.match(claudePicker, /data-conversation2-picker-toggle/);
-
-  // The picker's face shows what the conversation runs on now.
-  const runningOn = drawn(Composer, {
-    backendKey: "claude",
-    running: false,
-    current: { model: "sonnet", reasoningEffort: "high" },
-    onSend: async () => true
-  });
-  assert.match(runningOn, /sonnet · high/);
+  assert.match(claudePicker, /<select[^>]*data-conversation2-picker-model/);
+  assert.match(claudePicker, /<select[^>]*data-conversation2-picker-effort/);
+  assert.doesNotMatch(claudePicker, /data-conversation2-picker-toggle/, "no panel to open");
+  assert.doesNotMatch(claudePicker, /data-conversation2-picker-abandon/);
+  // They show what the conversation runs on now.
+  assert.match(claudePicker, /<option value="opus"[^>]*selected/);
+  assert.match(claudePicker, /<option value="high" selected/);
+  // Nothing is armed until something is picked.
+  assert.doesNotMatch(claudePicker, /data-conversation2-picker-armed/);
+  // FINDING 3: what an alias reaches rides along on the option and on the select's face.
+  assert.match(claudePicker, /title="opus → claude-opus-5"/);
+  assert.match(claudePicker, /title="Opus 5 — opus → claude-opus-5"/);
 
   // A backend card says what is known and names the terminal command when signing in is due.
   const backendCard = drawn(BackendCard, {
@@ -423,14 +596,66 @@ try {
     `
 <script lang="ts">
   import ConversationComposer from "../src/components/conversation2/ConversationComposer.svelte";
+  import ConversationTranscript from "../src/components/conversation2/ConversationTranscript.svelte";
+  import PermissionAskCard from "../src/components/conversation2/PermissionAskCard.svelte";
 
   const sends: unknown[] = [];
+  const answers: string[] = [];
   (window as any).__sends = () => sends;
+  (window as any).__answers = () => answers;
 
   async function onSend(text: string, mode: string, picked: unknown): Promise<boolean> {
     sends.push({ text, mode, picked });
     return true;
   }
+
+  function toolRow(index: number, detail: string | null) {
+    return {
+      key: "t" + index,
+      kind: "tool_call" as const,
+      sequence: index,
+      createdAt: 1000 + index,
+      toolCallId: "t" + index,
+      title: "Tool " + index,
+      toolKind: "read",
+      detail,
+      status: "completed" as const,
+      progress: null
+    };
+  }
+
+  const settledRows = [
+    {
+      key: "p1",
+      kind: "prompt" as const,
+      sequence: 1,
+      createdAt: 1000,
+      text: "go",
+      senderLabel: "owner",
+      mode: "run_when_free" as const
+    },
+    toolRow(2, "first output line\\nsecond output line"),
+    toolRow(3, null),
+    toolRow(4, null),
+    {
+      key: "e9",
+      kind: "turn_ended" as const,
+      sequence: 9,
+      createdAt: 1012,
+      ending: "completed" as const,
+      errorSummary: null
+    }
+  ];
+
+  const question = {
+    askId: "q1",
+    title: "Which way should this go?",
+    detail: null,
+    options: [
+      { option_id: "q-a", label: "Rewrite it", option_kind: "choice" },
+      { option_id: "q-b", label: "Leave it", option_kind: "choice" }
+    ]
+  };
 </script>
 
 <ConversationComposer
@@ -441,6 +666,10 @@ try {
   effortOptions={["low", "high"]}
   {onSend}
 />
+
+<ConversationTranscript rows={settledRows} ownSenderLabel="owner" />
+
+<PermissionAskCard ask={question} onAnswer={(optionId) => answers.push(optionId)} />
 `,
     "utf8"
   );
@@ -497,26 +726,27 @@ with sync_playwright() as playwright:
     page.set_default_timeout(5_000)
     page.goto(sys.argv[1], wait_until="networkidle")
 
-    # The picker's face shows what the conversation runs on now.
-    toggle = page.locator("[data-conversation2-picker-toggle]")
-    assert "Opus · high" in toggle.inner_text(), toggle.inner_text()
+    # FINDING 4 — the selectors are inline, and they show what the conversation runs on.
+    model = page.locator("[data-conversation2-picker-model]")
+    effort = page.locator("[data-conversation2-picker-effort]")
+    assert model.input_value() == "opus", model.input_value()
+    assert effort.input_value() == "high", effort.input_value()
+    assert page.locator("[data-conversation2-picker-armed]").count() == 0
 
-    # Browsing it changes nothing at all: no send, and the picker still says so.
-    toggle.click()
-    page.locator("[data-conversation2-picker-model]").select_option("sonnet")
-    page.locator("[data-conversation2-picker-effort]").select_option("low")
+    # Browsing them changes nothing at all: no send, just a pending change that says so.
+    model.select_option("sonnet")
+    effort.select_option("low")
     assert page.evaluate("window.__sends().length") == 0
-    assert "next message" in toggle.inner_text(), toggle.inner_text()
+    assert page.locator("[data-conversation2-picker-armed]").count() == 1
 
-    # Abandoning it leaves the conversation exactly as it was.
-    page.locator("[data-conversation2-picker-abandon]").click()
+    # Re-selecting what it already runs on disarms it — abandoning still costs nothing.
+    model.select_option("opus")
+    effort.select_option("high")
     assert page.evaluate("window.__sends().length") == 0
-    assert "Opus · high" in toggle.inner_text(), toggle.inner_text()
-    assert "next message" not in toggle.inner_text()
+    assert page.locator("[data-conversation2-picker-armed]").count() == 0
 
     # Picked again, the change rides the next message and then stops being pending.
-    toggle.click()
-    page.locator("[data-conversation2-picker-model]").select_option("sonnet")
+    model.select_option("sonnet")
     page.locator("[data-conversation2-input]").fill("go")
     page.locator("[data-conversation2-send]").click()
     page.wait_for_function("window.__sends().length === 1")
@@ -525,9 +755,9 @@ with sync_playwright() as playwright:
     assert first["mode"] == "run_when_free", first
     assert first["picked"]["model"] == "sonnet", first
 
-    # What was typed is gone, and so is the pending change.
     page.wait_for_function("document.querySelector('[data-conversation2-input]').value === ''")
-    assert "Opus · high" in toggle.inner_text(), toggle.inner_text()
+    assert page.locator("[data-conversation2-picker-armed]").count() == 0
+    assert model.input_value() == "opus", "the select falls back to what the conversation runs on"
 
     # A second message carries no change, because none is pending any more.
     page.locator("[data-conversation2-input]").fill("again")
@@ -535,6 +765,41 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.__sends().length === 2")
     second = page.evaluate("window.__sends()[1]")
     assert second["picked"]["model"] is None, second
+
+    # FINDING 6 — a settled turn's work is one line until it is asked for.
+    fold = page.locator("[data-conversation2-work-fold]")
+    assert fold.count() == 1
+    assert "worked for 12s" in fold.inner_text(), fold.inner_text()
+    assert page.locator("[data-conversation2-tool]").count() == 0
+    assert page.locator('[data-conversation2-row="agent_message"]').count() == 0
+
+    fold.click()
+    page.wait_for_function("document.querySelectorAll('[data-conversation2-tool]').length === 3")
+
+    # A tool row's own output is behind the row, and comes back capped and scrolling.
+    assert page.locator("[data-conversation2-tool-output]").count() == 0
+    page.locator('[data-conversation2-tool="t2"]').click()
+    page.wait_for_function("document.querySelectorAll('[data-conversation2-tool-output]').length === 1")
+    output = page.locator("[data-conversation2-tool-output]")
+    assert "second output line" in output.inner_text(), output.inner_text()
+    box = output.bounding_box()
+    assert box["height"] <= 400, box
+
+    fold.click()
+    page.wait_for_function("document.querySelectorAll('[data-conversation2-tool]').length === 0")
+
+    # A question is answered by its number key as well as by its row.
+    page.keyboard.press("2")
+    page.wait_for_function("window.__answers().length === 1")
+    assert page.evaluate("window.__answers()[0]") == "q-b"
+    page.locator('[data-conversation2-ask-choice="q-a"]').click()
+    page.wait_for_function("window.__answers().length === 2")
+    assert page.evaluate("window.__answers()[1]") == "q-a"
+
+    # A number typed into a field is the number, not the answer.
+    page.locator("[data-conversation2-input]").fill("")
+    page.locator("[data-conversation2-input]").type("1")
+    assert page.evaluate("window.__answers().length") == 2
 
     browser.close()
 

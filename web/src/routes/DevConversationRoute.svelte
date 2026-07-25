@@ -311,6 +311,7 @@
       {backendKey}
       workspaceFolder={view?.workspace_folder ?? null}
       {rows}
+      ownSenderLabel={SENDER_LABEL}
       {running}
       {ask}
       {askNote}

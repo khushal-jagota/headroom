@@ -1,14 +1,18 @@
 <script lang="ts">
-  /** The thread: one line per finished thing, in the order it happened.
+  /** The thread: what was said, and — folded down to its size — what was done between.
    *
-   * The prompt is the only bubble, the agent is bubble-less prose, and a tool call is a
-   * single quiet row that fills in its own mark when it finishes. Text still arriving is
-   * drawn at the end and disappears the moment its finished row lands.
+   * The prompt is the only bubble, the agent is bubble-less prose, and the work in
+   * between is a work log rather than a run of lines. Text still arriving is drawn at the
+   * end and disappears the moment its finished row lands.
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
-  import type { TranscriptRow } from "../../lib/conversation2/transcript";
+  import WorkLog from "./WorkLog.svelte";
+  import type { ThreadItem, TranscriptRow } from "../../lib/conversation2/transcript";
   import {
     askDeadSentence,
+    promptLabelFor,
+    readableDetail,
+    threadItems,
     turnEndingSentence,
     TURN_STOPPED_SENTENCE
   } from "../../lib/conversation2/transcript";
@@ -17,8 +21,17 @@
 
   let {
     rows,
-    models = []
-  }: { rows: readonly TranscriptRow[]; models?: readonly BackendModel[] } = $props();
+    models = [],
+    ownSenderLabel = null
+  }: {
+    rows: readonly TranscriptRow[];
+    models?: readonly BackendModel[];
+    /** The label this pane sends under. Messages carrying it are yours, and yours are
+     *  not labelled — you know who wrote them. Everyone else's still are. */
+    ownSenderLabel?: string | null;
+  } = $props();
+
+  let items = $derived<ThreadItem[]>(threadItems(rows));
 
   function modeChip(mode: string): string | null {
     if (mode === "send_now") return "sent now";
@@ -40,70 +53,71 @@
 </script>
 
 <div class="c2-transcript" data-conversation2-transcript>
-  {#each rows as row (row.key)}
-    {#if row.kind === "prompt"}
+  {#each items as item (item.key)}
+    {#if item.kind === "work"}
+      <WorkLog
+        entries={item.entries}
+        settled={item.settled}
+        durationSeconds={item.durationSeconds}
+      />
+    {:else if item.row.kind === "prompt"}
+      {@const label = promptLabelFor(item.row.senderLabel, ownSenderLabel)}
+      {@const chip = modeChip(item.row.mode)}
       <article class="chat-u" data-conversation2-row="prompt">
-        <div class="c2-label">
-          {row.senderLabel}{#if modeChip(row.mode)}<span class="c2-chip">{modeChip(row.mode)}</span>{/if}
-        </div>
-        {row.text}
+        {#if label || chip}
+          <div class="c2-label" data-conversation2-prompt-label>
+            {label ?? ""}{#if chip}<span class="c2-chip">{chip}</span>{/if}
+          </div>
+        {/if}
+        {item.row.text}
       </article>
-    {:else if row.kind === "prompt_refused"}
+    {:else if item.row.kind === "prompt_refused"}
       <article class="chat-system c2-refused" data-conversation2-row="prompt_refused">
-        <div class="c2-label">{row.senderLabel} · not delivered · {row.sentence}</div>
-        {row.text}
+        <div class="c2-label">
+          {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · not delivered · {item.row.sentence}
+        </div>
+        {item.row.text}
       </article>
-    {:else if row.kind === "prompt_discarded"}
+    {:else if item.row.kind === "prompt_discarded"}
       <article class="chat-system" data-conversation2-row="prompt_discarded">
-        <div class="c2-label">{row.senderLabel} · discarded without being delivered</div>
-        {row.text}
+        <div class="c2-label">
+          {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · discarded without being delivered
+        </div>
+        {item.row.text}
       </article>
-    {:else if row.kind === "agent_message"}
+    {:else if item.row.kind === "agent_message"}
       <article class="chat-a" data-conversation2-row="agent_message">
-        <MarkdownBlock text={row.text} />
+        <MarkdownBlock text={item.row.text} />
       </article>
-    {:else if row.kind === "streaming_agent_message"}
+    {:else if item.row.kind === "streaming_agent_message"}
       <article class="chat-a c2-streaming" data-conversation2-row="streaming">
-        <MarkdownBlock text={row.text} />
+        <MarkdownBlock text={item.row.text} />
       </article>
-    {:else if row.kind === "tool_call"}
-      <div class="acp-step" data-conversation2-row="tool_call" data-conversation2-tool={row.toolCallId}>
-        <span class="acp-step-title">{row.title}</span>
-        {#if row.status === "completed"}
-          <span class="acp-step-mark acp-mark-ok" role="img" aria-label="Completed">✓</span>
-        {:else if row.status === "failed"}
-          <span class="acp-step-mark acp-mark-fail" role="img" aria-label="Failed">✕</span>
-        {:else}
-          <span class="acp-spin" role="img" aria-label="Running"></span>
-        {/if}
-        {#if row.progress ?? row.detail}
-          <div class="c2-tool-detail">{row.progress ?? row.detail}</div>
-        {/if}
-      </div>
-    {:else if row.kind === "permission_ask"}
+    {:else if item.row.kind === "permission_ask"}
+      {@const detail = readableDetail(item.row.detail)}
       <div
         class="c2-ask-row"
-        class:is-dead={row.state === "dead"}
+        class:is-dead={item.row.state === "dead"}
         data-conversation2-row="permission_ask"
-        data-conversation2-ask-state={row.state}
+        data-conversation2-ask-state={item.row.state}
       >
-        <div class="c2-label">permission · {askStateLine(row)}</div>
-        <div class="c2-ask-title">{row.title}</div>
-        {#if row.detail}<div class="c2-ask-detail">{row.detail}</div>{/if}
+        <div class="c2-label">permission · {askStateLine(item.row)}</div>
+        <div class="c2-ask-title">{item.row.title}</div>
+        {#if detail}<pre class="c2-ask-detail" data-conversation2-ask-detail>{detail}</pre>{/if}
       </div>
-    {:else if row.kind === "model_changed"}
+    {:else if item.row.kind === "model_changed"}
       <div class="acp-compaction" role="separator" data-conversation2-row="model_changed">
-        <span>{runValuesLine(row.model, row.reasoningEffort)}</span>
+        <span>{runValuesLine(item.row.model, item.row.reasoningEffort)}</span>
       </div>
-    {:else if row.kind === "turn_ended" && row.ending === "failed"}
+    {:else if item.row.kind === "turn_ended" && item.row.ending === "failed"}
       <div class="acp-turn-end acp-turn-end--error" role="alert" data-conversation2-row="turn_ended">
-        {turnEndingSentence(row.ending, row.errorSummary)}
+        {turnEndingSentence(item.row.ending, item.row.errorSummary)}
       </div>
-    {:else if row.kind === "turn_ended" && row.ending === "interrupted"}
+    {:else if item.row.kind === "turn_ended" && item.row.ending === "interrupted"}
       <div class="acp-turn-end" data-conversation2-row="turn_ended">
-        {turnEndingSentence(row.ending, row.errorSummary)}
+        {turnEndingSentence(item.row.ending, item.row.errorSummary)}
       </div>
-    {:else if row.kind === "turn_stopped"}
+    {:else if item.row.kind === "turn_stopped"}
       <div class="acp-turn-end" data-conversation2-row="turn_stopped">{TURN_STOPPED_SENTENCE}</div>
     {/if}
   {/each}
@@ -127,13 +141,6 @@
   }
   .c2-refused .c2-label { color: var(--accent-error); }
   .c2-streaming { color: var(--text-muted); }
-  .c2-tool-detail {
-    flex-basis: 100%;
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    overflow-wrap: anywhere;
-  }
   .c2-ask-row {
     align-self: stretch;
     border-inline-start: var(--border-hairline) solid var(--accent-bright);
@@ -150,5 +157,15 @@
   .c2-ask-row.is-dead .c2-label { color: var(--text-faintest); }
   .c2-ask-title { color: var(--text-strong); }
   .c2-ask-row.is-dead .c2-ask-title { color: var(--text-faint); }
-  .c2-ask-detail { color: var(--text-faint); font-family: var(--font-mono); font-size: var(--type-xs); }
+  /* Capped and scrolling: a transcript row never grows by the size of a payload. */
+  .c2-ask-detail {
+    margin: var(--space-1) 0 0;
+    max-height: calc(var(--type-xs) * 16);
+    overflow: auto;
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
 </style>

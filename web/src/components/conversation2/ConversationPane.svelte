@@ -30,6 +30,7 @@
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
+    ownSenderLabel = null,
     effortOptions = [],
     heldPromptCount = 0,
     fateNote = null,
@@ -58,6 +59,8 @@
     askNote?: string | null;
     current?: RunValues;
     models?: readonly BackendModel[];
+    /** The label this pane sends under, so your own messages are not labelled as yours. */
+    ownSenderLabel?: string | null;
     effortOptions?: readonly string[];
     heldPromptCount?: number;
     fateNote?: string | null;
@@ -225,7 +228,7 @@
       {#if emptyState && rows.length === 0}
         {@render emptyState()}
       {/if}
-      <ConversationTranscript {rows} {models} />
+      <ConversationTranscript {rows} {models} {ownSenderLabel} />
     </div>
     {#if jumpVisible}
       <button
