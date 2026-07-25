@@ -159,6 +159,21 @@ PERMISSION_ASK_OPTIONS: Final[tuple[PermissionAskOption, ...]] = (
 DECLINED_TOOL_MESSAGE: Final = "User declined tool execution."
 WITHDRAWN_TOOL_MESSAGE: Final = "The turn ended before this was answered."
 
+# The tool claude uses when it is blocked on a decision that is the owner's to make. It is
+# not a permission at all — it is a question, and the answers on offer are the question's own
+# choices rather than the three a permission ask has.
+ASK_USER_QUESTION_TOOL_NAME: Final = "AskUserQuestion"
+
+# What one of a question's own choices is, as against an allow or a reject. Surfaces read
+# this to tell a question from a permission: an ask whose options commit to nothing is one
+# the owner answers rather than approves.
+QUESTION_CHOICE_OPTION_KIND: Final = "choice"
+
+# Where the tool takes the owner's answers: its own input has a place for them, keyed by the
+# full text of the question each one answers. The CLI fills that place from the permission
+# result and hands the tool the answers as if they had been collected by its own dialog.
+USER_ANSWERS_INPUT_FIELD: Final = "answers"
+
 
 @dataclass(frozen=True, slots=True)
 class ClaudeAgentSdkChildLaunch:
@@ -200,6 +215,28 @@ def claude_sdk_client(options: ClaudeAgentOptions) -> ClaudeSdkClient:
     return ClaudeSDKClient(options)
 
 
+@dataclass(frozen=True, slots=True)
+class _QuestionChoice:
+    """One of the answers a question offers, and what choosing it would mean."""
+
+    label: str
+    description: str
+
+
+@dataclass(frozen=True, slots=True)
+class _UserQuestion:
+    """A question claude is blocked on, as it asked it.
+
+    ``text`` is the whole question, and it is also the key the answer goes back under, so it
+    is kept rather than reduced to something shorter. ``header`` is the short chip claude
+    labelled it with, which is worth showing but is not the question.
+    """
+
+    text: str
+    header: str
+    choices: tuple[_QuestionChoice, ...]
+
+
 @dataclass(slots=True)
 class _ParkedPermissionAsk:
     """One ask waiting for an answer, and the callback that is held open for it.
@@ -208,12 +245,17 @@ class _ParkedPermissionAsk:
     sender learns the callback took it. The call being asked about is kept because the
     answer is made out of it: an allow goes back with the call's own input, and a
     session-wide allow with the scope the SDK suggested for it.
+
+    ``question`` is set when the call was claude asking the owner something rather than
+    asking to do something. It changes what an answer means — a chosen option is the
+    owner's answer to the question, not a permission — so it is kept with the ask.
     """
 
     answer: asyncio.Future[PermissionResult]
     handed_over: asyncio.Future[None]
     tool_input: dict[str, Any]
     suggestions: tuple[Any, ...]
+    question: _UserQuestion | None = None
 
 
 @dataclass(slots=True)
@@ -347,7 +389,7 @@ class ClaudeAgentSdkBackendChild:
         parked = None if turn is None else turn.parked_asks.get(ask_id)
         if parked is None or parked.answer.done():
             raise PermissionAnswerWriteFailed(ask_id)
-        answer = _answer_for(option_id, parked.tool_input, parked.suggestions)
+        answer = _answer_for(option_id, parked.tool_input, parked.suggestions, parked.question)
         if answer is None:
             raise PermissionAnswerWriteFailed(f"{ask_id} was not offered {option_id!r}")
         if turn is not None:
@@ -705,10 +747,18 @@ class ClaudeAgentSdkBackendChild:
         tool_input: dict[str, Any],
         context: ToolPermissionContext,
     ) -> PermissionResult:
-        """Hold the agent's ask open until a person answers it or its turn dies."""
+        """Hold the agent's ask open until a person answers it or its turn dies.
+
+        Two different things arrive here. Most are claude asking to *do* something, and the
+        answers are the three a permission has. One is claude asking the owner a question it
+        cannot answer itself, and then the answers are the question's own choices — raising
+        that as a permission would show the owner a tool call to approve instead of the
+        question they were asked, and approving it would run the tool with nothing chosen.
+        """
         turn = self._turn
         if turn is None:
             return PermissionResultDeny(message=WITHDRAWN_TOOL_MESSAGE)
+        question = self._user_question(tool_name, tool_input)
         self._asks_raised += 1
         ask_id = f"{context.tool_use_id or tool_name}:{self._asks_raised}"
         loop = asyncio.get_running_loop()
@@ -717,15 +767,20 @@ class ClaudeAgentSdkBackendChild:
             handed_over=loop.create_future(),
             tool_input=dict(tool_input),
             suggestions=tuple(context.suggestions),
+            question=question,
         )
         turn.parked_asks[ask_id] = parked
         await self._sink.permission_ask_raised(
             turn.token,
             BackendPermissionAsk(
                 ask_id=ask_id,
-                title=tool_name,
-                detail=_canonical_json(tool_input),
-                options=PERMISSION_ASK_OPTIONS,
+                title=tool_name if question is None else _question_title(question),
+                detail=(
+                    _canonical_json(tool_input) if question is None else _question_detail(question)
+                ),
+                options=(
+                    PERMISSION_ASK_OPTIONS if question is None else _question_options(question)
+                ),
             ),
         )
         try:
@@ -740,6 +795,27 @@ class ClaudeAgentSdkBackendChild:
         if not parked.handed_over.done():
             parked.handed_over.set_result(None)
         return answer
+
+    def _user_question(self, tool_name: str, tool_input: dict[str, Any]) -> _UserQuestion | None:
+        """The one question this call is asking, when it is asking exactly one.
+
+        A call carrying several questions, or one whose answer is a set rather than a
+        choice, is left as a plain permission ask. Half-rendering it would be worse than
+        not rendering it: the owner would answer one question and the rest would go back
+        unanswered. Both are rare, and one is not silently different from the other, so the
+        fallback is written down where it happens.
+        """
+        if tool_name != ASK_USER_QUESTION_TOOL_NAME:
+            return None
+        question = _the_single_question(tool_input)
+        if question is None:
+            LOGGER.info(
+                "conversation %s: a %s call was not one single-choice question, so it is "
+                "raised as a plain permission ask",
+                self._resolved_start.conversation_id,
+                ASK_USER_QUESTION_TOOL_NAME,
+            )
+        return question
 
     # --- the child's own noise ------------------------------------------------------------
 
@@ -834,17 +910,111 @@ def _durable_session_id(message: Message) -> str | None:
             return None
 
 
-def _answer_for(
-    option_id: str, tool_input: dict[str, Any], suggestions: tuple[Any, ...]
-) -> PermissionResult | None:
-    """What the SDK is given for one of the three answers this adapter offers.
+def _the_single_question(tool_input: dict[str, Any]) -> _UserQuestion | None:
+    """The question in an ask-the-owner call, when there is exactly one to show.
 
-    An allow goes back with the call's input exactly as it came: a person answering an ask
-    says whether the call may happen, never what the call is. A session-wide allow adds the
-    SDK's own suggested permission updates, which are the only thing that can say "and not
-    again this session" — an ask the SDK suggests nothing for is allowed this once, because
-    that is all there was to give.
+    Everything is checked rather than trusted. The call is claude's, and a shape this does
+    not recognise has to fall back to the plain permission ask instead of raising a question
+    with pieces missing.
     """
+    questions = tool_input.get("questions")
+    if not isinstance(questions, list) or len(questions) != 1:
+        return None
+    asked = questions[0]
+    if not isinstance(asked, dict) or asked.get("multiSelect"):
+        return None
+    text = asked.get("question")
+    if not isinstance(text, str) or not text:
+        return None
+    offered = asked.get("options")
+    if not isinstance(offered, list) or not offered:
+        return None
+    choices: list[_QuestionChoice] = []
+    for option in offered:
+        if not isinstance(option, dict):
+            return None
+        label = option.get("label")
+        if not isinstance(label, str) or not label:
+            return None
+        description = option.get("description")
+        choices.append(
+            _QuestionChoice(
+                label=label, description=description if isinstance(description, str) else ""
+            )
+        )
+    # The label is what the answer goes back as, so two choices sharing one would make an
+    # answer that names neither of them.
+    if len({choice.label for choice in choices}) != len(choices):
+        return None
+    header = asked.get("header")
+    return _UserQuestion(
+        text=text,
+        header=header if isinstance(header, str) else "",
+        choices=tuple(choices),
+    )
+
+
+def _question_title(question: _UserQuestion) -> str:
+    """What the owner is being asked, with claude's own short label for it in front."""
+    return f"{question.header}: {question.text}" if question.header else question.text
+
+
+def _question_detail(question: _UserQuestion) -> str | None:
+    """What each choice would mean, in plain lines.
+
+    Never the call's JSON. The owner is answering a question, and a question's detail is
+    what the answers mean — the shape of the tool call behind it says nothing to anyone.
+    """
+    lines = [
+        f"{choice.label} — {choice.description}" if choice.description else choice.label
+        for choice in question.choices
+    ]
+    return "\n".join(lines) if lines else None
+
+
+def _question_options(question: _UserQuestion) -> tuple[PermissionAskOption, ...]:
+    """The question's own choices, offered as the answers to it.
+
+    Each is a choice and none of them is an allow or a reject, which is what tells a surface
+    that this ask is answered rather than approved. The label goes back as the option id
+    because the label is the answer: it is the text the tool is given for the question.
+    """
+    return tuple(
+        PermissionAskOption(
+            option_id=choice.label, label=choice.label, option_kind=QUESTION_CHOICE_OPTION_KIND
+        )
+        for choice in question.choices
+    )
+
+
+def _answer_for(
+    option_id: str,
+    tool_input: dict[str, Any],
+    suggestions: tuple[Any, ...],
+    question: _UserQuestion | None,
+) -> PermissionResult | None:
+    """What the SDK is given for one of the answers this adapter offered.
+
+    A question's answer is the chosen choice put where the tool reads it from: its own input
+    has a place for answers, keyed by the full text of the question. Allowing the call with
+    that filled in is how the answer reaches the model — allowing it without is a call that
+    runs and tells the model nobody answered.
+
+    For a permission, an allow goes back with the call's input exactly as it came: a person
+    answering says whether the call may happen, never what the call is. A session-wide allow
+    adds the SDK's own suggested permission updates, which are the only thing that can say
+    "and not again this session" — an ask the SDK suggests nothing for is allowed this once,
+    because that is all there was to give.
+    """
+    if question is not None:
+        if option_id not in {choice.label for choice in question.choices}:
+            return None
+        answers = tool_input.get(USER_ANSWERS_INPUT_FIELD)
+        answered = dict(answers) if isinstance(answers, dict) else {}
+        answered[question.text] = option_id
+        return PermissionResultAllow(
+            updated_input={**tool_input, USER_ANSWERS_INPUT_FIELD: answered}
+        )
     if option_id == APPROVE_ONCE_OPTION_ID:
         return PermissionResultAllow(updated_input=dict(tool_input))
     if option_id == ALWAYS_ALLOW_THIS_SESSION_OPTION_ID:

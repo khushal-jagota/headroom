@@ -885,9 +885,7 @@ def test_a_subagents_own_tool_results_are_not_this_conversations_finishes(
         await _write(child)
         clients[0].say(
             UserMessage(
-                content=[
-                    ToolResultBlock(tool_use_id="inner-1", content="done", is_error=False)
-                ],
+                content=[ToolResultBlock(tool_use_id="inner-1", content="done", is_error=False)],
                 parent_tool_use_id="tool-1",
             ),
         )
@@ -1220,6 +1218,226 @@ def test_stopping_the_child_settles_its_asks_and_closes_the_client(tmp_path: Pat
     _run(exercise)
 
 
+# --- when claude is asking rather than asking permission ------------------------------------------
+
+COLOUR_QUESTION = "Which colour do you prefer?"
+
+
+def _ask_user_question_input(
+    *,
+    questions: list[dict[str, Any]] | None = None,
+    multi_select: bool = False,
+    header: str = "Colour",
+) -> dict[str, Any]:
+    """A call shaped the way claude 2.1.220 shapes one, as captured from the real CLI."""
+    if questions is not None:
+        return {"questions": questions}
+    return {
+        "questions": [
+            {
+                "question": COLOUR_QUESTION,
+                "header": header,
+                "multiSelect": multi_select,
+                "options": [
+                    {"label": "Red", "description": "A warm, vibrant colour"},
+                    {"label": "Blue", "description": "A cool, calming colour"},
+                    {"label": "Green", "description": "A natural, refreshing colour"},
+                ],
+            }
+        ]
+    }
+
+
+async def _raise_a_question(
+    client: _ScriptedClaudeSdkClient,
+    sink: _RecordingSink,
+    *,
+    tool_input: dict[str, Any] | None = None,
+) -> asyncio.Task[PermissionResult]:
+    """Have claude ask the owner something, and wait until the core has been told."""
+    callback = client.options.can_use_tool
+    assert callback is not None
+    asked = tool_input if tool_input is not None else _ask_user_question_input()
+
+    async def ask() -> PermissionResult:
+        return await callback("AskUserQuestion", asked, ToolPermissionContext(tool_use_id="tool-q"))
+
+    asking = asyncio.create_task(ask())
+    while not sink.asks:
+        await asyncio.sleep(0)
+    return asking
+
+
+def test_a_question_is_raised_as_the_question_and_its_own_choices(tmp_path: Path) -> None:
+    """The owner is shown what they were asked, not a tool call to approve.
+
+    The choices are the question's own, and none of them is an allow or a reject — which is
+    what tells a surface to render numbered answers instead of approval buttons.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await _write(child)
+        asking = await _raise_a_question(clients[0], sink)
+
+        ask = sink.asks[0]
+        assert ask.title == f"Colour: {COLOUR_QUESTION}"
+        assert [option.label for option in ask.options] == ["Red", "Blue", "Green"]
+        # The label is the answer, so it is also what goes back as the option id.
+        assert [option.option_id for option in ask.options] == ["Red", "Blue", "Green"]
+        assert {option.option_kind for option in ask.options} == {"choice"}
+        assert not any(option.option_kind.startswith(("allow", "reject")) for option in ask.options)
+        # What each answer means, in plain lines. Never the call's JSON.
+        assert ask.detail == (
+            "Red — A warm, vibrant colour\n"
+            "Blue — A cool, calming colour\n"
+            "Green — A natural, refreshing colour"
+        )
+        assert "questions" not in str(ask.detail)
+
+        await child.answer_permission_ask(ask.ask_id, "Blue")
+        await asking
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_questions_answer_is_put_where_the_tool_reads_it(tmp_path: Path) -> None:
+    """The chosen answer goes back keyed by the whole question text.
+
+    That is the field the tool takes the owner's answers from, established against the real
+    CLI: allowing the call without it runs the tool and tells the model nobody answered.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await _write(child)
+        asking = await _raise_a_question(clients[0], sink)
+
+        await child.answer_permission_ask(sink.asks[0].ask_id, "Blue")
+        answer = await asking
+        assert isinstance(answer, PermissionResultAllow)
+        assert answer.updated_input is not None
+        assert answer.updated_input["answers"] == {COLOUR_QUESTION: "Blue"}
+        # The call itself goes back unchanged around the answer.
+        assert answer.updated_input["questions"] == _ask_user_question_input()["questions"]
+        assert answer.updated_permissions is None
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_an_answer_the_question_did_not_offer_does_not_land(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await _write(child)
+        asking = await _raise_a_question(clients[0], sink)
+
+        for never_offered in ("Purple", APPROVE_ONCE_OPTION_ID):
+            with pytest.raises(PermissionAnswerWriteFailed):
+                await child.answer_permission_ask(sink.asks[0].ask_id, never_offered)
+            assert not asking.done()
+
+        await child.answer_permission_ask(sink.asks[0].ask_id, "Red")
+        await asking
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_question_that_dies_with_its_turn_is_still_settled(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        asking = await _raise_a_question(clients[0], sink)
+
+        clients[0].say(_result(session_id=session_id))
+        await clients[0].until_taken_in()
+        assert isinstance(await asking, PermissionResultDeny)
+        await child.stop()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "tool_input",
+    [
+        pytest.param(_ask_user_question_input(multi_select=True), id="an answer that is a set"),
+        pytest.param(
+            {
+                "questions": [
+                    {
+                        "question": "First?",
+                        "header": "One",
+                        "options": [{"label": "A", "description": ""}],
+                    },
+                    {
+                        "question": "Second?",
+                        "header": "Two",
+                        "options": [{"label": "B", "description": ""}],
+                    },
+                ]
+            },
+            id="more than one question",
+        ),
+        pytest.param({"questions": []}, id="no question at all"),
+        pytest.param(
+            {"questions": [{"question": "Which?", "header": "H", "options": []}]},
+            id="a question with no choices",
+        ),
+        pytest.param(
+            {
+                "questions": [
+                    {
+                        "question": "Which?",
+                        "header": "H",
+                        "options": [
+                            {"label": "Same", "description": "one"},
+                            {"label": "Same", "description": "two"},
+                        ],
+                    }
+                ]
+            },
+            id="two choices that answer the same",
+        ),
+        pytest.param({"questions": "not a list"}, id="nothing this recognises"),
+    ],
+)
+def test_a_question_this_cannot_show_whole_stays_a_plain_permission_ask(
+    tmp_path: Path, tool_input: dict[str, Any]
+) -> None:
+    """Half a question is worse than none: the owner would answer one part and the rest
+    would go back unanswered, so the fallback is the ask that was always there."""
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await _write(child)
+        asking = await _raise_a_question(clients[0], sink, tool_input=tool_input)
+
+        ask = sink.asks[0]
+        assert ask.title == "AskUserQuestion"
+        assert [option.option_id for option in ask.options] == [
+            APPROVE_ONCE_OPTION_ID,
+            ALWAYS_ALLOW_THIS_SESSION_OPTION_ID,
+            DECLINE_OPTION_ID,
+        ]
+
+        await child.answer_permission_ask(ask.ask_id, DECLINE_OPTION_ID)
+        answer = await asking
+        assert isinstance(answer, PermissionResultDeny)
+        assert answer.message == "User declined tool execution."
+        await child.stop()
+
+    _run(exercise)
+
+
 # --- the claude on this machine ------------------------------------------------------------------
 
 
@@ -1328,6 +1546,47 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path
         await rebound.stop()
 
     _run(exercise, seconds=420.0)
+
+
+@real_claude_only
+def test_real_claude_is_told_the_answer_the_owner_chose(tmp_path: Path) -> None:
+    """The whole of the claim, against the CLI: claude asks, the owner answers, claude knows.
+
+    The proof is claude's own next sentence naming the colour that was chosen here. Anything
+    less — the ask rendering nicely, the callback returning — would not show that the answer
+    reached the model at all.
+    """
+
+    async def exercise() -> None:
+        resolved_start = _start_request(workspace_folder=tmp_path, model=CLAUDE_MODEL)
+        child, sink, _ = _bench_on_real_claude(resolved_start)
+        await child.start(resolved_start, vendor_session_cursor=None)
+        await _write(
+            child,
+            "Use the AskUserQuestion tool to ask me whether I prefer the colour red, blue "
+            "or green. After I answer, reply with exactly one sentence naming the colour I "
+            "chose.",
+        )
+
+        async def until_asked() -> None:
+            while not sink.asks:
+                await asyncio.sleep(0.1)
+
+        await asyncio.wait_for(until_asked(), 120.0)
+        ask = sink.asks[0]
+        # Claude asked a question, so the ask carries the question's own choices.
+        assert not any(option.option_kind.startswith(("allow", "reject")) for option in ask.options)
+        blue = next(option for option in ask.options if "blue" in option.label.lower())
+
+        await child.answer_permission_ask(ask.ask_id, blue.option_id)
+        await _until_the_turn_ends(sink)
+        assert sink.endings[-1]["ending"] is ConversationTurnEnding.completed
+        said = " ".join(text for _, text in sink.messages).lower()
+        assert "blue" in said
+        assert "did not answer" not in said
+        await child.stop()
+
+    _run(exercise, seconds=300.0)
 
 
 def _bench_on_real_claude(
