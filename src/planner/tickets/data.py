@@ -536,6 +536,80 @@ def claim_running_step_employee_session_id(
         return _load_ticket_for_write(conn, ticket_id)
 
 
+def write_ticket_conversation_start(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    conversation_id: str,
+    backend: str,
+    model: str | None,
+    reasoning_effort: str | None,
+    now: int,
+) -> Ticket:
+    """Point the Ticket at the conversation just started for it, and record what it
+    runs on.
+
+    ``employee_session_id`` is the Ticket's conversation link. Under the new
+    conversation system the value it holds is the caller-owned conversation id, not an
+    ACP session id: the conversation system rebinds its own backend sessions behind that
+    one name. The three launch columns are the Ticket's last-chosen values — kept up to
+    date with what the conversation actually runs on, so a fresh conversation starts
+    from where the last one ended.
+    """
+    with _txn(conn):
+        _load_ticket_for_write(conn, ticket_id)
+        conn.execute(
+            "UPDATE tickets SET employee_session_id = ?, employee_backend = ?, "
+            "employee_launch_model = ?, employee_launch_reasoning_effort = ?, "
+            "updated_at = ? WHERE id = ?",
+            (conversation_id, backend, model, reasoning_effort, now, ticket_id),
+        )
+        return _load_ticket_for_write(conn, ticket_id)
+
+
+def write_ticket_last_chosen_configuration(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    model: str | None,
+    reasoning_effort: str | None,
+    now: int,
+) -> Ticket:
+    """Record the model and reasoning effort the Ticket's conversation now runs on.
+
+    The backend is not here because a message cannot change it: a conversation keeps the
+    backend it was started on, and choosing another one is a new conversation.
+    """
+    with _txn(conn):
+        _load_ticket_for_write(conn, ticket_id)
+        conn.execute(
+            "UPDATE tickets SET employee_launch_model = ?, "
+            "employee_launch_reasoning_effort = ?, updated_at = ? WHERE id = ?",
+            (model, reasoning_effort, now, ticket_id),
+        )
+        return _load_ticket_for_write(conn, ticket_id)
+
+
+def clear_ticket_conversation_link(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    now: int,
+) -> Ticket:
+    """Unlink the Ticket from its conversation and nothing else.
+
+    The last-chosen launch columns deliberately stay: they are exactly what the next
+    conversation starts from.
+    """
+    with _txn(conn):
+        _load_ticket_for_write(conn, ticket_id)
+        conn.execute(
+            "UPDATE tickets SET employee_session_id = NULL, updated_at = ? WHERE id = ?",
+            (now, ticket_id),
+        )
+        return _load_ticket_for_write(conn, ticket_id)
+
+
 def employee_launch_configuration(ticket: Ticket) -> EmployeeLaunchConfiguration:
     return EmployeeLaunchConfiguration(
         employee_backend=ticket.employee_backend,
