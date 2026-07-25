@@ -92,7 +92,7 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
         "t_running",
         "needs_success",
         sprint_item_id=running.id,
-        ticket_status="agent_running_step",
+        ticket_status="agent",
     )
     assert read_item(tmp_db, running.id).status is ItemStatus.in_progress
 

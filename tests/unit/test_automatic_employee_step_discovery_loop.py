@@ -18,7 +18,6 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.core import links as core_links
 from planner.core.clock import TestClock
 from planner.core.config import load_config
 from planner.core.contracts import LinkKind
@@ -38,6 +37,7 @@ from planner.runtime.employee_step_repository import SqliteEmployeeStepRepositor
 from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.runtime.step_gateway import EmployeeStepRunResult
 from planner.sprints import data as sprints_data
+from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.tickets.logic import fields_codec
@@ -207,9 +207,19 @@ def _jump_state(db: str, tid: str, state: str) -> None:
 
 
 def _add_block(db: str, blocker_id: str, target_id: str) -> None:
+    """Block a Ticket the way the API does, so its status settles to `blocked`."""
     conn = connect(db)
     try:
-        core_links.add_link(conn, blocker_id, target_id, LinkKind.blocks, 0)
+        tickets_actions.add_link(
+            conn,
+            blocker_id,
+            target_id,
+            LinkKind.blocks,
+            now=0,
+            automatic_employee_step_eligibility_wake=(
+                NoOpAutomaticEmployeeStepEligibilityWake()
+            ),
+        )
     finally:
         conn.close()
 
@@ -362,7 +372,7 @@ def test_candidate_sql_is_membership_only_and_every_member_reaches_one_complete_
     for ticket_id in (selected, terminal, non_empty):
         _add_to_day(db, ticket_id)
     _jump_state(db, terminal, "done")
-    _set_status(db, non_empty, TicketStatus.user_takeover)
+    _set_status(db, non_empty, TicketStatus.user)
 
     calls: list[tuple[str, str, str]] = []
 
@@ -483,10 +493,10 @@ def test_poll_passes_only_ticket_id_to_runner_interface(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "status",
     [
-        TicketStatus.agent_running_step,
+        TicketStatus.agent,
         TicketStatus.awaiting_approval,
-        TicketStatus.user_takeover,
-        TicketStatus.paired_work,
+        TicketStatus.user,
+        TicketStatus.paired,
         TicketStatus.errored,
     ],
 )
@@ -672,11 +682,11 @@ def test_poll_excludes_every_ineligible_ticket(tmp_path: Path) -> None:
     db = _db(tmp_path)
     # ticket_status-excluded (candidate query)
     t_working = _new_ticket(db)
-    _set_status(db, t_working, TicketStatus.agent_running_step)
+    _set_status(db, t_working, TicketStatus.agent)
     t_approval = _new_ticket(db)
     _set_status(db, t_approval, TicketStatus.awaiting_approval)
     t_takeover = _new_ticket(db)
-    _set_status(db, t_takeover, TicketStatus.user_takeover)
+    _set_status(db, t_takeover, TicketStatus.user)
     t_errored = _new_ticket(db)
     _set_status(db, t_errored, TicketStatus.errored)
     # predicate-excluded: dropped, at-ceiling+stop, parked proposal, blocked
@@ -933,7 +943,7 @@ def test_new_worker_paired_understanding_dispatches_one_opening_and_not_a_second
     stored = _read(db, ticket.id)
     assert stored.stage == "needs_understanding"
     assert fields_codec.get_slot(stored.fields, "understanding").proposal is None
-    assert stored.ticket_status is TicketStatus.paired_work
+    assert stored.ticket_status is TicketStatus.paired
     assert loop.poll_once() == []
 
 
@@ -1189,7 +1199,6 @@ def test_live_employee_runtime_has_no_deleted_names_or_old_wake_operation() -> N
         root / "src/planner/tickets/api.py",
         root / "src/planner/days/actions.py",
         root / "src/planner/days/api.py",
-        root / "src/planner/core/link_actions.py",
         root / "src/planner/core/loops.py",
         root / "src/planner/core/server.py",
     ]

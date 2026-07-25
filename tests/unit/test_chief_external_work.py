@@ -353,7 +353,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
         )
     assert pending.status_code == 400
 
-    for status in ("agent_running_step", "awaiting_approval"):
+    for status in ("agent", "awaiting_approval"):
         ticket_id = _ordinary_ticket(db_path)
         conn = connect(str(db_path))
         try:
@@ -525,7 +525,7 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
 
     lock_holder.execute("BEGIN IMMEDIATE")
     lock_holder.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+        "UPDATE tickets SET ticket_status = 'agent' WHERE id = ?",
         (ticket_id,),
     )
 
@@ -571,7 +571,7 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
         ).fetchone()
         assert ticket["stage"] == "needs_success"
         assert json.loads(ticket["fields"])["kickoff"]["value"] == "Original report"
-        assert ticket["ticket_status"] == "agent_running_step"
+        assert ticket["ticket_status"] == "agent"
     finally:
         conn.close()
 
@@ -590,7 +590,7 @@ def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path)
         )
         assert ticket.ticket_status is TicketStatus.empty
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+            "UPDATE tickets SET ticket_status = 'paired', employee_session_id = ? "
             "WHERE id = ?",
             ("paired-session", ticket_id),
         )
@@ -607,7 +607,7 @@ def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path)
         )
 
         assert reconciled.stage == "needs_success"
-        assert reconciled.ticket_status is TicketStatus.paired_work
+        assert reconciled.ticket_status is TicketStatus.paired
         assert reconciled.employee_session_id == "paired-session"
     finally:
         conn.close()

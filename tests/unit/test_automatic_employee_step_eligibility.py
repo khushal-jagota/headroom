@@ -9,15 +9,17 @@ from typing import Any
 
 import pytest
 
-from planner.core import links as core_links
-from planner.core.contracts import EventKind, LinkKind
+from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
-from planner.core.events import append_event
 from planner.days import data as days_data
 from planner.runtime.automatic_employee_step_eligibility import (
     is_eligible_for_automatic_employee_step,
 )
+from planner.runtime.automatic_employee_step_eligibility_wake import (
+    NoOpAutomaticEmployeeStepEligibilityWake,
+)
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
+from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -103,6 +105,20 @@ def _worker_turn(
         )
 
 
+def _block(
+    conn: sqlite3.Connection, *, blocker_id: str, target_id: str, now: int
+) -> None:
+    """Block a Ticket the way the API does, so its status settles to `blocked`."""
+    tickets_actions.add_link(
+        conn,
+        blocker_id,
+        target_id,
+        LinkKind.blocks,
+        now=now,
+        automatic_employee_step_eligibility_wake=NoOpAutomaticEmployeeStepEligibilityWake(),
+    )
+
+
 @pytest.mark.parametrize(
     ("worker_type", "first_stage", "expected_eligible", "definition"),
     [
@@ -174,148 +190,68 @@ def test_membership_must_match_the_explicit_planning_day(tmp_path: Path) -> None
         conn.close()
 
 
-@pytest.mark.parametrize("employee_session_id", [None, "existing-session"])
-def test_paired_work_without_current_stage_opening_is_eligible(
-    tmp_path: Path,
-    employee_session_id: str | None,
-) -> None:
+def test_paired_owned_ticket_resting_at_paired_is_never_startable(tmp_path: Path) -> None:
+    # The event-log marker scan is gone: `paired` is a control status like any other,
+    # so a paired-owned Ticket resting at `paired` is never loop-startable. Only the
+    # same Ticket at `empty` is.
     conn = _db(tmp_path)
     try:
         ticket = _ticket(conn, worker_type="new_worker")
-        conn.execute(
-            "UPDATE tickets SET ticket_status = ?, employee_session_id = ? WHERE id = ?",
-            (TicketStatus.paired_work.value, employee_session_id, ticket.id),
-        )
-        assert _eligible(conn, ticket)
-    finally:
-        conn.close()
-
-
-def test_paired_work_existing_session_is_eligible_for_later_silent_paired_stage(
-    tmp_path: Path,
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn, worker_type="exploration", ceiling="needs_answer")
-        conn.execute(
-            "UPDATE tickets SET stage = 'needs_answer', ticket_status = 'paired_work', "
-            "employee_session_id = 'existing-session' WHERE id = ?",
-            (ticket.id,),
-        )
-        append_event(
+        tickets_data.set_stage_ownership(
             conn,
             ticket.id,
-            EventKind.stage_changed,
-            {"from_stage": "needs_research", "to_stage": "needs_answer", "cause": "test"},
-            10,
+            stage=ticket.stage,
+            ownership_mode=StageOwnershipMode.paired,
+            now=4,
         )
-
-        assert _eligible(
-            conn,
-            ticket,
-            definition=configured_worker_type_registry().require("exploration"),
-        )
-    finally:
-        conn.close()
-
-
-def test_paired_work_existing_session_is_not_eligible_after_current_stage_opening(
-    tmp_path: Path,
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn, worker_type="exploration", ceiling="needs_answer")
         conn.execute(
-            "UPDATE tickets SET stage = 'needs_answer', ticket_status = 'paired_work', "
-            "employee_session_id = 'existing-session' WHERE id = ?",
-            (ticket.id,),
+            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
+            (TicketStatus.paired.value, ticket.id),
         )
-        append_event(
-            conn,
-            ticket.id,
-            EventKind.stage_changed,
-            {"from_stage": "needs_research", "to_stage": "needs_answer", "cause": "test"},
-            10,
-        )
-        _worker_turn(conn, ticket.id, now=11)
-
-        assert not _eligible(
-            conn,
-            ticket,
-            definition=configured_worker_type_registry().require("exploration"),
-        )
-    finally:
-        conn.close()
-
-
-def test_new_same_effective_paired_event_is_not_a_second_opening_marker(
-    tmp_path: Path,
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn, worker_type="new_worker")
-        append_event(
-            conn,
-            ticket.id,
-            EventKind.stage_ownership_changed,
-            {
-                "stage": "needs_understanding",
-                "ownership_mode": "paired",
-                "effective_ownership_mode": "paired",
-            },
-            3,
-        )
-        _worker_turn(conn, ticket.id, now=4)
-        conn.execute(
-            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
-            "WHERE id = ?",
-            ("existing-session", ticket.id),
-        )
-        append_event(
-            conn,
-            ticket.id,
-            EventKind.stage_ownership_changed,
-            {
-                "stage": "needs_understanding",
-                "ownership_mode": "paired",
-                "previous_effective_ownership_mode": "paired",
-                "effective_ownership_mode": "paired",
-            },
-            6,
-        )
-
         assert not _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
-    finally:
-        conn.close()
 
-
-def test_historical_paired_event_without_previous_effective_mode_remains_a_marker(
-    tmp_path: Path,
-) -> None:
-    conn = _db(tmp_path)
-    try:
-        ticket = _ticket(conn, worker_type="new_worker")
-        _worker_turn(conn, ticket.id, now=3)
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
-            "WHERE id = ?",
-            ("existing-session", ticket.id),
+            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
+            (TicketStatus.empty.value, ticket.id),
         )
-        append_event(
-            conn,
-            ticket.id,
-            EventKind.stage_ownership_changed,
-            {
-                "stage": "needs_understanding",
-                "ownership_mode": "paired",
-                "effective_ownership_mode": "paired",
-            },
-            5,
-        )
-
         assert _eligible(conn, ticket, definition=NEW_WORKER_TYPE_DEFINITION)
     finally:
         conn.close()
+
+
+def test_eligibility_reads_no_events_at_all(tmp_path: Path) -> None:
+    # The decision is made from the Ticket row, day membership, employee steps and the
+    # Closeout lane. Nothing reads the event log, so the whole table can be gone.
+    conn = _db(tmp_path)
+    try:
+        ticket = _ticket(conn)
+        blocked_ticket = _ticket(conn)
+        conn.execute(
+            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
+            (TicketStatus.blocked.value, blocked_ticket.id),
+        )
+        conn.execute("DROP TABLE events")
+
+        assert _eligible(conn, ticket)
+        assert not _eligible(conn, blocked_ticket)
+    finally:
+        conn.close()
+
+
+def test_eligibility_source_keeps_no_event_log_machinery() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (
+        root / "src/planner/runtime/automatic_employee_step_eligibility.py"
+    ).read_text(encoding="utf-8")
+    for deleted in (
+        "_latest_current_paired_stage_marker_event",
+        "_has_worker_step_started_in_event_range",
+        "_paired_status_allows_automatic_opening",
+        "EventKind",
+        "FROM events",
+        "is_blocked",
+    ):
+        assert deleted not in source, deleted
 
 
 @pytest.mark.parametrize(
@@ -387,7 +323,7 @@ def test_paired_stage_preserves_every_non_ownership_eligibility_factor(
             )
         else:
             blocker = _ticket(conn, planning_day_id=None)
-            core_links.add_link(conn, blocker.id, ticket.id, LinkKind.blocks, 5)
+            _block(conn, blocker_id=blocker.id, target_id=ticket.id, now=5)
 
         assert not _eligible(conn, ticket, definition=definition)
     finally:
@@ -397,10 +333,10 @@ def test_paired_stage_preserves_every_non_ownership_eligibility_factor(
 @pytest.mark.parametrize(
     "ticket_status",
     [
-        TicketStatus.agent_running_step,
+        TicketStatus.agent,
         TicketStatus.awaiting_approval,
-        TicketStatus.proposal_discussion,
-        TicketStatus.user_takeover,
+        TicketStatus.paired,
+        TicketStatus.user,
         TicketStatus.errored,
     ],
 )
@@ -424,12 +360,12 @@ def test_every_non_empty_control_status_is_ineligible(
 # TicketStatus set so a future status cannot silently become auto-runnable.
 _AUTO_ELIGIBLE_UNDER_WORKER_OWNERSHIP: dict[TicketStatus, bool] = {
     TicketStatus.empty: True,
-    TicketStatus.agent_running_step: False,
+    TicketStatus.blocked: False,
+    TicketStatus.agent: False,
     TicketStatus.awaiting_approval: False,
-    TicketStatus.proposal_discussion: False,
-    TicketStatus.user_takeover: False,
+    TicketStatus.paired: False,
+    TicketStatus.user: False,
     TicketStatus.needs_user: False,
-    TicketStatus.paired_work: False,
     TicketStatus.errored: False,
 }
 
@@ -555,15 +491,25 @@ def test_scope_permission_uses_the_ticket_worker_type_definition(
 
 
 @pytest.mark.parametrize("settled_stage", ["done", "dropped"])
-def test_only_an_active_blocking_source_blocks(tmp_path: Path, settled_stage: str) -> None:
+def test_a_completing_blocker_frees_its_target_for_automatic_work(
+    tmp_path: Path, settled_stage: str
+) -> None:
+    # Eligibility itself no longer looks at links: the completing blocker rewrites the
+    # target's status back to empty, and that is what makes it startable again.
     conn = _db(tmp_path)
     try:
         blocker = _ticket(conn, planning_day_id=None)
         target = _ticket(conn)
-        core_links.add_link(conn, blocker.id, target.id, LinkKind.blocks, 4)
+        _block(conn, blocker_id=blocker.id, target_id=target.id, now=4)
+        assert tickets_data.read_ticket(conn, target.id).ticket_status is TicketStatus.blocked
         assert not _eligible(conn, target)
 
-        conn.execute("UPDATE tickets SET stage = ? WHERE id = ?", (settled_stage, blocker.id))
+        if settled_stage == "done":
+            tickets_data.set_stage(conn, blocker.id, new_stage="done", actor="human", now=5)
+        else:
+            tickets_data.drop_ticket(conn, blocker.id, actor="human", now=5)
+
+        assert tickets_data.read_ticket(conn, target.id).ticket_status is TicketStatus.empty
         assert _eligible(conn, target)
     finally:
         conn.close()
@@ -629,7 +575,7 @@ def test_all_conjuncts_true_then_one_factor_at_a_time_false(
             days_data.remove_day_ticket(conn, PLANNING_DAY_ID, ticket.id, 5)
         elif break_one_conjunct == "status":
             conn.execute(
-                "UPDATE tickets SET ticket_status = 'user_takeover' WHERE id = ?",
+                "UPDATE tickets SET ticket_status = 'user' WHERE id = ?",
                 (ticket.id,),
             )
         elif break_one_conjunct == "terminal":
@@ -671,7 +617,7 @@ def test_all_conjuncts_true_then_one_factor_at_a_time_false(
             )
         elif break_one_conjunct == "blocker":
             blocker = _ticket(conn, planning_day_id=None)
-            core_links.add_link(conn, blocker.id, ticket.id, LinkKind.blocks, 5)
+            _block(conn, blocker_id=blocker.id, target_id=ticket.id, now=5)
         else:
             SqliteEmployeeStepRepository().start(conn, ticket.id, now=5)
 

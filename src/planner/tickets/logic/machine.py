@@ -149,5 +149,5 @@ def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
     if ownership_mode is StageOwnershipMode.worker:
         return TicketStatus.empty
     if ownership_mode is StageOwnershipMode.user:
-        return TicketStatus.user_takeover
-    return TicketStatus.paired_work
+        return TicketStatus.user
+    return TicketStatus.paired

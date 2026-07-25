@@ -354,11 +354,9 @@ def _ticket_decisions(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict
     for row in rows:
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])
-        if worker_type_definition.is_terminal(stage):
-            continue
-        if str(row["ticket_status"]) == TicketStatus.agent_running_step.value:
-            continue
-        if str(row["ticket_status"]) == TicketStatus.proposal_discussion.value:
+        # Review is a pure filter on the status: awaiting_approval is exactly "a
+        # proposal is parked for the user".
+        if str(row["ticket_status"]) != TicketStatus.awaiting_approval.value:
             continue
         field = worker_type_definition.gating_field(stage)
         if field is None:
@@ -390,7 +388,7 @@ def review_view(
     day_id: str,
 ) -> JsonDict:
     running_workers = conn.execute(
-        "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent_running_step'"
+        "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent'"
     ).fetchone()
     user_help_requests = [
         {

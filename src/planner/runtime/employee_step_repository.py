@@ -216,7 +216,7 @@ class SqliteEmployeeStepRepository:
             "FROM employee_step_runs "
             "JOIN tickets ON tickets.id = employee_step_runs.ticket_id "
             "WHERE employee_step_runs.status = 'running' "
-            "AND tickets.ticket_status <> 'agent_running_step' "
+            "AND tickets.ticket_status <> 'agent' "
             "ORDER BY employee_step_runs.started_at, employee_step_runs.employee_step_id"
         ).fetchall()
         settled: list[EmployeeStepRun] = []

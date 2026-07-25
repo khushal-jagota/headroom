@@ -178,7 +178,7 @@ class AcpStepGateway:
                 and int(binding_row["binding_generation"]) == snapshot.binding.binding_generation
                 and ticket_row["employee_session_id"] == snapshot.binding.acp_session_id
                 and ticket_row["employee_backend"] == snapshot.binding.backend_key
-                and ticket_row["ticket_status"] == "agent_running_step"
+                and ticket_row["ticket_status"] == "agent"
                 and running_step.employee_session_id == snapshot.binding.acp_session_id
             )
             with self._active_lock:

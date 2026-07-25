@@ -29,12 +29,12 @@ class StageOwnershipMode(StrEnum):
 
 class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer transitions
     empty = "empty"
-    agent_running_step = "agent_running_step"
+    blocked = "blocked"  # empty's stand-in while a live blocker exists
+    agent = "agent"
+    paired = "paired"
     awaiting_approval = "awaiting_approval"
-    proposal_discussion = "proposal_discussion"
-    user_takeover = "user_takeover"
     needs_user = "needs_user"
-    paired_work = "paired_work"
+    user = "user"
     errored = "errored"
 
 

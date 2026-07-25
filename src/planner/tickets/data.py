@@ -223,6 +223,84 @@ def _outgoing_block_target_ids(conn: sqlite3.Connection, ticket_id: str) -> tupl
     return tuple(str(row["to_id"]) for row in rows)
 
 
+def _has_live_blocker(conn: sqlite3.Connection, ticket_id: str) -> bool:
+    """Whether a blocks link into this Ticket has a source that is not done or dropped."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM links "
+            "JOIN tickets source ON source.id = links.from_id "
+            "WHERE links.kind = 'blocks' AND links.to_id = ? "
+            "AND source.stage NOT IN ('done', 'dropped') LIMIT 1",
+            (ticket_id,),
+        ).fetchone()
+        is not None
+    )
+
+
+def _blocked_standin(
+    conn: sqlite3.Connection, ticket_id: str, ticket_status: TicketStatus
+) -> TicketStatus:
+    """`blocked` stands in for `empty` while a live blocker exists; every other value
+    passes through untouched. There is no condition on the Ticket's own stage."""
+    if ticket_status is not TicketStatus.empty:
+        return ticket_status
+    if _has_live_blocker(conn, ticket_id):
+        return TicketStatus.blocked
+    return TicketStatus.empty
+
+
+def settle_blocked_standin(conn: sqlite3.Connection, ticket_id: str, now: int) -> None:
+    """Re-derive one resting Ticket's empty/blocked stand-in after its blockers changed.
+
+    The single transition writer for the link-driven pair. A no-op unless the Ticket is
+    currently resting at `empty` or `blocked` — every other status owns itself — and it
+    writes only when the value actually changes, so a Ticket that stays blocked because
+    another live blocker remains emits no event.
+    """
+    row = conn.execute(
+        "SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)
+    ).fetchone()
+    if row is None:
+        return
+    current = TicketStatus(str(row["ticket_status"]))
+    if current not in (TicketStatus.empty, TicketStatus.blocked):
+        return
+    target = _blocked_standin(conn, ticket_id, TicketStatus.empty)
+    if target is current:
+        return
+    _write_ticket_status(conn, ticket_id, target, now)
+
+
+def settle_blocked_standin_for_link_target(
+    conn: sqlite3.Connection, target_id: str, now: int
+) -> None:
+    """Settle a blocks-link target. Targets may be Tickets or sprint items; only a
+    Ticket carries a ticket status, so a sprint-item target is skipped."""
+    if target_id.split("_", 1)[0] != ID_PREFIXES["ticket"]:
+        return
+    settle_blocked_standin(conn, target_id, now)
+
+
+def _release_outgoing_blocks_links(
+    conn: sqlite3.Connection, ticket_id: str, target_ids: tuple[str, ...], now: int
+) -> None:
+    """A completing Ticket drops the blocks links it holds and frees each named target."""
+    for target_id in target_ids:
+        conn.execute(
+            "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
+            (ticket_id, target_id, LinkKind.blocks.value),
+        )
+        append_event(
+            conn,
+            ticket_id,
+            EventKind.link_removed,
+            {"from_id": ticket_id, "to_id": target_id, "kind": LinkKind.blocks.value},
+            now,
+        )
+    for target_id in target_ids:
+        settle_blocked_standin_for_link_target(conn, target_id, now)
+
+
 def _apply_decision(
     conn: sqlite3.Connection, ticket: Ticket, decision: Decision, now: int
 ) -> Ticket:
@@ -279,6 +357,16 @@ def _apply_decision(
         append_event(conn, ticket.id, spec.kind, payload, now)
     if any(spec.kind is EventKind.stage_changed for spec in decision.events):
         _append_item_children_changed(conn, ticket.sprint_item_id, ticket.id, "stage", now)
+    if active_before != active_after:
+        if active_after:
+            # Reopened out of done: the links this Ticket still holds block again, so
+            # each target re-derives its stand-in against the now-live source.
+            for target_id in affected_blocked_target_ids:
+                settle_blocked_standin_for_link_target(conn, target_id, now)
+        else:
+            # Completed into done/dropped: drop the blocks links this Ticket holds and
+            # rewrite each named target's status in this same transaction.
+            _release_outgoing_blocks_links(conn, ticket.id, affected_blocked_target_ids, now)
     return _load_ticket(conn, ticket.id)
 
 
@@ -308,6 +396,9 @@ def _write_ticket_status(
     *,
     error: str | None = None,
 ) -> None:
+    # The one write door also carries the stand-in: a caller asking for `empty` on a
+    # Ticket with a live blocker durably lands on `blocked`.
+    ticket_status = _blocked_standin(conn, ticket_id, ticket_status)
     backend_error = error if ticket_status is TicketStatus.errored else None
     if ticket_status is TicketStatus.errored and not backend_error:
         raise ValueError("errored Ticket status requires a concrete backend error")
@@ -332,6 +423,7 @@ def _write_ticket_status(
 
 
 def _resting_status_for_ticket(
+    conn: sqlite3.Connection,
     ticket: Ticket,
     *,
     worker_type_definition: WorkerTypeDefinition,
@@ -342,12 +434,16 @@ def _resting_status_for_ticket(
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
-    if ownership_mode is None:
-        return TicketStatus.empty
-    return machine.resting_ticket_status(ownership_mode)
+    resting = (
+        TicketStatus.empty
+        if ownership_mode is None
+        else machine.resting_ticket_status(ownership_mode)
+    )
+    return _blocked_standin(conn, ticket.id, resting)
 
 
 def _entered_stage_status_for_ticket(
+    conn: sqlite3.Connection,
     ticket: Ticket,
     *,
     worker_type_definition: WorkerTypeDefinition,
@@ -358,9 +454,10 @@ def _entered_stage_status_for_ticket(
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
-    if ownership_mode is StageOwnershipMode.user:
-        return TicketStatus.user_takeover
-    return TicketStatus.empty
+    entered = (
+        TicketStatus.user if ownership_mode is StageOwnershipMode.user else TicketStatus.empty
+    )
+    return _blocked_standin(conn, ticket.id, entered)
 
 
 def _write_resting_ticket_status(
@@ -371,6 +468,7 @@ def _write_resting_ticket_status(
     now: int,
 ) -> None:
     target_status = _resting_status_for_ticket(
+        conn,
         ticket,
         worker_type_definition=worker_type_definition,
     )
@@ -392,6 +490,7 @@ def _write_entered_stage_ticket_status(
     now: int,
 ) -> None:
     target_status = _entered_stage_status_for_ticket(
+        conn,
         ticket,
         worker_type_definition=worker_type_definition,
     )
@@ -477,7 +576,7 @@ def claim_running_step_employee_session_id(
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
-        if ticket.ticket_status is not TicketStatus.agent_running_step:
+        if ticket.ticket_status is not TicketStatus.agent:
             return ticket
         write_employee_session_id_in_transaction(
             conn,
@@ -506,8 +605,9 @@ def employee_configuration_editable(
         or ticket.ticket_status
         not in {
             TicketStatus.awaiting_approval,
-            TicketStatus.proposal_discussion,
+            TicketStatus.paired,
             TicketStatus.empty,
+            TicketStatus.blocked,
         }
         or ticket.employee_session_id is not None
     ):
@@ -964,8 +1064,9 @@ def reconcile_ticket_from_external_work(
         )
         if ticket.ticket_status not in (
             TicketStatus.empty,
-            TicketStatus.user_takeover,
-            TicketStatus.paired_work,
+            TicketStatus.blocked,
+            TicketStatus.user,
+            TicketStatus.paired,
             TicketStatus.errored,
         ):
             raise PlannerError(
@@ -1124,7 +1225,7 @@ def claim_automatic_employee_step(
             worker_type_definition=worker_type_definition,
         ):
             return None
-        _write_ticket_status(conn, ticket_id, TicketStatus.agent_running_step, now)
+        _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1147,7 +1248,7 @@ def finish_run_if_still_running_step(
                 force_fresh_employee_session=False,
                 now=now,
             )
-        if ticket.ticket_status is TicketStatus.agent_running_step:
+        if ticket.ticket_status is TicketStatus.agent:
             _write_resting_ticket_status(
                 conn,
                 ticket,
@@ -1166,7 +1267,7 @@ def release_run_claim_to_empty_if_still_running_step(
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.agent_running_step:
+        if ticket.ticket_status is TicketStatus.agent:
             if employee_session_transition is not None:
                 write_employee_session_id_in_transaction(
                     conn,
@@ -1211,7 +1312,7 @@ def mark_run_errored_if_still_running_step(
 ) -> Ticket:
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.agent_running_step:
+        if ticket.ticket_status is TicketStatus.agent:
             if employee_session_transition is not None:
                 write_employee_session_id_in_transaction(
                     conn,
@@ -1446,9 +1547,8 @@ def set_stage_ownership(
             and effective_before is not effective_after
             and updated.ticket_status
             not in (
-                TicketStatus.agent_running_step,
+                TicketStatus.agent,
                 TicketStatus.awaiting_approval,
-                TicketStatus.proposal_discussion,
                 TicketStatus.errored,
             )
         ):
@@ -1504,9 +1604,8 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
             now,
         )
         if effective_before is not StageOwnershipMode.user and updated.ticket_status not in (
-            TicketStatus.agent_running_step,
+            TicketStatus.agent,
             TicketStatus.awaiting_approval,
-            TicketStatus.proposal_discussion,
             TicketStatus.errored,
         ):
             _write_entered_stage_ticket_status(
@@ -1582,9 +1681,8 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
             now,
         )
         if effective_before is not effective_after and updated.ticket_status not in (
-            TicketStatus.agent_running_step,
+            TicketStatus.agent,
             TicketStatus.awaiting_approval,
-            TicketStatus.proposal_discussion,
             TicketStatus.errored,
         ):
             _write_entered_stage_ticket_status(
@@ -1621,8 +1719,8 @@ def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, n
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def enter_proposal_discussion(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
-    """Flip a filed proposal into in-flight discussion when a human sends a typed message.
+def enter_paired_on_human_reply(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
+    """Flip a filed proposal to paired when a human replies with a typed message.
 
     Automatic consequence of message admission, not an actor-authored write, so no actor is
     required. A no-op unless the Ticket is parked at awaiting_approval.
@@ -1630,7 +1728,7 @@ def enter_proposal_discussion(conn: sqlite3.Connection, ticket_id: str, *, now: 
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
         if ticket.ticket_status is TicketStatus.awaiting_approval:
-            _write_ticket_status(conn, ticket_id, TicketStatus.proposal_discussion, now)
+            _write_ticket_status(conn, ticket_id, TicketStatus.paired, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1684,7 +1782,7 @@ def return_for_revision(
                 {"ticket_id": ticket_id},
             )
         _apply_decision(conn, ticket, decision, now)
-        _write_ticket_status(conn, ticket_id, TicketStatus.agent_running_step, now)
+        _write_ticket_status(conn, ticket_id, TicketStatus.agent, now)
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -1740,7 +1838,7 @@ def delete_ticket(
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
         running_step = SqliteEmployeeStepRepository().running_exists(conn, ticket_id)
-        if ticket.ticket_status is TicketStatus.agent_running_step or running_step:
+        if ticket.ticket_status is TicketStatus.agent or running_step:
             raise PlannerError(
                 ErrorCode.already_running,
                 "ticket activity is still running",
@@ -1801,6 +1899,11 @@ def delete_ticket(
                 {"from_id": from_id, "to_id": to_id, "kind": kind},
                 now,
             )
+        # The deleted Ticket held those blocks links; every target it named re-derives
+        # its stand-in now that they are gone.
+        for row in link_rows:
+            if str(row["from_id"]) == ticket_id and str(row["kind"]) == LinkKind.blocks.value:
+                settle_blocked_standin_for_link_target(conn, str(row["to_id"]), now)
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
         for sprint_item_id in sprint_item_ids:

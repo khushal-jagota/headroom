@@ -96,7 +96,7 @@ def test_probe_ticket_drives_through_real_writers(
         at_cap=AtCap.propose,
     )
     assert ticket.stage == NEEDS_ALPHA
-    assert ticket.ticket_status is TicketStatus.user_takeover
+    assert ticket.ticket_status is TicketStatus.user
     ticket = tickets_data.set_stage_ownership(
         tmp_db,
         ticket.id,

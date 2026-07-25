@@ -390,7 +390,7 @@ def test_chief_rejections_do_not_wake_or_change_canonical_records(
 
         conn = connect(str(db_path))
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+            "UPDATE tickets SET ticket_status = 'agent' WHERE id = ?",
             (ticket_id,),
         )
         conn.close()
@@ -479,7 +479,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
                 now=4,
             )
             conn.execute(
-                "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+                "UPDATE tickets SET ticket_status = 'paired', employee_session_id = ? "
                 "WHERE id = ?",
                 ("existing-session", ticket_id),
             )
@@ -493,7 +493,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
             json={"ownership_mode": StageOwnershipMode.paired.value},
         )
         assert same_paired.status_code == 200, same_paired.text
-        assert same_paired.json()["ticket_status"] == TicketStatus.paired_work.value
+        assert same_paired.json()["ticket_status"] == TicketStatus.paired.value
         assert eligibility_wake.calls == 1
         assert _event_kinds(db_path, ticket_id).count("stage_ownership_changed") == 1
         assert not _is_eligible_today(db_path, ticket_id)
@@ -503,7 +503,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
             json={"ownership_mode": StageOwnershipMode.user.value},
         )
         assert user.status_code == 200, user.text
-        assert user.json()["ticket_status"] == TicketStatus.user_takeover.value
+        assert user.json()["ticket_status"] == TicketStatus.user.value
         assert eligibility_wake.calls == 2
 
         paired_again = client.put(
@@ -765,7 +765,7 @@ def test_every_approved_ticket_control_action_wakes_once_and_failures_wake_zero(
         control_id = _create_direct(db_path, title="Control")
         response = client.post(f"/api/tickets/{control_id}/takeover")
         assert response.status_code == 200, response.text
-        assert response.json()["ticket_status"] == "user_takeover"
+        assert response.json()["ticket_status"] == "user"
         assert eligibility_wake.calls == 7
         denied_release = client.post(f"/api/tickets/{control_id}/release", headers=_AGENT)
         assert denied_release.status_code == 400
@@ -1110,7 +1110,9 @@ def test_link_database_constraint_failure_rolls_back_and_does_not_wake(
     assert events_after == events_before
 
 
-def test_successful_excluded_ticket_and_day_writes_do_not_wake(tmp_path: Path) -> None:
+def test_only_eligibility_affecting_ticket_and_day_writes_wake(tmp_path: Path) -> None:
+    # The value edit and the two proposal routes each change eligibility and wake
+    # once after their commit; the note, recap and day writes do not.
     app, db_path, _clock, eligibility_wake = _make_app(tmp_path)
     ticket_id = _create_direct(db_path)
     combined_proposal_id = _create_direct(db_path, title="Combined proposal")
@@ -1167,7 +1169,7 @@ def test_successful_excluded_ticket_and_day_writes_do_not_wake(tmp_path: Path) -
         assert day.status_code == 200, day.text
         assert day.json()["focus"] == "Focus"
 
-    assert eligibility_wake.calls == 1
+    assert eligibility_wake.calls == 3
     conn = connect(str(db_path))
     try:
         persisted = tickets_data.read_ticket(conn, combined_proposal_id)

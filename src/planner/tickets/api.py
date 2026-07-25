@@ -28,7 +28,6 @@ from planner.conversation.employee_configuration import (
     EmployeeConfigurationCatalog,
     EmployeeConfigurationCatalogService,
 )
-from planner.core import link_actions
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
@@ -820,34 +819,52 @@ async def patch_ticket(
 
 @router.post("/tickets/{ticket_id}/propose")
 async def propose_current_field(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ProposeWithRecapBody(
         body=body_str(raw, "body"),
         recap=body_str(raw, "recap"),
     )
     now = clk.now_unix()
-    ticket = tickets_data.file_current_proposal_with_recap(
+    ticket = tickets_actions.file_current_proposal_with_recap(
         conn,
         ticket_id,
         body=body["body"],
         recap=body["recap"],
         actor=ctx.actor,
         now=now,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
 
 @router.post("/tickets/{ticket_id}/propose/{field}")
 async def propose_field(
-    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+    ticket_id: str,
+    field: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ProposeBody(body=body_str(raw, "body"))
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    ticket = tickets_data.file_proposal(
-        conn, ticket_id, field=field, body=body["body"], actor=ctx.actor, now=now
+    ticket = tickets_actions.file_proposal(
+        conn,
+        ticket_id,
+        field=field,
+        body=body["body"],
+        actor=ctx.actor,
+        now=now,
+        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1173,7 +1190,7 @@ async def add_link(
     )
     kind = parse_enum(LinkKind, body["kind"], "kind")
     now = clk.now_unix()
-    link_actions.add_link(
+    tickets_actions.add_link(
         conn,
         body["from_id"],
         body["to_id"],
@@ -1197,7 +1214,7 @@ async def remove_link(
     require_direct_write(ctx)
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
-    link_actions.remove_link(
+    tickets_actions.remove_link(
         conn,
         from_id,
         to_id,

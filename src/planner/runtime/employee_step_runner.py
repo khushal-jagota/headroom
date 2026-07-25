@@ -387,7 +387,7 @@ class EmployeeStepRunner:
             now = self._clock.now_unix()
             if restart_recovery:
                 claimed = tickets_data.read_ticket(conn, ticket_id)
-                if claimed.ticket_status is not TicketStatus.agent_running_step:
+                if claimed.ticket_status is not TicketStatus.agent:
                     return False
                 if claimed.employee_session_id is None:
                     error = "restart recovery has no existing Employee session"
@@ -434,7 +434,7 @@ class EmployeeStepRunner:
                 require_existing_session = False
             else:
                 claimed = tickets_data.read_ticket(conn, ticket_id)
-                if claimed.ticket_status is not TicketStatus.agent_running_step:
+                if claimed.ticket_status is not TicketStatus.agent:
                     return False
                 if claimed.employee_session_id is None:
                     tickets_data.finish_run_if_still_running_step(conn, ticket_id, now=now)
@@ -488,7 +488,7 @@ class EmployeeStepRunner:
                 conn.execute("BEGIN IMMEDIATE")
                 try:
                     current_ticket = tickets_data.read_ticket(conn, ticket_id)
-                    if current_ticket.ticket_status is not TicketStatus.agent_running_step:
+                    if current_ticket.ticket_status is not TicketStatus.agent:
                         raise _WorkerSessionClaimLost
                     effective_session_id = (
                         tickets_data.write_employee_session_id_in_transaction(
@@ -611,7 +611,7 @@ class EmployeeStepRunner:
                 )
                 finish_running_step(current_employee_session_id)
                 return True
-            except Exception as exc:  # never leave the Ticket at agent_running_step
+            except Exception as exc:  # never leave the Ticket at agent
                 _log.exception("employee step crashed (ticket=%s)", ticket_id)
                 error = f"employee step crashed: {exc}"
                 if self._is_stopping():

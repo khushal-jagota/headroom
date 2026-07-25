@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.core.contracts import EventKind
+from planner.core.contracts import EventKind, LinkKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.events import read_events_since
 from planner.days import data as days_data
@@ -470,7 +470,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
         now=now,
     )
     assert started is not None
-    assert started.ticket_status is TicketStatus.agent_running_step
+    assert started.ticket_status is TicketStatus.agent
     assert resolver_calls == 1
     assert eligibility_calls == 1
 
@@ -519,7 +519,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     assert t.ticket_status is TicketStatus.empty
 
     t = data.take_over_ticket(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.user_takeover
+    assert t.ticket_status is TicketStatus.user
     skipped = data.claim_automatic_employee_step(
         tmp_db,
         t.id,
@@ -558,7 +558,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     assert status_events[-2].payload == {"ticket_status": "errored", "error": "boom"}
 
 
-def _park_proposal_discussion(
+def _park_paired(
     tmp_db: Connection,
     cfg: Config,
     fake_clock: TestClock,
@@ -578,47 +578,47 @@ def _park_proposal_discussion(
             employee_session_transition=EmployeeSessionIdTransition(None, "sess-1"),
             now=now,
         )
-    t = data.enter_proposal_discussion(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.proposal_discussion
+    t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.paired
     return t
 
 
-def test_enter_proposal_discussion_flips_only_from_awaiting_approval(
+def test_enter_paired_on_human_reply_flips_only_from_awaiting_approval(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
     assert t.ticket_status is TicketStatus.empty
     # No-op from empty.
-    t = data.enter_proposal_discussion(tmp_db, t.id, now=now)
+    t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.empty
-    # No-op from agent_running_step.
+    # No-op from agent.
     t = _claim_eligible_automatic_step(tmp_db, t.id, now=now)
     assert t is not None
-    assert t.ticket_status is TicketStatus.agent_running_step
-    t = data.enter_proposal_discussion(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.agent_running_step
+    assert t.ticket_status is TicketStatus.agent
+    t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.agent
     # Flips from awaiting_approval.
     t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
     assert t.ticket_status is TicketStatus.awaiting_approval
-    t = data.enter_proposal_discussion(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.proposal_discussion
+    t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
+    assert t.ticket_status is TicketStatus.paired
 
 
-def test_proposal_discussion_exit_re_propose_returns_to_awaiting_approval(
+def test_paired_exit_re_propose_returns_to_awaiting_approval(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    t = _park_proposal_discussion(tmp_db, cfg, fake_clock, now, finish_run=False)
+    t = _park_paired(tmp_db, cfg, fake_clock, now, finish_run=False)
     t = data.file_proposal(tmp_db, t.id, field="success", body="revised", actor="agent", now=now)
     assert t.ticket_status is TicketStatus.awaiting_approval
 
 
-def test_proposal_discussion_exit_accept_rests_the_ticket(
+def test_paired_exit_accept_rests_the_ticket(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    t = _park_proposal_discussion(tmp_db, cfg, fake_clock, now, finish_run=True)
+    t = _park_paired(tmp_db, cfg, fake_clock, now, finish_run=True)
     t = data.accept_proposal(
         tmp_db,
         t.id,
@@ -631,28 +631,30 @@ def test_proposal_discussion_exit_accept_rests_the_ticket(
     assert t.ticket_status is TicketStatus.empty
 
 
-def test_proposal_discussion_exit_send_back_reopens_and_clears_proposal(
+def test_paired_exit_send_back_reopens_and_clears_proposal(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
-    t = _park_proposal_discussion(tmp_db, cfg, fake_clock, now, finish_run=True)
+    t = _park_paired(tmp_db, cfg, fake_clock, now, finish_run=True)
     t = data.return_for_revision(
         tmp_db, t.id, message="please revise", actor="human", now=now
     )
-    assert t.ticket_status is TicketStatus.agent_running_step
+    assert t.ticket_status is TicketStatus.agent
     fields = json.loads(
         tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()["fields"]
     )
     assert fields["success"]["proposal"] is None
 
 
-def test_take_over_preserves_proposal_discussion(
+def test_take_over_from_paired_re_derives_the_user_status(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
+    # paired is no longer excluded from ownership-change re-derivation: a resting
+    # paired-owned Ticket must follow the takeover to `user`.
     now = fake_clock.now_unix()
-    t = _park_proposal_discussion(tmp_db, cfg, fake_clock, now, finish_run=True)
+    t = _park_paired(tmp_db, cfg, fake_clock, now, finish_run=True)
     t = data.take_over_ticket(tmp_db, t.id, now=now)
-    assert t.ticket_status is TicketStatus.proposal_discussion
+    assert t.ticket_status is TicketStatus.user
 
 
 def test_claim_running_step_employee_session_id_logs_lookup_event(
@@ -868,7 +870,7 @@ def test_direct_plan_accept_derives_implementation_ownership_status(
     )
 
     assert ticket.stage == "needs_implementation"
-    expected = TicketStatus.user_takeover if implementation_owner else TicketStatus.empty
+    expected = TicketStatus.user if implementation_owner else TicketStatus.empty
     assert ticket.ticket_status is expected
 
 
@@ -911,14 +913,14 @@ def test_auto_accepted_plan_derives_implementation_ownership_status_after_settle
     )
     assert ticket.stage == "needs_implementation"
     before_settlement = (
-        TicketStatus.user_takeover
+        TicketStatus.user
         if implementation_owner is StageOwnershipMode.user
         else TicketStatus.empty
     )
     assert ticket.ticket_status is before_settlement
 
     settled = data.finish_run_if_still_running_step(tmp_db, ticket.id, now=now)
-    expected = TicketStatus.user_takeover if implementation_owner else TicketStatus.empty
+    expected = TicketStatus.user if implementation_owner else TicketStatus.empty
     assert settled.ticket_status is expected
 
 
@@ -957,9 +959,9 @@ def test_current_worker_plan_proposal_derives_user_owned_implementation_after_se
     )
 
     assert ticket.stage == "needs_implementation"
-    assert ticket.ticket_status is TicketStatus.user_takeover
+    assert ticket.ticket_status is TicketStatus.user
     settled = data.finish_run_if_still_running_step(tmp_db, ticket.id, now=now)
-    assert settled.ticket_status is TicketStatus.user_takeover
+    assert settled.ticket_status is TicketStatus.user
 
 
 def test_auto_accepted_proposal_does_not_park_status(
@@ -1640,3 +1642,314 @@ def test_read_ticket_by_employee_session_id(
     with pytest.raises(PlannerError) as exc:
         data.read_ticket_by_employee_session_id(tmp_db, "no_such_session")
     assert exc.value.code is ErrorCode.not_found
+
+
+# --- blocked: empty's stand-in while a live blocker exists ----------------------
+
+
+def _block(conn: Connection, *, blocker_id: str, target_id: str, now: int) -> None:
+    """Block an entity the way the API does, so a Ticket target settles to `blocked`."""
+    actions.add_link(
+        conn,
+        blocker_id,
+        target_id,
+        LinkKind.blocks,
+        now=now,
+        automatic_employee_step_eligibility_wake=_RecordingEligibilityWake(),
+    )
+
+
+def _status_events(conn: Connection, cfg: Config, ticket_id: str) -> list[str]:
+    return [
+        str(event.payload["ticket_status"])
+        for event in _events(conn, cfg, ticket_id, EventKind.ticket_status_changed)
+    ]
+
+
+def _links_from(conn: Connection, ticket_id: str) -> list[tuple[str, str]]:
+    return [
+        (str(row["to_id"]), str(row["kind"]))
+        for row in conn.execute(
+            "SELECT to_id, kind FROM links WHERE from_id = ? ORDER BY to_id", (ticket_id,)
+        ).fetchall()
+    ]
+
+
+def test_link_add_and_remove_settle_the_blocked_standin(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    assert target.ticket_status is TicketStatus.empty
+    assert _status_events(tmp_db, cfg, target.id) == []
+
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked"]
+
+    actions.remove_link(
+        tmp_db,
+        blocker.id,
+        target.id,
+        LinkKind.blocks,
+        now=now,
+        automatic_employee_step_eligibility_wake=_RecordingEligibilityWake(),
+    )
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked", "empty"]
+
+
+def test_repeated_link_add_is_rejected_and_writes_no_second_status_event(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+
+    with pytest.raises(PlannerError) as excinfo:
+        _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+    assert excinfo.value.code is ErrorCode.link_invalid
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked"]
+
+
+def test_a_second_live_blocker_holds_the_target_blocked_without_a_second_event(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    first = _create(tmp_db, cfg, fake_clock, title="First blocker")
+    second = _create(tmp_db, cfg, fake_clock, title="Second blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+
+    _block(tmp_db, blocker_id=first.id, target_id=target.id, now=now)
+    _block(tmp_db, blocker_id=second.id, target_id=target.id, now=now)
+    # The second acquisition finds the target already blocked and writes nothing.
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked"]
+
+    data.set_stage(tmp_db, first.id, new_stage="done", actor="human", now=now)
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked"]
+
+    data.set_stage(tmp_db, second.id, new_stage="done", actor="human", now=now)
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked", "empty"]
+
+
+@pytest.mark.parametrize("completion", ["done", "dropped"])
+def test_completing_a_blocker_releases_its_links_and_frees_the_target(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock, completion: str
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+    assert _links_from(tmp_db, blocker.id) == [(target.id, "blocks")]
+
+    if completion == "done":
+        data.set_stage(tmp_db, blocker.id, new_stage="done", actor="human", now=now)
+    else:
+        data.drop_ticket(tmp_db, blocker.id, actor="human", now=now)
+
+    assert _links_from(tmp_db, blocker.id) == []
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked", "empty"]
+    removed = _events(tmp_db, cfg, blocker.id, EventKind.link_removed)
+    assert [event.payload for event in removed] == [
+        {"from_id": blocker.id, "to_id": target.id, "kind": "blocks"}
+    ]
+
+
+def test_deleting_a_blocker_frees_its_target(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+
+    data.delete_ticket(tmp_db, blocker.id, actor="human", now=now)
+
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked", "empty"]
+
+
+def test_completion_cleanup_settles_ticket_targets_and_skips_sprint_item_targets(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    tmp_db.execute(
+        "INSERT INTO sprint_items (id, title, project_id, created_at, updated_at) "
+        "VALUES ('si_blocked', 'Blocked item', 'project_vylo', ?, ?)",
+        (now, now),
+    )
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+    _block(tmp_db, blocker_id=blocker.id, target_id="si_blocked", now=now)
+    assert len(_links_from(tmp_db, blocker.id)) == 2
+
+    data.drop_ticket(tmp_db, blocker.id, actor="human", now=now)
+
+    assert _links_from(tmp_db, blocker.id) == []
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
+    assert len(_events(tmp_db, cfg, blocker.id, EventKind.link_removed)) == 2
+    assert _events(tmp_db, cfg, "si_blocked", EventKind.ticket_status_changed) == []
+
+
+def test_reopening_a_done_blocker_blocks_its_target_again(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    data.set_stage(tmp_db, blocker.id, new_stage="done", actor="human", now=now)
+
+    # Linking from a done Ticket stays permitted and blocks nothing: the source is dead.
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
+    assert _status_events(tmp_db, cfg, target.id) == []
+
+    data.set_stage(tmp_db, blocker.id, new_stage="needs_success", actor="human", now=now)
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked"]
+
+
+def test_a_ticket_with_a_live_blocker_comes_to_rest_at_blocked(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+
+    tmp_db.execute(
+        "UPDATE tickets SET ticket_status = ? WHERE id = ?",
+        (TicketStatus.agent.value, target.id),
+    )
+    settled = data.finish_run_if_still_running_step(tmp_db, target.id, now=now)
+    assert settled.ticket_status is TicketStatus.blocked
+
+    tmp_db.execute(
+        "UPDATE tickets SET ticket_status = ? WHERE id = ?",
+        (TicketStatus.agent.value, target.id),
+    )
+    released = data.release_run_claim_to_empty_if_still_running_step(
+        tmp_db, target.id, now=now
+    )
+    assert released.ticket_status is TicketStatus.blocked
+
+
+def test_creation_with_blockers_parks_at_kickoff_then_rests_at_blocked(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    created = data.create_ticket(
+        tmp_db,
+        worker_type="coding",
+        title="Blocked from birth",
+        actor="human",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        blocked_by_ticket_ids=[blocker.id],
+    )
+    # A filed kickoff proposal owns the status; blocked only stands in for empty.
+    assert created.ticket_status is TicketStatus.awaiting_approval
+
+    accepted = data.accept_proposal(
+        tmp_db,
+        created.id,
+        field="kickoff",
+        actor="human",
+        now=now,
+        next_ceiling=NO_FURTHER,
+        at_cap=AtCap.propose,
+    )
+    assert accepted.stage == "needs_success"
+    assert accepted.ticket_status is TicketStatus.blocked
+
+
+def test_external_work_creation_with_blockers_ends_blocked(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    created = data.create_ticket_from_external_work(
+        tmp_db,
+        worker_type="coding",
+        title="Already done elsewhere",
+        kickoff_note="external note",
+        target_stage="needs_approach",
+        provided_values={"success": "success"},
+        actor="chief",
+        now=now,
+        title_max_chars=TITLE_MAX_CHARS,
+        blocked_by_ticket_ids=[blocker.id],
+    )
+    assert created.stage == "needs_approach"
+    assert created.ticket_status is TicketStatus.blocked
+    assert _status_events(tmp_db, cfg, created.id) == ["blocked"]
+
+
+def test_auto_accepted_closeout_frees_a_blocked_target_and_wakes_once(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    _scope(tmp_db, blocker, "done", AtCap.propose, fake_clock)
+    for field, body in [
+        ("success", "s"),
+        ("approach", "a"),
+        ("plan", "p"),
+        ("implementation", "i"),
+    ]:
+        data.file_proposal(tmp_db, blocker.id, field=field, body=body, actor="agent", now=now)
+    assert data.read_ticket(tmp_db, blocker.id).stage == "needs_closeout"
+
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
+
+    wake = _RecordingEligibilityWake()
+    closed = actions.file_current_proposal_with_recap(
+        tmp_db,
+        blocker.id,
+        body="c",
+        recap="closing recap",
+        actor="agent",
+        now=now,
+        automatic_employee_step_eligibility_wake=wake,
+    )
+
+    assert closed.stage == "done"
+    assert wake.wakes == 1
+    assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
+    assert _status_events(tmp_db, cfg, target.id) == ["blocked", "empty"]
+    assert _links_from(tmp_db, blocker.id) == []
+
+
+def test_a_rejected_reopen_rolls_back_its_link_settlement_too(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    # The stage change, the link release and every target settlement are one
+    # transaction: when the reopen is refused for closing a cycle, none of it lands.
+    now = fake_clock.now_unix()
+    first = _create(tmp_db, cfg, fake_clock, title="First")
+    second = _create(tmp_db, cfg, fake_clock, title="Second")
+    data.set_stage(tmp_db, first.id, new_stage="done", actor="human", now=now)
+    # Legal today: the done source cannot close an active cycle.
+    _block(tmp_db, blocker_id=first.id, target_id=second.id, now=now)
+    _block(tmp_db, blocker_id=second.id, target_id=first.id, now=now)
+    assert data.read_ticket(tmp_db, first.id).ticket_status is TicketStatus.blocked
+    events_before = len(_events(tmp_db, cfg, second.id))
+
+    with pytest.raises(PlannerError) as excinfo:
+        data.set_stage(tmp_db, first.id, new_stage="needs_success", actor="human", now=now)
+    assert excinfo.value.code is ErrorCode.link_cycle
+
+    assert data.read_ticket(tmp_db, first.id).stage == "done"
+    assert data.read_ticket(tmp_db, first.id).ticket_status is TicketStatus.blocked
+    assert data.read_ticket(tmp_db, second.id).ticket_status is TicketStatus.empty
+    assert _links_from(tmp_db, first.id) == [(second.id, "blocks")]
+    assert len(_events(tmp_db, cfg, second.id)) == events_before

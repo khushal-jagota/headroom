@@ -229,7 +229,7 @@ def test_startup_stale_handoff_settles_only_nonrunning_ticket_employee_steps(
             title_max_chars=200,
         )
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+            "UPDATE tickets SET ticket_status = 'agent' WHERE id = ?",
             (active.id,),
         )
         repository = SqliteEmployeeStepRepository()
@@ -265,7 +265,7 @@ def test_startup_recovers_each_running_ticket_after_stale_cleanup(
             title_max_chars=200,
         )
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+            "UPDATE tickets SET ticket_status = 'agent' WHERE id = ?",
             (ticket.id,),
         )
         SqliteEmployeeStepRepository().start(
