@@ -35,7 +35,16 @@ from typing import Any, Final, Protocol
 
 import httpx
 
+from planner.conversation2.backends.codex_app_server.model_catalog import (
+    CodexModelCatalog,
+    CodexModelCatalogUnavailable,
+    probe_codex_model_catalog,
+)
 from planner.conversation2.contracts import ConversationBackendKey
+
+# How codex is asked what it can be run as. Named as a parameter because asking spawns a
+# child: a test describes the answer instead of spawning one.
+type CodexModelCatalogProbe = Callable[[str], Awaitable[CodexModelCatalog]]
 
 # A probe is a local command. These are generous enough for a cold start and short enough
 # that a card is never left hanging on one.
@@ -344,6 +353,8 @@ def _version_is_newer(latest: str, installed: str) -> bool:
 class _CatalogRequest:
     environment: BackendProbeEnvironment
     version: str | None
+    executable_path: str
+    codex_model_catalog_probe: CodexModelCatalogProbe
 
 
 @dataclass(frozen=True, slots=True)
@@ -469,15 +480,27 @@ async def _codex_catalog(request: _CatalogRequest) -> _CatalogAnswer:
 
     The pinned protocol has no fixed list to read: ``ReasoningEffort`` is any non-empty
     string the model says it takes, and each model in ``model/list`` carries its own
-    supported efforts. So there is nothing honest to hard-code here, and the catalog stays
-    empty until the app-server client answers it.
+    supported efforts. So there is nothing to hard-code here — the answer is asked of the
+    codex on this machine, which costs one short-lived child and reaches no agent API.
+
+    The efforts are the union across the models, because a picker shows one list. A model
+    that does not take the effort it is asked for is codex's own business to refuse.
     """
-    del request
-    return _CatalogAnswer(
-        diagnoses=(
-            "Codex lists its models and reasoning efforts over its app-server, which "
-            "Panels does not ask yet, so none are offered here.",
+    try:
+        catalog = await request.codex_model_catalog_probe(request.executable_path)
+    except CodexModelCatalogUnavailable:
+        return _CatalogAnswer(
+            diagnoses=(
+                "Codex is installed but did not answer when asked what it can run, so no "
+                "models are listed. Check that `codex app-server` starts from a terminal.",
+            )
         )
+    return _CatalogAnswer(
+        models=tuple(
+            BackendModel(model_id=model.model_id, display_name=model.display_name)
+            for model in catalog.models
+        ),
+        reasoning_effort_options=catalog.reasoning_effort_options,
     )
 
 
@@ -601,7 +624,10 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
 
 
 async def probe_backend(
-    backend_key: ConversationBackendKey, environment: BackendProbeEnvironment
+    backend_key: ConversationBackendKey,
+    environment: BackendProbeEnvironment,
+    *,
+    codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
 ) -> BackendSnapshot:
     """Everything this machine can say about one backend, without touching an agent API."""
     recipe = _BACKEND_PROBE_RECIPES[backend_key]
@@ -641,7 +667,14 @@ async def probe_backend(
             f"Panels could not read who `{recipe.executable_name}` is signed in as."
         )
 
-    catalog = await recipe.read_catalog(_CatalogRequest(environment=environment, version=version))
+    catalog = await recipe.read_catalog(
+        _CatalogRequest(
+            environment=environment,
+            version=version,
+            executable_path=executable_path,
+            codex_model_catalog_probe=codex_model_catalog_probe,
+        )
+    )
     diagnoses.extend(catalog.diagnoses)
 
     advisory = await _update_advisory(recipe, executable_path, version, environment)
@@ -764,8 +797,14 @@ class BackendSnapshotService:
     once its command has finished.
     """
 
-    def __init__(self, environment: BackendProbeEnvironment | None = None) -> None:
+    def __init__(
+        self,
+        environment: BackendProbeEnvironment | None = None,
+        *,
+        codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
+    ) -> None:
         self._environment = environment or SubprocessBackendProbeEnvironment()
+        self._codex_model_catalog_probe = codex_model_catalog_probe
         self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
         self._lock = asyncio.Lock()
 
@@ -784,7 +823,11 @@ class BackendSnapshotService:
             kept = None if refresh else self._snapshots.get(backend_key)
             if kept is not None:
                 return kept
-            probed = await probe_backend(backend_key, self._environment)
+            probed = await probe_backend(
+                backend_key,
+                self._environment,
+                codex_model_catalog_probe=self._codex_model_catalog_probe,
+            )
             self._snapshots[backend_key] = probed
             return probed
 

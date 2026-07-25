@@ -19,6 +19,11 @@ from typing import Any
 
 import pytest
 
+from planner.conversation2.backends.codex_app_server.model_catalog import (
+    CodexModel,
+    CodexModelCatalog,
+    CodexModelCatalogUnavailable,
+)
 from planner.conversation2.contracts import ConversationBackendKey
 from planner.conversation2.snapshot import (
     BackendIdentityStatus,
@@ -81,6 +86,37 @@ class _FakeMachine:
         del timeout_seconds
         self.registry_lookups.append(package_name)
         return self.registry_versions.get(package_name)
+
+
+def _codex_that_answers(*models: CodexModel) -> Callable[[str], Any]:
+    async def probe(codex_executable: str) -> CodexModelCatalog:
+        del codex_executable
+        efforts: list[str] = []
+        for model in models:
+            for effort in model.reasoning_effort_options:
+                if effort not in efforts:
+                    efforts.append(effort)
+        return CodexModelCatalog(models=models, reasoning_effort_options=tuple(efforts))
+
+    return probe
+
+
+async def _codex_that_says_nothing(codex_executable: str) -> CodexModelCatalog:
+    del codex_executable
+    raise CodexModelCatalogUnavailable("codex app-server would not start")
+
+
+def _installed_codex() -> _FakeMachine:
+    machine = _FakeMachine(
+        executables={"codex": CODEX_PATH}, real_paths={CODEX_PATH: CODEX_REAL_PATH}
+    )
+    machine.outcomes[(CODEX_PATH, "--version")] = CommandOutcome(
+        exit_code=0, standard_output="codex-cli 0.145.0\n", standard_error=""
+    )
+    machine.outcomes[(CODEX_PATH, "login", "status")] = CommandOutcome(
+        exit_code=0, standard_output="Logged in using ChatGPT\n", standard_error=""
+    )
+    return machine
 
 
 def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
@@ -265,32 +301,64 @@ def test_an_account_that_cannot_be_read_is_unknown_rather_than_invented() -> Non
     _run(exercise)
 
 
-def test_codex_reads_its_login_line_and_says_what_it_cannot_list_yet() -> None:
-    async def exercise() -> None:
-        machine = _FakeMachine(
-            executables={"codex": CODEX_PATH}, real_paths={CODEX_PATH: CODEX_REAL_PATH}
-        )
-        machine.outcomes[(CODEX_PATH, "--version")] = CommandOutcome(
-            exit_code=0, standard_output="codex-cli 0.145.0\n", standard_error=""
-        )
-        machine.outcomes[(CODEX_PATH, "login", "status")] = CommandOutcome(
-            exit_code=0, standard_output="Logged in using ChatGPT\n", standard_error=""
-        )
+def test_codex_reads_its_login_line_and_what_its_app_server_says_it_runs() -> None:
+    """Codex is the one backend whose catalog is asked rather than written down."""
 
-        card = await probe_backend(ConversationBackendKey.codex, machine)
+    async def exercise() -> None:
+        machine = _installed_codex()
+
+        card = await probe_backend(
+            ConversationBackendKey.codex,
+            machine,
+            codex_model_catalog_probe=_codex_that_answers(
+                CodexModel(
+                    model_id="gpt-5.6-sol",
+                    display_name="GPT-5.6-Sol",
+                    reasoning_effort_options=("low", "medium", "high"),
+                    default_reasoning_effort="low",
+                    is_default=True,
+                ),
+                CodexModel(
+                    model_id="gpt-5.5",
+                    display_name="GPT-5.5",
+                    reasoning_effort_options=("medium", "xhigh"),
+                    default_reasoning_effort="medium",
+                    is_default=False,
+                ),
+            ),
+        )
 
         assert card.version == "0.145.0"
         assert card.identity is not None
         assert card.identity.status is BackendIdentityStatus.authenticated
         assert card.identity.account_label == "Logged in using ChatGPT"
         assert card.identity.login_command == "codex login"
-        # Codex advertises models and efforts per model over its app-server, so an empty
-        # list here is a gap that is stated rather than a claim that there are none.
+        assert [model.model_id for model in card.available_models] == [
+            "gpt-5.6-sol",
+            "gpt-5.5",
+        ]
+        # The union across the models, in the order codex listed them: a picker shows one
+        # list, and an effort no model takes is one no turn could run under.
+        assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh")
+        assert card.diagnoses == ()
+
+    _run(exercise)
+
+
+def test_a_codex_that_will_not_say_what_it_runs_lists_nothing_and_says_why() -> None:
+    async def exercise() -> None:
+        card = await probe_backend(
+            ConversationBackendKey.codex,
+            _installed_codex(),
+            codex_model_catalog_probe=_codex_that_says_nothing,
+        )
+
+        assert card.installed is True
         assert card.available_models == ()
         assert card.reasoning_effort_options == ()
         assert card.diagnoses == (
-            "Codex lists its models and reasoning efforts over its app-server, which "
-            "Panels does not ask yet, so none are offered here.",
+            "Codex is installed but did not answer when asked what it can run, so no "
+            "models are listed. Check that `codex app-server` starts from a terminal.",
         )
 
     _run(exercise)

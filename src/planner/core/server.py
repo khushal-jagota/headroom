@@ -16,8 +16,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.composition import ConversationComposition, ConversationTestOptions
-from planner.conversation2.api import build_conversation2_runtime, unwired_backend_child_factories
+from planner.conversation2.api import build_conversation2_runtime
 from planner.conversation2.api import router as conversation2_router
+from planner.conversation2.production_backends import production_backend_child_factories
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.errors import ErrorCode, PlannerError
@@ -165,13 +166,13 @@ def create_app(
             app.state.employee_step_runner = loops.employee_step_runner
 
         # The new conversation system, alongside the old one and touched by nothing else:
-        # no production screen and no loop calls it. Its backend adapters are wired in
-        # separately; until they are, a conversation is real and a send finds no child.
+        # no production screen and no loop calls it. It composes the three real agents on
+        # this machine, and spawns none of them until a conversation has something to send.
         conversation2 = build_conversation2_runtime(
             db_path=config.db_path,
             db_busy_timeout_ms=config.db_busy_timeout_ms,
             sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=unwired_backend_child_factories(),
+            backend_child_factories=production_backend_child_factories(),
         )
         app.state.conversation2 = conversation2
         await conversation2.system.start_idle_child_janitor()

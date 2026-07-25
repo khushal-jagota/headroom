@@ -25,11 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from planner.conversation2.backends.contracts import (
-    BackendChildFactory,
-    BackendEventSink,
-    BackendSpawnFailed,
-)
+from planner.conversation2.backends.contracts import BackendChildFactory
 from planner.conversation2.contracts import (
     ConversationAccess,
     ConversationAlreadyStarted,
@@ -41,7 +37,6 @@ from planner.conversation2.contracts import (
     PromptDeliveryQueued,
     PromptDeliveryRefused,
     PromptDeliveryStarted,
-    ResolvedConversationStart,
 )
 from planner.conversation2.events import (
     AgentMessageDeltaFrame,
@@ -88,26 +83,6 @@ class Conversation2Runtime:
         """
         self.live_tail.close_all_subscriptions()
         await self.system.shutdown()
-
-
-def unwired_backend_child_factories() -> Mapping[ConversationBackendKey, BackendChildFactory]:
-    """Every backend key, mapped to an adapter that is not wired up yet.
-
-    The system takes one child factory per backend key and will not be built without all
-    three. This is the seam the real adapters are dropped into when they land: until then
-    a conversation is real, its record is real, and a send is refused for the one honest
-    reason — nothing spawned.
-    """
-
-    def factory(
-        *, resolved_start: ResolvedConversationStart, event_sink: BackendEventSink
-    ) -> Any:
-        del event_sink
-        raise BackendSpawnFailed(
-            f"no backend adapter is wired for {resolved_start.backend_key}"
-        )
-
-    return {backend_key: factory for backend_key in ConversationBackendKey}
 
 
 def build_conversation2_runtime(
@@ -546,5 +521,4 @@ __all__ = [
     "Conversation2Runtime",
     "build_conversation2_runtime",
     "router",
-    "unwired_backend_child_factories",
 ]

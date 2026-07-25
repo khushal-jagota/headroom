@@ -29,6 +29,10 @@ from planner.conversation2.api import (
     Conversation2Runtime,
     router,
 )
+from planner.conversation2.backends.codex_app_server.model_catalog import (
+    CodexModelCatalog,
+    CodexModelCatalogUnavailable,
+)
 from planner.conversation2.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
@@ -165,6 +169,12 @@ class _FakeMachine:
         return None
 
 
+async def _no_codex_to_ask(codex_executable: str) -> CodexModelCatalog:
+    """No test here spawns a codex app-server to ask it what it runs."""
+    del codex_executable
+    raise CodexModelCatalogUnavailable("no codex in a unit test")
+
+
 # --- the subject ---------------------------------------------------------------------------
 
 
@@ -187,7 +197,9 @@ class _Harness:
             store=self.store,
             system=self.system,
             live_tail=self.live_tail,
-            backend_snapshots=BackendSnapshotService(self.machine),
+            backend_snapshots=BackendSnapshotService(
+                self.machine, codex_model_catalog_probe=_no_codex_to_ask
+            ),
             sse_heartbeat_ms=HEARTBEAT_MILLISECONDS,
         )
         self.app = FastAPI()
@@ -254,6 +266,30 @@ class _Harness:
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
         await backend.sink.agent_message_delta(token, text_delta)
+        await self.settle()
+
+    async def stream_tool_output(
+        self, conversation_id: str, tool_call_id: str, detail: str
+    ) -> None:
+        backend = self.backend(conversation_id)
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        await backend.sink.tool_call_progress(
+            token, tool_call_id=tool_call_id, detail=detail
+        )
+        await self.settle()
+
+    async def start_tool_call(self, conversation_id: str, tool_call_id: str) -> None:
+        backend = self.backend(conversation_id)
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        await backend.sink.tool_call_started(
+            token,
+            tool_call_id=tool_call_id,
+            title="Run a command",
+            tool_kind="execute",
+            detail=None,
+        )
         await self.settle()
 
     async def finish_tool_call(self, conversation_id: str, tool_call_id: str) -> None:
@@ -815,6 +851,54 @@ def test_the_tail_shows_text_that_has_not_finished_arriving_and_never_stores_it(
     _run(exercise)
 
 
+def test_the_tail_shows_a_tool_call_getting_on_with_it_and_keeps_no_row_for_it(
+    harness: _Harness,
+) -> None:
+    """The call starting is a row; what it says while it runs is only ever shown."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation2/conversations/c/send",
+                json={"text": "work", "sender_label": "owner"},
+            )
+
+            async with _EventStreamDrive(
+                harness.app, "/api/conversation2/conversations/c/tail", "after=1"
+            ) as stream:
+                await stream.wait_until_watching(harness.live_tail)
+                await harness.start_tool_call("c", "t-9")
+                await harness.stream_tool_output("c", "t-9", "total 0\n")
+                await harness.stream_tool_output("c", "t-9", "halfway")
+                await harness.finish_tool_call("c", "t-9")
+
+                name, payload = await stream.next_named_frame()
+                assert (name, payload["kind"]) == (COMMITTED_EVENT_STREAM_NAME, "tool_call_started")
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "tool_call_progress", "tool_call_id": "t-9", "detail": "total 0\n"},
+                )
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "tool_call_progress", "tool_call_id": "t-9", "detail": "halfway"},
+                )
+                name, payload = await stream.next_named_frame()
+                assert (name, payload["kind"]) == (
+                    COMMITTED_EVENT_STREAM_NAME,
+                    "tool_call_finished",
+                )
+
+            rows = (await client.get("/api/conversation2/conversations/c/events")).json()
+            assert [event["kind"] for event in rows["events"]] == [
+                "prompt",
+                "tool_call_started",
+                "tool_call_finished",
+            ]
+
+    _run(exercise)
+
+
 def test_a_quiet_tail_is_kept_alive_by_a_comment(harness: _Harness) -> None:
     async def exercise() -> None:
         async with harness.client() as client:
@@ -1003,16 +1087,14 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         )
         assert created.status_code == 201
         assert created.json()["backend_key"] == "codex"
-        assert client.get("/api/conversation2/conversations/wired").status_code == 200
 
-        # No adapter is wired yet, so a send finds nothing to spawn and says exactly that.
-        refused = client.post(
-            "/api/conversation2/conversations/wired/send",
-            json={"text": "anyone there?", "sender_label": "owner"},
-        )
-        assert refused.json() == {
-            "fate": "refused",
-            "refusal_reason": "backend_did_not_start",
-        }
+        view = client.get("/api/conversation2/conversations/wired")
+        assert view.status_code == 200
+        # Creating a conversation spawns nothing, which is why this test can run against
+        # the real backends without an agent starting anywhere.
+        assert view.json()["is_running"] is False
+
+        events = client.get("/api/conversation2/conversations/wired/events")
+        assert events.json() == {"events": []}
 
     assert app.state.conversation2 is None
