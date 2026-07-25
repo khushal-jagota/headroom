@@ -492,6 +492,57 @@ def test_a_conversation_keeps_the_names_of_its_identity_and_not_the_values(
     _run(exercise)
 
 
+def test_a_folder_written_the_way_a_person_writes_it_is_the_folder_they_meant(
+    harness: _Harness,
+) -> None:
+    """``~/Coding`` is what somebody types. Only a shell knows what it means, so the
+    boundary that turns typed text into a path is where it has to be worked out."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            created = await client.post(
+                "/api/conversation2/conversations",
+                json={
+                    "conversation_id": "typed",
+                    "backend_key": "hermes",
+                    "workspace_folder": "~/Coding",
+                },
+            )
+
+            assert created.status_code == 201
+            folder = created.json()["workspace_folder"]
+            assert folder == str(Path.home() / "Coding")
+            assert "~" not in folder
+
+            # And it is the folder the conversation is actually stored as running in.
+            stored = await harness.store.read_conversation("typed")
+            assert stored is not None
+            assert stored.workspace_folder == Path.home() / "Coding"
+
+    _run(exercise)
+
+
+def test_a_folder_that_is_neither_absolute_nor_a_home_path_is_refused(
+    harness: _Harness,
+) -> None:
+    """Resolving it against wherever the server was started would be a guess."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            refused = await client.post(
+                "/api/conversation2/conversations",
+                json={
+                    "conversation_id": "relative",
+                    "backend_key": "hermes",
+                    "workspace_folder": "some/relative/folder",
+                },
+            )
+
+            assert refused.status_code == 422
+
+    _run(exercise)
+
+
 def test_reading_a_conversation_that_was_never_started_is_a_404(harness: _Harness) -> None:
     async def exercise() -> None:
         async with harness.client() as client:

@@ -301,9 +301,24 @@ def _start_request(body: StartConversationBody) -> ConversationStartRequest:
         model=body.model,
         reasoning_effort=body.reasoning_effort,
         role_materials=role_materials,
-        workspace_folder=None if body.workspace_folder is None else Path(body.workspace_folder),
+        workspace_folder=_workspace_folder(body.workspace_folder),
         access=body.access,
     )
+
+
+def _workspace_folder(typed: str | None) -> Path | None:
+    """A folder as somebody typed it, turned into the one the agent will run in.
+
+    A person writes ``~/Coding``; only a shell knows what that means, and a start request
+    carries values that are already resolved. Expanding it here — where typed text becomes
+    a path — is what makes the two agree. Without it the request is refused for not being
+    absolute, which is true and useless.
+
+    Anything else is left exactly as it was written. A relative folder is not made absolute
+    against whatever directory this server happens to have been started in: that would be a
+    guess, and being refused is the right answer to it.
+    """
+    return None if typed is None else Path(typed).expanduser()
 
 
 async def _require_conversation(
