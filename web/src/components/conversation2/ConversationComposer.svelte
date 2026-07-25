@@ -11,7 +11,8 @@
   import {
     askPlaceholder,
     deliveryOptionsFor,
-    hasArmedChange
+    hasArmedChange,
+    modelDisplayName
   } from "../../lib/conversation2/composer";
   import type { RunValues } from "../../lib/conversation2/composer";
   import type {
@@ -77,7 +78,7 @@
   let inputDisabled = $derived(disabled || takenOver || sending);
   let livePlaceholder = $derived(takenOver ? askPlaceholder(ask) : placeholder);
   let modelLabel = $derived(
-    pickedModel ?? current.model ?? "the backend's own model"
+    modelDisplayName(models, pickedModel ?? current.model) ?? "the backend's own model"
   );
   let effortLabel = $derived(pickedEffort ?? current.reasoningEffort);
   let pickerLabel = $derived(

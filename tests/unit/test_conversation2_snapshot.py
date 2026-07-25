@@ -33,6 +33,7 @@ from planner.conversation2.snapshot import (
     BackendUpdateOutcome,
     CommandOutcome,
     SubprocessBackendProbeEnvironment,
+    _claude_model_catalog_for_version,
     classify_install_method,
     parse_version,
     probe_backend,
@@ -270,10 +271,27 @@ def test_claude_reports_its_account_its_models_and_its_effort_levels() -> None:
         assert card.identity.detail == "max plan via claude.ai"
         assert card.identity.login_command == "claude auth login"
         assert [model.model_id for model in card.available_models] == ["fable", "opus", "sonnet"]
+        # The wire keeps the CLI's aliases; the person reads the version this CLI
+        # resolves each alias to, like codex's card.
+        assert [model.display_name for model in card.available_models] == [
+            "Fable 5",
+            "Opus 5",
+            "Sonnet 5",
+        ]
         assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh", "max")
         assert card.diagnoses == ()
 
     _run(exercise)
+
+
+def test_an_older_claude_names_the_models_its_aliases_actually_reach() -> None:
+    # At 2.1.160 the CLI predates both the Opus 5 gate (2.1.219) and the Fable 5 gate
+    # (2.1.169): opus still resolves to Opus 4.8, and fable is shown as the bare family
+    # name rather than a guess at which older model the alias would reach.
+    assert [
+        (model.model_id, model.display_name)
+        for model in _claude_model_catalog_for_version("2.1.160")
+    ] == [("fable", "Fable"), ("opus", "Opus 4.8"), ("sonnet", "Sonnet 5")]
 
 
 def test_a_signed_out_cli_is_told_which_command_to_run() -> None:

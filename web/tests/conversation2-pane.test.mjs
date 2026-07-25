@@ -499,7 +499,7 @@ with sync_playwright() as playwright:
 
     # The picker's face shows what the conversation runs on now.
     toggle = page.locator("[data-conversation2-picker-toggle]")
-    assert "opus · high" in toggle.inner_text(), toggle.inner_text()
+    assert "Opus · high" in toggle.inner_text(), toggle.inner_text()
 
     # Browsing it changes nothing at all: no send, and the picker still says so.
     toggle.click()
@@ -511,7 +511,7 @@ with sync_playwright() as playwright:
     # Abandoning it leaves the conversation exactly as it was.
     page.locator("[data-conversation2-picker-abandon]").click()
     assert page.evaluate("window.__sends().length") == 0
-    assert "opus · high" in toggle.inner_text(), toggle.inner_text()
+    assert "Opus · high" in toggle.inner_text(), toggle.inner_text()
     assert "next message" not in toggle.inner_text()
 
     # Picked again, the change rides the next message and then stops being pending.
@@ -527,7 +527,7 @@ with sync_playwright() as playwright:
 
     # What was typed is gone, and so is the pending change.
     page.wait_for_function("document.querySelector('[data-conversation2-input]').value === ''")
-    assert "opus · high" in toggle.inner_text(), toggle.inner_text()
+    assert "Opus · high" in toggle.inner_text(), toggle.inner_text()
 
     # A second message carries no change, because none is pending any more.
     page.locator("[data-conversation2-input]").fill("again")

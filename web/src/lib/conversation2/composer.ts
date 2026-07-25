@@ -220,6 +220,21 @@ export function sendBodyFor(input: {
   };
 }
 
+/** The name a model value is shown under, from the backend card's own catalog.
+ *
+ * The wire carries whatever the CLI accepts (claude's bare aliases, codex's slugs);
+ * the person reads the catalog's display name for it — "Opus 5", not "opus". A value
+ * the catalog does not name is shown as itself rather than dressed up.
+ */
+export function modelDisplayName(
+  models: readonly { model_id: string; display_name: string | null }[],
+  value: string | null
+): string | null {
+  if (value === null) return null;
+  const match = models.find((model) => model.model_id === value);
+  return match?.display_name ?? value;
+}
+
 /** What a delivery's fate says, in the words a person reads under the composer.
  *
  * A started fate says nothing: the turn is already visible as itself — the prompt row,

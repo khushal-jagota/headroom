@@ -225,7 +225,7 @@
       {#if emptyState && rows.length === 0}
         {@render emptyState()}
       {/if}
-      <ConversationTranscript {rows} />
+      <ConversationTranscript {rows} {models} />
     </div>
     {#if jumpVisible}
       <button

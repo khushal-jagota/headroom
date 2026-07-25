@@ -419,15 +419,34 @@ _CLAUDE_REASONING_EFFORT_OPTIONS: Final = ("low", "medium", "high", "xhigh", "ma
 
 # Claude has no cheap way to enumerate models, so the catalog is the aliases its own
 # `--model` help documents. Aliases rather than dated model ids on purpose: an alias keeps
-# naming the current model, so this list does not quietly rot between releases.
-_CLAUDE_MODEL_CATALOG: Final[tuple[BackendModel, ...]] = (
-    BackendModel(model_id="fable", display_name="Fable"),
-    BackendModel(model_id="opus", display_name="Opus"),
-    BackendModel(model_id="sonnet", display_name="Sonnet"),
+# naming the current model, so this list does not quietly rot between releases. The shown
+# name carries the version the installed CLI resolves the alias to, so the picker reads
+# like codex's ("Opus 5", not a bare "opus"); below an alias's floor the bare family name
+# is shown rather than guessing which older model the alias would reach. The fable and
+# opus floors are the CLI's own documented model gates; sonnet has resolved to Sonnet 5
+# for every version this catalog admits.
+_CLAUDE_MODEL_ALIAS_VERSION_LADDER: Final[
+    tuple[tuple[str, str, tuple[tuple[tuple[int, int, int], str], ...]], ...]
+] = (
+    ("fable", "Fable", (((2, 1, 169), "Fable 5"),)),
+    ("opus", "Opus", (((2, 1, 219), "Opus 5"), ((2, 1, 154), "Opus 4.8"))),
+    ("sonnet", "Sonnet", (((2, 1, 0), "Sonnet 5"),)),
 )
 
 # Below this the installed CLI is too old for the catalog above to be the truth about it.
 _CLAUDE_MINIMUM_VERSION_FOR_CATALOG: Final = (2, 1, 0)
+
+
+def _claude_model_catalog_for_version(version: str) -> tuple[BackendModel, ...]:
+    models: list[BackendModel] = []
+    for alias, bare_family_name, versioned_names in _CLAUDE_MODEL_ALIAS_VERSION_LADDER:
+        shown = bare_family_name
+        for floor, versioned_name in versioned_names:
+            if _version_at_least(version, floor):
+                shown = versioned_name
+                break
+        models.append(BackendModel(model_id=alias, display_name=shown))
+    return tuple(models)
 
 
 def _read_claude_identity(outcome: CommandOutcome) -> BackendIdentity:
@@ -470,7 +489,7 @@ async def _claude_catalog(request: _CatalogRequest) -> _CatalogAnswer:
             ),
         )
     return _CatalogAnswer(
-        models=_CLAUDE_MODEL_CATALOG,
+        models=_claude_model_catalog_for_version(version),
         reasoning_effort_options=_CLAUDE_REASONING_EFFORT_OPTIONS,
     )
 

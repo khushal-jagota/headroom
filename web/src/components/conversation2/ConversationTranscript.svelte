@@ -12,8 +12,13 @@
     turnEndingSentence,
     TURN_STOPPED_SENTENCE
   } from "../../lib/conversation2/transcript";
+  import { modelDisplayName } from "../../lib/conversation2/composer";
+  import type { BackendModel } from "../../lib/conversation2/wire";
 
-  let { rows }: { rows: readonly TranscriptRow[] } = $props();
+  let {
+    rows,
+    models = []
+  }: { rows: readonly TranscriptRow[]; models?: readonly BackendModel[] } = $props();
 
   function modeChip(mode: string): string | null {
     if (mode === "send_now") return "sent now";
@@ -22,7 +27,7 @@
   }
 
   function runValuesLine(model: string | null, reasoningEffort: string | null): string {
-    const parts = [model ?? "the backend's own model"];
+    const parts = [modelDisplayName(models, model) ?? "the backend's own model"];
     if (reasoningEffort) parts.push(reasoningEffort);
     return `now running on ${parts.join(" · ")}`;
   }
