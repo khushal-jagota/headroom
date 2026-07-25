@@ -144,7 +144,7 @@ def test_checked_in_config_exposes_ws_heartbeat_cadence() -> None:
     assert load_config(path=str(path), env={}).ws_heartbeat_ms == 15000
 
 
-def test_backup_directory_is_configurable_without_reusing_a_release_path() -> None:
+def test_backup_directory_is_independently_configurable() -> None:
     cfg = load_config(path=None, env={"PLAN_BACKUP_DIR": "/operator-state/backups"})
 
     assert cfg.backup_dir == "/operator-state/backups"

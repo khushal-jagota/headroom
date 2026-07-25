@@ -8,13 +8,13 @@ Type=simple
 User=panels-live
 WorkingDirectory=/var/lib/panels/environments/live
 EnvironmentFile=/etc/panels/environments/live.env
-ExecStart=/opt/panels/current/bin/panels-launcher serve
+ExecStart=/opt/panels/current/app/bin/panels-launcher serve
 Restart=on-failure
 RestartSec=5
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/panels/environments/live /var/log/panels /etc/panels/environments
-ReadOnlyPaths=/opt/panels/releases /opt/panels/current
+ReadOnlyPaths=/opt/panels/current/app
 NoNewPrivileges=yes
 
 [Install]

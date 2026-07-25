@@ -40,11 +40,23 @@ The database and managed-file tree are independently verified recovery artifacts
 back-to-back at nightly granularity; they are not a single transactional point-in-time. This is
 recoverability to recent state, not point-in-time versioning.
 
-The repository command is:
+The general repository command is:
 
 ```sh
 panels environment backup --source-db /path/to/planner.db --backup-dir /path/to/backups --deployed-revision "$REVISION"
 ```
+
+Nightly and pre-deployment automation reads that revision from the validated deployed app:
+
+```sh
+panels environment backup-current \
+  --source-db ~/Deployments/Panels/current/data/planner.db \
+  --backup-dir ~/Deployments/Panels/current/data/backups \
+  --current-app ~/Deployments/Panels/current/app
+```
+
+The deployment transaction completes this verified backup before it replaces
+`current/app`. If the backup fails, the live app is unchanged.
 
 Restore is deliberately stopped-only. It validates the whole snapshot — the database and every
 managed-root manifest — before touching anything. It restores the database first (staging any
@@ -71,7 +83,8 @@ The live service and its operator-owned paths are described in [runtime environm
 
 ## Deferred
 
-Off-host copies, automatic rollback, and a broader disaster recovery product remain out of scope
-until a separate recovery design exists.
+Off-host copies and a broader disaster recovery product remain out of scope until a separate
+recovery design exists. Deployment's automatic app recovery is described in
+[production deployment](deployment.md); it does not restore persistent state.
 
-_Last verified: 2026-07-23._
+_Last verified: 2026-07-25._

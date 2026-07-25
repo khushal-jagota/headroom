@@ -22,8 +22,9 @@ duplicate Ticket.
 
 Cleanup has one dry-run/apply inventory and may act only on configured logs, verified backup
 retention, and expired Panels operation temporaries that pass containment and live-reference checks.
-Processes, worktrees, caches, prepared environments, selected releases, and unknown state are never
-automatic deletion targets. One implementation Ticket is appropriate because the backend snapshot,
+Processes, worktrees, caches, prepared environments, the deployed app, transaction recovery
+evidence, and unknown state are never automatic deletion targets. One implementation Ticket is
+appropriate because the backend snapshot,
 CLI/API, popover, and cleanup safety contract share types and acceptance tests; splitting them would
 create overlapping edits and an artificial integration boundary.
 
@@ -48,13 +49,14 @@ The Linux maintenance unit loads a separate operator-owned environment with abso
 `PLAN_BACKUP_DIR` so its snapshot and maintenance inspect one location.
 
 Process collection treats ordinary subprocess errors as unavailable evidence. It recognises only the
-bounded console-script `serve` forms and the release launcher's `python -m planner serve` form, then
+bounded console-script `serve` forms and the app launcher's `python -m planner serve` form, then
 serialises role, pid, state, and elapsed age only; raw command text is discarded.
 
 ## 2026-07-23 — The single-user Mac uses the signed-in operator identity
 
-Exact-commit deployment needs immutable non-Git releases, backup-before-switch, exact-SHA health,
-and code rollback. It does not require separate macOS application and deployment accounts. The Mac
+Exact-commit deployment needs one validated non-Git app, backup-before-replacement, exact-SHA
+health, and code recovery. It does not require separate macOS application and deployment accounts.
+The Mac
 runner and LaunchAgent use the signed-in operator's existing Hermes/provider setup and user-owned
 application root; separate identities remain an optional future server hardening step.
 
@@ -64,15 +66,15 @@ the supervisor's application child, while booting out a KeepAlive job alone is n
 
 The LaunchAgent derives `USER` and `LOGNAME` from its actual uid because launchd does not supply
 those shell variables. `HOME` alone is insufficient for Claude Code to resolve the operator's
-Keychain-backed login. The immutable release launcher preserves `USER`, `LOGNAME`, and `SHELL`
+Keychain-backed login. The validated app launcher preserves `USER`, `LOGNAME`, and `SHELL`
 alongside its existing `HOME`, `PATH`, and terminal locale boundary so the provider child can
 inherit the complete approved user identity.
 
 ## 2026-07-23 — The validated launcher supplies the packaged application root
 
-Checkout code can derive assets from `src/planner`, but an installed wheel cannot. The release
-launcher already validates the manifest and sets `PLAN_RELEASE_ROOT`; server composition uses that
-root for web, asset, and static paths, preserving the checkout fallback only when no release is
+Checkout code can derive assets from `src/planner`, but an installed wheel cannot. The app
+launcher validates the manifest and sets `PLAN_APP_ROOT`; server composition uses that root for
+web, asset, and static paths, preserving the checkout fallback only when no app is
 active.
 
 ## 2026-07-23 — GitHub variables enter deployment only through an explicit workflow map
@@ -91,29 +93,29 @@ ingress limit fails the child closed.
 
 ## D-t_2wcx0a55-review-correction — Build and validate on the host runner
 
-The release-build workflow runs on the production-labelled runner after installing its pinned
+The app-build workflow runs on the production-labelled runner after installing its pinned
 Python and Node prerequisites, so the exported virtual environment and frontend are host-native.
-The deploy job consumes that exact published artifact serially. This preserves the single runner
+The deploy job consumes that exact temporary app serially. This preserves the single runner
 boundary while avoiding a Linux-built artifact being used by the first macOS production host.
 
-## D-t_2wcx0a55-release-not-checkout — Git identifies source; live runs an application artifact
+## D-t_2wcx0a55-app-not-checkout — Git identifies source; live runs an application artifact
 
 After the user merges `staging → main`, deployment uses only the exact resulting `main` SHA.
 GitHub Actions may use its ordinary temporary checkout to obtain those files, but live receives a
-host-native versioned application tree with no Git metadata, branch, remote, or development
-workflow. Staging remains the persistent development checkout. A stable operator-owned `current`
-pointer selects a complete release, while database, managed files, agent state, configuration,
-credentials, logs, and backups remain outside every release.
+host-native application tree with no Git metadata, branch, remote, or development workflow.
+Staging remains the persistent development checkout. Deployment replaces only the operator-owned
+`current/app`; database, managed files, agent state, configuration, credentials, logs, and backups
+remain in persistent paths outside that app.
 
 ## D-t_2wcx0a55-one-protocol-two-service-managers — Move hosts by configuration, not semantics
 
 The current Mac is the first production target and the later VPS uses the same exact-SHA build,
-backup, atomic switch, health proof, release record, and code-rollback protocol. macOS launchd and
-Linux systemd are thin supervision adapters around one stable release launcher. The production
+backup, app replacement, health proof, and code-recovery protocol. macOS launchd and Linux systemd
+are thin supervision adapters around one stable app launcher. The production
 self-hosted GitHub runner has only the operator deployment boundary; the live service identity can
-write persistent runtime state but not releases or deployment controls. The current private GitHub
-plan cannot enforce branch-required checks, so PR verification is advisory and every `main` push
-must pass its own release gate before deployment can start.
+write persistent runtime state but not the deployed app or deployment controls. The current private
+GitHub plan cannot enforce branch-required checks, so PR verification is advisory and every
+`main` push must pass its app gate before deployment can start.
 
 ## D-t_fvrfhk2k-agents-route-and-chief-resource — Make role kind explicit without inventing a registry
 
@@ -3702,9 +3704,9 @@ not guarantee notification/request wire ordering across the prior fork response.
 - Do not use `actions/setup-python` or `actions/setup-node` on the production Mac. The runner is
   intentionally host-native, already publishes Python and Node through its service `PATH`, and the
   Python action's hosted-runner cache path is not writable by the production runner account.
-- Fail fast unless the host provides Python 3.12 or newer and Node 22. Release construction still
-  installs all Python and Node dependencies into the exported exact-SHA release; these checks only
-make the operator-owned host prerequisite explicit.
+- Fail fast unless the host provides Python 3.12 or newer and Node 22. App construction still
+  installs all Python and Node dependencies into the temporary exact-SHA app; these checks only
+  make the operator-owned host prerequisite explicit.
 
 ## 2026-07-24 — Workspace regroup: signals stay facts, buckets stay frontend
 

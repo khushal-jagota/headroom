@@ -45,15 +45,15 @@ DEFAULT_VPS_STATUS_POLICY = VpsStatusPolicy()
 
 
 def resolve_status_application_root(environment: dict[str, str] | None = None) -> Path:
-    """Use launcher-provided release context, or the installed/source application root.
+    """Use launcher-provided app context, or the installed/source application root.
 
-    The path is evidence context for the bounded Git probe only; release identity
-    remains ``Config.release_sha``.
+    The path is evidence context for the bounded Git probe only; app identity
+    remains ``Config.app_sha``.
     """
     values = os.environ if environment is None else environment
-    release_root = values.get("PLAN_RELEASE_ROOT")
-    if release_root is not None:
-        return Path(release_root).expanduser().resolve(strict=False)
+    app_root = values.get("PLAN_APP_ROOT")
+    if app_root is not None:
+        return Path(app_root).expanduser().resolve(strict=False)
     return Path(__file__).resolve().parents[3]
 
 
@@ -74,7 +74,7 @@ class VpsStatusSnapshot:
     collected_at: str
     overall_state: StatusState
     environment: dict[str, object]
-    release: dict[str, object]
+    app: dict[str, object]
     backup: dict[str, object]
     disk: dict[str, object]
     workloads: dict[str, object]
@@ -88,7 +88,7 @@ class VpsStatusSnapshot:
             "collected_at": self.collected_at,
             "overall_state": self.overall_state,
             "environment": self.environment,
-            "release": self.release,
+            "app": self.app,
             "backup": self.backup,
             "disk": self.disk,
             "workloads": self.workloads,
@@ -151,7 +151,7 @@ def collect_vps_status(
     logs_root = Path(config.logs_dir).expanduser()
     inventory = collect_cleanup_inventory(config, dependencies=dependencies, policy=policy)
     environment = _environment_section(runtime_root)
-    release = _release_section(config.release_sha)
+    app = _app_section(config.app_sha)
     backup = _backup_section(backup_root, now, policy)
     disk = _disk_section(runtime_root, dependencies, policy)
     workloads = _workloads_section(dependencies)
@@ -169,7 +169,7 @@ def collect_vps_status(
     resources = _resources_section(dependencies)
     sections = (
         environment,
-        release,
+        app,
         backup,
         disk,
         workloads,
@@ -182,7 +182,7 @@ def collect_vps_status(
         collected_at=_iso(now) or "",
         overall_state=_overall_state(section["state"] for section in sections),
         environment=environment,
-        release=release,
+        app=app,
         backup=backup,
         disk=disk,
         workloads=workloads,
@@ -289,14 +289,14 @@ def _environment_section(runtime_root: Path) -> dict[str, object]:
     return {"state": "healthy", "summary": "runtime path is available"}
 
 
-def _release_section(release_sha: str | None) -> dict[str, object]:
-    if release_sha is None:
+def _app_section(app_sha: str | None) -> dict[str, object]:
+    if app_sha is None:
         return {
             "state": "review_needed",
-            "summary": "release identity is not configured",
+            "summary": "app identity is not configured",
             "sha": None,
         }
-    return {"state": "healthy", "summary": "configured release identity", "sha": release_sha}
+    return {"state": "healthy", "summary": "configured app identity", "sha": app_sha}
 
 
 def _backup_section(root: Path, now: datetime, policy: VpsStatusPolicy) -> dict[str, object]:

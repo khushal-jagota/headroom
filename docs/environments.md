@@ -38,20 +38,24 @@ does not authorize any later command. `panels environment cleanup --apply` build
 then immediately re-proves every target under the operator's filesystem authority before changing
 it. It can rotate oversized configured log files, remove expired `.backup-*` temporary directories
 under the configured backup directory, and prune only verified backups beyond seven. It never
-kills a process or removes a worktree, cache, prepared environment, release, symlink, or ambiguous
-path. Cleanup has no HTTP endpoint.
+kills a process or removes a worktree, cache, prepared environment, deployed app, symlink, or
+ambiguous path. It also never removes a deployment transaction's recovery evidence.
+Cleanup has no HTTP endpoint.
 
-## Live environment
+## Prepared live environment
 
-Live is a prepared external environment attached to a separate `main` checkout. Its
+The environment commands can prepare a live instance attached to a separate `main` checkout. Its
 manifest records the checkout, durable state paths, credential-file reference, and a
-fixed port for known ingress. Live state and credentials remain operator-owned.
+fixed port for known ingress. Live state and credentials remain operator-owned. This prepared
+environment model is separate from the production app replacement described in
+[production deployment](deployment.md); production service intent launches the deployed
+`current/app`.
 
 Use an absolute environment root and repository root:
 
 ```sh
 ENV_ROOT=/var/lib/panels/environments
-LIVE_RELEASE_ROOT=/opt/panels/releases
+LIVE_REPO_ROOT=/opt/panels/live
 
 panels environment prepare \
   --kind live \
@@ -233,7 +237,8 @@ checkout, or remove the fallback until live has passed those checks and the work
 reconnected.
 
 Nightly SQLite backups and operator restore are described in [database backups](backups.md).
-Automatic deployment and public ingress changes remain separate work.
+Production app replacement is described in [production deployment](deployment.md). Public ingress
+changes remain separate work.
 
 ## Linux intent
 
@@ -256,9 +261,9 @@ The output is render-only and reports `vps_enforcement_verified` as false. Linux
 isolation exists only after an operator has installed and checked the accounts,
 permissions, credential files, services, and ingress on the target host.
 
-The live unit uses the operator-owned `/opt/panels/current` release pointer. Staging uses
+The live unit uses the operator-owned `/opt/panels/current/app` launcher. Staging uses
 `/opt/panels/staging` as its development checkout and the root-owned manager checkout.
-The live service receives only external writable state paths; the release root is read-only.
+The live service receives only external writable state paths; the deployed app is read-only.
 
 ## Handoffs
 
@@ -271,4 +276,4 @@ The live service receives only external writable state paths; the release root i
 
 ---
 
-_Last verified: 2026-07-23._
+_Last verified: 2026-07-25._

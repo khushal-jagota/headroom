@@ -1,4 +1,4 @@
-"""Stable launcher boundary for a validated production release."""
+"""Stable launcher boundary for a validated production app."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from planner.environments.release import validate_release_manifest
+from planner.environments.app import validate_app_manifest
 
 EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
     {
@@ -47,33 +47,30 @@ EXTERNAL_RUNTIME_ENVIRONMENT_KEYS = frozenset(
 )
 
 
-def build_release_launch_env(release_root: Path, *, ambient: Mapping[str, str]) -> dict[str, str]:
-    root = release_root.expanduser().resolve()
-    manifest = validate_release_manifest(root / "manifest.json", require_runtime=True)
+def build_app_launch_env(app_root: Path, *, ambient: Mapping[str, str]) -> dict[str, str]:
+    root = app_root.expanduser().resolve()
+    manifest = validate_app_manifest(root / "manifest.json", require_runtime=True)
     allowed = {
         key: value
         for key, value in ambient.items()
         if key in EXTERNAL_RUNTIME_ENVIRONMENT_KEYS or key.startswith("LC_")
     }
-    allowed.update({"PLAN_RELEASE_SHA": manifest.release_sha, "PLAN_RELEASE_ROOT": str(root)})
+    allowed.update({"PLAN_APP_SHA": manifest.app_sha, "PLAN_APP_ROOT": str(root)})
     return allowed
 
 
-def launch_release(
-    release_root: Path, argv: list[str], *, ambient: Mapping[str, str] | None = None
+def launch_app(
+    app_root: Path, argv: list[str], *, ambient: Mapping[str, str] | None = None
 ) -> None:
-    env = build_release_launch_env(release_root, ambient=os.environ if ambient is None else ambient)
-    os.execve(str(release_root / ".venv" / "bin" / "python"), argv, env)
+    env = build_app_launch_env(app_root, ambient=os.environ if ambient is None else ambient)
+    os.execve(str(app_root / ".venv" / "bin" / "python"), argv, env)
 
 
 def main() -> None:
     if len(sys.argv) < 2:
-        raise SystemExit("usage: release_launcher RELEASE_ROOT [planner arguments]")
+        raise SystemExit("usage: app_launcher APP_ROOT [planner arguments]")
     root = Path(sys.argv[1]).expanduser().resolve()
-    launch_release(
-        root,
-        [str(root / ".venv" / "bin" / "python"), "-m", "planner", *sys.argv[2:]],
-    )
+    launch_app(root, [str(root / ".venv" / "bin" / "python"), "-m", "planner", *sys.argv[2:]])
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ import click
 
 from planner.conversation.hermes_backend_configuration import resolve_hermes_python
 from planner.core.config import Config, load_config
+from planner.environments.app import build_exported_app, validate_app_manifest
+from planner.environments.app_compatibility import prove_previous_app_compatibility
 from planner.environments.backup import create_database_backup, restore_database_snapshot
 from planner.environments.contracts import (
     DynamicEnvironmentPort,
@@ -24,7 +26,7 @@ from planner.environments.contracts import (
 from planner.environments.deployment import (
     HttpHealthClient,
     SubprocessServiceController,
-    deploy_release,
+    deploy_app,
 )
 from planner.environments.linux import render_linux_specification
 from planner.environments.logic.credentials import parse_environment_file
@@ -42,7 +44,6 @@ from planner.environments.materialize import (
     remove_environment_instance,
     reset_environment_instance,
 )
-from planner.environments.release import build_exported_release, validate_release_manifest
 from planner.environments.repository_runtime import resolve_repository_runtime_python
 from planner.environments.runtime_port import reserve_available_tcp_listener
 from planner.environments.vps_status import (
@@ -148,19 +149,19 @@ def backup(source_db: Path, backup_dir: Path, deployed_revision: str) -> None:
     click.echo(str(snapshot))
 
 
-@environment.command("release-build")
+@environment.command("app-build")
 @click.option(
     "--source-root", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
 )
 @click.option("--requested-sha", required=True)
-@click.option("--release-root", type=click.Path(path_type=Path, file_okay=False), required=True)
-def release_build(source_root: Path, requested_sha: str, release_root: Path) -> None:
-    """Build and validate one host-native exact-SHA release."""
+@click.option("--candidate-app", type=click.Path(path_type=Path, file_okay=False), required=True)
+def app_build(source_root: Path, requested_sha: str, candidate_app: Path) -> None:
+    """Build and validate one host-native exact-SHA app."""
     try:
-        manifest = build_exported_release(
+        manifest = build_exported_app(
             source_root,
             requested_sha=requested_sha,
-            release_root=release_root,
+            candidate_app=candidate_app,
             install_dependencies=True,
         )
     except (OSError, RuntimeError, ValueError) as exc:
@@ -168,17 +169,17 @@ def release_build(source_root: Path, requested_sha: str, release_root: Path) -> 
     click.echo(json.dumps(manifest.as_dict(), sort_keys=True))
 
 
-@environment.command("release-identity")
+@environment.command("app-identity")
 @click.option(
-    "--release", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+    "--app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
 )
-def release_identity(release: Path) -> None:
-    """Print the validated SHA for one release directory."""
+def app_identity(app: Path) -> None:
+    """Print the validated SHA for one app directory."""
     try:
-        manifest = validate_release_manifest(release / "manifest.json")
+        manifest = validate_app_manifest(app / "manifest.json")
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(manifest.release_sha)
+    click.echo(manifest.app_sha)
 
 
 @environment.command("backup-current")
@@ -187,61 +188,66 @@ def release_identity(release: Path) -> None:
 )
 @click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
 @click.option(
-    "--current-release",
+    "--current-app",
     type=click.Path(path_type=Path, exists=True, file_okay=False),
     required=True,
 )
-def backup_current(source_db: Path, backup_dir: Path, current_release: Path) -> None:
-    """Validate the current release and back up the database and file tree with its identity."""
+def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None:
+    """Validate the current app and back up the database and file tree with its identity."""
     try:
-        revision = validate_release_manifest(current_release / "manifest.json").release_sha
+        revision = validate_app_manifest(current_app / "manifest.json").app_sha
         snapshot = create_database_backup(source_db, backup_dir, revision)
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(str(snapshot))
 
 
-@environment.command("deploy")
+@environment.command("app-deploy")
 @click.option(
-    "--candidate", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+    "--candidate-app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
 )
-@click.option("--current", "current_pointer", type=click.Path(path_type=Path), required=True)
+@click.option("--current-root", type=click.Path(path_type=Path), required=True)
 @click.option("--source-db", type=click.Path(path_type=Path, dir_okay=False), required=True)
 @click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
-@click.option("--records", "records_path", type=click.Path(path_type=Path), required=True)
 @click.option("--health-url", required=True)
 @click.option("--service-manager", type=click.Choice(["systemctl", "launchctl"]), required=True)
 @click.option("--service-name", required=True)
-@click.option("--baseline-release", type=click.Path(path_type=Path, exists=True, file_okay=False))
-def deploy(
-    candidate: Path,
-    current_pointer: Path,
+@click.option("--lock-path", type=click.Path(path_type=Path))
+def app_deploy(
+    candidate_app: Path,
+    current_root: Path,
     source_db: Path,
     backup_dir: Path,
-    records_path: Path,
     health_url: str,
     service_manager: str,
     service_name: str,
-    baseline_release: Path | None,
+    lock_path: Path | None,
 ) -> None:
-    """Deploy one already-built release with backup, health proof, and code rollback."""
+    """Replace the one deployed app with backup, compatibility proof, and recovery."""
     try:
-        baseline_sha = None
-        if baseline_release is not None:
-            baseline_sha = validate_release_manifest(baseline_release / "manifest.json").release_sha
-        result = deploy_release(
-            candidate=candidate,
-            current_pointer=current_pointer,
+        result = deploy_app(
+            candidate_app=candidate_app,
+            current_root=current_root,
+            source_db=source_db,
             backup=lambda revision: create_database_backup(source_db, backup_dir, revision),
+            prove_compatibility=lambda candidate, current, database: (
+                prove_previous_app_compatibility(
+                    candidate_app=candidate,
+                    current_app=current,
+                    source_db=database,
+                )
+            ),
             service=SubprocessServiceController(service_manager, service_name),
             health=HttpHealthClient(health_url),
-            records_path=records_path,
-            source_db=source_db,
-            baseline_sha=baseline_sha,
+            lock_path=lock_path,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(json.dumps(result.__dict__, sort_keys=True))
+    payload = json.dumps(result.__dict__, sort_keys=True)
+    click.echo(payload)
+    if result.status not in {"succeeded", "unchanged"}:
+        detail = result.detail or "requested app is not running"
+        raise click.ClickException(f"app deployment {result.status}: {detail}")
 
 
 @environment.command("restore")

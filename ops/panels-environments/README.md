@@ -15,22 +15,24 @@ read or write live credential content. The staging credential file is
 `0640 panels-worker:panels-worker`.
 
 Staging calls the environment command from the pinned, root-owned manager checkout. Live calls the
-stable operator-owned `current` release launcher:
+operator-owned deployed app launcher:
 
 ```sh
 /opt/panels/environment-manager/.venv/bin/python -m planner environment run \
   --repository-root /opt/panels/<environment>
+
+/opt/panels/current/app/bin/panels-launcher serve
 ```
 
-The release root and deployment controls are writable only by the operator/deploy identity. The
-live service receives external state paths and cannot modify the selected release.
+The `current` deployment root and deployment controls are writable only by the operator/deploy
+identity. The live service receives external state paths and cannot modify `current/app`.
 
 Live uses the fixed port in its prepared contract. Start the staging unit only while
 active work needs it and stop it afterward; each start chooses an available loopback
 port and reports the actual URL in the service log. Staging's prepared state remains
 between starts.
 
-The static units use a stable release launcher for live and `/opt/panels/staging` for staging.
+The static units use the deployed app launcher for live and `/opt/panels/staging` for staging.
 Runtime writes belong under
 `/var/lib/panels/environments`, and credential files belong under
 `/etc/panels/environments`. Repositories cannot be shared across live and staging.

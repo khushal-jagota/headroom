@@ -1,48 +1,63 @@
-name: Deploy exact main commit
+name: Deploy exact commit
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full 40-character commit SHA to deploy
+        required: true
+        type: string
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 env:
-  PANELS_RELEASE_ROOT: ${{ vars.PANELS_RELEASE_ROOT }}
-  PANELS_CURRENT_POINTER: ${{ vars.PANELS_CURRENT_POINTER }}
+  PANELS_REQUESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
+  PANELS_CURRENT_ROOT: ${{ vars.PANELS_CURRENT_ROOT }}
   PANELS_BACKUP_SOURCE_DB: ${{ vars.PANELS_BACKUP_SOURCE_DB }}
   PANELS_BACKUP_DIRECTORY: ${{ vars.PANELS_BACKUP_DIRECTORY }}
-  PANELS_DEPLOYMENT_RECORDS: ${{ vars.PANELS_DEPLOYMENT_RECORDS }}
   PANELS_HEALTH_URL: ${{ vars.PANELS_HEALTH_URL }}
   PANELS_SERVICE_MANAGER: ${{ vars.PANELS_SERVICE_MANAGER }}
   PANELS_SERVICE_NAME: ${{ vars.PANELS_SERVICE_NAME }}
+  PANELS_CANDIDATE_APP: ${{ runner.temp }}/panels-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+  PANELS_DEPLOY_VENV: ${{ runner.temp }}/panels-deploy-venv-${{ github.run_id }}-${{ github.run_attempt }}
 jobs:
   deploy:
     runs-on: [self-hosted, production]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
-      - name: Prove host prerequisites and exact source commit
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
+          fetch-depth: 0
+      - name: Prove exact temporary source
         run: |
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          printf '%s\n' "$PANELS_REQUESTED_SHA" | grep -Eq '^[0-9a-f]{40}$' || {
+            echo "commit_sha must be a lowercase, full 40-character hexadecimal SHA" >&2
+            exit 2
+          }
+          test "$(git rev-parse HEAD)" = "$PANELS_REQUESTED_SHA"
           python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python 3.12 or newer is required"'
           node -e 'const major = Number(process.versions.node.split(".")[0]); if (major !== 22) throw new Error("Node 22 is required")'
-          python3 -m venv .venv
-          .venv/bin/python -m pip install -r requirements.txt
-          .venv/bin/python -m pip install --editable .
-      - name: Build and validate host-native release
+          python3 -m venv "$PANELS_DEPLOY_VENV"
+          "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
+          "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
+      - name: Build and validate exact app
         run: |
-          .venv/bin/python -m planner environment release-build \
-            --source-root . --requested-sha "${{ github.sha }}" \
-            --release-root "$PANELS_RELEASE_ROOT/${{ github.sha }}"
-      - name: Deploy exact SHA
+          "$PANELS_DEPLOY_VENV/bin/python" -m planner environment app-build \
+            --source-root "$GITHUB_WORKSPACE" \
+            --requested-sha "$PANELS_REQUESTED_SHA" \
+            --candidate-app "$PANELS_CANDIDATE_APP"
+      - name: Deploy exact app
         run: |
-          .venv/bin/python -m planner environment deploy \
-            --candidate "$PANELS_RELEASE_ROOT/${{ github.sha }}" \
-            --current "$PANELS_CURRENT_POINTER" \
+          "$PANELS_DEPLOY_VENV/bin/python" -m planner environment app-deploy \
+            --candidate-app "$PANELS_CANDIDATE_APP" \
+            --current-root "$PANELS_CURRENT_ROOT" \
             --source-db "$PANELS_BACKUP_SOURCE_DB" \
             --backup-dir "$PANELS_BACKUP_DIRECTORY" \
-            --records "$PANELS_DEPLOYMENT_RECORDS" \
             --health-url "$PANELS_HEALTH_URL" \
             --service-manager "$PANELS_SERVICE_MANAGER" \
             --service-name "$PANELS_SERVICE_NAME"
+      - name: Remove runner-temporary deployment state
+        if: always()
+        run: |
+          rm -rf -- "$PANELS_CANDIDATE_APP" "$PANELS_DEPLOY_VENV"

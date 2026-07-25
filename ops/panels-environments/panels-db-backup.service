@@ -6,5 +6,5 @@ After=panels-live.service
 Type=oneshot
 User=panels-live
 EnvironmentFile=/etc/panels/environments/backup.env
-ExecStart=/opt/panels/environment-manager/.venv/bin/python -m planner environment backup-current --source-db ${PANELS_BACKUP_SOURCE_DB} --backup-dir ${PANELS_BACKUP_DIRECTORY} --current-release ${PANELS_CURRENT_RELEASE}
+ExecStart=/opt/panels/current/app/bin/panels-launcher environment backup-current --source-db ${PANELS_BACKUP_SOURCE_DB} --backup-dir ${PANELS_BACKUP_DIRECTORY} --current-app ${PANELS_CURRENT_APP}
 NoNewPrivileges=yes

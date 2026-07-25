@@ -9,8 +9,10 @@ from typing import Any
 from click.testing import CliRunner
 
 from planner.environments import materialize
+from planner.environments.app import AppManifest
 from planner.environments.cli import EnvironmentCliDependencies, environment
 from planner.environments.contracts import EnvironmentManifest, ResolvedEnvironmentInstance
+from planner.environments.deployment import DeploymentResult
 from planner.environments.logic.registry import resolve_environment_instance
 
 
@@ -22,6 +24,106 @@ class _Listener:
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_environment_help_exposes_single_app_commands_only() -> None:
+    result = CliRunner().invoke(environment, ["--help"])
+    assert result.exit_code == 0, result.output
+    assert "app-build" in result.output
+    assert "app-identity" in result.output
+    assert "app-deploy" in result.output
+    assert "release-build" not in result.output
+    assert "release-identity" not in result.output
+
+    deploy_help = CliRunner().invoke(environment, ["app-deploy", "--help"])
+    assert deploy_help.exit_code == 0, deploy_help.output
+    assert "--candidate-app" in deploy_help.output
+    assert "--current-root" in deploy_help.output
+    assert "--records" not in deploy_help.output
+    assert "--baseline-release" not in deploy_help.output
+
+
+def test_app_identity_prints_manifest_sha(tmp_path: Path, monkeypatch: Any) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    monkeypatch.setattr(
+        "planner.environments.cli.validate_app_manifest",
+        lambda _: AppManifest("a" * 40, "b" * 64, "c" * 64),
+    )
+    result = CliRunner().invoke(environment, ["app-identity", "--app", str(app)])
+    assert result.exit_code == 0, result.output
+    assert result.output == f"{'a' * 40}\n"
+
+
+def test_app_deploy_exits_nonzero_after_automatic_rollback(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    result = _invoke_app_deploy(
+        tmp_path,
+        monkeypatch,
+        DeploymentResult("rolled_back", "b" * 40, "a" * 40, "candidate unhealthy"),
+    )
+    assert result.exit_code != 0
+    assert '"status": "rolled_back"' in result.output
+    assert "app deployment rolled_back: candidate unhealthy" in result.output
+
+
+def test_app_deploy_exits_nonzero_after_failed_initial_install(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    result = _invoke_app_deploy(
+        tmp_path,
+        monkeypatch,
+        DeploymentResult("initial_failed", "b" * 40, None, "initial app unhealthy"),
+    )
+    assert result.exit_code != 0
+    assert '"status": "initial_failed"' in result.output
+    assert "app deployment initial_failed: initial app unhealthy" in result.output
+
+
+def test_app_deploy_success_and_unchanged_exit_zero(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    for status in ("succeeded", "unchanged"):
+        result = _invoke_app_deploy(
+            tmp_path,
+            monkeypatch,
+            DeploymentResult(status, "b" * 40, "a" * 40, None),
+        )
+        assert result.exit_code == 0, result.output
+        assert f'"status": "{status}"' in result.output
+
+
+def _invoke_app_deploy(
+    tmp_path: Path,
+    monkeypatch: Any,
+    deployment_result: DeploymentResult,
+):
+    candidate = tmp_path / "candidate"
+    candidate.mkdir(exist_ok=True)
+    monkeypatch.setattr(
+        "planner.environments.cli.deploy_app", lambda **_: deployment_result
+    )
+    return CliRunner().invoke(
+        environment,
+        [
+            "app-deploy",
+            "--candidate-app",
+            str(candidate),
+            "--current-root",
+            str(tmp_path / "current"),
+            "--source-db",
+            str(tmp_path / "planning.db"),
+            "--backup-dir",
+            str(tmp_path / "backups"),
+            "--health-url",
+            "http://127.0.0.1:8767/api/health",
+            "--service-manager",
+            "systemctl",
+            "--service-name",
+            "panels-live",
+        ],
+    )
 
 
 def test_help_exposes_only_live_and_staging_kinds() -> None:
@@ -286,7 +388,7 @@ def test_render_linux_uses_the_explicit_pinned_manager_checkout(tmp_path: Path) 
 
     assert result.exit_code == 0, result.output
     unit_text = json.loads(result.output)["unit_text"]
-    assert "ExecStart=/opt/panels/current/bin/panels-launcher serve" in unit_text
+    assert "ExecStart=/opt/panels/current/app/bin/panels-launcher serve" in unit_text
 
 
 def test_import_live_cli_has_one_explicit_state_source_contract(tmp_path: Path) -> None:

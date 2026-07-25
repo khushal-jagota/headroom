@@ -20,7 +20,7 @@ def test_live_linux_render_keeps_fixed_external_service_contract(tmp_path: Path)
     )
     assert rendered.required_account == "panels-live"
     assert rendered.unit_name == "panels-live.service"
-    assert "/opt/panels/current/bin/panels-launcher serve" in rendered.unit_text
+    assert "/opt/panels/current/app/bin/panels-launcher serve" in rendered.unit_text
     assert str(manifest.repository_roots[0]) not in rendered.unit_text
 
 
@@ -54,7 +54,7 @@ def test_checked_in_linux_units_use_the_shared_pinned_manager_and_private_accoun
 
     assert "User=panels-live" in live
     assert "User=panels-worker" in staging
-    assert "/opt/panels/current/bin/panels-launcher serve" in live
+    assert "/opt/panels/current/app/bin/panels-launcher serve" in live
     assert manager_launcher in staging
     assert "/opt/panels/current" in live
     assert "--repository-root /opt/panels/staging" in staging
@@ -68,12 +68,12 @@ def test_checked_in_linux_units_use_the_shared_pinned_manager_and_private_accoun
     )
 
 
-def test_backup_inputs_resolve_the_deployed_revision_from_the_current_manifest() -> None:
+def test_backup_inputs_resolve_the_deployed_revision_from_the_current_app_manifest() -> None:
     service = (ASSET_ROOT / "panels-db-backup.service").read_text(encoding="utf-8")
     pre_deploy = (ASSET_ROOT / "pre-deploy-backup.sh").read_text(encoding="utf-8")
     environment = (ASSET_ROOT / "backup.env.example").read_text(encoding="utf-8")
 
-    assert "PANELS_CURRENT_RELEASE=" in environment
+    assert "PANELS_CURRENT_APP=" in environment
     assert "PANELS_LIVE_REPOSITORY" not in environment
     assert "git -C" not in service
     assert "git -C" not in pre_deploy

@@ -6,8 +6,8 @@ This directory provides install inputs. Choose the real host paths in the operat
 ## Setup
 
 Copy `backup.env.example` to the host and set `PANELS_BACKUP_SOURCE_DB`, `PANELS_BACKUP_DIRECTORY`,
-`PANELS_CURRENT_RELEASE`, and `PANELS_ENVIRONMENT_MANAGER_PYTHON`. The backup reads the
-current deployed revision from the validated release manifest each time it runs. Install
+`PANELS_CURRENT_APP`, and `PANELS_ENVIRONMENT_MANAGER_PYTHON`. The backup reads the
+current deployed revision from the validated app each time it runs. Install
 `panels-db-backup.service` and `panels-db-backup.timer`, then enable the timer. The timer runs
 nightly at 02:30 local host time and the backup does not stop `panels-live`.
 
@@ -18,7 +18,7 @@ database at that moment:
 PANELS_ENVIRONMENT_MANAGER_PYTHON=/chosen/manager/.venv/bin/python \
 PANELS_BACKUP_SOURCE_DB=/chosen/state/planning.db \
 PANELS_BACKUP_DIRECTORY=/chosen/state/backups \
-PANELS_CURRENT_RELEASE=/chosen/releases/0123456789abcdef0123456789abcdef01234567 \
+PANELS_CURRENT_APP=/chosen/current/app \
   ./ops/panels-environments/pre-deploy-backup.sh
 ```
 

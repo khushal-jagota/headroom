@@ -6,5 +6,5 @@ After=panels-live.service
 Type=oneshot
 User=panels-live
 EnvironmentFile=/etc/panels/environments/maintenance.env
-ExecStart=/opt/panels/environment-manager/.venv/bin/python -m planner environment cleanup --apply
+ExecStart=/opt/panels/current/app/bin/panels-launcher environment cleanup --apply
 NoNewPrivileges=yes

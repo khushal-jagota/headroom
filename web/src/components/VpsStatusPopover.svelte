@@ -18,7 +18,7 @@
   function statusRows(value: VpsStatusSnapshot): Array<[string, VpsStatusSection]> {
     return [
       ["Environment", value.environment],
-      ["Release", value.release],
+      ["App", value.app],
       ["Backup", value.backup],
       ["Disk", value.disk],
       ["Resources", value.resources]

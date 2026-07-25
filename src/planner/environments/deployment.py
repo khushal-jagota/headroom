@@ -1,11 +1,11 @@
-"""Serialized, code-only release deployment transaction."""
+"""Serialized replacement of the one deployed application directory."""
 
 from __future__ import annotations
 
 import fcntl
-import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from collections.abc import Callable
@@ -15,15 +15,11 @@ from typing import Protocol, TextIO
 
 import httpx
 
-from planner.environments.release import (
-    ReleaseManifest,
-    ReleaseValidationError,
-    validate_release_manifest,
-)
+from planner.environments.app import AppManifest, AppValidationError, validate_app_manifest
 
 
 class DeploymentError(RuntimeError):
-    """Raised when deployment cannot safely proceed."""
+    """Raised when app replacement cannot safely proceed."""
 
 
 class ServiceController(Protocol):
@@ -32,6 +28,9 @@ class ServiceController(Protocol):
 
 class HealthClient(Protocol):
     def wait_for_sha(self, sha: str, *, deadline: float) -> bool: ...
+
+
+CompatibilityProof = Callable[[Path, Path, Path], None]
 
 
 @dataclass(frozen=True)
@@ -60,9 +59,7 @@ class SubprocessServiceController:
     def _restart_user_launchagent(target: str) -> None:
         domain, label = target.rsplit("/", 1)
         plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
-        subprocess.run(
-            ["/bin/launchctl", "kill", "SIGTERM", target], check=False, shell=False
-        )
+        subprocess.run(["/bin/launchctl", "kill", "SIGTERM", target], check=False, shell=False)
         deadline = time.monotonic() + 10.0
         while True:
             inspection = subprocess.run(
@@ -79,9 +76,7 @@ class SubprocessServiceController:
             if time.monotonic() >= deadline:
                 raise DeploymentError("user LaunchAgent did not stop cleanly")
             time.sleep(0.05)
-        subprocess.run(
-            ["/bin/launchctl", "bootout", target], check=False, shell=False
-        )
+        subprocess.run(["/bin/launchctl", "bootout", target], check=False, shell=False)
         subprocess.run(
             ["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False
         )
@@ -96,7 +91,7 @@ class HttpHealthClient:
         while time.monotonic() < deadline:
             try:
                 response = httpx.get(self.url, params={"expected_sha": sha}, timeout=1.0)
-                if response.status_code == 200 and response.json().get("release_sha") == sha:
+                if response.status_code == 200 and response.json().get("app_sha") == sha:
                     return True
             except (httpx.HTTPError, ValueError):
                 pass
@@ -131,193 +126,211 @@ class deployment_lock:
         self._stream.close()
 
 
-def deploy_release(
+def deploy_app(
     *,
-    candidate: Path,
-    current_pointer: Path,
+    candidate_app: Path,
+    current_root: Path,
+    source_db: Path,
     backup: Callable[[str], object],
+    prove_compatibility: CompatibilityProof,
     service: ServiceController,
     health: HealthClient,
-    records_path: Path,
     now: Callable[[], float] = time.monotonic,
     health_timeout_seconds: float = 30.0,
-    release_root: Path | None = None,
     lock_path: Path | None = None,
-    source_db: Path | None = None,
-    baseline_sha: str | None = None,
 ) -> DeploymentResult:
+    """Replace only ``current/app`` and recover the prior app on post-move failure."""
     if health_timeout_seconds <= 0:
         raise DeploymentError("health timeout must be positive")
-    candidate_sha = candidate.name
-    effective_release_root = (
-        release_root.expanduser().resolve()
-        if release_root is not None
-        else candidate.parent.resolve()
-    )
-    effective_lock_path = lock_path or (effective_release_root.parent / ".panels-deploy.lock")
+    root_input = current_root.expanduser()
+    if root_input.is_symlink():
+        raise DeploymentError("current root must not be a symlink")
+    root = root_input.resolve()
+    current_app = root / "app"
+    effective_lock_path = lock_path or (root.parent / ".panels-app-deploy.lock")
     with deployment_lock(effective_lock_path):
-        try:
-            candidate_manifest = _validate_candidate(candidate, effective_release_root)
-            prior_manifest = _validate_current(current_pointer, effective_release_root)
-        except DeploymentError as exc:
-            failed = DeploymentResult("failed", candidate_sha, None, str(exc))
-            _record(records_path, failed, now())
-            raise
-        if (
-            prior_manifest is not None
-            and prior_manifest.release_sha == candidate_manifest.release_sha
-        ):
-            result = DeploymentResult(
-                "unchanged", candidate_manifest.release_sha, prior_manifest.release_sha, None
-            )
-            _record(records_path, result, now())
-            return result
-        prior_sha = prior_manifest.release_sha if prior_manifest is not None else None
-        if prior_sha is None:
-            if source_db is not None and source_db.exists() and baseline_sha is None:
-                detail = "existing database requires an operator-established baseline SHA"
-                _record(
-                    records_path,
-                    DeploymentResult(
-                        "initial_failed", candidate_manifest.release_sha, None, detail
-                    ),
-                    now(),
-                )
-                raise DeploymentError(detail)
-            try:
-                if source_db is not None and source_db.exists():
-                    assert baseline_sha is not None
-                    backup(baseline_sha)
-                _switch_pointer(current_pointer, candidate)
-                service.restart()
-                if not health.wait_for_sha(
-                    candidate_manifest.release_sha, deadline=now() + health_timeout_seconds
-                ):
-                    raise DeploymentError("initial release did not become healthy before cutoff")
-            except BaseException as exc:
-                current_pointer.unlink(missing_ok=True)
-                result = DeploymentResult(
-                    "initial_failed",
-                    candidate_manifest.release_sha,
-                    None,
-                    f"{exc}; operator state path: {current_pointer}",
-                )
-                _record(records_path, result, now())
-                return result
-            result = DeploymentResult("succeeded", candidate_manifest.release_sha, None, None)
-            _record(records_path, result, now())
-            return result
-        try:
-            backup(prior_sha)
-        except BaseException as exc:
-            result = DeploymentResult(
-                "failed", candidate_manifest.release_sha, prior_sha, "backup failed"
-            )
-            _record(records_path, result, now())
-            raise DeploymentError("database backup failed; current release was unchanged") from exc
-        prior_root = current_pointer.resolve()
-        try:
-            _switch_pointer(current_pointer, candidate)
-        except BaseException as exc:
-            result = DeploymentResult("failed", candidate_manifest.release_sha, prior_sha, str(exc))
-            _record(records_path, result, now())
-            raise
-        try:
-            service.restart()
-            if not health.wait_for_sha(
-                candidate_manifest.release_sha, deadline=now() + health_timeout_seconds
-            ):
-                raise DeploymentError("candidate release did not become healthy before cutoff")
-        except BaseException as exc:
-            rollback_detail = _rollback(
-                current_pointer=current_pointer,
-                prior_root=prior_root,
+        _validate_current_root(root)
+        candidate_manifest = _validate_app(candidate_app, "candidate app")
+        prior_manifest = _validate_optional_current_app(current_app)
+        if prior_manifest is None:
+            if _persistent_state_exists(root):
+                raise DeploymentError("persistent state exists without a current app")
+            return _install_first_app(
+                candidate_app=candidate_app,
+                candidate_manifest=candidate_manifest,
+                current_app=current_app,
                 service=service,
                 health=health,
                 now=now,
-                timeout_seconds=health_timeout_seconds,
-                original=exc,
+                health_timeout_seconds=health_timeout_seconds,
             )
-            if rollback_detail is not None:
-                result = DeploymentResult(
-                    "rollback_failed", candidate_manifest.release_sha, prior_sha, rollback_detail
+        if prior_manifest.app_sha == candidate_manifest.app_sha:
+            if not health.wait_for_sha(
+                prior_manifest.app_sha, deadline=now() + health_timeout_seconds
+            ):
+                raise DeploymentError("unchanged current app did not pass health proof")
+            return DeploymentResult(
+                "unchanged", candidate_manifest.app_sha, prior_manifest.app_sha, None
+            )
+        if not source_db.is_file():
+            raise DeploymentError("current database is missing")
+        try:
+            prove_compatibility(candidate_app, current_app, source_db)
+        except BaseException as exc:
+            raise DeploymentError(
+                "candidate failed one-version database compatibility proof"
+            ) from exc
+        try:
+            backup(prior_manifest.app_sha)
+        except BaseException as exc:
+            raise DeploymentError("database backup failed; current app was unchanged") from exc
+        staged = root / f".app-candidate-{os.getpid()}"
+        fallback = root / f".app-fallback-{os.getpid()}"
+        _require_unused(staged)
+        _require_unused(fallback)
+        try:
+            shutil.copytree(candidate_app, staged, symlinks=True)
+            _validate_app(staged, "staged candidate app", expected_sha=candidate_manifest.app_sha)
+            os.replace(current_app, fallback)
+            try:
+                os.replace(staged, current_app)
+                service.restart()
+                if not health.wait_for_sha(
+                    candidate_manifest.app_sha,
+                    deadline=now() + health_timeout_seconds,
+                ):
+                    raise DeploymentError("candidate app did not become healthy before cutoff")
+            except BaseException as exc:
+                detail = _restore_fallback(
+                    current_app=current_app,
+                    fallback=fallback,
+                    prior_manifest=prior_manifest,
+                    service=service,
+                    health=health,
+                    now=now,
+                    timeout_seconds=health_timeout_seconds,
+                    original=exc,
                 )
-                _record(records_path, result, now())
-                raise DeploymentError(rollback_detail) from exc
-            result = DeploymentResult(
-                "rolled_back", candidate_manifest.release_sha, prior_sha, str(exc)
+                if detail is not None:
+                    raise DeploymentError(detail) from exc
+                return DeploymentResult(
+                    "rolled_back",
+                    candidate_manifest.app_sha,
+                    prior_manifest.app_sha,
+                    str(exc),
+                )
+            shutil.rmtree(fallback)
+            return DeploymentResult(
+                "succeeded", candidate_manifest.app_sha, prior_manifest.app_sha, None
             )
-            _record(records_path, result, now())
-            return result
-        result = DeploymentResult("succeeded", candidate_manifest.release_sha, prior_sha, None)
-        _record(records_path, result, now())
-        return result
+        finally:
+            if staged.exists() and not staged.is_symlink():
+                shutil.rmtree(staged)
 
 
-def _validate_candidate(candidate: Path, release_root: Path) -> ReleaseManifest:
-    try:
-        if candidate.is_symlink():
-            raise ReleaseValidationError("candidate release must not be a symlink")
-        return validate_release_manifest(
-            candidate / "manifest.json",
-            expected_sha=candidate.name,
-            release_root=release_root,
-            require_runtime=True,
-        )
-    except ReleaseValidationError as exc:
-        raise DeploymentError(f"candidate release is invalid: {exc}") from exc
-
-
-def _validate_current(current_pointer: Path, release_root: Path) -> ReleaseManifest | None:
-    if not current_pointer.exists() and not current_pointer.is_symlink():
-        return None
-    try:
-        return validate_release_manifest(
-            current_pointer / "manifest.json", release_root=release_root, require_runtime=True
-        )
-    except ReleaseValidationError as exc:
-        raise DeploymentError(f"current release is invalid: {exc}") from exc
-
-
-def _switch_pointer(current_pointer: Path, target: Path) -> None:
-    current_pointer.parent.mkdir(parents=True, exist_ok=True)
-    temporary = current_pointer.with_name(f".{current_pointer.name}.next-{os.getpid()}")
-    temporary.unlink(missing_ok=True)
-    temporary.symlink_to(target.resolve(), target_is_directory=True)
-    os.replace(temporary, current_pointer)
-
-
-def _rollback(
+def _install_first_app(
     *,
-    current_pointer: Path,
-    prior_root: Path,
+    candidate_app: Path,
+    candidate_manifest: AppManifest,
+    current_app: Path,
+    service: ServiceController,
+    health: HealthClient,
+    now: Callable[[], float],
+    health_timeout_seconds: float,
+) -> DeploymentResult:
+    current_app.parent.mkdir(parents=True, exist_ok=True)
+    staged = current_app.parent / f".app-candidate-{os.getpid()}"
+    _require_unused(staged)
+    try:
+        shutil.copytree(candidate_app, staged, symlinks=True)
+        _validate_app(staged, "staged candidate app", expected_sha=candidate_manifest.app_sha)
+        os.replace(staged, current_app)
+        try:
+            service.restart()
+            if not health.wait_for_sha(
+                candidate_manifest.app_sha, deadline=now() + health_timeout_seconds
+            ):
+                raise DeploymentError("initial app did not become healthy before cutoff")
+        except BaseException as exc:
+            if current_app.exists() and not current_app.is_symlink():
+                shutil.rmtree(current_app)
+            return DeploymentResult(
+                "initial_failed",
+                candidate_manifest.app_sha,
+                None,
+                f"{exc}; validated candidate remains at: {candidate_app}",
+            )
+        return DeploymentResult("succeeded", candidate_manifest.app_sha, None, None)
+    finally:
+        if staged.exists() and not staged.is_symlink():
+            shutil.rmtree(staged)
+
+
+def _validate_current_root(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+
+
+def _validate_app(app: Path, label: str, *, expected_sha: str | None = None) -> AppManifest:
+    try:
+        if app.is_symlink():
+            raise AppValidationError(f"{label} must not be a symlink")
+        return validate_app_manifest(
+            app / "manifest.json", expected_sha=expected_sha, require_runtime=True
+        )
+    except AppValidationError as exc:
+        raise DeploymentError(f"{label} is invalid: {exc}") from exc
+
+
+def _validate_optional_current_app(current_app: Path) -> AppManifest | None:
+    if not current_app.exists() and not current_app.is_symlink():
+        return None
+    return _validate_app(current_app, "current app")
+
+
+def _persistent_state_exists(current_root: Path) -> bool:
+    return any(
+        (current_root / name).exists() or (current_root / name).is_symlink()
+        for name in ("data", "logs")
+    )
+
+
+def _require_unused(path: Path) -> None:
+    if path.exists() or path.is_symlink():
+        raise DeploymentError(f"temporary deployment path already exists: {path}")
+
+
+def _restore_fallback(
+    *,
+    current_app: Path,
+    fallback: Path,
+    prior_manifest: AppManifest,
     service: ServiceController,
     health: HealthClient,
     now: Callable[[], float],
     timeout_seconds: float,
     original: BaseException,
 ) -> str | None:
+    failed = current_app.parent / f".app-failed-{os.getpid()}"
     try:
-        _switch_pointer(current_pointer, prior_root)
+        _require_unused(failed)
+        if current_app.exists() or current_app.is_symlink():
+            os.replace(current_app, failed)
+        os.replace(fallback, current_app)
         service.restart()
-        prior_manifest = validate_release_manifest(current_pointer / "manifest.json")
-        if not health.wait_for_sha(prior_manifest.release_sha, deadline=now() + timeout_seconds):
-            return f"candidate failed ({original}); prior release did not become healthy"
+        if not health.wait_for_sha(
+            prior_manifest.app_sha, deadline=now() + timeout_seconds
+        ):
+            raise DeploymentError("prior app did not become healthy")
+        if failed.exists() and not failed.is_symlink():
+            shutil.rmtree(failed)
     except BaseException as exc:
-        return f"candidate failed ({original}); rollback failed: {exc}"
+        continuation_paths = [
+            str(path)
+            for path in (current_app, fallback, failed)
+            if path.exists() or path.is_symlink()
+        ]
+        return (
+            f"candidate failed ({original}); recovery failed: {exc}; "
+            f"operator continuation paths: {', '.join(continuation_paths)}"
+        )
     return None
-
-
-def _record(path: Path, result: DeploymentResult, timestamp: float) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    row = {
-        "attempted_at": timestamp,
-        "result": result.status,
-        "requested_sha": result.requested_sha,
-        "prior_sha": result.prior_sha,
-        "detail": result.detail,
-    }
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(row, sort_keys=True) + "\n")
-        stream.flush()
-        os.fsync(stream.fileno())

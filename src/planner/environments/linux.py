@@ -8,7 +8,7 @@ from pathlib import Path
 from planner.environments.contracts import EnvironmentManifest, EnvironmentValidationError
 
 DEFAULT_LINUX_ENVIRONMENT_MANAGER_ROOT = Path("/opt/panels/environment-manager")
-DEFAULT_LIVE_LAUNCHER = Path("/opt/panels/current/bin/panels-launcher")
+DEFAULT_LIVE_LAUNCHER = Path("/opt/panels/current/app/bin/panels-launcher")
 
 
 @dataclass(frozen=True)
@@ -73,7 +73,7 @@ def render_linux_specification(
         ownership_text=ownership_text,
         strict_writable_paths=tuple(writable_paths),
         repository_path_policy=(
-            "live runs from the operator-owned current release launcher; persistent state is "
+            "live runs from the operator-owned current app launcher; persistent state is "
             "external and staging may use its working checkout"
         ),
         credential_file_reference=manifest.credentials_env_file,
