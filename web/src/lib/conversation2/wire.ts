@@ -154,6 +154,10 @@ export type BackendModel = {
    *  version it reaches, for instance. Optional: a catalog that offers none is read the
    *  same way as one that has not started offering them yet. */
   detail?: string | null;
+  /** The reasoning efforts this particular model takes, where they differ per model
+   *  rather than per backend. Absent means the backend's own list is the answer; an
+   *  empty list means this model takes none, and no effort control exists for it. */
+  reasoning_effort_options?: string[];
 };
 
 export type BackendUpdateAdvisory = {

@@ -151,6 +151,7 @@ try {
       'export { default as TurnAnchor } from "../src/components/conversation2/TurnAnchor.svelte";',
       'export { default as WorkGroup } from "../src/components/conversation2/WorkGroup.svelte";',
       'export { default as PlanStrip } from "../src/components/conversation2/PlanStrip.svelte";',
+      'export { default as NewForm } from "../src/components/conversation2/NewConversationForm.svelte";',
       ""
     ].join("\n"),
     "utf8"
@@ -167,7 +168,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, Composer, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, BackendCard, Composer, NewForm, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -592,8 +593,86 @@ try {
     models: [{ model_id: "m1", display_name: "One" }],
     onSend: async () => true
   });
-  assert.doesNotMatch(hermesPicker, /data-conversation2-picker-effort/);
+  assert.doesNotMatch(
+    hermesPicker,
+    /data-conversation2-picker-effort/,
+    "no effort options at all means no effort control, zero pixels"
+  );
   assert.match(hermesPicker, /data-conversation2-picker-model/, "hermes still picks a model");
+
+  // A model that takes no effort gets no effort control either, even where the backend
+  // has a list of its own.
+  const haikuPicker = drawn(Composer, {
+    backendKey: "claude",
+    running: false,
+    effortOptions: ["low", "high"],
+    models: [
+      { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] },
+      { model_id: "opus", display_name: "Opus" }
+    ],
+    current: { model: "haiku", reasoningEffort: null },
+    onSend: async () => true
+  });
+  assert.doesNotMatch(haikuPicker, /data-conversation2-picker-effort/);
+  assert.match(haikuPicker, /data-conversation2-picker-model/);
+
+  // Options exist but nothing to show: the control keeps its capability and gives up
+  // its width rather than sitting there empty and wide.
+  const bareEffort = drawn(Composer, {
+    backendKey: "claude",
+    running: false,
+    effortOptions: ["low", "high"],
+    models: [{ model_id: "opus", display_name: "Opus" }],
+    current: { model: "opus", reasoningEffort: null },
+    onSend: async () => true
+  });
+  assert.match(bareEffort, /data-conversation2-picker-effort-bare="true"/);
+  assert.match(bareEffort, /class="[^"]*is-bare/);
+  assert.match(bareEffort, /aria-label="Reasoning effort"/, "and it still says what it is");
+  assert.match(bareEffort, /<option value="low">low<\/option>/, "opening it offers the real ones");
+
+  // The empty state obeys the same rule: never a wide empty select.
+  function newForm(snapshot) {
+    return drawn(NewForm, { conversationId: "dev-1", backends: [snapshot], backendKey: snapshot.backend_key });
+  }
+  const claudeFresh = newForm({
+    backend_key: "claude",
+    installed: true,
+    available_models: [{ model_id: "opus", display_name: "Opus" }],
+    reasoning_effort_options: ["low", "high"],
+    default_model_id: "opus",
+    default_reasoning_effort: null,
+    diagnoses: []
+  });
+  assert.match(claudeFresh, /data-conversation2-new-effort-bare="true"/);
+  assert.match(claudeFresh, /is-bare/);
+  const hermesFresh = newForm({
+    backend_key: "hermes",
+    installed: true,
+    available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5" }],
+    reasoning_effort_options: [],
+    default_model_id: "gpt-5.5",
+    default_reasoning_effort: null,
+    diagnoses: []
+  });
+  assert.doesNotMatch(
+    hermesFresh,
+    /data-conversation2-new-effort/,
+    "a backend with no efforts gets no effort control in the empty state either"
+  );
+
+  // Once there is a value, the value is the label again.
+  const valuedEffort = drawn(Composer, {
+    backendKey: "claude",
+    running: false,
+    effortOptions: ["low", "high"],
+    models: [{ model_id: "opus", display_name: "Opus" }],
+    current: { model: "opus", reasoningEffort: "high" },
+    onSend: async () => true
+  });
+  assert.doesNotMatch(valuedEffort, /data-conversation2-picker-effort-bare/);
+  assert.doesNotMatch(valuedEffort, /is-bare/);
+  assert.match(valuedEffort, /<option value="high" selected/);
 
   // FINDING 4: the selectors are in the footer, in place. There is nowhere to navigate to.
   const claudePicker = drawn(Composer, {
@@ -790,8 +869,11 @@ try {
   running={false}
   current={{ model: null, reasoningEffort: null }}
   defaultModelId="opus"
-  defaultReasoningEffort="high"
-  models={[{ model_id: "opus", display_name: "Opus" }, { model_id: "sonnet", display_name: "Sonnet" }]}
+  models={[
+    { model_id: "opus", display_name: "Opus" },
+    { model_id: "sonnet", display_name: "Sonnet" },
+    { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] }
+  ]}
   effortOptions={["low", "high"]}
   {onSend}
 />
@@ -864,10 +946,21 @@ with sync_playwright() as playwright:
     model = page.locator("[data-conversation2-picker-model]")
     effort = page.locator("[data-conversation2-picker-effort]")
     assert model.input_value() == "opus", model.input_value()
-    assert effort.input_value() == "high", effort.input_value()
+    # Claude names no default effort, so the control is there but bare — never empty-wide.
+    assert effort.input_value() == "", effort.input_value()
+    assert effort.get_attribute("data-conversation2-picker-effort-bare") == "true"
+    bare_width = effort.bounding_box()["width"]
+    model_width = model.bounding_box()["width"]
+    assert bare_width < model_width, (bare_width, model_width)
+    # The owner's rule, in pixels: nothing empty and wide sits in the footer. What is
+    # left is the native arrow's own minimum box and nothing more.
+    assert bare_width <= 56, bare_width
     options = page.locator("[data-conversation2-picker-model] option").all_inner_texts()
-    assert options == ["Opus", "Sonnet"], options
-    effort_options = page.locator("[data-conversation2-picker-effort] option").all_inner_texts()
+    assert options == ["Opus", "Sonnet", "Haiku"], options
+    effort_options = [
+        value for value in page.locator("[data-conversation2-picker-effort] option").all_inner_texts()
+        if value.strip()
+    ]
     assert effort_options == ["low", "high"], effort_options
     body = page.inner_text("body").lower()
     assert "default" not in body, "the word default must never appear in a selector"
@@ -881,18 +974,46 @@ with sync_playwright() as playwright:
     assert first["picked"]["model"] is None, first
     assert first["picked"]["reasoningEffort"] is None, first
 
-    # A pick arms commit-on-send exactly as before, and rides the next message.
+    # A pick arms commit-on-send exactly as before, and rides the next message —
+    # including a pick made from the bare effort control, which then shows its value.
     model.select_option("sonnet")
+    effort.select_option("low")
     assert page.evaluate("window.__sends().length") == 1
     assert page.locator("[data-conversation2-picker-armed]").count() == 1
+    assert effort.get_attribute("data-conversation2-picker-effort-bare") is None, (
+        "once it has a value the value is the label again"
+    )
+    assert effort.bounding_box()["width"] >= bare_width
     page.locator("[data-conversation2-input]").fill("again")
     page.locator("[data-conversation2-send]").click()
     page.wait_for_function("window.__sends().length === 2")
     second = page.evaluate("window.__sends()[1]")
     assert second["picked"]["model"] == "sonnet", second
+    assert second["picked"]["reasoningEffort"] == "low", second
     page.wait_for_function("document.querySelector('[data-conversation2-input]').value === ''")
     assert page.locator("[data-conversation2-picker-armed]").count() == 0
     assert model.input_value() == "opus", "and it falls back to the value in force"
+    assert effort.get_attribute("data-conversation2-picker-effort-bare") == "true", (
+        "the effort has nothing to show again, so it is bare again"
+    )
+
+    # A model that takes no effort takes the effort control with it — and the pick that
+    # the new catalog cannot honor goes too, rather than riding out as a value nothing
+    # would accept.
+    effort.select_option("low")
+    assert page.locator("[data-conversation2-picker-effort]").count() == 1
+    model.select_option("haiku")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation2-picker-effort]').length === 0"
+    )
+    model.select_option("opus")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation2-picker-effort]').length === 1"
+    )
+    assert page.locator("[data-conversation2-picker-effort]").get_attribute(
+        "data-conversation2-picker-effort-bare"
+    ) == "true", "the dropped pick did not come back"
+    model.select_option("opus")
 
     # FINDING 9 — a settled turn folds to "Worked for X" with no count on the label.
     fold = page.locator("[data-conversation2-turn-fold]").first

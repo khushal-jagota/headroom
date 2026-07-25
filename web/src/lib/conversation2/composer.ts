@@ -274,6 +274,23 @@ export function preselectedValue(
   return currentValue ?? backendDefault ?? null;
 }
 
+/** The reasoning efforts on offer for the model actually in force.
+ *
+ * Effort is a per-backend list until a backend says otherwise per model — claude's
+ * smallest models take none at all. A model that names its own list is believed, including
+ * when that list is empty, because "this model takes no effort" is an answer. A model that
+ * names nothing falls back to the backend's list, which is where every backend started.
+ */
+export function effortOptionsFor(
+  models: readonly { model_id: string; reasoning_effort_options?: string[] }[],
+  modelInForce: string | null,
+  backendOptions: readonly string[]
+): readonly string[] {
+  if (modelInForce === null) return backendOptions;
+  const model = models.find((candidate) => candidate.model_id === modelInForce);
+  return model?.reasoning_effort_options ?? backendOptions;
+}
+
 // --- what shape of ask this is -------------------------------------------------------------
 
 /** The three kinds of thing an agent can stop and wait for.

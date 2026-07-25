@@ -73,6 +73,7 @@ const {
   askIsGeneric,
   askQuestionChoices,
   askShape,
+  effortOptionsFor,
   modelDetail,
   preselectedValue,
   askPlaceholder,
@@ -922,6 +923,31 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
     { model_change: "opus" },
     "picking it is"
   );
+}
+
+{
+  // Effort belongs to the model that will run. A model that names its own list is
+  // believed — including when that list is empty, because that is an answer.
+  const models = [
+    { model_id: "opus", reasoning_effort_options: ["low", "high"] },
+    { model_id: "haiku", reasoning_effort_options: [] },
+    { model_id: "quiet" }
+  ];
+  const backendOptions = ["low", "medium", "high"];
+  assert.deepEqual(effortOptionsFor(models, "opus", backendOptions), ["low", "high"]);
+  assert.deepEqual(
+    effortOptionsFor(models, "haiku", backendOptions),
+    [],
+    "a model that takes no effort gets no effort control at all"
+  );
+  assert.deepEqual(
+    effortOptionsFor(models, "quiet", backendOptions),
+    backendOptions,
+    "a model naming nothing falls back to the backend's own list"
+  );
+  assert.deepEqual(effortOptionsFor(models, null, backendOptions), backendOptions);
+  assert.deepEqual(effortOptionsFor(models, "unknown", backendOptions), backendOptions);
+  assert.deepEqual(effortOptionsFor([], "opus", []), [], "hermes offers none, so none exist");
 }
 
 {

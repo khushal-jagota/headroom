@@ -6,6 +6,7 @@
    * The backend picker only exists here for the same reason: once a conversation has a
    * backend it has a live process behind it, and that is not a dropdown any more.
    */
+  import { effortOptionsFor } from "../../lib/conversation2/composer";
   import { CONVERSATION_BACKEND_KEYS } from "../../lib/conversation2/wire";
   import type { BackendSnapshot, ConversationBackendKey } from "../../lib/conversation2/wire";
 
@@ -27,11 +28,17 @@
 
   let chosen = $derived(backends.find((snapshot) => snapshot.backend_key === backendKey) ?? null);
   let models = $derived(chosen?.available_models ?? []);
-  let effortOptions = $derived(chosen?.reasoning_effort_options ?? []);
+  let backendEffortOptions = $derived(chosen?.reasoning_effort_options ?? []);
   // Nothing picked shows the concrete value this backend already runs. "Default" is a
   // word for which value is in force, never a value you can choose.
   let shownModel = $derived(model ?? chosen?.default_model_id ?? "");
   let shownEffort = $derived(reasoningEffort ?? chosen?.default_reasoning_effort ?? "");
+  // Effort belongs to the model that will run, and a model that takes none gets no
+  // control at all rather than an empty one.
+  let effortOptions = $derived(
+    effortOptionsFor(models, shownModel === "" ? null : shownModel, backendEffortOptions)
+  );
+  let effortIsBare = $derived(shownEffort === "");
 
   function chooseBackend(key: ConversationBackendKey): void {
     if (key === backendKey) return;
@@ -83,8 +90,11 @@
 
     {#if effortOptions.length > 0}
       <select
+        class:is-bare={effortIsBare}
         data-conversation2-new-effort
+        data-conversation2-new-effort-bare={effortIsBare ? "true" : undefined}
         aria-label="Reasoning effort"
+        title="Reasoning effort"
         value={shownEffort}
         onchange={(event) => (reasoningEffort = event.currentTarget.value || null)}
       >
@@ -148,6 +158,7 @@
   .c2-new-field input {
     flex: 1;
     min-width: 0;
+    max-width: 100%;
     background: var(--surface-sunken);
     border: var(--border-hairline) solid var(--border-color);
     border-radius: var(--radius-sm);
@@ -155,6 +166,14 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     padding: var(--space-2);
+  }
+  /* Nothing to show means nothing wide: the control keeps its capability and gives up
+     its width, down to the arrow that says there is something here to pick. */
+  .c2-new-field select.is-bare {
+    flex: none;
+    width: var(--space-5);
+    min-width: var(--space-5);
+    padding-inline: 0;
   }
   .c2-new-warning { margin: 0; color: var(--accent-error); font-size: var(--type-xs); }
   .c2-new-id {

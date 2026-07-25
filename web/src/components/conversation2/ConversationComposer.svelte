@@ -12,6 +12,7 @@
   import {
     askPlaceholder,
     deliveryOptionsFor,
+    effortOptionsFor,
     hasArmedChange,
     modelDetail,
     modelDisplayName,
@@ -99,11 +100,18 @@
       ? [{ model_id: shownModel, display_name: null }, ...models]
       : models
   );
-  let effortChoices = $derived(
-    shownEffort !== "" && !effortOptions.includes(shownEffort)
-      ? [shownEffort, ...effortOptions]
-      : effortOptions
+  // Effort belongs to the model that will actually run, not to the backend in general.
+  let modelEffortOptions = $derived(
+    effortOptionsFor(models, shownModel === "" ? null : shownModel, effortOptions)
   );
+  let effortChoices = $derived(
+    shownEffort !== "" && !modelEffortOptions.includes(shownEffort)
+      ? [shownEffort, ...modelEffortOptions]
+      : modelEffortOptions
+  );
+  // Nothing to show and nothing wide: an effort is still pickable, so the control shrinks
+  // to the affordance that says so and nothing more.
+  let effortIsBare = $derived(shownEffort === "");
 
   // What the chosen model really is, when the catalog says — an alias and the version it
   // reaches. A native select has nowhere to put a second line, so it is the tooltip.
@@ -112,6 +120,22 @@
     const name = modelDisplayName(models, value) ?? "the backend's own model";
     const detail = modelDetail(models, value);
     return detail === null ? name : `${name} — ${detail}`;
+  });
+
+  // A pick belongs to the catalog it was made from. Change backend — or change to a model
+  // that takes no effort — and a value the new catalog does not offer is not a pending
+  // change any more, it is a value nothing would accept. It goes.
+  $effect(() => {
+    if (pickedModel !== null && models.length > 0
+        && !models.some((model) => model.model_id === pickedModel)) {
+      pickedModel = null;
+    }
+  });
+
+  $effect(() => {
+    if (pickedEffort !== null && !modelEffortOptions.includes(pickedEffort)) {
+      pickedEffort = null;
+    }
   });
 
   async function send(): Promise<void> {
@@ -210,13 +234,16 @@
             <select
               class="c2-pick-select"
               class:on={pickedEffort !== null}
+              class:is-bare={effortIsBare}
               data-conversation2-picker-effort
+              data-conversation2-picker-effort-bare={effortIsBare ? "true" : undefined}
               aria-label="Reasoning effort"
+              title="Reasoning effort"
               disabled={inputDisabled}
               value={shownEffort}
               onchange={(event) => (pickedEffort = event.currentTarget.value || null)}
             >
-              {#if shownEffort === ""}
+              {#if effortIsBare}
                 <option value=""></option>
               {/if}
               {#each effortChoices as effort (effort)}
@@ -287,6 +314,14 @@
   .c2-pick-select:hover { border-color: var(--border-color); color: var(--text-strong); }
   .c2-pick-select.on { color: var(--accent-bright); border-color: var(--border-color); }
   .c2-pick-select:disabled { cursor: default; opacity: 0.5; }
+  /* No value to show: the control keeps its capability and gives up its width, down to
+     the arrow that says there is something here to pick. */
+  .c2-pick-select.is-bare {
+    width: var(--space-5);
+    min-width: var(--space-5);
+    padding-inline: 0;
+    text-indent: var(--space-1);
+  }
   .c2-armed {
     color: var(--accent-bright);
     font-family: var(--font-mono);
