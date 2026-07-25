@@ -22,10 +22,20 @@ export type ConversationFeed = {
   readonly streamingAgentText: string;
   /** Output from tool calls that are still running, by tool call id. */
   readonly toolCallProgress: Readonly<Record<string, string>>;
+  /** How many live frames have arrived. Only ever compared with its own last value:
+   *  a surface watches it move to know something happened just now, which is the one
+   *  thing a content-free frame can honestly say. */
+  readonly livenessPulse: number;
 };
 
 export function emptyConversationFeed(): ConversationFeed {
-  return { events: [], latestSequence: 0, streamingAgentText: "", toolCallProgress: {} };
+  return {
+    events: [],
+    latestSequence: 0,
+    streamingAgentText: "",
+    toolCallProgress: {},
+    livenessPulse: 0
+  };
 }
 
 /** Take one committed row, and drop whatever half-finished output it supersedes.
@@ -52,6 +62,7 @@ export function feedWithCommittedEvent(
     toolCallProgress = {};
   }
   return {
+    ...feed,
     events,
     latestSequence: Math.max(feed.latestSequence, event.sequence),
     streamingAgentText,
@@ -75,13 +86,24 @@ export function feedWithLiveFrame(
   // put half a message back on screen underneath the finished one. Rows are the record,
   // so when they say nothing is running there is nothing half-finished to show.
   if (!conversationIsRunning(feed)) return feed;
-  if (frame.frame === "agent_message_delta") {
-    return { ...feed, streamingAgentText: feed.streamingAgentText + frame.text_delta };
+  // Every frame is a sign of life, whatever else it carries.
+  const alive = { ...feed, livenessPulse: feed.livenessPulse + 1 };
+  switch (frame.frame) {
+    case "agent_message_delta":
+      return { ...alive, streamingAgentText: feed.streamingAgentText + frame.text_delta };
+    case "tool_call_progress":
+      return {
+        ...alive,
+        toolCallProgress: { ...feed.toolCallProgress, [frame.tool_call_id]: frame.detail }
+      };
+    case "model_thinking":
+      // There is nothing to show and nothing to keep. That it arrived is the whole message.
+      return alive;
+    default:
+      // A frame this browser does not know yet. The server may be ahead of it, and a
+      // page that guessed at the shape would draw something nobody sent.
+      return feed;
   }
-  return {
-    ...feed,
-    toolCallProgress: { ...feed.toolCallProgress, [frame.tool_call_id]: frame.detail }
-  };
 }
 
 function mergedBySequence(

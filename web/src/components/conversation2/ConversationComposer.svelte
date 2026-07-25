@@ -14,7 +14,8 @@
     deliveryOptionsFor,
     hasArmedChange,
     modelDetail,
-    modelDisplayName
+    modelDisplayName,
+    preselectedValue
   } from "../../lib/conversation2/composer";
   import type { RunValues } from "../../lib/conversation2/composer";
   import type {
@@ -32,6 +33,8 @@
     current = { model: null, reasoningEffort: null },
     models = [],
     effortOptions = [],
+    defaultModelId = null,
+    defaultReasoningEffort = null,
     heldPromptCount = 0,
     fateNote = null,
     errorNote = null,
@@ -54,6 +57,10 @@
     current?: RunValues;
     models?: readonly BackendModel[];
     effortOptions?: readonly string[];
+    /** The concrete values this backend runs when nobody names one. They are what the
+     *  selectors show before anybody picks; they are never offered as an option. */
+    defaultModelId?: string | null;
+    defaultReasoningEffort?: string | null;
     heldPromptCount?: number;
     fateNote?: string | null;
     errorNote?: string | null;
@@ -78,10 +85,30 @@
   let takenOver = $derived(ask !== null);
   let inputDisabled = $derived(disabled || takenOver || sending);
   let livePlaceholder = $derived(takenOver ? askPlaceholder(ask) : placeholder);
+  // What each selector shows with nothing picked: the concrete value already in force.
+  let shownModel = $derived(
+    pickedModel ?? preselectedValue(current.model, defaultModelId) ?? ""
+  );
+  let shownEffort = $derived(
+    pickedEffort ?? preselectedValue(current.reasoningEffort, defaultReasoningEffort) ?? ""
+  );
+  // A value the catalog does not list is still the value being run, so it is offered as
+  // itself rather than silently dropped off the face of the selector.
+  let modelOptions = $derived(
+    shownModel !== "" && !models.some((model) => model.model_id === shownModel)
+      ? [{ model_id: shownModel, display_name: null }, ...models]
+      : models
+  );
+  let effortChoices = $derived(
+    shownEffort !== "" && !effortOptions.includes(shownEffort)
+      ? [shownEffort, ...effortOptions]
+      : effortOptions
+  );
+
   // What the chosen model really is, when the catalog says — an alias and the version it
   // reaches. A native select has nowhere to put a second line, so it is the tooltip.
   let modelTitle = $derived.by(() => {
-    const value = pickedModel ?? current.model;
+    const value = shownModel === "" ? null : shownModel;
     const name = modelDisplayName(models, value) ?? "the backend's own model";
     const detail = modelDetail(models, value);
     return detail === null ? name : `${name} — ${detail}`;
@@ -159,43 +186,43 @@
             onCancelTurn={() => onCancelTurn?.()}
           />
         {:else}
-          <label class="c2-pick" data-conversation2-pick-model-field>
-            <span class="c2-pick-name">model</span>
+          <select
+            class="c2-pick-select"
+            class:on={pickedModel !== null}
+            data-conversation2-picker-model
+            aria-label="Model"
+            disabled={inputDisabled}
+            value={shownModel}
+            title={modelTitle}
+            onchange={(event) => (pickedModel = event.currentTarget.value || null)}
+          >
+            {#if shownModel === ""}
+              <option value=""></option>
+            {/if}
+            {#each modelOptions as model (model.model_id)}
+              <option value={model.model_id} title={model.detail ?? undefined}>
+                {model.display_name ?? model.model_id}
+              </option>
+            {/each}
+          </select>
+
+          {#if effortChoices.length > 0}
             <select
               class="c2-pick-select"
-              class:on={pickedModel !== null && pickedModel !== current.model}
-              data-conversation2-picker-model
+              class:on={pickedEffort !== null}
+              data-conversation2-picker-effort
+              aria-label="Reasoning effort"
               disabled={inputDisabled}
-              value={pickedModel ?? current.model ?? ""}
-              title={modelTitle}
-              onchange={(event) => (pickedModel = event.currentTarget.value || null)}
+              value={shownEffort}
+              onchange={(event) => (pickedEffort = event.currentTarget.value || null)}
             >
-              <option value="">backend default</option>
-              {#each models as model (model.model_id)}
-                <option value={model.model_id} title={model.detail ?? undefined}>
-                  {model.display_name ?? model.model_id}
-                </option>
+              {#if shownEffort === ""}
+                <option value=""></option>
+              {/if}
+              {#each effortChoices as effort (effort)}
+                <option value={effort}>{effort}</option>
               {/each}
             </select>
-          </label>
-
-          {#if effortOptions.length > 0}
-            <label class="c2-pick" data-conversation2-pick-effort-field>
-              <span class="c2-pick-name">effort</span>
-              <select
-                class="c2-pick-select"
-                class:on={pickedEffort !== null && pickedEffort !== current.reasoningEffort}
-                data-conversation2-picker-effort
-                disabled={inputDisabled}
-                value={pickedEffort ?? current.reasoningEffort ?? ""}
-                onchange={(event) => (pickedEffort = event.currentTarget.value || null)}
-              >
-                <option value="">backend default</option>
-                {#each effortOptions as effort (effort)}
-                  <option value={effort}>{effort}</option>
-                {/each}
-              </select>
-            </label>
           {/if}
 
           {#if armed}
@@ -244,18 +271,6 @@
   /* An ask is a band on top of the box, not a replacement for it: the input keeps its
      resting height underneath, so the composer stays exactly the size it always was. */
   :global(.chat-box.has-ask) { padding-top: 0; }
-  .c2-pick {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .c2-pick-name {
-    color: var(--text-faintest);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-  }
   .c2-pick-select {
     min-width: 0;
     max-width: calc(var(--space-page-tail) * 1.25);

@@ -312,12 +312,15 @@
       workspaceFolder={view?.workspace_folder ?? null}
       {rows}
       ownSenderLabel={SENDER_LABEL}
+      livenessPulse={feed.livenessPulse}
       {running}
       {ask}
       {askNote}
       {current}
       models={backendSnapshot?.available_models ?? []}
       effortOptions={backendSnapshot?.reasoning_effort_options ?? []}
+      defaultModelId={backendSnapshot?.default_model_id ?? null}
+      defaultReasoningEffort={backendSnapshot?.default_reasoning_effort ?? null}
       heldPromptCount={view?.held_prompt_count ?? 0}
       {fateNote}
       {errorNote}

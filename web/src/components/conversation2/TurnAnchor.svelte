@@ -1,0 +1,189 @@
+<script lang="ts">
+  /** A turn's head: the one place in the thread that does not move.
+   *
+   * It appears the moment the turn starts, before there is anything to put under it —
+   * the wait before the first tool call is exactly the silence it exists to fill — and it
+   * is still there when the turn is over, as the fold across everything the turn did.
+   *
+   * While the turn runs it counts, honestly, from the moment the prompt landed: a reload
+   * mid-turn shows the real elapsed time rather than starting again from zero. The dots
+   * beside it say the model was alive recently; they never claim to track progress nobody
+   * can see, and a turn that stopped without an ending gets no head at all, because a dead
+   * process must not look like a live one.
+   */
+  import PlanStrip from "./PlanStrip.svelte";
+  import { turnFoldLabel, workingSentence } from "../../lib/conversation2/transcript";
+  import type { ConversationTurnEnding, PlanEntry } from "../../lib/conversation2/wire";
+
+  /** How long a sign of life is still recent. Long enough to ride out the gaps between
+   *  frames, short enough that a stalled backend stops claiming to be alive. */
+  const LIVELINESS_DECAY_MS = 2_000;
+
+  let {
+    settled = false,
+    stopped = false,
+    plan = null,
+    startedAt = null,
+    ending = null,
+    isLatest = false,
+    durationSeconds = null,
+    toolCallCount = 0,
+    expanded = false,
+    livenessPulse = 0,
+    onToggle
+  }: {
+    settled?: boolean;
+    stopped?: boolean;
+    /** The plan as it stands, when this head is the one holding the newest. */
+    plan?: readonly PlanEntry[] | null;
+    /** When the turn began, in whole unix seconds, so a reload counts from the truth. */
+    startedAt?: number | null;
+    ending?: ConversationTurnEnding | null;
+    isLatest?: boolean;
+    durationSeconds?: number | null;
+    toolCallCount?: number;
+    /** Whether this turn's work is showing. The turn owns it, not the individual runs. */
+    expanded?: boolean;
+    /** Moves whenever a live frame arrives. Only its movement is read. */
+    livenessPulse?: number;
+    onToggle?: () => void;
+  } = $props();
+
+  let fresh = $state(false);
+  // The one thing that changes every second. The transcript is not rebuilt on a tick and
+  // no row is touched: only this number moves.
+  let elapsedSeconds = $state<number | null>(null);
+
+  let hasPlan = $derived(plan !== null && plan.length > 0);
+  let foldLabel = $derived(turnFoldLabel({ durationSeconds, ending, isLatest }));
+  let countLabel = $derived(`${toolCallCount} tool call${toolCallCount === 1 ? "" : "s"}`);
+  let foldVisible = $derived(settled && toolCallCount > 0);
+  // A settled turn that did nothing, and planned nothing, has nothing to report.
+  let visible = $derived(!settled || foldVisible || hasPlan);
+
+  $effect(() => {
+    livenessPulse;
+    fresh = true;
+    const decay = setTimeout(() => (fresh = false), LIVELINESS_DECAY_MS);
+    return () => clearTimeout(decay);
+  });
+
+  $effect(() => {
+    if (settled || startedAt === null) {
+      elapsedSeconds = null;
+      return;
+    }
+    const begun = startedAt;
+    const tick = (): void => {
+      elapsedSeconds = Math.max(0, Math.floor(Date.now() / 1000) - begun);
+    };
+    tick();
+    const ticking = setInterval(tick, 1_000);
+    return () => clearInterval(ticking);
+  });
+</script>
+
+{#if visible}
+  <div
+    class="c2-turn"
+    data-conversation2-turn
+    data-conversation2-turn-settled={settled ? "true" : "false"}
+    data-conversation2-turn-stopped={stopped ? "true" : undefined}
+    data-conversation2-turn-expanded={expanded ? "true" : "false"}
+  >
+    {#if foldVisible}
+      <button
+        type="button"
+        class="c2-turn-fold"
+        data-conversation2-turn-fold
+        aria-expanded={expanded}
+        onclick={() => onToggle?.()}
+      >
+        <span aria-hidden="true" class="c2-turn-chevron" class:is-open={expanded}>›</span>
+        <span data-conversation2-turn-label>{foldLabel}</span>
+        {#if expanded}
+          <span class="c2-turn-count" data-conversation2-turn-count>{countLabel}</span>
+        {/if}
+      </button>
+    {:else if !settled}
+      <div
+        class="c2-alive"
+        class:is-fresh={fresh}
+        data-conversation2-alive
+        data-conversation2-alive-fresh={fresh ? "true" : "false"}
+        role="status"
+      >
+        <span class="c2-alive-dots" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </span>
+        <span class="c2-alive-word" data-conversation2-alive-word>
+          {workingSentence(elapsedSeconds)}
+        </span>
+      </div>
+    {/if}
+
+    {#if plan}
+      <PlanStrip entries={plan} />
+    {/if}
+  </div>
+{/if}
+
+<style>
+  .c2-turn { display: grid; min-width: 0; max-width: 100%; gap: var(--space-1); }
+  .c2-alive {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-faintest);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    letter-spacing: var(--tracking-mono);
+    padding: var(--space-1) var(--space-2);
+  }
+  .c2-alive-word { font-variant-numeric: tabular-nums; }
+  .c2-alive-dots { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; }
+  .c2-alive-dots span {
+    width: var(--space-1);
+    height: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--text-faintest);
+    animation: c2-alive-pulse var(--motion-loop-bounce) var(--motion-ease) infinite;
+  }
+  .c2-alive-dots span:nth-child(2) { animation-delay: calc(var(--motion-loop-bounce) / 6); }
+  .c2-alive-dots span:nth-child(3) { animation-delay: calc(var(--motion-loop-bounce) / 3); }
+  /* Recently alive: the same dots, brighter. Nothing bounces. */
+  .c2-alive.is-fresh { color: var(--text-muted); }
+  .c2-alive.is-fresh .c2-alive-dots span { background: var(--accent-bright); }
+  @keyframes c2-alive-pulse {
+    0%, 100% { opacity: 0.25; }
+    50% { opacity: 1; }
+  }
+  .c2-turn-fold {
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-faintest);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    letter-spacing: var(--tracking-mono);
+    padding: var(--space-1) var(--space-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .c2-turn-fold:hover { color: var(--text-muted); background: var(--surface-overlay); }
+  .c2-turn-count { color: var(--text-faintest); }
+  .c2-turn-chevron {
+    display: inline-block;
+    transition: transform var(--motion-fast) var(--motion-ease);
+  }
+  .c2-turn-chevron.is-open { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) {
+    .c2-alive-dots span { animation: none; }
+    .c2-turn-chevron { transition: none; }
+  }
+</style>

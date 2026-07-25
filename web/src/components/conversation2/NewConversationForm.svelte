@@ -28,6 +28,10 @@
   let chosen = $derived(backends.find((snapshot) => snapshot.backend_key === backendKey) ?? null);
   let models = $derived(chosen?.available_models ?? []);
   let effortOptions = $derived(chosen?.reasoning_effort_options ?? []);
+  // Nothing picked shows the concrete value this backend already runs. "Default" is a
+  // word for which value is in force, never a value you can choose.
+  let shownModel = $derived(model ?? chosen?.default_model_id ?? "");
+  let shownEffort = $derived(reasoningEffort ?? chosen?.default_reasoning_effort ?? "");
 
   function chooseBackend(key: ConversationBackendKey): void {
     if (key === backendKey) return;
@@ -60,39 +64,47 @@
     </div>
   </div>
 
-  <label class="c2-new-field">
-    <span class="c2-new-label">model</span>
+  <div class="c2-new-field">
     <select
       data-conversation2-new-model
-      value={model ?? ""}
+      aria-label="Model"
+      value={shownModel}
       onchange={(event) => (model = event.currentTarget.value || null)}
     >
-      <option value="">the backend's own model</option>
+      {#if shownModel === ""}
+        <option value=""></option>
+      {/if}
       {#each models as candidate (candidate.model_id)}
-        <option value={candidate.model_id}>{candidate.display_name ?? candidate.model_id}</option>
+        <option value={candidate.model_id} title={candidate.detail ?? undefined}>
+          {candidate.display_name ?? candidate.model_id}
+        </option>
       {/each}
     </select>
-  </label>
 
-  {#if effortOptions.length > 0}
-    <label class="c2-new-field">
-      <span class="c2-new-label">reasoning effort</span>
+    {#if effortOptions.length > 0}
       <select
         data-conversation2-new-effort
-        value={reasoningEffort ?? ""}
+        aria-label="Reasoning effort"
+        value={shownEffort}
         onchange={(event) => (reasoningEffort = event.currentTarget.value || null)}
       >
-        <option value="">the backend's own effort</option>
+        {#if shownEffort === ""}
+          <option value=""></option>
+        {/if}
         {#each effortOptions as effort (effort)}
           <option value={effort}>{effort}</option>
         {/each}
       </select>
-    </label>
-  {/if}
+    {/if}
+  </div>
 
   <label class="c2-new-field">
-    <span class="c2-new-label">workspace folder</span>
-    <input data-conversation2-new-workspace type="text" bind:value={workspaceFolder} />
+    <input
+      data-conversation2-new-workspace
+      type="text"
+      aria-label="Workspace folder"
+      bind:value={workspaceFolder}
+    />
   </label>
 
   {#if chosen && !chosen.installed}
@@ -131,15 +143,7 @@
     font-size: var(--type-serif-sm);
     line-height: 1.6;
   }
-  .c2-new-field { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
-  .c2-new-label {
-    flex: none;
-    width: var(--space-page-tail);
-    color: var(--text-faintest);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-  }
+  .c2-new-field { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
   .c2-new-field select,
   .c2-new-field input {
     flex: 1;

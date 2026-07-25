@@ -6,7 +6,8 @@
    * end and disappears the moment its finished row lands.
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
-  import WorkLog from "./WorkLog.svelte";
+  import TurnAnchor from "./TurnAnchor.svelte";
+  import WorkGroup from "./WorkGroup.svelte";
   import type { ThreadItem, TranscriptRow } from "../../lib/conversation2/transcript";
   import {
     askDeadSentence,
@@ -22,16 +23,26 @@
   let {
     rows,
     models = [],
-    ownSenderLabel = null
+    ownSenderLabel = null,
+    livenessPulse = 0
   }: {
     rows: readonly TranscriptRow[];
     models?: readonly BackendModel[];
+    /** Moves whenever a live frame arrives, so a running turn can say it is alive. */
+    livenessPulse?: number;
     /** The label this pane sends under. Messages carrying it are yours, and yours are
      *  not labelled — you know who wrote them. Everyone else's still are. */
     ownSenderLabel?: string | null;
   } = $props();
 
   let items = $derived<ThreadItem[]>(threadItems(rows));
+  // Opening a turn opens every run inside it, so there is one place to open a turn
+  // rather than one per batch of tool calls in it.
+  let expandedTurns = $state<Record<string, boolean>>({});
+
+  function toggleTurn(turnKey: string): void {
+    expandedTurns = { ...expandedTurns, [turnKey]: expandedTurns[turnKey] !== true };
+  }
 
   function modeChip(mode: string): string | null {
     if (mode === "send_now") return "sent now";
@@ -54,11 +65,24 @@
 
 <div class="c2-transcript" data-conversation2-transcript>
   {#each items as item (item.key)}
-    {#if item.kind === "work"}
-      <WorkLog
-        entries={item.entries}
+    {#if item.kind === "turn"}
+      <TurnAnchor
         settled={item.settled}
+        stopped={item.stopped}
+        plan={item.plan}
+        startedAt={item.startedAt}
+        ending={item.ending}
+        isLatest={item.isLatest}
         durationSeconds={item.durationSeconds}
+        toolCallCount={item.toolCallCount}
+        expanded={expandedTurns[item.turnKey] === true}
+        {livenessPulse}
+        onToggle={() => toggleTurn(item.turnKey)}
+      />
+    {:else if item.kind === "work_group"}
+      <WorkGroup
+        entries={item.entries}
+        hidden={item.settled && expandedTurns[item.turnKey] !== true}
       />
     {:else if item.row.kind === "prompt"}
       {@const label = promptLabelFor(item.row.senderLabel, ownSenderLabel)}

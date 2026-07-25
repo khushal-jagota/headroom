@@ -54,13 +54,17 @@ const {
   threadItems,
   liveAskFrom,
   askDeadSentence,
+  formatDuration,
   hiddenWorkSentence,
   promptLabelFor,
   readableDetail,
   refusalSentence,
   toolGlyphKind,
+  stoppedSentence,
   turnEndingSentence,
+  turnFoldLabel,
   workedSentence,
+  workingSentence,
   VISIBLE_RUNNING_WORK_ENTRIES
 } = await import(join(directory, "transcript.mjs"));
 const {
@@ -70,6 +74,7 @@ const {
   askQuestionChoices,
   askShape,
   modelDetail,
+  preselectedValue,
   askPlaceholder,
   armedChangeFor,
   deliveryOptionsFor,
@@ -92,6 +97,7 @@ const TOOL_STARTED = (sequence, tool_call_id, title, tool_kind = "read") =>
   event(sequence, "tool_call_started", { tool_call_id, title, tool_kind, detail: null });
 const TOOL_FINISHED = (sequence, tool_call_id, tool_call_status = "completed", detail = null) =>
   event(sequence, "tool_call_finished", { tool_call_id, tool_call_status, detail });
+const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries });
 
 // --- the record a reader holds ------------------------------------------------------------
 
@@ -613,14 +619,15 @@ const TOOL_FINISHED = (sequence, tool_call_id, tool_call_status = "completed", d
     TOOL_STARTED(6, "t3", "Read three")
   ]);
   const items = threadItems(transcriptRows(feed));
-  const work = items.filter((item) => item.kind === "work");
-  assert.equal(work.length, 1, "a turn's tool calls are one thing, not a run of lines");
-  assert.equal(work[0].entries.length, 3);
-  assert.equal(work[0].settled, false);
+  const groups = items.filter((item) => item.kind === "work_group");
+  assert.equal(groups.length, 1, "an unbroken run of tool calls is one group");
+  assert.equal(groups[0].entries.length, 3);
   assert.equal(VISIBLE_RUNNING_WORK_ENTRIES, 1);
   assert.equal(hiddenWorkSentence(2), "+2 previous tool calls");
   assert.equal(hiddenWorkSentence(1), "+1 previous tool call");
-  // The conversation itself is still made of rows: only the work was gathered up.
+  const anchor = items.find((item) => item.kind === "turn");
+  assert.equal(anchor.settled, false);
+  assert.equal(anchor.toolCallCount, 3);
   assert.deepEqual(
     items.filter((item) => item.kind === "row").map((item) => item.row.kind),
     ["prompt"]
@@ -637,26 +644,56 @@ const TOOL_FINISHED = (sequence, tool_call_id, tool_call_status = "completed", d
     { ...TURN_ENDED(5), created_at: 1_012 }
   ]);
   const items = threadItems(transcriptRows(feed));
-  const work = items.find((item) => item.kind === "work");
-  assert.equal(work.settled, true);
-  assert.equal(work.durationSeconds, 12, "start of the turn to its ending, in whole seconds");
-  assert.equal(workedSentence(work.durationSeconds), "worked for 12s");
-  // The work is anchored where it began, so the thread still reads in order.
+  const anchor = items.find((item) => item.kind === "turn");
+  assert.equal(anchor.settled, true);
+  assert.equal(anchor.durationSeconds, 12, "start of the turn to its ending, in whole seconds");
+  assert.equal(workedSentence(anchor.durationSeconds), "Worked for 12s");
+  // The head is at the turn's start and the run stays where it happened.
   assert.deepEqual(
-    items.map((item) => (item.kind === "work" ? "work" : item.row.kind)),
-    ["prompt", "work", "agent_message", "turn_ended"]
+    items.map((item) =>
+      item.kind === "turn" ? "turn" : item.kind === "work_group" ? "work" : item.row.kind
+    ),
+    ["prompt", "turn", "work", "agent_message", "turn_ended"]
+  );
+  assert.equal(
+    items.find((item) => item.kind === "work_group").settled,
+    true,
+    "and it goes behind the turn's fold when the turn ends"
   );
 }
 
 {
   // The record keeps whole seconds, so a turn too short to measure claims no duration.
-  assert.equal(workedSentence(0), "worked");
-  assert.equal(workedSentence(null), "worked");
-  assert.equal(workedSentence(1), "worked for 1s");
-  assert.equal(workedSentence(59), "worked for 59s");
-  assert.equal(workedSentence(60), "worked for 1m");
-  assert.equal(workedSentence(80), "worked for 1m 20s");
-  assert.equal(workedSentence(3_600), "worked for 60m");
+  assert.equal(workedSentence(0), "Worked");
+  assert.equal(workedSentence(null), "Worked");
+  assert.equal(workedSentence(1), "Worked for 1s");
+  // The boundaries T3 formats around, at the precision our rows actually have.
+  assert.equal(formatDuration(59), "59s");
+  assert.equal(formatDuration(60), "1m");
+  assert.equal(formatDuration(61), "1m 1s");
+  assert.equal(formatDuration(120), "2m");
+  assert.equal(formatDuration(80), "1m 20s");
+  assert.equal(formatDuration(3_600), "60m", "no hours unit, as T3 has none");
+  assert.equal(workingSentence(12), "Working for 12s");
+  assert.equal(workingSentence(null), "Working");
+
+  // Only the newest turn takes the stopped wording; further back the line already said it.
+  assert.equal(
+    turnFoldLabel({ durationSeconds: 12, ending: "interrupted", isLatest: true }),
+    "You stopped after 12s"
+  );
+  assert.equal(
+    turnFoldLabel({ durationSeconds: null, ending: "interrupted", isLatest: true }),
+    "You stopped this response"
+  );
+  assert.equal(
+    turnFoldLabel({ durationSeconds: 12, ending: "interrupted", isLatest: false }),
+    "Worked for 12s"
+  );
+  assert.equal(
+    turnFoldLabel({ durationSeconds: 12, ending: "completed", isLatest: true }),
+    "Worked for 12s"
+  );
 }
 
 {
@@ -668,11 +705,223 @@ const TOOL_FINISHED = (sequence, tool_call_id, tool_call_status = "completed", d
     { ...PROMPT(4, "again"), created_at: 200 },
     { ...TOOL_STARTED(5, "t2", "Two"), created_at: 201 }
   ]);
-  const work = threadItems(transcriptRows(feed)).filter((item) => item.kind === "work");
-  assert.equal(work.length, 2);
-  assert.deepEqual(work.map((item) => item.settled), [true, false]);
-  assert.equal(work[0].durationSeconds, 5);
-  assert.equal(work[1].durationSeconds, null, "a turn still running has no length yet");
+  const turns = threadItems(transcriptRows(feed)).filter((item) => item.kind === "turn");
+  assert.equal(turns.length, 2);
+  assert.deepEqual(turns.map((item) => item.settled), [true, false]);
+  assert.equal(turns[0].durationSeconds, 5);
+  assert.equal(turns[1].durationSeconds, null, "a turn still running has no length yet");
+  assert.deepEqual(turns.map((item) => item.isLatest), [false, true]);
+}
+
+{
+  // A turn gets its place the moment it starts, before there is anything to put in it —
+  // the wait before the first tool call is exactly when a person needs to see it.
+  const justStarted = feedWithCommittedEvent(emptyConversationFeed(), PROMPT(1, "go"));
+  const items = threadItems(transcriptRows(justStarted));
+  const anchor = items.find((item) => item.kind === "turn");
+  assert.ok(anchor, "a running turn has a head before there is any work to put under it");
+  assert.equal(anchor.toolCallCount, 0);
+  assert.equal(anchor.settled, false);
+  assert.equal(anchor.startedAt, justStarted.events[0].created_at, "it counts from the prompt");
+  assert.deepEqual(
+    items.map((item) => (item.kind === "turn" ? "turn" : item.row.kind)),
+    ["prompt", "turn"],
+    "and it sits directly under the message that started it"
+  );
+
+  // A steer joins the turn already running rather than opening a second head.
+  const steered = feedWithCommittedEvent(justStarted, PROMPT(2, "also this", "steer"));
+  assert.equal(
+    threadItems(transcriptRows(steered)).filter((item) => item.kind === "turn").length,
+    1
+  );
+}
+
+{
+  // A turn that stopped without an ending claims no length, and folds like any other.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    { ...PROMPT(1), created_at: 100 },
+    { ...TOOL_STARTED(2, "t1", "One"), created_at: 101 }
+  ]);
+  const stoppedRows = transcriptRows(feed, { turnStoppedWithoutAnEnding: true });
+  const anchor = threadItems(stoppedRows).find((item) => item.kind === "turn");
+  assert.equal(anchor.settled, true, "a stopped turn is not still running");
+  assert.equal(anchor.stopped, true);
+  assert.equal(anchor.durationSeconds, null, "nobody saw the end, so nobody can time it");
+  assert.equal(workedSentence(anchor.durationSeconds), "Worked");
+}
+
+{
+  // A sign of life is a sign of life whatever it carries — and a frame carrying nothing
+  // is the only thing private reasoning is ever allowed to become.
+  let feed = feedWithCommittedEvent(emptyConversationFeed(), PROMPT(1));
+  assert.equal(feed.livenessPulse, 0);
+  feed = feedWithLiveFrame(feed, { frame: "model_thinking" });
+  assert.equal(feed.livenessPulse, 1);
+  assert.equal(feed.streamingAgentText, "", "thinking never becomes content");
+  assert.deepEqual(feed.toolCallProgress, {});
+  assert.equal(feed.events.length, 1, "and it is never a row");
+  feed = feedWithLiveFrame(feed, { frame: "model_thinking" });
+  feed = feedWithLiveFrame(feed, { frame: "agent_message_delta", text_delta: "hi" });
+  feed = feedWithLiveFrame(feed, {
+    frame: "tool_call_progress",
+    tool_call_id: "t1",
+    detail: "…"
+  });
+  assert.equal(feed.livenessPulse, 4, "every kind of frame counts as life");
+
+  // A frame after the turn is over is a ghost, and a ghost is not a sign of life.
+  const ended = feedWithCommittedEvent(feed, TURN_ENDED(2));
+  const haunted = feedWithLiveFrame(ended, { frame: "model_thinking" });
+  assert.equal(haunted.livenessPulse, ended.livenessPulse);
+
+  // A frame this browser has not been taught yet changes nothing at all.
+  let running = feedWithCommittedEvent(emptyConversationFeed(), PROMPT(1));
+  const puzzled = feedWithLiveFrame(running, { frame: "something_new", payload: 1 });
+  assert.deepEqual(puzzled, running, "an unknown frame is ignored rather than guessed at");
+}
+
+{
+  // A plan is read as a strip, never as a line of the thread.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    PROMPT(1, "plan it"),
+    PLAN(2, [
+      { text: "read the code", status: "completed" },
+      { text: "write it", status: "in_progress" },
+      { text: "test it", status: "pending" }
+    ])
+  ]);
+  const rows = transcriptRows(feed);
+  assert.equal(
+    rows.filter((row) => row.kind === "plan_updated").length,
+    1,
+    "the row is in the record"
+  );
+  const items = threadItems(rows);
+  assert.deepEqual(
+    items.map((item) => (item.kind === "turn" ? "turn" : item.row.kind)),
+    ["prompt", "turn"],
+    "and it is not a line of its own — the strip is its rendering"
+  );
+  const anchor = items.find((item) => item.kind === "turn");
+  assert.equal(anchor.plan.length, 3);
+  assert.equal(anchor.plan[1].status, "in_progress");
+}
+
+{
+  // Each plan row is the whole plan, so the newest replaces the last outright.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    PROMPT(1),
+    PLAN(2, [
+      { text: "one", status: "in_progress" },
+      { text: "two", status: "pending" }
+    ]),
+    PLAN(3, [{ text: "one", status: "completed" }])
+  ]);
+  const plans = threadItems(transcriptRows(feed))
+    .filter((item) => item.kind === "turn" && item.plan !== null)
+    .map((item) => item.plan);
+  assert.equal(plans.length, 1, "one conversation, one strip");
+  assert.deepEqual(plans[0], [{ text: "one", status: "completed" }], "replaced, never merged");
+}
+
+{
+  // A plan outlives the turn that made it — it is fed by rows, so a reload still has it.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    { ...PROMPT(1), created_at: 100 },
+    PLAN(2, [{ text: "one", status: "completed" }]),
+    { ...TURN_ENDED(3), created_at: 104 }
+  ]);
+  const settledAnchor = threadItems(transcriptRows(feed)).find((item) => item.kind === "turn");
+  assert.equal(settledAnchor.settled, true);
+  assert.equal(settledAnchor.plan.length, 1, "the plan is still there after the turn ended");
+
+  // A later turn's plan becomes the plan, and the earlier anchor stops showing one.
+  const later = feedWithCommittedEvents(feed, [
+    { ...PROMPT(4, "again"), created_at: 200 },
+    PLAN(5, [{ text: "two", status: "in_progress" }])
+  ]);
+  const anchors = threadItems(transcriptRows(later)).filter((item) => item.kind === "turn");
+  assert.equal(anchors.length, 2);
+  assert.equal(anchors[0].plan, null, "the plan it stated is history now");
+  assert.deepEqual(anchors[1].plan, [{ text: "two", status: "in_progress" }]);
+}
+
+{
+  // A conversation that never planned has no plan anywhere.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [PROMPT(1), AGENT(2, "done")]);
+  for (const item of threadItems(transcriptRows(feed))) {
+    if (item.kind === "turn") assert.equal(item.plan, null);
+  }
+}
+
+{
+  // FINDING 10: work between two pieces of commentary stays between them. Each unbroken
+  // run is its own group, sitting where it happened.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    PROMPT(1, "go"),
+    TOOL_STARTED(2, "t1", "One"),
+    TOOL_STARTED(3, "t2", "Two"),
+    AGENT(4, "here is what I found"),
+    TOOL_STARTED(5, "t3", "Three"),
+    AGENT(6, "and the answer")
+  ]);
+  const items = threadItems(transcriptRows(feed));
+  assert.deepEqual(
+    items.map((item) =>
+      item.kind === "turn" ? "turn" : item.kind === "work_group" ? "work" : item.row.kind
+    ),
+    ["prompt", "turn", "work", "agent_message", "work", "agent_message"],
+    "two batches, each between the commentary it belongs to"
+  );
+  const groups = items.filter((item) => item.kind === "work_group");
+  assert.deepEqual(groups.map((group) => group.entries.length), [2, 1]);
+  assert.deepEqual(
+    groups.map((group) => group.entries.map((entry) => entry.title)),
+    [["One", "Two"], ["Three"]]
+  );
+  // Every group belongs to the turn that made it, so one fold covers them all.
+  const anchor = items.find((item) => item.kind === "turn");
+  assert.equal(anchor.toolCallCount, 3, "the count spans the whole turn, not one batch");
+  assert.deepEqual(new Set(groups.map((group) => group.turnKey)), new Set([anchor.turnKey]));
+}
+
+{
+  // On settle every group goes behind the one fold; a run of one hides nothing.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    { ...PROMPT(1), created_at: 10 },
+    TOOL_STARTED(2, "t1", "Only one"),
+    AGENT(3, "done"),
+    { ...TURN_ENDED(4), created_at: 13 }
+  ]);
+  const items = threadItems(transcriptRows(feed));
+  const groups = items.filter((item) => item.kind === "work_group");
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].entries.length, 1, "a run of one has nothing to hide");
+  assert.equal(groups[0].settled, true, "and it is behind the turn's fold now");
+  const anchor = items.find((item) => item.kind === "turn");
+  assert.equal(turnFoldLabel(anchor), "Worked for 3s");
+}
+
+{
+  // FINDING 11: a selector shows the concrete value in force, and "default" is never one.
+  assert.equal(preselectedValue("sonnet", "opus"), "sonnet", "the record wins when it has one");
+  assert.equal(preselectedValue(null, "opus"), "opus", "otherwise what the backend runs");
+  assert.equal(preselectedValue(null, null), null, "and a backend naming none stays empty");
+  assert.equal(preselectedValue(null, undefined), null, "a catalog yet to say is absence");
+
+  // Untouched sends nothing — the backend already runs that value. A pick arms as ever.
+  const current = { model: null, reasoningEffort: null };
+  assert.deepEqual(
+    armedChangeFor(current, { model: null, reasoningEffort: null }, "run_when_free"),
+    {},
+    "showing the backend's own value is not choosing it"
+  );
+  assert.deepEqual(
+    armedChangeFor(current, { model: "opus", reasoningEffort: null }, "run_when_free"),
+    { model_change: "opus" },
+    "picking it is"
+  );
 }
 
 {

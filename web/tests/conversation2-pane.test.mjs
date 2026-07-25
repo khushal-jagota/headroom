@@ -36,8 +36,10 @@ const expectedInventory = [
   "NewConversationForm.svelte",
   "PermissionAskActions.svelte",
   "PermissionAskCard.svelte",
+  "PlanStrip.svelte",
   "ToolCallRow.svelte",
-  "WorkLog.svelte"
+  "TurnAnchor.svelte",
+  "WorkGroup.svelte"
 ];
 const inventory = (await readdir(componentDirectory))
   .filter((name) => name.endsWith(".svelte"))
@@ -146,7 +148,9 @@ try {
       'export { default as AskCard } from "../src/components/conversation2/PermissionAskCard.svelte";',
       'export { default as BackendCard } from "../src/components/conversation2/BackendCard.svelte";',
       'export { default as AskActions } from "../src/components/conversation2/PermissionAskActions.svelte";',
-      'export { default as WorkLog } from "../src/components/conversation2/WorkLog.svelte";',
+      'export { default as TurnAnchor } from "../src/components/conversation2/TurnAnchor.svelte";',
+      'export { default as WorkGroup } from "../src/components/conversation2/WorkGroup.svelte";',
+      'export { default as PlanStrip } from "../src/components/conversation2/PlanStrip.svelte";',
       ""
     ].join("\n"),
     "utf8"
@@ -163,7 +167,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, Composer, Transcript, WorkLog } = await import(
+  const { AskActions, AskCard, BackendCard, Composer, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -262,7 +266,8 @@ try {
   assert.match(mixedThread, /now running on sonnet · low/);
   assert.match(mixedThread, /turn failed · the child stopped/);
   // The turn is over, so its one tool call is behind the fold rather than in the thread.
-  assert.match(mixedThread, /worked for 3s · 1 tool call/);
+  assert.match(mixedThread, /Worked for 3s/);
+  assert.doesNotMatch(mixedThread, /tool call/, "the count belongs inside the expansion");
   assert.doesNotMatch(mixedThread, /acp-step/);
 
   // FINDING 2: your own messages are not labelled as yours.
@@ -298,6 +303,7 @@ try {
   assert.doesNotMatch(completedThread, /turn complete/, "a turn that simply finished says nothing");
 
   // FINDING 6: while a turn runs, one line is what is happening; the rest wait behind a count.
+  // (toolRow is declared above, hoisted, so the finding-7 block can use it too.)
   function toolRow(index, status = "completed", detail = null) {
     return {
       key: `t${index}`,
@@ -312,7 +318,7 @@ try {
       progress: null
     };
   }
-  const runningWork = drawn(WorkLog, { entries: [toolRow(1), toolRow(2), toolRow(3)], settled: false });
+  const runningWork = drawn(WorkGroup, { entries: [toolRow(1), toolRow(2), toolRow(3)] });
   assert.match(runningWork, /\+2 previous tool calls/);
   assert.equal(
     (runningWork.match(/data-conversation2-tool="/g) ?? []).length,
@@ -322,32 +328,120 @@ try {
   assert.match(runningWork, /Tool 3/, "and it is the newest one");
   assert.doesNotMatch(runningWork, /Tool 1/);
 
-  const oneEntryWork = drawn(WorkLog, { entries: [toolRow(1)], settled: false });
+  const oneEntryWork = drawn(WorkGroup, { entries: [toolRow(1)] });
   assert.doesNotMatch(oneEntryWork, /previous tool call/, "nothing is hidden when nothing is behind");
 
-  // Settled: the whole log folds to a line, and no tool row is in the thread at all.
-  const settledWork = drawn(WorkLog, {
-    entries: [toolRow(1), toolRow(2)],
+  // Settled: the head becomes the fold, and the runs are behind it.
+  const settledWork = drawn(TurnAnchor, {
     settled: true,
+    toolCallCount: 2,
     durationSeconds: 80
   });
-  assert.match(settledWork, /worked for 1m 20s · 2 tool calls/);
-  assert.match(settledWork, /data-conversation2-work-settled="true"/);
+  assert.match(settledWork, /Worked for 1m 20s/);
+  assert.match(settledWork, /data-conversation2-turn-settled="true"/);
   assert.equal((settledWork.match(/data-conversation2-tool="/g) ?? []).length, 0);
+  assert.doesNotMatch(settledWork, /2 tool calls/, "the count shows when it is opened");
+  assert.match(
+    drawn(TurnAnchor, { settled: true, toolCallCount: 2, durationSeconds: 80, expanded: true }),
+    /2 tool calls/
+  );
+  const hiddenRun = drawn(WorkGroup, { entries: [toolRow(1)], hidden: true });
+  assert.equal(hiddenRun.trim(), "", "a settled run draws nothing until its turn is opened");
 
   // A row's own output is behind the row, capped, and never pasted into the thread.
-  const withOutput = drawn(WorkLog, {
-    entries: [toolRow(1, "completed", "line one\nline two\nline three")],
-    settled: false
+  const withOutput = drawn(WorkGroup, {
+    entries: [toolRow(1, "completed", "line one\nline two\nline three")]
   });
   assert.match(withOutput, /aria-expanded="false"/, "a tool row starts closed");
   assert.doesNotMatch(withOutput, /line three/, "its output is not in the thread");
-  const withSummary = drawn(WorkLog, {
-    entries: [toolRow(1, "completed", "ls -la /tmp")],
-    settled: false
+  const withSummary = drawn(WorkGroup, {
+    entries: [toolRow(1, "completed", "ls -la /tmp")]
   });
   assert.match(withSummary, /data-conversation2-tool-summary/);
   assert.match(withSummary, /ls -la \/tmp/, "a one-line detail is the summary itself");
+
+  // FINDING 7 — a running turn has one mark that says the model is alive, from the moment
+  // it starts. It is there before there is any work to put under it, which is the whole
+  // point: the wait before the first tool call is the silence it exists to fill.
+  const bareRunning = drawn(TurnAnchor, { startedAt: Math.floor(Date.now() / 1000) });
+  assert.match(bareRunning, /data-conversation2-alive/);
+  assert.match(bareRunning, /Working/, "it counts from the moment the prompt landed");
+  assert.match(bareRunning, /c2-alive-dots/, "three dots, as T3 has");
+  assert.doesNotMatch(bareRunning, /data-conversation2-turn-fold/, "nothing to fold yet");
+
+  // Settled: the mark is gone and the fold stands in its place.
+  const settledAnchor = drawn(TurnAnchor, {
+    settled: true,
+    toolCallCount: 1,
+    durationSeconds: 4
+  });
+  assert.doesNotMatch(settledAnchor, /data-conversation2-alive/, "a finished turn is not thinking");
+  assert.match(settledAnchor, /Worked for 4s/);
+
+  // The latest turn a person stopped says who stopped it.
+  assert.match(
+    drawn(TurnAnchor, {
+      settled: true,
+      toolCallCount: 1,
+      durationSeconds: 9,
+      ending: "interrupted",
+      isLatest: true
+    }),
+    /You stopped after 9s/
+  );
+
+  // A turn that stopped without an ending has no mark and claims no length.
+  const stoppedAnchor = drawn(TurnAnchor, {
+    settled: true,
+    stopped: true,
+    toolCallCount: 1,
+    durationSeconds: null
+  });
+  assert.doesNotMatch(stoppedAnchor, /data-conversation2-alive/, "a dead process is not alive");
+  assert.match(stoppedAnchor, /Worked</);
+  assert.doesNotMatch(stoppedAnchor, /Worked for/);
+
+  // And the whole transcript agrees: a stopped turn shows no thinking mark anywhere.
+  const stoppedTurnThread = drawn(Transcript, {
+    rows: [
+      {
+        key: "p1",
+        kind: "prompt",
+        sequence: 1,
+        createdAt: 1_000,
+        text: "go",
+        senderLabel: "owner",
+        mode: "run_when_free"
+      },
+      { key: "turn-stopped", kind: "turn_stopped", sequence: 2, createdAt: 1_005 }
+    ]
+  });
+  assert.doesNotMatch(stoppedTurnThread, /data-conversation2-alive/);
+  assert.match(stoppedTurnThread, /turn stopped without an ending/);
+
+  // A settled turn that did nothing says nothing at all.
+  assert.equal(drawn(TurnAnchor, { settled: true, toolCallCount: 0 }).trim(), "");
+
+  // FINDING 8 — the plan reads as a count you can open, in the old strip's own vocabulary.
+  const plan = [
+    { text: "read the code", status: "completed" },
+    { text: "write it", status: "in_progress" },
+    { text: "test it", status: "pending" }
+  ];
+  const strip = drawn(PlanStrip, { entries: plan });
+  assert.match(strip, /1 \/ 3 tasks/);
+  assert.match(strip, /aria-label="1 of 3 tasks complete"/);
+  assert.doesNotMatch(strip, /data-conversation2-plan-list/, "the checklist starts closed");
+  assert.equal(drawn(PlanStrip, { entries: [] }).trim(), "", "no plan, no strip");
+
+  // It survives its turn: a settled anchor with no tool calls still carries the plan.
+  const settledWithPlan = drawn(TurnAnchor, { settled: true, toolCallCount: 0, plan });
+  assert.match(settledWithPlan, /data-conversation2-plan/);
+  assert.match(settledWithPlan, /1 \/ 3 tasks/);
+  assert.doesNotMatch(settledWithPlan, /data-conversation2-alive/);
+  const runningWithPlan = drawn(TurnAnchor, { settled: false, plan });
+  assert.match(runningWithPlan, /data-conversation2-alive/);
+  assert.match(runningWithPlan, /data-conversation2-plan/);
 
   // Steering is offered to hermes and to nobody else.
   const hermesComposer = drawn(Composer, {
@@ -647,6 +741,39 @@ try {
     }
   ];
 
+  const runningRows = [
+    {
+      key: "rp1",
+      kind: "prompt" as const,
+      sequence: 1,
+      createdAt: Math.floor(Date.now() / 1000),
+      text: "go",
+      senderLabel: "owner",
+      mode: "run_when_free" as const
+    },
+    { ...toolRow(21, null), key: "r21", toolCallId: "r21", title: "Batch one A" },
+    { ...toolRow(22, null), key: "r22", toolCallId: "r22", title: "Batch one B" },
+    {
+      key: "ra1",
+      kind: "agent_message" as const,
+      sequence: 23,
+      createdAt: 1023,
+      text: "found it"
+    },
+    { ...toolRow(24, null), key: "r24", toolCallId: "r24", title: "Batch two A" },
+    { ...toolRow(25, null), key: "r25", toolCallId: "r25", title: "Batch two B" },
+    {
+      key: "rplan",
+      kind: "plan_updated" as const,
+      sequence: 26,
+      createdAt: 1026,
+      entries: [
+        { text: "read the code", status: "completed" as const },
+        { text: "write it", status: "in_progress" as const }
+      ]
+    }
+  ];
+
   const question = {
     askId: "q1",
     title: "Which way should this go?",
@@ -661,13 +788,19 @@ try {
 <ConversationComposer
   backendKey="claude"
   running={false}
-  current={{ model: "opus", reasoningEffort: "high" }}
+  current={{ model: null, reasoningEffort: null }}
+  defaultModelId="opus"
+  defaultReasoningEffort="high"
   models={[{ model_id: "opus", display_name: "Opus" }, { model_id: "sonnet", display_name: "Sonnet" }]}
   effortOptions={["low", "high"]}
   {onSend}
 />
 
 <ConversationTranscript rows={settledRows} ownSenderLabel="owner" />
+
+<div data-running-thread>
+  <ConversationTranscript rows={runningRows} ownSenderLabel="owner" />
+</div>
 
 <PermissionAskCard ask={question} onAnswer={(optionId) => answers.push(optionId)} />
 `,
@@ -724,69 +857,119 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     page = browser.new_page()
     page.set_default_timeout(5_000)
-    page.goto(sys.argv[1], wait_until="networkidle")
+    page.goto(sys.argv[1], wait_until="domcontentloaded")
 
-    # FINDING 4 — the selectors are inline, and they show what the conversation runs on.
+    # FINDING 11 — the selectors show the concrete value already in force, unlabelled,
+    # and the word "default" appears nowhere in them.
     model = page.locator("[data-conversation2-picker-model]")
     effort = page.locator("[data-conversation2-picker-effort]")
     assert model.input_value() == "opus", model.input_value()
     assert effort.input_value() == "high", effort.input_value()
+    options = page.locator("[data-conversation2-picker-model] option").all_inner_texts()
+    assert options == ["Opus", "Sonnet"], options
+    effort_options = page.locator("[data-conversation2-picker-effort] option").all_inner_texts()
+    assert effort_options == ["low", "high"], effort_options
+    body = page.inner_text("body").lower()
+    assert "default" not in body, "the word default must never appear in a selector"
     assert page.locator("[data-conversation2-picker-armed]").count() == 0
 
-    # Browsing them changes nothing at all: no send, just a pending change that says so.
-    model.select_option("sonnet")
-    effort.select_option("low")
-    assert page.evaluate("window.__sends().length") == 0
-    assert page.locator("[data-conversation2-picker-armed]").count() == 1
-
-    # Re-selecting what it already runs on disarms it — abandoning still costs nothing.
-    model.select_option("opus")
-    effort.select_option("high")
-    assert page.evaluate("window.__sends().length") == 0
-    assert page.locator("[data-conversation2-picker-armed]").count() == 0
-
-    # Picked again, the change rides the next message and then stops being pending.
-    model.select_option("sonnet")
+    # Showing the backend's own value is not choosing it: untouched sends nothing.
     page.locator("[data-conversation2-input]").fill("go")
     page.locator("[data-conversation2-send]").click()
     page.wait_for_function("window.__sends().length === 1")
     first = page.evaluate("window.__sends()[0]")
-    assert first["text"] == "go", first
-    assert first["mode"] == "run_when_free", first
-    assert first["picked"]["model"] == "sonnet", first
+    assert first["picked"]["model"] is None, first
+    assert first["picked"]["reasoningEffort"] is None, first
 
-    page.wait_for_function("document.querySelector('[data-conversation2-input]').value === ''")
-    assert page.locator("[data-conversation2-picker-armed]").count() == 0
-    assert model.input_value() == "opus", "the select falls back to what the conversation runs on"
-
-    # A second message carries no change, because none is pending any more.
+    # A pick arms commit-on-send exactly as before, and rides the next message.
+    model.select_option("sonnet")
+    assert page.evaluate("window.__sends().length") == 1
+    assert page.locator("[data-conversation2-picker-armed]").count() == 1
     page.locator("[data-conversation2-input]").fill("again")
     page.locator("[data-conversation2-send]").click()
     page.wait_for_function("window.__sends().length === 2")
     second = page.evaluate("window.__sends()[1]")
-    assert second["picked"]["model"] is None, second
+    assert second["picked"]["model"] == "sonnet", second
+    page.wait_for_function("document.querySelector('[data-conversation2-input]').value === ''")
+    assert page.locator("[data-conversation2-picker-armed]").count() == 0
+    assert model.input_value() == "opus", "and it falls back to the value in force"
 
-    # FINDING 6 — a settled turn's work is one line until it is asked for.
-    fold = page.locator("[data-conversation2-work-fold]")
-    assert fold.count() == 1
-    assert "worked for 12s" in fold.inner_text(), fold.inner_text()
-    assert page.locator("[data-conversation2-tool]").count() == 0
-    assert page.locator('[data-conversation2-row="agent_message"]').count() == 0
+    # FINDING 9 — a settled turn folds to "Worked for X" with no count on the label.
+    fold = page.locator("[data-conversation2-turn-fold]").first
+    label = page.locator("[data-conversation2-turn-label]").first.inner_text()
+    assert label == "Worked for 12s", label
+    assert page.locator("[data-conversation2-turn-count]").count() == 0
+    settled_thread = page.locator("[data-conversation2-transcript]").first
+    assert settled_thread.locator("[data-conversation2-tool]").count() == 0
 
+    # Opening the turn brings its run back, still showing only its newest entry — the
+    # turn's fold and the run's own count are two different questions.
     fold.click()
-    page.wait_for_function("document.querySelectorAll('[data-conversation2-tool]').length === 3")
+    settled = page.locator("[data-conversation2-transcript]").first
+    page.wait_for_function(
+        "document.querySelector('[data-conversation2-transcript]')"
+        ".querySelectorAll('[data-conversation2-tool]').length === 1"
+    )
+    assert page.locator("[data-conversation2-turn-count]").first.inner_text() == "3 tool calls"
+    assert settled.locator(".acp-step-title").all_inner_texts() == ["Tool 4"]
 
-    # A tool row's own output is behind the row, and comes back capped and scrolling.
-    assert page.locator("[data-conversation2-tool-output]").count() == 0
+    settled.locator("[data-conversation2-work-fold]").click()
+    page.wait_for_function(
+        "document.querySelector('[data-conversation2-transcript]')"
+        ".querySelectorAll('[data-conversation2-tool]').length === 3"
+    )
+
+    # A tool row's own output stays behind the row, capped and scrolling.
     page.locator('[data-conversation2-tool="t2"]').click()
     page.wait_for_function("document.querySelectorAll('[data-conversation2-tool-output]').length === 1")
     output = page.locator("[data-conversation2-tool-output]")
     assert "second output line" in output.inner_text(), output.inner_text()
-    box = output.bounding_box()
-    assert box["height"] <= 400, box
+    assert output.bounding_box()["height"] <= 400
 
     fold.click()
-    page.wait_for_function("document.querySelectorAll('[data-conversation2-tool]').length === 0")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation2-transcript]')"
+        ".querySelectorAll('[data-conversation2-tool]').length === 0"
+    )
+
+    # FINDING 7 — the running turn has a head that counts, with three dots beside it.
+    running = page.locator("[data-running-thread]")
+    alive = running.locator("[data-conversation2-alive]")
+    assert alive.count() == 1
+    assert alive.inner_text().startswith("Working for"), alive.inner_text()
+
+    # FINDING 10 — two batches, each showing only its newest entry, expanded separately.
+    groups = running.locator("[data-conversation2-work-group]")
+    assert groups.count() == 2, groups.count()
+    assert running.locator("[data-conversation2-tool]").count() == 2
+    titles = running.locator(".acp-step-title").all_inner_texts()
+    assert titles == ["Batch one B", "Batch two B"], titles
+
+    groups.nth(0).locator("[data-conversation2-work-fold]").click()
+    page.wait_for_function(
+        "document.querySelector('[data-running-thread]')"
+        ".querySelectorAll('[data-conversation2-tool]').length === 3"
+    )
+    assert groups.nth(0).get_attribute("data-conversation2-work-expanded") == "true"
+    assert groups.nth(1).get_attribute("data-conversation2-work-expanded") == "false", (
+        "opening one batch leaves the other alone"
+    )
+
+    # FINDING 8 — the plan is a count that opens into the checklist.
+    pill = running.locator("[data-conversation2-plan-pill]")
+    assert pill.count() == 1
+    assert "1 / 2 tasks" in pill.inner_text(), pill.inner_text()
+    assert running.locator("[data-conversation2-plan-list]").count() == 0
+    pill.click()
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation2-plan-list]').length === 1"
+    )
+    marks = running.locator("[data-conversation2-plan-status]").all_inner_texts()
+    assert "read the code" in marks[0], marks
+    pill.click()
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation2-plan-list]').length === 0"
+    )
 
     # A question is answered by its number key as well as by its row.
     page.keyboard.press("2")

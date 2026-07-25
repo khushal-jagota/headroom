@@ -259,6 +259,21 @@ export function modelDetail(
   return models.find((model) => model.model_id === value)?.detail ?? null;
 }
 
+/** The value a selector shows when nobody has picked anything.
+ *
+ * "Default" is not a value and is never offered as one — it is a word for whichever
+ * concrete value is already in force. So the face shows that concrete value: what the
+ * conversation is actually running if the record says, otherwise what the backend runs
+ * when nobody names one. A backend that names none leaves the face empty rather than
+ * inventing a word, which is the honest end of it.
+ */
+export function preselectedValue(
+  currentValue: string | null,
+  backendDefault: string | null | undefined
+): string | null {
+  return currentValue ?? backendDefault ?? null;
+}
+
 // --- what shape of ask this is -------------------------------------------------------------
 
 /** The three kinds of thing an agent can stop and wait for.

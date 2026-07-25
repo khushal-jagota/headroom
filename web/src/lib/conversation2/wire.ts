@@ -46,6 +46,11 @@ export type PromptDeliveryRefusalReason =
   | "no_running_turn_to_steer_into"
   | "backend_cannot_steer";
 
+/** Where one step of the agent's plan has got to. */
+export type PlanEntryStatus = "pending" | "in_progress" | "completed";
+
+export type PlanEntry = { text: string; status: PlanEntryStatus };
+
 export type PermissionAskOption = {
   option_id: string;
   label: string;
@@ -110,14 +115,24 @@ export type ConversationEvent =
     >
   | Row<"permission_answered", { ask_id: string; option_id: string }>
   | Row<"model_changed", { model: string | null; reasoning_effort: string | null }>
+  /** The agent's plan as it stands now. Each row is the whole plan, not a change to it,
+   *  so the newest one is the plan and the ones before it are history. */
+  | Row<"plan_updated", { entries: PlanEntry[] }>
   | Row<"turn_ended", { ending: ConversationTurnEnding; error_summary: string | null }>;
 
 export type ConversationEventKind = ConversationEvent["kind"];
 
-/** Half-finished output. Shown and then forgotten; never a row. */
+/** Half-finished output. Shown and then forgotten; never a row.
+ *
+ * ``model_thinking`` carries nothing on purpose. Private reasoning is not stored and is
+ * not shown, so the only thing this frame says is that the model was thinking just now —
+ * which is enough to tell a person the silence is not a stall. A backend may send none of
+ * these on a turn, or none ever, and the pane reads the same either way.
+ */
 export type ConversationLiveFrame =
   | { frame: "agent_message_delta"; text_delta: string }
-  | { frame: "tool_call_progress"; tool_call_id: string; detail: string };
+  | { frame: "tool_call_progress"; tool_call_id: string; detail: string }
+  | { frame: "model_thinking" };
 
 export type PromptDeliveryFate =
   | { fate: "started" }
@@ -157,6 +172,11 @@ export type BackendSnapshot = {
   identity: BackendIdentity | null;
   available_models: BackendModel[];
   reasoning_effort_options: string[];
+  /** The concrete model this backend runs when nobody names one. Optional: a catalog
+   *  that has not said yet is read as absence, never as a word called "default". */
+  default_model_id?: string | null;
+  /** The same for reasoning effort. Some backends genuinely name none. */
+  default_reasoning_effort?: string | null;
   update_advisory: BackendUpdateAdvisory | null;
   diagnoses: string[];
 };

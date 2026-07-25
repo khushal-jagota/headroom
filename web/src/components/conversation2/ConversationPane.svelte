@@ -31,7 +31,10 @@
     current = { model: null, reasoningEffort: null },
     models = [],
     ownSenderLabel = null,
+    livenessPulse = 0,
     effortOptions = [],
+    defaultModelId = null,
+    defaultReasoningEffort = null,
     heldPromptCount = 0,
     fateNote = null,
     errorNote = null,
@@ -61,7 +64,10 @@
     models?: readonly BackendModel[];
     /** The label this pane sends under, so your own messages are not labelled as yours. */
     ownSenderLabel?: string | null;
+    livenessPulse?: number;
     effortOptions?: readonly string[];
+    defaultModelId?: string | null;
+    defaultReasoningEffort?: string | null;
     heldPromptCount?: number;
     fateNote?: string | null;
     errorNote?: string | null;
@@ -228,7 +234,7 @@
       {#if emptyState && rows.length === 0}
         {@render emptyState()}
       {/if}
-      <ConversationTranscript {rows} {models} {ownSenderLabel} />
+      <ConversationTranscript {rows} {models} {ownSenderLabel} {livenessPulse} />
     </div>
     {#if jumpVisible}
       <button
@@ -248,6 +254,8 @@
     {current}
     {models}
     {effortOptions}
+    {defaultModelId}
+    {defaultReasoningEffort}
     {heldPromptCount}
     {fateNote}
     {errorNote}
