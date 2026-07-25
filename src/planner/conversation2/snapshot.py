@@ -27,7 +27,9 @@ import json
 import os
 import re
 import shutil
+import signal
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -235,6 +237,11 @@ class SubprocessBackendProbeEnvironment:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=environment,
+                # Its own process group, so that everything this command starts can be
+                # stopped with it. An installer is a script that runs other programs, and
+                # killing only the script it was launched as would leave those still
+                # writing to this machine after Panels had reported the update failed.
+                start_new_session=True,
             )
         except (OSError, ValueError) as error:
             return CommandOutcome(exit_code=-1, standard_output="", standard_error=str(error))
@@ -243,7 +250,7 @@ class SubprocessBackendProbeEnvironment:
                 process.communicate(), timeout=timeout_seconds
             )
         except TimeoutError:
-            process.kill()
+            _end_the_whole_process_group(process)
             await process.wait()
             return CommandOutcome(
                 exit_code=-1,
@@ -278,6 +285,23 @@ class SubprocessBackendProbeEnvironment:
 
 
 # --- how a path says what installed it ------------------------------------------------
+
+
+def _end_the_whole_process_group(process: asyncio.subprocess.Process) -> None:
+    """Kill the command and everything it started.
+
+    A command that has run out of time is one nobody is waiting for any more, so nothing
+    it spawned should carry on working on this machine either. If the group has already
+    gone there is nothing to do; if this process may not signal it, the child itself is
+    still killed rather than left running.
+    """
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        return
+    except (ProcessLookupError, PermissionError):
+        pass
+    with suppress(ProcessLookupError):
+        process.kill()
 
 
 def _normalized_path(path: str) -> str:
@@ -807,6 +831,13 @@ class BackendSnapshotService:
         self._codex_model_catalog_probe = codex_model_catalog_probe
         self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
         self._lock = asyncio.Lock()
+        # One lock per backend, held for a whole update rather than for a probe. Reading a
+        # card is quick and shares the lock above; installing a package is slow, changes
+        # the machine, and must not happen twice at once — so the two are different locks,
+        # and a running update never blocks somebody looking at a different backend's card.
+        self._update_locks: dict[ConversationBackendKey, asyncio.Lock] = {
+            backend_key: asyncio.Lock() for backend_key in ConversationBackendKey
+        }
 
     async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
         return tuple(
@@ -836,7 +867,17 @@ class BackendSnapshotService:
 
         Looking again is the whole point: a command can exit cleanly and change nothing,
         and only the version says which of those happened.
+
+        The whole of it — looking, running, looking again — happens under this backend's
+        update lock. Two people pressing Update are two package-manager runs against the
+        same install, and package managers do not survive that. The second one waits, and
+        then finds an install the first has already moved, so it reports what actually
+        happened to it: nothing changed.
         """
+        async with self._update_locks[backend_key]:
+            return await self._update_backend(backend_key)
+
+    async def _update_backend(self, backend_key: ConversationBackendKey) -> BackendUpdateResult:
         before = await self.snapshot(backend_key, refresh=True)
         advisory = before.update_advisory
         if not before.installed or advisory is None or advisory.update_command is None:

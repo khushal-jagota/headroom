@@ -15,6 +15,7 @@ import json
 import os
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -31,6 +32,7 @@ from planner.conversation2.snapshot import (
     BackendSnapshotService,
     BackendUpdateOutcome,
     CommandOutcome,
+    SubprocessBackendProbeEnvironment,
     classify_install_method,
     parse_version,
     probe_backend,
@@ -54,6 +56,12 @@ class _FakeMachine:
     after_run: dict[tuple[str, ...], Callable[[], None]] = field(default_factory=dict)
     run_commands: list[tuple[str, ...]] = field(default_factory=list)
     registry_lookups: list[str] = field(default_factory=list)
+    # Commands that wait to be let go, so a test can hold one in flight and see what
+    # another caller does while it is.
+    slow_commands: set[tuple[str, ...]] = field(default_factory=set)
+    let_slow_commands_finish: asyncio.Event | None = None
+    commands_in_flight: int = 0
+    most_commands_at_once: int = 0
 
     def executable_path(self, executable_name: str) -> str | None:
         return self.executables.get(executable_name)
@@ -71,6 +79,13 @@ class _FakeMachine:
         del timeout_seconds, environment_overrides
         command = tuple(argv)
         self.run_commands.append(command)
+        if command in self.slow_commands and self.let_slow_commands_finish is not None:
+            self.commands_in_flight += 1
+            self.most_commands_at_once = max(
+                self.most_commands_at_once, self.commands_in_flight
+            )
+            await self.let_slow_commands_finish.wait()
+            self.commands_in_flight -= 1
         outcome = self.outcomes.get(
             command,
             CommandOutcome(exit_code=-1, standard_output="", standard_error="no such command"),
@@ -567,6 +582,127 @@ def test_an_update_with_no_command_to_run_fails_with_the_reason() -> None:
         assert result.outcome is BackendUpdateOutcome.failed
         assert result.detail == "`hermes` is not installed or not on PATH."
         assert machine.run_commands == []
+
+    _run(exercise)
+
+
+def test_two_people_pressing_update_do_not_run_two_installs_at_once() -> None:
+    """Package managers do not survive being run twice against the same install.
+
+    The second caller waits, and then finds an install the first has already moved — so it
+    reports what actually happened to it, which is that nothing changed.
+    """
+
+    async def exercise() -> None:
+        machine = _installed_claude()
+        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
+        machine.outcomes[_claude_update_command()] = CommandOutcome(
+            exit_code=0, standard_output="added 1 package\n", standard_error=""
+        )
+        machine.slow_commands.add(_claude_update_command())
+        machine.let_slow_commands_finish = asyncio.Event()
+
+        def the_new_one_is_now_installed() -> None:
+            machine.outcomes[(CLAUDE_PATH, "--version")] = CommandOutcome(
+                exit_code=0, standard_output="2.1.230 (Claude Code)\n", standard_error=""
+            )
+
+        machine.after_run[_claude_update_command()] = the_new_one_is_now_installed
+        service = BackendSnapshotService(machine)
+
+        both = [
+            asyncio.create_task(service.update_backend(ConversationBackendKey.claude))
+            for _ in range(2)
+        ]
+        # Long enough that a second install would have started if nothing stopped it.
+        for _ in range(50):
+            await asyncio.sleep(0)
+        assert machine.let_slow_commands_finish is not None
+        machine.let_slow_commands_finish.set()
+        first, second = await asyncio.gather(*both)
+
+        assert machine.most_commands_at_once == 1
+        assert first.outcome is BackendUpdateOutcome.succeeded
+        assert second.outcome is BackendUpdateOutcome.unchanged
+
+    _run(exercise)
+
+
+def test_an_update_on_one_backend_does_not_hold_up_reading_another_ones_card() -> None:
+    """An install is slow; looking at a card is not, and must not wait behind one."""
+
+    async def exercise() -> None:
+        machine = _installed_claude()
+        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
+        machine.outcomes[_claude_update_command()] = CommandOutcome(
+            exit_code=0, standard_output="", standard_error=""
+        )
+        machine.slow_commands.add(_claude_update_command())
+        machine.let_slow_commands_finish = asyncio.Event()
+        service = BackendSnapshotService(machine)
+
+        updating = asyncio.create_task(service.update_backend(ConversationBackendKey.claude))
+        for _ in range(50):
+            await asyncio.sleep(0)
+
+        # The codex card comes back while claude is still installing.
+        card = await asyncio.wait_for(
+            service.snapshot(ConversationBackendKey.codex), timeout=5.0
+        )
+        assert card.backend_key is ConversationBackendKey.codex
+
+        assert machine.let_slow_commands_finish is not None
+        machine.let_slow_commands_finish.set()
+        await updating
+
+    _run(exercise)
+
+
+# --- what a command that runs out of time leaves behind ------------------------------------
+
+
+def _still_alive(process_id: int) -> bool:
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
+    tmp_path: Path,
+) -> None:
+    """An installer is a script that runs other programs.
+
+    Killing only the script would leave those still writing to this machine after Panels
+    had already said the update failed, which is the one thing a failed update must not
+    mean. So the command gets its own process group and the group is what is killed.
+    """
+
+    async def exercise() -> None:
+        child_process_id_file = tmp_path / "the-child.pid"
+        outcome = await SubprocessBackendProbeEnvironment().run(
+            (
+                "/bin/sh",
+                "-c",
+                f"sleep 60 & echo $! > {child_process_id_file}; wait",
+            ),
+            timeout_seconds=1.0,
+        )
+
+        assert outcome.exit_code == -1
+        assert "did not answer within" in outcome.standard_error
+
+        child_process_id = int(child_process_id_file.read_text().strip())
+        for _ in range(100):
+            if not _still_alive(child_process_id):
+                break
+            await asyncio.sleep(0.05)
+        assert not _still_alive(child_process_id), (
+            f"the command's own child ({child_process_id}) outlived it"
+        )
 
     _run(exercise)
 

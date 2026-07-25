@@ -46,12 +46,13 @@ from planner.conversation2.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation2.events import (
+    AgentMessageDeltaFrame,
     AgentMessageEventPayload,
     ConversationTurnEnding,
     PermissionAskOption,
     ToolCallStatus,
 )
-from planner.conversation2.live_tail import ConversationLiveTail
+from planner.conversation2.live_tail import MAXIMUM_HELD_TAIL_ITEMS, ConversationLiveTail
 from planner.conversation2.snapshot import (
     BackendSnapshotService,
     CommandOutcome,
@@ -984,6 +985,34 @@ def test_shutting_down_closes_every_open_tail(harness: _Harness) -> None:
     _run(exercise)
 
 
+def test_a_watcher_that_stops_reading_has_its_watch_closed_rather_than_grown(
+    harness: _Harness,
+) -> None:
+    """A browser that has stopped reading must not cost this process memory forever.
+
+    Closing the watch is the kind thing as well as the safe thing: a closed tail is the
+    reconnect path, and reconnecting asks for everything after the last row seen. Dropping
+    items quietly instead would leave a hole in the middle that nothing ever fills.
+    """
+    del harness
+
+    async def exercise() -> None:
+        hub = ConversationLiveTail()
+        watching = hub.subscribe("c")
+
+        for index in range(MAXIMUM_HELD_TAIL_ITEMS + 5):
+            hub.publish_frame("c", AgentMessageDeltaFrame(text_delta=str(index)))
+
+        assert hub.open_subscription_count() == 0
+
+        # The reader finishes rather than hanging, holding everything up to the limit.
+        shown = [item async for item in watching]
+        assert len(shown) == MAXIMUM_HELD_TAIL_ITEMS
+        assert shown[0] == AgentMessageDeltaFrame(text_delta="0")
+
+    _run(exercise)
+
+
 def test_a_tail_is_closed_by_the_same_door_that_closes_the_change_stream(
     harness: _Harness,
 ) -> None:
@@ -1007,8 +1036,16 @@ def test_a_tail_is_closed_by_the_same_door_that_closes_the_change_stream(
 
             # Exactly as the process's signal handler calls it: from another thread.
             await asyncio.to_thread(sse.close_open_change_streams)
-            for _ in range(50):
-                if harness.live_tail.open_subscription_count() == 0:
+
+            # The watch is ended by the closer; the stream lets go of its place in the
+            # register when it next runs and finds the watch over. Both happen without
+            # anybody asking again, which is what a shutdown needs — so both are waited
+            # for rather than assumed to have happened by now.
+            for _ in range(200):
+                if (
+                    harness.live_tail.open_subscription_count() == 0
+                    and sse.open_change_stream_count() == streams_before
+                ):
                     break
                 await asyncio.sleep(0.005)
 

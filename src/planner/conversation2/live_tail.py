@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Iterator
+from typing import Final
 
 from planner.conversation2.events import ConversationLiveTailFrame
 from planner.conversation2.storage import StoredConversationEvent
@@ -28,8 +29,14 @@ from planner.conversation2.storage import StoredConversationEvent
 type ConversationTailItem = StoredConversationEvent | ConversationLiveTailFrame
 
 
+# How far behind a watcher may fall before its watch is closed. Generous enough that a
+# browser reading normally never reaches it, small enough that a reader which has stopped
+# reading cannot grow this process's memory without limit.
+MAXIMUM_HELD_TAIL_ITEMS: Final = 2048
+
+
 class _TailClosed:
-    """The last thing a subscription is handed, when the server is going away."""
+    """The last thing a subscription is handed, when its watch ends."""
 
 
 _TAIL_CLOSED = _TailClosed()
@@ -46,7 +53,12 @@ class ConversationTailSubscription:
     def __init__(self, live_tail: ConversationLiveTail, conversation_id: str) -> None:
         self._live_tail = live_tail
         self._conversation_id = conversation_id
-        self._items: asyncio.Queue[ConversationTailItem | _TailClosed] = asyncio.Queue()
+        # One more than a watcher may hold, and that one is spoken for: it is the slot the
+        # closing sentinel goes in, so a watch can always be told it is over — including
+        # the watch that was closed for filling this queue up in the first place.
+        self._items: asyncio.Queue[ConversationTailItem | _TailClosed] = asyncio.Queue(
+            maxsize=MAXIMUM_HELD_TAIL_ITEMS + 1
+        )
         self._closed = False
 
     @property
@@ -54,9 +66,20 @@ class ConversationTailSubscription:
         return self._conversation_id
 
     def deliver(self, item: ConversationTailItem) -> None:
-        """Take an item for this watcher. Never waits, never fails on a slow reader."""
-        if not self._closed:
-            self._items.put_nowait(item)
+        """Take an item for this watcher. Never waits, and never grows without limit.
+
+        A watcher this far behind is not reading, and holding more for it would cost this
+        process memory for a browser that is not there. So the watch is closed instead —
+        which is not a loss: a closed tail is the reconnect path, and reconnecting is
+        asking for everything after the last row seen. Dropping items quietly would be the
+        harmful choice, because a row dropped from the middle is a gap that never heals.
+        """
+        if self._closed:
+            return
+        if self._items.qsize() >= MAXIMUM_HELD_TAIL_ITEMS:
+            self.close()
+            return
+        self._items.put_nowait(item)
 
     def close(self) -> None:
         """Stop watching. The iterator finishes; nothing else is delivered."""
