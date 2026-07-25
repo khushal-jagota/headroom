@@ -133,6 +133,24 @@ async def get_item(item_id: str, conn: DbConn) -> JsonDict:
     return sprints_views.item_detail(conn, item_id)
 
 
+@router.delete("/items/{item_id}")
+async def delete_item(item_id: str, conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+    require_direct_write(ctx)
+    deleted = sprints_data.delete_item(
+        conn,
+        item_id,
+        actor=ctx.actor,
+        clock=clk,
+    )
+    return {
+        "ok": True,
+        "sprint_item_id": deleted.sprint_item_id,
+        "title": deleted.title,
+        "sprint_ids": list(deleted.sprint_ids),
+        "linked_entity_ids": list(deleted.linked_entity_ids),
+    }
+
+
 @router.post("/items/{item_id}/tickets")
 async def add_item_ticket(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
                           clk: Clk) -> JsonDict:

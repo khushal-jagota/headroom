@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Final, Literal
 
 EnvironmentKind = Literal["live", "staging"]
-ExpectedLinuxAccount = Literal["panels-live", "panels-worker"]
 MIN_TCP_PORT: Final = 1
 MAX_TCP_PORT: Final = 65535
 
@@ -79,15 +78,12 @@ class ResolvedEnvironmentInstance:
     instance_root: Path
     db_path: Path
     managed_files_root: Path
-    hermes_home: Path
-    runtime_user_home: Path
     logs_dir: Path
     dispatcher_lock_path: Path
     server_control_socket_path: Path
     port_policy: EnvironmentPortPolicy
     credentials_env_file: Path | None
     allowed_repository_roots: tuple[Path, ...]
-    expected_linux_account: ExpectedLinuxAccount
     fixture_version: str | None
     prepared: bool
     running: bool
@@ -101,14 +97,11 @@ class EnvironmentManifest:
     instance_root: Path
     db_path: Path
     managed_files_root: Path
-    hermes_home: Path
-    runtime_user_home: Path
     logs_dir: Path
     dispatcher_lock_path: Path
     server_control_socket_path: Path
     port_policy: EnvironmentPortPolicy
     credentials_env_file: Path | None
-    expected_linux_account: ExpectedLinuxAccount
     fixture_version: str | None
     prepared_at: int | None
     repository_roots: tuple[Path, ...]

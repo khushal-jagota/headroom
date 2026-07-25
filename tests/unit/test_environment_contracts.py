@@ -27,8 +27,6 @@ def test_live_and_staging_have_distinct_runtime_port_contracts(tmp_path: Path) -
     live = resolve_environment_instance(
         kind="live",
         environment_root=environment_root,
-        allowed_repository_roots=(repository,),
-        requested_repository_roots=(repository,),
     )
     staging = resolve_environment_instance(
         kind="staging",
@@ -39,10 +37,15 @@ def test_live_and_staging_have_distinct_runtime_port_contracts(tmp_path: Path) -
 
     assert live.port_policy == FixedEnvironmentPort(8767)
     assert staging.port_policy == DynamicEnvironmentPort(bind_attempts=10)
-    assert live.instance_root == environment_root.resolve() / "live"
+    assert live.instance_root == environment_root.resolve()
     assert live.db_path == live.instance_root / "current" / "data" / "planner.db"
-    assert live.runtime_user_home == live.instance_root / "current" / "user-home"
+    assert live.logs_dir == live.instance_root / "current" / "logs"
+    assert live.dispatcher_lock_path == live.instance_root / "current" / "data" / "dispatcher.lock"
+    assert live.server_control_socket_path == (
+        live.instance_root / "current" / "data" / "server-control.sock"
+    )
     assert staging.instance_root == environment_root.resolve() / "staging"
+    assert staging.dispatcher_lock_path == staging.instance_root / "run" / "dispatcher.lock"
 
 
 def test_staging_rejects_a_configured_port(tmp_path: Path) -> None:
@@ -54,6 +57,39 @@ def test_staging_rejects_a_configured_port(tmp_path: Path) -> None:
             port=9000,
             allowed_repository_roots=(repository,),
             requested_repository_roots=(repository,),
+        )
+
+
+def test_live_rejects_source_repository_registration(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    with pytest.raises(EnvironmentValidationError, match="deployed app"):
+        resolve_environment_instance(
+            kind="live",
+            environment_root=_environment_root(tmp_path),
+            allowed_repository_roots=(repository,),
+            requested_repository_roots=(repository,),
+        )
+
+
+def test_live_rejects_source_repository_and_credential_file_registration(
+    tmp_path: Path,
+) -> None:
+    repository = _repository(tmp_path)
+    environment_root = _environment_root(tmp_path)
+
+    with pytest.raises(EnvironmentValidationError, match="source repository"):
+        resolve_environment_instance(
+            kind="live",
+            environment_root=environment_root,
+            allowed_repository_roots=(repository,),
+            requested_repository_roots=(repository,),
+        )
+
+    with pytest.raises(EnvironmentValidationError, match="credential file"):
+        resolve_environment_instance(
+            kind="live",
+            environment_root=environment_root,
+            credentials_env_file=tmp_path / "live.env",
         )
 
 
@@ -88,22 +124,20 @@ def test_registry_only_compares_fixed_ports(tmp_path: Path) -> None:
 def test_registry_rejects_cross_environment_state_overlap(tmp_path: Path) -> None:
     live, staging = _instances(tmp_path)
     with pytest.raises(EnvironmentValidationError, match="overlapping paths"):
-        validate_resolved_registry((live, replace(staging, hermes_home=live.hermes_home)))
+        validate_resolved_registry((live, replace(staging, logs_dir=live.logs_dir)))
 
 
 def _instances(tmp_path: Path):  # type: ignore[no-untyped-def]
-    live_repository = _repository(tmp_path, "live-repo")
     staging_repository = _repository(tmp_path, "staging-repo")
-    root = _environment_root(tmp_path)
+    live_root = _environment_root(tmp_path) / "live-estate"
+    staging_root = _environment_root(tmp_path) / "source-estate"
     live = resolve_environment_instance(
         kind="live",
-        environment_root=root,
-        allowed_repository_roots=(live_repository,),
-        requested_repository_roots=(live_repository,),
+        environment_root=live_root,
     )
     staging = resolve_environment_instance(
         kind="staging",
-        environment_root=root,
+        environment_root=staging_root,
         allowed_repository_roots=(staging_repository,),
         requested_repository_roots=(staging_repository,),
     )

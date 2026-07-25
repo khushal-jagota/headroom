@@ -32,6 +32,7 @@ class EventKind(StrEnum):
     proposal_superseded = "proposal_superseded"      # §4.4.1 {field, replaced_body}
     day_ticket_removed = "day_ticket_removed"        # §3.4 {ticket_id}
     ticket_deleted = "ticket_deleted"                # hard-delete audit + affected resources
+    sprint_item_deleted = "sprint_item_deleted"      # hard-delete audit + affected resources
 
     # --- supplemental: creation, one per entity ---
     ticket_created = "ticket_created"

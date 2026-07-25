@@ -61,9 +61,10 @@ its old event lines are replaced by one minimal deletion audit.
   Chief of Staff, including the `hermes`, `codex`, and `claude` backends, live work,
   commands, permissions, and compaction state.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
-  layouts, Ticket worktree servers, scrubbed launch, and Linux render intent.
+  layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
-- **Exact-commit releases** (`release-deployment.md`) — Git-free production releases and deployment.
+- **Production deployment** (`deployment.md`) — exact-commit building, single-app replacement,
+  and automatic recovery.
 
 **The surfaces you plan on**
 

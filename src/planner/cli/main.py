@@ -1026,6 +1026,24 @@ def sprint_item_show(item_id: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{data['id']} {data['status']} {data['priority']} {data['title']}")
 
 
+@sprint_item.command("delete")
+@click.argument("item_id")
+@click.option(
+    "--yes",
+    is_flag=True,
+    default=False,
+    help="Permanently delete the sprint item and its history.",
+)
+@json_option
+def sprint_item_delete(item_id: str, yes: bool, as_json: bool) -> None:
+    if not yes:
+        http.fail_validation("permanent deletion requires --yes", as_json)
+    data = http.send(
+        "DELETE", f"/api/items/{item_id}", as_json=as_json, request_actor="ordinary"
+    )
+    http.emit(data, as_json, f"{item_id} permanently deleted")
+
+
 @sprint_item.command("set")
 @click.argument("item_id")
 @click.argument("field", type=click.Choice(sorted(_ITEM_FIELDS)))

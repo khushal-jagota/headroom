@@ -12,7 +12,7 @@ export type VpsStatusSnapshot = {
   collected_at: string;
   overall_state: VpsStatusState;
   environment: VpsStatusSection;
-  release: VpsStatusSection;
+  app: VpsStatusSection;
   backup: VpsStatusSection;
   disk: VpsStatusSection;
   workloads: VpsStatusSection;
