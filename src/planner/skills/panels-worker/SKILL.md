@@ -31,9 +31,10 @@ Ownership says who drives the current Stage. It is separate from Ticket scope.
   eligibility condition also allows it. Scope still decides whether a proposal is
   accepted below the ceiling, parked through **Continue** at the ceiling, or prevented
   by **Stop**.
-- **User** — the Ticket rests in user takeover and is never dispatched automatically.
+- **User** — the Ticket rests at `user` and is never dispatched automatically.
 - **Paired** — the Ticket gets one automatic opening turn for the current Stage, then
-  rests in paired work. Ordinary Ticket Chat is the continuation path: the user's
+  rests at `paired` and is never started automatically again. Ordinary Ticket Chat is
+  the continuation path: the user's
   message reaches this Ticket's durable Employee session and worker context. When clarity is reached, the worker can propose.
 
 **Take over** sets an explicit `user` override on the current Stage, including while a

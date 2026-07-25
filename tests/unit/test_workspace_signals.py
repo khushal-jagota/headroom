@@ -16,12 +16,12 @@ from planner.tickets.logic.workspace_signals import workspace_signals
 # assertion fails the moment a new status is added without a conscious decision here.
 _EXPECTED_AGENT_WORKING: dict[TicketStatus, bool] = {
     TicketStatus.empty: False,
-    TicketStatus.agent_running_step: True,
+    TicketStatus.blocked: False,
+    TicketStatus.agent: True,
     TicketStatus.awaiting_approval: False,
-    TicketStatus.proposal_discussion: False,
-    TicketStatus.user_takeover: False,
+    TicketStatus.paired: False,
+    TicketStatus.user: False,
     TicketStatus.needs_user: False,
-    TicketStatus.paired_work: False,
     TicketStatus.errored: False,
 }
 
@@ -41,12 +41,14 @@ _EXPECTED_ACTIVITY_WORKING: dict[WorkspaceActivityState, bool] = {
 # Explicit sprint-rollup "counts as in progress" decision for every control status.
 _EXPECTED_IN_PROGRESS_ROLLUP: dict[TicketStatus, bool] = {
     TicketStatus.empty: False,
-    TicketStatus.agent_running_step: True,
+    # blocked is empty's stand-in: a blocked child is not in progress. The sprint
+    # rollup already calls it blocked through the link-derived child.blocked flag.
+    TicketStatus.blocked: False,
+    TicketStatus.agent: True,
     TicketStatus.awaiting_approval: True,
-    TicketStatus.proposal_discussion: True,
-    TicketStatus.user_takeover: True,
+    TicketStatus.paired: True,
+    TicketStatus.user: True,
     TicketStatus.needs_user: False,
-    TicketStatus.paired_work: True,
     TicketStatus.errored: False,
 }
 
@@ -79,9 +81,9 @@ def test_every_ticket_status_has_an_explicit_sprint_rollup_decision() -> None:
 @pytest.mark.parametrize(
     ("facts", "expected"),
     [
-        # agent_running_step alone means the agent is working.
+        # agent alone means the agent is working.
         (
-            WorkspaceSignalFacts(ticket_status=TicketStatus.agent_running_step),
+            WorkspaceSignalFacts(ticket_status=TicketStatus.agent),
             WorkspaceSignals(
                 agent_working=True, agent_reply_state=WorkspaceAgentReplyState.none
             ),
@@ -129,7 +131,7 @@ def test_every_ticket_status_has_an_explicit_sprint_rollup_decision() -> None:
         # unseen reply from an earlier turn.
         (
             WorkspaceSignalFacts(
-                ticket_status=TicketStatus.agent_running_step,
+                ticket_status=TicketStatus.agent,
                 has_completed_response_awaiting_user=True,
                 has_completed_response=True,
             ),

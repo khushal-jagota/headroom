@@ -803,7 +803,7 @@ def _seed_guard_database(
         "(id, title, worker_type, employee_backend, stage, ceiling, fields, "
         "ticket_status, created_at, updated_at) "
         "VALUES ('t_gateway', 'Gateway', 'coding', 'hermes', 'needs_kickoff', 'needs_kickoff', ?, "
-        "'agent_running_step', 1, 1)",
+        "'agent', 1, 1)",
         (json.dumps(fields, separators=(",", ":")),),
     )
     conn.close()

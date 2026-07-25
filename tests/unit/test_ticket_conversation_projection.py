@@ -206,7 +206,7 @@ def test_has_completed_response_survives_acknowledgement_until_reset(tmp_path) -
     conn.close()
 
 
-def test_courier_flips_awaiting_approval_to_proposal_discussion(tmp_path) -> None:
+def test_courier_flips_awaiting_approval_to_paired(tmp_path) -> None:
     db_path = str(tmp_path / "projection-courier-flip.db")
     conn = connect(db_path)
     create_schema(conn)
@@ -225,12 +225,12 @@ def test_courier_flips_awaiting_approval_to_proposal_discussion(tmp_path) -> Non
     conn.commit()
     projection = TicketConversationProjection(db_path, now=lambda: 2)
 
-    projection.enter_proposal_discussion_on_human_prompt(ticket.id)
+    projection.enter_paired_on_human_prompt(ticket.id)
 
     row = conn.execute(
         "SELECT ticket_status FROM tickets WHERE id = ?", (ticket.id,)
     ).fetchone()
-    assert str(row["ticket_status"]) == "proposal_discussion"
+    assert str(row["ticket_status"]) == "paired"
     conn.close()
 
 
@@ -247,18 +247,18 @@ def test_courier_is_a_no_op_when_not_awaiting_approval(tmp_path) -> None:
         title_max_chars=200,
     )
     conn.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+        "UPDATE tickets SET ticket_status = 'agent' WHERE id = ?",
         (ticket.id,),
     )
     conn.commit()
     projection = TicketConversationProjection(db_path, now=lambda: 2)
 
-    projection.enter_proposal_discussion_on_human_prompt(ticket.id)
+    projection.enter_paired_on_human_prompt(ticket.id)
 
     row = conn.execute(
         "SELECT ticket_status FROM tickets WHERE id = ?", (ticket.id,)
     ).fetchone()
-    assert str(row["ticket_status"]) == "agent_running_step"
+    assert str(row["ticket_status"]) == "agent"
     conn.close()
 
 

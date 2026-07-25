@@ -2625,7 +2625,7 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
                     (ticket.id,),
                 ).fetchone()
             assert running is not None and step is not None
-            assert tuple(running) == ("agent_running_step", session_id)
+            assert tuple(running) == ("agent", session_id)
             assert tuple(step) == ("running", session_id)
 
             with client.websocket_connect("/api/conversation") as websocket:

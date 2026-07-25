@@ -86,7 +86,7 @@ def _recover_running_ticket_steps(
         if not _has_tables(conn, ("tickets",)):
             return
         rows = conn.execute(
-            "SELECT id FROM tickets WHERE ticket_status = 'agent_running_step' ORDER BY id"
+            "SELECT id FROM tickets WHERE ticket_status = 'agent' ORDER BY id"
         ).fetchall()
     finally:
         conn.close()

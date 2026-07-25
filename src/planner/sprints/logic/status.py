@@ -23,11 +23,10 @@ _DROPPED_STAGE = "dropped"
 _DONE_STAGE = "done"
 _IN_PROGRESS_TICKET_STATUSES = frozenset(
     {
-        "agent_running_step",
+        "agent",
         "awaiting_approval",
-        "proposal_discussion",
-        "user_takeover",
-        "paired_work",
+        "paired",
+        "user",
     }
 )
 _BLOCKED_TICKET_STATUS = "errored"

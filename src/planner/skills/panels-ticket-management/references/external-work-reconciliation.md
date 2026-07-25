@@ -47,9 +47,9 @@ Do not silently accept a proposal that contradicts the user's completion report.
 
 ## Releasing an errored ticket to resume work
 
-A release rings the readiness doorbell. If the ticket is on today, has no pending proposal, and is runnable, it may move immediately from `errored` through `empty` to `agent_running_step`. Before release, verify there is no live Hermes worker turn for the ticket's session key. After release, report the observed post-release status rather than promising it will remain `empty`.
+A release rings the readiness doorbell. If the ticket is on today, has no pending proposal, and is runnable, it may move immediately from `errored` through `empty` to `agent`. Before release, verify there is no live Hermes worker turn for the ticket's session key. After release, report the observed post-release status rather than promising it will remain `empty`. If the ticket still has a live blocker it settles at `blocked` instead of `empty`, and no worker starts.
 
-For external reconciliation specifically, `ticket_status: errored` is accepted by the Chief reconciliation path and is cleared after the canonical fields/state are settled, provided no worker/chat turn is active.
+Chief reconciliation accepts a ticket whose `ticket_status` is `empty`, `blocked`, `user`, `paired`, or `errored` — the five ways a ticket can sit without active control. `errored` in particular is accepted and is cleared after the canonical fields/state are settled, provided no worker/chat turn is active. The other three statuses — `agent`, `awaiting_approval`, and `needs_user` — are refused as active control; clear them first rather than working around the refusal.
 
 ## Fallback when the Chief API route is unavailable
 

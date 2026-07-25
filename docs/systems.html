@@ -699,8 +699,25 @@
                 A Ticket stores <code>stage</code> for its work Stage. Its Worker type
                 declares the available Stages; coding uses kickoff, success, approach,
                 plan, implementation, closeout, done, or dropped.
-                <code>ticket_status</code> is separate runtime control: empty, running,
-                awaiting approval, user takeover, paired work, or errored.
+                <code>ticket_status</code> is separate runtime control — one word for
+                what is happening on the Ticket right now. There are eight:
+                <code>empty</code> (at rest and ready), <code>blocked</code> (at rest,
+                waiting on a live blocker), <code>agent</code> (a worker is running a
+                step), <code>paired</code> (working together),
+                <code>awaiting_approval</code> (a proposal is waiting for the human),
+                <code>needs_user</code> (the worker asked for help), <code>user</code>
+                (the user has taken the stage), and <code>errored</code> (a confirmed
+                backend Worker failure).
+              </p>
+              <p>
+                <code>blocked</code> stands in for <code>empty</code> and nothing else. A
+                Ticket that comes to rest with nothing running lands there while a live
+                blocker remains, and only <code>empty</code> Tickets are ever started
+                automatically. The write that removes the cause — finishing, dropping, or
+                deleting the blocking Ticket, or removing the link — deletes the links it
+                held and rewrites each blocked Ticket back to <code>empty</code> in the
+                same transaction, or leaves it <code>blocked</code> when another live
+                blocker remains.
               </p>
               <p>
                 Workers write proposals to the six fields: kickoff, success, approach,
@@ -714,9 +731,10 @@
               <p>
                 Stage ownership decides who drives the current Stage: worker, user, or
                 paired. Worker-owned Stages can be discovered automatically, user-owned
-                Stages rest in user takeover, and paired Stages get one automatic opening
-                turn before human conversation continues the same Employee session.
-                Any real paired proposal parks for approval. The Worker type selects a
+                Stages rest at <code>user</code>, and paired Stages get one automatic
+                opening turn and then rest at <code>paired</code>, where human
+                conversation continues the same Employee session and no further step is
+                started automatically. Any real paired proposal parks for approval. The Worker type selects a
                 default backend key. During pristine Kickoff, the Ticket may instead select
                 <code>hermes</code>, <code>codex</code>, or <code>claude</code>. A session,
                 binding, or move beyond Kickoff freezes that stored choice.
@@ -739,8 +757,12 @@
               <p>
                 One complete decision owns <strong>Automatic Employee-step eligibility</strong>.
                 It returns yes only when the Ticket is on the planning day, its current
-                Stage and ownership allow automatic work, no proposal or blocker prevents
-                work, scope permits the next proposal, and no Employee step is already running.
+                Stage is not terminal and has a gated field, the user does not own that
+                Stage, its <code>ticket_status</code> is <code>empty</code>, no proposal
+                is already parked, scope permits the next proposal, and no Employee step
+                is already running. The <code>empty</code> check is what keeps blocked,
+                paired, errored, user-held, help-waiting, and approval-waiting Tickets
+                from starting; the decision reads no event history at all.
               </p>
               <p>
                 AutomaticEmployeeStepDiscoveryLoop is read-only and advisory. It selects
@@ -895,7 +917,8 @@
                 about Tickets or Projects.
               </p>
               <p>
-                Review contains only today’s parked Ticket proposals and the
+                Review contains exactly today’s Tickets whose
+                <code>ticket_status</code> is <code>awaiting_approval</code>, plus the
                 global running-worker count.
               </p>
               <p>
@@ -1083,7 +1106,7 @@
 
       <footer>
         HTML companion to <a href="systems.md">systems.md</a>. Last verified:
-        2026-07-20.
+        2026-07-25.
       </footer>
     </main>
   </div>

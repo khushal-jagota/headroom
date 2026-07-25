@@ -103,12 +103,12 @@ def test_derive_sprint_item_status_coding_buckets_golden() -> None:
         assert derive_sprint_item_status(directly_blocked=False, children=[_child(stage)]) is status
 
 
-def test_proposal_discussion_child_rolls_up_in_progress() -> None:
+def test_paired_child_rolls_up_in_progress() -> None:
     # A child parked at a non-in-progress stage still rolls up in_progress when its
-    # ticket_status is proposal_discussion (an in-flight proposal conversation).
+    # ticket_status is paired (an in-flight proposal conversation).
     child = SprintItemChildStatus(
         stage="needs_success",
-        ticket_status="proposal_discussion",
+        ticket_status="paired",
         blocked=False,
         stage_in_progress=False,
     )

@@ -324,15 +324,15 @@ def test_employee_configuration_stays_editable_when_kickoff_proposal_enters_disc
     probe_runtime: None,
 ) -> None:
     # A kickoff proposal that a user starts discussing flips awaiting_approval ->
-    # proposal_discussion; the proposal is still filed and approvable, so Employee
+    # paired; the proposal is still filed and approvable, so Employee
     # configuration must stay editable exactly as it is at awaiting_approval.
     _app, db_path = _make_app(tmp_path)
     ticket_id = _create_pristine_ticket(db_path)
     conn = connect(str(db_path))
     try:
-        tickets_data.enter_proposal_discussion(conn, ticket_id, now=2)
+        tickets_data.enter_paired_on_human_reply(conn, ticket_id, now=2)
         ticket = tickets_data.read_ticket(conn, ticket_id)
-        assert ticket.ticket_status is TicketStatus.proposal_discussion
+        assert ticket.ticket_status is TicketStatus.paired
         assert tickets_data.employee_configuration_editable(conn, ticket) is True
     finally:
         conn.close()
@@ -539,9 +539,8 @@ def test_employee_configuration_noop_after_freeze_emits_nothing(
     ("mutation_sql", "mutation_parameters"),
     (
         ("UPDATE tickets SET stage = 'needs_alpha' WHERE id = ?", ()),
-        ("UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?", ()),
-        ("UPDATE tickets SET ticket_status = 'user_takeover' WHERE id = ?", ()),
-        ("UPDATE tickets SET ticket_status = 'paired_work' WHERE id = ?", ()),
+        ("UPDATE tickets SET ticket_status = 'agent' WHERE id = ?", ()),
+        ("UPDATE tickets SET ticket_status = 'user' WHERE id = ?", ()),
         ("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", ()),
         ("UPDATE tickets SET employee_session_id = 'session-existing' WHERE id = ?", ()),
     ),
@@ -1245,7 +1244,7 @@ def test_active_worker_and_running_employee_step_do_not_block_an_ordinary_edit(
         )
 
     assert response.status_code == 200, response.json()
-    assert response.json()["ticket_status"] == "agent_running_step"
+    assert response.json()["ticket_status"] == "agent"
     assert response.json()["title"] == "Edited during active work"
     assert response.json()["priority"] == "P1"
     assert _snapshot(db_path, ticket_id)["context"][-1][2] == 1

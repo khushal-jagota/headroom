@@ -53,7 +53,7 @@ def _event_cursor(server) -> int:
 def _set_running_worker_without_event(server, ticket_id: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+            "UPDATE tickets SET ticket_status = 'agent' WHERE id = ?",
             (ticket_id,),
         )
 

@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
-from planner.core import links as core_links
-from planner.core.contracts import EventKind
 from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.tickets.logic import machine
@@ -54,93 +51,15 @@ def _closeout_lane_is_occupied(
             "SELECT 1 FROM tickets t "
             "LEFT JOIN sprint_items si ON si.id = t.sprint_item_id "
             "WHERE t.id != ? AND t.worker_type = ? AND t.stage = ? "
-            "AND t.ticket_status != 'empty' "
+            # blocked stands in for empty: a blocked Closeout Ticket is resting, so it
+            # does not occupy the lane.
+            "AND t.ticket_status NOT IN ('empty', 'blocked') "
             "AND CASE WHEN t.sprint_item_id IS NOT NULL THEN si.project_id "
             "ELSE t.project_id END IS ? LIMIT 1",
             (ticket.id, worker_type, closeout_stage, effective_project_id),
         ).fetchone()
         is not None
     )
-
-
-def _latest_current_paired_stage_marker_event(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-) -> tuple[int, str] | None:
-    latest: tuple[int, str] | None = None
-    rows = conn.execute(
-        "SELECT id, kind, payload FROM events WHERE entity_id = ? ORDER BY id",
-        (ticket.id,),
-    ).fetchall()
-    for row in rows:
-        kind = str(row["kind"])
-        if kind not in {
-            EventKind.ticket_created.value,
-            EventKind.stage_changed.value,
-            EventKind.stage_ownership_changed.value,
-        }:
-            continue
-        payload = json.loads(str(row["payload"]))
-        if kind == EventKind.ticket_created.value and payload.get("stage") == ticket.stage:
-            latest = (int(row["id"]), kind)
-        elif (
-            kind == EventKind.stage_changed.value
-            and payload.get("to_stage") == ticket.stage
-        ):
-            latest = (int(row["id"]), kind)
-        elif (
-            kind == EventKind.stage_ownership_changed.value
-            and payload.get("stage") == ticket.stage
-            and payload.get("effective_ownership_mode") == StageOwnershipMode.paired.value
-            and (
-                "previous_effective_ownership_mode" not in payload
-                or payload.get("previous_effective_ownership_mode")
-                != StageOwnershipMode.paired.value
-            )
-        ):
-            latest = (int(row["id"]), kind)
-    return latest
-
-
-def _has_worker_step_started_in_event_range(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    after_event_id: int | None = None,
-) -> bool:
-    clauses = ["entity_id = ?", "kind = ?"]
-    params: list[object] = [ticket_id, EventKind.employee_step_started.value]
-    if after_event_id is not None:
-        clauses.append("id > ?")
-        params.append(after_event_id)
-
-    where_clause = " AND ".join(clauses)
-    row = conn.execute(
-        f"SELECT id, payload FROM events WHERE {where_clause} ORDER BY id",
-        tuple(params),
-    ).fetchone()
-    return row is not None
-
-
-def _paired_status_allows_automatic_opening(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-) -> bool:
-    if ticket.ticket_status is TicketStatus.empty:
-        return True
-    if ticket.ticket_status is not TicketStatus.paired_work:
-        return False
-    marker = _latest_current_paired_stage_marker_event(conn, ticket)
-    if marker is None:
-        return ticket.employee_session_id is None
-    marker_event_id, _marker_kind = marker
-    if _has_worker_step_started_in_event_range(
-        conn,
-        ticket.id,
-        after_event_id=marker_event_id,
-    ):
-        return False
-    return True
 
 
 def is_eligible_for_automatic_employee_step(
@@ -167,17 +86,11 @@ def is_eligible_for_automatic_employee_step(
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
-    if ticket.ticket_status is TicketStatus.needs_user:
+    if ownership_mode is StageOwnershipMode.user:
         return False
-    if ticket.ticket_status is TicketStatus.proposal_discussion:
-        return False
-    if ownership_mode is StageOwnershipMode.worker:
-        if ticket.ticket_status is not TicketStatus.empty:
-            return False
-    elif ownership_mode is StageOwnershipMode.paired:
-        if not _paired_status_allows_automatic_opening(conn, ticket):
-            return False
-    else:
+    # `empty` is the only startable status. It covers blocked, needs_user, paired,
+    # awaiting_approval, agent, user, and errored in one gate.
+    if ticket.ticket_status is not TicketStatus.empty:
         return False
     if worker_type_definition.gating_field(ticket.stage) is None:
         return False
@@ -194,8 +107,6 @@ def is_eligible_for_automatic_employee_step(
         )
         and ticket.at_cap is AtCap.stop
     ):
-        return False
-    if core_links.is_blocked(conn, ticket.id):
         return False
     if _closeout_lane_is_occupied(
         conn,

@@ -24,17 +24,15 @@ One screen per part of the system:
   including **All projects** and **No project**. A ticket parented by a sprint item uses
   that item's project; a standalone ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
-  tickets into collapsible boxed **status buckets**, in a
-  fixed order that puts what needs the user first: Errored, Needs you, Kickoff,
-  Stopped, Taken over, Paired, Agent working, Needs approval, Closing out, Blocked,
-  Done. A bucket with no tickets is not rendered; Blocked and Done start collapsed.
-  Every ticket sits in exactly one bucket: its status decides first, Blocked claims
-  only idle tickets, and a kickoff-stage ticket with a parked proposal sits in
-  Kickoff rather than Needs approval. Paired holds both paired work and proposal
-  discussion; Stopped is a ticket whose turn ended with nothing running and nothing
-  asked of the user; Taken over is that same stopped condition while the user holds
-  the stage. Rows carry only the ticket title and one mark, sorted by recent
-  activity.
+  tickets into collapsible boxed **status groups** — one group per ticket status, in a
+  fixed order that puts what needs the user first: Errored, Needs user, Empty, User,
+  Paired, Agent, Awaiting approval, Blocked, Done. A group with no tickets is not
+  rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group,
+  and the rule is that plain: a done ticket goes to Done, every other ticket goes to
+  its own status. The heading is the status name itself, so the screen holds no second
+  vocabulary that could drift from the statuses, and a status it has never seen still
+  gets its own group at the end rather than being dropped. Rows carry only the ticket
+  title and one mark, sorted by recent activity.
 
   The mark carries exactly two signals. An agent working right now spins. Otherwise
   the mark shows the reply state: a filled accent dot for a Worker reply (or
@@ -48,7 +46,7 @@ One screen per part of the system:
   distinguishable from a ticket that never had one. A response that completes while
   its Ticket is open is already seen; there is no response-generation or
   message-visibility tracking. **Chief of Staff** sits first in the rail above the
-  buckets.
+  groups.
 
   The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the
@@ -279,4 +277,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-23 (Agents page, single ACP conversation pane, GFM rendering, Resource Catalogue, and shared file previews)._
+_Last verified: 2026-07-25 (Workspace groups by Ticket status; single ACP conversation pane, GFM rendering, Resource Catalogue, and shared file previews)._

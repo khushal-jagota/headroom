@@ -434,7 +434,7 @@ def test_restart_missing_session_records_failure_and_releases_to_user_control(
         now=4,
     )
     conn.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "UPDATE tickets SET ticket_status = 'agent', "
         "employee_session_id = NULL WHERE id = ?",
         (ticket_id,),
     )
@@ -452,7 +452,7 @@ def test_restart_missing_session_records_failure_and_releases_to_user_control(
     conn.close()
     assert recorded.status == "errored"
     assert recorded.error == "restart recovery has no existing Employee session"
-    assert released.ticket_status is TicketStatus.user_takeover
+    assert released.ticket_status is TicketStatus.user
     assert released.backend_error is None
     assert gateway.calls == []
 
@@ -471,7 +471,7 @@ def test_revision_missing_session_releases_to_paired_control_without_replay(
         now=4,
     )
     conn.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "UPDATE tickets SET ticket_status = 'agent', "
         "employee_session_id = NULL WHERE id = ?",
         (ticket_id,),
     )
@@ -490,7 +490,7 @@ def test_revision_missing_session_releases_to_paired_control_without_replay(
     ).fetchone()[0]
     conn.close()
     assert run_count == 0
-    assert released.ticket_status is TicketStatus.paired_work
+    assert released.ticket_status is TicketStatus.paired
     assert released.backend_error is None
     assert gateway.calls == []
 
@@ -509,7 +509,7 @@ def test_restart_session_mismatch_releases_to_paired_control_without_replay(
         now=4,
     )
     conn.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "UPDATE tickets SET ticket_status = 'agent', "
         "employee_session_id = 'session-current' WHERE id = ?",
         (ticket_id,),
     )
@@ -529,7 +529,7 @@ def test_restart_session_mismatch_releases_to_paired_control_without_replay(
     conn.close()
     assert preserved.status == "running"
     assert preserved.employee_session_id == "session-stale"
-    assert released.ticket_status is TicketStatus.paired_work
+    assert released.ticket_status is TicketStatus.paired
     assert released.backend_error is None
     assert gateway.calls == []
 
@@ -548,7 +548,7 @@ def test_active_employee_step_collision_releases_to_user_control_without_replay(
         now=4,
     )
     conn.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "UPDATE tickets SET ticket_status = 'agent', "
         "employee_session_id = 'session-1' WHERE id = ?",
         (ticket_id,),
     )
@@ -568,7 +568,7 @@ def test_active_employee_step_collision_releases_to_user_control_without_replay(
     released = tickets_data.read_ticket(conn, ticket_id)
     conn.close()
     assert preserved.status == "running"
-    assert released.ticket_status is TicketStatus.user_takeover
+    assert released.ticket_status is TicketStatus.user
     assert released.backend_error is None
     assert gateway.calls == []
 
@@ -577,7 +577,7 @@ def test_restart_replaces_exact_running_record_and_reuses_session(tmp_path: Path
     db_path, ticket_id = _eligible_ticket(tmp_path)
     conn = connect(db_path)
     conn.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step', "
+        "UPDATE tickets SET ticket_status = 'agent', "
         "employee_session_id = 'session-1' WHERE id = ?",
         (ticket_id,),
     )
@@ -653,7 +653,7 @@ def test_controlled_stop_preserves_exact_running_record_for_restart_recovery(
     conn.close()
     assert original is not None
     assert original.employee_session_id == "session-1"
-    assert stopped_ticket.ticket_status is TicketStatus.agent_running_step
+    assert stopped_ticket.ticket_status is TicketStatus.agent
     assert stopped_ticket.employee_session_id == "session-1"
 
     recovery_gateway = _Gateway()

@@ -1240,7 +1240,7 @@ class _AcceptingPermissions(_Permissions):
         return SimpleNamespace(disposition="accepted")
 
 
-def test_prompt_action_on_ticket_flips_awaiting_approval_to_proposal_discussion(
+def test_prompt_action_on_ticket_flips_awaiting_approval_to_paired(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
@@ -1267,7 +1267,7 @@ def test_prompt_action_on_ticket_flips_awaiting_approval_to_proposal_discussion(
             ),
         )
 
-        assert _read_ticket_status(db_path) == "proposal_discussion"
+        assert _read_ticket_status(db_path) == "paired"
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())
@@ -1303,14 +1303,14 @@ def test_permission_response_action_does_not_flip_ticket_status(tmp_path: Path) 
     asyncio.run(exercise())
 
 
-def test_agent_reply_still_delivers_on_a_proposal_discussion_ticket(
+def test_agent_reply_still_delivers_on_a_paired_ticket(
     tmp_path: Path,
 ) -> None:
     # The conversation reply path reads no ticket_status: an agent reply reaches the
-    # browser unchanged even while the ticket is parked in proposal_discussion.
+    # browser unchanged even while the ticket is parked in paired.
     async def exercise() -> None:
         db_path, repository = await _ticket_database(tmp_path)
-        _set_ticket_status(db_path, "proposal_discussion")
+        _set_ticket_status(db_path, "paired")
         record, handle = _runtime(tmp_path)
         projection = TicketConversationProjection(db_path, now=lambda: 2)
         hub = ConversationHub(repository, ticket_conversation_projection=projection)
@@ -1328,7 +1328,7 @@ def test_agent_reply_still_delivers_on_a_proposal_discussion_ticket(
         envelope = json.loads(await asyncio.wait_for(subscription.queue.get(), timeout=1))
         assert envelope["type"] == "activity"
         assert envelope["payload"]["state"] == "thinking"
-        assert _read_ticket_status(db_path) == "proposal_discussion"
+        assert _read_ticket_status(db_path) == "paired"
         await hub.shutdown(asyncio.get_running_loop().time() + 1)
 
     asyncio.run(exercise())

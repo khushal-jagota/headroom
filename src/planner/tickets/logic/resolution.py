@@ -292,7 +292,7 @@ def decide_return_for_revision(
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     admission.require_direct_actor(actor, "return_for_revision")
-    if ticket.ticket_status is TicketStatus.agent_running_step:
+    if ticket.ticket_status is TicketStatus.agent:
         raise PlannerError(
             ErrorCode.already_running,
             "the ticket worker is already revising this proposal",

@@ -29,7 +29,7 @@ def workspace_signals(facts: WorkspaceSignalFacts) -> WorkspaceSignals:
     """
 
     agent_working = (
-        facts.ticket_status is TicketStatus.agent_running_step
+        facts.ticket_status is TicketStatus.agent
         or facts.latest_activity_state in _WORKING_ACTIVITY_STATES
     )
 

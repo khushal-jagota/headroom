@@ -197,7 +197,7 @@ def _run_opening_and_human_turn(
     opened = _wait_for_ticket(
         client,
         ticket_id,
-        lambda ticket: ticket["ticket_status"] == "paired_work",
+        lambda ticket: ticket["ticket_status"] == "paired",
     )
     assert opened["employee_session_id"] is not None
 
@@ -248,7 +248,7 @@ def test_new_worker_understanding_uses_one_acp_session_for_automatic_and_human_d
     assert opened["stage"] == "needs_understanding"
     assert opened["fields"]["understanding"]["proposal"] is None
     assert after["employee_session_id"] == opened["employee_session_id"]
-    assert after["ticket_status"] == "paired_work"
+    assert after["ticket_status"] == "paired"
     assert "typed answer" in json.dumps(turn)
 
 

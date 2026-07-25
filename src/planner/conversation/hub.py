@@ -706,7 +706,7 @@ class ConversationHub:
                 action.delivery_choice,
                 prompt,
             )
-            await self._enter_ticket_proposal_discussion(stream.employee)
+            await self._enter_ticket_paired_on_human_prompt(stream.employee)
             return
         if isinstance(action, CancelAction):
             await self._require_broker().cancel(handle, action.queued_client_message_id)
@@ -853,7 +853,7 @@ class ConversationHub:
                 action.delivery_choice,
                 prompt,
             )
-            await self._enter_ticket_proposal_discussion(employee)
+            await self._enter_ticket_paired_on_human_prompt(employee)
             return
         if isinstance(action, NewConversationAction):
             await self.new_conversation(employee_id)
@@ -1645,14 +1645,14 @@ class ConversationHub:
             projection.record_activity, employee.entity_id, state
         )
 
-    async def _enter_ticket_proposal_discussion(
+    async def _enter_ticket_paired_on_human_prompt(
         self, employee: ConversationEmployee
     ) -> None:
         projection = self._ticket_conversation_projection
         if projection is None or employee.entity_kind != "ticket":
             return
         await asyncio.to_thread(
-            projection.enter_proposal_discussion_on_human_prompt, employee.entity_id
+            projection.enter_paired_on_human_prompt, employee.entity_id
         )
 
     async def _record_ticket_permission(

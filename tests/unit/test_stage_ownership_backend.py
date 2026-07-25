@@ -63,8 +63,8 @@ def test_stage_ownership_contract_manifest_and_pure_resolution() -> None:
         is StageOwnershipMode.paired
     )
     assert machine.resting_ticket_status(StageOwnershipMode.worker) is TicketStatus.empty
-    assert machine.resting_ticket_status(StageOwnershipMode.user) is TicketStatus.user_takeover
-    assert machine.resting_ticket_status(StageOwnershipMode.paired) is TicketStatus.paired_work
+    assert machine.resting_ticket_status(StageOwnershipMode.user) is TicketStatus.user
+    assert machine.resting_ticket_status(StageOwnershipMode.paired) is TicketStatus.paired
 
 
 def test_registry_rejects_missing_or_terminal_default_ownership() -> None:
@@ -171,7 +171,7 @@ def test_ownership_override_set_clear_takeover_release_derives_resting_status(
     )
     assert ticket.stage_ownership_overrides == {"needs_success": StageOwnershipMode.user}
     assert ticket.effective_stage_ownership_mode is StageOwnershipMode.user
-    assert ticket.ticket_status is TicketStatus.user_takeover
+    assert ticket.ticket_status is TicketStatus.user
 
     ticket = data.set_stage_ownership(
         tmp_db,
@@ -190,7 +190,7 @@ def test_ownership_override_set_clear_takeover_release_derives_resting_status(
 
     ticket = data.take_over_ticket(tmp_db, ticket.id, now=6)
     assert ticket.stage_ownership_overrides == {"needs_success": StageOwnershipMode.user}
-    assert ticket.ticket_status is TicketStatus.user_takeover
+    assert ticket.ticket_status is TicketStatus.user
 
 
 def test_ticket_current_stage_default_is_captured_until_next_stage_entry(

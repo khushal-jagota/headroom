@@ -121,5 +121,5 @@ def test_shutdown_interrupts_exact_bound_employee_step_without_partial_output(
         "updated_at",
         "completed_at",
     }
-    assert stored.ticket_status is TicketStatus.agent_running_step
+    assert stored.ticket_status is TicketStatus.agent
     assert stored.employee_session_id == "shutdown-session"

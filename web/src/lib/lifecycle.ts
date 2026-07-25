@@ -151,14 +151,10 @@ export function ticketStageVisualStateFor(
   if (fieldIsPassedFor(lc, fieldName, ticketStage)) return "completed";
 
   if (gatingFieldFor(lc, ticketStage) === fieldName) {
-    if (ticketStatus === "agent_running_step") return "current-running";
+    if (ticketStatus === "agent") return "current-running";
     if (ticketStatus === "errored") return "errored";
-    if (ticketStatus === "paired_work") return "current-paired-work";
-    if (
-      fieldHasProposal ||
-      ticketStatus === "awaiting_approval" ||
-      ticketStatus === "proposal_discussion"
-    ) {
+    if (ticketStatus === "paired") return "current-paired";
+    if (fieldHasProposal || ticketStatus === "awaiting_approval") {
       return "current-awaiting-approval";
     }
     return "current-waiting";

@@ -79,16 +79,27 @@ example; the engine itself uses the Ticket's stored Worker type.
 Workers propose. The resolution engine alone accepts a proposal into a canonical field
 and advances the Stage. Scope says how far worker-owned work may advance without human
 approval. Stage ownership says whether the worker, the user, or both drive the current
-Stage. Paired work receives one automatic opening turn and then continues through the
-same employee conversation.
+Stage. A paired Stage receives one automatic opening turn on entry and then continues
+through the same employee conversation; no further step is ever started for it
+automatically.
 
-Ticket status is runtime control state. `empty`, `agent_running_step`,
-`awaiting_approval`, `user_takeover`, `needs_user`, and `paired_work` say who may act next; they are
-not conversation transcript states.
+Ticket status is runtime control state — one word for what is happening on the Ticket
+right now, not a conversation transcript state. There are eight: `empty` (at rest and
+ready), `blocked` (at rest, waiting on a live blocker), `agent` (a worker is running a
+step), `paired` (working together), `awaiting_approval` (a proposal is waiting for the
+human), `needs_user` (the worker asked for help), `user` (the user has taken the
+stage), and `errored` (a confirmed backend Worker failure).
 
-The Review screen is the human gate. Approval settles the proposal and records the
-next scope in one decision. Returning for revision clears the parked proposal and
-sends the guidance as the real next ACP worker prompt in the same durable session.
+`blocked` is `empty`'s stand-in and nothing else's: a Ticket that comes to rest with
+nothing running lands there instead of `empty` while a live blocker remains, and only
+`empty` Tickets are ever started automatically.
+
+The Review screen is the human gate, and it holds exactly the Tickets whose status is
+`awaiting_approval`. Approval settles the proposal and records the next scope in one
+decision. Returning for revision clears the parked proposal and sends the guidance as
+the real next ACP worker prompt in the same durable session. Replying to a parked
+proposal in chat instead moves the Ticket to `paired` and out of Review; the proposal
+itself stays filed.
 
 _Code paths:_ `src/planner/tickets/`, `src/planner/worker_types/`, and the resolution
 engine in `src/planner/core/loops.py`.
@@ -252,4 +263,4 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ---
 
-_Last verified: 2026-07-25 (schema history replaces the hand-written upgrade steps)._
+_Last verified: 2026-07-25 (the eight Ticket statuses and the blocked stand-in)._

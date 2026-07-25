@@ -312,7 +312,7 @@ def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(
     )
     assert ticket.ticket_status is TicketStatus.empty
     tmp_db.execute(
-        "UPDATE tickets SET ticket_status = 'paired_work' WHERE id = ?",
+        "UPDATE tickets SET ticket_status = 'paired' WHERE id = ?",
         (ticket.id,),
     )
 
@@ -335,5 +335,5 @@ def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(
         now=now,
     )
     assert ticket.stage == "needs_approach"
-    assert ticket.ticket_status is TicketStatus.paired_work
+    assert ticket.ticket_status is TicketStatus.paired
     assert fields_codec.get_slot(ticket.fields, "plan").value == "plan draft"

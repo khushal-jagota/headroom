@@ -62,7 +62,7 @@ def test_ticket_facts_edit_current_stage_owner_without_execution_route(
     )
     detail = api.get(server, f"/api/tickets/{ticket_id}")
     assert detail["stage_ownership_overrides"][detail["stage"]] == "user"
-    assert detail["ticket_status"] == "user_takeover"
+    assert detail["ticket_status"] == "user"
     assert page.inner_text("[data-ticket-takeover-toggle]") == "Release"
 
     with page.expect_response(
@@ -83,7 +83,7 @@ def test_ticket_facts_edit_current_stage_owner_without_execution_route(
     assert page.inner_text("[data-ticket-takeover-toggle]") == "Take over"
 
 
-def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
+def test_workspace_stage_mark_renders_paired_on_desktop_and_mobile(
     server, context_factory, cli, api
 ) -> None:
     ticket_id = cli(
@@ -102,7 +102,7 @@ def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
     # This test isolates rendering of the post-opening paired resting state.
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+            "UPDATE tickets SET ticket_status = 'paired', employee_session_id = ? "
             "WHERE id = ?",
             ("paired-render-session", ticket_id),
         )
@@ -123,7 +123,7 @@ def test_workspace_stage_mark_renders_paired_work_on_desktop_and_mobile(
         card = f'[data-card][data-ticket-id="{ticket_id}"]'
         page.wait_for_selector(card, timeout=WAIT_MS)
         assert page.locator('[aria-label="Ticket status"]').count() == 0
-        assert page.get_attribute(card, "data-ticket-status") == "paired_work"
+        assert page.get_attribute(card, "data-ticket-status") == "paired"
         paired_bucket = '[data-bucket-section][data-bucket-key="paired"]'
         assert page.inner_text(f"{paired_bucket} > summary .board-workspace-bucket-label") == (
             "Paired"

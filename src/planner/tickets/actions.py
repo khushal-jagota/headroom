@@ -7,7 +7,8 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 
-from planner.core.contracts import Priority
+from planner.core import links as core_links
+from planner.core.contracts import LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.runtime.automatic_employee_step_eligibility_wake import (
@@ -202,6 +203,98 @@ def delete_ticket(
     deleted = tickets_data.delete_ticket(conn, ticket_id, actor=actor, now=now)
     automatic_employee_step_eligibility_wake.wake()
     return deleted
+
+
+def add_link(
+    conn: sqlite3.Connection,
+    from_id: str,
+    to_id: str,
+    kind: LinkKind,
+    *,
+    now: int,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
+) -> None:
+    """Create a link and settle the target's blocked stand-in in the same transaction."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        core_links.add_link(conn, from_id, to_id, kind, now)
+        if kind is LinkKind.blocks:
+            tickets_data.settle_blocked_standin_for_link_target(conn, to_id, now)
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+    if kind is LinkKind.blocks:
+        automatic_employee_step_eligibility_wake.wake()
+
+
+def remove_link(
+    conn: sqlite3.Connection,
+    from_id: str,
+    to_id: str,
+    kind: LinkKind,
+    *,
+    now: int,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
+) -> None:
+    """Delete a link and settle the target's blocked stand-in in the same transaction."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        core_links.remove_link(conn, from_id, to_id, kind, now)
+        if kind is LinkKind.blocks:
+            tickets_data.settle_blocked_standin_for_link_target(conn, to_id, now)
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+    if kind is LinkKind.blocks:
+        automatic_employee_step_eligibility_wake.wake()
+
+
+def file_proposal(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    field: str,
+    body: str,
+    actor: str,
+    now: int,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
+) -> Ticket:
+    ticket = tickets_data.file_proposal(
+        conn,
+        ticket_id,
+        field=field,
+        body=body,
+        actor=actor,
+        now=now,
+    )
+    automatic_employee_step_eligibility_wake.wake()
+    return ticket
+
+
+def file_current_proposal_with_recap(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    body: str,
+    recap: str,
+    actor: str,
+    now: int,
+    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
+) -> Ticket:
+    ticket = tickets_data.file_current_proposal_with_recap(
+        conn,
+        ticket_id,
+        body=body,
+        recap=recap,
+        actor=actor,
+        now=now,
+    )
+    automatic_employee_step_eligibility_wake.wake()
+    return ticket
 
 
 def accept_proposal(

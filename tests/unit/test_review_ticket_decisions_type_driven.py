@@ -22,8 +22,13 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.sprints import data as sprints_data
-from planner.tickets.contracts import AtCap
-from planner.tickets.data import accept_proposal, create_ticket, file_proposal
+from planner.tickets.contracts import AtCap, TicketStatus
+from planner.tickets.data import (
+    accept_proposal,
+    create_ticket,
+    drop_ticket,
+    file_proposal,
+)
 from planner.tickets.views import review_view
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -216,7 +221,7 @@ def test_running_ticket_is_not_a_decision_and_global_count_includes_off_day(
     days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, today_running_id, 4)
     days_data.add_day_ticket(tmp_db, YESTERDAY_DAY_ID, off_day_running.id, 4)
     tmp_db.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id IN (?, ?)",
+        "UPDATE tickets SET ticket_status = 'agent' WHERE id IN (?, ?)",
         (today_running_id, off_day_running.id),
     )
 
@@ -226,22 +231,46 @@ def test_running_ticket_is_not_a_decision_and_global_count_includes_off_day(
     assert response["running_worker_count"] == 2
 
 
-def test_proposal_discussion_ticket_is_excluded_from_decisions(tmp_db: Connection) -> None:
-    # A filed proposal that flipped to proposal_discussion (a typed message landed) drops
-    # out of the clean review queue even though the proposal is still on file.
-    discussing_id = _park_after_kickoff(
+def test_review_membership_is_the_awaiting_approval_status_and_nothing_else(
+    tmp_db: Connection,
+) -> None:
+    # Review is a pure filter on the status. The proposal stays on file throughout,
+    # so only the status decides membership - including for `paired`, which is where
+    # a filed proposal lands once the user replies.
+    ticket_id = _park_after_kickoff(
         tmp_db,
         worker_type="coding",
-        title="In discussion",
+        title="Parked proposal",
         next_ceiling="needs_success",
         field="success",
         proposal_at=3,
     )
-    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, discussing_id, 4)
-    tmp_db.execute(
-        "UPDATE tickets SET ticket_status = 'proposal_discussion' WHERE id = ?",
-        (discussing_id,),
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, ticket_id, 4)
+
+    for status in TicketStatus:
+        tmp_db.execute(
+            "UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id)
+        )
+        decision_ids = [row["ticket_id"] for row in _review(tmp_db)["ticket_decisions"]]
+        expected = [ticket_id] if status is TicketStatus.awaiting_approval else []
+        assert decision_ids == expected, status
+
+
+def test_a_terminal_ticket_never_reaches_review(tmp_db: Connection) -> None:
+    # The is_terminal skip is gone; a completed Ticket stays out because completing it
+    # rests its status away from awaiting_approval.
+    ticket_id = _park_after_kickoff(
+        tmp_db,
+        worker_type="coding",
+        title="Completed",
+        next_ceiling="needs_success",
+        field="success",
+        proposal_at=3,
     )
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, ticket_id, 4)
+    assert [row["ticket_id"] for row in _review(tmp_db)["ticket_decisions"]] == [ticket_id]
+
+    drop_ticket(tmp_db, ticket_id, actor="human", now=5)
 
     assert _review(tmp_db)["ticket_decisions"] == []
 

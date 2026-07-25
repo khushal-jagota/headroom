@@ -125,10 +125,9 @@
     return (
       ticket.has_pending_proposal === true ||
       ticket.ticket_status === "awaiting_approval" ||
-      ticket.ticket_status === "proposal_discussion" ||
-      ticket.ticket_status === "agent_running_step" ||
-      ticket.ticket_status === "paired_work" ||
-      ticket.ticket_status === "user_takeover"
+      ticket.ticket_status === "agent" ||
+      ticket.ticket_status === "paired" ||
+      ticket.ticket_status === "user"
     );
   }
 

@@ -218,7 +218,7 @@ assert.equal(fieldIsPassedFor(coding, "closeout", "needs_success"), false);
 assert.equal(
   ticketStageVisualStateFor(coding, {
     ticketStage: "needs_success",
-    ticketStatus: "agent_running_step",
+    ticketStatus: "agent",
     fieldName: "success"
   }),
   "current-running"
@@ -235,14 +235,6 @@ assert.equal(
   ticketStageVisualStateFor(coding, {
     ticketStage: "needs_success",
     ticketStatus: "awaiting_approval",
-    fieldName: "success"
-  }),
-  "current-awaiting-approval"
-);
-assert.equal(
-  ticketStageVisualStateFor(coding, {
-    ticketStage: "needs_success",
-    ticketStatus: "proposal_discussion",
     fieldName: "success"
   }),
   "current-awaiting-approval"
@@ -267,12 +259,13 @@ assert.equal(
 assert.equal(
   ticketStageVisualStateFor(coding, {
     ticketStage: "needs_success",
-    ticketStatus: "paired_work",
+    ticketStatus: "paired",
     fieldName: "success"
   }),
-  "current-paired-work"
+  "current-paired"
 );
-assert.equal(ticketStatusText("paired_work"), "paired work");
+assert.equal(ticketStatusText("paired"), "paired");
+assert.equal(ticketStatusText("awaiting_approval"), "awaiting approval");
 assert.equal(
   ticketStageVisualStateFor(coding, {
     ticketStage: "needs_approach",
@@ -320,7 +313,7 @@ assert.equal(fieldIsPassedFor(null, "success", "needs_approach"), false);
 assert.equal(
   ticketStageVisualStateFor(null, {
     ticketStage: "needs_success",
-    ticketStatus: "agent_running_step",
+    ticketStatus: "agent",
     fieldName: "success"
   }),
   "upcoming"
@@ -392,7 +385,7 @@ assert.equal(gatingFieldFor(lc2, "needs_findings"), "findings");
 assert.equal(
   ticketStageVisualStateFor(lc2, {
     ticketStage: "needs_findings",
-    ticketStatus: "agent_running_step",
+    ticketStatus: "agent",
     fieldName: "findings"
   }),
   "current-running"
