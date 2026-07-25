@@ -1,0 +1,265 @@
+"""The seam between the conversation system's core and one backend's child process.
+
+This is an internal seam, not the contract Panels talks to. It exists so that the rules
+live in exactly one place: **the core owns every contract semantic** — the held queue, the
+four fates, steer gating, permission bookkeeping, which rows get written, when a child is
+spawned and when it is stopped. An adapter owns one child process and its wire, and knows
+none of that.
+
+The division shows up in what each side is allowed to decide. An adapter never decides
+that a message should wait, never decides that an ask has expired, and never writes a row.
+The core never speaks a vendor's protocol. When an adapter cannot do what it was asked, it
+says so by raising one of the named failures below, and the core turns that into the one
+refusal reason the contract has for it:
+
+- ``BackendSpawnFailed`` → ``backend_did_not_start``
+- ``SessionLoadFailed`` → ``session_did_not_load``
+- ``PromptWriteFailed`` → ``write_to_backend_failed``
+
+Anything else an adapter raises is a fault in the adapter, not a delivery impossibility,
+and is not translated into a refusal.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+from planner.conversation2.contracts import ResolvedConversationStart
+from planner.conversation2.events import (
+    ConversationTurnEnding,
+    PermissionAskOption,
+    ToolCallStatus,
+)
+
+
+class BackendAdapterError(Exception):
+    """Something an adapter was asked to do could not be done. Always say which."""
+
+
+class BackendSpawnFailed(BackendAdapterError):
+    """The backend process would not spawn, so there is no live process to write to."""
+
+
+class SessionLoadFailed(BackendAdapterError):
+    """The process is alive but there is no valid bound session to write under.
+
+    This covers a session that would not be created, one that would not load, and — just
+    as much — a resume that came back with a session that has lost the conversation's
+    memory. A backend that quietly hands back a fresh thread in place of the one that was
+    asked for has not loaded the session, and saying so here is what keeps that from being
+    accepted in silence.
+    """
+
+
+class PromptWriteFailed(BackendAdapterError):
+    """The prompt did not reach the backend's wire."""
+
+
+class PermissionAnswerWriteFailed(BackendAdapterError):
+    """The answer to a permission ask did not reach the backend's wire.
+
+    The answer lands only when the backend has it, so this is the difference between an
+    answer that was recorded and one that was actually given.
+    """
+
+
+class NeedsRebind(BackendAdapterError):
+    """This change cannot be made to the child as it stands; restart it to make it.
+
+    Some backends take a model or reasoning-effort change as a parameter of the next turn,
+    and some can only be changed by starting again. An adapter of the second kind raises
+    this instead of applying the change, and the core stops the child and starts a new one
+    from the stored session cursor, under the same conversation, before writing again.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class TurnToken:
+    """The core's name for one started turn.
+
+    The core mints it, hands it to the adapter with the prompt that starts the turn, and
+    the adapter puts it on everything it later reports about that turn. It is what lets
+    the core tell this turn's news from the news of a turn that has already been ended and
+    replaced — a cancelled turn's late-arriving events name a turn that is over, and are
+    dropped.
+    """
+
+    conversation_id: str
+    turn_number: int
+
+
+@dataclass(frozen=True, slots=True)
+class BackendPermissionAsk:
+    """A permission ask exactly as the backend raised it.
+
+    The options are the backend's own list. The conversation system holds no catalog of
+    answers, adds none of its own, and never answers one itself.
+    """
+
+    ask_id: str
+    title: str
+    detail: str | None
+    options: tuple[PermissionAskOption, ...]
+
+
+class BackendEventSink(Protocol):
+    """How an adapter tells the core what its backend just did.
+
+    Every turn fact carries the turn token it belongs to, because the core alone decides
+    whether that turn is still the one running. Calls return as soon as the core has taken
+    the fact: they are handed to one queue per conversation and worked through in order,
+    so an adapter's reporting is never blocked by whatever the core does about it.
+
+    The one call that carries no turn token is the session cursor. It is not a fact about a
+    turn — it is the conversation's durable session identity, and it has to be kept
+    whatever turn happened to be running when it changed.
+    """
+
+    async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
+        """A piece of an agent message that has not finished. Shown live, never stored."""
+
+    async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
+        """The whole of a finished agent message."""
+
+    async def tool_call_started(
+        self,
+        turn_token: TurnToken,
+        *,
+        tool_call_id: str,
+        title: str,
+        tool_kind: str,
+        detail: str | None,
+    ) -> None: ...
+
+    async def tool_call_finished(
+        self,
+        turn_token: TurnToken,
+        *,
+        tool_call_id: str,
+        tool_call_status: ToolCallStatus,
+        detail: str | None,
+    ) -> None: ...
+
+    async def permission_ask_raised(
+        self, turn_token: TurnToken, ask: BackendPermissionAsk
+    ) -> None:
+        """The agent asked for permission.
+
+        The core records the ask and shows it. Nothing is answered here and no answer is
+        returned: an ask waits for a person, however long that takes, and the answer comes
+        back the other way, through ``BackendChild.answer_permission_ask``.
+        """
+
+    async def turn_ended(
+        self,
+        turn_token: TurnToken,
+        *,
+        ending: ConversationTurnEnding,
+        error_summary: str | None,
+        standard_error_tail: str | None,
+    ) -> None:
+        """The turn stopped running, on the backend's own account.
+
+        An ending the core caused itself — an interruption, or a send-now killing the
+        incumbent — is already recorded by the time this arrives, and the second ending is
+        dropped. First ending wins, once per turn.
+        """
+
+    async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
+        """The backend minted or changed the session id this conversation resumes from."""
+
+
+class BackendChild(Protocol):
+    """One backend child process, under one conversation, and its wire.
+
+    An adapter holds whatever the vendor needs — a subprocess, a client object, a reader
+    task — and nothing about the conversation's rules.
+
+    **A turn's asks die with the turn.** Whenever a turn stops running, for any reason,
+    every permission ask still outstanding on that turn has to be settled with the backend
+    in the way that backend understands a withdrawn ask (a cancelled outcome, a denial),
+    so no vendor call is left hanging. The core stops accepting answers for them at the
+    same moment, so an ask settled this way never carries a person's answer.
+    """
+
+    async def start(
+        self,
+        resolved_start: ResolvedConversationStart,
+        *,
+        vendor_session_cursor: str | None,
+    ) -> None:
+        """Spawn the process and create or resume its session.
+
+        ``resolved_start`` carries the values this child is to run on *now*, which for a
+        conversation that has moved onto another model is not what it was first started
+        with. A cursor of ``None`` means create a fresh session; a cursor means resume that
+        one. The child is not usable until this has returned.
+
+        Raises ``BackendSpawnFailed`` if the process would not start, and
+        ``SessionLoadFailed`` if it started but the session did not.
+        """
+
+    async def write_prompt(
+        self,
+        turn_token: TurnToken,
+        text: str,
+        *,
+        model_change: str | None,
+        reasoning_effort_change: str | None,
+    ) -> None:
+        """Start a turn with this text, on these values.
+
+        The change and the prompt are one operation because they are one act: the message
+        carries the change, so **a change must not stand if the write does not**. How that
+        is kept is the adapter's business — both as parameters of the same turn request,
+        or an option set and put back if the prompt fails, or a rebind whose new child is
+        discarded — but the two outcomes are the only ones allowed: the prompt is on the
+        wire and the change is in force, or neither happened.
+
+        A change of ``None`` means leave that value where it is.
+
+        Returns once the text is on the wire, not when the turn ends. Raises
+        ``PromptWriteFailed`` if it did not get there, or ``NeedsRebind`` if the change
+        cannot be made to this child at all.
+        """
+
+    async def steer(self, text: str) -> None:
+        """Put text into the turn that is already running, without ending it.
+
+        Only a backend that can do this ever has it called: the core refuses a steer aimed
+        at one that cannot, before any child is touched. Raises ``PromptWriteFailed``.
+        """
+
+    async def cancel_running_turn(self) -> None:
+        """Stop the turn that is running. The child stays alive for the next one."""
+
+    async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
+        """Give the backend the option a person chose for one of its asks.
+
+        Raises ``PermissionAnswerWriteFailed`` if it did not reach the backend, in which
+        case the answer has not landed and the ask is still waiting.
+        """
+
+    async def stop(self) -> None:
+        """Shut the child down for good: the janitor's idle sweep, or the server stopping.
+
+        The session cursor is already stored, so a conversation whose child was stopped
+        picks up again by resuming, with nothing said about it.
+        """
+
+
+class BackendChildFactory(Protocol):
+    """Makes the child for one conversation, on one backend.
+
+    The core holds one factory per backend key and calls the one the conversation was
+    started on. Making the child does not spawn it — ``start`` does — but a factory that
+    already knows the backend cannot run says so with ``BackendSpawnFailed`` here.
+    """
+
+    def __call__(
+        self,
+        *,
+        resolved_start: ResolvedConversationStart,
+        event_sink: BackendEventSink,
+    ) -> BackendChild: ...
