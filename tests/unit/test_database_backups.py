@@ -22,8 +22,9 @@ from planner.environments.cli import environment
 
 
 @pytest.fixture(autouse=True)
-def _default_skills_home(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Resolve the skills home from the database directory unless a test sets it.
+def _default_skills_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Keep ambient provider-home configuration isolated from managed backup roots.
+    monkeypatch.setenv("HOME", str(tmp_path / "user-home"))
     monkeypatch.delenv("PLAN_HERMES_HOME", raising=False)
 
 
@@ -42,8 +43,8 @@ def _seed_managed_tree(data_dir: Path, marker: str) -> None:
     settings = data_dir / "worker-settings" / "coding"
     settings.mkdir(parents=True)
     (settings / "settings.json").write_text(f'{{"marker": "{marker}"}}')
-    skills = data_dir / "hermes-home" / "skills" / "panels"
-    skills.mkdir(parents=True)
+    skills = data_dir / "skills" / "panels"
+    skills.mkdir(parents=True, exist_ok=True)
     (skills / "SKILL.md").write_text(f"# {marker}")
 
 
@@ -446,7 +447,7 @@ def test_missing_skills_home_is_tolerated(tmp_path: Path) -> None:
     source = tmp_path / "data" / "planner.db"
     _seed_database(source)
     _seed_managed_tree(source.parent, marker="captured")
-    shutil.rmtree(source.parent / "hermes-home")
+    shutil.rmtree(source.parent / "skills")
     backup_dir = tmp_path / "backups"
 
     snapshot = create_database_backup(source, backup_dir, "rev-1")
@@ -492,7 +493,7 @@ def test_restore_brings_back_the_managed_file_tree(tmp_path: Path) -> None:
     assert (
         destination.parent / "worker-settings" / "coding" / "settings.json"
     ).read_text() == '{"marker": "snapshot"}'
-    assert (destination.parent / "hermes-home" / "skills" / "panels" / "SKILL.md").read_text() == (
+    assert (destination.parent / "skills" / "panels" / "SKILL.md").read_text() == (
         "# snapshot"
     )
     assert not (destination.parent / "files" / "tickets" / "t_old").exists()
@@ -555,14 +556,15 @@ def test_restore_managed_replacement_failure_rolls_back_the_live_tree(
     assert leftover == []
 
 
-def test_skills_home_resolves_from_plan_hermes_home(
+def test_plan_hermes_home_does_not_redirect_managed_skill_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "data" / "planner.db"
     _seed_database(source)
+    _seed_managed_tree(source.parent, marker="managed")
     hermes_home = tmp_path / "elsewhere" / "hermes-home"
-    (hermes_home / "skills" / "panels").mkdir(parents=True)
-    (hermes_home / "skills" / "panels" / "SKILL.md").write_text("# from PLAN_HERMES_HOME")
+    (hermes_home / "skills" / "unrelated").mkdir(parents=True)
+    (hermes_home / "skills" / "unrelated" / "SKILL.md").write_text("# user skill")
     monkeypatch.setenv("PLAN_HERMES_HOME", str(hermes_home))
     backup_dir = tmp_path / "backups"
 
@@ -571,8 +573,9 @@ def test_skills_home_resolves_from_plan_hermes_home(
     metadata = json.loads((snapshot / "metadata.json").read_text())
     assert "skills" in metadata["managed_files"]["roots"]
     assert (snapshot / "files" / "skills" / "panels" / "SKILL.md").read_text() == (
-        "# from PLAN_HERMES_HOME"
+        "# managed"
     )
+    assert not (snapshot / "files" / "skills" / "unrelated").exists()
 
 
 def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) -> None:
@@ -581,7 +584,7 @@ def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) 
     packaged = tmp_path / "repo" / "panels"
     packaged.mkdir(parents=True)
     (packaged / "SKILL.md").write_text("# canonical")
-    skills = source.parent / "hermes-home" / "skills"
+    skills = source.parent / "skills"
     skills.mkdir(parents=True)
     (skills / "panels").symlink_to(packaged, target_is_directory=True)
     # A dangling symlink must not abort the backup (the database must still be protected).
@@ -597,7 +600,7 @@ def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) 
     _seed_database(destination)
     restore_database_snapshot(snapshot, destination, live_stopped=True)
 
-    restored = destination.parent / "hermes-home" / "skills" / "panels"
+    restored = destination.parent / "skills" / "panels"
     assert restored.is_symlink()
     assert (restored / "SKILL.md").read_text() == "# canonical"
 

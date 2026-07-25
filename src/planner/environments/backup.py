@@ -20,8 +20,6 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from planner.conversation.hermes_backend_configuration import resolve_planner_home
-
 SNAPSHOT_DATABASE_NAME = "database.sqlite"
 SNAPSHOT_METADATA_NAME = "metadata.json"
 SNAPSHOT_FILES_DIR_NAME = "files"
@@ -34,19 +32,16 @@ def managed_file_roots(database_path: Path) -> dict[str, Path]:
     """The managed-file roots protected alongside the database.
 
     The managed files root and worker-settings root anchor on the database's
-    directory.  The skills home is resolved through the same ``resolve_planner_home``
-    the running server uses -- ``PLAN_HERMES_HOME`` when the operator sets it,
-    otherwise ``<db parent>/hermes-home`` -- so backup captures exactly the tree
-    the server reads.  A root that does not exist yet (the skills home, until it
-    becomes canonical managed state) is simply absent here and skipped by capture;
-    it is picked up automatically once it exists.
+    directory. The canonical Panels skills also live there; normal provider homes
+    contain links to that managed authority and are not owned or replaced by backup.
+    A root that does not exist yet is skipped and is picked up automatically once
+    it exists.
     """
     parent = Path(database_path).expanduser().resolve().parent
-    skills_home = resolve_planner_home(default=parent / "hermes-home")
     return {
         "files": parent / "files",
         "worker-settings": parent / "worker-settings",
-        "skills": skills_home / "skills",
+        "skills": parent / "skills",
     }
 
 

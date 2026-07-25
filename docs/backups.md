@@ -24,10 +24,11 @@ managed root exists — a `files/` directory holding a copy of each captured roo
 the database checksum, the format, the list of captured managed roots with the manifest's
 checksum, and the fact that verification passed.
 
-The managed-file tree is the durable state that lives beside the database: **ticket files**
-(`files/`), **worker-settings** (`worker-settings/`), and the **skills home**
-(`hermes-home/skills/`). All three anchor on the database's directory. The skills home is only
-captured once it exists; until then its absence is a normal empty capture, not a failure.
+The managed-file tree includes **ticket files** (`files/`), **worker-settings**
+(`worker-settings/`), and canonical Panels **skills** (`skills/`) beside the database.
+The user's normal Hermes, Codex, and Claude homes only link to that authority; backup
+does not capture or replace unrelated user-installed skills. The managed skills root is
+captured only once it exists; until then its absence is normal, not a failure.
 
 The temporary directory is never published, and a snapshot publishes only when both the database
 integrity check and the managed-file manifest verify. A failed copy, integrity check,
@@ -46,17 +47,18 @@ The general repository command is:
 panels environment backup --source-db /path/to/planner.db --backup-dir /path/to/backups --deployed-revision "$REVISION"
 ```
 
-Nightly and pre-deployment automation reads that revision from the validated deployed app:
+Nightly and pre-deployment automation both enter through the validated deployed app:
 
 ```sh
-panels environment backup-current \
+"$HOME/Deployments/Panels/current/app/bin/panels-launcher" environment backup-current \
   --source-db ~/Deployments/Panels/current/data/planner.db \
   --backup-dir ~/Deployments/Panels/current/data/backups \
   --current-app ~/Deployments/Panels/current/app
 ```
 
-The deployment transaction completes this verified backup before it replaces
-`current/app`. If the backup fails, the live app is unchanged.
+The systemd user timer runs this command as `vps`. The deployment transaction completes
+the same verified command before it replaces `current/app`. If the backup fails, the
+live app is unchanged. Neither path needs sudo or a separate manager checkout.
 
 Restore is deliberately stopped-only. It validates the whole snapshot — the database and every
 managed-root manifest — before touching anything. It restores the database first (staging any
@@ -69,7 +71,7 @@ one swap fails:
 panels environment restore --snapshot /path/to/backups/snapshot-... --destination-db /path/to/planner.db --live-stopped
 ```
 
-Both commands derive the managed-file roots from the database's directory, so the nightly setup
+Both commands derive every managed root from the database path, so the nightly setup
 needs no additional inputs.
 
 The concrete nightly setup, configurable paths, inspection commands, and pre-deployment hook

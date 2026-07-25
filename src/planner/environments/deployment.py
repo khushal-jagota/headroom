@@ -40,7 +40,7 @@ class SubprocessServiceController:
 
     def restart(self) -> None:
         if self.manager == "systemctl":
-            command = ["systemctl", "restart", self.service_name]
+            command = ["systemctl", "--user", "restart", self.service_name]
         elif self.manager == "launchctl":
             target = (
                 self.service_name
@@ -80,6 +80,34 @@ class SubprocessServiceController:
         subprocess.run(
             ["/bin/launchctl", "bootstrap", domain, str(plist)], check=True, shell=False
         )
+
+
+def run_current_app_backup(
+    current_root: Path,
+    source_db: Path,
+    backup_dir: Path,
+) -> None:
+    """Run a pre-deployment backup through the app that owns the live database."""
+    current_app = current_root.expanduser().resolve() / "app"
+    database = source_db.expanduser().resolve()
+    backups = backup_dir.expanduser().resolve()
+    subprocess.run(
+        [
+            str(current_app / "bin" / "panels-launcher"),
+            "environment",
+            "backup-current",
+            "--source-db",
+            str(database),
+            "--backup-dir",
+            str(backups),
+            "--current-app",
+            str(current_app),
+        ],
+        check=True,
+        env=os.environ
+        | {"PLAN_HERMES_HOME": str(Path.home().expanduser().resolve() / ".hermes")},
+        shell=False,
+    )
 
 
 @dataclass(frozen=True)

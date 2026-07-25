@@ -1,50 +1,68 @@
-# Panels environment Linux inputs
+# Panels single-user operating inputs
 
-These files are checked-in render/install inputs only. They do not install users,
-write permissions, enable units, start services, configure networking, or prove VPS
-enforcement by themselves.
+These checked-in files describe the Linux and macOS operating surface. They do not
+modify a host by themselves.
 
-The live runtime uses the ordinary Linux account `panels-live`. The staging runtime
-uses the ordinary Linux account `panels-worker`. The live state, config, and
-credentials must stay unreadable and unwritable by `panels-worker`; the worker account
-is for nonproduction runtime state only.
-The shared `/etc/panels/environments` directory is traversable by the service users
-so each unit can open its own credential file. The live credential file remains
-`0640 panels-live:panels-live`, so `panels-worker` can traverse the parent but cannot
-read or write live credential content. The staging credential file is
-`0640 panels-worker:panels-worker`.
+The VPS has one Panels identity: the existing UID-1000 `vps` user. Source lives at
+`~/Coding/Panels`; the deployed app and live state live at
+`~/Deployments/Panels/current`. Do not create `panels-live`, `panels-worker`, or
+`panels-deploy` accounts and do not install these units as system services.
 
-Staging calls the environment command from the pinned, root-owned manager checkout. Live calls the
-operator-owned deployed app launcher:
+## Linux user services
+
+Install the unit files in `~/.config/systemd/user/`, then reload and enable them as
+`vps`:
 
 ```sh
-/opt/panels/environment-manager/.venv/bin/python -m planner environment run \
-  --repository-root /opt/panels/<environment>
+mkdir -p "$HOME/.config/systemd/user"
+cp panels-live.service panels-deployment-runner.service \
+  panels-db-backup.service panels-db-backup.timer \
+  panels-maintenance.service panels-maintenance.timer \
+  "$HOME/.config/systemd/user/"
 
-/opt/panels/current/app/bin/panels-launcher serve
+systemctl --user daemon-reload
+systemctl --user enable --now panels-live.service
+systemctl --user enable --now panels-deployment-runner.service
+systemctl --user enable --now panels-db-backup.timer
+systemctl --user enable --now panels-maintenance.timer
 ```
 
-The `current` deployment root and deployment controls are writable only by the operator/deploy
-identity. The live service receives external state paths and cannot modify `current/app`.
+Enable user lingering once during the host migration if these services must start
+before an interactive login. That host-level migration step is outside this repository
+change.
 
-`setup-accounts.sh` also installs the checked-in `panels` wrapper as the root-owned,
-mode-`0755` regular file `/usr/local/bin/panels`. Agent shells include `/usr/local/bin`
-in their standard PATH, so the bare command works outside a release checkout. The wrapper
-executes `/opt/panels/current/bin/panels-launcher` and forwards every argument unchanged.
-It is deliberately a wrapper rather than a symlink: the launcher derives its release root
-from its own path, so a symlink in `/usr/local/bin` would resolve the wrong root.
+`panels-live.service` binds the app to loopback port 8767 through its explicit live
+configuration. The existing Tailscale Serve route remains unchanged.
 
-Deployments and rollbacks do not replace this host-level command. They switch only
-`/opt/panels/current`, and the wrapper follows whichever release that pointer selects.
+## Dedicated GitHub Actions runner
 
-Live uses the fixed port in its prepared contract. Start the staging unit only while
-active work needs it and stop it afterward; each start chooses an available loopback
-port and reports the actual URL in the service log. Staging's prepared state remains
-between starts.
+Install the repository's self-hosted runner beneath
+`~/Coding/Panels/.github-runner`, then use `configure-deployment-runner.sh` with the
+repository URL and a short-lived registration token. The script registers the custom
+labels `production` and `panels-deploy`; GitHub adds `self-hosted` and `linux`. The
+unit requires that configured runner and runs its `run.sh`; the deploy workflow
+requests exactly those four labels.
 
-The static units use the deployed app launcher for live and `/opt/panels/staging` for staging.
-Runtime writes belong under
-`/var/lib/panels/environments`, and credential files belong under
-`/etc/panels/environments`. Repositories cannot be shared across live and staging.
+The workflow builds the requested exact commit in runner-temporary storage and deploys
+only `~/Deployments/Panels/current/app`. It controls live with `systemctl --user` and
+leaves `current/data` and `current/logs` in place.
 
-SQLite backup and restore setup is in [backup-restore.md](backup-restore.md).
+## Commands and non-production
+
+The checked-in `panels` wrapper follows the deployed application and forwards arguments:
+
+```sh
+install -d "$HOME/.local/bin"
+install -m 0755 panels "$HOME/.local/bin/panels"
+```
+
+Staging is not a service. Prepare its fake state under
+`~/Coding/Panels/data/environments/staging`, start it from `~/Coding/Panels` on demand,
+and stop it after active work. Ticket servers follow the same on-demand rule from their
+isolated worktrees.
+
+The live and backup units use the `vps` user's ordinary `HOME`, Hermes, Codex, and
+Claude homes. They contain no `User=` switch, privileged ownership choreography,
+tmpfiles rules, or root-owned environment-manager path.
+
+Backup and restore instructions are in [backup-restore.md](backup-restore.md).

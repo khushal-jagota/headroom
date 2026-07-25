@@ -1,0 +1,17 @@
+[Unit]
+Description=Panels GitHub deployment runner (labels: self-hosted, linux, production, panels-deploy)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/Coding/Panels/.github-runner/.runner
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Coding/Panels/.github-runner
+ExecStart=%h/Coding/Panels/.github-runner/run.sh
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

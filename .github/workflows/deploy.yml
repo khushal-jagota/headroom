@@ -13,17 +13,11 @@ concurrency:
   cancel-in-progress: false
 env:
   PANELS_REQUESTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.commit_sha || github.sha }}
-  PANELS_CURRENT_ROOT: ${{ vars.PANELS_CURRENT_ROOT }}
-  PANELS_BACKUP_SOURCE_DB: ${{ vars.PANELS_BACKUP_SOURCE_DB }}
-  PANELS_BACKUP_DIRECTORY: ${{ vars.PANELS_BACKUP_DIRECTORY }}
-  PANELS_HEALTH_URL: ${{ vars.PANELS_HEALTH_URL }}
-  PANELS_SERVICE_MANAGER: ${{ vars.PANELS_SERVICE_MANAGER }}
-  PANELS_SERVICE_NAME: ${{ vars.PANELS_SERVICE_NAME }}
   PANELS_CANDIDATE_APP: ${{ runner.temp }}/panels-candidate-${{ github.run_id }}-${{ github.run_attempt }}
   PANELS_DEPLOY_VENV: ${{ runner.temp }}/panels-deploy-venv-${{ github.run_id }}-${{ github.run_attempt }}
 jobs:
   deploy:
-    runs-on: [self-hosted, production]
+    runs-on: [self-hosted, linux, production, panels-deploy]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -51,12 +45,12 @@ jobs:
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" -m planner environment app-deploy \
             --candidate-app "$PANELS_CANDIDATE_APP" \
-            --current-root "$PANELS_CURRENT_ROOT" \
-            --source-db "$PANELS_BACKUP_SOURCE_DB" \
-            --backup-dir "$PANELS_BACKUP_DIRECTORY" \
-            --health-url "$PANELS_HEALTH_URL" \
-            --service-manager "$PANELS_SERVICE_MANAGER" \
-            --service-name "$PANELS_SERVICE_NAME"
+            --current-root "$HOME/Deployments/Panels/current" \
+            --source-db "$HOME/Deployments/Panels/current/data/planner.db" \
+            --backup-dir "$HOME/Deployments/Panels/current/data/backups" \
+            --health-url "http://127.0.0.1:8767/api/health" \
+            --service-manager systemctl \
+            --service-name panels-live.service
       - name: Remove runner-temporary deployment state
         if: always()
         run: |

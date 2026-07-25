@@ -16,6 +16,7 @@ from planner.environments.deployment import (
     DeploymentResult,
     SubprocessServiceController,
     deploy_app,
+    run_current_app_backup,
 )
 
 SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -522,6 +523,71 @@ def test_launchctl_restart_accepts_explicit_user_domain(
         "bootout",
         "bootstrap",
     ]
+
+
+def test_systemctl_restart_targets_the_callers_user_manager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def run(
+        command: list[str], *, check: bool, shell: bool, **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        assert check is True
+        assert shell is False
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    SubprocessServiceController("systemctl", "panels-live.service").restart()
+    assert commands == [
+        ["systemctl", "--user", "restart", "panels-live.service"]
+    ]
+
+
+def test_predeploy_backup_runs_through_the_current_deployed_launcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = tmp_path / "current"
+    launcher = current / "app" / "bin" / "panels-launcher"
+    launcher.parent.mkdir(parents=True)
+    source_db = current / "data" / "planner.db"
+    backup_dir = current / "data" / "backups"
+    commands: list[list[str]] = []
+    environments: list[dict[str, str]] = []
+
+    def run(
+        command: list[str],
+        *,
+        check: bool,
+        env: dict[str, str],
+        shell: bool,
+        **_: object,
+    ) -> subprocess.CompletedProcess[str]:
+        assert check is True
+        assert shell is False
+        commands.append(command)
+        environments.append(env)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setenv("HOME", str(tmp_path / "vps"))
+    monkeypatch.setattr(subprocess, "run", run)
+    run_current_app_backup(current, source_db, backup_dir)
+    assert commands == [
+        [
+            str(launcher),
+            "environment",
+            "backup-current",
+            "--source-db",
+            str(source_db),
+            "--backup-dir",
+            str(backup_dir),
+            "--current-app",
+            str(current / "app"),
+        ]
+    ]
+    assert environments[0]["PLAN_HERMES_HOME"] == str(tmp_path / "vps" / ".hermes")
 
 
 def _database(current: Path) -> Path:

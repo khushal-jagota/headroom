@@ -1,6 +1,6 @@
 # Production deployment
 
-Production runs one Git-free application. On the single-user Mac its durable layout is:
+Production runs one Git-free application as the existing UID-1000 `vps` user:
 
 ```text
 ~/Deployments/Panels/current/
@@ -9,67 +9,78 @@ Production runs one Git-free application. On the single-user Mac its durable lay
 └── logs/    application logs
 ```
 
-Only `app` changes during deployment. `data` and `logs` are siblings of the app, so code changes,
-failed deployments, and code rollback do not replace persistent state. The self-hosted runner and
-the Panels LaunchAgent run as the signed-in operator. Production continues to use that operator's
-Hermes home and provider credentials. Ordinary deployment does not require root access or a
-separate service user.
+Only `app` changes during deployment. `data` and `logs` remain in place through code
+changes, failed deployments, and code rollback. Serving, deployment, rollback, backup,
+and user-service control need no sudo.
+
+## Services and runner
+
+Linux uses systemd user services. `panels-live.service` launches the deployed app,
+`panels-deployment-runner.service` owns the dedicated GitHub Actions runner used by the
+deployment workflow, and the backup timer invokes the deployed app's backup command.
+The `vps` user controls them with `systemctl --user`.
+
+macOS retains its launchd path. Both service controllers operate in the signed-in
+user's service-manager domain, and both preserve the user's normal Hermes, Codex, and
+Claude homes.
 
 ## Exact commit path
 
-A push to `main` deploys `${{ github.sha }}`. The workflow also has an owner-triggered input for
-one lowercase, full 40-character commit SHA, including an earlier commit selected for code
-rollback. Both routes use the same job:
+A push to `main` deploys `${{ github.sha }}`. The owner-triggered workflow input accepts
+one lowercase, full 40-character SHA, including an earlier commit selected for rollback.
+Both routes use the same transaction:
 
 ```text
 exact temporary checkout
         │ prove HEAD
         ▼
 build and validate temporary candidate app
-        │
+        │ compatibility proof + verified live backup
         ▼
-deploy candidate into current/app
+replace current/app
+        │ restart + prove requested SHA
+        ▼
+success, or restore and prove the prior app
 ```
 
-The runner proves its host Python is at least 3.12 and Node is version 22. It builds the candidate
-under runner-temporary storage and removes that build state when the job ends. The installed app
-contains no Git metadata and carries a validated identity for the requested commit.
+The self-hosted runner proves Python is at least 3.12 and Node is version 22. It builds
+under runner-temporary storage and removes that state when the job ends. The resulting
+app contains no Git metadata and carries a validated identity for the requested commit.
 
-The workflow repository variables are `PANELS_CURRENT_ROOT`, `PANELS_BACKUP_SOURCE_DB`,
-`PANELS_BACKUP_DIRECTORY`, `PANELS_HEALTH_URL`, `PANELS_SERVICE_MANAGER`, and
-`PANELS_SERVICE_NAME`. For the single-user Mac, `PANELS_CURRENT_ROOT` is
-`~/Deployments/Panels/current`.
+The workflow uses the fixed VPS contract:
 
-## Existing-host precondition
-
-Automatic app deployment starts only after the operator has established the single-app layout,
-service path, workflow variables, and persistent `data` and `logs` paths on that host. This
-repository change does not move a running host from an older installation layout and does not
-rewrite an older app manifest. Perform that host cutover separately, prove the new app and
-persistent state, and remove superseded host artifacts only after the operator accepts the cutover.
-The checked-in systemd changes remain installation intent; this work does not alter the live VPS.
+- current root: `~/Deployments/Panels/current`
+- live database: `~/Deployments/Panels/current/data/planner.db`
+- backups: `~/Deployments/Panels/current/data/backups`
+- health: loopback port 8767
+- service manager: `systemctl`
+- service: `panels-live.service`
 
 ## Replacement and recovery
 
-Deployment is serialized. It validates the candidate before changing the live app, then completes
-the verified pre-deployment backup. After that it keeps the working app as a transaction-temporary
-fallback, installs the candidate as `current/app`, restarts Panels, and requires local health to
-report the requested commit.
+Deployment is serialized. It validates the candidate and proves one-version database
+compatibility before running the deployed application's `backup-current` command.
+Only then does it retain the working app as transaction-temporary fallback, install the
+candidate at `current/app`, restart Panels, and require health to report the requested
+commit.
 
-If replacement, restart, or health proof fails, deployment restores the fallback app, restarts it,
-and proves it healthy. A successful deployment removes the fallback. If recovery itself cannot be
-proved, deployment reports the retained fallback path so the operator has an exact continuation
-point. The fallback is recovery state for one transaction, not an installed second version.
+If replacement, restart, or health proof fails, deployment restores the fallback app,
+restarts it, and proves it healthy. If recovery cannot be proved, the retained fallback
+path is the exact operator continuation point. A successful transaction removes it.
 
-Code rollback follows the same workflow with an earlier full SHA. It replaces the app only; it does
-not restore the database. Database changes therefore pass a one-version compatibility gate that
-proves the immediately previous app can start and pass health against the database upgraded by the
-candidate.
+Code rollback uses the same workflow with an earlier full SHA. It replaces only the
+app; it does not restore the database.
 
-The checked-in launchd and systemd files are installation intent. They launch
-`current/app/bin/panels-launcher`; they do not install or modify the live host themselves.
+## Existing-host precondition
+
+The operator must establish the single-user filesystem layout, user units, runner, and
+persistent paths before enabling automatic deployment. This ticket does not migrate the
+live host, rename `vps-agent`, or change the existing Tailscale Serve route. UID 1000 is
+preserved later by renaming that account, not by creating a second identity.
 
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 `src/planner/environments/deployment.py`, and `src/planner/environments/cli.py`.
+
+---
 
 _Last verified: 2026-07-25._

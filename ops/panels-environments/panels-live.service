@@ -5,17 +5,21 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=panels-live
-WorkingDirectory=/var/lib/panels/environments/live
-EnvironmentFile=/etc/panels/environments/live.env
-ExecStart=/opt/panels/current/app/bin/panels-launcher serve
+WorkingDirectory=%h/Deployments/Panels/current
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PLAN_CONFIG_PATH=%h/Deployments/Panels/current/data/config.yaml
+Environment=PLAN_DB_PATH=%h/Deployments/Panels/current/data/planner.db
+Environment=PLAN_DISPATCHER_LOCK_PATH=%h/Deployments/Panels/current/data/dispatcher.lock
+Environment=PLAN_HERMES_HOME=%h/.hermes
+Environment=PLAN_LOGS_DIR=%h/Deployments/Panels/current/logs
+Environment=PLAN_PORT=8767
+Environment=PLAN_SERVER_CONTROL_SOCKET=%h/Deployments/Panels/current/data/server-control.sock
+Environment=PLAN_BACKUP_DIR=%h/Deployments/Panels/current/data/backups
+ExecStart=%h/Deployments/Panels/current/app/bin/panels-launcher serve
 Restart=on-failure
 RestartSec=5
-ProtectSystem=strict
-ProtectHome=yes
-ReadWritePaths=/var/lib/panels/environments/live /var/log/panels /etc/panels/environments
-ReadOnlyPaths=/opt/panels/current/app
 NoNewPrivileges=yes
+PrivateTmp=yes
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
