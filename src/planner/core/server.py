@@ -33,9 +33,9 @@ from planner.tickets.api import router as tickets_router
 from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_settings.api import router as worker_settings_router
 from planner.worker_types.configuration import (
-    configured_employee_runtime_definitions,
-    install_employee_runtime_definitions_for_test,
-    restore_employee_runtime_definitions_for_test,
+    configured_worker_runtime_definitions,
+    install_worker_runtime_definitions_for_test,
+    restore_worker_runtime_definitions_for_test,
 )
 
 _STATUS_BY_CODE: dict[ErrorCode, int] = {
@@ -59,16 +59,16 @@ def resolve_application_root(
 
 
 _REPO_ROOT = resolve_application_root()
-_PREFERRED_EMPLOYEE_WORKSPACE_ROOT = Path.home() / "Coding"
+_PREFERRED_WORKER_WORKSPACE_ROOT = Path.home() / "Coding"
 _WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_INDEX = _WEB_DIST / "index.html"
 _ASSETS_DIR = _REPO_ROOT / "assets"
 _STATIC_DIR = _REPO_ROOT / "static"
 
 
-def resolve_employee_workspace_root() -> Path:
-    if _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.is_dir():
-        return _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.resolve(strict=False)
+def resolve_worker_workspace_root() -> Path:
+    if _PREFERRED_WORKER_WORKSPACE_ROOT.is_dir():
+        return _PREFERRED_WORKER_WORKSPACE_ROOT.resolve(strict=False)
     return _REPO_ROOT.resolve(strict=False)
 
 
@@ -123,7 +123,7 @@ def create_app(
                 busy_timeout_ms=config.db_busy_timeout_ms,
                 clock=clock,
                 repository_root=_REPO_ROOT,
-                employee_workspace_root=resolve_employee_workspace_root(),
+                employee_workspace_root=resolve_worker_workspace_root(),
                 loop=asyncio.get_running_loop(),
                 test_options=conversation_test_options,
             )
@@ -136,7 +136,7 @@ def create_app(
                 busy_timeout_ms=config.db_busy_timeout_ms,
                 clock=clock,
                 repository_root=_REPO_ROOT,
-                employee_workspace_root=resolve_employee_workspace_root(),
+                employee_workspace_root=resolve_worker_workspace_root(),
                 loop=asyncio.get_running_loop(),
             )
             try:
@@ -172,7 +172,7 @@ def create_app(
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         previous_definitions = None
         if conversation_test_options is not None:
-            previous_definitions = install_employee_runtime_definitions_for_test(
+            previous_definitions = install_worker_runtime_definitions_for_test(
                 conversation_test_options.employee_runtime_definitions
             )
         try:
@@ -180,7 +180,7 @@ def create_app(
                 yield
         finally:
             if previous_definitions is not None:
-                restore_employee_runtime_definitions_for_test(previous_definitions)
+                restore_worker_runtime_definitions_for_test(previous_definitions)
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=lifespan)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
@@ -243,7 +243,7 @@ def create_app(
 
     @app.get("/api/worker-types")
     async def worker_types() -> dict[str, Any]:
-        runtime_definitions = configured_employee_runtime_definitions()
+        runtime_definitions = configured_worker_runtime_definitions()
         registry = runtime_definitions.worker_type_registry
         return {
             "employee_backends": list(

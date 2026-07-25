@@ -10,16 +10,16 @@ import { build } from "vite";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
-const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-employee-configuration-"));
-const hostPath = join(webRoot, "tests", `.employee-configuration-host-${process.pid}.svelte`);
-const mainPath = join(webRoot, "tests", `.employee-configuration-main-${process.pid}.ts`);
-const indexPath = join(webRoot, "tests", `.employee-configuration-index-${process.pid}.html`);
+const temporaryDirectory = await mkdtemp(join(tmpdir(), "panels-worker-configuration-"));
+const hostPath = join(webRoot, "tests", `.worker-configuration-host-${process.pid}.svelte`);
+const mainPath = join(webRoot, "tests", `.worker-configuration-main-${process.pid}.ts`);
+const indexPath = join(webRoot, "tests", `.worker-configuration-index-${process.pid}.html`);
 let serverProcess;
 
 try {
   await writeFile(hostPath, `
 <script lang="ts">
-  import EmployeeConfigurationSetup from "../src/components/EmployeeConfigurationSetup.svelte";
+  import WorkerConfigurationSetup from "../src/components/WorkerConfigurationSetup.svelte";
   import ManagedLaunchDefaults from "../src/components/ManagedLaunchDefaults.svelte";
   import type {
     EmployeeConfigurationSnapshot,
@@ -121,7 +121,7 @@ try {
 </script>
 
 {#if editable}
-  <EmployeeConfigurationSetup
+  <WorkerConfigurationSetup
     ticketId="ticket-ui"
     employeeBackends={["hermes", "codex"]}
     employeeBackend={saved.employee_backend}
@@ -496,4 +496,4 @@ async function waitUntilReady(url) {
   throw new Error(`component runtime server did not become ready: ${url}`);
 }
 
-console.log("employee-configuration-setup.test.mjs: all assertions passed");
+console.log("worker-configuration-setup.test.mjs: all assertions passed");

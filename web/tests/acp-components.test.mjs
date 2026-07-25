@@ -19,11 +19,11 @@ let serverProcess;
 
 const ticketRouteSource = await readFile(new URL("../src/routes/TicketRoute.svelte", import.meta.url), "utf8");
 const boardRouteSource = await readFile(new URL("../src/routes/BoardRoute.svelte", import.meta.url), "utf8");
-const employeeConfigurationSource = await readFile(
-  new URL("../src/components/EmployeeConfigurationSetup.svelte", import.meta.url),
+const workerConfigurationSource = await readFile(
+  new URL("../src/components/WorkerConfigurationSetup.svelte", import.meta.url),
   "utf8",
 );
-assert.match(ticketRouteSource, /<EmployeeConfigurationSetup/);
+assert.match(ticketRouteSource, /<WorkerConfigurationSetup/);
 assert.match(ticketRouteSource, /contextRow=\{name === "kickoff" && kickoffCardShowsContextRow/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-configuration/);
 assert.match(ticketRouteSource, /mutateJson<TicketDetail>\(/);
@@ -33,15 +33,15 @@ assert.match(boardRouteSource, /state: "current-running", ariaLabel: "Agent work
 assert.match(boardRouteSource, /state: "reply-seen", ariaLabel: "Agent reply seen"/);
 assert.match(ticketRouteSource, /deferInitialAttach=\{detail\.employee_configuration_editable\}/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
-assert.match(employeeConfigurationSource, /employee_launch_model/);
-assert.match(employeeConfigurationSource, /employee_launch_reasoning_effort/);
-assert.match(employeeConfigurationSource, /employee-configuration-catalog/);
-assert.match(employeeConfigurationSource, /query\.set\("candidate_model", model\)/);
-assert.match(employeeConfigurationSource, /AbortController/);
-assert.match(employeeConfigurationSource, /requestGeneration/);
-assert.match(employeeConfigurationSource, /data-employee-configuration-retry/);
+assert.match(workerConfigurationSource, /employee_launch_model/);
+assert.match(workerConfigurationSource, /employee_launch_reasoning_effort/);
+assert.match(workerConfigurationSource, /employee-configuration-catalog/);
+assert.match(workerConfigurationSource, /query\.set\("candidate_model", model\)/);
+assert.match(workerConfigurationSource, /AbortController/);
+assert.match(workerConfigurationSource, /requestGeneration/);
+assert.match(workerConfigurationSource, /data-employee-configuration-retry/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
-assert.doesNotMatch(employeeConfigurationSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
+assert.doesNotMatch(workerConfigurationSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
 
 for (const fileName of [

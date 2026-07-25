@@ -1,8 +1,10 @@
 # Conversation
 
-Panels has one conversation system. The Chief of Staff, a Ticket's human discussion,
-and that Ticket's Automatic Employee steps all use the same ACP session machinery.
-There is no second Chat database, relay, neutral protocol, or history adapter.
+Panels has one conversation pane. The Chief of Staff and a Ticket's human discussion
+both use the ACP session machinery described here. There is no second Chat database,
+relay, neutral protocol, or history adapter. (Worker steps Panels starts on its own
+currently go through the separate conversation contract instead; the two meet again at
+the swap. See `worker-orchestration.md`.)
 
 ## What the browser connects to
 
@@ -140,8 +142,8 @@ Reasoning choice, then writes the binding only if the Ticket still owns the setu
 to prepare that session. The stored model and reasoning remain after binding as the
 historical Kickoff request, not the worker's current settings. A bound load, child
 replacement, compaction recovery, or later New Conversation never reapplies or presents
-them as current. Human prompts and Automatic Employee steps still share the selected
-backend and durable binding.
+them as current. Every human prompt in the pane shares the selected backend and
+durable binding.
 
 Chief has managed Backend, Model, and Reasoning defaults. Starting a new Chief conversation
 copies the current trio into the durable empty conversation. Its first prompt later creates the
@@ -159,8 +161,7 @@ backend still start or resume through the same registry and binding machinery.
 A Panels conversation and an ACP backend session are separate things. Opening a Ticket or the
 Chief with no session returns an empty, ready conversation and does not start a backend. **New**
 advances that durable Panels conversation, clears the old transcript and binding, and also starts
-no backend. The first human message or Automatic Employee prompt creates and binds the real ACP
-session. An empty conversation therefore remains writable after Panels restarts even when a
+no backend. The first human message creates and binds the real ACP session. An empty conversation therefore remains writable after Panels restarts even when a
 provider cannot load a session that has never received a turn. A browser cursor from an older
 conversation receives a full current reset instead of being rejected.
 
@@ -180,8 +181,8 @@ Panels source instead of keeping another copy.
 
 A newly created ACP conversation adds its employee role to the first real prompt sent
 through that session. A Ticket adds `panels-worker`; the Chief adds
-`panels-chief-of-staff`. The first prompt may come from the browser or Automatic
-Employee work. Text-only slash commands pass through unchanged and leave the role ready for the
+`panels-chief-of-staff`. The first prompt may come from the browser or from a prompt
+Panels sends on its own. Text-only slash commands pass through unchanged and leave the role ready for the
 next ordinary prompt. Later ordinary prompts and a loaded, forked, or replacement child
 do not add the role again. After **New**, the next ordinary prompt creates the session and adds the
 role to that first prompt.
@@ -192,26 +193,22 @@ live updates or replay. A genuine message that happens to equal the role line re
 visible too. Claude receives the same ordinary ACP prompt behavior as the other
 backends; Panels does not modify Claude's system prompt.
 
-Automatic Employee prompts are also visible immediately as \`System message · worker\`.
+A prompt Panels sends on its own is visible immediately as \`System message · worker\`.
 The broker publishes the exact prompt admitted to ACP, including any role prefix, at
 prompt start. The browser keeps that typed event in its ordered timeline, so it does
 not require a hard refresh to reveal a programmatic prompt. ACP replay remains the
 source for rebuilding the conversation after reload.
 
-## Human and Automatic Employee work share the session
+## What Panels sends on its own
 
-A human prompt in the Ticket pane and an Automatic Employee step reach the same
-durable ACP session. The automatic path is not a hidden transcript writer. It uses
-`AcpStepGateway`, which submits the real worker prompt through the same hub and broker.
+Worker steps and revision guidance are ordinary messages, not a hidden transcript
+writer. They now go through the separate conversation contract rather than this pane's
+machinery; the two meet again at the swap, when this pane moves over to the same
+system.
 
-Pending worker context is prepared into that real model prompt before delivery. Its
-exact revisions are acknowledged only after ACP admits the prompt. If admission fails,
-the pending context stays pending for the next legitimate attempt. Writing a database
-row is never treated as delivery to the model.
-
-`employee_step_runs` records only execution ownership and settlement. It contains the
-step id, Ticket id, status, employee session id, error, and timestamps. It contains no
-prompt, reply, transcript, usage, activity, tool data, image, or browser state.
+Pending worker context is prepared into the real model prompt before delivery, and its
+exact revisions are acknowledged only after the message is actually sent. Writing a
+database row is never treated as delivery to the model.
 
 ## Compaction
 
@@ -236,13 +233,12 @@ shared file-preview code.
 There is no Day conversation, conversation-file route, or Employee-session-history
 HTTP route. The ACP pane and backend replay are the one conversation view. The database
 holds no former Chat or session tables either, and no runtime code looks for them: the
-only conversation history the record keeps is worker-step correctness in
-`employee_step_runs`.
+record keeps no conversation history of its own at all.
 
 ## Handoffs
 
-- **The employee runtime** (`employee-runtime.md`) owns discovery, execution, and
-  Employee-step settlement.
+- **Worker orchestration** (`worker-orchestration.md`) owns deciding a Ticket is ready
+  and starting its next worker step.
 - **Tickets & the gates** (`tickets-and-gates.md`) owns Stage, scope, proposals, and
   the Ticket session mirror.
 - **The front end** (`frontend.md`) owns the ACP pane and shared preview rendering.

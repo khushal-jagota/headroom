@@ -50,8 +50,8 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
 from planner.worker_types.configuration import (
-    ConfiguredEmployeeRuntimeDefinitions,
-    build_employee_runtime_definitions,
+    ConfiguredWorkerRuntimeDefinitions,
+    build_worker_runtime_definitions,
 )
 
 
@@ -155,7 +155,7 @@ class _Factory:
 def _runtime_definitions(
     definition: AgentBackendDefinition,
     factory: Any,
-) -> ConfiguredEmployeeRuntimeDefinitions:
+) -> ConfiguredWorkerRuntimeDefinitions:
     codex_definition = replace(definition, backend_key="codex")
     claude_definition = replace(definition, backend_key="claude")
     catalog = EmployeeBackendCatalog(
@@ -169,7 +169,7 @@ def _runtime_definitions(
             ),
         )
     )
-    return build_employee_runtime_definitions(catalog)
+    return build_worker_runtime_definitions(catalog)
 
 
 def _database(tmp_path: Path) -> tuple[str, MutableTestClock, str]:
@@ -438,7 +438,7 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
             employee_workspace_root=employee_workspace_root,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
-                employee_runtime_definitions=build_employee_runtime_definitions(catalog),
+                employee_runtime_definitions=build_worker_runtime_definitions(catalog),
             ),
         )
 
@@ -552,7 +552,7 @@ def test_production_composes_the_conversation_and_the_loop_under_one_shutdown_de
     )
     monkeypatch.setattr(
         server_module,
-        "_PREFERRED_EMPLOYEE_WORKSPACE_ROOT",
+        "_PREFERRED_WORKER_WORKSPACE_ROOT",
         preferred_employee_workspace_root,
     )
     monkeypatch.setattr(

@@ -543,8 +543,8 @@
           <p class="eyebrow">Planning v2</p>
           <h1>Systems map</h1>
           <p class="lead">
-            One planning record, one human approval gate, one Automatic Employee
-            runtime, and one ACP conversation system.
+            One planning record, one human approval gate, one worker-orchestration
+            system, and one conversation system.
           </p>
           <div class="meta" aria-label="Document facts">
             <span class="pill">SQLite is canonical</span>
@@ -571,7 +571,7 @@
                 <span>plain record changes</span>
               </div>
               <div>
-                <strong>Resolution engine</strong>
+                <strong>Proposal resolver</strong>
                 <span>ticket gate changes</span>
               </div>
             </li>
@@ -585,13 +585,13 @@
                 <span>on-screen reads refetch</span>
               </div>
               <div>
-                <strong>AutomaticEmployeeStepDiscoveryLoop</strong>
-                <span>today membership candidates</span>
+                <strong>Readiness loop</strong>
+                <span>today's Tickets, re-checked</span>
               </div>
             </li>
             <li>
-              <strong>EmployeeStepRunner</strong>
-              <span>one ACP worker step</span>
+              <strong>One claim, one message</strong>
+              <span>the step goes into the Ticket's conversation</span>
             </li>
           </ol>
         </div>
@@ -610,11 +610,11 @@
           </li>
           <li>
             <strong>Who can decide?</strong>
-            <span>Ticket Gate System. Workers propose; the resolution engine and human approvals settle.</span>
+            <span>Ticket Gate System. Workers propose; the proposal resolver and human approvals settle.</span>
           </li>
           <li>
             <strong>Why did work run?</strong>
-            <span>Employee Runtime. AutomaticEmployeeStepDiscoveryLoop checks Automatic Employee-step eligibility; EmployeeStepRunner runs one worker step.</span>
+            <span>Worker Orchestration. The readiness loop decides a Ticket is ready, claims it with one status flip, and sends the step.</span>
           </li>
           <li>
             <strong>Where is conversation?</strong>
@@ -653,7 +653,7 @@
                 A write should go through a canonical writer and let the UI refetch
                 from the server. Committing a write announces itself — the
                 announcement carries no entity, kind, or payload — and both the
-                browser and the discovery loop answer by asking the record again.
+                browser and the readiness loop answer by asking the record again.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/core/db.py</code>,
@@ -678,9 +678,8 @@
               </p>
               <p>
                 The Board is today's execution board, not an all-ticket inventory.
-                AutomaticEmployeeStepDiscoveryLoop starts with that same membership-only
-                candidate set, then asks the complete Automatic Employee-step eligibility
-                decision about each Ticket.
+                The readiness loop starts from that same membership-only candidate set,
+                then asks the complete readiness decision about each Ticket.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/sprints/</code>,
@@ -722,7 +721,7 @@
               </p>
               <p>
                 Workers write proposals to the six fields: kickoff, success, approach,
-                plan, implementation, and closeout. The resolution engine is the only code that can
+                plan, implementation, and closeout. The proposal resolver is the only code that can
                 settle a proposal or advance <code>stage</code>. Scope is
                 <code>ceiling</code> plus <code>at_cap</code>; it decides how far a
                 worker may go before the human must approve again. The UI labels the
@@ -731,11 +730,11 @@
               </p>
               <p>
                 Stage ownership decides who drives the current Stage: worker, user, or
-                paired. Worker-owned Stages can be discovered automatically, user-owned
+                paired. Worker-owned Stages can be started automatically, user-owned
                 Stages rest at <code>user</code>, and paired Stages get one automatic
                 opening turn and then rest at <code>paired</code>, where human
-                conversation continues the same Employee session and no further step is
-                started automatically. Any real paired proposal parks for approval. The Worker type selects a
+                conversation continues in the same Ticket conversation and no further
+                step is started automatically. Any real paired proposal parks for approval. The Worker type selects a
                 default backend key. During pristine Kickoff, the Ticket may instead select
                 <code>hermes</code>, <code>codex</code>, or <code>claude</code>. A session,
                 binding, or move beyond Kickoff freezes that stored choice.
@@ -752,59 +751,58 @@
           <details>
             <summary>
               <span class="number">04</span>
-              <span><strong>The Employee Runtime</strong><span>Advisory automatic eligibility discovery and separate step execution.</span></span>
+              <span><strong>Worker Orchestration</strong><span>Decide a Ticket is ready, claim it, send the step.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                One complete decision owns <strong>Automatic Employee-step eligibility</strong>.
-                It returns yes only when the Ticket is on the planning day, its current
+                One complete decision owns <strong>worker-step readiness</strong>. It
+                returns yes only when the Ticket is on the planning day, its current
                 Stage is not terminal and has a gated field, the user does not own that
                 Stage, its <code>ticket_status</code> is <code>empty</code>, no proposal
-                is already parked, scope permits the next proposal, and no Employee step
-                is already running. The <code>empty</code> check is what keeps blocked,
-                paired, errored, user-held, help-waiting, and approval-waiting Tickets
-                from starting; the decision reads only current facts.
+                is already parked, scope permits the next proposal, and its Closeout lane
+                is free. The <code>empty</code> check is what keeps blocked, paired,
+                errored, user-held, help-waiting, approval-waiting, and already-out
+                Tickets from starting; the decision reads only current facts.
               </p>
               <p>
-                AutomaticEmployeeStepDiscoveryLoop is read-only and advisory. It selects
-                only Tickets that belong to today's day, then calls the complete decision for
-                each membership candidate. It does not claim Tickets, write state, or contact
-                the ACP backend.
+                One more question the record cannot answer is asked before anything is
+                sent: whether that Ticket's worker is already busy. That is the
+                conversation system's fact, and a busy worker is left alone for the pass.
               </p>
               <p>
-                EmployeeStepRunner separately owns one worker step. Its final claim starts
-                <code>BEGIN IMMEDIATE</code>, reloads the Ticket and its Worker type definition,
-                resolves the planning day inside the transaction, and calls the same complete
-                decision. A stale discovery result cannot change status, create a run, call
-                the gateway, or build a prompt. After a successful claim, the runner creates
-                one running <code>employee_step_runs</code> row and sends the step through
-                <code>AcpStepGateway</code>.
+                Taking the Ticket out of <code>empty</code> under
+                <code>BEGIN IMMEDIATE</code> <strong>is</strong> the claim — to
+                <code>agent</code> for a worker-owned Stage, <code>paired</code> for a
+                paired one. The readiness decision runs again inside that write, so two
+                racers both re-check under the same lock and only one writes. There is no
+                claim stamp and no run record.
               </p>
               <p>
-                <code>employee_step_runs</code> is correctness state only: identity, status,
-                exact Employee session, error, and timestamps. It stores no prompt, reply,
-                transcript, activity, usage, image, tool, or browser state. One partial index
-                permits at most one running step per Ticket.
+                The step is then sent as a real message: the opening instruction plus any
+                pending worker context, whose receipts are ticked off only after the send
+                reported started or queued. Both count as delivered. Only a refusal gives
+                the claim back, guarded on the status <em>and</em> the moment it was
+                written so a late release cannot erase a later legitimate move.
               </p>
               <p>
-                The gateway prepares pending worker context into the actual model prompt
-                before ACP delivery. It acknowledges exact context revisions only after ACP
-                admits the prompt. A correctness row is never model context.
+                Nothing watches the turn end. A Ticket moves again only when someone acts
+                on it, and a crash leaves a Ticket whose status and whose live worker
+                disagree — visible on purpose, with no recovery sweep to pretend
+                otherwise.
               </p>
               <p>
-                The discovery loop subscribes to the change signal, so any committed write
-                in the server process makes it check again at once. The signal carries no
-                Ticket id, owns no state, and sends no IPC; a failed delivery is logged and
-                ignored, because SQLite and the periodic discovery timer remain canonical.
-                Over-waking is deliberate and cheap: the re-check is read-only and complete.
+                The loop subscribes to the change signal, so any committed write in the
+                server process makes it check again at once. The signal carries no Ticket
+                id, owns no state, and sends no IPC; a failed delivery is logged and
+                ignored, because SQLite and the periodic timer remain canonical.
+                Over-waking is deliberate and cheap: the re-check is read-only and
+                complete.
               </p>
               <p class="code-paths">
-                Code paths: <code>src/planner/runtime/automatic_employee_step_eligibility.py</code>,
-                <code>src/planner/runtime/automatic_employee_step_discovery_loop.py</code>,
+                Code paths: <code>src/planner/runtime/worker_step_readiness.py</code>,
+                <code>src/planner/runtime/worker_step_readiness_loop.py</code>,
+                <code>src/planner/runtime/conversation_start.py</code>,
                 <code>src/planner/core/change_signal.py</code>,
-                <code>src/planner/runtime/employee_step_runner.py</code>,
-                <code>src/planner/runtime/acp_step_gateway.py</code>,
-                <code>src/planner/runtime/employee_step_repository.py</code>,
                 <code>src/planner/core/loops.py</code>
               </p>
             </div>
@@ -813,22 +811,25 @@
           <details>
             <summary>
               <span class="number">05</span>
-              <span><strong>The ACP Conversation System</strong><span>One durable session for human and Automatic Employee prompts.</span></span>
+              <span><strong>The ACP Conversation System</strong><span>The browser's conversation pane and everything under it.</span></span>
             </summary>
             <div class="detail-body">
               <p>
                 <code>ConversationComposition</code> owns the Employee registry,
-                typed publication hub, turn broker, permission broker, durable binding
-                repository, and the Automatic Employee step gateway. The server is the
-                ACP client and uses the official ACP client library; an agent backend runs
-                as a child process over ACP standard input and output.
+                typed publication hub, turn broker, permission broker, and durable binding
+                repository. The server is the ACP client and uses the official ACP client
+                library; an agent backend runs as a child process over ACP standard input
+                and output. Worker orchestration no longer goes through here: it talks to
+                a small conversation contract, composed today as an in-memory stand-in
+                until the replacement conversation system lands.
               </p>
               <p>
                 <code>conversation_session_bindings</code> is the durable owner of ACP
                 session identity. A Ticket mirrors that id in
                 <code>tickets.employee_session_id</code>; the Chief has no second mirror.
-                Human prompts, Automatic Employee steps, and revision guidance all reach
-                the same binding and resume it after restart.
+                Human prompts reach that binding and resume it after restart. In the
+                interim both conversation systems write that one column, and the last
+                writer wins.
               </p>
               <p>
                 The turn broker owns active work, Steer, Send Now, Queue, Stop, and
@@ -998,7 +999,7 @@
         </p>
         <ul class="boundary-list">
           <li>
-            <strong>Resolution engine</strong>
+            <strong>Proposal resolver</strong>
             <span>Owns Ticket field values and Ticket <code>stage</code> transitions.</span>
           </li>
           <li>

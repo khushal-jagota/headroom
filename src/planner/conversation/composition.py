@@ -20,8 +20,8 @@ from planner.conversation.backend_catalog import EmployeeBackendBuildContext
 from planner.core.clock import Clock
 from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_types.configuration import (
-    ConfiguredEmployeeRuntimeDefinitions,
-    configured_employee_runtime_definitions,
+    ConfiguredWorkerRuntimeDefinitions,
+    configured_worker_runtime_definitions,
 )
 
 from .backend_contracts import AcpConversationIngress, ConversationIngressTransition
@@ -87,7 +87,7 @@ def _permit_worker_permission_settlement(
 class ConversationTestOptions:
     """Explicit test-only runtime substitution; production never imports test subjects."""
 
-    employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions
+    employee_runtime_definitions: ConfiguredWorkerRuntimeDefinitions
     ingress_capacity: int = 256
     browser_capacity: int | None = None
     # Temporary live ceiling while the imported durable replay is measured.
@@ -131,7 +131,7 @@ class ConversationComposition:
         employee_workspace_root = employee_workspace_root.resolve(strict=False)
 
         if test_options is None:
-            employee_runtime_definitions = configured_employee_runtime_definitions()
+            employee_runtime_definitions = configured_worker_runtime_definitions()
             ingress_capacity = 2_048
             browser_capacity = ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
             # Temporary live ceiling while the imported durable replay is measured.

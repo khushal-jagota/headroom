@@ -57,10 +57,10 @@ INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     ),
     worker_profile=WorkerProfile(
         specialist_skill="panels-worker-initiative-planning",
-        default_employee_model="gpt-5.6-sol",
-        default_employee_reasoning_effort="medium",
+        default_model="gpt-5.6-sol",
+        default_reasoning_effort="medium",
         toolset_profile="default",
-        default_employee_backend="codex",
+        default_backend="codex",
     ),
     supports_prefix_reconciliation=True,
 )

@@ -83,9 +83,9 @@ PROBE_MANIFEST = {
     "ceiling_range": ["needs_kickoff", "needs_alpha", "needs_beta", "done"],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
-    "default_employee_backend": "probe-backend",
-    "default_employee_model": "probe-model",
-    "default_employee_reasoning_effort": "probe-high",
+    "default_backend": "probe-backend",
+    "default_model": "probe-model",
+    "default_reasoning_effort": "probe-high",
 }
 
 @pytest.fixture

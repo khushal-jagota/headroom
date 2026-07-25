@@ -33,7 +33,7 @@ from planner.days.logic.dates import resolve_day_id
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import NO_FURTHER, AtCap
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
-from planner.worker_types.configuration import build_employee_runtime_definitions
+from planner.worker_types.configuration import build_worker_runtime_definitions
 from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
 from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
@@ -47,9 +47,9 @@ _SCRIPTED_WORKER_TYPE_DEFINITIONS = tuple(
         definition,
         worker_profile=replace(
             definition.worker_profile,
-            default_employee_backend="hermes",
-            default_employee_model=None,
-            default_employee_reasoning_effort=None,
+            default_backend="hermes",
+            default_model=None,
+            default_reasoning_effort=None,
         ),
     )
     for definition in (
@@ -110,7 +110,7 @@ def _application(tmp_path: Path) -> tuple[Any, Path, str]:
     catalog = EmployeeBackendCatalog(
         (static_employee_backend_registration(definition, SdkAcpEmployeeChildFactory(definition)),)
     )
-    runtime_definitions = build_employee_runtime_definitions(
+    runtime_definitions = build_worker_runtime_definitions(
         catalog,
         worker_type_definitions=_SCRIPTED_WORKER_TYPE_DEFINITIONS,
     )

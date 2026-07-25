@@ -457,7 +457,7 @@ def test_corrupt_current_files_restore_custom_launch_defaults_on_first_read(
     tmp_path: Path,
 ) -> None:
     registry = configured_worker_type_registry()
-    expected = worker_settings_service.update_employee_launch_defaults(
+    expected = worker_settings_service.update_worker_launch_defaults(
         tmp_path,
         registry,
         "coding",

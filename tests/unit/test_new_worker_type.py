@@ -35,7 +35,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import fields_codec
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     PRODUCTION_WORKER_TYPE_REGISTRY,
 )
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
@@ -72,7 +72,7 @@ def test_registry_validates_new_worker() -> None:
         (NEW_WORKER_TYPE_DEFINITION,),
         known_skills=_KNOWN_SKILLS,
         known_toolset_profiles=_KNOWN_TOOLSET_PROFILES,
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 
@@ -186,9 +186,9 @@ NEW_WORKER_MANIFEST = {
     ],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-new-worker",
-    "default_employee_backend": "codex",
-    "default_employee_model": "gpt-5.6-sol",
-    "default_employee_reasoning_effort": "medium",
+    "default_backend": "codex",
+    "default_model": "gpt-5.6-sol",
+    "default_reasoning_effort": "medium",
 }
 
 

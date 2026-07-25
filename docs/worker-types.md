@@ -225,18 +225,19 @@ _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
 `src/planner/conversation/hermes_backend_configuration.py`, and
 `web/src/routes/AgentsRoute.svelte`.
 
-## The Ticket owns its Employee launch setup
+## The Ticket owns its launch setup
 
 Each Worker type supplies the Worker, Model, and Reasoning values used to start a new
 Ticket. Creation copies the trio once. From then on, the Ticket owns it; changing the
 Worker type's defaults later does not change existing Tickets, and switching a Ticket's
 Worker does not restore an earlier set of choices.
 
-The complete trio may change only while the Ticket is still at pristine Kickoff, has no
-Employee session, and has no durable conversation binding. One save replaces the whole
-setup. Changing Worker resets Model and Reasoning to that backend's native defaults.
-Changing Model retains an explicit Reasoning choice only when the new model still supports it.
-The first Employee demand or any move past Kickoff freezes the setup.
+The complete trio may be edited in the Kickoff controls only while the Ticket is still
+at pristine Kickoff and has no conversation yet. One save replaces the whole setup.
+Changing Worker resets Model and Reasoning to that backend's native defaults. Changing
+Model retains an explicit Reasoning choice only when the new model still supports it.
+Starting the Ticket's first conversation, or any move past Kickoff, removes those
+controls.
 
 Hermes offers Model but not Reasoning. Codex and Claude Code offer Model, and their
 Reasoning choices depend on the selected model. Leaving Model or Reasoning at its native
@@ -249,10 +250,9 @@ model. A catalog stays fresh for 24 hours across a server restart. The user can 
 keeps the last catalog in the database but reports the failure instead of presenting stale
 choices as a successful refresh.
 
-The stored model and reasoning are requests for the first session, not a live settings
-mirror. After the Ticket binds a session they remain only as the historical Kickoff
-request, while human conversation and Automatic Employee work use the same stored
-backend and durable ACP session.
+The stored backend, model and reasoning are the Ticket's last-chosen values. They start
+as the Worker type's defaults and are kept up to date with what its conversation
+actually runs on, so a fresh conversation starts from where the last one ended.
 
 Chief settings use the same managed authority for Backend, Model, and Reasoning. A new Chief
 conversation copies the then-current trio into its durable binding. An existing Chief session
@@ -267,7 +267,7 @@ behavior its adapter does not suppress.
 _Code paths:_ `src/planner/conversation/backend_catalog.py` owns the ordered backend
 catalog; `src/planner/worker_types/configuration.py` composes it with the Worker-type
 registry; `src/planner/tickets/data.py` stores and freezes the Ticket setup; and
-`web/src/components/EmployeeConfigurationSetup.svelte` renders the Kickoff controls.
+`web/src/components/WorkerConfigurationSetup.svelte` renders the Kickoff controls.
 
 ## How a worker finds its specialist
 
@@ -280,9 +280,8 @@ that skill with `skill_view` and follows its Stage-specific guidance.
 
 Panels opens or resumes the Ticket's durable ACP conversation. The conversation binding
 owns the Employee-to-session relationship and records the Ticket's selected backend. The
-Ticket mirrors its session id, and one ACP session cannot belong to two Employees. Human
-and Automatic Employee prompts use that same backend and binding. Restart resumes it
-rather than reconstructing identity from terminal state.
+Ticket mirrors its session id, and one ACP session cannot belong to two Employees.
+Restart resumes it rather than reconstructing identity from terminal state.
 
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
@@ -294,9 +293,9 @@ Understanding, Stages, Thinking, Runtime Defaults, Drafting, Closeout, Done. Und
 and Runtime Defaults are paired. Runtime Defaults approves an explicit registered backend,
 advertised model, and supported reasoning effort before Drafting records them in the
 Worker profile. Understanding:
-Panels dispatches one automatic opening turn into the durable Employee session, human
-conversation continues that same session, and an Understanding proposal waits for approval
-before the Ticket advances to Stages.
+Panels sends one automatic opening turn into the Ticket's conversation, human
+conversation continues in that same conversation, and an Understanding proposal waits for
+approval before the Ticket advances to Stages.
 
 The repository exposes the same skill source at Codex's and Claude Code's native project
 skill locations, while startup links the listed skills into the planner Hermes home. The
@@ -348,8 +347,8 @@ prefix, and reconciliation support before changing state.
 
 - **Tickets and gates** (`tickets-and-gates.md`) explains scope, proposals, resolution,
   Stage ownership and per-Ticket overrides, scope, and approval.
-- **The employee runtime** (`employee-runtime.md`) explains how a worker owns one Ticket
-  step and reaches its specialist.
+- **Worker orchestration** (`worker-orchestration.md`) explains how a Ticket's next
+  worker step gets started and how the worker reaches its specialist.
 - **The frontend** (`frontend.md`) explains the screens driven by the served manifest.
 - **The command-line tool** (`cli.md`) explains the worker and Chief commands.
 

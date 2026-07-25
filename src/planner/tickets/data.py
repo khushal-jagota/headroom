@@ -49,8 +49,8 @@ from planner.worker_settings.service import (
     read_worker_launch_defaults_for_ticket_creation,
 )
 from planner.worker_types.configuration import (
-    ConfiguredEmployeeRuntimeDefinitions,
-    configured_employee_runtime_definitions,
+    ConfiguredWorkerRuntimeDefinitions,
+    configured_worker_runtime_definitions,
     configured_worker_type_registry,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -462,6 +462,13 @@ def write_employee_session_id_in_transaction(
     force_fresh_employee_session: bool,
     now: int,
 ) -> str:
+    """Bind the old ACP layer's session id into the Ticket's conversation-link column.
+
+    This is the old conversation layer's compare-and-set writer, kept until that layer
+    is swapped out. The worker-orchestration side writes the same column through
+    ``write_ticket_conversation_start``; the name and the column stay as they are
+    because renaming a column needs a migration.
+    """
     candidate = transition.candidate_employee_session_id
     if not isinstance(candidate, str) or not candidate:
         raise PlannerError(
@@ -662,7 +669,7 @@ def write_employee_configuration(
         if not employee_configuration_editable(conn, ticket):
             raise PlannerError(
                 ErrorCode.already_running,
-                "Employee configuration is frozen after Kickoff or Employee demand",
+                "Employee configuration is frozen after Kickoff or the first worker session",
                 {"ticket_id": ticket_id},
             )
         conn.execute(
@@ -695,13 +702,13 @@ def create_ticket(
     sprint_item_id: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
-    employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
+    worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
-    runtime_definitions = employee_runtime_definitions or configured_employee_runtime_definitions()
+    runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
@@ -831,7 +838,7 @@ def create_ticket_from_external_work(
     sprint_item_id: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
-    employee_runtime_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None,
+    worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
 ) -> Ticket:
@@ -842,7 +849,7 @@ def create_ticket_from_external_work(
     admission.validate_deadline(deadline)
     if recap is not None:
         admission.validate_body(recap, "recap")
-    runtime_definitions = employee_runtime_definitions or configured_employee_runtime_definitions()
+    runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
@@ -1064,7 +1071,7 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
     production server audits existing rows once before serving or starting background
     work. Plain row loading intentionally returns stored values without resolving a
     Worker type merely to read a Stage."""
-    runtime_definitions = configured_employee_runtime_definitions()
+    runtime_definitions = configured_worker_runtime_definitions()
     registry = runtime_definitions.worker_type_registry
     for row in conn.execute(
         "SELECT id, worker_type, employee_backend, stage, ceiling, fields FROM tickets ORDER BY id"
@@ -1216,7 +1223,7 @@ def release_worker_step_claim(
         return True
 
 
-def mark_run_errored(
+def mark_ticket_errored(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,

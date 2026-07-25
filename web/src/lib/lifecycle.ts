@@ -39,9 +39,9 @@ export type WorkerTypeManifest = {
   ceiling_range: string[];
   default_ceiling: string;
   worker_profile_id: string;
-  default_employee_backend: string;
-  default_employee_model: string | null;
-  default_employee_reasoning_effort: string | null;
+  default_backend: string;
+  default_model: string | null;
+  default_reasoning_effort: string | null;
 };
 
 export type WorkerTypesResponse = {

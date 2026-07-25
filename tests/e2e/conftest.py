@@ -5,7 +5,7 @@ Each test gets a real ``panels serve`` subprocess on an OS-assigned port, backed
 fresh temp SQLite DB in ``PLAN_TEST_MODE``. Browser contexts come from
 pytest-playwright's session ``browser``; the ``open_page`` / ``cli`` / ``api`` helpers
 drive the surfaces. Every Playwright wait carries an explicit ``timeout``; the only sleep
-is the Automatic Employee-step discovery poll's 0.1s interval, which polls a condition
+is the worker-step readiness poll's 0.1s interval, which polls a condition
 inside a boot budget.
 """
 

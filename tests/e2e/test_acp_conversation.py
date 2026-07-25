@@ -61,8 +61,8 @@ from planner.worker_context import data as worker_context_data
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
-    build_employee_runtime_definitions,
+    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
+    build_worker_runtime_definitions,
 )
 from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
 from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
@@ -87,9 +87,9 @@ _SCRIPTED_WORKER_TYPE_DEFINITIONS = tuple(
         definition,
         worker_profile=replace(
             definition.worker_profile,
-            default_employee_backend="hermes",
-            default_employee_model=None,
-            default_employee_reasoning_effort=None,
+            default_backend="hermes",
+            default_model=None,
+            default_reasoning_effort=None,
         ),
     )
     for definition in (
@@ -102,7 +102,7 @@ _SCRIPTED_WORKER_TYPE_DEFINITIONS = tuple(
 
 
 def _scripted_runtime_definitions(catalog: EmployeeBackendCatalog) -> Any:
-    return build_employee_runtime_definitions(
+    return build_worker_runtime_definitions(
         catalog,
         worker_type_definitions=_SCRIPTED_WORKER_TYPE_DEFINITIONS,
     )
@@ -110,7 +110,7 @@ def _scripted_runtime_definitions(catalog: EmployeeBackendCatalog) -> Any:
 
 def test_production_employee_backend_catalog_is_hermes_codex_claude() -> None:
     assert (
-        PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
+        PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
         == ("hermes", "codex", "claude")
     )
 
@@ -312,7 +312,7 @@ def _application_with_backends(
     )
 
 
-def _seed_eligible_ticket(
+def _seed_ready_ticket(
     conn: Any,
     clock: Any,
     boundary_hour: int,
@@ -751,7 +751,7 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
     )
     with connect(db_path) as conn:
         create_schema(conn)
-        ticket = _seed_eligible_ticket(
+        ticket = _seed_ready_ticket(
             conn,
             clock,
             config.boundary_hour,
@@ -830,7 +830,7 @@ def test_user_reply_reaches_same_acp_session_while_worker_help_waits(
     )
     with connect(db_path) as conn:
         create_schema(conn)
-        ticket = _seed_eligible_ticket(
+        ticket = _seed_ready_ticket(
             conn,
             clock,
             config.boundary_hour,
@@ -1035,7 +1035,7 @@ def test_new_ticket_and_chief_sessions_show_visible_role_and_worker_prompts(
     ticket_clock = build_clock(ticket_config)
     with connect(ticket_db_path) as conn:
         create_schema(conn)
-        ticket = _seed_eligible_ticket(
+        ticket = _seed_ready_ticket(
             conn,
             ticket_clock,
             ticket_config.boundary_hour,
@@ -2512,7 +2512,7 @@ def test_automatic_worker_delivers_pending_context_through_official_sdk_once(
         clock = build_clock(config)
         with connect(db_path) as conn:
             create_schema(conn)
-            ticket = _seed_eligible_ticket(
+            ticket = _seed_ready_ticket(
                 conn,
                 clock,
                 config.boundary_hour,
@@ -2597,7 +2597,7 @@ def test_automatic_worker_starts_stream_before_midturn_browser_attach(
         clock = build_clock(config)
         with connect(db_path) as conn:
             create_schema(conn)
-            ticket = _seed_eligible_ticket(conn, clock, config.boundary_hour)
+            ticket = _seed_ready_ticket(conn, clock, config.boundary_hour)
         app = _application(config, clock, _definition())
 
         with TestClient(app) as client:
@@ -2702,7 +2702,7 @@ def test_stale_worker_permission_cannot_settle(
         clock = build_clock(config)
         with connect(db_path) as conn:
             create_schema(conn)
-            ticket = _seed_eligible_ticket(
+            ticket = _seed_ready_ticket(
                 conn,
                 clock,
                 config.boundary_hour,

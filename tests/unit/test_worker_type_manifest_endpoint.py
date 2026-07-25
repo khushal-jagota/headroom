@@ -22,7 +22,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     PRODUCTION_WORKER_TYPE_REGISTRY,
 )
 
@@ -75,14 +75,14 @@ def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend
         served = client.get("/api/worker-types").json()
 
     assert served["employee_backends"] == ["hermes", "codex", "claude", "probe-backend"]
-    assert [item["default_employee_backend"] for item in served["worker_types"]] == [
+    assert [item["default_backend"] for item in served["worker_types"]] == [
         "codex",
         "codex",
         "codex",
         "codex",
         "probe-backend",
     ]
-    assert [item["default_employee_model"] for item in served["worker_types"]] == [
+    assert [item["default_model"] for item in served["worker_types"]] == [
         "gpt-5.6-sol",
         "gpt-5.6-sol",
         "gpt-5.6-sol",
@@ -90,10 +90,10 @@ def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend
         "probe-model",
     ]
     assert [
-        item["default_employee_reasoning_effort"] for item in served["worker_types"]
+        item["default_reasoning_effort"] for item in served["worker_types"]
     ] == ["medium", "medium", "medium", "medium", "probe-high"]
     assert (
-        PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
+        PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
         == ("hermes", "codex", "claude")
     )
 

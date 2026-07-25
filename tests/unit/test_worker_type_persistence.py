@@ -29,11 +29,11 @@ from planner.tickets.contracts import (
 )
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
-    ConfiguredEmployeeRuntimeDefinitions,
+    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
+    ConfiguredWorkerRuntimeDefinitions,
     configured_worker_type_registry,
-    install_employee_runtime_definitions_for_test,
-    restore_employee_runtime_definitions_for_test,
+    install_worker_runtime_definitions_for_test,
+    restore_worker_runtime_definitions_for_test,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -58,7 +58,7 @@ def _two_type_registry():
         # "panels-worker-coding"), so the catalog must carry it or R14 fails.
         known_skills=frozenset({"panels-worker", "panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 
@@ -67,8 +67,8 @@ def two_type_registry():
     """Install a registry carrying coding + a coding-shaped second type for the
     persistence doors, then restore production composition after the test."""
     registry = _two_type_registry()
-    previous_definitions = install_employee_runtime_definitions_for_test(
-        ConfiguredEmployeeRuntimeDefinitions(
+    previous_definitions = install_worker_runtime_definitions_for_test(
+        ConfiguredWorkerRuntimeDefinitions(
             registry.employee_backend_catalog,
             registry,
         )
@@ -76,7 +76,7 @@ def two_type_registry():
     try:
         yield
     finally:
-        restore_employee_runtime_definitions_for_test(previous_definitions)
+        restore_worker_runtime_definitions_for_test(previous_definitions)
 
 
 @pytest.fixture
@@ -453,7 +453,7 @@ def test_second_type_reaches_coding_default_engine_paths(
     tmp_db: Connection, fake_clock: TestClock, two_type_registry: None
 ) -> None:
     # review-F6 demonstration: a coding-shaped non-coding row flows through the
-    # coding-DEFAULT resolution engine (decide_*) — it advances by coding semantics,
+    # coding-DEFAULT proposal resolver (decide_*) — it advances by coding semantics,
     # NOT a second definition threaded through resolution. This is exactly why no
     # second PRODUCTION definition may be registered until t_tt02b threads the
     # definition through resolution/external-work.

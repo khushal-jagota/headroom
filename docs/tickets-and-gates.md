@@ -4,7 +4,7 @@ A ticket is one piece of work small enough to hand to a single AI worker. It is 
 correctness heart of the planner: everything about _how far a worker may go on its
 own_ and _what waits for the human_ is decided here. A ticket moves through its stages
 by filling one blank at a time, and no value ever becomes real except through one
-door — the resolution engine.
+door — the proposal resolver.
 
 The Stage set is not fixed for all Tickets — it is declared by the Ticket's **Worker
 type** (see `worker-types.md`). The lifecycle below is the **`coding`** Worker type's,
@@ -35,14 +35,13 @@ part of the Kickoff proposal. A new ordinary ticket parks a Kickoff field propos
 for review before any worker turn can start. Approving Kickoff settles the Kickoff
 field, then the ticket enters the worker stages.
 
-The Ticket also stores the Worker, Model, and Reasoning requested for its first Employee
-session. Creation copies the Worker type's three starting values once. The Kickoff
+The Ticket also stores the Worker, Model, and Reasoning its conversation runs on.
+Creation copies the Worker type's three starting values, and they are kept up to date
+afterwards, so a fresh conversation starts from where the last one ended. The Kickoff
 section shows the editable controls beside approval only while Kickoff is pristine and
-no session or conversation binding exists. Hermes has no Reasoning control; Codex and
-Claude Code show the Reasoning values supported by the selected model. Advancing Kickoff
-or making the first Employee demand freezes the complete setup and removes the controls.
-The stored model and reasoning then remain historical launch choices, not a display of
-the session's current settings.
+no conversation exists yet. Hermes has no Reasoning control; Codex and Claude Code show
+the Reasoning values supported by the selected model. Advancing Kickoff or starting the
+Ticket's first conversation removes the controls.
 
 After Kickoff, a ticket fills its blanks in order: a **success condition** (what
 does done mean?), an **approach** (how, roughly?), a **plan** (concretely, step by
@@ -65,24 +64,17 @@ value path.
 
 _Code paths:_ `src/planner/tickets/` (the Ticket Stage and its fields).
 
-### The durable Employee conversation
+### The Ticket's one conversation
 
-`conversation_session_bindings` owns one durable ACP session for the Ticket's
-employee and the exact stored `employee_backend` used to open it. The Ticket mirrors that
-session id in `employee_session_id`. Human prompts, Automatic Employee steps, and revision
-guidance all reach that same backend and session, and Panels resumes it after a restart
-instead of replaying the original prompt.
+A Ticket points at one conversation, and everything reaches the worker through it:
+worker steps Panels starts on its own, what the human types in the pane, and revision
+guidance sent back from Review. Starting a fresh one is deliberate — it stops the old
+worker outright and discards anything it was still holding — and the new one starts from
+the Ticket's last-chosen backend, model and reasoning.
 
-Before that first binding is written, Panels applies any explicit launch Model and then
-any explicit Reasoning choice to the new session. The binding is accepted only if the
-Ticket still owns the same complete setup. Once bound, loading and recovery trust the
-ACP session's own configuration. New Conversation also starts without reapplying the
-historical Kickoff model or reasoning.
-
-The ACP backend's typed replay is the conversation transcript. Panels does not keep a
-second message or active-turn table, and there is no separate Employee-history HTTP
-route. Pending worker context reaches the employee only when `AcpStepGateway` includes
-it in the real ACP prompt and ACP admits that prompt.
+The conversation system owns the transcript. Panels keeps no second message or
+active-turn table. Pending worker context reaches the worker only when it is included
+in a message that was actually sent — never because a row was written somewhere.
 
 ### Confirmed Worker failures
 
@@ -92,12 +84,10 @@ Ticket and Board reads, and shows it plainly on the Ticket page. The status and 
 are one fact: every transition to a non-error status clears the reason in the same
 database write.
 
-Employee-step correctness records are broader. They can record an errored delivery even
-when the Ticket remains available, because cancellation uncertainty, restart cleanup,
-session contention, permissions, browser publication, replay, and projection failures
-are not confirmed backend Worker failures. Workspace uses only the Ticket's canonical
-`backend_error` to choose its exceptional treatment; failed or interrupted conversation
-activity alone does not make the Workspace row exceptional.
+A delivery that never got through is not that. When Panels cannot get a step to the
+worker at all, it simply gives back the claim it took and the Ticket goes back to rest —
+nothing is recorded as an error. Workspace uses only the Ticket's canonical
+`backend_error` to choose its exceptional treatment.
 
 ### Work completed outside Panels
 
@@ -105,8 +95,8 @@ When work was completed elsewhere, the Chief can reconcile an existing ticket or
 one already populated through the explicit `panels chief` external-work commands. This
 is not a worker proposal and not a general Stage bypass. The operation requires a
 complete Kickoff field value, an exact settled-field prefix for the target Stage, and a Chief
-request. It refuses backward moves, pending proposals, active ticket control, and
-running Employee steps. It moves the ceiling to the imported Stage but preserves the Ticket's
+request. It refuses backward moves, pending proposals, active ticket control, and a
+worker that is mid-turn. It moves the ceiling to the imported Stage but preserves the Ticket's
 at-cap choice: an explicit **Stop** remains Stop; otherwise **Continue** remains. The
 target Stage's effective ownership then determines whether the Ticket rests ready for
 the worker, with the user, or paired.
@@ -114,7 +104,7 @@ the worker, with the user, or paired.
 The create or reconciliation writer commits all fields, Kickoff value, recap, Stage,
 scope, and ownership-derived resting status together. A validation or concurrency
 failure leaves the ticket exactly as it was. Committing is itself what tells the
-Automatic Employee-step discovery loop to look again.
+readiness loop to look again.
 
 Standalone tickets may point at a project by `project_id`. API responses also include
 `project`, the display name, for compatibility. A ticket under a sprint item does not
@@ -126,7 +116,7 @@ An ordinary Ticket create and a Chief external-work Ticket create may name any n
 of existing blocker Ticket ids. Panels creates the dependent Ticket and every directed
 `blocks` link in one transaction. A missing, invalid, or repeated blocker rejects the
 whole create with a structured error. Nothing is saved. A successful create commits
-once, so Automatic Employee eligibility is nudged once.
+once, so readiness is nudged once.
 
 A blocker is **live** while the Ticket doing the blocking is neither done nor dropped.
 Blocking shows up in exactly one place: the dependent Ticket's status. When a Ticket
@@ -174,21 +164,20 @@ Later changes therefore do not move work already resting there. A Ticket may als
 the stored default for a particular Stage. The current Stage's override wins; without one,
 the stored default applies. Terminal Tickets have no current owner.
 
-- **Worker-owned** Stages rest at `empty`, ready for automatic eligibility — or at
-  `blocked` while a live blocker remains. The other runtime, proposal, and scope
-  conditions must still allow a run.
+- **Worker-owned** Stages rest at `empty`, ready for Panels to start the next step —
+  or at `blocked` while a live blocker remains. The other readiness, proposal, and
+  scope conditions must still allow it.
 - **User-owned** Stages rest at `user` and are never dispatched automatically. The user
   does the work, then the Chief records it through external-work reconciliation; there
   is no direct self-settle path.
-- **Paired** Stages get one automatic Employee opening turn when the Stage becomes
-  eligible, then rest at `paired`. Because only `empty` Tickets are started
-  automatically, a Ticket resting at `paired` is never started again — the human
-  conversation carries it from there, on the same durable Employee conversation. A turn
-  without a proposal leaves it at `paired`; a real proposal always parks for approval,
-  regardless of scope.
+- **Paired** Stages get one automatic opening turn when the Stage becomes ready, then
+  rest at `paired`. Because only `empty` Tickets are started automatically, a Ticket
+  resting at `paired` is never started again — the human conversation carries it from
+  there, in the same Ticket conversation. A turn without a proposal leaves it at
+  `paired`; a real proposal always parks for approval, regardless of scope.
 
-**Take over** sets a `user` override for the current Stage, even if an Employee run is
-active. That run cannot undo the takeover when it settles. **Release** clears the current
+**Take over** sets a `user` override for the current Stage, even while a worker step is
+out. Nothing that step does afterwards can undo the takeover. **Release** clears the current
 Stage override and reapplies the default captured when the Ticket entered that Stage; there
 is no stack of older overrides. Moving to another Stage captures that Stage's current global
 default, then applies any explicit Ticket override.
@@ -203,7 +192,7 @@ _Code paths:_ `src/planner/tickets/logic/machine.py`, `src/planner/tickets/data.
 ## The one rule: proposals and the single door
 
 Workers never change the record directly. A worker that wants to move work forward
-files a **proposal** on the blank the current stage gates. The resolution engine is
+files a **proposal** on the blank the current stage gates. The proposal resolver is
 the only thing that can turn a proposal into a real value or advance the stage. Only
 one proposal can be pending on a blank at a time — a newer one replaces the older,
 and the replacement is recorded.
@@ -217,7 +206,7 @@ orientation line that works beside the title: what the ticket is, where it stand
 and the key fact for the current step. It is not a detailed log. It can be written or
 updated at any stage — recap is never gated.
 
-_Code paths:_ `src/planner/core/loops.py` (the resolution engine), `src/planner/core/server.py`.
+_Code paths:_ `src/planner/tickets/logic/resolution.py` (the proposal resolver), `src/planner/tickets/data.py`.
 
 ## How far a worker may go: the scope
 
@@ -259,8 +248,10 @@ way that happens.
 
 The Review screen can also send a ticket back instead of accepting it, whatever field
 is currently gated. The human writes short guidance in the review card. Panels
-reserves a revision Employee step and sends that guidance as the real next ACP prompt
-in the Ticket's existing durable session. The ticket's stage never changes: a pending
+sends that guidance as the real next message into the Ticket's conversation, and only
+then hands the Ticket back to the worker — that order matters, because the hand-back
+deletes the pending proposal and could not be honestly undone if the send had failed.
+A refused send changes nothing and can simply be retried. The ticket's stage never changes: a pending
 gated proposal is cleared, settled values remain, and the ticket leaves Review while
 its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
@@ -280,16 +271,16 @@ _Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
 Dropping a ticket keeps its record. Permanent deletion is different: it is a
 direct-only capability for a ticket created by mistake. The ticket UI intentionally
 has no delete control; deletion remains a manual API or CLI operation, and the CLI
-requires `--yes`. The operation is blocked while an Employee step is still running.
-One transaction removes the ticket from days, sprint views, links, Review, Workspace,
-pending worker context, its durable conversation binding, and terminal Employee-step
-rows. Other tickets and day ordering stay intact.
+requires `--yes`. It is refused while the Ticket's status says a worker step is out,
+and also while its conversation has a turn running. One transaction removes the ticket
+from days, sprint views, links, Review, Workspace, and pending worker context. Other
+tickets and day ordering stay intact.
 
 Blocker links are removed in the same transaction, and the delete response lists the
 surviving Ticket and Sprint-item endpoints those links pointed at.
 
-The separate stored Employee session is outside Panels' record and is not erased, but
-Panels removes the binding that could resolve or resume it.
+The conversation itself lives outside Panels' record and is not erased, but nothing in
+Panels points at it any more.
 
 The whole deletion is one transaction, so it announces one change — not one per removed
 day or link.
@@ -302,9 +293,9 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 - **Worker types** (`worker-types.md`) — the registry that declares this Ticket's Stage
   set, its gates, fields, default ownership, and worker. The six Stages above are the
   `coding` Worker type's.
-- **The employee runtime** (`employee-runtime.md`) — the worker that files the
-  proposals and does the drafting; committing a write is what tells discovery to check
-  again at once.
+- **Worker orchestration** (`worker-orchestration.md`) — how the worker that files
+  these proposals gets asked to take the next step; committing a write is what tells the
+  readiness loop to look again at once.
 - **The command-line tool** (`cli.md`) — how a worker files proposals, recaps, and
   notes; it deliberately holds no accept/approve/grant verb.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
@@ -318,4 +309,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-07-25 (the eight Ticket statuses, and the commit itself as the change signal)._
+_Last verified: 2026-07-25 (the eight Ticket statuses, the commit itself as the change signal, and revision sent before the Ticket is handed back)._

@@ -57,9 +57,9 @@ def _default_workspace_folder() -> Path:
     package through the Ticket routes, so a top-level import here would run while the
     server module is still being built.
     """
-    from planner.core.server import resolve_employee_workspace_root
+    from planner.core.server import resolve_worker_workspace_root
 
-    return resolve_employee_workspace_root()
+    return resolve_worker_workspace_root()
 
 
 def new_conversation_id() -> str:

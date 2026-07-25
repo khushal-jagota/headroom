@@ -24,8 +24,8 @@ from planner.skill_sources import ensure_managed_panels_skills, panels_skill_roo
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
-    ManagedEmployeeLaunchDefaults,
     ManagedSkill,
+    ManagedWorkerLaunchDefaults,
     ManagedWorkerSettings,
     SkillsHome,
     SpecialistSkillPatch,
@@ -258,18 +258,18 @@ def _bootstrap_settings_payload(definition: WorkerTypeDefinition) -> JsonDict:
             if not stage.is_terminal and stage.default_ownership_mode is not None
         },
         "launch_defaults": _launch_defaults_payload(
-            ManagedEmployeeLaunchDefaults(
-                employee_backend=definition.worker_profile.default_employee_backend,
-                employee_launch_model=definition.worker_profile.default_employee_model,
+            ManagedWorkerLaunchDefaults(
+                employee_backend=definition.worker_profile.default_backend,
+                employee_launch_model=definition.worker_profile.default_model,
                 employee_launch_reasoning_effort=(
-                    definition.worker_profile.default_employee_reasoning_effort
+                    definition.worker_profile.default_reasoning_effort
                 ),
             )
         ),
     }
 
 
-def _launch_defaults_payload(defaults: ManagedEmployeeLaunchDefaults) -> JsonDict:
+def _launch_defaults_payload(defaults: ManagedWorkerLaunchDefaults) -> JsonDict:
     return {
         "employee_backend": defaults.employee_backend,
         "employee_launch_model": defaults.employee_launch_model,
@@ -281,8 +281,8 @@ def _validate_launch_defaults(
     raw: object,
     *,
     registry: WorkerTypeRegistry,
-    fallback: ManagedEmployeeLaunchDefaults | None = None,
-) -> ManagedEmployeeLaunchDefaults:
+    fallback: ManagedWorkerLaunchDefaults | None = None,
+) -> ManagedWorkerLaunchDefaults:
     if raw is None and fallback is not None:
         return fallback
     if not isinstance(raw, dict) or set(raw) != {
@@ -307,7 +307,7 @@ def _validate_launch_defaults(
         ):
             raise PlannerError(ErrorCode.validation, f"{key} must be null or trimmed text", {})
         optional.append(value)
-    return ManagedEmployeeLaunchDefaults(
+    return ManagedWorkerLaunchDefaults(
         employee_backend=backend,
         employee_launch_model=optional[0],
         employee_launch_reasoning_effort=optional[1],
@@ -581,10 +581,10 @@ def _read_settings_with_recovery(
         launch_defaults = _validate_launch_defaults(
             settings_payload.get("launch_defaults"),
             registry=registry,
-            fallback=ManagedEmployeeLaunchDefaults(
-                profile.default_employee_backend,
-                profile.default_employee_model,
-                profile.default_employee_reasoning_effort,
+            fallback=ManagedWorkerLaunchDefaults(
+                profile.default_backend,
+                profile.default_model,
+                profile.default_reasoning_effort,
             ),
         )
         if "launch_defaults" not in settings_payload:
@@ -609,10 +609,10 @@ def _read_settings_with_recovery(
         launch_defaults = _validate_launch_defaults(
             settings_payload.get("launch_defaults"),
             registry=registry,
-            fallback=ManagedEmployeeLaunchDefaults(
-                profile.default_employee_backend,
-                profile.default_employee_model,
-                profile.default_employee_reasoning_effort,
+            fallback=ManagedWorkerLaunchDefaults(
+                profile.default_backend,
+                profile.default_model,
+                profile.default_reasoning_effort,
             ),
         )
         if "launch_defaults" not in settings_payload:
@@ -695,8 +695,8 @@ def _chief_settings_path(root: Path) -> Path:
     return root / CHIEF_SETTINGS_KEY / SETTINGS_FILE_NAME
 
 
-def _default_chief_launch_defaults() -> ManagedEmployeeLaunchDefaults:
-    return ManagedEmployeeLaunchDefaults(
+def _default_chief_launch_defaults() -> ManagedWorkerLaunchDefaults:
+    return ManagedWorkerLaunchDefaults(
         employee_backend=DEFAULT_CHIEF_BACKEND,
         employee_launch_model=DEFAULT_CHIEF_MODEL,
         employee_launch_reasoning_effort=DEFAULT_CHIEF_REASONING_EFFORT,
@@ -734,7 +734,7 @@ def read_chief_settings(
         )
 
 
-def update_employee_launch_defaults(
+def update_worker_launch_defaults(
     configured_database_parent: Path | str,
     registry: WorkerTypeRegistry,
     worker_type: str,
@@ -849,14 +849,14 @@ def read_worker_launch_defaults_for_ticket_creation(
     conn: sqlite3.Connection,
     registry: WorkerTypeRegistry,
     worker_type: str,
-) -> ManagedEmployeeLaunchDefaults:
+) -> ManagedWorkerLaunchDefaults:
     parent = database_parent_from_connection(conn)
     if parent is None:
         profile = registry.require(worker_type).worker_profile
-        return ManagedEmployeeLaunchDefaults(
-            profile.default_employee_backend,
-            profile.default_employee_model,
-            profile.default_employee_reasoning_effort,
+        return ManagedWorkerLaunchDefaults(
+            profile.default_backend,
+            profile.default_model,
+            profile.default_reasoning_effort,
         )
     return read_worker_settings(parent, registry, worker_type).launch_defaults
 

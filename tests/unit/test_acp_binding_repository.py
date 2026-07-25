@@ -35,7 +35,7 @@ from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     configured_worker_type_registry,
 )
 
@@ -75,7 +75,7 @@ def SqliteConversationBindingRepository(
         integer_now=integer_now,
         employee_backend_catalog=(
             employee_backend_catalog
-            or PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog
+            or PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog
         ),
         chief_backend_key=chief_backend_key,
     )
@@ -947,7 +947,7 @@ def test_new_chief_conversation_owns_launch_snapshot_until_first_binding(
         workspace_root=tmp_path,
         integer_now=lambda: 30,
         busy_timeout_ms=5000,
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
         chief_backend_key="codex",
         worker_type_registry=registry,
     )
@@ -1001,7 +1001,7 @@ def test_chief_settings_save_and_initial_binding_share_settings_then_sqlite_orde
         workspace_root=tmp_path,
         integer_now=lambda: 30,
         busy_timeout_ms=250,
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
         chief_backend_key="codex",
         worker_type_registry=registry,
     )

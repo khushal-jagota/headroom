@@ -264,8 +264,8 @@ The live service receives only external writable state paths; the release root i
 
 - **The command-line tool** (`cli.md`) — the command tree that exposes environment
   lifecycle verbs.
-- **The employee runtime** (`employee-runtime.md`) — the foreground server runtime
-  that `environment run` starts.
+- **Worker orchestration** (`worker-orchestration.md`) — the background loop the
+  foreground server started by `environment run` owns.
 - **Hermes gateway** (`systems.md`) — the external worker gateway whose homes stay
   separate between live, staging, and Ticket worktrees.
 

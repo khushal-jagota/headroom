@@ -191,12 +191,12 @@ def _validate_definition(
             },
         )
 
-    employee_backend_catalog.require_registered(definition.worker_profile.default_employee_backend)
+    employee_backend_catalog.require_registered(definition.worker_profile.default_backend)
     for field_name, value in (
-        ("default_employee_model", definition.worker_profile.default_employee_model),
+        ("default_model", definition.worker_profile.default_model),
         (
-            "default_employee_reasoning_effort",
-            definition.worker_profile.default_employee_reasoning_effort,
+            "default_reasoning_effort",
+            definition.worker_profile.default_reasoning_effort,
         ),
     ):
         if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -299,9 +299,9 @@ class WorkerTypeRegistry:
             "ceiling_range": list(definition.ceiling_range()),
             "default_ceiling": definition.default_ceiling(),
             "worker_profile_id": definition.worker_profile.specialist_skill,
-            "default_employee_backend": (definition.worker_profile.default_employee_backend),
-            "default_employee_model": definition.worker_profile.default_employee_model,
-            "default_employee_reasoning_effort": (
-                definition.worker_profile.default_employee_reasoning_effort
+            "default_backend": (definition.worker_profile.default_backend),
+            "default_model": definition.worker_profile.default_model,
+            "default_reasoning_effort": (
+                definition.worker_profile.default_reasoning_effort
             ),
         }

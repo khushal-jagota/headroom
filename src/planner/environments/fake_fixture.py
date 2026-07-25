@@ -241,7 +241,7 @@ def _create_tickets(
         sprint_id=sprint_id,
         worker_type="initiative_planning",
     )
-    tickets_data.mark_run_errored(
+    tickets_data.mark_ticket_errored(
         conn,
         exploration.id,
         error="Fictional non-production error for inspection.",

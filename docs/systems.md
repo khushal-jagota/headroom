@@ -1,8 +1,8 @@
 # Systems
 
-Panels is one planning record, one gate for canonical decisions, one Automatic
-Employee runtime, and one ACP conversation system. This page is the cold-start map:
-what each system owns and where the important boundaries sit.
+Panels is one planning record, one gate for canonical decisions, one worker-orchestration
+system, and one conversation system. This page is the cold-start map: what each system
+owns and where the important boundaries sit.
 
 ```
 Human browser ───────────────► FastAPI + SQLite ◄────────────── panels CLI
@@ -16,9 +16,9 @@ Human browser ───────────────► FastAPI + SQLite 
 ```
 
 The browser is the human decision surface. Workers use the CLI to inspect Tickets and
-file proposals. The resolution engine is the only door from a proposal to a canonical
-field value or Stage advance. Human and Automatic Employee prompts both reach the same
-durable ACP conversation for an employee.
+file proposals. The proposal resolver is the only door from a proposal to a canonical
+field value or Stage advance. What the human types and what Panels sends on its own
+both reach the same one conversation per Ticket.
 
 ## The Systems
 
@@ -29,9 +29,9 @@ foreign keys enabled and brings a database up to the current schema. Domain writ
 related changes in one transaction.
 
 The record contains planning objects, Ticket fields and status, proposals, Stage
-ownership and scope, links, pending worker context, durable ACP session
-bindings, and correctness-only Employee-step runs. Conversation transcript content
-belongs to the ACP backend and typed replay, not to duplicate Panels message tables.
+ownership and scope, links, pending worker context, and each Ticket's conversation
+link. Conversation transcript content belongs to the conversation system, not to
+duplicate Panels message tables.
 
 The schema is not written out in one place. It is a numbered history of changes, kept
 under `src/planner/core/migrations/`, starting from a first entry that holds the schema as
@@ -45,9 +45,9 @@ that fails leaves the database exactly as it was.
 
 Committing a write is also what tells the rest of the process that something changed.
 The signal carries nothing — no entity, no kind, no payload — and both listeners answer
-it the same way: the browser refetches what it is showing, and the Employee-runtime
-discovery loop re-checks eligibility. It is a nudge for latency only; SQLite and the
-periodic timer stay canonical.
+it the same way: the browser refetches what it is showing, and the readiness loop asks
+again which Tickets are ready. It is a nudge for latency only; SQLite and the periodic
+timer stay canonical.
 
 _Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`,
 `src/planner/core/change_signal.py`.
@@ -59,7 +59,7 @@ The planning record is made from:
 - **Days**, using the configured planning-day boundary rather than midnight.
 - **Sprints** and **Sprint items**, which group a bounded push and its meaningful
   chunks.
-- **Tickets**, small enough to hand to one employee.
+- **Tickets**, small enough to hand to one worker.
 - **Ideas**, which are remembered possibilities rather than committed work.
 - **Projects**, a shared classification catalog.
 - **Links**, currently the explicit blocker relationship between Tickets and Sprint
@@ -77,11 +77,11 @@ A Ticket's Worker type declares its ordered Stages, gated fields, default Stage
 ownership, scope range, and specialist skill. The coding lifecycle is one configured
 example; the engine itself uses the Ticket's stored Worker type.
 
-Workers propose. The resolution engine alone accepts a proposal into a canonical field
+Workers propose. The proposal resolver alone accepts a proposal into a canonical field
 and advances the Stage. Scope says how far worker-owned work may advance without human
 approval. Stage ownership says whether the worker, the user, or both drive the current
 Stage. A paired Stage receives one automatic opening turn on entry and then continues
-through the same employee conversation; no further step is ever started for it
+through the same Ticket conversation; no further step is ever started for it
 automatically.
 
 Ticket status is runtime control state — one word for what is happening on the Ticket
@@ -98,33 +98,33 @@ nothing running lands there instead of `empty` while a live blocker remains, and
 The Review screen is the human gate, and it holds exactly the Tickets whose status is
 `awaiting_approval`. Approval settles the proposal and records the next scope in one
 decision. Returning for revision clears the parked proposal and sends the guidance as
-the real next ACP worker prompt in the same durable session. Replying to a parked
-proposal in chat instead moves the Ticket to `paired` and out of Review; the proposal
-itself stays filed.
+the real next message into the Ticket's conversation. Replying to a parked proposal in
+chat instead moves the Ticket to `paired` and out of Review; the proposal itself stays
+filed.
 
-_Code paths:_ `src/planner/tickets/`, `src/planner/worker_types/`, and the resolution
-engine in `src/planner/core/loops.py`.
+_Code paths:_ `src/planner/tickets/`, `src/planner/worker_types/`, and the proposal
+resolver in `src/planner/tickets/logic/resolution.py`.
 
-### 4. The Employee Runtime
+### 4. Worker Orchestration
 
-`AutomaticEmployeeStepDiscoveryLoop` scans only Tickets on today's planning day and
-applies the complete eligibility decision. It is advisory. `EmployeeStepRunner`
-rechecks eligibility under a SQLite write lock, claims the Ticket, creates one running
-Employee-step record, and sends work through `AcpStepGateway`.
+One loop asks, over and over, which of today's Tickets are ready for their next worker
+step, and starts one for each. Ready means the record allows it — on today, not
+terminal, a blank to fill, owner is not the user, status `empty`, nothing parked,
+scope permits, Closeout lane free — plus one question the record cannot answer: the
+conversation system is asked whether that Ticket's worker is already busy.
 
-`employee_step_runs` is correctness state only. It records identity, status, exact
-employee session, error, and timestamps. It stores no prompt, reply, transcript,
-activity, usage, image, tool, or browser state. One partial index permits at most one
-running step per Ticket.
+Taking the Ticket out of `empty` in one guarded write **is** the claim. There is no
+claim stamp and no run record. The step is then sent as a real message: the opening
+instruction plus any worker context that was waiting. Started and queued both count as
+delivered; only a refusal gives the claim back.
 
-The gateway prepares pending worker context into the actual model prompt before ACP
-delivery. It acknowledges exact context revisions only after ACP admits that prompt.
-A correctness row is never treated as model context.
+Nothing watches the turn end. A Ticket moves again only when someone acts on it. That
+means a Ticket's status and whether its worker is actually running can disagree after
+a crash, and Panels leaves that visible rather than running a recovery sweep — the
+conversation system is asked for liveness whenever it matters.
 
-Restart recovery uses the same durable session. It replaces a stranded running record
-without replaying the original prompt, and all terminal settlements are first-wins.
-The discovery loop listens for the commit signal so an eligibility-affecting write is
-picked up promptly; SQLite and the periodic timer remain canonical.
+The loop wakes on the commit signal so a write that changes readiness is picked up
+promptly; SQLite and the periodic timer remain canonical.
 
 _Code paths:_ `src/planner/runtime/` and `src/planner/worker_context/`.
 
@@ -136,14 +136,19 @@ processes with worktree-local state, not prepared environment instances. See
 
 ### 5. The ACP Conversation System
 
+This is the browser's conversation pane and everything under it. Worker orchestration
+no longer goes through it: it talks to a small conversation contract instead, which the
+server currently composes as an in-memory stand-in until the replacement conversation
+system lands. Both write a Ticket's conversation-link column in the meantime, and the
+last writer wins — an interim wart, and nothing is deployed in this window.
+
 `ConversationComposition` is the one production conversation composition. It owns:
 
 - an `AcpEmployeeRegistry` for one live child generation per employee;
 - a `ConversationHub` for typed replay and browser publication;
 - a `ConversationTurnBroker` for active work, Steer, Send Now, Queue, Stop, and
   compaction;
-- a `ConversationPermissionBroker` for exact pending permission ownership;
-- an `AcpStepGateway` for Automatic Employee work; and
+- a `ConversationPermissionBroker` for exact pending permission ownership; and
 - a `SqliteConversationBindingRepository` for durable session identity.
 
 The server uses the official ACP client library. Each selected agent backend runs as a
@@ -154,10 +159,9 @@ updates share the same employee, ACP session, binding generation, and sequence. 
 or identity mismatch fails closed. The UI renders typed messages, thoughts, tools,
 plans, terminals, permissions, receipts, connection state, and compaction boundaries.
 
-Human and Automatic Employee prompts share the same Ticket binding. A Ticket mirrors
-the binding's ACP session id in `tickets.employee_session_id`; the binding table is the
-owner and the Chief has no second mirror. Binding replacement uses compare-and-swap,
-and an ACP session cannot be owned by two employees.
+A Ticket mirrors the binding's ACP session id in `tickets.employee_session_id`; the
+binding table is the owner and the Chief has no second mirror. Binding replacement uses
+compare-and-swap, and an ACP session cannot be owned by two employees.
 
 Commands come from ACP. Conversation images are ordered inline ACP content. Durable
 Ticket artifacts remain under `/files/tickets/...`; there is no conversation upload or
@@ -176,8 +180,8 @@ Send Now. Claude runs one initialize-only preflight at server startup and closes
 temporary child without creating a session. Codex starts lazily on first demand.
 
 Each Worker type supplies a default backend. A Ticket may override it during pristine
-Kickoff, before a session or binding exists. Human chat and Automatic Employee work use
-that same selected backend and durable session after the choice freezes.
+Kickoff, before a session or binding exists. Human chat then uses that same selected
+backend and durable session after the choice freezes.
 
 Managed Worker and Chief settings also provide Model and Reasoning defaults. Ticket creation
 copies its Worker's trio once; a new Chief conversation copies the Chief trio into its durable
@@ -185,8 +189,8 @@ empty conversation, and the first demand later creates its backend binding.
 Permission is not managed or persisted. Every new session starts in backend-native full access,
 and every durable-session load reasserts that mode before the runtime can be used.
 
-_Code paths:_ `src/planner/conversation/`, `src/planner/runtime/acp_step_gateway.py`,
-and `/api/conversation` in `src/planner/core/server.py`.
+_Code paths:_ `src/planner/conversation/`, `src/planner/conversation2/`, and
+`/api/conversation` in `src/planner/core/server.py`.
 
 ### 6. The Human UI System
 
@@ -206,7 +210,7 @@ of truth; the browser does not keep a second canonical product store.
 
 Conversation state is separate from that REST cache. Each ACP pane owns a typed
 conversation controller and reducer. Chief, Ticket, and Workspace mounts all use the
-same restrained pane: bubble-less employee prose, one user pill, compact thought/tool
+same restrained pane: bubble-less worker prose, one user pill, compact thought/tool
 disclosures, one persistent status line, and permission as the only prominent blocking
 inset. The ACP composer accepts available commands, text, and inline images.
 
@@ -225,7 +229,7 @@ general approval power.
 
 Human and service actions carry explicit actor and claim context. Direct-only
 operations reject worker claims. Worker writes remain proposals. The Chief's bounded
-operations do not create a second path around the resolution engine.
+operations do not create a second path around the proposal resolver.
 
 Worker identity uses `PLAN_TICKET_ID` and the Ticket's worker-self endpoint. The
 server's ACP child receives the exact Ticket environment. Duplicate session ownership
@@ -235,14 +239,14 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ## Boundaries That Matter
 
-- **Proposal versus canonical value.** A worker proposal is inert until the resolution
-  engine accepts it.
+- **Proposal versus canonical value.** A worker proposal is inert until the proposal
+  resolver accepts it.
 - **Signal versus state.** The change signal only says that something changed; domain
   tables hold canonical values.
-- **Correctness run versus conversation.** `employee_step_runs` proves ownership and
-  settlement; ACP owns model input, output, and replay.
+- **Status versus liveness.** A Ticket's status is what Panels last decided; whether a
+  worker is running now is the conversation system's answer, asked fresh each time.
 - **Stored worker context versus delivered context.** Pending context reaches the model
-  only when `AcpStepGateway` includes it in an admitted prompt.
+  only when it is included in a message that was actually sent.
 - **Binding owner versus Ticket mirror.** `conversation_session_bindings` owns ACP
   identity; a Ticket mirror supports Ticket correctness and worker lookup.
 - **Product cache versus conversation reducer.** REST resources are refetched on a
@@ -254,8 +258,10 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ## System-Level Friction
 
-- **A settled errored Employee step has no retry policy.** Startup recovery handles a
-  stranded running step, not a Ticket already settled as errored.
+- **An errored Ticket has no way back.** Nothing retries or resets one.
+- **A crash leaves a Ticket looking busy.** Its status still says a worker has it while
+  nothing is running. Deliberate: liveness is asked of the conversation system, and no
+  recovery machinery pretends to know better.
 - **Rollover scheduling is external.** Panels provisions the role skill but does not own
   a deterministic morning/afternoon scheduler.
 - **Built frontend artifacts are tracked.** Source changes still require one deliberate
@@ -263,9 +269,12 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ## Deferred
 
-- An explicit retry/reset policy for errored Employee work.
+- An explicit retry/reset policy for an errored Ticket.
 - In-server rollover scheduling, if the product chooses to own it.
+- The replacement conversation system, which takes over from the in-memory stand-in
+  and from the browser pane's older machinery in one swap.
 
 ---
 
-_Last verified: 2026-07-25 (the eight Ticket statuses, and one contentless change signal per commit)._
+_Last verified: 2026-07-25 (the eight Ticket statuses, one contentless change signal
+per commit, and worker orchestration rebuilt on the conversation contract)._

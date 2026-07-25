@@ -104,9 +104,9 @@ EXPLORATION_MANIFEST = {
     ],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-exploration",
-    "default_employee_backend": "codex",
-    "default_employee_model": "gpt-5.6-sol",
-    "default_employee_reasoning_effort": "medium",
+    "default_backend": "codex",
+    "default_model": "gpt-5.6-sol",
+    "default_reasoning_effort": "medium",
 }
 
 

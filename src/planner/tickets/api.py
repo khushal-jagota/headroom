@@ -71,7 +71,7 @@ from planner.tickets.contracts import (
 from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_types.configuration import (
-    configured_employee_runtime_definitions,
+    configured_worker_runtime_definitions,
     configured_worker_type_registry,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -613,7 +613,7 @@ async def get_employee_configuration_catalog(
     candidate_model: str | None = None,
     force_refresh: bool = False,
 ) -> JsonDict:
-    definitions = configured_employee_runtime_definitions()
+    definitions = configured_worker_runtime_definitions()
     registered_backend = definitions.employee_backend_catalog.require_registered(employee_backend)
     catalog = await _load_employee_configuration_catalog(
         request, registered_backend, candidate_model, force_refresh
@@ -708,7 +708,7 @@ async def put_ticket_employee_configuration(
             raw, "employee_launch_reasoning_effort"
         ),
     )
-    definitions = configured_employee_runtime_definitions()
+    definitions = configured_worker_runtime_definitions()
     expected = tickets_data.employee_launch_configuration(
         tickets_data.read_ticket(conn, ticket_id)
     )

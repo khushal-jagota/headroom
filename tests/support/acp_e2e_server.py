@@ -28,7 +28,7 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect
 from planner.core.server import create_app
-from planner.worker_types.configuration import ConfiguredEmployeeRuntimeDefinitions
+from planner.worker_types.configuration import ConfiguredWorkerRuntimeDefinitions
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTED_AGENT = REPOSITORY_ROOT / "tests/support/acp_scripted_agent.py"
@@ -77,7 +77,7 @@ def _scripted_definition(backend_key: str) -> AgentBackendDefinition:
     )
 
 
-def build_scripted_employee_runtime_definitions() -> ConfiguredEmployeeRuntimeDefinitions:
+def build_scripted_worker_runtime_definitions() -> ConfiguredWorkerRuntimeDefinitions:
     definitions = tuple(
         _scripted_definition(key)
         for key in ("hermes", "codex", "claude", "probe-backend")
@@ -98,7 +98,7 @@ def build_scripted_employee_runtime_definitions() -> ConfiguredEmployeeRuntimeDe
             for definition in definitions
         )
     )
-    return ConfiguredEmployeeRuntimeDefinitions(
+    return ConfiguredWorkerRuntimeDefinitions(
         catalog,
         build_probe_registry(catalog),
     )
@@ -112,7 +112,7 @@ def _app() -> object:
         clock,
         lambda: connect(config.db_path),
         conversation_test_options=ConversationTestOptions(
-            employee_runtime_definitions=(build_scripted_employee_runtime_definitions()),
+            employee_runtime_definitions=(build_scripted_worker_runtime_definitions()),
         ),
     )
 

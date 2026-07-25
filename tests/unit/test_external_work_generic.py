@@ -34,7 +34,7 @@ from planner.tickets.logic.external_work import (
     decide_external_work,
 )
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
-from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
+from planner.worker_types.configuration import PRODUCTION_WORKER_RUNTIME_DEFINITIONS
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
@@ -128,10 +128,10 @@ _MISALIGNED = WorkerTypeDefinition(
     ),
     worker_profile=WorkerProfile(
         specialist_skill="panels-worker",
-        default_employee_model=None,
-        default_employee_reasoning_effort=None,
+        default_model=None,
+        default_reasoning_effort=None,
         toolset_profile="default",
-        default_employee_backend="hermes",
+        default_backend="hermes",
     ),
     supports_prefix_reconciliation=True,
 )
@@ -172,10 +172,10 @@ _NO_PREFIX = WorkerTypeDefinition(
     fields=(FieldDefinition(id="kickoff", label="Kickoff"), FieldDefinition(id="one", label="One")),
     worker_profile=WorkerProfile(
         specialist_skill="panels-worker",
-        default_employee_model=None,
-        default_employee_reasoning_effort=None,
+        default_model=None,
+        default_reasoning_effort=None,
         toolset_profile="default",
-        default_employee_backend="hermes",
+        default_backend="hermes",
     ),
     supports_prefix_reconciliation=False,
 )
@@ -231,7 +231,7 @@ def test_type_declining_prefix_reconciliation_is_rejected() -> None:
         (_NO_PREFIX,),
         known_skills=frozenset({"panels-worker"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
     ticket = _needs_kickoff_ticket(_NO_PREFIX)
     with pytest.raises(PlannerError) as exc:

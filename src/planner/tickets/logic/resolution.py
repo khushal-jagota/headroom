@@ -249,7 +249,7 @@ def decide_edit_value(
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
     """§4.2 direct edit of an already-*passed* settled value. The value stays written
-    solely by the resolution engine; this is a tightly-guarded direct write path that
+    solely by the proposal resolver; this is a tightly-guarded direct write path that
     never touches stage/ceiling. It rejects dropped tickets, an unset value, a field
     carrying a live proposal, and the current gating or any future field."""
     admission.require_direct_actor(actor, "edit_field_value")

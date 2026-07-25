@@ -32,7 +32,7 @@ from planner.seed.logic.workspace import parse_workspace
 from planner.tickets.contracts import FieldSlot, TicketFields
 from planner.tickets.logic import fields_codec
 from planner.worker_settings import service as worker_settings_service
-from planner.worker_types.configuration import configured_employee_runtime_definitions
+from planner.worker_types.configuration import configured_worker_runtime_definitions
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
@@ -46,12 +46,12 @@ def seed_from_source(
 ) -> MigrationReport:
     """now is unix seconds from the caller's clock (the app clock in the server,
     a fixed instant in tests) — the importer never reads wall time itself (§13)."""
-    runtime_definitions = configured_employee_runtime_definitions()
+    runtime_definitions = configured_worker_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
     selected_employee_backend = runtime_definitions.employee_backend_catalog.require_registered(
         employee_backend
         if employee_backend is not None
-        else worker_type_definition.worker_profile.default_employee_backend
+        else worker_type_definition.worker_profile.default_backend
     )
     root = Path(source_dir)
     if not root.exists():
@@ -283,7 +283,7 @@ def _import_tickets(
             default_stage_ownership_mode = (
                 worker_settings_service.read_stage_default_ownership_for_ticket_entry(
                     database_parent,
-                    configured_employee_runtime_definitions().worker_type_registry,
+                    configured_worker_runtime_definitions().worker_type_registry,
                     ticket.worker_type,
                     ticket.stage,
                 )

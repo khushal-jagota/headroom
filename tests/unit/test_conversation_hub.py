@@ -76,7 +76,7 @@ from planner.conversation.wire_contracts import (
 from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.tickets.conversation_projection import TicketConversationProjection
-from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
+from planner.worker_types.configuration import PRODUCTION_WORKER_RUNTIME_DEFINITIONS
 
 SCRIPTED_AGENT = Path(__file__).resolve().parents[1] / "support" / "acp_scripted_agent.py"
 
@@ -490,7 +490,7 @@ async def _ticket_database(
         db_path,
         workspace_root=tmp_path,
         integer_now=lambda: 2,
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
         chief_backend_key="hermes",
     )
     if bound:

@@ -15,9 +15,9 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     PRODUCTION_WORKER_TYPE_REGISTRY,
-    ConfiguredEmployeeRuntimeDefinitions,
+    ConfiguredWorkerRuntimeDefinitions,
 )
 from planner.worker_types.contracts import (
     FieldDefinition,
@@ -37,12 +37,12 @@ def registry(*definitions: WorkerTypeDefinition) -> WorkerTypeRegistry:
         definitions,
         known_skills=KNOWN_SKILLS,
         known_toolset_profiles=KNOWN_TOOLSETS,
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 
 def test_production_employee_backend_catalog_is_ordered_hermes_codex_claude() -> None:
-    runtime_definitions = PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
+    runtime_definitions = PRODUCTION_WORKER_RUNTIME_DEFINITIONS
     assert runtime_definitions.employee_backend_catalog.registered_backend_keys() == (
         "hermes",
         "codex",
@@ -54,7 +54,7 @@ def test_production_employee_backend_catalog_is_ordered_hermes_codex_claude() ->
     )
     assert {
         runtime_definitions.worker_type_registry.require(worker_type)
-        .worker_profile.default_employee_backend
+        .worker_profile.default_backend
         for worker_type in runtime_definitions.worker_type_registry.registered_worker_types()
     } == {"codex"}
 
@@ -62,9 +62,9 @@ def test_production_employee_backend_catalog_is_ordered_hermes_codex_claude() ->
 def test_worker_profile_declares_complete_employee_defaults() -> None:
     for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types():
         profile = PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile
-        assert profile.default_employee_backend == "codex"
-        assert profile.default_employee_model == "gpt-5.6-sol"
-        assert profile.default_employee_reasoning_effort == "medium"
+        assert profile.default_backend == "codex"
+        assert profile.default_model == "gpt-5.6-sol"
+        assert profile.default_reasoning_effort == "medium"
 
 
 def assert_error(
@@ -134,9 +134,9 @@ def test_coding_definition_owns_complete_behavior() -> None:
         if not stage.is_terminal
     )
     assert definition.worker_profile.specialist_skill == "panels-worker-coding"
-    assert definition.worker_profile.default_employee_backend == "codex"
-    assert definition.worker_profile.default_employee_model == "gpt-5.6-sol"
-    assert definition.worker_profile.default_employee_reasoning_effort == "medium"
+    assert definition.worker_profile.default_backend == "codex"
+    assert definition.worker_profile.default_model == "gpt-5.6-sol"
+    assert definition.worker_profile.default_reasoning_effort == "medium"
     definition.validate_ticket_position("dropped", "done")
 
 
@@ -351,26 +351,26 @@ def test_duplicate_worker_type_is_rejected() -> None:
     }
 
 
-@pytest.mark.parametrize("default_employee_backend", ["", " ", "missing-backend"])
-def test_worker_profiles_require_non_empty_registered_default_employee_backend(
-    default_employee_backend: str,
+@pytest.mark.parametrize("default_backend", ["", " ", "missing-backend"])
+def test_worker_profiles_require_non_empty_registered_default_backend(
+    default_backend: str,
 ) -> None:
     definition = replace(
         CODING_WORKER_TYPE_DEFINITION,
         worker_profile=replace(
             CODING_WORKER_TYPE_DEFINITION.worker_profile,
-            default_employee_backend=default_employee_backend,
+            default_backend=default_backend,
         ),
     )
     with pytest.raises(PlannerError) as raised:
         registry(definition)
     assert raised.value.code is ErrorCode.validation
-    assert raised.value.detail["employee_backend"] == default_employee_backend
-    if default_employee_backend == "missing-backend":
+    assert raised.value.detail["employee_backend"] == default_backend
+    if default_backend == "missing-backend":
         assert raised.value.detail["employee_backends"] == ["hermes", "codex", "claude"]
 
 
-def test_probe_default_employee_backend_is_registered_after_production_catalog() -> None:
+def test_probe_default_backend_is_registered_after_production_catalog() -> None:
     probe_registry = build_probe_registry()
     assert PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys() == (
         "hermes",
@@ -379,14 +379,14 @@ def test_probe_default_employee_backend_is_registered_after_production_catalog()
         "probe-backend",
     )
     assert (
-        probe_registry.require("probe").worker_profile.default_employee_backend
+        probe_registry.require("probe").worker_profile.default_backend
         == PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys()[-1]
     )
 
 
 def test_configured_runtime_pair_rejects_catalog_registry_authority_divergence() -> None:
     with pytest.raises(ValueError, match="same authority"):
-        ConfiguredEmployeeRuntimeDefinitions(
+        ConfiguredWorkerRuntimeDefinitions(
             build_production_employee_backend_catalog(),
             PRODUCTION_WORKER_TYPE_REGISTRY,
         )
@@ -488,9 +488,9 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         ],
         "default_ceiling": "needs_kickoff",
         "worker_profile_id": "panels-worker-coding",
-        "default_employee_backend": "codex",
-        "default_employee_model": "gpt-5.6-sol",
-        "default_employee_reasoning_effort": "medium",
+        "default_backend": "codex",
+        "default_model": "gpt-5.6-sol",
+        "default_reasoning_effort": "medium",
     }
     assert json.loads(json.dumps(coding)) == coding
     assert (

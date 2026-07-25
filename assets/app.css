@@ -1851,9 +1851,9 @@ button.list-row:hover .list-row-title {
   .acp-spin { animation: none; }
 }
 
-/* --- Chat panel (v2 — the ticket's employee; Vylo restraint) ------------- */
+/* --- Chat panel (v2 — the ticket's worker; Vylo restraint) --------------- */
 /* Message history + input. No dividers: the thread fades into a whisper header and
- * a recessed composer. One user pill; the employee is bubble-less prose. */
+ * a recessed composer. One user pill; the worker is bubble-less prose. */
 
 .chat-panel {
   flex: 1;
@@ -2033,7 +2033,7 @@ button.list-row:hover .list-row-title {
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
-/* employee = bubble-less prose, in the system's serif voice */
+/* worker = bubble-less prose, in the system's serif voice */
 .chat-a {
   align-self: stretch;
   color: var(--text-default);
@@ -3162,7 +3162,7 @@ select {
   gap: var(--space-4);
 }
 
-/* Kickoff's Employee launch setup is one quiet form row, not another surface. */
+/* Kickoff's worker launch setup is one quiet form row, not another surface. */
 .employee-configuration-setup {
   display: flex;
   align-items: center;

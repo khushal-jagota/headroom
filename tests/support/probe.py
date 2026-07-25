@@ -12,9 +12,9 @@ from planner.conversation.backend_catalog import (
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    ConfiguredEmployeeRuntimeDefinitions,
-    install_employee_runtime_definitions_for_test,
-    restore_employee_runtime_definitions_for_test,
+    ConfiguredWorkerRuntimeDefinitions,
+    install_worker_runtime_definitions_for_test,
+    restore_worker_runtime_definitions_for_test,
 )
 from planner.worker_types.contracts import (
     FieldDefinition,
@@ -52,10 +52,10 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     ),
     worker_profile=WorkerProfile(
         specialist_skill=PROBE_SPECIALIST_SKILL,
-        default_employee_model="probe-model",
-        default_employee_reasoning_effort="probe-high",
+        default_model="probe-model",
+        default_reasoning_effort="probe-high",
         toolset_profile="default",
-        default_employee_backend="probe-backend",
+        default_backend="probe-backend",
     ),
     supports_prefix_reconciliation=True,
 )
@@ -106,14 +106,14 @@ def build_probe_registry(
     )
 
 
-_installed_definitions: ConfiguredEmployeeRuntimeDefinitions | None = None
+_installed_definitions: ConfiguredWorkerRuntimeDefinitions | None = None
 
 
 def install_probe_registry() -> WorkerTypeDefinition:
     global _installed_definitions
     registry = build_probe_registry()
-    _installed_definitions = install_employee_runtime_definitions_for_test(
-        ConfiguredEmployeeRuntimeDefinitions(
+    _installed_definitions = install_worker_runtime_definitions_for_test(
+        ConfiguredWorkerRuntimeDefinitions(
             PROBE_EMPLOYEE_BACKEND_CATALOG,
             registry,
         )
@@ -125,5 +125,5 @@ def uninstall_probe_registry() -> None:
     global _installed_definitions
     if _installed_definitions is None:
         raise RuntimeError("probe runtime definitions were not installed")
-    restore_employee_runtime_definitions_for_test(_installed_definitions)
+    restore_worker_runtime_definitions_for_test(_installed_definitions)
     _installed_definitions = None

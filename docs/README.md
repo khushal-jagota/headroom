@@ -20,7 +20,7 @@ that system's doc.
    every decision:                       every action is a proposal:
    approve · grant · drop · plan         draft the next blank, park it
         \                                       /
-         \______  the resolution engine  ______/
+         \______  the proposal resolver  ______/
                    (the single door)
                           │
                           ▼
@@ -30,7 +30,7 @@ that system's doc.
 Two kinds of user, two surfaces, on purpose. The human uses the web page, where
 every decision that matters lives — approving work, granting how far a worker may
 go, closing things out. AI workers use a command-line tool and can only ever file
-_proposals_. A piece of code called the **resolution engine** is the one thing that
+_proposals_. A piece of code called the **proposal resolver** is the one thing that
 can turn a proposal into a real value or move a ticket to its next stage; a worker
 can never take a decision that belongs to the human.
 
@@ -46,14 +46,14 @@ can never take a decision that belongs to the human.
 **The core of the work**
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
-  it moves through, and the resolution engine, scope, and approval gate that govern
+  it moves through, and the proposal resolver, scope, and approval gate that govern
   every advance. The correctness heart of the system.
 - **Worker types and settings** (`worker-types.md`) — the registry declares each workflow's
-  immutable Stages, gates, fields, specialist identity, and starting Employee setup. Managed
+  immutable Stages, gates, fields, specialist identity, and starting worker setup. Managed
   settings own prospective Stage defaults and editable specialist-skill content.
-- **The employee runtime** (`employee-runtime.md`) — the single AI worker that
-  carries each worker-owned ticket Stage forward, and the loop that fires it, watches
-  it, configures its first session, and feeds proposals back through the gate.
+- **Worker orchestration** (`worker-orchestration.md`) — how Panels decides a ticket is
+  ready for its next worker step, claims it, and sends the step into that ticket's
+  conversation. It starts work; it does not watch it.
 - **Conversation** (`chat.md`) — the typed ACP pane shared by Ticket workers and the
   Chief of Staff, including the `hermes`, `codex`, and `claude` backends, live work,
   commands, permissions, and compaction state.
@@ -80,7 +80,8 @@ can never take a decision that belongs to the human.
 
 ## Not built yet
 
-- **Recovery from a failed run** — an errored ticket is stuck (see `employee-runtime.md`).
+- **Recovery from a failed run** — an errored ticket is stuck (see
+  `worker-orchestration.md`).
 - **An in-server rollover scheduler** — the agent-owned rollover skill is provisioned,
   while thin morning and afternoon prompts remain external (see `days.md`).
 

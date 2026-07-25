@@ -51,7 +51,7 @@ _Code paths:_ `src/planner/days/` (the day record and 5am planning date),
 
 - **The app does not schedule rollover itself.** The repository owns and provisions the
   rollover role skill, which expects thin morning and afternoon prompts outside the
-  deterministic server runtime. See `employee-runtime.md`.
+  deterministic server runtime. See `worker-orchestration.md`.
 
 ---
 

@@ -82,7 +82,7 @@ class Proposal:  # §4.2 proposal slot
 
 @dataclass
 class FieldSlot:  # one ordinary field object
-    value: str | None = None  # canonical; resolution engine is the only writer
+    value: str | None = None  # canonical; proposal resolver is the only writer
     proposal: Proposal | None = None
     user_note: str | None = None  # preserved user guidance for this field / step
 
@@ -94,7 +94,7 @@ class TicketFields:  # tickets.fields JSON column, generic over the type's field
     order.
 
     ``slots`` is exposed as a ``MappingProxyType`` so the only way to change a slot is
-    through ``fields_codec.with_slot`` (copy-on-write) → the resolution engine — the same
+    through ``fields_codec.with_slot`` (copy-on-write) → the proposal resolver — the same
     value-object boundary the old fixed struct enforced. The constructor accepts any
     ``Mapping`` and wraps a private copy, so a caller cannot retain a mutable handle to
     the backing dict. (FieldSlot's own field-level mutability is pre-existing and left
@@ -231,8 +231,8 @@ class Ticket:  # §3.3 — column names match exactly
     id: str
     title: str  # <= TITLE_MAX_CHARS (200), every write path
     worker_type: str  # immutable registry id selected at creation
-    employee_backend: str  # immutable after the first employee demand
-    # Historical first-session Kickoff request; null means backend-native default.
+    employee_backend: str  # last-chosen backend for this Ticket's worker
+    # Last-chosen model and reasoning effort; null means the backend's own default.
     employee_launch_model: str | None = field(default=None, kw_only=True)
     employee_launch_reasoning_effort: str | None = field(default=None, kw_only=True)
     stage: str  # directly stored Stage id
@@ -254,7 +254,7 @@ class Ticket:  # §3.3 — column names match exactly
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]
     default_stage_ownership_mode: StageOwnershipMode | None
     effective_stage_ownership_mode: StageOwnershipMode | None
-    employee_session_id: str | None  # durable Hermes identity for this Ticket's employee
+    employee_session_id: str | None  # the Ticket's conversation link (column name is frozen)
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields
     created_at: int
@@ -263,10 +263,11 @@ class Ticket:  # §3.3 — column names match exactly
 
 @dataclass(frozen=True, slots=True)
 class EmployeeLaunchConfiguration:
-    """The Ticket-owned, first-session launch request.
+    """What the Ticket's worker last ran on: backend, model, reasoning effort.
 
-    After the first binding these values remain historical Kickoff provenance; they
-    are not a mirror of the ACP session's current configuration.
+    Kept up to date as the Ticket's conversation changes, so a fresh conversation
+    starts from where the last one ended. The field names are the storage and wire
+    names of the three columns and are frozen with them.
     """
 
     employee_backend: str

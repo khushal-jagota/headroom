@@ -18,15 +18,15 @@ from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings import service
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
-    ManagedEmployeeLaunchDefaults,
     ManagedSkill,
+    ManagedWorkerLaunchDefaults,
     ManagedWorkerSettings,
     SkillsHome,
     SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
-from planner.worker_types.configuration import configured_employee_runtime_definitions
+from planner.worker_types.configuration import configured_worker_runtime_definitions
 
 router = APIRouter()
 
@@ -81,7 +81,7 @@ def _summary_json(summary: WorkerManagementSummary) -> JsonDict:
     }
 
 
-def _launch_defaults_json(defaults: ManagedEmployeeLaunchDefaults) -> JsonDict:
+def _launch_defaults_json(defaults: ManagedWorkerLaunchDefaults) -> JsonDict:
     return {
         "employee_backend": defaults.employee_backend,
         "employee_launch_model": defaults.employee_launch_model,
@@ -103,7 +103,7 @@ def _detail_json(detail: WorkerManagementDetail) -> JsonDict:
         "manifest": detail.manifest,
         "settings": _settings_json(detail.settings),
         "employee_backends": list(
-            configured_employee_runtime_definitions().employee_backend_catalog.registered_backend_keys()
+            configured_worker_runtime_definitions().employee_backend_catalog.registered_backend_keys()
         ),
     }
 
@@ -116,8 +116,8 @@ _announce_worker_settings_change = change_signal.emit
 
 @router.get("/workers")
 async def list_workers(config: Cfg) -> JsonDict:
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    definitions = configured_employee_runtime_definitions()
+    registry = configured_worker_runtime_definitions().worker_type_registry
+    definitions = configured_worker_runtime_definitions()
     return {
         "workers": [
             _summary_json(summary)
@@ -160,7 +160,7 @@ async def patch_skill(
 
 @router.get("/workers/chief-of-staff/settings")
 async def get_chief_settings(config: Cfg) -> JsonDict:
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     return _chief_json(service.read_chief_settings(_database_parent(config), registry))
 
 
@@ -169,7 +169,7 @@ async def put_chief_launch_defaults(
     raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_chief_launch_defaults(
         _database_parent(config),
         registry,
@@ -184,7 +184,7 @@ async def put_chief_skill(
     raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_chief_skill(
         _database_parent(config),
         registry,
@@ -201,7 +201,7 @@ async def patch_chief_skill(
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_chief_skill(
         _database_parent(config), registry, raw,
         after_publish=_announce_worker_settings_change,
@@ -217,8 +217,8 @@ async def put_worker_launch_defaults(
     config: Cfg,
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    settings = service.update_employee_launch_defaults(
+    registry = configured_worker_runtime_definitions().worker_type_registry
+    settings = service.update_worker_launch_defaults(
         _database_parent(config),
         registry,
         worker_type,
@@ -230,7 +230,7 @@ async def put_worker_launch_defaults(
 
 @router.get("/workers/{worker_type}")
 async def get_worker(worker_type: str, config: Cfg) -> JsonDict:
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     return _detail_json(
         service.read_worker_management_detail(_database_parent(config), registry, worker_type)
     )
@@ -256,7 +256,7 @@ async def put_stage_default_ownership(
         body_str(raw, "ownership_mode"),
         "ownership_mode",
     )
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_stage_default_ownership(
         _database_parent(config),
         registry,
@@ -276,7 +276,7 @@ async def put_worker_skill(
     config: Cfg,
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_specialist_skill(
         _database_parent(config),
         registry,
@@ -307,7 +307,7 @@ async def patch_worker_skill(
         patch["description"] = body_str(raw, "description")
     else:
         patch["markdown_body"] = body_str(raw, "markdown_body")
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.patch_specialist_skill(
         _database_parent(config),
         registry,

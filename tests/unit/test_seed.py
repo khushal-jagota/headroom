@@ -31,11 +31,11 @@ from planner.seed.logic.workspace import match_item_title, parse_workspace
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
-    ConfiguredEmployeeRuntimeDefinitions,
-    build_employee_runtime_definitions,
-    install_employee_runtime_definitions_for_test,
-    restore_employee_runtime_definitions_for_test,
+    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
+    ConfiguredWorkerRuntimeDefinitions,
+    build_worker_runtime_definitions,
+    install_worker_runtime_definitions_for_test,
+    restore_worker_runtime_definitions_for_test,
 )
 from planner.worker_types.contracts import FieldDefinition, StageDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -516,14 +516,14 @@ def test_seed_backend_default_override_and_unknown_roll_back(
         CODING_WORKER_TYPE_DEFINITION,
         worker_profile=replace(
             CODING_WORKER_TYPE_DEFINITION.worker_profile,
-            default_employee_backend="probe-backend",
+            default_backend="probe-backend",
         ),
     )
-    definitions = build_employee_runtime_definitions(
+    definitions = build_worker_runtime_definitions(
         PROBE_EMPLOYEE_BACKEND_CATALOG,
         worker_type_definitions=(probe_default_coding,),
     )
-    previous = install_employee_runtime_definitions_for_test(definitions)
+    previous = install_worker_runtime_definitions_for_test(definitions)
     connections: list[Connection] = []
     try:
         for name in ("default", "override", "rejected"):
@@ -564,7 +564,7 @@ def test_seed_backend_default_override_and_unknown_roll_back(
     finally:
         for conn in connections:
             conn.close()
-        restore_employee_runtime_definitions_for_test(previous)
+        restore_worker_runtime_definitions_for_test(previous)
 
 
 def test_unknown_seed_worker_type_fails_before_any_import_write(tmp_db: Connection) -> None:
@@ -608,18 +608,18 @@ def test_seed_fields_follow_the_explicit_registered_definition(tmp_db: Connectio
         (definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
+        employee_backend_catalog=PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
-    previous_definitions = install_employee_runtime_definitions_for_test(
-        ConfiguredEmployeeRuntimeDefinitions(
-            PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
+    previous_definitions = install_worker_runtime_definitions_for_test(
+        ConfiguredWorkerRuntimeDefinitions(
+            PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
             registry,
         )
     )
     try:
         seed_from_source(tmp_db, FIXTURE, worker_type="seed_probe", now=_FIXED_NOW)
     finally:
-        restore_employee_runtime_definitions_for_test(previous_definitions)
+        restore_worker_runtime_definitions_for_test(previous_definitions)
 
     rows = {
         row["alias"]: row
@@ -660,11 +660,11 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
         (incompatible_definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
+        employee_backend_catalog=PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
-    previous_definitions = install_employee_runtime_definitions_for_test(
-        ConfiguredEmployeeRuntimeDefinitions(
-            PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
+    previous_definitions = install_worker_runtime_definitions_for_test(
+        ConfiguredWorkerRuntimeDefinitions(
+            PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
             registry,
         )
     )
@@ -677,7 +677,7 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
                 now=_FIXED_NOW,
             )
     finally:
-        restore_employee_runtime_definitions_for_test(previous_definitions)
+        restore_worker_runtime_definitions_for_test(previous_definitions)
     assert raised.value.code is ErrorCode.validation
     assert raised.value.message == "stage outside the linear order"
     for table in ("sprints", "sprint_items", "tickets", "ideas"):

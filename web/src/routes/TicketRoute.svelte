@@ -20,7 +20,7 @@
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
-  import EmployeeConfigurationSetup from "../components/EmployeeConfigurationSetup.svelte";
+  import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -407,7 +407,7 @@
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
-                <EmployeeConfigurationSetup
+                <WorkerConfigurationSetup
                   ticketId={stableId}
                   employeeBackends={manifest.data?.employee_backends ?? []}
                   employeeBackend={detail.employee_backend}

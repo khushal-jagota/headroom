@@ -8,8 +8,8 @@ Every connection opened here also announces its own commits on the process-wide 
 signal, so nothing a writer does has to remember to say it wrote. One writer stays
 outside this door on purpose: ``conversation/employee_configuration.py`` opens a raw
 ``sqlite3`` connection for its backend catalog cache and commits there. That cache is
-conversation's own; it changes nothing the browser shows and nothing Automatic
-Employee-step eligibility reads, so it is left unwatched.
+conversation's own; it changes nothing the browser shows and nothing the worker-step
+readiness check reads, so it is left unwatched.
 
 The schema itself is not written here. It lives in the migration history under
 ``migrations/``, whose first revision is the schema as the old hand-written migration

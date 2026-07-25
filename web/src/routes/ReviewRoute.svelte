@@ -293,7 +293,7 @@
                     class="review-revision-input"
                     data-review-revision-input
                     rows="1"
-                    placeholder="Or tell the employee what to change..."
+                    placeholder="Or tell the worker what to change..."
                     bind:value={revisionDraft}
                     disabled={revisionBusy}
                     onkeydown={(event) => {

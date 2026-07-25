@@ -1,3 +1,11 @@
+"""Domain actions, the change signal they ring, and the readiness they change.
+
+Every committed Ticket, day, link, project and sprint write announces itself exactly
+once, and a rejected or rolled-back write announces nothing. That is what wakes the
+worker-step readiness loop. The readiness assertions here are the second half: which
+of those writes actually make a Ticket ready for a worker step, and which do not.
+"""
+
 from __future__ import annotations
 
 import ast
@@ -58,7 +66,7 @@ def _drop_change_signal_subscriptions() -> Iterator[None]:
 def _make_app(
     tmp_path: Path, *, fake_now: str | None = None
 ) -> tuple[FastAPI, Path, Clock, RecordingChangeSignal]:
-    db_path = tmp_path / "automatic-employee-step-eligibility-actions.db"
+    db_path = tmp_path / "readiness-wake-actions.db"
     boot = connect(str(db_path))
     create_schema(boot)
     boot.close()
@@ -104,7 +112,7 @@ def _create_direct(db_path: Path, *, title: str = "Ready") -> str:
         conn.close()
 
 
-def _is_eligible_today(db_path: Path, ticket_id: str) -> bool:
+def _is_ready_today(db_path: Path, ticket_id: str) -> bool:
     from planner.runtime.worker_step_readiness import is_ready_for_worker_step
     from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -297,7 +305,7 @@ def test_ticket_creators_atomically_add_all_blockers_and_reject_any_invalid_set(
     assert changes.calls == 1
 
 
-def test_creator_blockers_all_must_clear_before_automatic_eligibility_resumes(
+def test_creator_blockers_all_must_clear_before_readiness_resumes(
     tmp_path: Path,
 ) -> None:
     app, db_path, _clock, _changes = _make_app(
@@ -324,21 +332,21 @@ def test_creator_blockers_all_must_clear_before_automatic_eligibility_resumes(
             json={"next_ceiling": "needs_success", "at_cap": "propose"},
         )
         assert accepted.status_code == 200, accepted.text
-        assert not _is_eligible_today(db_path, dependent)
+        assert not _is_ready_today(db_path, dependent)
 
         removed = client.delete(
             "/api/links",
             params={"from_id": first_blocker, "to_id": dependent, "kind": "blocks"},
         )
         assert removed.status_code == 200, removed.text
-        assert not _is_eligible_today(db_path, dependent)
+        assert not _is_ready_today(db_path, dependent)
 
         completed = client.post(
             f"/api/tickets/{second_blocker}/stage", json={"to_stage": "done"}
         )
         assert completed.status_code == 200, completed.text
 
-    assert _is_eligible_today(db_path, dependent)
+    assert _is_ready_today(db_path, dependent)
 
 
 def test_chief_rejections_do_not_signal_or_change_canonical_records(
@@ -424,7 +432,7 @@ def test_accepting_kickoff_into_paired_stage_leaves_empty_and_signals(
     assert accepted.json()["stage"] == "needs_understanding"
     assert accepted.json()["ticket_status"] == TicketStatus.empty.value
     assert changes.calls == 1
-    assert _is_eligible_today(db_path, ticket.id)
+    assert _is_ready_today(db_path, ticket.id)
 
 
 def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
@@ -450,7 +458,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
         assert paired.status_code == 200, paired.text
         assert paired.json()["ticket_status"] == TicketStatus.empty.value
         assert changes.calls == 1
-        assert _is_eligible_today(db_path, ticket_id)
+        assert _is_ready_today(db_path, ticket_id)
 
         conn = connect(str(db_path))
         try:
@@ -462,7 +470,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
             conn.commit()
         finally:
             conn.close()
-        assert not _is_eligible_today(db_path, ticket_id)
+        assert not _is_ready_today(db_path, ticket_id)
 
         changes.reset()
         same_paired = client.put(
@@ -474,7 +482,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
         # Rewriting the same ownership mode changes nothing canonical, but the writer
         # still opens and commits its transaction, and every commit signals.
         assert changes.calls == 1
-        assert not _is_eligible_today(db_path, ticket_id)
+        assert not _is_ready_today(db_path, ticket_id)
 
         changes.reset()
         user = client.put(
@@ -493,7 +501,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
         assert paired_again.status_code == 200, paired_again.text
         assert paired_again.json()["ticket_status"] == TicketStatus.empty.value
         assert changes.calls == 1
-        assert _is_eligible_today(db_path, ticket_id)
+        assert _is_ready_today(db_path, ticket_id)
 
 
 def test_chief_reconcile_changes_canonical_records_for_a_semantic_change_only(
@@ -1083,9 +1091,9 @@ def test_link_database_constraint_failure_rolls_back_and_does_not_signal(
 
 
 def test_every_committed_ticket_and_day_write_signals(tmp_path: Path) -> None:
-    # The signal says only "something committed", so the writes that change eligibility
-    # and the ones that do not are indistinguishable here on purpose: discovery answers
-    # a signal by re-checking the whole eligibility decision.
+    # The signal says only "something committed", so the writes that change readiness
+    # and the ones that do not are indistinguishable here on purpose: the readiness loop
+    # answers a signal by re-running the whole readiness check.
     app, db_path, _clock, changes = _make_app(tmp_path)
     ticket_id = _create_direct(db_path)
     combined_proposal_id = _create_direct(db_path, title="Combined proposal")
@@ -1294,7 +1302,7 @@ def test_proposal_change_signal_sees_the_committed_proposal(tmp_path: Path) -> N
     assert observed == ["proposal"]
 
 
-def test_routes_do_not_own_discovery_policy() -> None:
+def test_routes_do_not_own_readiness_policy() -> None:
     root = Path(__file__).resolve().parents[2]
     forbidden = {
         "WorkerStepReadinessLoop",

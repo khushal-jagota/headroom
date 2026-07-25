@@ -481,7 +481,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
 
     t = data.release_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.empty
-    t = data.mark_run_errored(
+    t = data.mark_ticket_errored(
         tmp_db,
         t.id,
         error="boom",
@@ -774,7 +774,7 @@ def test_an_errored_ticket_stays_errored_and_is_never_claimed(
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
     _claim_ready_worker_step(tmp_db, t.id, now=now)
-    t = data.mark_run_errored(
+    t = data.mark_ticket_errored(
         tmp_db,
         t.id,
         error="boom",

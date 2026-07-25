@@ -370,7 +370,7 @@ def test_probe_data_layer_drive_to_done(
     assert fields_codec.get_slot(t.fields, _FA).value == "alpha body"
     assert fields_codec.get_slot(t.fields, _FA).proposal is None  # proposal cleared
     # Probe's mixed ownership fired for the FOREIGN type:
-    # worker-owned needs_alpha auto-accepted into newly eligible paired needs_beta.
+    # worker-owned needs_alpha auto-accepted into the newly reached paired needs_beta.
     assert t.ticket_status == TicketStatus.empty
 
     # --- at needs_beta (ceiling _B ==): propose beta -> PARKS (value None, proposal set).

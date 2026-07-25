@@ -34,19 +34,28 @@ One screen per part of the system:
   gets its own group at the end rather than being dropped. Rows carry only the ticket
   title and one mark, sorted by recent activity.
 
-  The mark carries exactly two signals. An agent working right now spins. Otherwise
-  the mark shows the reply state: a filled accent dot for a Worker reply (or
-  pending permission ask) the user has not seen, the same dot greyed once the user
-  has opened the ticket since that reply, and a faint ring when nothing is waiting.
-  The signals combine Ticket facts with a small durable Ticket-linked ACP
-  projection, so a browser reload or an unopened conversation does not invent or
-  retain stale activity. A completed response stays unseen through reconnect/load
-  until a new turn, explicit reset, or the user opens that Ticket; the projection
-  also remembers that a reply ever completed, which is what keeps a seen reply
-  distinguishable from a ticket that never had one. A response that completes while
-  its Ticket is open is already seen; there is no response-generation or
-  message-visibility tracking. **Chief of Staff** sits first in the rail above the
-  groups.
+  The mark carries three signals in one order of precedence, and each is one
+  system's own fact rather than a blend of several. A **pure white dot** means the
+  worker is waiting on a permission only the user can grant — it wins outright,
+  because a turn waiting on an ask is still running and the ask is the part only the
+  user can clear. Below it, a **spinner** means the worker is running right now. With
+  neither, the mark shows the **reply state**: a filled accent dot for a reply the
+  user has not seen, the same dot greyed once the user has opened the ticket since
+  that reply, and a faint ring when nothing is waiting.
+
+  The first two are asked of the conversation system directly, for the conversation
+  the ticket is linked to. The reply dot still runs on the older machinery — a small
+  durable ticket-linked projection plus an acknowledge-on-open endpoint — so a browser
+  reload or an unopened conversation does not invent or retain stale activity. A
+  completed response stays unseen through reconnect/load until a new turn, explicit
+  reset, or the user opens that ticket.
+
+  **The seam:** the browser half of the replacement is already here — a per-conversation
+  read position kept in this browser, keyed by conversation id so a fresh conversation
+  starts unread. When the transcript surface lands, a board row will also carry how far
+  its conversation has got; the dot becomes "further than I have read", the ticket pane
+  writes the position when the user looks, and the projection and its endpoint die
+  together. **Chief of Staff** sits first in the rail above the groups.
 
   The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the
@@ -59,12 +68,12 @@ One screen per part of the system:
   leash written as one sentence, the recap, then the spine of stages — which stages that
   spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
   `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
-  employee conversation in serif alongside, and a copy button that produces a plain-text block
+  worker conversation in serif alongside, and a copy button that produces a plain-text block
   for pasting anywhere. During pristine Kickoff, the facts line also shows a restrained
-  **Worker** pill whose choices come only from the served Employee-backend catalog. Changing
+  **Worker** pill whose choices come only from the served backend catalog. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
-  through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or Employee
-  demand exists, the pill becomes read-only. Its project picker is backed by the shared
+  through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
+  Ticket has a conversation, the pill becomes read-only. Its project picker is backed by the shared
   `projects` resource.
 - **Sprint** — one tracking page that scrolls (name, a meta line, the bet, then the
   work grouped by project with loose tickets as the same group), plus a separate
@@ -103,7 +112,7 @@ share.
   Every live-updated read the browser makes is listed in one place — its name and
   the address it comes from — so a screen asks for a resource by name and gets both.
   The reads are cached and shared: two screens asking for the same thing make one
-  request. (A few one-shot reads, like the VPS status check and the employee
+  request. (A few one-shot reads, like the VPS status check and the worker
   configuration probe, are plain fetches and sit outside the list.)
 
   The server holds open a change stream and sends one line down it every time a write
@@ -278,4 +287,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-25 (Workspace groups by Ticket status; single ACP conversation pane, GFM rendering, the change stream feeding cached reads, and shared file previews)._
+_Last verified: 2026-07-25 (Workspace groups by Ticket status and its row mark carries three signals; single ACP conversation pane, GFM rendering, the change stream feeding cached reads, and shared file previews)._

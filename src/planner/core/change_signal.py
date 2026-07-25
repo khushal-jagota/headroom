@@ -7,7 +7,7 @@ whichever thread committed, so a subscriber must be cheap and thread-safe — se
 database write.
 
 The signal is best-effort by design. A subscriber that raises is logged and skipped,
-because the database and the discovery loop's periodic timer remain the canonical
+because the database and the readiness loop's periodic timer remain the canonical
 answer to "what is true now"; this only removes the wait.
 """
 
