@@ -393,3 +393,29 @@ orphans a live conversation) ACCEPTED — wording strengthened in §2, interim-o
 Minors: all three ACCEPTED (external-work description corrected; board link source +
 pure-view boundary specified; resolve signatures restored to the ruled
 two-function shape).
+
+## Codex diff-review dispositions (gpt-5.6-sol, round 2 — combined diff)
+
+Zero blockers. Four majors, one minor:
+- Silent scheduled-task failures (completion callback discards exceptions; refusal
+  log ordered after the release) — ACCEPTED, fixed: exception-inspecting completion
+  callback, refusal logged before the release.
+- Deadline shutdown releases the machine lock with unfinished flows alive — HALF
+  REFUTED: abandonment-past-deadline is the OLD runner's exact semantics (stop waited
+  with a timeout, then the lock released regardless) and this package's recorded
+  choice; HALF ACCEPTED as cheap hardening: stop() now cancels unfinished futures at
+  the deadline before abandoning them.
+- Link/last-chosen writers unguarded across awaits (mid-await relink can be
+  clobbered) — ACCEPTED, fixed: expected-conversation-id CAS on
+  write_ticket_last_chosen_configuration and clear_ticket_conversation_link; a guard
+  that does not fire is silent by design (nothing about the acted-on conversation was
+  claimed).
+- Sync SQLite on the event loop in the scheduled flows — REFUTED as the repo's
+  established architecture: every async route already runs sync sqlite inline on the
+  event loop (single writer, short transactions; the stack verdict records the
+  headroom), and the blocking is bounded by busy_timeout, unlike the unbounded
+  backend-send stall the rework actually eliminated. Recorded as a swap-time
+  watch-item, not changed.
+- Minor (test overclaims: ack-failure-no-revert untested, in-flight test not
+  isolating the set, ABA comment obscuring the accepted same-second alias) —
+  ACCEPTED, tests strengthened and the comment made honest.
