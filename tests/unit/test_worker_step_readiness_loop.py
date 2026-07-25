@@ -195,7 +195,10 @@ def test_a_release_does_not_fire_once_the_status_has_been_written_again(
     tmp_path: Path,
 ) -> None:
     # A delayed release carries the status AND the moment it was written. The status can
-    # legitimately come back to the same value; the moment cannot.
+    # legitimately come back to the same value; the moment cannot — unless both flips land
+    # in the same second, which is the accepted limitation of this guard: the stamp has
+    # one-second resolution, so a claim and a later re-claim inside the same second are
+    # indistinguishable to it. Recorded, and not worth a wider clock to close.
     world = _World(tmp_path)
     ticket_id = world.ready_ticket()
     conn = world.connect()
@@ -389,6 +392,89 @@ def test_pending_context_is_acknowledged_only_after_the_send_lands(world: _World
     assert world.pending_context_keys(ticket_id) == []
 
 
+class _AcknowledgementRefusingContext:
+    """Prepares as usual, then cannot tick the context off."""
+
+    def __init__(self, service: WorkerContextService) -> None:
+        self._service = service
+
+    def prepare(self, worker_entity_id: str, prompt_text: str):
+        return self._service.prepare(worker_entity_id, prompt_text)
+
+    def acknowledge(self, worker_entity_id: str, receipts) -> None:
+        raise RuntimeError("the context store is unreachable")
+
+
+def test_a_failed_acknowledgement_after_a_delivery_is_reported_and_never_reverted(
+    world: _World, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The text is out. Reverting here would re-arm the Ticket and send it twice, so the
+    # failure is reported and the claim stands — the context stays owed instead.
+    ticket_id = world.ready_ticket(conversation_id="conv-ack")
+    world.start_conversation("conv-ack")
+    world.add_pending_context(ticket_id, "ticket_changed", "The user renamed the ticket.")
+
+    with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
+        started = asyncio.run(
+            start_ready_worker_step(
+                ticket_id,
+                connect_database=world.connect,
+                conversation_system=cast(ConversationSystem, world.conversations),
+                worker_context_service=cast(
+                    WorkerContextService, _AcknowledgementRefusingContext(world.context)
+                ),
+                worker_type_registry=configured_worker_type_registry(),
+                planning_day_id_resolver=lambda: TODAY_DAY_ID,
+                now=world.clock.now_unix,
+            )
+        )
+
+    assert started is True
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
+    assert len(world.conversations.backend_prompt_writes("conv-ack")) == 1
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert ticket_id in errors[0].getMessage()
+    assert errors[0].exc_info is not None
+    assert world.pending_context_keys(ticket_id) == ["ticket_changed"]
+
+
+class _UnreadableConversationSystem(InMemoryConversationSystem):
+    """A conversation system whose liveness read fails outright."""
+
+    async def is_running(self, conversation_id: str) -> bool:
+        raise RuntimeError("the conversation system is unreachable")
+
+
+def test_a_step_that_fails_outside_the_flows_own_handling_is_still_reported(
+    world: _World, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Nobody awaits a scheduled step, and the occupancy read happens before the flow has
+    # anything to give back, so it sits outside the flow's own failure handling. An
+    # exception there has no way to be heard except through the finished task itself.
+    ticket_id = world.ready_ticket(conversation_id="conv-unreadable")
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(
+        world,
+        conversation_system=cast(ConversationSystem, _UnreadableConversationSystem()),
+    )
+    with caplog.at_level(logging.ERROR, logger="planner.runtime.worker_step_readiness_loop"):
+        try:
+            assert readiness_loop.poll_once() == [ticket_id]
+            assert _waited_for(lambda: bool(caplog.records))
+        finally:
+            readiness_loop.stop()
+            asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
+            thread.join(5)
+            asyncio_loop.close()
+
+    errors = [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert len(errors) == 1
+    assert ticket_id in errors[0].getMessage()
+    assert errors[0].exc_info is not None
+    # Nothing was claimed, so the Ticket is exactly where it was.
+    assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
+
+
 def test_the_opener_carries_the_step_prompt_and_the_pending_context(world: _World) -> None:
     ticket_id = world.ready_ticket(title="Ship it", conversation_id="conv-opener")
     world.start_conversation("conv-opener")
@@ -456,8 +542,66 @@ def test_a_ticket_that_is_not_ready_is_never_sent_to(world: _World) -> None:
 # --- the polling loop ----------------------------------------------------------
 
 
+class _HeldAtTheOccupancyCheck:
+    """The fake, with its first read held open until a test lets it go.
+
+    The occupancy check is the flow's first await, so holding it there keeps a step
+    genuinely in flight while its Ticket is still untouched and still ready.
+    """
+
+    def __init__(self, system: InMemoryConversationSystem) -> None:
+        self._system = system
+        self.reached = threading.Event()
+        self._gate: asyncio.Event | None = None
+
+    def release(self, asyncio_loop: asyncio.AbstractEventLoop) -> None:
+        gate = self._gate
+        if gate is not None:
+            asyncio_loop.call_soon_threadsafe(gate.set)
+
+    async def is_running(self, conversation_id: str) -> bool:
+        if self._gate is None:
+            self._gate = asyncio.Event()
+        self.reached.set()
+        await self._gate.wait()
+        return await self._system.is_running(conversation_id)
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        await self._system.start_conversation(request)
+
+    async def send(
+        self,
+        conversation_id: str,
+        text: str,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+    ) -> PromptDeliveryFate:
+        return await self._system.send(
+            conversation_id,
+            text,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+        )
+
+    async def interrupt(self, conversation_id: str) -> None:
+        await self._system.interrupt(conversation_id)
+
+    async def kill(self, conversation_id: str) -> None:
+        await self._system.kill(conversation_id)
+
+    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+        return await self._system.has_pending_permission_ask(conversation_id)
+
+
 def _loop_in_a_thread(
     world: _World,
+    *,
+    conversation_system: ConversationSystem | None = None,
 ) -> tuple[WorkerStepReadinessLoop, asyncio.AbstractEventLoop, threading.Thread]:
     asyncio_loop = asyncio.new_event_loop()
     thread = threading.Thread(target=asyncio_loop.run_forever, daemon=True)
@@ -466,7 +610,11 @@ def _loop_in_a_thread(
         WorkerStepReadinessLoop(
             world.db_path,
             world.clock,
-            conversation_system=cast(ConversationSystem, world.conversations),
+            conversation_system=(
+                cast(ConversationSystem, world.conversations)
+                if conversation_system is None
+                else conversation_system
+            ),
             worker_context_service=cast(WorkerContextService, world.context),
             asyncio_loop=asyncio_loop,
             boundary_hour=BOUNDARY_HOUR,
@@ -529,16 +677,28 @@ def test_one_closeout_lane_takes_one_ticket_per_pass(world: _World) -> None:
 
 
 def test_a_ticket_already_in_flight_is_not_scheduled_twice(world: _World) -> None:
+    # The step is held at its very first await, before the claim, so the Ticket is still
+    # plainly ready when the second poll runs. Nothing but the in-flight set can turn that
+    # poll away, which is the point: without it a stalled step would be started twice.
     ticket_id = world.ready_ticket(conversation_id="conv-inflight")
     world.start_conversation("conv-inflight")
-    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(world)
+    held = _HeldAtTheOccupancyCheck(world.conversations)
+    readiness_loop, asyncio_loop, thread = _loop_in_a_thread(
+        world, conversation_system=cast(ConversationSystem, held)
+    )
     try:
         assert readiness_loop.poll_once() == [ticket_id]
-        assert _waited_for(lambda: world.ticket(ticket_id).ticket_status is TicketStatus.agent)
-        # The Ticket is no longer ready, so a second pass finds nothing anyway; the
-        # in-flight set is what stops a duplicate before the claim can arbitrate.
+        assert held.reached.wait(5)
+        assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
+
         assert readiness_loop.poll_once() == []
+
+        held.release(asyncio_loop)
+        assert _waited_for(lambda: world.ticket(ticket_id).ticket_status is TicketStatus.agent)
+        # One step ran, so one opener reached the backend.
+        assert len(world.conversations.backend_prompt_writes("conv-inflight")) == 1
     finally:
+        held.release(asyncio_loop)
         readiness_loop.stop()
         asyncio_loop.call_soon_threadsafe(asyncio_loop.stop)
         thread.join(5)

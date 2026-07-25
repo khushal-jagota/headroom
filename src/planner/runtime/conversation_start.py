@@ -188,7 +188,9 @@ async def send_to_ticket_conversation(
     A message carrying a model or reasoning-effort change also updates the Ticket's
     last-chosen columns, but only when the delivery started. A held message applies its
     change when it later runs, and a refused one changes nothing at all, so recording
-    either would record a model the conversation may never adopt.
+    either would record a model the conversation may never adopt. That update names the
+    conversation this send actually went into, so a Ticket pointed at a fresh conversation
+    while the send was out keeps its own values.
 
     A Ticket with no conversation to send into is an error rather than a fate: there is
     no delivery to report on.
@@ -214,6 +216,7 @@ async def send_to_ticket_conversation(
         tickets_data.write_ticket_last_chosen_configuration(
             conn,
             ticket_id,
+            expected_conversation_id=conversation_id,
             model=ticket.employee_launch_model if model_change is None else model_change,
             reasoning_effort=(
                 ticket.employee_launch_reasoning_effort
@@ -242,9 +245,18 @@ async def reset_ticket_conversation(
 
     The last-chosen launch columns stay: they are what the next conversation starts
     from. A Ticket with no conversation has nothing to reset.
+
+    The unlink names the conversation that was killed, so a Ticket already pointed at a
+    newer one is left pointing at it: only the conversation this call silenced is the one
+    it may cut loose.
     """
     conversation_id = tickets_data.read_ticket(conn, ticket_id).employee_session_id
     if conversation_id is None:
         return
     await system.kill(conversation_id)
-    tickets_data.clear_ticket_conversation_link(conn, ticket_id, now=now)
+    tickets_data.clear_ticket_conversation_link(
+        conn,
+        ticket_id,
+        expected_conversation_id=conversation_id,
+        now=now,
+    )

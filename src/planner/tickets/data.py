@@ -554,43 +554,60 @@ def write_ticket_last_chosen_configuration(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
+    expected_conversation_id: str,
     model: str | None,
     reasoning_effort: str | None,
     now: int,
-) -> Ticket:
-    """Record the model and reasoning effort the Ticket's conversation now runs on.
+) -> bool:
+    """Record the model and reasoning effort a Ticket's conversation now runs on.
+
+    ``expected_conversation_id`` names the conversation these values are true of, and the
+    write only lands while the Ticket still points at it. Sending is awaited, and a Ticket
+    can be pointed at a fresh conversation while a send into the old one is still out —
+    without the guard, that send's model would be stamped onto a conversation that never
+    ran on it. Reports whether the write fired. Not firing is not a failure: the values
+    were never claimed to be true of whatever the Ticket moved on to.
 
     The backend is not here because a message cannot change it: a conversation keeps the
     backend it was started on, and choosing another one is a new conversation.
     """
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        conn.execute(
+        updated = conn.execute(
             "UPDATE tickets SET employee_launch_model = ?, "
-            "employee_launch_reasoning_effort = ?, updated_at = ? WHERE id = ?",
-            (model, reasoning_effort, now, ticket_id),
+            "employee_launch_reasoning_effort = ?, updated_at = ? "
+            "WHERE id = ? AND employee_session_id = ?",
+            (model, reasoning_effort, now, ticket_id, expected_conversation_id),
         )
-        return _load_ticket_for_write(conn, ticket_id)
+        return updated.rowcount == 1
 
 
 def clear_ticket_conversation_link(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
+    expected_conversation_id: str,
     now: int,
-) -> Ticket:
-    """Unlink the Ticket from its conversation and nothing else.
+) -> bool:
+    """Unlink the Ticket from the named conversation, and nothing else.
+
+    ``expected_conversation_id`` is the conversation the caller acted on, and the unlink
+    only lands while the Ticket still points at it. Killing a conversation is awaited, and
+    a Ticket can be pointed at a fresh one in that time — an unguarded clear would then
+    cut the Ticket loose from a conversation nobody killed. Reports whether the unlink
+    fired. Not firing is not a failure: the Ticket had already moved on by itself.
 
     The last-chosen launch columns deliberately stay: they are exactly what the next
     conversation starts from.
     """
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        conn.execute(
-            "UPDATE tickets SET employee_session_id = NULL, updated_at = ? WHERE id = ?",
-            (now, ticket_id),
+        updated = conn.execute(
+            "UPDATE tickets SET employee_session_id = NULL, updated_at = ? "
+            "WHERE id = ? AND employee_session_id = ?",
+            (now, ticket_id, expected_conversation_id),
         )
-        return _load_ticket_for_write(conn, ticket_id)
+        return updated.rowcount == 1
 
 
 def employee_launch_configuration(ticket: Ticket) -> EmployeeLaunchConfiguration:

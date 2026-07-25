@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Callable
 from pathlib import Path
-from time import monotonic, sleep
+from time import monotonic
 from typing import cast
 
 from planner.conversation2.contracts import (
@@ -28,12 +27,17 @@ from planner.worker_context.service import EmptyWorkerContextService
 
 
 class _HoldingConversationSystem(InMemoryConversationSystem):
-    """A conversation system whose send does not return until it is let go."""
+    """A conversation system whose send does not return until it is let go.
+
+    It also notes whether the wait it was sitting in was cancelled, so a test can prove
+    that stopping actually reached the step rather than merely walking away from it.
+    """
 
     def __init__(self) -> None:
         super().__init__()
         self.sending = threading.Event()
         self.released = threading.Event()
+        self.cancelled = threading.Event()
 
     async def send(
         self,
@@ -46,8 +50,12 @@ class _HoldingConversationSystem(InMemoryConversationSystem):
         reasoning_effort_change: str | None = None,
     ) -> PromptDeliveryFate:
         self.sending.set()
-        while not self.released.is_set():
-            await asyncio.sleep(0.01)
+        try:
+            while not self.released.is_set():
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
         return await super().send(
             conversation_id,
             text,
@@ -89,15 +97,6 @@ def _ready_ticket(db_path: str, clock: RealClock) -> str:
             clock.now_unix(),
         )
     return ticket.id
-
-
-def _waited_for(predicate: Callable[[], bool], timeout: float = 5.0) -> bool:
-    deadline = monotonic() + timeout
-    while monotonic() < deadline:
-        if predicate():
-            return True
-        sleep(0.01)
-    return False
 
 
 def _run_event_loop_in_a_thread() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
@@ -146,6 +145,8 @@ def test_stopping_waits_out_a_worker_step_that_is_still_being_sent(tmp_path: Pat
         conversations.released.set()
         stopping.join(5)
         assert not stopping.is_alive()
+        # It finished inside the deadline, so nothing cancelled it.
+        assert not conversations.cancelled.is_set()
     finally:
         conversations.released.set()
         loop.call_soon_threadsafe(loop.stop)
@@ -182,19 +183,21 @@ def test_stopping_abandons_a_worker_step_that_outlives_the_deadline(tmp_path: Pa
     try:
         assert readiness_loop.poll_once() == [ticket_id]
         assert conversations.sending.wait(5)
-        # The deadline has already passed: stopping gives up on the step in flight rather
-        # than hanging on it. In a real process the abandoned step dies with the process.
+        # The deadline has already passed: stopping does not hang on the step in flight,
+        # and it does not walk away leaving it running either — it cancels it, because
+        # the machine lock is released the moment this returns.
         started_stopping = monotonic()
         readiness_loop.stop(deadline=monotonic() - 1)
         assert monotonic() - started_stopping < 1.0
+        assert conversations.cancelled.wait(5)
     finally:
-        conversations.released.set()
-        assert _waited_for(lambda: bool(conversations.backend_prompt_writes("conv-shutdown")))
         loop.call_soon_threadsafe(loop.stop)
         thread.join(5)
         loop.close()
 
-    # The Ticket is left where the claim put it, with no live conversation behind it.
-    # That mismatch is the honest record of a process that stopped mid-step.
+    # The send never reached the backend, and the Ticket is left where the claim put it,
+    # with no live conversation behind it. That mismatch is the honest record of a
+    # process that stopped mid-step.
+    assert conversations.backend_prompt_writes("conv-shutdown") == ()
     with connect(db_path) as conn:
         assert tickets_data.read_ticket(conn, ticket_id).ticket_status is TicketStatus.agent

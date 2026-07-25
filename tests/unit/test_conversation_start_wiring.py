@@ -289,6 +289,121 @@ def test_a_change_on_a_refused_delivery_records_nothing(
     asyncio.run(exercise())
 
 
+class _RelinkingConversationSystem:
+    """The fake, which points the Ticket at a fresh conversation mid-operation.
+
+    It stands in for what a New press does from the browser while the loop's send — or a
+    reset's kill — is still out: both are awaited, and the Ticket can move underneath
+    them.
+    """
+
+    def __init__(
+        self,
+        system: InMemoryConversationSystem,
+        conn: Connection,
+        ticket_id: str,
+        relink_to: str,
+    ) -> None:
+        self._system = system
+        self._conn = conn
+        self._ticket_id = ticket_id
+        self._relink_to = relink_to
+
+    def _relink(self) -> None:
+        self._conn.execute(
+            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            (self._relink_to, self._ticket_id),
+        )
+        self._conn.commit()
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        await self._system.start_conversation(request)
+
+    async def send(
+        self,
+        conversation_id: str,
+        text: str,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+    ):
+        fate = await self._system.send(
+            conversation_id,
+            text,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+        )
+        self._relink()
+        return fate
+
+    async def interrupt(self, conversation_id: str) -> None:
+        await self._system.interrupt(conversation_id)
+
+    async def kill(self, conversation_id: str) -> None:
+        await self._system.kill(conversation_id)
+        self._relink()
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return await self._system.is_running(conversation_id)
+
+    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+        return await self._system.has_pending_permission_ask(conversation_id)
+
+
+def test_a_change_is_not_recorded_on_a_ticket_that_moved_to_another_conversation(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        await start_ticket_conversation(system, tmp_db, ticket, _values(ticket.id), now=10)
+        relinking = _RelinkingConversationSystem(system, tmp_db, ticket.id, "conv_elsewhere")
+
+        fate = await send_to_ticket_conversation(
+            relinking,
+            tmp_db,
+            ticket.id,
+            "work the step",
+            sender_label="loop",
+            model_change="sonnet",
+            now=20,
+        )
+
+        # The delivery started, but by then the Ticket had been pointed at a different
+        # conversation. Sonnet is true of the one that ran, not of the one it now names.
+        assert isinstance(fate, PromptDeliveryStarted)
+        after = read_ticket(tmp_db, ticket.id)
+        assert after.employee_session_id == "conv_elsewhere"
+        assert after.employee_launch_model == "opus"
+        assert after.employee_launch_reasoning_effort == "high"
+
+    asyncio.run(exercise())
+
+
+def test_resetting_does_not_unlink_a_conversation_it_did_not_kill(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        killed = await start_ticket_conversation(
+            system, tmp_db, ticket, _values(ticket.id), now=10
+        )
+        await system.send(killed, "running work", sender_label="loop")
+        relinking = _RelinkingConversationSystem(system, tmp_db, ticket.id, "conv_newer")
+
+        await reset_ticket_conversation(relinking, tmp_db, ticket.id, now=30)
+
+        # The old conversation was silenced, and the link the Ticket had moved on to is
+        # left alone: only what this call killed is what it may cut loose.
+        assert await system.is_running(killed) is False
+        assert read_ticket(tmp_db, ticket.id).employee_session_id == "conv_newer"
+
+    asyncio.run(exercise())
+
+
 def test_sending_into_a_ticket_that_has_no_conversation_is_an_error(
     tmp_db: Connection, ticket: Ticket
 ) -> None:

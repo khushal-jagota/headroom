@@ -138,13 +138,15 @@ async def start_ready_worker_step(
             return False
 
         if isinstance(fate, PromptDeliveryRefused):
-            give_the_claim_back()
+            # The refusal is on the record before the claim is given back, so a release
+            # that itself fails cannot swallow the one line that says why nothing ran.
             _log.error(
                 "worker step send was refused (ticket=%s conversation=%s reason=%s)",
                 ticket_id,
                 conversation_id,
                 fate.refusal_reason.value,
             )
+            give_the_claim_back()
             return False
 
         try:
@@ -258,12 +260,29 @@ class WorkerStepReadinessLoop:
         )
         with self._in_flight_lock:
             self._in_flight[future] = ticket_id
-        future.add_done_callback(self._forget)
+        future.add_done_callback(self._step_ended)
         return True
 
-    def _forget(self, future: concurrent.futures.Future[bool]) -> None:
+    def _step_ended(self, future: concurrent.futures.Future[bool]) -> None:
+        """Forget a finished step, and say so when it ended in a way nothing else saw.
+
+        The flow handles its own failures, but the ground it stands on can give way
+        underneath it — the database connection, the handling of a failure, the close on
+        the way out. Nobody awaits these tasks, so an exception that gets this far has no
+        other way to be heard.
+        """
         with self._in_flight_lock:
-            self._in_flight.pop(future, None)
+            ticket_id = self._in_flight.pop(future, None)
+        if future.cancelled():
+            # Stopping cancels what it could not wait out. That is a decision, not a fault.
+            return
+        error = future.exception()
+        if error is not None:
+            _log.error(
+                "worker step task ended in an unhandled failure (ticket=%s)",
+                ticket_id,
+                exc_info=error,
+            )
 
     def start(self, interval: int) -> None:
         """Start the polling thread."""
@@ -278,12 +297,17 @@ class WorkerStepReadinessLoop:
         self._thread.start()
 
     def stop(self, *, deadline: float | None = None) -> None:
-        """Stop polling, then wait out the steps already in flight until the deadline.
+        """Stop polling, wait out the steps in flight, and cancel whatever outlasts that.
 
-        Anything still in flight when the deadline passes is abandoned. It dies with the
-        process, and a Ticket left at its departure status with no live conversation is
-        the honest record of that: ``is_running`` is the live answer, and no machinery
-        pretends otherwise.
+        A step that is still going at the deadline is cancelled rather than left running:
+        the caller releases the machine lock the moment this returns, and another process
+        may pick the work up. Cancelling is best-effort — it reaches a step that is
+        waiting on something, and a step past the point of no return finishes anyway.
+
+        A cancelled step leaves its Ticket at its departure status with no live
+        conversation behind it. That mismatch is the honest record of a process that
+        stopped mid-step: ``is_running`` is the live answer, and no machinery pretends
+        otherwise.
         """
         self._stop.set()
         self._wake.set()
@@ -294,7 +318,9 @@ class WorkerStepReadinessLoop:
         with self._in_flight_lock:
             in_flight = tuple(self._in_flight)
         if in_flight:
-            concurrent.futures.wait(in_flight, timeout=_remaining(deadline))
+            _, still_going = concurrent.futures.wait(in_flight, timeout=_remaining(deadline))
+            for future in still_going:
+                future.cancel()
 
     def _run_loop(self, interval: int) -> None:
         while not self._stop.is_set():
