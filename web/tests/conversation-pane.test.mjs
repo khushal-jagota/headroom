@@ -32,6 +32,7 @@ const expectedInventory = [
   "BackendCard.svelte",
   "ConversationComposer.svelte",
   "ConversationPane.svelte",
+  "ConversationRestBar.svelte",
   "ConversationTranscript.svelte",
   "LiveConversation.svelte",
   "MessagePieces.svelte",
