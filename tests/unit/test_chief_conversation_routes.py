@@ -107,6 +107,28 @@ def test_resetting_silences_the_chief_and_the_next_start_is_a_fresh_one(
         )
 
 
+def test_the_agent_outlives_the_conversation_it_was_having(tmp_path: Path) -> None:
+    """A row here is an agent, not a link. Resetting lets go of the conversation; the
+    agent did not stop existing, so its row is still there holding nothing."""
+    app, db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        client.post("/api/chief/conversation")
+        client.post("/api/chief/conversation/reset")
+
+    conn = connect(str(db_path))
+    try:
+        rows = conn.execute(
+            "SELECT agent_key, conversation_id FROM agents WHERE agent_key = ?",
+            ("chief_of_staff",),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(rows) == 1
+    assert rows[0][1] is None
+
+
 def test_resetting_a_chief_with_no_conversation_changes_nothing(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 

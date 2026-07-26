@@ -13,7 +13,7 @@ import pytest
 
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "agent_conversations"
+HEAD_REVISION = "agents"
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, int, int]]:

@@ -229,16 +229,19 @@ async def send_to_ticket_conversation(
 
 
 def read_agent_conversation(conn: sqlite3.Connection, agent_key: str) -> str | None:
-    """Which conversation this agent is currently talking in, or none.
+    """Which conversation this agent is currently having, or none.
 
-    An agent with no conversation has no row, so absence is the answer rather than a
-    column holding nothing.
+    An agent nobody has spoken to has no row yet, and one that has been reset has a row
+    holding nothing. Both are the same answer to the only question asked here, so both
+    read as none.
     """
     row = conn.execute(
-        "SELECT conversation_id FROM agent_conversations WHERE agent_key = ?",
+        "SELECT conversation_id FROM agents WHERE agent_key = ?",
         (agent_key,),
     ).fetchone()
-    return None if row is None else str(row[0])
+    if row is None or row[0] is None:
+        return None
+    return str(row[0])
 
 
 async def start_agent_conversation(
@@ -267,7 +270,7 @@ async def start_agent_conversation(
     )
     with conn:
         conn.execute(
-            "INSERT INTO agent_conversations (agent_key, conversation_id) VALUES (?, ?) "
+            "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
             "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id",
             (agent_key, conversation_id),
         )
@@ -285,8 +288,9 @@ async def reset_agent_conversation(
     agent would let the messages it was holding run, and starting again must not be the
     thing that finally delivers them.
 
-    The unlink names the conversation that was killed, so an agent already pointed at a
-    newer one is left pointing at it.
+    The agent's row stays and its conversation is what is let go, because the agent did
+    not stop existing. The unlink names the conversation that was killed, so an agent
+    already pointed at a newer one is left pointing at it.
     """
     conversation_id = read_agent_conversation(conn, agent_key)
     if conversation_id is None:
@@ -294,7 +298,8 @@ async def reset_agent_conversation(
     await system.kill(conversation_id)
     with conn:
         conn.execute(
-            "DELETE FROM agent_conversations WHERE agent_key = ? AND conversation_id = ?",
+            "UPDATE agents SET conversation_id = NULL "
+            "WHERE agent_key = ? AND conversation_id = ?",
             (agent_key, conversation_id),
         )
 
