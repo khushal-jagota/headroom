@@ -148,6 +148,10 @@ def test_live_run_from_new_manager_execs_the_accepted_target_checkout(
     resolved_roots: list[Path] = []
     exec_calls: list[tuple[str, list[str]]] = []
 
+    def _resolve_and_record(root: Path) -> Path:
+        resolved_roots.append(root)
+        return root / ".venv/bin/python"
+
     result = CliRunner().invoke(
         environment,
         [
@@ -161,9 +165,7 @@ def test_live_run_from_new_manager_execs_the_accepted_target_checkout(
         ],
         obj=EnvironmentCliDependencies(
             inspect_instance=lambda **_: _manifest(instance),
-            resolve_repository_runtime_python=lambda root: (
-                resolved_roots.append(root) or root / ".venv/bin/python"
-            ),
+            resolve_repository_runtime_python=_resolve_and_record,
             exec_fn=lambda file, argv, _env: exec_calls.append((file, argv)),
             ambient_env={"PATH": str(manager_checkout / ".venv/bin")},
         ),

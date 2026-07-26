@@ -238,6 +238,26 @@ class _ObservingSink:
         self._conversation.turn_endings_reported += 1
         self._conversation.pulse.send()
 
+    async def token_usage_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+        cost_usd: float | None,
+    ) -> None:
+        await self._sink.token_usage_reported(
+            turn_token,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_input_tokens=cached_input_tokens,
+            cost_usd=cost_usd,
+        )
+
+    async def context_compacted(self, turn_token: TurnToken) -> None:
+        await self._sink.context_compacted(turn_token)
+
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         await self._sink.vendor_session_cursor_rebound(vendor_session_cursor)
 

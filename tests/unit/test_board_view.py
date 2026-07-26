@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from tests.support.probe import (
@@ -31,6 +32,8 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core import links as core_links
+from planner.core.clock import TestClock
+from planner.core.config import load_config
 from planner.core.contracts import LinkKind, Priority
 from planner.days.data import add_day_ticket
 from planner.projects.data import create_project
@@ -133,7 +136,7 @@ def _put_every_ticket_on_today(conn: Connection) -> str:
     return day_id
 
 
-def _board(conn: Connection) -> dict:
+def _board(conn: Connection) -> dict[str, Any]:
     return board_view(conn, day_id=_put_every_ticket_on_today(conn))
 
 
@@ -148,10 +151,12 @@ def _database_path(conn: Connection) -> str:
     return str(conn.execute("PRAGMA database_list").fetchone()[2])
 
 
-def _enriched_board(conn: Connection, conversations: InMemoryConversationSystem) -> dict:
+def _enriched_board(
+    conn: Connection, conversations: InMemoryConversationSystem
+) -> dict[str, Any]:
     _put_every_ticket_on_today(conn)
     clock = SimpleNamespace(now=lambda: datetime(2026, 7, 4, 12, 0))
-    config = SimpleNamespace(boundary_hour=5)
+    config = load_config(path=None, env={"PLAN_BOUNDARY_HOUR": "5"})
     return asyncio.run(
         board_route(conn, config, clock, conversations, ConversationStore(_database_path(conn)))
     )
@@ -187,13 +192,13 @@ def test_board_route_resolves_the_5am_planning_day(
 ) -> None:
     resolved_day_ids: list[str] = []
 
-    def capture_board(_conn: Connection, *, day_id: str) -> dict:
+    def capture_board(_conn: Connection, *, day_id: str) -> dict[str, Any]:
         resolved_day_ids.append(day_id)
         return {"columns": []}
 
     monkeypatch.setattr("planner.tickets.api.tickets_views.board_view", capture_board)
     clock = SimpleNamespace(now=lambda: now)
-    config = SimpleNamespace(boundary_hour=5)
+    config = load_config(path=None, env={"PLAN_BOUNDARY_HOUR": "5"})
     conversations = InMemoryConversationSystem()
 
     record = ConversationStore(_database_path(tmp_db))
@@ -204,7 +209,7 @@ def test_board_route_resolves_the_5am_planning_day(
 
 
 def test_board_view_groups_parented_ticket_by_parent_item_project(
-    tmp_db: Connection, fake_clock
+    tmp_db: Connection, fake_clock: TestClock
 ) -> None:
     standalone_project = create_project(tmp_db, name="Client Work", now=0)
     item = create_item(

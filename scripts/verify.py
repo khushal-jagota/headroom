@@ -59,10 +59,12 @@ def run_ruff() -> GateResult:
 
 
 def run_mypy() -> GateResult:
-    # src/ is the production surface; tests/typing/ holds strict-mypy fixtures that
-    # are type-checked (not run) — e.g. the t_tt01 overload-narrowing cases, which are
-    # only genuinely enforced when mypy sees them (assert_type is a runtime no-op).
-    rc, _ = _run([str(VENV_BIN / "mypy"), "src/", "tests/typing/"])
+    # No paths: what gets checked is stated once, by ``files`` in pyproject.toml, so this
+    # gate and a bare ``mypy`` at a terminal can never disagree about the surface. That
+    # surface is src/ plus the whole of tests/ — production code, the strict-mypy fixtures
+    # under tests/typing/ that are checked rather than run, and every real test, whose
+    # fixture parameters are the objects under test.
+    rc, _ = _run([str(VENV_BIN / "mypy")])
     return GateResult("mypy", rc == 0)
 
 

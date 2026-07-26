@@ -10,6 +10,7 @@ import pytest
 from planner.environments.contracts import (
     EnvironmentCredentialPolicy,
     EnvironmentValidationError,
+    ResolvedEnvironmentInstance,
 )
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (
@@ -175,7 +176,7 @@ def test_hidden_test_launch_seam_injects_fake_runtime_itself(tmp_path: Path) -> 
     assert run_env["PLAN_TICK_SECONDS"] == "1"
 
 
-def _staging_instance(tmp_path: Path):
+def _staging_instance(tmp_path: Path) -> ResolvedEnvironmentInstance:
     repository_root = tmp_path / "repo"
     repository_root.mkdir()
     subprocess.run(["git", "init", "-q", str(repository_root)], check=True)

@@ -12,6 +12,7 @@ ceiling sourcing through the same definition-backed paths."""
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -50,7 +51,7 @@ CODING_PROBE_WORKER_TYPE_DEFINITION: WorkerTypeDefinition = WorkerTypeDefinition
 )
 
 
-def _two_type_registry():
+def _two_type_registry() -> WorkerTypeRegistry:
     return WorkerTypeRegistry(
         (CODING_WORKER_TYPE_DEFINITION, CODING_PROBE_WORKER_TYPE_DEFINITION),
         # CODING_PROBE_WORKER_TYPE_DEFINITION inherits coding's profile (specialist_skill=
@@ -61,7 +62,7 @@ def _two_type_registry():
 
 
 @pytest.fixture
-def two_type_registry():
+def two_type_registry() -> Iterator[None]:
     """Install a registry carrying coding + a coding-shaped second type for the
     persistence doors, then restore production composition after the test."""
     registry = _two_type_registry()
@@ -368,7 +369,7 @@ def test_note_door_rejects_undeclared_field(tmp_db: Connection, fake_clock: Test
         tickets_data.set_field_user_note(
             tmp_db,
             ticket.id,
-            field="not_a_field",  # type: ignore[arg-type]
+            field="not_a_field",
             user_note="x",
             actor="human",
             now=now,

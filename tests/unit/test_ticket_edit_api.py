@@ -772,7 +772,7 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
     finally:
         conn.close()
 
-    cases = (
+    cases: tuple[tuple[dict[str, Any], int, dict[str, Any], dict[str, str]], ...] = (
         (
             {"title": "Must not land", "project": "Other", "project_id": "project_vylo"},
             400,

@@ -17,6 +17,7 @@ from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationStartRequest,
+    PromptDeliveryFate,
     PromptDeliveryMode,
     PromptDeliveryQueued,
     PromptDeliveryRefusalReason,
@@ -27,7 +28,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime.conversation_start import (
     CONVERSATION_ID_PREFIX,
@@ -88,6 +89,37 @@ class _LinkWatchingConversationSystem:
             self._conn, self._ticket_id
         ).conversation_id
 
+    async def send(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+    ) -> PromptDeliveryFate:
+        return await self._system.send(
+            conversation_id,
+            content,
+            sender_label=sender_label,
+            mode=mode,
+            model_change=model_change,
+            reasoning_effort_change=reasoning_effort_change,
+        )
+
+    async def interrupt(self, conversation_id: str) -> None:
+        await self._system.interrupt(conversation_id)
+
+    async def kill(self, conversation_id: str) -> None:
+        await self._system.kill(conversation_id)
+
+    async def is_running(self, conversation_id: str) -> bool:
+        return await self._system.is_running(conversation_id)
+
+    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+        return await self._system.has_pending_permission_ask(conversation_id)
+
 
 def test_the_conversation_exists_before_the_ticket_points_at_it(
     tmp_db: Connection, ticket: Ticket
@@ -144,6 +176,37 @@ def test_the_start_request_carries_every_resolved_value(
             async def start_conversation(self, request: ConversationStartRequest) -> None:
                 seen.append(request)
                 await system.start_conversation(request)
+
+            async def send(
+                self,
+                conversation_id: str,
+                content: MessageContent,
+                *,
+                sender_label: str,
+                mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+                model_change: str | None = None,
+                reasoning_effort_change: str | None = None,
+            ) -> PromptDeliveryFate:
+                return await system.send(
+                    conversation_id,
+                    content,
+                    sender_label=sender_label,
+                    mode=mode,
+                    model_change=model_change,
+                    reasoning_effort_change=reasoning_effort_change,
+                )
+
+            async def interrupt(self, conversation_id: str) -> None:
+                await system.interrupt(conversation_id)
+
+            async def kill(self, conversation_id: str) -> None:
+                await system.kill(conversation_id)
+
+            async def is_running(self, conversation_id: str) -> bool:
+                return await system.is_running(conversation_id)
+
+            async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+                return await system.has_pending_permission_ask(conversation_id)
 
         conversation_id = await start_ticket_conversation(
             _Recording(), tmp_db, ticket, _values(ticket.id), now=10
@@ -323,16 +386,16 @@ class _RelinkingConversationSystem:
     async def send(
         self,
         conversation_id: str,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
-    ):
+    ) -> PromptDeliveryFate:
         fate = await self._system.send(
             conversation_id,
-            text_message_content(text),
+            content,
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,

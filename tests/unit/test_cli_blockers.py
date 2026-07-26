@@ -2,19 +2,23 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
+from planner.cli import http as cli_http
 from planner.cli import main as cli_main
 
 
-def test_sprint_item_block_and_unblock_are_thin_blocks_link_calls(monkeypatch) -> None:
+def test_sprint_item_block_and_unblock_are_thin_blocks_link_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[str, str, dict[str, Any]]] = []
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
         return {"ok": True, "from_id": "t_source", "to_id": "si_target", "kind": "blocks"}
 
-    monkeypatch.setattr(cli_main.http, "send", fake_send)
+    monkeypatch.setattr(cli_http, "send", fake_send)
     runner = CliRunner()
 
     blocked = runner.invoke(
@@ -50,14 +54,16 @@ def test_sprint_item_block_and_unblock_are_thin_blocks_link_calls(monkeypatch) -
     ]
 
 
-def test_ticket_creation_clis_send_repeated_blocker_ids(monkeypatch) -> None:
+def test_ticket_creation_clis_send_repeated_blocker_ids(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[tuple[str, str, dict[str, Any]]] = []
 
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         calls.append((method, path, kwargs))
         return {"id": "t_created", "stage": "needs_kickoff"}
 
-    monkeypatch.setattr(cli_main.http, "send", fake_send)
+    monkeypatch.setattr(cli_http, "send", fake_send)
     runner = CliRunner()
     ordinary = runner.invoke(
         cli_main.main,

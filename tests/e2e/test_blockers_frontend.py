@@ -3,30 +3,39 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
 import httpx
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 WAIT_MS = 10_000
 
 
-def _post_stage(server, ticket_id: str, stage: str) -> dict:
+def _post_stage(server: ServerHandle, ticket_id: str, stage: str) -> JsonObject:
     resp = httpx.post(
         f"{server.base}/api/tickets/{ticket_id}/stage",
         json={"to_stage": stage},
         timeout=10.0,
     )
     assert resp.status_code < 300, f"POST Stage -> {resp.status_code}: {resp.text}"
-    return resp.json()
+    body: JsonObject = resp.json()
+    return body
 
 
-def _get_ticket(server, ticket_id: str) -> dict:
+def _get_ticket(server: ServerHandle, ticket_id: str) -> JsonObject:
     resp = httpx.get(f"{server.base}/api/tickets/{ticket_id}", timeout=10.0)
     assert resp.status_code < 300, f"GET ticket -> {resp.status_code}: {resp.text}"
-    return resp.json()
+    body: JsonObject = resp.json()
+    return body
 
 
 def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     blocker = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "Prerequisite"
@@ -134,7 +143,10 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
 
 
 def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     active_blocker = cli(
         server,
@@ -255,7 +267,10 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
 
 
 def test_kickoff_card_context_row_approves_and_standalone_blockers_return(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     blocker = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "Standing blocker"

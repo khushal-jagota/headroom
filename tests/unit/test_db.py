@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -85,7 +86,7 @@ STATUS_CHANGED_AT_COLUMN = ("ticket_status_changed_at", "INTEGER", 1, "0", 0)
 
 def _table_structure_before_status_changed_at(structure: dict[str, object]) -> dict[str, object]:
     """The tickets structure with the one column this revision adds taken back off."""
-    columns = list(structure["columns"])  # type: ignore[arg-type]
+    columns = list(structure["columns"])  # type: ignore[call-overload]
     assert columns[-1] == STATUS_CHANGED_AT_COLUMN
     return {**structure, "columns": columns[:-1]}
 
@@ -99,7 +100,7 @@ def _with_the_conversation_link_renamed(structure: dict[str, object]) -> dict[st
     """
     columns = [
         ("conversation_id", *rest) if name == "employee_session_id" else (name, *rest)
-        for name, *rest in structure["columns"]  # type: ignore[union-attr]
+        for name, *rest in structure["columns"]  # type: ignore[attr-defined]
     ]
     return {**structure, "columns": columns}
 
@@ -136,17 +137,18 @@ def _insert_ticket(
 
 
 def test_connect_applies_busy_timeout_to_initial_connect_and_pragma(
-    tmp_path,
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     real_connect = sqlite3.connect
-    initial_connect_calls = []
+    initial_connect_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
-    def recording_connect(*args, **kwargs):
+    def recording_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
         initial_connect_calls.append((args, kwargs))
-        return real_connect(*args, **kwargs)
+        connection: sqlite3.Connection = real_connect(*args, **kwargs)
+        return connection
 
-    monkeypatch.setattr(db_module.sqlite3, "connect", recording_connect)
+    monkeypatch.setattr(sqlite3, "connect", recording_connect)
 
     db_path = str(tmp_path / "bounded-connect.db")
     conn = connect(db_path, busy_timeout_ms=275)
@@ -171,7 +173,7 @@ def test_connect_applies_busy_timeout_to_initial_connect_and_pragma(
 # --- bringing a database up to the current schema ---------------------------------------
 
 
-def test_fresh_database_is_built_and_marked_at_the_current_revision(tmp_path) -> None:
+def test_fresh_database_is_built_and_marked_at_the_current_revision(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "fresh.db"))
     create_schema(conn)
 
@@ -183,7 +185,7 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(tmp_path) ->
     conn.close()
 
 
-def test_reopening_a_current_database_changes_nothing(tmp_path) -> None:
+def test_reopening_a_current_database_changes_nothing(tmp_path: Path) -> None:
     """The server calls this on every start; a start must not rewrite the record."""
     conn = connect(str(tmp_path / "reopened.db"))
     create_schema(conn)
@@ -199,7 +201,7 @@ def test_reopening_a_current_database_changes_nothing(tmp_path) -> None:
     conn.close()
 
 
-def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_path) -> None:
+def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_path: Path) -> None:
     db_path = tmp_path / "old.db"
     _build_pre_alembic_database(db_path)
     conn = connect(str(db_path))
@@ -230,7 +232,7 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_pa
     conn.close()
 
 
-def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path) -> None:
+def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path: Path) -> None:
     """Statuses a database written before the reshape holds, brought onto the eight."""
     db_path = tmp_path / "pre-reshape.db"
     _build_pre_alembic_database(db_path)
@@ -316,7 +318,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path) 
     conn.close()
 
 
-def test_database_older_than_the_baseline_is_refused_by_its_version(tmp_path) -> None:
+def test_database_older_than_the_baseline_is_refused_by_its_version(tmp_path: Path) -> None:
     db_path = tmp_path / "older.db"
     _build_pre_alembic_database(db_path, schema_version=34)
     conn = connect(str(db_path))
@@ -330,7 +332,9 @@ def test_database_older_than_the_baseline_is_refused_by_its_version(tmp_path) ->
     conn.close()
 
 
-def test_database_marked_at_the_baseline_but_holding_another_schema_is_refused(tmp_path) -> None:
+def test_database_marked_at_the_baseline_but_holding_another_schema_is_refused(
+    tmp_path: Path,
+) -> None:
     conn = connect(str(tmp_path / "mismarked.db"))
     conn.execute("CREATE TABLE something_else (value TEXT)")
     conn.execute("PRAGMA user_version=37")
@@ -341,7 +345,7 @@ def test_database_marked_at_the_baseline_but_holding_another_schema_is_refused(t
     conn.close()
 
 
-def test_database_missing_an_index_the_marker_promises_is_refused(tmp_path) -> None:
+def test_database_missing_an_index_the_marker_promises_is_refused(tmp_path: Path) -> None:
     """The old ladder wrote its marker before creating indexes, so the two can disagree."""
     db_path = tmp_path / "no-alias-index.db"
     _build_pre_alembic_database(db_path)
@@ -354,7 +358,7 @@ def test_database_missing_an_index_the_marker_promises_is_refused(tmp_path) -> N
     conn.close()
 
 
-def test_database_with_an_empty_version_table_is_refused(tmp_path) -> None:
+def test_database_with_an_empty_version_table_is_refused(tmp_path: Path) -> None:
     """Alembic always writes a row, so an empty one says nothing about the schema."""
     conn = connect(str(tmp_path / "blank-version.db"))
     create_schema(conn)
@@ -366,7 +370,7 @@ def test_database_with_an_empty_version_table_is_refused(tmp_path) -> None:
     conn.close()
 
 
-def test_empty_database_carrying_an_old_marker_is_refused(tmp_path) -> None:
+def test_empty_database_carrying_an_old_marker_is_refused(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "emptied.db"))
     conn.execute("PRAGMA user_version=34")
 
@@ -377,7 +381,7 @@ def test_empty_database_carrying_an_old_marker_is_refused(tmp_path) -> None:
 
 
 def test_the_baseline_revision_still_builds_the_schema_it_was_frozen_at(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The baseline is history: later work adds revisions, it never edits this one.
 
@@ -398,7 +402,7 @@ def test_the_baseline_revision_still_builds_the_schema_it_was_frozen_at(
     built.close()
 
 
-def test_create_schema_refuses_a_connection_it_cannot_migrate_beside(tmp_path) -> None:
+def test_create_schema_refuses_a_connection_it_cannot_migrate_beside(tmp_path: Path) -> None:
     """Migrations run on their own connection, so the caller's must not hold a lock."""
     conn = connect(str(tmp_path / "busy.db"))
     conn.execute("BEGIN IMMEDIATE")
@@ -413,7 +417,7 @@ def test_create_schema_refuses_a_connection_it_cannot_migrate_beside(tmp_path) -
     in_memory.close()
 
 
-def test_processes_starting_at_once_agree_on_one_database(tmp_path) -> None:
+def test_processes_starting_at_once_agree_on_one_database(tmp_path: Path) -> None:
     """Nothing stops two Panels processes bringing the same database up together."""
     db_path = tmp_path / "contended.db"
     # Open once so the file exists in WAL mode. Racing that first open is a question
@@ -567,7 +571,7 @@ def downgrade() -> None:
 )
 
 
-def _migration_tree(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _migration_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A copy of the real migrations, for revisions that only exist inside a test."""
     tree = tmp_path / "migrations"
     (tree / "versions").mkdir(parents=True)
@@ -581,7 +585,7 @@ def _migration_tree(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_rebuilding_a_table_keeps_its_rows_children_checks_and_indexes(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tree = _migration_tree(tmp_path, monkeypatch)
     conn = connect(str(tmp_path / "rebuilt.db"))
@@ -628,7 +632,7 @@ def test_rebuilding_a_table_keeps_its_rows_children_checks_and_indexes(
 
 
 def test_a_migration_that_fails_leaves_the_database_as_it_was(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tree = _migration_tree(tmp_path, monkeypatch)
     conn = connect(str(tmp_path / "failed.db"))
@@ -646,7 +650,7 @@ def test_a_migration_that_fails_leaves_the_database_as_it_was(
 
 
 def test_adopting_a_database_is_undone_when_a_later_migration_fails(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The live database is adopted once, in the same breath as everything after it."""
     tree = _migration_tree(tmp_path, monkeypatch)
@@ -672,7 +676,7 @@ def test_adopting_a_database_is_undone_when_a_later_migration_fails(
 
 
 def test_a_migration_that_leaves_a_dangling_reference_is_rolled_back(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Foreign keys are not enforced while migrating, so this is what catches the damage."""
     tree = _migration_tree(tmp_path, monkeypatch)
@@ -697,7 +701,7 @@ def test_a_migration_that_leaves_a_dangling_reference_is_rolled_back(
 # --- the schema the baseline describes ----------------------------------------------------
 
 
-def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(tmp_path):
+def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(tmp_path: Path) -> None:
     # t_tt02 retired the two enumerating CHECKs (Stage, ceiling): lifecycle integrity
     # now lives in the registry validation doors, not the DB. The fresh schema no
     # longer rejects a raw out-of-order write at the DB level — the registry is the
@@ -717,7 +721,7 @@ def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(tmp_path):
     conn.close()
 
 
-def test_fresh_schema_rejects_ticket_fields_omission(tmp_path):
+def test_fresh_schema_rejects_ticket_fields_omission(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "fresh-fields-required.db"))
     create_schema(conn)
 
@@ -731,7 +735,7 @@ def test_fresh_schema_rejects_ticket_fields_omission(tmp_path):
     conn.close()
 
 
-def test_fresh_schema_has_no_ticket_execution_route(tmp_path):
+def test_fresh_schema_has_no_ticket_execution_route(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "fresh-without-execution-route.db"))
     create_schema(conn)
 
@@ -744,7 +748,7 @@ def test_fresh_schema_has_no_ticket_execution_route(tmp_path):
     conn.close()
 
 
-def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(tmp_path):
+def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "fresh-blocks-links.db"))
     create_schema(conn)
 
@@ -766,7 +770,7 @@ def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(tmp_path):
     conn.close()
 
 
-def test_fresh_ticket_and_chief_launch_snapshots_are_nullable(tmp_path) -> None:
+def test_fresh_ticket_and_chief_launch_snapshots_are_nullable(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "fresh-configuration.db"))
     create_schema(conn)
     columns = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
@@ -790,7 +794,9 @@ def test_fresh_ticket_and_chief_launch_snapshots_are_nullable(tmp_path) -> None:
     conn.close()
 
 
-def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tmp_path):
+def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(
+    tmp_path: Path,
+) -> None:
     conn = connect(str(tmp_path / "fresh-type.db"))
     create_schema(conn)
 
@@ -838,7 +844,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     conn.close()
 
 
-def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path):
+def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "fresh.db"))
 
     create_schema(conn)

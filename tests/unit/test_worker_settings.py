@@ -19,7 +19,7 @@ from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.environments.hermes_home import provision_planner_home_skills
-from planner.skill_sources import ensure_managed_panels_skills
+from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode
 from planner.worker_settings import api as worker_settings_api
@@ -50,7 +50,7 @@ def _counting_change_signals() -> Iterator[_SignalCounter]:
 @pytest.fixture
 def canonical_skills_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Give skill-edit tests an isolated managed home seeded from package defaults."""
-    source = worker_settings_service.panels_skill_root()
+    source = panels_skill_root()
     target = tmp_path / "canonical-skills"
     shutil.copytree(source, target)
     monkeypatch.setattr(worker_settings_service, "panels_skill_root", lambda: target)
@@ -117,7 +117,7 @@ def test_workers_api_composes_registry_with_managed_settings_and_signals_the_cha
 def test_skills_home_api_lists_and_edits_any_packaged_skill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source = worker_settings_service.panels_skill_root()
+    source = panels_skill_root()
     target = tmp_path / "skills"
     shutil.copytree(source, target)
     monkeypatch.setattr(worker_settings_service, "panels_skill_root", lambda: target)

@@ -44,7 +44,7 @@ from tests.support.probe import PROBE_FIELD_IDS as _PROBE_FIELD_IDS
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.core.clock import TestClock
-from planner.core.contracts import ErrorCode, PlannerError
+from planner.core.contracts import ErrorCode, PlannerError, Priority
 from planner.core.db import connect, create_schema
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -52,7 +52,6 @@ from planner.tickets.contracts import (
     TITLE_MAX_CHARS,
     AtCap,
     FieldSlot,
-    Priority,
     Proposal,
     ScopePair,
     StageOwnershipMode,
@@ -382,7 +381,8 @@ def test_probe_data_layer_drive_to_done(
 
     # --- propose beta AGAIN -> SUPERSEDES the first.
     t = tickets_data.file_proposal(tmp_db, tid, field=_FB, body="beta v2", actor="agent", now=now)
-    assert fields_codec.get_slot(t.fields, _FB).proposal.body == "beta v2"
+    beta_v2 = fields_codec.get_slot(t.fields, _FB)
+    assert beta_v2.proposal is not None and beta_v2.proposal.body == "beta v2"
 
     # --- accept beta -> advances to done (the terminal), value settled.
     t = tickets_data.accept_proposal(
@@ -421,7 +421,8 @@ def test_probe_recap_path_infers_gating_field(
         tmp_db, tid, body="alpha via recap", recap="probe recap", actor="agent", now=now
     )
     assert t.recap == "probe recap"
-    assert fields_codec.get_slot(t.fields, _FA).proposal.body == "alpha via recap"
+    alpha = fields_codec.get_slot(t.fields, _FA)
+    assert alpha.proposal is not None and alpha.proposal.body == "alpha via recap"
     assert t.stage == _A  # parked at the ceiling
 
 

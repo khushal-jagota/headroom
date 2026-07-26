@@ -61,6 +61,7 @@ from planner.conversation.events import (
     ConversationEventKind,
     ConversationTurnEnding,
     ModelThinkingFrame,
+    PlanEntry,
     PlanUpdatedEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
@@ -605,7 +606,7 @@ def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: P
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                "work",
+                text_message_content("work"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -651,7 +652,7 @@ def test_an_answer_that_cannot_be_shown_to_have_landed_does_not_wait_for_good(
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                "work",
+                text_message_content("work"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -679,7 +680,7 @@ def test_an_answer_that_reached_the_wire_uses_the_ask_up(tmp_path: Path) -> None
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                "work",
+                text_message_content("work"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -739,7 +740,7 @@ def test_real_hermes_holds_a_turn_and_records_what_it_said(tmp_path: Path) -> No
             assert sink.vendor_session_cursor is not None
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                "Reply with exactly the word: ready",
+                text_message_content("Reply with exactly the word: ready"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -776,13 +777,19 @@ def test_real_hermes_takes_a_model_change_between_turns(tmp_path: Path) -> None:
         try:
             assert child._session_configuration_options == ()
 
-            await _real_turn(child, sink, 1, HERMES_MODEL_QUESTION)
+            await _real_turn(child, sink, 1, text_message_content(HERMES_MODEL_QUESTION))
             before = sink.agent_messages[-1]
 
-            await _real_turn(child, sink, 2, HERMES_MODEL_QUESTION, model=HERMES_OTHER_MODEL)
+            await _real_turn(
+                child,
+                sink,
+                2,
+                text_message_content(HERMES_MODEL_QUESTION),
+                model=HERMES_OTHER_MODEL,
+            )
             with_the_change = sink.agent_messages[-1]
 
-            await _real_turn(child, sink, 3, HERMES_MODEL_QUESTION)
+            await _real_turn(child, sink, 3, text_message_content(HERMES_MODEL_QUESTION))
             after = sink.agent_messages[-1]
 
             assert HERMES_OTHER_MODEL.split(":")[-1] in with_the_change
@@ -816,7 +823,7 @@ def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: 
         try:
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                "Count slowly from 1 to 200, one number per line.",
+                text_message_content("Count slowly from 1 to 200, one number per line."),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -830,7 +837,7 @@ def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: 
             sink.expect_another_turn()
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=2),
-                "Reply with exactly the word: pineapple",
+                text_message_content("Reply with exactly the word: pineapple"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.send_now,
                 model_change=None,
@@ -863,7 +870,7 @@ def test_real_hermes_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
         try:
             await child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
-                "Count slowly from 1 to 200, one number per line.",
+                text_message_content("Count slowly from 1 to 200, one number per line."),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -915,14 +922,14 @@ async def _real_turn(
     child: HermesAcpBackendChild,
     sink: _RecordingSink,
     turn_number: int,
-    text: str,
+    content: MessageContent,
     *,
     model: str | None = None,
 ) -> None:
     sink.expect_another_turn()
     await child.write_prompt(
         TurnToken(conversation_id="c", turn_number=turn_number),
-        text,
+        content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=model,
@@ -956,12 +963,21 @@ class _RecordingSink:
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         return None
 
+    async def model_thinking_happened(self, turn_token: TurnToken) -> None:
+        return None
+
+    async def plan_updated(self, turn_token: TurnToken, entries: tuple[PlanEntry, ...]) -> None:
+        return None
+
     async def agent_message_completed(
         self, turn_token: TurnToken, content: MessageContent
     ) -> None:
         self.agent_contents.append(content)
 
     async def tool_call_started(self, turn_token: TurnToken, **kwargs: object) -> None:
+        return None
+
+    async def tool_call_progress(self, turn_token: TurnToken, **kwargs: object) -> None:
         return None
 
     async def tool_call_finished(self, turn_token: TurnToken, **kwargs: object) -> None:
@@ -1083,6 +1099,7 @@ def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
                 reasoning_effort_change=None,
             )
             report = await control.send({"command": "report"})
+            assert report is not None
 
             blocks = report["prompt_writes"][0]["blocks"]
             assert blocks[0] == {"piece": "text", "text": "look at this"}

@@ -18,9 +18,10 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import acp
+from acp.interfaces import Agent
 from acp.schema import (
     AgentCapabilities,
     AgentMessageChunk,
@@ -100,7 +101,7 @@ class WorkerSkillProofAgent:
 
 
 async def _main() -> None:
-    await acp.run_agent(WorkerSkillProofAgent(), use_unstable_protocol=True)
+    await acp.run_agent(cast(Agent, WorkerSkillProofAgent()), use_unstable_protocol=True)
 
 
 if __name__ == "__main__":

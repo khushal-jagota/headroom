@@ -1186,14 +1186,14 @@ class _ScriptedChild:
     async def write_prompt(
         self,
         turn_number: int,
-        text: str,
+        content: MessageContent,
         *,
         model: str | None = None,
         reasoning_effort: str | None = None,
     ) -> None:
         await self.child.write_prompt(
             TurnToken(conversation_id="c", turn_number=turn_number),
-            text,
+            content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change=model,

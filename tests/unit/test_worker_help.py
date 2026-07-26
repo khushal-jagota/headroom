@@ -10,14 +10,14 @@ from planner.core.contracts import ErrorCode, PlannerError
 from planner.days import data as days_data
 from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data
-from planner.tickets.contracts import AtCap, TicketStatus
+from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.tickets.views import review_view
 from planner.worker_types.configuration import configured_worker_type_registry
 
 DAY_ID = "day_2026-07-23"
 
 
-def _ticket(conn: Connection):
+def _ticket(conn: Connection) -> Ticket:
     ticket = data.create_ticket(
         conn,
         worker_type="coding",

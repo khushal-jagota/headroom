@@ -9,6 +9,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
@@ -48,7 +49,7 @@ def probe_runtime() -> Iterator[None]:
         uninstall_probe_registry()
 
 
-def _make_app(tmp_path: Path):
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)

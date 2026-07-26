@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -26,7 +27,7 @@ from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture
-def tmp_db(tmp_path: Path) -> Connection:
+def tmp_db(tmp_path: Path) -> Iterator[Connection]:
     conn = connect(str(tmp_path / "probe.db"))
     create_schema(conn)
     yield conn
@@ -39,7 +40,7 @@ def fake_clock() -> TestClock:
 
 
 @pytest.fixture(autouse=True)
-def probe_registry() -> None:
+def probe_registry() -> Iterator[None]:
     install_probe_registry()
     yield
     uninstall_probe_registry()

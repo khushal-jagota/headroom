@@ -284,7 +284,7 @@ def test_restore_replacement_failure_preserves_database_and_sidecars(
 
     real_replace = __import__("os").replace
 
-    def fail_database_replacement(source_path: str, destination_path: str) -> None:
+    def fail_database_replacement(source_path: Path, destination_path: Path) -> None:
         if destination_path == destination:
             raise OSError("replace failed")
         real_replace(source_path, destination_path)

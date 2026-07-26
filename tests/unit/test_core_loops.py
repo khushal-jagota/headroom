@@ -11,14 +11,14 @@ import pytest
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import change_signal, loops
-from planner.core.clock import TestClock
-from planner.core.config import load_config
+from planner.core.clock import Clock, TestClock
+from planner.core.config import Config, load_config
 from planner.core.db import connect, create_schema
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_context.service import EmptyWorkerContextService
 
 
-def _config(tmp_path: Path, *, dispatch: bool = True):
+def _config(tmp_path: Path, *, dispatch: bool = True) -> Config:
     db_path = tmp_path / "planning.db"
     conn = connect(str(db_path))
     create_schema(conn)
@@ -90,11 +90,10 @@ def test_lock_winner_composes_the_loop_and_wakes_it_from_the_change_signal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = _config(tmp_path)
-    constructed: list[Any] = []
     released: list[str] = []
 
     class RecordingReadinessLoop:
-        def __init__(self, _db_path, _clock, **kwargs) -> None:
+        def __init__(self, _db_path: str, _clock: Clock, **kwargs: object) -> None:
             self.kwargs = kwargs
             self.started: list[int] = []
             self.wakes = 0
@@ -110,23 +109,26 @@ def test_lock_winner_composes_the_loop_and_wakes_it_from_the_change_signal(
         def stop(self, *, deadline: float | None = None) -> None:
             self.stops.append(deadline)
 
+    constructed: list[RecordingReadinessLoop] = []
+
     monkeypatch.setattr(loops, "ensure_machine_lock", lambda _path: True)
     monkeypatch.setattr(loops, "release_machine_lock", released.append)
     monkeypatch.setattr(loops, "WorkerStepReadinessLoop", RecordingReadinessLoop)
     handle = _start(config, fake_clock)
     try:
-        assert handle.worker_step_readiness_loop is constructed[0]
-        assert constructed[0].started == [config.tick_seconds]
-        assert constructed[0].kwargs["boundary_hour"] == config.boundary_hour
+        loop = cast(RecordingReadinessLoop, handle.worker_step_readiness_loop)
+        assert loop is constructed[0]
+        assert loop.started == [config.tick_seconds]
+        assert loop.kwargs["boundary_hour"] == config.boundary_hour
         change_signal.emit()
-        assert constructed[0].wakes == 1
+        assert loop.wakes == 1
     finally:
         asyncio.run(handle.stop(deadline=123.0))
     # Stopping takes the loop off the signal, so a later commit cannot wake a stopped loop.
     change_signal.emit()
-    assert constructed[0].wakes == 1
+    assert loop.wakes == 1
     # The loop drains under the same deadline, and only then is the lock given back.
-    assert constructed[0].stops == [123.0]
+    assert loop.stops == [123.0]
     assert released == [config.dispatcher_lock_path]
 
 
@@ -140,7 +142,7 @@ def test_a_loop_that_fails_to_start_releases_the_lock_and_leaves_nothing_listeni
     released: list[str] = []
 
     class BrokenLoop:
-        def __init__(self, *_args, **_kwargs) -> None:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
             return None
 
         def wake(self) -> None:

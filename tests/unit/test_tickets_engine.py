@@ -169,9 +169,10 @@ def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
     assert t.stage == "needs_kickoff"
     assert t.ticket_status is TicketStatus.awaiting_approval
     assert t.title == "Draft kickoff title"
-    assert fields_codec.get_slot(t.fields, "kickoff").value is None
-    assert fields_codec.get_slot(t.fields, "kickoff").proposal is not None
-    assert fields_codec.get_slot(t.fields, "kickoff").proposal.body == "draft kickoff note"
+    kickoff_slot = fields_codec.get_slot(t.fields, "kickoff")
+    assert kickoff_slot.value is None
+    assert kickoff_slot.proposal is not None
+    assert kickoff_slot.proposal.body == "draft kickoff note"
     assert set(json.loads(fields_codec.fields_to_json(t.fields))) == {
         "kickoff",
         "success",
@@ -236,12 +237,14 @@ def test_review_exposes_kickoff_as_ordinary_ticket_decision(
 
     review = ticket_views.review_view(tmp_db, day_id=day_id)
 
+    kickoff_slot = fields_codec.get_slot(t.fields, "kickoff")
+    assert kickoff_slot.proposal is not None
     assert review["ticket_decisions"] == [
         {
             "ticket_id": t.id,
             "field": "kickoff",
             "title": t.title,
-            "waiting_since": fields_codec.get_slot(t.fields, "kickoff").proposal.created_at,
+            "waiting_since": kickoff_slot.proposal.created_at,
         }
     ]
 
@@ -449,8 +452,9 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     t = data.read_ticket(tmp_db, t.id)
     assert t.ticket_status is TicketStatus.empty
 
-    t = _claim_ready_worker_step(tmp_db, t.id, now=now)
-    assert t is not None
+    claimed_again = _claim_ready_worker_step(tmp_db, t.id, now=now)
+    assert claimed_again is not None
+    t = claimed_again
     t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
     assert t.ticket_status is TicketStatus.awaiting_approval
 
@@ -565,8 +569,9 @@ def _park_paired(
     now: int,
 ) -> Ticket:
     t = _create(tmp_db, cfg, fake_clock)
-    t = _claim_ready_worker_step(tmp_db, t.id, now=now)
-    assert t is not None
+    claimed = _claim_ready_worker_step(tmp_db, t.id, now=now)
+    assert claimed is not None
+    t = claimed
     tmp_db.execute(
         "UPDATE tickets SET conversation_id = ? WHERE id = ?",
         (f"conv-{t.id}", t.id),
@@ -588,8 +593,9 @@ def test_enter_paired_on_human_reply_flips_only_from_awaiting_approval(
     t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.empty
     # No-op from agent.
-    t = _claim_ready_worker_step(tmp_db, t.id, now=now)
-    assert t is not None
+    claimed = _claim_ready_worker_step(tmp_db, t.id, now=now)
+    assert claimed is not None
+    t = claimed
     assert t.ticket_status is TicketStatus.agent
     t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.agent
@@ -830,8 +836,9 @@ def test_current_proposal_with_recap_parks_both_atomically(
 
     assert t.stage == "needs_success"
     assert t.recap == "worker recap"
-    assert fields_codec.get_slot(t.fields, "success").proposal is not None
-    assert fields_codec.get_slot(t.fields, "success").proposal.body == "success proposal"
+    success_slot = fields_codec.get_slot(t.fields, "success")
+    assert success_slot.proposal is not None
+    assert success_slot.proposal.body == "success proposal"
     assert t.ticket_status is TicketStatus.awaiting_approval
 
 
@@ -921,10 +928,11 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
 
     t = data.file_proposal(tmp_db, t.id, field="plan", body="plan body", actor="agent", now=now)
     assert t.stage == "needs_plan"
-    assert fields_codec.get_slot(t.fields, "plan").value is None
-    assert fields_codec.get_slot(t.fields, "plan").proposal is not None
-    assert fields_codec.get_slot(t.fields, "plan").proposal.body == "plan body"
-    assert fields_codec.get_slot(t.fields, "plan").proposal.proposed_by == "agent"
+    plan_slot = fields_codec.get_slot(t.fields, "plan")
+    assert plan_slot.value is None
+    assert plan_slot.proposal is not None
+    assert plan_slot.proposal.body == "plan body"
+    assert plan_slot.proposal.proposed_by == "agent"
     assert (
         machine.has_pending_gating_proposal(
             t.stage,
@@ -965,9 +973,10 @@ def test_a04_at_cap_stop_vs_propose(tmp_db: Connection, cfg: Config, fake_clock:
         tmp_db, a.id, field="approach", body="approach draft", actor="agent", now=now
     )
     assert a.stage == "needs_approach"
-    assert fields_codec.get_slot(a.fields, "approach").proposal is not None
-    assert fields_codec.get_slot(a.fields, "approach").proposal.body == "approach draft"
-    assert fields_codec.get_slot(a.fields, "approach").value is None
+    approach_slot = fields_codec.get_slot(a.fields, "approach")
+    assert approach_slot.proposal is not None
+    assert approach_slot.proposal.body == "approach draft"
+    assert approach_slot.value is None
 
     row_before = _ticket_row(tmp_db, a.id)
     with pytest.raises(PlannerError) as exc_propose_non_gating:
@@ -1009,14 +1018,16 @@ def test_a05_one_pending_proposal_per_field_supersede(
     t = _create(tmp_db, cfg, fake_clock)
 
     t = data.file_proposal(tmp_db, t.id, field="success", body="first body", actor="agent", now=now)
-    assert fields_codec.get_slot(t.fields, "success").proposal is not None
-    assert fields_codec.get_slot(t.fields, "success").proposal.body == "first body"
+    first_success = fields_codec.get_slot(t.fields, "success")
+    assert first_success.proposal is not None
+    assert first_success.proposal.body == "first body"
 
     t = data.file_proposal(
         tmp_db, t.id, field="success", body="second body", actor="agent", now=now
     )
-    assert fields_codec.get_slot(t.fields, "success").proposal is not None
-    assert fields_codec.get_slot(t.fields, "success").proposal.body == "second body"
+    second_success = fields_codec.get_slot(t.fields, "success")
+    assert second_success.proposal is not None
+    assert second_success.proposal.body == "second body"
 
     assert t.stage == "needs_success"
 
@@ -1287,9 +1298,10 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
 
     t = data.read_ticket(tmp_db, t.id)
     assert t.stage == "needs_success"
-    assert fields_codec.get_slot(t.fields, "success").value is None
-    assert fields_codec.get_slot(t.fields, "success").proposal is not None
-    assert fields_codec.get_slot(t.fields, "success").proposal.body == "body"
+    success_slot = fields_codec.get_slot(t.fields, "success")
+    assert success_slot.value is None
+    assert success_slot.proposal is not None
+    assert success_slot.proposal.body == "body"
     assert t.ceiling == "needs_success"
     assert t.at_cap is AtCap.propose
     assert _ticket_row(tmp_db, t.id) == row_before

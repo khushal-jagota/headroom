@@ -3,23 +3,32 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
 import httpx
-from tests.e2e.conftest import WAIT_MS
+from playwright.sync_api import BrowserContext, Page, ViewportSize
+from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 
 
-def _put_stage_owner(server, ticket_id: str, stage: str, mode: str | None) -> dict:
+def _put_stage_owner(
+    server: ServerHandle, ticket_id: str, stage: str, mode: str | None
+) -> JsonObject:
     response = httpx.put(
         f"{server.base}/api/tickets/{ticket_id}/stage-ownership/{stage}",
         json={"ownership_mode": mode},
         timeout=10.0,
     )
     assert response.status_code < 300, response.text
-    return response.json()
+    body: JsonObject = response.json()
+    return body
 
 
 def test_ticket_facts_edit_current_stage_owner_without_execution_route(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -84,7 +93,10 @@ def test_ticket_facts_edit_current_stage_owner_without_execution_route(
 
 
 def test_workspace_stage_mark_renders_paired_on_desktop_and_mobile(
-    server, context_factory, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -107,7 +119,10 @@ def test_workspace_stage_mark_renders_paired_on_desktop_and_mobile(
             ("paired-render-session", ticket_id),
         )
 
-    for viewport in ({"width": 1440, "height": 900}, {"width": 390, "height": 844}):
+    for viewport in (
+        ViewportSize(width=1440, height=900),
+        ViewportSize(width=390, height=844),
+    ):
         page = context_factory().new_page()
         page.set_viewport_size(viewport)
         page.goto(server.base + "/#/workspace")

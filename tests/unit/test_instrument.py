@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-import verify_lib  # noqa: E402
+import verify_lib  # type: ignore[import-not-found]  # noqa: E402  # reached via sys.path.insert above; not visible to mypy
 
 from planner.core.clock import RealClock, build_clock  # noqa: E402
 from planner.core.clock import (

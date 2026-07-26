@@ -5,13 +5,18 @@ drive the CLI + API surfaces only. The worker-step readiness loop never runs in 
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
 
 
-def test_ticket_cli_forwards_employee_backend_create_and_set(server, cli, api) -> None:
+def test_ticket_cli_forwards_employee_backend_create_and_set(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
     created = cli(
         server,
         "ticket",
@@ -39,7 +44,9 @@ def test_ticket_cli_forwards_employee_backend_create_and_set(server, cli, api) -
     assert api.get(server, f"/api/tickets/{created['id']}")["employee_backend"] == "hermes"
 
 
-def test_ticket_create_sprint_item_parents_it(server, cli, api) -> None:
+def test_ticket_create_sprint_item_parents_it(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
     # --item -> --sprint-item: the option renamed; still parents the ticket under the item.
     iid = cli(server, "sprint", "item", "create", "--title", "Item A", "--project", "Vylo")["id"]
     tid = cli(
@@ -60,7 +67,9 @@ def test_ticket_create_sprint_item_parents_it(server, cli, api) -> None:
     ]
 
 
-def test_ticket_list_day_filter(server, cli, api) -> None:
+def test_ticket_list_day_filter(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
     # `ticket list --day today` scopes to the day's board (day_tickets join).
     t_on = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "On today")["id"]
     t_off = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "Off day")["id"]
@@ -81,7 +90,9 @@ def test_ticket_list_day_filter(server, cli, api) -> None:
     assert t_on in all_ids and t_off in all_ids
 
 
-def test_project_create_list_and_project_id_item_filter(server, cli) -> None:
+def test_project_create_list_and_project_id_item_filter(
+    server: ServerHandle, cli: Callable[..., JsonObject]
+) -> None:
     project = cli(server, "project", "create", "--name", "Alpha One")
     assert project["id"] == "project_alpha_one"
     assert project["name"] == "Alpha One"
@@ -103,7 +114,7 @@ def test_project_create_list_and_project_id_item_filter(server, cli) -> None:
     assert [entry["id"] for entry in listed_items["items"]] == [item["id"]]
 
 
-def test_queue_pickup_command_removed(server) -> None:
+def test_queue_pickup_command_removed(server: ServerHandle) -> None:
     # `queue` is no longer a CLI command group; approval is homed on ticket/sprint item.
     proc = subprocess.run(
         [str(PLAN_BIN), "queue", "pickup", "--json"],
@@ -116,7 +127,9 @@ def test_queue_pickup_command_removed(server) -> None:
     assert "queue" in (proc.stderr + proc.stdout)  # click's "No such command 'queue'"
 
 
-def test_ticket_approval_copy_and_worker_note_shape(server, cli, api) -> None:
+def test_ticket_approval_copy_and_worker_note_shape(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
     tid = cli(
         server,
         "ticket",
@@ -197,7 +210,9 @@ def test_ticket_approval_copy_and_worker_note_shape(server, cli, api) -> None:
     assert "approach note" in copied["text"]
 
 
-def test_sprint_ticket_commands_use_sprint_option_and_current_selector(server, cli, api) -> None:
+def test_sprint_ticket_commands_use_sprint_option_and_current_selector(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
     sprint = cli(
         server,
         "sprint",

@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from planner.environments import materialize as environment_materialize
 from planner.environments.fake_fixture import (
     FAKE_FIXTURE_VERSION,
@@ -109,11 +111,11 @@ def test_prepare_common_layout_does_not_materialize_a_panels_managed_hermes_home
 
 def test_live_prepare_creates_empty_layout_without_fake_fixture(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository_root = _repository_root()
 
-    def fail_fixture(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def fail_fixture(*args: object, **kwargs: object) -> None:
         raise AssertionError("live prepare must not build the fake fixture")
 
     monkeypatch.setattr(
@@ -165,7 +167,9 @@ def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Pat
     assert not reset.hermes_home.exists()
 
 
-def test_failed_reset_keeps_prior_data_tree(tmp_path: Path, monkeypatch) -> None:
+def test_failed_reset_keeps_prior_data_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repository_root = _repository_root()
     staging = prepare_environment_instance(
         kind="staging",
@@ -175,7 +179,7 @@ def test_failed_reset_keeps_prior_data_tree(tmp_path: Path, monkeypatch) -> None
     marker = staging.db_path.parent / "marker.txt"
     marker.write_text("old data", encoding="utf-8")
 
-    def fail_fixture(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def fail_fixture(*args: object, **kwargs: object) -> None:
         raise RuntimeError("fixture failed")
 
     monkeypatch.setattr(

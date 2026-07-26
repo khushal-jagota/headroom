@@ -18,6 +18,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
@@ -25,6 +26,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+
+AppDb = tuple[FastAPI, Path]
 
 
 @pytest.fixture
@@ -37,7 +40,7 @@ def probe_installed() -> Iterator[None]:
 
 
 @pytest.fixture
-def app_db(tmp_path: Path):
+def app_db(tmp_path: Path) -> AppDb:
     db_path = tmp_path / "ingress.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -58,13 +61,16 @@ def _create(client: TestClient, worker_type: str) -> str:
         "/api/tickets", json={"title": worker_type, "worker_type": worker_type, "kickoff_note": "k"}
     )
     assert r.status_code == 200, r.json()
-    return r.json()["id"]
+    ticket_id: str = r.json()["id"]
+    return ticket_id
 
 
 # --- coding ingress stays byte-identical ---------------------------------------
 
 
-def test_coding_ticket_accepts_coding_field_and_ceiling(app_db, probe_installed: None) -> None:
+def test_coding_ticket_accepts_coding_field_and_ceiling(
+    app_db: AppDb, probe_installed: None
+) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "coding")
@@ -77,7 +83,7 @@ def test_coding_ticket_accepts_coding_field_and_ceiling(app_db, probe_installed:
         assert scoped.json()["ceiling"] == "needs_approach"
 
 
-def test_coding_ticket_rejects_probe_field(app_db, probe_installed: None) -> None:
+def test_coding_ticket_rejects_probe_field(app_db: AppDb, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "coding")
@@ -89,7 +95,7 @@ def test_coding_ticket_rejects_probe_field(app_db, probe_installed: None) -> Non
         assert r.json()["error"]["detail"] == {"field": "alpha", "worker_type": "coding"}
 
 
-def test_coding_ticket_rejects_probe_ceiling(app_db, probe_installed: None) -> None:
+def test_coding_ticket_rejects_probe_ceiling(app_db: AppDb, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "coding")
@@ -103,7 +109,7 @@ def test_coding_ticket_rejects_probe_ceiling(app_db, probe_installed: None) -> N
 
 
 def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
-    app_db, probe_installed: None
+    app_db: AppDb, probe_installed: None
 ) -> None:
     app, _db = app_db
     with TestClient(app) as client:
@@ -129,7 +135,9 @@ def test_accept_rejects_foreign_field_and_foreign_next_ceiling(
 # --- probe ingress: per-type field / ceiling / stage ---------------------------
 
 
-def test_probe_proposal_parks_on_registry_selected_field(app_db, probe_installed: None) -> None:
+def test_probe_proposal_parks_on_registry_selected_field(
+    app_db: AppDb, probe_installed: None
+) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "probe")
@@ -148,7 +156,7 @@ def test_probe_proposal_parks_on_registry_selected_field(app_db, probe_installed
         assert parked.json()["fields"]["beta"]["proposal"] is None
 
 
-def test_probe_rejects_coding_field_value_edit(app_db, probe_installed: None) -> None:
+def test_probe_rejects_coding_field_value_edit(app_db: AppDb, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "probe")
@@ -158,7 +166,7 @@ def test_probe_rejects_coding_field_value_edit(app_db, probe_installed: None) ->
         assert r.json()["error"]["detail"] == {"field": "success", "worker_type": "probe"}
 
 
-def test_probe_rejects_coding_state_and_note_field(app_db, probe_installed: None) -> None:
+def test_probe_rejects_coding_state_and_note_field(app_db: AppDb, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         tid = _create(client, "probe")
@@ -172,7 +180,7 @@ def test_probe_rejects_coding_state_and_note_field(app_db, probe_installed: None
         assert note.json()["error"]["detail"] == {"field": "plan", "worker_type": "probe"}
 
 
-def test_probe_accepts_its_own_state_via_direct_state(app_db, probe_installed: None) -> None:
+def test_probe_accepts_its_own_state_via_direct_state(app_db: AppDb, probe_installed: None) -> None:
     # /stage must stop rejecting probe stages: advancing directly to needs_beta from
     # needs_alpha is a valid probe stage jump (kickoff first settled so it's non-kickoff).
     app, _db = app_db
@@ -192,7 +200,7 @@ def test_probe_accepts_its_own_state_via_direct_state(app_db, probe_installed: N
 # --- the ?stage= filter decision -----------------------------------------------
 
 
-def test_stage_filter_compares_stored_values_directly(app_db, probe_installed: None) -> None:
+def test_stage_filter_compares_stored_values_directly(app_db: AppDb, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         _create(client, "coding")
@@ -205,7 +213,9 @@ def test_stage_filter_compares_stored_values_directly(app_db, probe_installed: N
         assert len(both) == 2
 
 
-def test_stage_filter_non_reserved_needs_no_worker_type(app_db, probe_installed: None) -> None:
+def test_stage_filter_non_reserved_needs_no_worker_type(
+    app_db: AppDb, probe_installed: None
+) -> None:
     app, _db = app_db
     with TestClient(app) as client:
         _create(client, "coding")

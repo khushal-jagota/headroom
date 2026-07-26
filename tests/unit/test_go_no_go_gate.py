@@ -25,6 +25,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
@@ -98,7 +99,7 @@ def probe_installed() -> Iterator[None]:
 
 
 @pytest.fixture
-def app_db(tmp_path: Path):
+def app_db(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "gate.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -119,7 +120,7 @@ def app_db(tmp_path: Path):
 
 
 def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
-    app_db, probe_installed: None
+    app_db: tuple[FastAPI, Path], probe_installed: None
 ) -> None:
     app, db_path = app_db
     with TestClient(app) as client:
@@ -212,7 +213,9 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         conn.close()
 
 
-def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -> None:
+def test_gate_invalid_inputs_return_exact_codes(
+    app_db: tuple[FastAPI, Path], probe_installed: None
+) -> None:
     app, _db_path = app_db
     with TestClient(app) as client:
         made = client.post(
@@ -275,7 +278,9 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
         }
 
 
-def test_gate_error_precedence_not_found_beats_invalid_field(app_db, probe_installed: None) -> None:
+def test_gate_error_precedence_not_found_beats_invalid_field(
+    app_db: tuple[FastAPI, Path], probe_installed: None
+) -> None:
     # Resolving the ticket's type before validating the field means a missing ticket
     # is reported as not_found — it beats an invalid-field error.
     app, _db_path = app_db
@@ -286,7 +291,9 @@ def test_gate_error_precedence_not_found_beats_invalid_field(app_db, probe_insta
         assert resp.json()["error"]["detail"] == {"ticket_id": "t_missing"}
 
 
-def test_gate_external_work_create_and_reconcile_both_types(app_db, probe_installed: None) -> None:
+def test_gate_external_work_create_and_reconcile_both_types(
+    app_db: tuple[FastAPI, Path], probe_installed: None
+) -> None:
     app, _db_path = app_db
     chief = {"X-Plan-Actor": "chief"}
     with TestClient(app) as client:

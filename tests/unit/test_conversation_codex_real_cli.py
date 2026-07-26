@@ -37,6 +37,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import ConversationTurnEnding
+from planner.conversation.message_content import MessageContent, text_message_content
 from planner.conversation.message_files import ConversationMessageFiles
 
 
@@ -97,7 +98,7 @@ async def _turn(
     child: CodexAppServerBackendChild,
     sink: _RecordingSink,
     turn_number: int,
-    text: str,
+    content: MessageContent,
     *,
     model: str | None = None,
 ) -> None:
@@ -106,7 +107,7 @@ async def _turn(
     sink.expect_another_turn()
     await child.write_prompt(
         TurnToken(conversation_id="real-codex", turn_number=turn_number),
-        text,
+        content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=model,
@@ -123,13 +124,18 @@ def test_real_codex_starts_a_thread_and_runs_a_turn(tmp_path: Path) -> None:
         await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
         try:
             assert sink.vendor_session_cursor is not None
-            await _turn(child, sink, 1, "Reply with exactly the word: ready. No tools.")
+            await _turn(
+                child,
+                sink,
+                1,
+                text_message_content("Reply with exactly the word: ready. No tools."),
+            )
 
             assert sink.endings == [ConversationTurnEnding.completed]
-            assert sink.agent_messages
+            assert sink.agent_message_texts
             assert sink.deltas
             print("REAL CODEX cursor:", sink.vendor_session_cursor)
-            print("REAL CODEX said:", sink.agent_messages[-1])
+            print("REAL CODEX said:", sink.agent_message_texts[-1])
         finally:
             await child.stop()
 
@@ -148,7 +154,9 @@ def test_real_codex_takes_an_interrupt(tmp_path: Path) -> None:
 
             await child.write_prompt(
                 TurnToken(conversation_id="real-codex", turn_number=1),
-                "Count slowly from 1 to 300, one number per line, and do not stop early.",
+                text_message_content(
+                    "Count slowly from 1 to 300, one number per line, and do not stop early."
+                ),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -193,7 +201,9 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
             sink.expect_another_turn()
             await child.write_prompt(
                 TurnToken(conversation_id="real-codex", turn_number=1),
-                "Count slowly from 1 to 300, one number per line, and do not stop early.",
+                text_message_content(
+                    "Count slowly from 1 to 300, one number per line, and do not stop early."
+                ),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -207,7 +217,9 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
             sink.expect_another_turn()
             await child.write_prompt(
                 TurnToken(conversation_id="real-codex", turn_number=2),
-                "Stop counting. Reply with exactly one word: pineapple. No tools.",
+                text_message_content(
+                    "Stop counting. Reply with exactly one word: pineapple. No tools."
+                ),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -215,7 +227,7 @@ def test_real_codex_runs_a_send_now_written_the_instant_the_cancel_returns(
             )
             await sink.wait_for_the_turn_to_end()
 
-            urgent_reply = sink.agent_messages[-1]
+            urgent_reply = sink.agent_message_texts[-1]
             print("REAL CODEX send-now reply:", urgent_reply)
             assert sink.endings[-1] is ConversationTurnEnding.completed
             assert "pineapple" in urgent_reply.lower()
@@ -241,13 +253,13 @@ def test_real_codex_runs_three_turns_with_the_model_changed_in_the_middle(
         child = _real_child(tmp_path, sink)
         await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
         try:
-            question = "Reply with exactly: ok. No tools."
+            question = text_message_content("Reply with exactly: ok. No tools.")
             await _turn(child, sink, 1, question)
             await _turn(child, sink, 2, question, model=OTHER_CHEAP_MODEL)
             await _turn(child, sink, 3, question)
 
             assert sink.endings == [ConversationTurnEnding.completed] * 3
-            print("REAL CODEX three turns across a model change:", sink.agent_messages)
+            print("REAL CODEX three turns across a model change:", sink.agent_message_texts)
         finally:
             await child.stop()
 
@@ -267,12 +279,16 @@ def test_real_codex_honours_the_model_and_the_effort_a_turn_carries(tmp_path: Pa
         child = _real_child(tmp_path, sink)
         await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
         try:
-            await _turn(child, sink, 1, "Reply with: ok", model="totally-not-a-model")
+            await _turn(
+                child, sink, 1, text_message_content("Reply with: ok"), model="totally-not-a-model"
+            )
             assert sink.endings[-1] is ConversationTurnEnding.failed
             assert "totally-not-a-model" in str(sink.error_summaries[-1])
             print("REAL CODEX on an unknown model:", sink.error_summaries[-1])
 
-            await _turn_with_effort(child, sink, 2, "Reply with: ok", effort="banana")
+            await _turn_with_effort(
+                child, sink, 2, text_message_content("Reply with: ok"), effort="banana"
+            )
             assert sink.endings[-1] is ConversationTurnEnding.failed
             assert "banana" in str(sink.error_summaries[-1])
             print("REAL CODEX on an unknown effort:", sink.error_summaries[-1])
@@ -294,7 +310,7 @@ async def _turn_with_effort(
     child: CodexAppServerBackendChild,
     sink: _RecordingSink,
     turn_number: int,
-    text: str,
+    content: MessageContent,
     *,
     effort: str,
 ) -> None:
@@ -303,7 +319,7 @@ async def _turn_with_effort(
     sink.expect_another_turn()
     await child.write_prompt(
         TurnToken(conversation_id="real-codex", turn_number=turn_number),
-        text,
+        content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=CHEAP_MODEL,
@@ -325,7 +341,9 @@ def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path
                 child,
                 sink,
                 1,
-                "Remember this word: pomegranate. Reply with exactly: ok. No tools.",
+                text_message_content(
+                    "Remember this word: pomegranate. Reply with exactly: ok. No tools."
+                ),
             )
             cursor = sink.vendor_session_cursor
             assert cursor is not None
@@ -340,9 +358,11 @@ def test_real_codex_resumes_the_thread_after_the_child_is_stopped(tmp_path: Path
                 resumed,
                 resumed_sink,
                 2,
-                "What word did I ask you to remember? Reply with only that word. No tools.",
+                text_message_content(
+                    "What word did I ask you to remember? Reply with only that word. No tools."
+                ),
             )
-            remembered = resumed_sink.agent_messages[-1]
+            remembered = resumed_sink.agent_message_texts[-1]
             print("REAL CODEX remembered:", remembered)
             assert "pomegranate" in remembered.lower()
             # A resume that worked mints nothing: the cursor still names the same thread.

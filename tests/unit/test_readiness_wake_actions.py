@@ -240,7 +240,7 @@ def test_ticket_creators_atomically_add_all_blockers_and_reject_any_invalid_set(
     second_blocker = _create_direct(db_path, title="Second blocker")
     changes.reset()
 
-    def counts() -> tuple[int, int, int]:
+    def counts() -> tuple[int, ...]:
         conn = connect(str(db_path))
         try:
             return tuple(
@@ -1159,8 +1159,9 @@ def test_every_committed_ticket_and_day_write_signals(tmp_path: Path) -> None:
         persisted = tickets_data.read_ticket(conn, combined_proposal_id)
     finally:
         conn.close()
-    assert fields_codec.get_slot(persisted.fields, "success").proposal is not None
-    assert fields_codec.get_slot(persisted.fields, "success").proposal.body == "combined proposal"
+    success_slot = fields_codec.get_slot(persisted.fields, "success")
+    assert success_slot.proposal is not None
+    assert success_slot.proposal.body == "combined proposal"
     assert persisted.recap == "combined recap"
     assert persisted.ticket_status is TicketStatus.awaiting_approval
 

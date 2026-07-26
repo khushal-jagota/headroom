@@ -6,14 +6,18 @@ import pytest
 
 from planner.core.contracts import PlannerError
 from planner.environments.hermes_home import provision_planner_home_skills
-from planner.skill_sources import ensure_managed_panels_skills, provision_native_backend_skills
+from planner.skill_sources import (
+    ensure_managed_panels_skills,
+    panels_skill_root,
+    provision_native_backend_skills,
+)
 from planner.worker_settings import service
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture
 def canonical_skills_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    source = service.panels_skill_root()
+    source = panels_skill_root()
     target = tmp_path / "canonical-skills"
     shutil.copytree(source, target)
     monkeypatch.setattr(service, "panels_skill_root", lambda: target)

@@ -34,7 +34,11 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
 )
-from planner.conversation.events import ConversationEventKind
+from planner.conversation.events import (
+    AgentMessageEventPayload,
+    ConversationEventKind,
+    TurnEndedEventPayload,
+)
 from planner.conversation.message_content import (
     message_content_text,
     text_message_content,
@@ -120,12 +124,16 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
         assert len(endings) == 1, events
         # The agent refuses the turn when either half is missing, so a completed turn is
         # the claim and its text is the evidence.
-        assert str(endings[0].payload.ending) == "completed", endings[0].payload
-        assert [
-            message_content_text(event.payload.content)
-            for event in events
-            if event.kind is ConversationEventKind.agent_message
-        ] == [WORKTREE_ACKNOWLEDGEMENT]
+        final_turn_ended = endings[0].payload
+        assert isinstance(final_turn_ended, TurnEndedEventPayload)
+        assert str(final_turn_ended.ending) == "completed", final_turn_ended
+        agent_messages: list[str] = []
+        for event in events:
+            if event.kind is ConversationEventKind.agent_message:
+                agent_message_payload = event.payload
+                assert isinstance(agent_message_payload, AgentMessageEventPayload)
+                agent_messages.append(message_content_text(agent_message_payload.content))
+        assert agent_messages == [WORKTREE_ACKNOWLEDGEMENT]
 
     # Playwright's session fixture may already own an event loop when the complete E2E
     # suite reaches this synchronous test. Keep the ACP proof isolated from that loop.

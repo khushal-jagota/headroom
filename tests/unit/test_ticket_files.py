@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.core.clock import build_clock
@@ -16,7 +17,7 @@ from planner.files.contracts import TicketFile
 from planner.files.logic.paths import resolve_ticket_file
 
 
-def _make_app(tmp_path: Path) -> tuple[object, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning-test.db"
     db_path.parent.mkdir(parents=True)
     boot = connect(str(db_path))

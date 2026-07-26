@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from sqlite3 import Connection
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.core import change_signal
@@ -23,7 +24,7 @@ from planner.tickets.data import accept_proposal, change_scope, create_ticket, f
 _AGENT = {"X-Plan-Actor": "agent"}  # a plain (non-dispatched) agent context
 
 
-def _make_app(tmp_path: Path) -> tuple[object, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)

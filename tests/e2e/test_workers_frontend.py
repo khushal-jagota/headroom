@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import httpx
 import pytest
+from playwright.sync_api import BrowserContext, Page, Route
 from tests.e2e.conftest import WAIT_MS
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 
 @pytest.fixture(autouse=True)
-def restore_canonical_skill_sources():
+def restore_canonical_skill_sources() -> Iterator[None]:
     """Keep browser skill-edit tests from leaking edits into the repository tree."""
     root = Path(__file__).resolve().parents[2] / "src" / "planner" / "skills"
     snapshots = {
@@ -24,14 +27,17 @@ def restore_canonical_skill_sources():
         path.write_bytes(contents)
 
 
-def _put_stage_owner(server, ticket_id: str, stage: str, mode: str | None) -> dict:
+def _put_stage_owner(
+    server: ServerHandle, ticket_id: str, stage: str, mode: str | None
+) -> JsonObject:
     response = httpx.put(
         f"{server.base}/api/tickets/{ticket_id}/stage-ownership/{stage}",
         json={"ownership_mode": mode},
         timeout=10.0,
     )
     assert response.status_code < 300, response.text
-    return response.json()
+    answer: JsonObject = response.json()
+    return answer
 
 
 DESCRIPTION_EDIT = '[data-skill-description] [contenteditable="true"]'
@@ -46,7 +52,7 @@ ARTIFACT_DIR = (
 )
 
 
-def _replace_inline_edit_text(page, selector: str, text: str) -> None:
+def _replace_inline_edit_text(page: Page, selector: str, text: str) -> None:
     page.locator(selector).click()
     page.locator(selector).evaluate(
         """(node, text) => {
@@ -62,7 +68,7 @@ def _replace_inline_edit_text(page, selector: str, text: str) -> None:
     page.locator("[data-role-name]").click()
 
 
-def _replace_inline_edit_markdown(page, selector: str, source: str) -> None:
+def _replace_inline_edit_markdown(page: Page, selector: str, source: str) -> None:
     page.locator(selector).click()
     page.locator(selector).evaluate(
         r"""(node, source) => {
@@ -88,11 +94,12 @@ def _replace_inline_edit_markdown(page, selector: str, source: str) -> None:
     page.locator("[data-role-name]").click()
 
 
-def _editable_text(page, selector: str) -> str:
-    return page.locator(selector).evaluate("(node) => node.textContent")
+def _editable_text(page: Page, selector: str) -> str:
+    text: str = page.locator(selector).evaluate("(node) => node.textContent")
+    return text
 
 
-def _assert_agents_nav_active_and_clear(page) -> None:
+def _assert_agents_nav_active_and_clear(page: Page) -> None:
     nav = page.locator('.shell-links .nav-link[data-screen="agents"]')
     assert nav.inner_text() == "Agents"
     assert nav.get_attribute("href") == "#/agents"
@@ -112,14 +119,16 @@ def _assert_agents_nav_active_and_clear(page) -> None:
     )
 
 
-def _assert_no_horizontal_overflow(page) -> None:
+def _assert_no_horizontal_overflow(page: Page) -> None:
     overflow = page.evaluate(
         "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
     )
     assert overflow <= 0
 
 
-def test_agents_routes_navigation_and_mobile_controls(server, context_factory) -> None:
+def test_agents_routes_navigation_and_mobile_controls(
+    server: ServerHandle, context_factory: Callable[[], BrowserContext]
+) -> None:
     legacy_index = context_factory().new_page()
     legacy_index.goto(server.base + "/#/workers")
     legacy_index.wait_for_url(server.base + "/#/agents", timeout=WAIT_MS)
@@ -162,7 +171,11 @@ def test_agents_routes_navigation_and_mobile_controls(server, context_factory) -
     assert mobile_index.locator(BODY_EDIT).is_editable()
 
 
-def test_agents_index_worker_detail_and_mobile_layout(server, context_factory, open_page) -> None:
+def test_agents_index_worker_detail_and_mobile_layout(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
     page = open_page(
         context_factory(),
         server,
@@ -230,7 +243,7 @@ def test_agents_index_worker_detail_and_mobile_layout(server, context_factory, o
 
 
 def test_chief_detail_edits_skill_independently_and_retries_failure(
-    server, context_factory, api
+    server: ServerHandle, context_factory: Callable[[], BrowserContext], api: ApiHelper
 ) -> None:
     page = context_factory().new_page()
     requests: list[tuple[str, str]] = []
@@ -263,12 +276,14 @@ def test_chief_detail_edits_skill_independently_and_retries_failure(
     assert after_description["markdown_body"] == original["markdown_body"]
 
     failed_once = True
-    body_patch_payloads: list[dict] = []
+    body_patch_payloads: list[JsonObject] = []
 
-    def fail_chief_skill(route) -> None:
+    def fail_chief_skill(route: Route) -> None:
         nonlocal failed_once
         if route.request.method == "PATCH":
-            body_patch_payloads.append(route.request.post_data_json)
+            post_data_json = route.request.post_data_json
+            assert post_data_json is not None
+            body_patch_payloads.append(post_data_json)
         if route.request.method == "PATCH" and failed_once:
             failed_once = False
             route.fulfill(
@@ -304,7 +319,7 @@ def test_chief_detail_edits_skill_independently_and_retries_failure(
 
 
 def test_shared_worker_skill_detail_edits_independently_and_retries_failure(
-    server, context_factory, api
+    server: ServerHandle, context_factory: Callable[[], BrowserContext], api: ApiHelper
 ) -> None:
     page = context_factory().new_page()
     requests: list[tuple[str, str]] = []
@@ -348,12 +363,14 @@ def test_shared_worker_skill_detail_edits_independently_and_retries_failure(
     assert after_description["markdown_body"] == original["markdown_body"]
 
     failed_once = True
-    body_patch_payloads: list[dict] = []
+    body_patch_payloads: list[JsonObject] = []
 
-    def fail_shared_worker_skill(route) -> None:
+    def fail_shared_worker_skill(route: Route) -> None:
         nonlocal failed_once
         if route.request.method == "PATCH":
-            body_patch_payloads.append(route.request.post_data_json)
+            post_data_json = route.request.post_data_json
+            assert post_data_json is not None
+            body_patch_payloads.append(post_data_json)
         if route.request.method == "PATCH" and failed_once:
             failed_once = False
             route.fulfill(
@@ -402,7 +419,11 @@ def test_shared_worker_skill_detail_edits_independently_and_retries_failure(
 
 
 def test_worker_selection_persists_from_kickoff_card_context_row(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket = cli(
         server,
@@ -441,7 +462,10 @@ def test_worker_selection_persists_from_kickoff_card_context_row(
 
 
 def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_defaults_hold(
-    server, context_factory, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     existing_ticket = cli(
         server,
@@ -508,10 +532,12 @@ def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_de
     assert fresh["effective_stage_ownership_mode"] == "user"
 
 
-def test_worker_stage_failed_save_keeps_chosen_row_value(server, context_factory) -> None:
+def test_worker_stage_failed_save_keeps_chosen_row_value(
+    server: ServerHandle, context_factory: Callable[[], BrowserContext]
+) -> None:
     page = context_factory().new_page()
 
-    def fail_stage(route) -> None:
+    def fail_stage(route: Route) -> None:
         if route.request.method == "PUT":
             route.fulfill(
                 status=500,
@@ -539,7 +565,10 @@ def test_worker_stage_failed_save_keeps_chosen_row_value(server, context_factory
 
 
 def test_worker_skill_edit_save_failure_and_session_stability(
-    server, context_factory, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     rejected = httpx.put(
         f"{server.base}/api/workers/coding/skill",
@@ -593,12 +622,14 @@ def test_worker_skill_edit_save_failure_and_session_stability(
     assert after_description["markdown_body"] == original["markdown_body"]
 
     failed_once = True
-    body_patch_payloads: list[dict] = []
+    body_patch_payloads: list[JsonObject] = []
 
-    def fail_skill(route) -> None:
+    def fail_skill(route: Route) -> None:
         nonlocal failed_once
         if route.request.method == "PATCH":
-            body_patch_payloads.append(route.request.post_data_json)
+            post_data_json = route.request.post_data_json
+            assert post_data_json is not None
+            body_patch_payloads.append(post_data_json)
         if route.request.method == "PATCH" and failed_once:
             failed_once = False
             route.fulfill(

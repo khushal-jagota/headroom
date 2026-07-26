@@ -15,31 +15,34 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page
+from tests.e2e.harness import (
+    BOOT_BUDGET_S,
+    FAKE_NOW,
+    PLAN_BIN,
+    REPO_ROOT,
+    WAIT_MS,
+    ApiHelper,
+    JsonObject,
+    ServerHandle,
+)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAN_BIN = Path(sys.executable).parent / "panels"
-FAKE_NOW = "2026-07-04T12:00:00"
-WAIT_MS = 10_000          # every Playwright wait
-BOOT_BUDGET_S = 15.0      # server readiness budget
-
-@dataclass(frozen=True)
-class ServerHandle:
-    base: str
-    proc: subprocess.Popen[bytes]
-    db_path: Path
-    log_path: Path
-    port: int
-    control_socket_path: Path
+__all__ = [
+    "BOOT_BUDGET_S",
+    "FAKE_NOW",
+    "PLAN_BIN",
+    "REPO_ROOT",
+    "WAIT_MS",
+    "ApiHelper",
+    "JsonObject",
+    "ServerHandle",
+]
 
 
 def _free_port() -> int:
@@ -214,14 +217,14 @@ def open_page() -> Callable[..., Page]:
 
 
 @pytest.fixture
-def cli() -> Callable[..., dict]:
+def cli() -> Callable[..., JsonObject]:
     def _cli(
         server: ServerHandle,
         *args: str,
         ticket_id: str | None = None,
         actor: str | None = None,
         stdin: str | None = None,
-    ) -> dict:
+    ) -> JsonObject:
         env = _scrubbed_env()
         env["PLAN_SERVER_URL"] = server.base
         if ticket_id is not None:
@@ -240,7 +243,7 @@ def cli() -> Callable[..., dict]:
         assert proc.returncode == 0, (
             f"plan {' '.join(args)} rc={proc.returncode}\nstderr: {proc.stderr}"
         )
-        data = json.loads(proc.stdout)
+        data: JsonObject = json.loads(proc.stdout)
         # Most pre-Kickoff browser scenarios need a worker-stage ticket. Settle the
         # new intake gate in the fixture unless the test supplied Kickoff content;
         # those explicit cases exercise the parked proposal itself.
@@ -259,31 +262,13 @@ def cli() -> Callable[..., dict]:
             assert approve.returncode == 0, (
                 f"automatic kickoff approval rc={approve.returncode}\nstderr: {approve.stderr}"
             )
-            return json.loads(approve.stdout)
+            approved: JsonObject = json.loads(approve.stdout)
+            return approved
         return data
 
     return _cli
 
 
 @pytest.fixture
-def api() -> SimpleNamespace:
-    def get(server: ServerHandle, path: str) -> dict:
-        resp = httpx.get(server.base + path, timeout=10.0)
-        assert resp.status_code < 300, f"GET {path} -> {resp.status_code}: {resp.text}"
-        return resp.json()
-
-    def direct_post(server: ServerHandle, path: str, json_body: dict) -> dict:
-        # No X-Plan-* headers: authctx classifies this request as unattributed,
-        # which direct-only /scope and /accept permit.
-        resp = httpx.post(server.base + path, json=json_body, timeout=10.0)
-        assert resp.status_code < 300, f"POST {path} -> {resp.status_code}: {resp.text}"
-        return resp.json()
-
-    def direct_patch(server: ServerHandle, path: str, json_body: dict) -> dict:
-        # A headerless PATCH is unattributed. The day brief writer is direct-only,
-        # so this is how a test seeds or edits a brief.
-        resp = httpx.patch(server.base + path, json=json_body, timeout=10.0)
-        assert resp.status_code < 300, f"PATCH {path} -> {resp.status_code}: {resp.text}"
-        return resp.json()
-
-    return SimpleNamespace(get=get, direct_post=direct_post, direct_patch=direct_patch)
+def api() -> ApiHelper:
+    return ApiHelper()

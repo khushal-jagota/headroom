@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from sqlite3 import Connection
 from typing import Any
 
 import pytest
@@ -33,7 +34,7 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     config = load_config(path=None, env=env)
     clock = build_clock(config)
 
-    def conn_factory():
+    def conn_factory() -> Connection:
         return connect(str(db_path))
 
     app = create_app(config, clock, conn_factory)

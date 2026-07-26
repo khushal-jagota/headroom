@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from conftest import WAIT_MS, ServerHandle
 from playwright.sync_api import Browser
+from tests.e2e.harness import WAIT_MS, ServerHandle
 
 ALLOWED_LOGIN = "khushal@example.com"
 
