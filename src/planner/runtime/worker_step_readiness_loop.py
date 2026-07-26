@@ -26,7 +26,7 @@ from collections.abc import Callable
 from time import monotonic as _monotonic
 from typing import Final
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
     PromptDeliveryRefused,
@@ -71,7 +71,7 @@ async def start_ready_worker_step(
     conn = connect_database()
     try:
         ticket = tickets_data.read_ticket(conn, ticket_id)
-        conversation_id = ticket.employee_session_id
+        conversation_id = ticket.conversation_id
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
             # An occupied worker is left alone for this pass. Queueing stays the answer
             # only for a collision that slipped between this check and the send.
@@ -99,7 +99,7 @@ async def start_ready_worker_step(
             )
 
         try:
-            conversation_id = claimed.employee_session_id
+            conversation_id = claimed.conversation_id
             if conversation_id is None:
                 conversation_id = await conversation_start.start_ticket_conversation(
                     conversation_system,

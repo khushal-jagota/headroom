@@ -10,7 +10,6 @@ from pathlib import Path
 
 import click
 
-from planner.conversation.hermes_backend_configuration import resolve_hermes_python
 from planner.core.config import Config, load_config
 from planner.environments.backup import create_database_backup, restore_database_snapshot
 from planner.environments.contracts import (
@@ -26,6 +25,7 @@ from planner.environments.deployment import (
     SubprocessServiceController,
     deploy_release,
 )
+from planner.environments.hermes_home import resolve_hermes_python
 from planner.environments.linux import render_linux_specification
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (

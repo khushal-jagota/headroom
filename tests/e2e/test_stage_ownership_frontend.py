@@ -102,7 +102,7 @@ def test_workspace_stage_mark_renders_paired_on_desktop_and_mobile(
     # This test isolates rendering of the post-opening paired resting state.
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'paired', employee_session_id = ? "
+            "UPDATE tickets SET ticket_status = 'paired', conversation_id = ? "
             "WHERE id = ?",
             ("paired-render-session", ticket_id),
         )
@@ -132,4 +132,4 @@ def test_workspace_stage_mark_renders_paired_on_desktop_and_mobile(
         )
         assert paired_mark.count() == 1
         assert paired_mark.get_attribute("data-agent-working") == "false"
-        assert paired_mark.get_attribute("data-reply-state") == "none"
+        assert paired_mark.get_attribute("data-latest-turn-ended") == "0"

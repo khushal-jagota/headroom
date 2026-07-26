@@ -14,7 +14,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.environments.contracts import (
     DynamicEnvironmentPort,
     EnvironmentDefaults,
@@ -28,6 +27,7 @@ from planner.environments.fake_fixture import (
     FAKE_FIXTURE_VERSION,
     build_fake_environment_database,
 )
+from planner.environments.hermes_home import provision_planner_home_skills
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.registry import (
     acquire_environment_registry_lock,

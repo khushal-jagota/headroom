@@ -44,7 +44,7 @@ def _bind_session(db_path: Path, ticket_id: str, session_key: str) -> None:
     conn = connect(str(db_path))
     try:
         conn.execute(
-            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             (session_key, ticket_id),
         )
         conn.commit()

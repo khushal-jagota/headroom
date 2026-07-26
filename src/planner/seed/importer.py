@@ -9,6 +9,7 @@ import sqlite3
 from pathlib import Path
 from typing import cast
 
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.projects import data as projects_data
@@ -48,7 +49,7 @@ def seed_from_source(
     a fixed instant in tests) — the importer never reads wall time itself (§13)."""
     runtime_definitions = configured_worker_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
-    selected_employee_backend = runtime_definitions.employee_backend_catalog.require_registered(
+    selected_employee_backend = require_conversation_backend_key(
         employee_backend
         if employee_backend is not None
         else worker_type_definition.worker_profile.default_backend
@@ -293,9 +294,9 @@ def _import_tickets(
             "id, title, worker_type, employee_backend, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, default_stage_ownership_mode, "
-            "employee_session_id, alias, fields, created_at, updated_at, "
+            "alias, fields, created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 ticket.title,
@@ -315,7 +316,6 @@ def _import_tickets(
                     if default_stage_ownership_mode is not None
                     else None
                 ),
-                ticket.employee_session_id,
                 ticket.alias,
                 fields_codec.fields_to_json(fields),
                 now,

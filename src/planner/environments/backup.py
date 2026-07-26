@@ -20,7 +20,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from planner.conversation.hermes_backend_configuration import resolve_planner_home
+from planner.environments.hermes_home import resolve_planner_home
 
 SNAPSHOT_DATABASE_NAME = "database.sqlite"
 SNAPSHOT_METADATA_NAME = "metadata.json"

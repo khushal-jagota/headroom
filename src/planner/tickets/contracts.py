@@ -38,41 +38,6 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     errored = "errored"
 
 
-class WorkspaceActivityState(StrEnum):
-    """ACP activity facts that may affect a Ticket's Workspace dot."""
-
-    connecting = "connecting"
-    loading = "loading"
-    idle = "idle"
-    thinking = "thinking"
-    working = "working"
-    compacting = "compacting"
-    waiting_for_permission = "waiting_for_permission"
-    interrupted = "interrupted"
-    failed = "failed"
-
-
-class WorkspaceAgentReplyState(StrEnum):
-    """Whether a Worker reply (or permission ask) is waiting, and whether it was seen."""
-
-    none = "none"
-    unseen = "unseen"
-    seen = "seen"
-
-
-@dataclass(frozen=True)
-class WorkspaceAgentReplyFacts:
-    """The conversation-projection flags a Ticket's reply dot is derived from.
-
-    Whether a worker is running now, and whether it is waiting on a permission ask, are
-    the conversation system's facts and are read in the board route, not here.
-    """
-
-    has_completed_response_awaiting_user: bool = False
-    has_completed_response: bool = False
-    has_pending_permission: bool = False
-
-
 @dataclass(frozen=True)
 class Proposal:  # §4.2 proposal slot
     body: str
@@ -254,7 +219,7 @@ class Ticket:  # §3.3 — column names match exactly
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]
     default_stage_ownership_mode: StageOwnershipMode | None
     effective_stage_ownership_mode: StageOwnershipMode | None
-    employee_session_id: str | None  # the Ticket's conversation link (column name is frozen)
+    conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields
     created_at: int
@@ -277,21 +242,8 @@ class EmployeeLaunchConfiguration:
 
 @dataclass(frozen=True)
 class EmployeeSessionIdTransition:
-    expected_employee_session_id: str | None
-    candidate_employee_session_id: str
-
-
-@dataclass(frozen=True)
-class EmployeeSessionHistoryMessage:
-    role: str
-    text: str
-    created_at: int
-
-
-@dataclass(frozen=True)
-class EmployeeSessionHistory:
-    messages: tuple[EmployeeSessionHistoryMessage, ...]
-    employee_session_id: str | None
+    expected_conversation_id: str | None
+    candidate_conversation_id: str
 
 
 @dataclass(frozen=True)

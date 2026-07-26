@@ -39,7 +39,7 @@ can never take a decision that belongs to the human.
 **The full-system view**
 
 - **Systems** (`systems.md`) — the cold-start map: the record, ticket gate,
-  runtime, ACP conversation, UI, CLI, and the main boundaries.
+  runtime, the conversation system, UI, CLI, and the main boundaries.
 - **Systems artifact** (`systems.html`) — the same map as a designed, collapsible
   reading artifact.
 
@@ -54,13 +54,10 @@ can never take a decision that belongs to the human.
 - **Worker orchestration** (`worker-orchestration.md`) — how Panels decides a ticket is
   ready for its next worker step, claims it, and sends the step into that ticket's
   conversation. It starts work; it does not watch it.
-- **Conversation** (`chat.md`) — the typed ACP pane shared by Ticket workers and the
-  Chief of Staff, including the `hermes`, `codex`, and `claude` backends, live work,
-  commands, permissions, and compaction state.
-- **The conversation system, new** (`conversation-system.md`) — the replacement being
-  built behind a fixed contract: one agent process per conversation, an append-only
-  notebook of events, honest send fates, and backend cards. Serves the development
-  pane today; replaces `chat.md`'s layer at the swap.
+- **The conversation system** (`conversation-system.md`) — the one way Panels talks to an
+  agent, behind a fixed contract: one agent process per conversation, an append-only
+  notebook of events, honest send fates, and backend cards. It serves every screen that
+  shows a conversation — a Ticket's, the Chief of Staff's, and the development pane.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and Linux render intent.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.

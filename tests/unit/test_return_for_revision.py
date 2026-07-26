@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -31,7 +32,14 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
         path=None,
         env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
     )
-    app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
+    app = create_app(
+        config,
+        build_clock(config),
+        lambda: connect(str(db_path)),
+        # What this file asserts is where the guidance went, so the conversation system
+        # has to be one that records its writes and never spawns anything.
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
     return app, db_path
 
 
@@ -70,7 +78,7 @@ def _ticket_with_pending_plan(
         file_proposal(conn, ticket.id, field="plan", body="bad plan", actor="agent", now=0)
         if conversation_id is not None:
             conn.execute(
-                "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                 (conversation_id, ticket.id),
             )
         conn.commit()
@@ -80,7 +88,7 @@ def _ticket_with_pending_plan(
 
 
 def _start_conversation(app: FastAPI, conversation_id: str = _CONVERSATION_ID) -> None:
-    from planner.conversation2.contracts import ConversationStartRequest
+    from planner.conversation.contracts import ConversationStartRequest
 
     asyncio.run(
         app.state.conversation_system.start_conversation(

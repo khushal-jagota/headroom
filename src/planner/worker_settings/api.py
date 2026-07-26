@@ -7,12 +7,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
-from planner.conversation.hermes_backend_configuration import resolve_planner_home
 from planner.core import change_signal
 from planner.core.authctx import RequestContext, request_context, require_direct_write
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
+from planner.environments.hermes_home import resolve_planner_home
 from planner.tickets.api import body_str, get_config, parse_enum
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings import service
@@ -102,9 +102,6 @@ def _detail_json(detail: WorkerManagementDetail) -> JsonDict:
     return {
         "manifest": detail.manifest,
         "settings": _settings_json(detail.settings),
-        "employee_backends": list(
-            configured_worker_runtime_definitions().employee_backend_catalog.registered_backend_keys()
-        ),
     }
 
 
@@ -117,16 +114,12 @@ _announce_worker_settings_change = change_signal.emit
 @router.get("/workers")
 async def list_workers(config: Cfg) -> JsonDict:
     registry = configured_worker_runtime_definitions().worker_type_registry
-    definitions = configured_worker_runtime_definitions()
     return {
         "workers": [
             _summary_json(summary)
             for summary in service.read_worker_management_index(_database_parent(config), registry)
         ],
-        "chief_of_staff": _chief_json(
-            service.read_chief_settings(_database_parent(config), registry)
-        ),
-        "employee_backends": list(definitions.employee_backend_catalog.registered_backend_keys()),
+        "chief_of_staff": _chief_json(service.read_chief_settings(_database_parent(config))),
     }
 
 
@@ -160,8 +153,7 @@ async def patch_skill(
 
 @router.get("/workers/chief-of-staff/settings")
 async def get_chief_settings(config: Cfg) -> JsonDict:
-    registry = configured_worker_runtime_definitions().worker_type_registry
-    return _chief_json(service.read_chief_settings(_database_parent(config), registry))
+    return _chief_json(service.read_chief_settings(_database_parent(config)))
 
 
 @router.put("/workers/chief-of-staff/launch-defaults")
@@ -169,10 +161,8 @@ async def put_chief_launch_defaults(
     raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_chief_launch_defaults(
         _database_parent(config),
-        registry,
         raw,
         after_publish=_announce_worker_settings_change,
     )
@@ -184,10 +174,8 @@ async def put_chief_skill(
     raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_chief_skill(
         _database_parent(config),
-        registry,
         raw,
         after_publish=_announce_worker_settings_change,
     )
@@ -201,9 +189,8 @@ async def patch_chief_skill(
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
-    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_chief_skill(
-        _database_parent(config), registry, raw,
+        _database_parent(config), raw,
         after_publish=_announce_worker_settings_change,
     )
     return _chief_json(settings)

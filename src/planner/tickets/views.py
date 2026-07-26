@@ -14,10 +14,8 @@ from planner.tickets.contracts import (
     FieldSlot,
     Ticket,
     TicketStatus,
-    WorkspaceAgentReplyFacts,
 )
 from planner.tickets.logic import fields_codec, machine
-from planner.tickets.logic.workspace_signals import workspace_agent_reply_state
 from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -80,7 +78,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             if ticket.effective_stage_ownership_mode is not None
             else None
         ),
-        "employee_session_id": ticket.employee_session_id,
+        "conversation_id": ticket.conversation_id,
         "alias": ticket.alias,
         "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
         "created_at": ticket.created_at,
@@ -141,7 +139,7 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
             "effective_sprint_id": tickets_data.get_effective_sprint_id(conn, ticket_id),
             "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
-                conn, ticket
+                ticket
             ),
         }
     )
@@ -203,13 +201,14 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
 
     Each card carries ``conversation_id``: the Ticket's conversation link, which under
     the new conversation system is the caller-owned conversation id stored in the
-    ``employee_session_id`` column. It is what the board route asks the conversation
+    ``conversation_id`` column. It is what the board route asks the conversation
     system about, and what the browser keys its reply watermark by.
 
-    Two of the three row signals are not database facts and are therefore not answered
-    here: whether the worker is running (``agent_working``) and whether it is waiting on
-    a permission ask (``needs_me``) are added by the async board route, which can await
-    the conversation system.
+    None of the three row signals is a database fact of the tickets domain, so none is
+    answered here: whether the worker is running (``agent_working``), whether it is
+    waiting on a permission ask (``needs_me``), and where its conversation last had a
+    turn end (``latest_turn_ended_sequence``) all belong to the conversation system and
+    are added by the async board route, which can await it.
     """
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
@@ -217,18 +216,13 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "sprint_items.project_id AS parent_project_id, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
         "tickets.employee_backend, "
-        "tickets.employee_session_id, "
+        "tickets.conversation_id, "
         "tickets.ticket_status, "
         "tickets.backend_error, "
-        "ticket_conversation_projections.has_completed_response_awaiting_user, "
-        "ticket_conversation_projections.has_completed_response, "
-        "ticket_conversation_projections.has_pending_permission, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
-        "LEFT JOIN ticket_conversation_projections "
-        "ON ticket_conversation_projections.ticket_id = tickets.id "
         "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
         "WHERE day_tickets.day_id = ? AND tickets.stage != 'dropped'",
         (day_id,),
@@ -295,17 +289,8 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
             "blocked": str(row["id"]) in blocked_target_ids,
             "conversation_id": (
-                str(row["employee_session_id"]) if row["employee_session_id"] is not None else None
+                str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
-            "agent_reply_state": workspace_agent_reply_state(
-                WorkspaceAgentReplyFacts(
-                    has_completed_response_awaiting_user=bool(
-                        row["has_completed_response_awaiting_user"] or 0
-                    ),
-                    has_completed_response=bool(row["has_completed_response"] or 0),
-                    has_pending_permission=bool(row["has_pending_permission"] or 0),
-                )
-            ).value,
         }
         sort_key = (
             _prio_rank(priority),

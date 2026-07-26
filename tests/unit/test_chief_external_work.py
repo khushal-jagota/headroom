@@ -12,7 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.conversation2.contracts import ConversationStartRequest
+from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -62,7 +63,14 @@ def _make_app(tmp_path: Path):
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    app = create_app(config, build_clock(config), conn_factory)
+    app = create_app(
+        config,
+        build_clock(config),
+        conn_factory,
+        # Reconciling asks the conversation system whether a turn is running, so this file
+        # needs one whose running turn it can start by hand and that spawns nothing.
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
     return app, db_path
 
 
@@ -157,7 +165,7 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
         )
 
     assert defaulted.status_code == overridden.status_code == 200
-    assert defaulted.json()["employee_backend"] == "probe-backend"
+    assert defaulted.json()["employee_backend"] == "claude"
     assert overridden.json()["employee_backend"] == "hermes"
     assert rejected.status_code == 400
     check = connect(str(db_path))
@@ -345,7 +353,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     conn = connect(str(db_path))
     try:
         conn.execute(
-            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             ("conv-live", live_id),
         )
         conn.commit()
@@ -522,7 +530,7 @@ def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path)
         )
         assert ticket.ticket_status is TicketStatus.empty
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'paired', employee_session_id = ? "
+            "UPDATE tickets SET ticket_status = 'paired', conversation_id = ? "
             "WHERE id = ?",
             ("paired-session", ticket_id),
         )
@@ -540,7 +548,7 @@ def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path)
 
         assert reconciled.stage == "needs_success"
         assert reconciled.ticket_status is TicketStatus.paired
-        assert reconciled.employee_session_id == "paired-session"
+        assert reconciled.conversation_id == "paired-session"
     finally:
         conn.close()
 

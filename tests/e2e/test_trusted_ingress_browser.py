@@ -57,12 +57,15 @@ def test_trusted_ingress_browser_websocket_origin_and_wrong_origin_rejection(
     try:
         attacker = attacker_context.new_page()
         attacker.goto(f"{attacker_server.base}/")
-        rejected_socket = server.base.replace("http://", "ws://") + "/api/conversation"
+        # Panels serves no WebSocket of its own, and the guard that would refuse one from
+        # a foreign origin runs before anything looks at the path — so any path is the
+        # right path to try, and none of them opens.
+        rejected_socket = server.base.replace("http://", "ws://") + "/api/nothing-serves-this"
         result = attacker.evaluate(OPEN_SOCKET, rejected_socket)
 
         # A server-side close before the WebSocket is accepted is exposed by Chromium as
-        # abnormal closure 1006. The direct ASGI test asserts the middleware's 1008 policy
-        # code, and that an allowed origin gets past the middleware into the application.
+        # abnormal closure 1006. The direct ASGI test asserts the middleware's own 1008
+        # policy code.
         assert result == {"opened": False, "code": 1006}
     finally:
         attacker_context.close()

@@ -12,7 +12,7 @@ conversation composition:
 - the shared worker gateway uses the configured worker role skill, usually `panels-worker`;
 - the Chief gateway uses `panels-chief-of-staff`;
 - both use the Hermes home resolved by
-  `planner.conversation.hermes_backend_configuration.resolve_planner_home()`.
+  `planner.environments.hermes_home.resolve_planner_home()`.
 
 `resolve_planner_home()` defaults to the user's normal `~/.hermes` and can be
 overridden by `PLAN_HERMES_HOME`.
@@ -45,7 +45,7 @@ Useful source files:
 
 - `config.yaml` — Panels app config; has `worker_skill`, `gateway_adapter`, but no model field.
 - `src/planner/core/config.py` — parses Panels config/env overrides.
-- `src/planner/conversation/hermes_backend_configuration.py` — resolves
+- `src/planner/environments/hermes_home.py` — resolves
   `PLAN_HERMES_HOME` and Hermes Python.
 - `src/planner/core/server.py` — wires worker and Chief gateways.
 - `src/planner/conversation/backend_catalog.py` — materializes the Hermes backend and

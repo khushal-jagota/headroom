@@ -5,11 +5,8 @@ all times are INTEGER unix seconds; all dates are TEXT ISO. Column names match t
 contract dataclass field names one-for-one.
 
 Every connection opened here also announces its own commits on the process-wide change
-signal, so nothing a writer does has to remember to say it wrote. One writer stays
-outside this door on purpose: ``conversation/employee_configuration.py`` opens a raw
-``sqlite3`` connection for its backend catalog cache and commits there. That cache is
-conversation's own; it changes nothing the browser shows and nothing the worker-step
-readiness check reads, so it is left unwatched.
+signal, so nothing a writer does has to remember to say it wrote. Every writer comes
+through this door, so there is no commit the signal does not carry.
 
 The schema itself is not written here. It lives in the migration history under
 ``migrations/``, whose first revision is the schema as the old hand-written migration

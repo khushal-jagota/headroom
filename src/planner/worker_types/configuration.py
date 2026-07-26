@@ -4,10 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from planner.conversation.backend_catalog import (
-    EmployeeBackendCatalog,
-    build_production_employee_backend_catalog,
-)
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
@@ -35,18 +31,10 @@ _PRODUCTION_WORKER_TYPE_DEFINITIONS = (
 
 @dataclass(frozen=True, slots=True)
 class ConfiguredWorkerRuntimeDefinitions:
-    employee_backend_catalog: EmployeeBackendCatalog
     worker_type_registry: WorkerTypeRegistry
-
-    def __post_init__(self) -> None:
-        if self.worker_type_registry.employee_backend_catalog is not self.employee_backend_catalog:
-            raise ValueError(
-                "backend catalog and Worker-type registry must be the same authority"
-            )
 
 
 def build_worker_runtime_definitions(
-    employee_backend_catalog: EmployeeBackendCatalog,
     *,
     worker_type_definitions: tuple[WorkerTypeDefinition, ...] = (
         _PRODUCTION_WORKER_TYPE_DEFINITIONS
@@ -58,14 +46,11 @@ def build_worker_runtime_definitions(
         worker_type_definitions,
         known_skills=known_skills,
         known_toolset_profiles=known_toolset_profiles,
-        employee_backend_catalog=employee_backend_catalog,
     )
-    return ConfiguredWorkerRuntimeDefinitions(employee_backend_catalog, registry)
+    return ConfiguredWorkerRuntimeDefinitions(registry)
 
 
-PRODUCTION_WORKER_RUNTIME_DEFINITIONS = build_worker_runtime_definitions(
-    build_production_employee_backend_catalog()
-)
+PRODUCTION_WORKER_RUNTIME_DEFINITIONS = build_worker_runtime_definitions()
 PRODUCTION_WORKER_TYPE_REGISTRY = PRODUCTION_WORKER_RUNTIME_DEFINITIONS.worker_type_registry
 
 _configured_worker_runtime_definitions = PRODUCTION_WORKER_RUNTIME_DEFINITIONS

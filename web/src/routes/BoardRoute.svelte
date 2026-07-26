@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { labelize, type FieldStageVisualState } from "../lib/ui";
-  import AcpConversation from "../components/AcpConversation.svelte";
+  import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
+  import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
@@ -10,7 +12,6 @@
 
   let { ticketId }: { ticketId?: string } = $props();
 
-  const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const board = createQuery(() => queries.board());
   let columns = $derived(board.data?.columns || []);
   let allCards = $derived(
@@ -78,17 +79,46 @@
     window.location.hash = "#/workspace";
   }
 
-  type AgentReplyState = "none" | "unseen" | "seen";
-
   type SignalPresentation = {
     state: FieldStageVisualState;
     ariaLabel: string;
   };
 
+  // How far this browser has read each conversation on the board.
+  //
+  // It is held here rather than read while a row is being drawn, and that is the whole
+  // point: reading a conversation writes nothing the server can announce, so no refetch
+  // is coming to redraw the board. Keeping the positions in state is what makes a row
+  // redraw when one of them moves — and it is a value the marks visibly depend on, so
+  // there is nothing here a tidy-up could remove without the dots going wrong loudly.
+  let howFarThisBrowserHasRead = $state<Record<string, number>>({});
+
+  function rereadWhereThisBrowserHasGot(): void {
+    const positions: Record<string, number> = {};
+    for (const column of board.data?.columns || []) {
+      for (const card of column.cards) {
+        const conversationId = card.conversation_id;
+        if (typeof conversationId === "string") {
+          positions[conversationId] = readReplyWatermark(conversationId);
+        }
+      }
+    }
+    howFarThisBrowserHasRead = positions;
+  }
+
+  // Two things move a position: this browser reading a conversation, and a board arriving
+  // with conversations it has not seen before.
+  onMount(() => onReplyWatermarkMoved(rereadWhereThisBrowserHasGot));
+  $effect(() => {
+    board.data;
+    rereadWhereThisBrowserHasGot();
+  });
+
   // The row mark carries three signals in one precedence. A permission ask wins: a
   // turn waiting on an ask is still running, and the ask is the part only the user can
-  // clear. Then an agent working now. Otherwise the reply state shows — accent while
-  // unseen, grey once seen, the reduced ring when nothing is waiting.
+  // clear. Then an agent working now. Otherwise the reply shows — accent while a turn
+  // has ended past where this browser has read, grey once it has been read, the reduced
+  // ring for a conversation whose turns have never ended.
   function signalPresentation(card: Record<string, any>): SignalPresentation {
     if (card.needs_me) {
       return { state: "needs-me", ariaLabel: "Needs you" };
@@ -96,14 +126,17 @@
     if (card.agent_working) {
       return { state: "current-running", ariaLabel: "Agent working" };
     }
-    const reply = card.agent_reply_state as AgentReplyState;
-    if (reply === "unseen") {
+    const latestTurnEnded = Number(card.latest_turn_ended_sequence ?? 0);
+    if (latestTurnEnded === 0 || typeof card.conversation_id !== "string") {
+      return { state: "upcoming", ariaLabel: "Nothing waiting" };
+    }
+    // A conversation this browser has never read has got nowhere in it, which is what
+    // an absent position means. Every failure path lands here, so the mark over-shows
+    // attention rather than hiding a reply.
+    if (latestTurnEnded > (howFarThisBrowserHasRead[card.conversation_id] ?? 0)) {
       return { state: "current-awaiting-approval", ariaLabel: "Unseen agent reply" };
     }
-    if (reply === "seen") {
-      return { state: "reply-seen", ariaLabel: "Agent reply seen" };
-    }
-    return { state: "upcoming", ariaLabel: "Nothing waiting" };
+    return { state: "reply-seen", ariaLabel: "Agent reply seen" };
   }
 
   // Every ticket sits in exactly one group: its own ticket status, except a done
@@ -228,7 +261,7 @@
                       data-stage-state={presentation.state}
                       data-needs-me={card.needs_me ? "true" : "false"}
                       data-agent-working={card.agent_working ? "true" : "false"}
-                      data-reply-state={card.agent_reply_state}
+                      data-latest-turn-ended={card.latest_turn_ended_sequence}
                       aria-label={presentation.ariaLabel}
                     />
                   </button>
@@ -245,10 +278,7 @@
         >
           {#if rightPaneMode === "chief"}
             <div class="board-workspace-desk-inner">
-              <AcpConversation
-                employeeId={chiefOfStaffEntityId}
-                employeeLabel="Chief of Staff"
-              />
+              <ChiefConversation />
             </div>
           {:else if selectedCard}
             {#key selectedCard.id}

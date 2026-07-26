@@ -2,13 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Never
-
-from planner.conversation.backend_catalog import (
-    EmployeeBackendBuildContext,
-    EmployeeBackendCatalog,
-    EmployeeBackendRegistration,
-)
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
@@ -55,7 +48,9 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         default_model="probe-model",
         default_reasoning_effort="probe-high",
         toolset_profile="default",
-        default_backend="probe-backend",
+        # A real backend key, and deliberately not the one every shipped Worker type
+        # names: the probe exists to prove a Worker type may run on a backend of its own.
+        default_backend="claude",
     ),
     supports_prefix_reconciliation=True,
 )
@@ -73,25 +68,7 @@ PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
 PROBE_KNOWN_TOOLSET_PROFILES: frozenset[str] = frozenset({"default"})
 
 
-def _unmaterialized_probe_backend(
-    _context: EmployeeBackendBuildContext,
-) -> Never:
-    raise RuntimeError("unit-only probe backend was materialized")
-
-
-PROBE_EMPLOYEE_BACKEND_CATALOG = EmployeeBackendCatalog(
-    (
-        EmployeeBackendRegistration("hermes", _unmaterialized_probe_backend),
-        EmployeeBackendRegistration("codex", _unmaterialized_probe_backend),
-        EmployeeBackendRegistration("claude", _unmaterialized_probe_backend),
-        EmployeeBackendRegistration("probe-backend", _unmaterialized_probe_backend),
-    )
-)
-
-
-def build_probe_registry(
-    employee_backend_catalog: EmployeeBackendCatalog = PROBE_EMPLOYEE_BACKEND_CATALOG,
-) -> WorkerTypeRegistry:
+def build_probe_registry() -> WorkerTypeRegistry:
     return WorkerTypeRegistry(
         (
             CODING_WORKER_TYPE_DEFINITION,
@@ -102,7 +79,6 @@ def build_probe_registry(
         ),
         known_skills=PROBE_KNOWN_SKILLS,
         known_toolset_profiles=PROBE_KNOWN_TOOLSET_PROFILES,
-        employee_backend_catalog=employee_backend_catalog,
     )
 
 
@@ -113,10 +89,7 @@ def install_probe_registry() -> WorkerTypeDefinition:
     global _installed_definitions
     registry = build_probe_registry()
     _installed_definitions = install_worker_runtime_definitions_for_test(
-        ConfiguredWorkerRuntimeDefinitions(
-            PROBE_EMPLOYEE_BACKEND_CATALOG,
-            registry,
-        )
+        ConfiguredWorkerRuntimeDefinitions(registry)
     )
     return registry.require("probe")
 

@@ -463,7 +463,7 @@ def test_same_mode_ownership_does_not_reopen_but_real_paired_transition_does(
         conn = connect(str(db_path))
         try:
             conn.execute(
-                "UPDATE tickets SET ticket_status = 'paired', employee_session_id = ? "
+                "UPDATE tickets SET ticket_status = 'paired', conversation_id = ? "
                 "WHERE id = ?",
                 ("existing-session", ticket_id),
             )

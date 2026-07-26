@@ -1,25 +1,20 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
+  import { onDestroy, onMount } from "svelte";
   import { labelize } from "../lib/ui";
-  import type {
-    EmployeeConfigurationCatalog,
-    EmployeeConfigurationSnapshot,
-    TicketDetail
-  } from "../lib/types";
+  import { effortOptionsFor } from "../lib/conversation/composer";
+  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
+  import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
 
   let {
     ticketId,
-    employeeBackends,
     employeeBackend,
     employeeLaunchModel,
     employeeLaunchReasoningEffort,
     onSave
   }: {
     ticketId: string;
-    employeeBackends: string[];
     employeeBackend: string;
     employeeLaunchModel: string | null;
     employeeLaunchReasoningEffort: string | null;
@@ -30,26 +25,45 @@
   let selectedModel = $state<string | null>(null);
   let selectedReasoning = $state<string | null>(null);
   let lastIncomingSignature = $state("");
-  let catalogKey = $state("");
-  let catalog = $state<EmployeeConfigurationCatalog | null>(null);
-  let catalogLoading = $state(false);
-  let catalogError = $state<unknown>(null);
+  let backends = $state<readonly BackendSnapshot[]>([]);
+  let backendsLoading = $state(false);
+  let backendsError = $state<unknown>(null);
   let saveError = $state<unknown>(null);
   let saving = $state(false);
   let requestGeneration = 0;
-  let requestController: AbortController | null = null;
 
+  // The backend the ticket will launch on, as the machine reports it: which models it
+  // offers, which efforts each of those takes, and what it runs when nobody names one.
+  let snapshot = $derived(
+    backends.find((candidate) => candidate.backend_key === selectedBackend) ?? null
+  );
+  // Before the machine has answered, the only worker this pill knows of is the one the
+  // Ticket already names — so that is what it shows, and there is nothing else to pick.
   let workerOptions = $derived(
-    employeeBackends.map((backend) => ({ value: backend, label: labelize(backend) }))
+    backends.length > 0
+      ? backends.map((candidate) => ({
+          value: candidate.backend_key as string,
+          label: labelize(candidate.backend_key)
+        }))
+      : selectedBackend === ""
+        ? []
+        : [{ value: selectedBackend, label: labelize(selectedBackend) }]
   );
   let modelOptions = $derived(
-    (catalog?.models ?? []).map((option) => ({ value: option.value, label: option.label }))
-  );
-  let reasoningOptions = $derived(
-    (catalog?.reasoning_efforts ?? []).map((option) => ({
-      value: option.value,
-      label: option.label
+    (snapshot?.available_models ?? []).map((model) => ({
+      value: model.model_id,
+      label: model.display_name ?? model.model_id
     }))
+  );
+  // Effort belongs to the model that will actually run. Nothing pinned means the backend's
+  // own model runs, so the backend's own list is the one on offer — the same rule the
+  // server applies when it saves the choice.
+  let reasoningOptions = $derived(
+    effortOptionsFor(
+      snapshot?.available_models ?? [],
+      selectedModel,
+      snapshot?.reasoning_effort_options ?? []
+    ).map((effort) => ({ value: effort, label: effort }))
   );
 
   function incomingSignature(): string {
@@ -58,10 +72,6 @@
       employeeLaunchModel,
       employeeLaunchReasoningEffort
     ]);
-  }
-
-  function requestKey(backend: string, model: string | null): string {
-    return JSON.stringify([backend, model]);
   }
 
   function displayLabel(
@@ -96,29 +106,20 @@
     ];
   }
 
-  async function loadCatalog(backend: string, model: string | null, forceRefresh = false): Promise<void> {
-    requestController?.abort();
-    const controller = new AbortController();
-    requestController = controller;
+  async function loadBackends(refresh = false): Promise<void> {
     const generation = ++requestGeneration;
-    catalog = null;
-    catalogError = null;
-    catalogLoading = true;
-    const query = new URLSearchParams({ employee_backend: backend });
-    if (model !== null) query.set("candidate_model", model);
-    if (forceRefresh) query.set("force_refresh", "true");
+    backends = [];
+    backendsError = null;
+    backendsLoading = true;
     try {
-      const response = await fetchJson<EmployeeConfigurationCatalog>(
-        `/api/employee-configuration-catalog?${query.toString()}`,
-        { signal: controller.signal }
-      );
+      const answer = await readBackends(refresh);
       if (generation !== requestGeneration) return;
-      catalog = response;
+      backends = answer;
     } catch (error) {
       if (generation !== requestGeneration) return;
-      catalogError = error;
+      backendsError = error;
     } finally {
-      if (generation === requestGeneration) catalogLoading = false;
+      if (generation === requestGeneration) backendsLoading = false;
     }
   }
 
@@ -153,8 +154,8 @@
   function selectModel(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
     // Choosing the native value stores null ("not pinned"); anything else pins.
-    const nextModel = target.value === (catalog?.native_model ?? "") ? null : target.value || null;
-    target.value = selectedModel ?? catalog?.native_model ?? "";
+    const nextModel = target.value === (snapshot?.default_model_id ?? "") ? null : target.value || null;
+    target.value = selectedModel ?? snapshot?.default_model_id ?? "";
     if (nextModel === selectedModel || saving) return;
     void persist({
       employee_backend: selectedBackend,
@@ -166,8 +167,8 @@
   function selectReasoning(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
     const nextReasoning =
-      target.value === (catalog?.native_reasoning_effort ?? "") ? null : target.value || null;
-    target.value = selectedReasoning ?? catalog?.native_reasoning_effort ?? "";
+      target.value === (snapshot?.default_reasoning_effort ?? "") ? null : target.value || null;
+    target.value = selectedReasoning ?? snapshot?.default_reasoning_effort ?? "";
     if (nextReasoning === selectedReasoning || saving) return;
     void persist({
       employee_backend: selectedBackend,
@@ -185,17 +186,12 @@
     selectedReasoning = employeeLaunchReasoningEffort;
   });
 
-  $effect(() => {
-    if (!selectedBackend) return;
-    const nextKey = requestKey(selectedBackend, selectedModel);
-    if (nextKey === catalogKey) return;
-    catalogKey = nextKey;
-    void loadCatalog(selectedBackend, selectedModel);
+  onMount(() => {
+    void loadBackends();
   });
 
   onDestroy(() => {
     requestGeneration += 1;
-    requestController?.abort();
   });
 </script>
 
@@ -217,16 +213,16 @@
     </select>
   </span>
 
-  {#if catalogLoading}
+  {#if backendsLoading}
     <span class="employee-configuration-state" data-employee-configuration-loading>
       loading models…
     </span>
-  {:else if catalog}
+  {:else if snapshot}
     <span class="pill" data-employee-configuration-model-control>
       <span class="pill-key">model</span>
-      {displayValue(modelOptions, selectedModel, catalog.native_model)}
+      {displayValue(modelOptions, selectedModel, snapshot.default_model_id ?? null)}
       <select
-        value={selectedModel ?? catalog.native_model ?? ""}
+        value={selectedModel ?? snapshot.default_model_id ?? ""}
         disabled={saving}
         onchange={selectModel}
         aria-label="Model"
@@ -237,12 +233,12 @@
       </select>
     </span>
 
-    {#if catalog.reasoning_supported}
+    {#if reasoningOptions.length > 0}
       <span class="pill" data-employee-configuration-reasoning-control>
         <span class="pill-key">reasoning</span>
-        {displayValue(reasoningOptions, selectedReasoning, catalog.native_reasoning_effort)}
+        {displayValue(reasoningOptions, selectedReasoning, snapshot.default_reasoning_effort ?? null)}
         <select
-          value={selectedReasoning ?? catalog.native_reasoning_effort ?? ""}
+          value={selectedReasoning ?? snapshot.default_reasoning_effort ?? ""}
           disabled={saving}
           onchange={selectReasoning}
           aria-label="Reasoning"
@@ -253,7 +249,7 @@
         </select>
       </span>
     {/if}
-  {:else if catalogError}
+  {:else if backendsError}
     <span class="pill" data-employee-configuration-saved-model>
       <span class="pill-key">model</span>{selectedModel ?? ""}
     </span>
@@ -264,24 +260,24 @@
     {/if}
   {/if}
 
-  {#if catalogError}
+  {#if backendsError}
     <div class="employee-configuration-problem" data-employee-configuration-error>
-      <ErrorLine error={catalogError} />
+      <ErrorLine error={backendsError} />
       <Button
         variant="quiet"
         data-employee-configuration-retry
-        disabled={catalogLoading}
-        onclick={() => void loadCatalog(selectedBackend, selectedModel, true)}
+        disabled={backendsLoading}
+        onclick={() => void loadBackends(true)}
       >Retry</Button>
     </div>
   {/if}
 
-  {#if catalog}
+  {#if snapshot}
     <Button
       variant="quiet"
       data-employee-configuration-refresh
-      disabled={catalogLoading}
-      onclick={() => void loadCatalog(selectedBackend, selectedModel, true)}
+      disabled={backendsLoading}
+      onclick={() => void loadBackends(true)}
     >Refresh</Button>
   {/if}
 

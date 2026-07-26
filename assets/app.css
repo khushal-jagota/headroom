@@ -1605,72 +1605,9 @@ button.list-row:hover .list-row-title {
   border-color: var(--text-faint);
 }
 
-/* ── ACP transcript: stanzas, seams, pills ──────────────────────────────────
- * The transcript renders as direct flex children of .chat-thread; nesting is
- * expressed by disclosure, never by borders or indentation. */
-.acp-transcript { display: contents; }
-.acp-transcript img { display: block; max-width: 100%; }
-.acp-transcript audio { max-width: 100%; }
-.acp-unsupported { color: var(--text-faint); }
-
-/* Stanza: one beat of work — a Thinking/Thought line; disclosure reveals the
- * full thought then the steps it drove. */
-.acp-stanza { display: grid; min-width: 0; max-width: 100%; gap: var(--space-1); }
-.acp-stanza-body { display: grid; min-width: 0; max-width: 100%; gap: var(--space-1); margin-top: var(--space-1); }
-
-.acp-think {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  max-width: 100%;
-  background: transparent;
-  border: 0;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
-  color: var(--text-faint);
-  font-family: var(--font-ui);
-}
-.acp-think:hover { color: var(--text-strong); }
-.acp-think-word {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-mono);
-}
-.acp-think-preview {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-serif);
-  font-style: italic;
-  font-size: var(--type-serif-sm);
-  color: var(--text-faintest);
-}
-.acp-think.is-live .acp-think-word {
-  background: linear-gradient(90deg, var(--text-faint) 30%, var(--text-strong) 50%, var(--text-faint) 70%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-          background-clip: text;
-  color: transparent;
-  animation: acp-shimmer var(--motion-loop-bounce) linear infinite;
-}
-.acp-think-body {
-  min-width: 0;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
-  line-height: 1.6;
-  color: var(--text-muted);
-}
-
-/* Wide step output (code wells, markdown pre) must scroll inside its own box,
-   never widen the stanza: cap every grid level's items so a long line cannot
-   push the track — and its sibling rows — past the pane. */
-.acp-stanza > *,
-.acp-stanza-body > *,
+/* Wide step output (code wells, markdown pre) must scroll inside its own box, never
+   widen the row: cap the grid's items so a long line cannot push the track — and its
+   sibling rows — past the pane. */
 .acp-steps > * { min-width: 0; }
 
 /* Steps: kind glyph, title, edit counts, right-aligned status mark. */
@@ -1715,23 +1652,14 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-sm);
   color: var(--text-muted);
 }
-.acp-step-counts {
-  flex: none;
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-}
-.acp-step-add { color: var(--accent-done); }
-.acp-step-del { color: var(--accent-error); }
 .acp-step-mark {
   margin-left: auto;
   flex: none;
   font-family: var(--font-mono);
   font-size: var(--type-xs);
 }
-.acp-step-counts + .acp-step-mark { margin-left: var(--space-2); }
 .acp-mark-ok { color: var(--accent-done); }
 .acp-mark-fail { color: var(--accent-error); }
-.acp-mark-pend { color: var(--text-faintest); }
 .acp-spin {
   margin-left: auto;
   flex: none;
@@ -1742,22 +1670,6 @@ button.list-row:hover .list-row-title {
   border-radius: var(--radius-pill);
   animation: acp-spin var(--motion-loop-spin) linear infinite;
 }
-.acp-step-detail { min-width: 0; max-width: 100%; margin: var(--space-1) 0 var(--space-2); }
-
-/* Command / terminal output: a sunken mono well (no raw input/output). */
-.acp-code-well {
-  min-width: 0;
-  max-width: 100%;
-  background: var(--surface-sunken);
-  border-radius: var(--radius-sm);
-  padding: var(--space-2);
-  overflow-x: auto;
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-default);
-}
-.acp-code-well-label { color: var(--text-faint); }
-.acp-code-well pre { margin: 0; white-space: pre-wrap; }
 
 /* Compaction seam: dashed full-width divider, centred uppercase mono label. */
 .acp-compaction {
@@ -1778,7 +1690,6 @@ button.list-row:hover .list-row-title {
   text-transform: uppercase;
   color: var(--text-faint);
 }
-.acp-compaction--failed span { color: var(--accent-error); }
 .acp-compaction.is-live span {
   background: linear-gradient(90deg, var(--text-faint) 30%, var(--text-strong) 50%, var(--text-faint) 70%);
   background-size: 200% 100%;
@@ -1802,30 +1713,6 @@ button.list-row:hover .list-row-title {
   border-color: var(--accent-error);
   color: var(--accent-error);
 }
-.acp-pill-group {
-  align-self: center;
-  display: grid;
-  justify-items: center;
-  gap: var(--space-1);
-}
-.acp-pill {
-  background: transparent;
-  border: var(--border-hairline) solid var(--accent-error);
-  border-radius: var(--radius-pill);
-  padding: var(--space-1) var(--space-3);
-  cursor: pointer;
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--accent-error);
-}
-.acp-pill:hover { color: var(--text-strong); }
-.acp-pill-reason {
-  max-width: 82%;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-}
 
 /* Something happening right now, said in movement: the words themselves travel. The app's
    one way of showing a thing is live, so a turn working reads the same as a thought
@@ -1843,7 +1730,6 @@ button.list-row:hover .list-row-title {
 @keyframes acp-shimmer { to { background-position: -200% 0; } }
 @keyframes acp-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
-  .acp-think.is-live .acp-think-word,
   .acp-compaction.is-live span,
   .acp-spin { animation: none; }
   /* Still the brighter reading, so being alive is said in colour to anyone who does not

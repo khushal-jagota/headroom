@@ -12,13 +12,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.environments.hermes_home import provision_planner_home_skills
 from planner.skill_sources import ensure_managed_panels_skills
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode
@@ -218,7 +218,7 @@ def test_api_skill_patch_updates_canonical_skill_without_touching_ticket_session
             worker_type="coding",
         )
         conn.execute(
-            "UPDATE tickets SET employee_session_id = 'session_keep_api' WHERE id = ?",
+            "UPDATE tickets SET conversation_id = 'session_keep_api' WHERE id = ?",
             (ticket.id,),
         )
     finally:
@@ -276,9 +276,9 @@ def test_api_skill_patch_updates_canonical_skill_without_touching_ticket_session
     conn = connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
+            "SELECT conversation_id FROM tickets WHERE id = ?", (ticket.id,)
         ).fetchone()
-        assert row["employee_session_id"] == "session_keep_api"
+        assert row["conversation_id"] == "session_keep_api"
     finally:
         conn.close()
 
@@ -738,7 +738,7 @@ def test_provisioning_links_canonical_specialist_skill_without_touching_sessions
         worker_type="coding",
     )
     conn.execute(
-        "UPDATE tickets SET employee_session_id = 'session_keep' WHERE id = ?",
+        "UPDATE tickets SET conversation_id = 'session_keep' WHERE id = ?",
         (ticket.id,),
     )
     conn.close()
@@ -773,8 +773,8 @@ def test_provisioning_links_canonical_specialist_skill_without_touching_sessions
     conn = connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
+            "SELECT conversation_id FROM tickets WHERE id = ?", (ticket.id,)
         ).fetchone()
-        assert row["employee_session_id"] == "session_keep"
+        assert row["conversation_id"] == "session_keep"
     finally:
         conn.close()

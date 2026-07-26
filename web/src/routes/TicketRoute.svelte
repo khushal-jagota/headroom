@@ -16,7 +16,8 @@
     StageOwnershipMode,
     TicketDetail
   } from "../lib/types";
-  import AcpConversation from "../components/AcpConversation.svelte";
+  import LiveConversation from "../components/conversation/LiveConversation.svelte";
+  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -61,18 +62,62 @@
 
   let headerError = $state<unknown>(null);
   let copied = $state(false);
+  let conversationBackends = $state<readonly BackendSnapshot[]>([]);
   let projectOptions = $derived([
     { value: "", label: "(no project)" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
 
   onMount(() => {
-    void mutateJson(`/api/tickets/${stableId}/acknowledge-completed-response`, {
-      method: "POST"
-    }).catch((err) => {
-      headerError = err;
-    });
+    // What the conversation's model and effort pickers offer. Read once on arrival rather
+    // than through the query catalogue: it is a fact about the machine's agents, and
+    // nothing a person does to this Ticket changes it.
+    void readBackends()
+      .then((snapshots) => (conversationBackends = snapshots))
+      .catch(() => {
+        // The pickers fall back to showing the value already in force, which is the same
+        // thing they show before the catalog has arrived. Nothing here is worth a banner.
+      });
   });
+
+  /** Say that the person here has replied to this Ticket's worker.
+   *
+   * A Ticket parked on a proposal is waiting for its owner, and a reply is an answer of a
+   * kind: it moves to paired. The server owns which statuses move — this says only that a
+   * reply happened, and says it after the conversation took the message, because a reply
+   * that reached nothing is not a reply.
+   *
+   * This screen is the one place that knows both halves. The conversation system is told
+   * nothing about Tickets, and the send door it offers knows nothing about them either.
+   */
+  async function recordHumanReply(): Promise<void> {
+    try {
+      await mutateJson(`/api/tickets/${stableId}/human-reply`, { method: "POST" });
+    } catch (err) {
+      // The message itself got through. Failing to move the Ticket is worth saying and
+      // not worth taking the reply back for.
+      headerError = err;
+    }
+  }
+
+  /** Start this Ticket's conversation, so the first message has somewhere to go.
+   *
+   * The readiness loop starts one when it has a step to send; this is what happens when a
+   * person gets there first. The reply carries the Ticket, so the id comes back from the
+   * same write that made the link.
+   */
+  async function startTicketConversation(): Promise<string | null> {
+    const detail = await mutateJson<TicketDetail>(`/api/tickets/${stableId}/conversation`, {
+      method: "POST"
+    });
+    return detail.conversation_id;
+  }
+
+  /** New: the old conversation is killed and the Ticket stops pointing at it. The next
+   *  message starts a fresh one, through the same door as the first one ever did. */
+  async function resetTicketConversation(): Promise<void> {
+    await mutateJson(`/api/tickets/${stableId}/conversation/reset`, { method: "POST" });
+  }
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
@@ -409,7 +454,6 @@
               {#if detail.employee_configuration_editable}
                 <WorkerConfigurationSetup
                   ticketId={stableId}
-                  employeeBackends={manifest.data?.employee_backends ?? []}
                   employeeBackend={detail.employee_backend}
                   employeeLaunchModel={detail.employee_launch_model}
                   employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
@@ -454,10 +498,14 @@
         </div>
       </main>
       <aside class="chat-rail" data-chat>
-        <AcpConversation
-          employeeId={stableId}
-          employeeLabel={conversationEmployeeLabel(detail)}
-          deferInitialAttach={detail.employee_configuration_editable}
+        <LiveConversation
+          conversationId={detail.conversation_id}
+          label={conversationEmployeeLabel(detail)}
+          backends={conversationBackends}
+          senderLabel="owner"
+          onStartConversation={startTicketConversation}
+          onNewConversation={resetTicketConversation}
+          onMessageAccepted={recordHumanReply}
         />
       </aside>
     </div>

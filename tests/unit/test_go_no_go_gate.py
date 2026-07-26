@@ -83,7 +83,7 @@ PROBE_MANIFEST = {
     "ceiling_range": ["needs_kickoff", "needs_alpha", "needs_beta", "done"],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
-    "default_backend": "probe-backend",
+    "default_backend": "claude",
     "default_model": "probe-model",
     "default_reasoning_effort": "probe-high",
 }
@@ -200,17 +200,14 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         assert final["fields"]["alpha"]["value"] == "alpha proposal"
         assert final["fields"]["beta"]["value"] == "beta proposal"
 
-    # 7. No worker session/turn was ever created — the whole drive is human/API-only.
+    # 7. No worker was ever started — the whole drive is human/API-only, so the Ticket
+    # never came to name a conversation.
     conn = connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)
+            "SELECT conversation_id FROM tickets WHERE id = ?", (tid,)
         ).fetchone()
-        assert row["employee_session_id"] is None
-        turns = conn.execute(
-            "SELECT count(*) AS n FROM employee_step_runs WHERE ticket_id = ?", (tid,)
-        ).fetchone()
-        assert turns["n"] == 0
+        assert row["conversation_id"] is None
     finally:
         conn.close()
 

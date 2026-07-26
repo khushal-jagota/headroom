@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Final
 from uuid import uuid4
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationSystem,
@@ -119,7 +119,7 @@ def agent_resolve(
     database_parent = database_parent_from_connection(conn)
     if database_parent is None:
         raise RuntimeError("managed Chief settings need a database that lives in a folder")
-    launch_defaults = read_chief_settings(database_parent, registry).launch_defaults
+    launch_defaults = read_chief_settings(database_parent).launch_defaults
     return resolve_agent_conversation_start(
         chief_launch_defaults=ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
@@ -196,7 +196,7 @@ async def send_to_ticket_conversation(
     no delivery to report on.
     """
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    conversation_id = ticket.employee_session_id
+    conversation_id = ticket.conversation_id
     if conversation_id is None:
         raise PlannerError(
             ErrorCode.not_found,
@@ -228,6 +228,82 @@ async def send_to_ticket_conversation(
     return fate
 
 
+def read_agent_conversation(conn: sqlite3.Connection, agent_key: str) -> str | None:
+    """Which conversation this agent is currently having, or none.
+
+    An agent nobody has spoken to has no row yet, and one that has been reset has a row
+    holding nothing. Both are the same answer to the only question asked here, so both
+    read as none.
+    """
+    row = conn.execute(
+        "SELECT conversation_id FROM agents WHERE agent_key = ?",
+        (agent_key,),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return str(row[0])
+
+
+async def start_agent_conversation(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    agent_key: str,
+    values: ConversationStartValues,
+) -> str:
+    """Start a conversation for an agent that is not a Ticket. Returns its id.
+
+    The same two steps a Ticket takes, in the same order: the conversation is created
+    first and the agent is pointed at it second, so the agent never names a conversation
+    that does not exist.
+    """
+    conversation_id = new_conversation_id()
+    await system.start_conversation(
+        ConversationStartRequest(
+            conversation_id=conversation_id,
+            backend_key=values.backend_key,
+            model=values.model,
+            reasoning_effort=values.reasoning_effort,
+            role_materials=values.role_materials,
+            workspace_folder=values.workspace_folder,
+            access=values.access,
+        )
+    )
+    with conn:
+        conn.execute(
+            "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
+            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id",
+            (agent_key, conversation_id),
+        )
+    return conversation_id
+
+
+async def reset_agent_conversation(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    agent_key: str,
+) -> None:
+    """Kill this agent's conversation and unlink it, so the next start is a fresh one.
+
+    Killing rather than interrupting, for the reason a Ticket's reset gives: freeing the
+    agent would let the messages it was holding run, and starting again must not be the
+    thing that finally delivers them.
+
+    The agent's row stays and its conversation is what is let go, because the agent did
+    not stop existing. The unlink names the conversation that was killed, so an agent
+    already pointed at a newer one is left pointing at it.
+    """
+    conversation_id = read_agent_conversation(conn, agent_key)
+    if conversation_id is None:
+        return
+    await system.kill(conversation_id)
+    with conn:
+        conn.execute(
+            "UPDATE agents SET conversation_id = NULL "
+            "WHERE agent_key = ? AND conversation_id = ?",
+            (agent_key, conversation_id),
+        )
+
+
 async def reset_ticket_conversation(
     system: ConversationSystem,
     conn: sqlite3.Connection,
@@ -250,7 +326,7 @@ async def reset_ticket_conversation(
     newer one is left pointing at it: only the conversation this call silenced is the one
     it may cut loose.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).employee_session_id
+    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
     if conversation_id is None:
         return
     await system.kill(conversation_id)

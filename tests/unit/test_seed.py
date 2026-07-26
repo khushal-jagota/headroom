@@ -15,7 +15,6 @@ from sqlite3 import Connection
 from types import SimpleNamespace
 
 import pytest
-from tests.support.probe import PROBE_EMPLOYEE_BACKEND_CATALOG
 
 from planner.core.contracts import ErrorCode, Priority
 from planner.core.db import connect, create_schema
@@ -31,7 +30,6 @@ from planner.seed.logic.workspace import match_item_title, parse_workspace
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     ConfiguredWorkerRuntimeDefinitions,
     build_worker_runtime_definitions,
     install_worker_runtime_definitions_for_test,
@@ -188,7 +186,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     tickets = _rows_by(
         tmp_db,
         "SELECT tickets.id, tickets.alias, tickets.stage, tickets.priority, "
-        "tickets.worker_type, tickets.employee_session_id, tickets.sprint_item_id, "
+        "tickets.worker_type, tickets.conversation_id, tickets.sprint_item_id, "
         "tickets.sprint_id, "
         "tickets.project_id, projects.name AS project, tickets.recap, tickets.ceiling, "
         "tickets.at_cap, tickets.deadline, tickets.fields "
@@ -206,16 +204,18 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
         assert row["recap"] == ""
         assert row["deadline"] is None
 
-    # (6) the historical Chat ID is preserved byte-for-byte as the Employee session id.
-    assert (
-        tickets["ticket-20260611-export-format"]["employee_session_id"] == "20260611_090000_abc123"
-    )
+    # (6) A historical Chat ID from the planning documents names nothing. The column holds
+    # the id of a conversation this system owns, and a Ticket carrying a made-up one could
+    # never be given a real conversation — the door that starts one only opens on a Ticket
+    # naming none. So the field is read and dropped, and every seeded Ticket arrives with
+    # no conversation.
     for alias in (
+        "ticket-20260611-export-format",
         "ticket-20260611-onboarding-survey",
         "ticket-20260611-release-branch",
         "ticket-20260611-import-pipeline",
     ):
-        assert tickets[alias]["employee_session_id"] is None
+        assert tickets[alias]["conversation_id"] is None
 
     # (7) fields JSON.
     onboarding = json.loads(tickets["ticket-20260611-onboarding-survey"]["fields"])
@@ -516,11 +516,10 @@ def test_seed_backend_default_override_and_unknown_roll_back(
         CODING_WORKER_TYPE_DEFINITION,
         worker_profile=replace(
             CODING_WORKER_TYPE_DEFINITION.worker_profile,
-            default_backend="probe-backend",
+            default_backend="claude",
         ),
     )
     definitions = build_worker_runtime_definitions(
-        PROBE_EMPLOYEE_BACKEND_CATALOG,
         worker_type_definitions=(probe_default_coding,),
     )
     previous = install_worker_runtime_definitions_for_test(definitions)
@@ -551,7 +550,7 @@ def test_seed_backend_default_override_and_unknown_roll_back(
         assert {
             str(row["employee_backend"])
             for row in default_conn.execute("SELECT employee_backend FROM tickets")
-        } == {"probe-backend"}
+        } == {"claude"}
         assert {
             str(row["employee_backend"])
             for row in override_conn.execute("SELECT employee_backend FROM tickets")
@@ -608,13 +607,9 @@ def test_seed_fields_follow_the_explicit_registered_definition(tmp_db: Connectio
         (definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
     previous_definitions = install_worker_runtime_definitions_for_test(
-        ConfiguredWorkerRuntimeDefinitions(
-            PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
-            registry,
-        )
+        ConfiguredWorkerRuntimeDefinitions(registry)
     )
     try:
         seed_from_source(tmp_db, FIXTURE, worker_type="seed_probe", now=_FIXED_NOW)
@@ -660,13 +655,9 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
         (incompatible_definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
     previous_definitions = install_worker_runtime_definitions_for_test(
-        ConfiguredWorkerRuntimeDefinitions(
-            PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
-            registry,
-        )
+        ConfiguredWorkerRuntimeDefinitions(registry)
     )
     try:
         with pytest.raises(PlannerError) as raised:

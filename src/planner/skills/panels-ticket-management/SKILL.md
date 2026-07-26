@@ -166,7 +166,7 @@ If the user asks to “look into” a Panels behavior, says something feels off,
 4. Ask whether the user wants a Ticket for the complete investigation and fix.
 5. Create that Ticket only after explicit approval. Put the evidence and unanswered questions in Kickoff; do not treat an exploratory patch as an accepted design.
 
-For cross-Ticket worker identity symptoms, use `references/session-identity-diagnostics.md` to distinguish database ownership, CLI lookup, gateway identity, and terminal-environment propagation before scoping the Ticket.
+For cross-Ticket worker identity symptoms, use `references/session-identity-diagnostics.md` to tell a duplicate conversation id apart from a worker launched with the wrong one before scoping the Ticket.
 
 For a regression in work that was already merged or closed, inspect the actual live/integration branch and the existing regression coverage, not merely the session’s current worktree. A stale worktree can make a shipped feature appear absent. Ground the likely seam, label hypotheses as hypotheses, and put an exact red-capable reproduction requirement into the follow-up ticket before suggesting a fix.
 

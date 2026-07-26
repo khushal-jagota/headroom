@@ -43,19 +43,20 @@ One screen per part of the system:
   user has not seen, the same dot greyed once the user has opened the ticket since
   that reply, and a faint ring when nothing is waiting.
 
-  The first two are asked of the conversation system directly, for the conversation
-  the ticket is linked to. The reply dot still runs on the older machinery — a small
-  durable ticket-linked projection plus an acknowledge-on-open endpoint — so a browser
-  reload or an unopened conversation does not invent or retain stale activity. A
-  completed response stays unseen through reconnect/load until a new turn, explicit
-  reset, or the user opens that ticket.
+  All three come from the conversation the ticket is linked to. The first two are asked
+  of the conversation system directly. The third is a comparison: the row carries where
+  its conversation last had a turn end, and this browser keeps how far the reader has
+  got in that conversation. A reply is waiting when the ending is past the reading.
 
-  **The seam:** the browser half of the replacement is already here — a per-conversation
-  read position kept in this browser, keyed by conversation id so a fresh conversation
-  starts unread. When the transcript surface lands, a board row will also carry how far
-  its conversation has got; the dot becomes "further than I have read", the ticket pane
-  writes the position when the user looks, and the projection and its endpoint die
-  together. **Chief of Staff** sits first in the rail above the groups.
+  How far somebody has read is about that person at that screen, not about the ticket,
+  so it is kept in their own browser and the server is never told. Nothing is written
+  when a reply is read, which is why opening a ticket clears its dot straight away
+  rather than after something refetches. The position is kept per conversation, so
+  pressing New starts unread rather than inheriting the old conversation's reading. A
+  browser that has never seen a conversation has read none of it, so a reply shows —
+  every failure path over-shows attention rather than hiding a reply.
+
+  **Chief of Staff** sits first in the rail above the groups.
 
   The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the
@@ -70,7 +71,8 @@ One screen per part of the system:
   `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
   worker conversation in serif alongside, and a copy button that produces a plain-text block
   for pasting anywhere. During pristine Kickoff, the facts line also shows a restrained
-  **Worker** pill whose choices come only from the served backend catalog. Changing
+  **Worker** pill whose choices come only from the backends this machine actually has —
+  the same answer the conversation composer's model and effort pickers read. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
   Ticket has a conversation, the pill becomes read-only. Its project picker is backed by the shared
@@ -129,13 +131,11 @@ share.
   server remains the source of truth, and the browser holds only the answers it has
   been given.
 
-  Conversation state is deliberately not one of those cached reads. Each ACP pane
-  owns one typed `/api/conversation` WebSocket controller. Its session replay,
-  generation, sequence, queue, permissions, terminal state, and delivery receipts are
-  conversation state rather than cached REST resources. The controller reduces the
-  ordered replay envelopes into a private candidate and publishes the complete
-  conversation to the pane once at `ready`; an existing complete transcript remains
-  visible during a refresh, while post-ready updates still render incrementally.
+  Conversation state is deliberately not one of those cached reads. A pane reads the
+  rows of its conversation after the position it holds, then keeps up over a live tail
+  of the same rows — one seam, whether the pane is opening, reloading, or a second tab.
+  A conversation's rows, what it is running on, and what it is waiting for are the
+  record's own account rather than cached REST resources.
 
   The change stream is also the browser's connection-health owner. The shell starts at
   Reconnecting and says Connected while the stream is open. When the stream drops, the
@@ -145,10 +145,11 @@ share.
   the whole recovery story. The server sends an occasional invisible keep-alive line
   down a quiet stream, which changes nothing on screen.
 
-  The browser does not merge a second Panels transcript with backend history. ACP
-  load/replay is the one conversation projection, and reconnect uses the same strict
-  employee/session/generation boundary as live delivery. A pristine-Kickoff Ticket defers
-  the pane's initial attach so merely opening the page cannot freeze its backend choice.
+  There is no second transcript to merge: the record's rows are what a pane shows, read
+  after the position it already holds and then kept up over a live tail of those same
+  rows. Opening a Ticket attaches to nothing and spawns nothing — an agent starts when a
+  message is sent to it — so merely looking at a Ticket during Kickoff cannot freeze its
+  backend choice.
 - **Markdown is GFM and sanitized.** Written text (briefs, notes, ideas) renders
   through a Vite-owned unified pipeline. It supports CommonMark and ordinary GFM,
   including tables, task lists, strikethrough, autolinks, reference links, fenced
@@ -245,11 +246,14 @@ hand-rolling the same shapes per screen. Each does one job:
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
-- **AcpConversation / AcpConversationPane** — the sole Ticket and Chief-of-Staff
-  conversation surface: typed replay, connection/activity status, transcript,
-  permissions, and the compact work controls.
-- **ConversationComposer** — ACP commands, draft text, and ordered pending image
-  previews for picker, paste, and drop intake. Images become inline ACP blocks.
+- **LiveConversation** — what makes a conversation live, and the only thing that does:
+  it opens one by id, replays the rows after the one it holds and keeps going, keeps the
+  messages this browser has sent that the record has not caught up with, and turns send,
+  stop, answer and New into calls. The Ticket screen, the Chief of Staff and the
+  development pane all mount it.
+- **ConversationPane / ConversationTranscript / ConversationComposer** — what a
+  conversation looks like: the rows, the one raised ask, the status line, and the
+  composer with its model, effort and skill choices.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
@@ -275,8 +279,8 @@ _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 `web/src/lib/queryCatalogue.ts` (every server read, by name and address),
 `web/src/lib/queryClient.ts` (the one shared cache), `web/src/lib/changeStream.ts`
 (the change stream and connection health), `web/src/lib/mutate.ts` (a write, then the
-refetch it earns), `web/src/lib/acp/` and `web/src/components/acp/` (the typed
-conversation controller, state, transport, transcript, and composer), and the
+refetch it earns), `web/src/lib/conversation/` and `web/src/components/conversation/`
+(the conversation wire, feed, transcript and composer), and the
 remaining `web/src/lib/` helpers (API, Managed Markdown, `markdownPipeline.ts`,
 `labelize`, dates), `assets/tokens.css` (design tokens), `assets/app.css` (shared
 styling), `web/dist/` (built app served by FastAPI).
@@ -285,7 +289,8 @@ styling), `web/dist/` (built app served by FastAPI).
 
 - Every backend doc owns the behaviour its screen projects — **Tickets & the gates**
   (`tickets-and-gates.md`), **Days** (`days.md`), **Sprints** (`sprints.md`),
-  **Backlog & Ideas** (`backlog-and-ideas.md`), **Conversation** (`chat.md`).
+  **Backlog & Ideas** (`backlog-and-ideas.md`), **the conversation system**
+  (`conversation-system.md`).
 - **Worker types** (`worker-types.md`) — the served manifest the Ticket screen turns
   into a per-Worker-type lifecycle to render each Ticket's Stages and Worker type pill.
 - **Projects** (`projects.md`) — the shared project selector resource.
@@ -299,4 +304,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-25 (Workspace groups by Ticket status and its row mark carries three signals; single ACP conversation pane, GFM rendering, the change stream feeding cached reads, and shared file previews)._
+_Last verified: 2026-07-26 (Workspace groups by Ticket status and its row mark carries three signals; one conversation pane over the record, GFM rendering, the change stream feeding cached reads, and shared file previews)._

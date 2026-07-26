@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from planner.conversation2.contracts import ConversationAccess, ConversationBackendKey
+from planner.conversation.contracts import ConversationAccess, ConversationBackendKey
 from planner.runtime.logic.conversation_start_resolution import (
     CHIEF_ROLE_TEXT,
     NO_CONVERSATION_START_OVERRIDES,

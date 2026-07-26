@@ -1,15 +1,17 @@
-# The conversation system (new)
+# The conversation system
 
-This is the new home for talking to an AI agent. One conversation = one agent
+This is how Panels talks to an AI agent. One conversation = one agent
 process (hermes, codex, or claude) working in a folder, plus a permanent notebook
 of everything that happened in it. The rest of the planner can do exactly five
 things to a conversation — start it, send text into it, interrupt its running
 turn, kill its activity outright, and ask whether it is running — plus one more
 question: is a permission ask waiting. Nothing else crosses the boundary.
 
-It currently serves the development pane at `#/dev/conversation`. Production
-screens still run on the old conversation layer (`chat.md`); this system replaces
-that layer when the swap is ruled.
+It serves every screen that shows a conversation: a Ticket's, the Chief of
+Staff's, and the development pane at `#/dev/conversation`. There is no second
+one. The layer that came before it — a WebSocket, a session-binding table, a
+per-ticket projection of what the agent was doing — is gone, along with the
+second database, relay, neutral protocol and history adapter that preceded it.
 
 ```
   caller (pane, loop)                the conversation system                agent CLIs
@@ -54,6 +56,14 @@ such conversation, the agent would not start, its session would not load, the
 write failed, a steer with no running turn to join, or a steer at a backend that
 cannot steer. A busy agent is never a refusal. How a turn later ends is never
 part of the answer — endings are notebook rows.
+
+A message that is waiting can be taken back, by the name the sender gave it. It
+has reached no agent, so taking it back reaches none either — it comes out of the
+line and is written down as discarded, the same row a New writes for everything it
+throws away, because text somebody handed over never disappears without a trace.
+Being told there was nothing to take back is an ordinary answer: a waiting message
+runs the moment the agent frees up, so the one you were looking at may already have
+gone.
 
 A send may also carry a model or reasoning-effort change. The change rides the
 message: browsing a picker does nothing, the change lands when the message is
@@ -162,23 +172,22 @@ names the command.
 
 ## Code paths
 
-- Contract and floor defaults: `src/planner/conversation2/contracts.py` (the
+- Contract and floor defaults: `src/planner/conversation/contracts.py` (the
   docstrings are the documentation of record).
-- Core, notebook, storage: `src/planner/conversation2/` (`system.py`,
+- Core, notebook, storage: `src/planner/conversation/` (`system.py`,
   `events.py`, `storage.py`); tables land in
   `src/planner/core/migrations/versions/conversation_system_tables.py`.
-- The three backends: `src/planner/conversation2/backends/`.
-- Reading side, live tail, backend cards: `src/planner/conversation2/api.py`,
+- The three backends: `src/planner/conversation/backends/`.
+- Reading side, live tail, backend cards: `src/planner/conversation/api.py`,
   `live_tail.py`, `snapshot.py`.
 - The pane: `web/src/routes/DevConversationRoute.svelte`,
-  `web/src/components/conversation2/`, `web/src/lib/conversation2/`.
+  `web/src/components/conversation/`, `web/src/lib/conversation/`.
 - The contract's proof: `tests/support/conversation_contract_conformance.py`,
   run against the real system in
-  `tests/unit/test_conversation2_conformance.py`.
+  `tests/unit/test_conversation_conformance.py`.
 
 ## Handoffs
 
-- The old conversation layer still serves production screens: `chat.md`.
 - Ticket-side surfacing (which ticket needs you, row dots) is the worker
   orchestration's job, built against this contract: `employee-runtime.md`.
 

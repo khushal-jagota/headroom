@@ -22,8 +22,8 @@ import threading
 
 import httpx
 
-from planner.conversation2.contracts import PromptDeliveryMode
-from planner.conversation2.events import (
+from planner.conversation.contracts import PromptDeliveryMode
+from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationEventPayload,
     ConversationTurnEnding,
@@ -33,7 +33,7 @@ from planner.conversation2.events import (
     ToolCallStatus,
     TurnEndedEventPayload,
 )
-from planner.conversation2.storage import ConversationStore
+from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
 BACKEND_CARD_WAIT_MS = 30_000  # backend cards probe real CLIs with subprocess calls
@@ -71,21 +71,21 @@ window.fetch = (input, init) => {
 # to, how much of it is in view, and where the bottom of its last piece of content sits.
 WHERE_THE_THREAD_IS = """
 () => {
-  const thread = document.querySelector('[data-conversation2-thread]');
+  const thread = document.querySelector('[data-conversation-thread]');
   // The transcript lays its rows out in the thread rather than in a box of its own, so
   // anything without a shape is looked through to the things inside it that have one.
   const content = [];
   const consider = (element) => {
-    if (element.hasAttribute('data-conversation2-reserved-space')) return;
+    if (element.hasAttribute('data-conversation-reserved-space')) return;
     if (element.getClientRects().length > 0) { content.push(element); return; }
     for (const inside of element.children) consider(inside);
   };
   for (const child of thread.children) consider(child);
   const last = content[content.length - 1];
   const threadTop = thread.getBoundingClientRect().top;
-  const outgoing = thread.querySelector('[data-conversation2-outgoing]');
-  const room = thread.querySelector('[data-conversation2-reserved-space]');
-  const answers = thread.querySelectorAll('[data-conversation2-row="agent_message"]');
+  const outgoing = thread.querySelector('[data-conversation-outgoing]');
+  const room = thread.querySelector('[data-conversation-reserved-space]');
+  const answers = thread.querySelectorAll('[data-conversation-row="agent_message"]');
   const newestAnswer = answers[answers.length - 1] ?? null;
   return {
     scrollTop: Math.round(thread.scrollTop),
@@ -95,7 +95,7 @@ WHERE_THE_THREAD_IS = """
       ? null
       : Math.round(outgoing.getBoundingClientRect().top - threadTop),
     roomKept: room === null ? 0 : Math.round(room.getBoundingClientRect().height),
-    toolCallsOnScreen: thread.querySelectorAll('[data-conversation2-tool]').length,
+    toolCallsOnScreen: thread.querySelectorAll('[data-conversation-tool]').length,
     // Where the newest answer sits in the reader's view, which is what has to stay put
     // when something above it changes height or disappears.
     newestAnswerTop: newestAnswer === null
@@ -108,7 +108,7 @@ WHERE_THE_THREAD_IS = """
 
 def _create_conversation(server, conversation_id: str) -> None:
     created = httpx.post(
-        f"{server.base}/api/conversation2/conversations",
+        f"{server.base}/api/conversation/conversations",
         json={"conversation_id": conversation_id, "backend_key": "codex"},
         timeout=10.0,
     )
@@ -151,7 +151,7 @@ def _let_the_browser_catch_up(page, rows_expected: int) -> None:
     """
     page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
     page.wait_for_function(
-        "(expected) => document.querySelectorAll('[data-conversation2-row]').length >= expected",
+        "(expected) => document.querySelectorAll('[data-conversation-row]').length >= expected",
         arg=rows_expected,
         timeout=WAIT_MS,
     )
@@ -218,14 +218,14 @@ def test_the_dev_route_renders_the_empty_state_and_backend_cards(
     server, context_factory, open_page
 ) -> None:
     page = open_page(
-        context_factory(), server, "#/dev/conversation", "[data-conversation2-route]"
+        context_factory(), server, "#/dev/conversation", "[data-conversation-route]"
     )
     # The empty state is a real surface, visibly distinct from a broken blank screen.
-    page.wait_for_selector("[data-conversation2-new]", timeout=WAIT_MS)
-    page.wait_for_selector("[data-conversation2-new-id]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-new-id]", timeout=WAIT_MS)
     for backend_key in ("hermes", "codex", "claude"):
         page.wait_for_selector(
-            f'[data-conversation2-backend="{backend_key}"]', timeout=BACKEND_CARD_WAIT_MS
+            f'[data-conversation-backend="{backend_key}"]', timeout=BACKEND_CARD_WAIT_MS
         )
 
 
@@ -238,10 +238,10 @@ def test_a_started_conversation_reloads_into_the_pane_surface(
         context_factory(),
         server,
         "#/dev/conversation?id=e2e-dev-pane",
-        "[data-conversation2-pane]",
+        "[data-conversation-pane]",
     )
-    page.wait_for_selector("[data-conversation2-thread]", timeout=WAIT_MS)
-    page.wait_for_selector("[data-conversation2-workspace]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-thread]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-workspace]", timeout=WAIT_MS)
 
 
 def test_a_sent_message_is_in_the_thread_before_the_server_answers(
@@ -257,20 +257,20 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
     context = context_factory()
     context.add_init_script(HOLD_THE_SEND)
     page = open_page(
-        context, server, "#/dev/conversation?id=e2e-optimistic", "[data-conversation2-pane]"
+        context, server, "#/dev/conversation?id=e2e-optimistic", "[data-conversation-pane]"
     )
 
-    page.fill("[data-conversation2-input]", "what is the plan")
-    page.press("[data-conversation2-input]", "Enter")
+    page.fill("[data-conversation-input]", "what is the plan")
+    page.press("[data-conversation-input]", "Enter")
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
 
-    drawn = page.wait_for_selector("[data-conversation2-outgoing]", timeout=WAIT_MS)
+    drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
     assert drawn.inner_text().strip() == "what is the plan"
     # The box is theirs again straight away, and it never stopped being typeable.
-    assert page.input_value("[data-conversation2-input]") == ""
-    assert page.is_enabled("[data-conversation2-input]")
+    assert page.input_value("[data-conversation-input]") == ""
+    assert page.is_enabled("[data-conversation-input]")
     # The one thing that says a send is still happening.
-    page.wait_for_selector("[data-conversation2-sending]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-sending]", timeout=WAIT_MS)
 
     # The message carries the identity and the instant this browser minted for it.
     sent = page.evaluate("() => window.__heldSends[0].body")
@@ -282,11 +282,11 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
     # Held for a busy agent. It stays where it was put and says it has reached nothing,
     # because nothing is answering it yet.
     page.evaluate("() => window.__heldSends[0].answer({ fate: 'queued', queue_position: 1 })")
-    page.wait_for_selector("[data-conversation2-outgoing-label]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-outgoing-label]", timeout=WAIT_MS)
     assert "waiting for the agent to be free" in page.inner_text(
-        "[data-conversation2-outgoing-label]"
+        "[data-conversation-outgoing-label]"
     )
-    assert page.query_selector("[data-conversation2-sending]") is None
+    assert page.query_selector("[data-conversation-sending]") is None
 
 
 def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
@@ -303,30 +303,30 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
     context = context_factory()
     context.add_init_script(HOLD_THE_SEND)
     page = open_page(
-        context, server, "#/dev/conversation?id=e2e-first-send", "[data-conversation2-pane]"
+        context, server, "#/dev/conversation?id=e2e-first-send", "[data-conversation-pane]"
     )
     # Nothing has been started yet: this is the empty state, not a conversation.
-    page.wait_for_selector("[data-conversation2-new]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
 
-    page.fill("[data-conversation2-input]", "the very first thing")
-    page.press("[data-conversation2-input]", "Enter")
+    page.fill("[data-conversation-input]", "the very first thing")
+    page.press("[data-conversation-input]", "Enter")
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
 
-    drawn = page.wait_for_selector("[data-conversation2-outgoing]", timeout=WAIT_MS)
+    drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
     assert drawn.inner_text().strip() == "the very first thing"
-    assert page.query_selector("[data-conversation2-outgoing-label]") is None, (
+    assert page.query_selector("[data-conversation-outgoing-label]") is None, (
         "a message on its way says nothing about itself"
     )
     # The conversation really was created on the way through, and the message really is
     # still in flight.
     assert httpx.get(
-        f"{server.base}/api/conversation2/conversations/e2e-first-send", timeout=10.0
+        f"{server.base}/api/conversation/conversations/e2e-first-send", timeout=10.0
     ).status_code == 200
-    page.wait_for_selector("[data-conversation2-sending]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-sending]", timeout=WAIT_MS)
 
     page.evaluate("() => window.__heldSends[0].answer({ fate: 'started' })")
-    page.wait_for_selector("[data-conversation2-sending]", state="detached", timeout=WAIT_MS)
-    assert page.query_selector("[data-conversation2-outgoing-label]") is None
+    page.wait_for_selector("[data-conversation-sending]", state="detached", timeout=WAIT_MS)
+    assert page.query_selector("[data-conversation-outgoing-label]") is None
 
 
 def test_a_send_that_gets_nowhere_gives_the_words_back(
@@ -336,38 +336,38 @@ def test_a_send_that_gets_nowhere_gives_the_words_back(
     context = context_factory()
     context.add_init_script(HOLD_THE_SEND)
     page = open_page(
-        context, server, "#/dev/conversation?id=e2e-send-failed", "[data-conversation2-pane]"
+        context, server, "#/dev/conversation?id=e2e-send-failed", "[data-conversation-pane]"
     )
 
-    page.fill("[data-conversation2-input]", "try this one")
-    page.press("[data-conversation2-input]", "Enter")
+    page.fill("[data-conversation-input]", "try this one")
+    page.press("[data-conversation-input]", "Enter")
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
     page.evaluate("() => window.__heldSends[0].turnAway('the server would not take that')")
 
-    page.wait_for_selector("[data-conversation2-error]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-error]", timeout=WAIT_MS)
     # The copy on screen goes, because nothing has it and no row is coming for it.
-    assert page.query_selector("[data-conversation2-outgoing]") is None
-    assert page.input_value("[data-conversation2-input]") == "try this one"
+    assert page.query_selector("[data-conversation-outgoing]") is None
+    assert page.input_value("[data-conversation-input]") == "try this one"
     assert page.evaluate(
         """() => {
-          const box = document.querySelector('[data-conversation2-input]');
+          const box = document.querySelector('[data-conversation-input]');
           return [box.selectionStart, box.selectionEnd, document.activeElement === box];
         }"""
     ) == [len("try this one"), len("try this one"), True]
 
     # Unless something else has been written in the meantime. That draft is the thing that
     # matters, so it is left alone and the error under the box is the whole of the news.
-    page.fill("[data-conversation2-input]", "second try")
-    page.press("[data-conversation2-input]", "Enter")
+    page.fill("[data-conversation-input]", "second try")
+    page.press("[data-conversation-input]", "Enter")
     page.wait_for_function("() => window.__heldSends.length === 2", timeout=WAIT_MS)
-    page.fill("[data-conversation2-input]", "a different thought")
+    page.fill("[data-conversation-input]", "a different thought")
     page.evaluate("() => window.__heldSends[1].turnAway('no')")
     page.wait_for_function(
-        "() => document.querySelector('[data-conversation2-outgoing]') === null",
+        "() => document.querySelector('[data-conversation-outgoing]') === null",
         timeout=WAIT_MS,
     )
-    assert page.input_value("[data-conversation2-input]") == "a different thought"
-    assert page.query_selector("[data-conversation2-error]") is not None
+    assert page.input_value("[data-conversation-input]") == "a different thought"
+    assert page.query_selector("[data-conversation-error]") is not None
 
 
 def test_a_send_nobody_heard_the_end_of_is_not_offered_back_to_be_sent_again(
@@ -383,21 +383,21 @@ def test_a_send_nobody_heard_the_end_of_is_not_offered_back_to_be_sent_again(
     context = context_factory()
     context.add_init_script(HOLD_THE_SEND)
     page = open_page(
-        context, server, "#/dev/conversation?id=e2e-send-unanswered", "[data-conversation2-pane]"
+        context, server, "#/dev/conversation?id=e2e-send-unanswered", "[data-conversation-pane]"
     )
 
-    page.fill("[data-conversation2-input]", "did this arrive")
-    page.press("[data-conversation2-input]", "Enter")
+    page.fill("[data-conversation-input]", "did this arrive")
+    page.press("[data-conversation-input]", "Enter")
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
     page.evaluate("() => window.__heldSends[0].fail()")
 
-    page.wait_for_selector("[data-conversation2-error]", timeout=WAIT_MS)
-    page.wait_for_selector("[data-conversation2-outgoing-label]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-error]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-outgoing-label]", timeout=WAIT_MS)
     assert "the server never said whether this arrived" in page.inner_text(
-        "[data-conversation2-outgoing-label]"
+        "[data-conversation-outgoing-label]"
     )
-    assert page.inner_text("[data-conversation2-outgoing]").strip().endswith("did this arrive")
-    assert page.input_value("[data-conversation2-input]") == ""
+    assert page.inner_text("[data-conversation-outgoing]").strip().endswith("did this arrive")
+    assert page.input_value("[data-conversation-input]") == ""
 
 
 def test_a_reader_who_has_gone_elsewhere_is_left_where_they_are(
@@ -412,15 +412,15 @@ def test_a_reader_who_has_gone_elsewhere_is_left_where_they_are(
         context_factory(),
         server,
         f"#/dev/conversation?id={conversation_id}",
-        "[data-conversation2-pane]",
+        "[data-conversation-pane]",
     )
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation2-row]').length >= 16",
+        "() => document.querySelectorAll('[data-conversation-row]').length >= 16",
         timeout=WAIT_MS,
     )
     at_the_end = page.evaluate(WHERE_THE_THREAD_IS)
 
-    page.hover("[data-conversation2-thread]")
+    page.hover("[data-conversation-thread]")
     page.mouse.wheel(0, -400)
     page.wait_for_selector(JUMP_BUTTON, timeout=WAIT_MS)
     gone_reading = page.evaluate(WHERE_THE_THREAD_IS)
@@ -439,7 +439,7 @@ def test_a_reader_who_has_gone_elsewhere_is_left_where_they_are(
     assert back["lastContentBottom"] <= back["clientHeight"]
 
 
-TURN_FOLD = "[data-conversation2-turn-fold]"
+TURN_FOLD = "[data-conversation-turn-fold]"
 
 
 def test_a_screenful_disappearing_above_the_reader_leaves_them_where_they_are(
@@ -465,30 +465,30 @@ def test_a_screenful_disappearing_above_the_reader_leaves_them_where_they_are(
         context_factory(),
         server,
         f"#/dev/conversation?id={conversation_id}",
-        "[data-conversation2-pane]",
+        "[data-conversation-pane]",
     )
     page.wait_for_selector(TURN_FOLD, timeout=WAIT_MS)
 
     # Open the oldest turn's fold and its run of tool calls: a screenful of work log, back
     # on the page, well above where the reader is.
-    page.evaluate("() => document.querySelector('[data-conversation2-turn-fold]').click()")
-    page.wait_for_selector("[data-conversation2-work-fold]", timeout=WAIT_MS)
-    page.evaluate("() => document.querySelector('[data-conversation2-work-fold]').click()")
+    page.evaluate("() => document.querySelector('[data-conversation-turn-fold]').click()")
+    page.wait_for_selector("[data-conversation-work-fold]", timeout=WAIT_MS)
+    page.evaluate("() => document.querySelector('[data-conversation-work-fold]').click()")
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation2-tool]').length > 4",
+        "() => document.querySelectorAll('[data-conversation-tool]').length > 4",
         timeout=WAIT_MS,
     )
 
-    page.hover("[data-conversation2-thread]")
+    page.hover("[data-conversation-thread]")
     page.mouse.wheel(0, -200)
     page.wait_for_selector(JUMP_BUTTON, timeout=WAIT_MS)
     reading = page.evaluate(WHERE_THE_THREAD_IS)
     assert reading["newestAnswerTop"] is not None
 
     # And now it all goes.
-    page.evaluate("() => document.querySelector('[data-conversation2-turn-fold]').click()")
+    page.evaluate("() => document.querySelector('[data-conversation-turn-fold]').click()")
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation2-tool]').length === 0",
+        "() => document.querySelectorAll('[data-conversation-tool]').length === 0",
         timeout=WAIT_MS,
     )
 
@@ -520,27 +520,27 @@ def test_something_above_the_reader_changing_height_leaves_them_where_they_are(
         context_factory(),
         server,
         f"#/dev/conversation?id={conversation_id}",
-        "[data-conversation2-pane]",
+        "[data-conversation-pane]",
     )
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation2-row]').length >= 17",
+        "() => document.querySelectorAll('[data-conversation-row]').length >= 17",
         timeout=WAIT_MS,
     )
 
     # The reader goes off to read something in the middle. From here on nothing may move
     # them that they did not do themselves.
-    page.hover("[data-conversation2-thread]")
+    page.hover("[data-conversation-thread]")
     page.mouse.wheel(0, -300)
     page.wait_for_selector(JUMP_BUTTON, timeout=WAIT_MS)
     reading = page.evaluate(WHERE_THE_THREAD_IS)
     assert reading["newestAnswerTop"] is not None
 
     # The oldest turn's fold — far above them — opens, and its run of tool calls with it.
-    page.evaluate("() => document.querySelector('[data-conversation2-turn-fold]').click()")
-    page.wait_for_selector("[data-conversation2-work-fold]", timeout=WAIT_MS)
-    page.evaluate("() => document.querySelector('[data-conversation2-work-fold]').click()")
+    page.evaluate("() => document.querySelector('[data-conversation-turn-fold]').click()")
+    page.wait_for_selector("[data-conversation-work-fold]", timeout=WAIT_MS)
+    page.evaluate("() => document.querySelector('[data-conversation-work-fold]').click()")
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation2-tool]').length > 4",
+        "() => document.querySelectorAll('[data-conversation-tool]').length > 4",
         timeout=WAIT_MS,
     )
 
@@ -563,10 +563,10 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
         context,
         server,
         f"#/dev/conversation?id={conversation_id}",
-        "[data-conversation2-pane]",
+        "[data-conversation-pane]",
     )
     page.wait_for_function(
-        "() => document.querySelectorAll('[data-conversation2-row]').length >= 16",
+        "() => document.querySelectorAll('[data-conversation-row]').length >= 16",
         timeout=WAIT_MS,
     )
 
@@ -575,12 +575,12 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
     assert opened["scrollTop"] > 0, "a conversation this long has somewhere to scroll"
     assert opened["lastContentBottom"] <= opened["clientHeight"]
 
-    page.fill("[data-conversation2-input]", "the newest question")
-    page.press("[data-conversation2-input]", "Enter")
+    page.fill("[data-conversation-input]", "the newest question")
+    page.press("[data-conversation-input]", "Enter")
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
-    page.wait_for_selector("[data-conversation2-outgoing]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
     page.wait_for_function(
-        "(was) => document.querySelector('[data-conversation2-thread]').scrollTop > was",
+        "(was) => document.querySelector('[data-conversation-thread]').scrollTop > was",
         arg=opened["scrollTop"],
         timeout=WAIT_MS,
     )
@@ -608,7 +608,7 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
     )
     _let_the_browser_catch_up(page, 17)
     page.wait_for_function(
-        "() => document.querySelector('[data-conversation2-outgoing]') === null",
+        "() => document.querySelector('[data-conversation-outgoing]') === null",
         timeout=WAIT_MS,
     )
     took_over = page.evaluate(WHERE_THE_THREAD_IS)
@@ -635,7 +635,7 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
     )
     _let_the_browser_catch_up(page, 19)
     page.wait_for_function(
-        "(was) => document.querySelector('[data-conversation2-thread]').scrollTop > was",
+        "(was) => document.querySelector('[data-conversation-thread]').scrollTop > was",
         arg=fitted["scrollTop"],
         timeout=WAIT_MS,
     )

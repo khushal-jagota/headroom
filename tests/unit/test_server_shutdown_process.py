@@ -8,13 +8,13 @@ from pathlib import Path
 from time import monotonic
 from typing import cast
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationStartRequest,
     ConversationSystem,
     PromptDeliveryFate,
     PromptDeliveryMode,
 )
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
@@ -87,7 +87,7 @@ def _ready_ticket(db_path: str, clock: RealClock) -> str:
             at_cap=AtCap.propose,
         )
         conn.execute(
-            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             ("conv-shutdown", ticket.id),
         )
         days_data.add_day_ticket(

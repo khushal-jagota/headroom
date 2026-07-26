@@ -1,4 +1,9 @@
-"""Route-level geometry and responsive visibility for every ACP chat host."""
+"""Route-level geometry and responsive visibility for every chat host.
+
+Every host is on the conversation system's own pane now. The geometry contract is that
+the pane fits its host and the thread fits the pane, on every route that shows one and at
+the width where each is meant to appear.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,9 @@ from typing import Any
 from playwright.sync_api import Browser, Page
 
 WAIT_MS = 10_000
+
+CONVERSATION_PANE = "[data-conversation-pane]"
+CONVERSATION_THREAD = "[data-conversation-thread]"
 
 
 def _open_route(
@@ -22,13 +30,15 @@ def _open_route(
     return page
 
 
-def _width_geometry(page: Page, host_selector: str) -> dict[str, Any]:
+def _width_geometry(
+    page: Page, host_selector: str, pane_selector: str, thread_selector: str
+) -> dict[str, Any]:
     return page.evaluate(
-        """hostSelector => {
+        """([hostSelector, paneSelector, threadSelector]) => {
           const tolerance = 1;
           const host = document.querySelector(hostSelector);
-          const pane = host.querySelector('[data-acp-conversation-pane]');
-          const thread = pane.querySelector('[data-chat-messages]');
+          const pane = host.querySelector(paneSelector);
+          const thread = pane.querySelector(threadSelector);
           const inside = (child, parent) => {
             const childRect = child.getBoundingClientRect();
             const parentRect = parent.getBoundingClientRect();
@@ -50,12 +60,17 @@ def _width_geometry(page: Page, host_selector: str) -> dict[str, Any]:
             threadInsidePane: inside(thread, pane),
           };
         }""",
-        host_selector,
+        [host_selector, pane_selector, thread_selector],
     )
 
 
-def _assert_bounded(page: Page, host_selector: str) -> None:
-    geometry = _width_geometry(page, host_selector)
+def _assert_bounded(
+    page: Page,
+    host_selector: str,
+    pane_selector: str = CONVERSATION_PANE,
+    thread_selector: str = CONVERSATION_THREAD,
+) -> None:
+    geometry = _width_geometry(page, host_selector, pane_selector, thread_selector)
     assert geometry["documentScroll"] <= geometry["documentClient"], geometry
     assert geometry["bodyScroll"] <= geometry["bodyClient"], geometry
     assert geometry["hostScroll"] <= geometry["hostClient"], geometry
@@ -78,6 +93,8 @@ def test_chat_hosts_own_width_and_follow_the_960px_visibility_contract(
     ticket_id = ticket["id"]
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
+    # A Ticket's rail, a Ticket inside the Workspace, and the Workspace desk showing the
+    # Chief. All three disappear below 961px rather than squeezing.
     route_cases = [
         (
             f"#/ticket/{ticket_id}",
@@ -110,7 +127,7 @@ def test_chat_hosts_own_width_and_follow_the_960px_visibility_contract(
         browser,
         server.base,
         "#/chief",
-        "[data-chief-of-staff-route] [data-acp-conversation-pane]",
+        f"[data-chief-of-staff-route] {CONVERSATION_PANE}",
         961,
     )
     try:

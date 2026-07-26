@@ -1,4 +1,16 @@
-"""Light proof that a real Worker ACP child sees installed repository guidance."""
+"""Proof that a Worker actually reads the guidance Panels installed for it.
+
+Two things have to be true for a Worker to know its job, and neither is provable from a
+database row. The role Panels gives the conversation has to arrive as text in the agent's
+own prompt, and the specialist skill Panels provisions has to be on disk, under the home
+the agent was launched with, in a form the agent can open. Both are proved here the only
+honest way: a real agent process on a real wire, reading a real file, answering with what
+it found.
+
+The agent is the assertion. It refuses the turn if the role is missing from its prompt, and
+refuses it again if the installed skill does not carry the guidance — so the turn ending as
+a failure is the test failing, and the acknowledgement coming back is the claim made.
+"""
 
 from __future__ import annotations
 
@@ -6,63 +18,48 @@ import asyncio
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
 
-from acp.schema import (
-    AgentMessageChunk,
-    AllowedOutcome,
-    NewSessionRequest,
-    PromptRequest,
-    RequestPermissionRequest,
-    RequestPermissionResponse,
-    SessionNotification,
-    TextContentBlock,
+from tests.support.worker_skill_proof_acp_agent import (
+    ROLE_DIRECTIVE,
+    WORKTREE_ACKNOWLEDGEMENT,
+    WORKTREE_GUIDANCE,
 )
-from acp.transports import default_environment
 
-from planner.conversation import (
-    AgentBackendDefinition,
-    BackendTurnCapabilities,
-    ConversationEmployee,
-    ProtocolUpdateRejectedPayload,
-    ReverseServiceCapabilities,
-    SdkAcpEmployeeChildFactory,
-    build_panels_initialize_request,
+from planner.conversation.backends.hermes_acp import (
+    AcpChildLaunch,
+    HermesAcpBackendChildFactory,
 )
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
-from planner.conversation.role_skill_kickoff import RoleSkillKickoffAcpEmployeeChildFactory
+from planner.conversation.contracts import (
+    ConversationBackendKey,
+    ConversationRoleMaterials,
+    ConversationStartRequest,
+)
+from planner.conversation.events import ConversationEventKind
+from planner.conversation.storage import ConversationStore
+from planner.conversation.system import SqliteProcessConversationSystem
+from planner.core.db import connect, create_schema
+from planner.environments.hermes_home import provision_planner_home_skills
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTED_AGENT = REPOSITORY_ROOT / "tests" / "support" / "acp_worker_skill_proof_agent.py"
-WORKTREE_GUIDANCE = "Always do your work on a worktree and a branch."
-WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed worktree and branch guidance."
+PROOF_AGENT = REPOSITORY_ROOT / "tests" / "support" / "worker_skill_proof_acp_agent.py"
+CONVERSATION_ID = "conversation-worker-skill-proof"
 
 
-class _UnusedTurnStrategy:
-    async def steer(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
-
-    def observe_compaction(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-    async def capture_compaction(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError
-
-
-def test_ticket_worker_reads_provisioned_worktree_guidance_through_acp(
+def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt(
     tmp_path: Path,
 ) -> None:
     async def exercise() -> None:
         runtime_root = tmp_path / "runtime"
         hermes_home = runtime_root / "hermes-home"
         database_parent = runtime_root / "state"
-        panels_skills_source_root = REPOSITORY_ROOT / "src" / "planner" / "skills"
         provision_planner_home_skills(
             hermes_home,
             configured_database_parent=database_parent,
-            panels_skills_source_root=panels_skills_source_root,
+            panels_skills_source_root=REPOSITORY_ROOT / "src" / "planner" / "skills",
         )
 
+        # What Panels installed, before any agent is asked to read it: the skill is a link
+        # into the folder beside the database, and it carries the guidance.
         installed_skill = hermes_home / "skills" / "panels-worker-coding" / "SKILL.md"
         installed_package = installed_skill.parent
         assert installed_package.is_symlink()
@@ -71,84 +68,70 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_acp(
         ).resolve()
         assert WORKTREE_GUIDANCE in installed_skill.read_text(encoding="utf-8")
 
-        definition = AgentBackendDefinition(
-            backend_key="worker-skill-proof",
-            argv=(sys.executable, str(SCRIPTED_AGENT)),
-            inherited_environment_names=tuple(default_environment()),
-            environment_overrides=(("HERMES_HOME", str(hermes_home)),),
-            expected_agent_name="panels-scripted-agent",
-            expected_agent_version="1.0.0",
-            turn_capabilities=BackendTurnCapabilities(
-                supports_steer=False,
-                observes_compaction=False,
-            ),
-            reverse_service_capabilities=ReverseServiceCapabilities(
-                filesystem=False,
-                terminal=False,
-                permission=True,
-            ),
-            working_directory_resolver=lambda employee: employee.workspace_roots[0],
-            turn_strategy=_UnusedTurnStrategy(),
-        )
-        employee = ConversationEmployee(
-            employee_id="employee-worker-skill-proof",
-            entity_kind="ticket",
-            entity_id="ticket-worker-skill-proof",
-            workspace_roots=(REPOSITORY_ROOT,),
-            backend_key=definition.backend_key,
-        )
-        received: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
-
-        async def ingress(
-            item: SessionNotification | ProtocolUpdateRejectedPayload,
-        ) -> None:
-            received.append(item)
-
-        async def permission(
-            request: RequestPermissionRequest,
-        ) -> RequestPermissionResponse:
-            return RequestPermissionResponse(
-                outcome=AllowedOutcome(
-                    outcome="selected",
-                    option_id=request.options[0].option_id,
-                )
-            )
-
-        async def death(cause: BaseException | None) -> None:
-            if cause is not None:
-                raise cause
-
-        factory = RoleSkillKickoffAcpEmployeeChildFactory(SdkAcpEmployeeChildFactory(definition))
-        child = await factory.create(employee, 1, ingress, permission, death)
+        database_path = runtime_root / "conversations.db"
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = connect(str(database_path), 5000)
         try:
-            await child.initialize(build_panels_initialize_request(definition))
-            created = await child.new_session(
-                NewSessionRequest(cwd=str(REPOSITORY_ROOT), mcp_servers=[])
-            )
-            response = await child.prompt(
-                PromptRequest(
-                    session_id=created.session_id,
-                    prompt=[
-                        TextContentBlock(
-                            type="text",
-                            text="Read and acknowledge the installed coding Worker guidance.",
-                        )
-                    ],
+            create_schema(connection)
+        finally:
+            connection.close()
+
+        # The real hermes adapter, pointed at an agent this test can hold to account. The
+        # launch is a value for exactly this reason, so nothing about the path from Panels
+        # to the child is stubbed.
+        launch = AcpChildLaunch(
+            argv=(sys.executable, str(PROOF_AGENT)),
+            environment_overrides=(("HERMES_HOME", str(hermes_home)),),
+        )
+        factory = HermesAcpBackendChildFactory(launch)
+        store = ConversationStore(str(database_path))
+        system = SqliteProcessConversationSystem(
+            store=store,
+            backend_child_factories={key: factory for key in ConversationBackendKey},
+        )
+        try:
+            await system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id=CONVERSATION_ID,
+                    backend_key=ConversationBackendKey.hermes,
+                    role_materials=ConversationRoleMaterials(role_text=ROLE_DIRECTIVE),
+                    workspace_folder=REPOSITORY_ROOT,
                 )
             )
-            assert response.stop_reason == "end_turn"
-            acknowledgements = [
-                item.update.content.text
-                for item in received
-                if isinstance(item, SessionNotification)
-                and isinstance(item.update, AgentMessageChunk)
-                and isinstance(item.update.content, TextContentBlock)
-            ]
-            assert acknowledgements == [WORKTREE_ACKNOWLEDGEMENT]
+            await system.send(
+                CONVERSATION_ID,
+                "Read and acknowledge the installed coding Worker guidance.",
+                sender_label="loop",
+            )
+            await _waited_for_the_turn_to_end(store)
         finally:
-            await child.close()
+            await system.shutdown()
+
+        events = await store.read_events_after(CONVERSATION_ID, 0)
+        endings = [
+            event for event in events if event.kind is ConversationEventKind.turn_ended
+        ]
+        assert len(endings) == 1, events
+        # The agent refuses the turn when either half is missing, so a completed turn is
+        # the claim and its text is the evidence.
+        assert str(endings[0].payload.ending) == "completed", endings[0].payload
+        assert [
+            event.payload.text
+            for event in events
+            if event.kind is ConversationEventKind.agent_message
+        ] == [WORKTREE_ACKNOWLEDGEMENT]
 
     # Playwright's session fixture may already own an event loop when the complete E2E
     # suite reaches this synchronous test. Keep the ACP proof isolated from that loop.
     with ThreadPoolExecutor(max_workers=1) as executor:
         executor.submit(asyncio.run, exercise()).result()
+
+
+async def _waited_for_the_turn_to_end(store: ConversationStore, timeout: float = 30.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        events = await store.read_events_after(CONVERSATION_ID, 0)
+        if any(event.kind is ConversationEventKind.turn_ended for event in events):
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("the proof agent's turn never ended")

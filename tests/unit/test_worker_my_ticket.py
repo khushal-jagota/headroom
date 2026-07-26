@@ -29,7 +29,7 @@ def _make_app(tmp_path: Path):
 def _bind(db_path: Path, ticket_id: str, session_id: str) -> None:
     with connect(str(db_path)) as conn:
         conn.execute(
-            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             (session_id, ticket_id),
         )
 

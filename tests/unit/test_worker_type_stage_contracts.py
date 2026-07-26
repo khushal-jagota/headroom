@@ -82,9 +82,9 @@ def test_fresh_schema_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
     assert columns["fields"][4] is None
     assert "ticket_type" not in columns
     assert "state" not in columns
-    assert "employee_session_id" in columns
-    assert columns["employee_session_id"][3] == 0
-    assert columns["employee_session_id"][4] is None
+    assert "conversation_id" in columns
+    assert columns["conversation_id"][3] == 0
+    assert columns["conversation_id"][4] is None
     assert "chat_session_key" not in columns
     indexes = {row[1] for row in conn.execute("PRAGMA index_list(tickets)")}
     assert "idx_tickets_stage" in indexes

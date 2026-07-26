@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+import threading
 
-from planner.tickets.conversation_projection import TicketConversationProjection
+import httpx
+
+from planner.conversation.events import (
+    AgentMessageEventPayload,
+    ConversationEventPayload,
+    ConversationTurnEnding,
+    TurnEndedEventPayload,
+)
+from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
 
@@ -155,19 +165,22 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     )
     assert waiting_mark.count() == 1
     assert waiting_mark.get_attribute("data-agent-working") == "false"
-    assert waiting_mark.get_attribute("data-reply-state") == "none"
+    assert waiting_mark.get_attribute("data-latest-turn-ended") == "0"
     assert waiting_mark.get_attribute("data-workspace-dot-state") is None
     assert waiting_mark.get_attribute("data-marker") is None
     assert waiting_mark.get_attribute("aria-label") == "Nothing waiting"
 
-    # A running step: the working signal wins the mark.
+    # A Ticket whose STATUS is agent is not a turn running now. The mark is about the
+    # conversation, and this Ticket has none, so it is quiet. Whether a turn is running is
+    # the conversation system's answer and needs a live agent to be true, so the board
+    # route asking it is proved in the unit suite rather than here.
     running_mark = page.locator(
-        f'{running_card} .board-workspace-stage-mark[data-stage-state="current-running"]'
+        f'{running_card} .board-workspace-stage-mark[data-stage-state="upcoming"]'
     )
     assert running_mark.count() == 1
-    assert running_mark.get_attribute("data-agent-working") == "true"
-    assert running_mark.get_attribute("data-reply-state") == "none"
-    assert running_mark.get_attribute("aria-label") == "Agent working"
+    assert running_mark.get_attribute("data-agent-working") == "false"
+    assert running_mark.get_attribute("data-latest-turn-ended") == "0"
+    assert running_mark.get_attribute("aria-label") == "Nothing waiting"
 
     # The errored condition lives on the bucket, not the row mark: the mark
     # carries only the two signals, and the Errored label carries the error red.
@@ -176,7 +189,7 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     )
     assert errored_mark.count() == 1
     assert errored_mark.get_attribute("data-agent-working") == "false"
-    assert errored_mark.get_attribute("data-reply-state") == "none"
+    assert errored_mark.get_attribute("data-latest-turn-ended") == "0"
     assert errored_mark.get_attribute("aria-label") == "Nothing waiting"
     errored_label_color = page.eval_on_selector(
         f'{_bucket("errored")} .board-workspace-bucket-label',
@@ -325,20 +338,67 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
     assert page.locator(f'{_bucket("empty")} {card}').count() == 1
     assert page.locator(_bucket("errored")).count() == 0
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
-    assert page.get_attribute(mark, "data-reply-state") == "none"
+    assert page.get_attribute(mark, "data-latest-turn-ended") == "0"
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute(
             "SELECT ticket_status, backend_error FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone() == ("empty", None)
 
 
-def test_workspace_signals_follow_projection_activity_reply_and_acknowledgement(
+def _start_conversation(server, conversation_id: str) -> None:
+    created = httpx.post(
+        f"{server.base}/api/conversation/conversations",
+        json={"conversation_id": conversation_id, "backend_key": "codex"},
+        timeout=10.0,
+    )
+    assert created.status_code == 201, created.text
+
+
+def _append_rows(server, conversation_id: str, *payloads: ConversationEventPayload) -> None:
+    """Write rows into the record, exactly as the conversation system writes them.
+
+    The store's calls are awaited and this thread belongs to the browser driver, so the
+    writing happens on a thread of its own and this one waits for it.
+    """
+    store = ConversationStore(str(server.db_path))
+
+    async def write() -> None:
+        for payload in payloads:
+            await store.append_event(conversation_id, payload)
+
+    fell_over: list[BaseException] = []
+
+    def run_it() -> None:
+        try:
+            asyncio.run(write())
+        except BaseException as error:  # noqa: BLE001 - re-raised on the calling thread
+            fell_over.append(error)
+
+    writer = threading.Thread(target=run_it)
+    writer.start()
+    writer.join()
+    if fell_over:
+        raise fell_over[0]
+
+
+def _link_conversation(server, ticket_id: str, conversation_id: str) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+            (conversation_id, ticket_id),
+        )
+
+
+def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
     server, context_factory, open_page, cli, api
 ) -> None:
-    ticket_id = _create_ticket(cli, server, "Projection Workspace ticket")
+    conversation_id = "conv-workspace-reply"
+    ticket_id = _create_ticket(cli, server, "Reply mark Workspace ticket")
     _add_today(api, server, ticket_id)
     _set_ticket_stage(server, ticket_id, "needs_success")
     _set_ticket_status(server, ticket_id, "empty")
+    _start_conversation(server, conversation_id)
+    _link_conversation(server, ticket_id, conversation_id)
 
     page = open_page(
         context_factory(),
@@ -347,41 +407,33 @@ def test_workspace_signals_follow_projection_activity_reply_and_acknowledgement(
         f'[data-card][data-ticket-id="{ticket_id}"]',
     )
     mark = f'[data-card][data-ticket-id="{ticket_id}"] .board-workspace-stage-mark'
+    # A conversation whose turns have never ended has nothing waiting for anybody.
+    assert page.get_attribute(mark, "data-latest-turn-ended") == "0"
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
-    assert page.get_attribute(mark, "data-agent-working") == "false"
-    assert page.get_attribute(mark, "data-reply-state") == "none"
     assert page.get_attribute(mark, "aria-label") == "Nothing waiting"
 
-    # A working activity state flips the working signal live.
-    projection = TicketConversationProjection(server.db_path, now=lambda: 2)
-    projection.record_activity(ticket_id, "thinking")
-    page.wait_for_function(
-        "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
-        "=== 'current-running'",
-        arg=mark,
-        timeout=WAIT_MS,
+    # A turn ending is a reply waiting. The rows are written from this process, so the
+    # server's own change signal never hears them and the screen is reloaded rather than
+    # pretending it would light up on its own.
+    _append_rows(
+        server,
+        conversation_id,
+        AgentMessageEventPayload(text="the first answer"),
+        TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
     )
-    assert page.get_attribute(mark, "data-agent-working") == "true"
-    assert page.get_attribute(mark, "aria-label") == "Agent working"
-
     page.reload()
     page.wait_for_selector(mark, timeout=WAIT_MS)
-    assert page.get_attribute(mark, "data-stage-state") == "current-running"
-    assert page.get_attribute(mark, "data-agent-working") == "true"
-
-    # The completed turn becomes an unseen reply.
-    projection.record_activity(ticket_id, "idle")
     page.wait_for_function(
         "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
         "=== 'current-awaiting-approval'",
         arg=mark,
         timeout=WAIT_MS,
     )
-    assert page.get_attribute(mark, "data-agent-working") == "false"
-    assert page.get_attribute(mark, "data-reply-state") == "unseen"
+    assert page.get_attribute(mark, "data-latest-turn-ended") == "2"
     assert page.get_attribute(mark, "aria-label") == "Unseen agent reply"
 
-    # Opening the ticket acknowledges the reply: seen, not gone.
+    # Opening the Ticket is reading it. Reading writes nothing the server announces, so
+    # the row goes quiet on this browser's own account, without waiting for a refetch.
     page.click(f'[data-card][data-ticket-id="{ticket_id}"]')
     page.wait_for_function(
         "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
@@ -389,41 +441,26 @@ def test_workspace_signals_follow_projection_activity_reply_and_acknowledgement(
         arg=mark,
         timeout=WAIT_MS,
     )
-    assert page.get_attribute(mark, "data-reply-state") == "seen"
     assert page.get_attribute(mark, "aria-label") == "Agent reply seen"
 
-    # A pending permission ask reads as an unseen reply again.
+    # A reply seen is a POSITION, not a flag: leave the Ticket, let a second turn end
+    # past where this browser read, and the row is waiting again.
     page.click("[data-chief-of-staff-button]")
-    projection.record_activity(ticket_id, "thinking")
-    projection.record_activity(ticket_id, "idle")
-    projection.record_permission(ticket_id, True)
+    _append_rows(
+        server,
+        conversation_id,
+        AgentMessageEventPayload(text="the second answer"),
+        TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
+    )
+    page.reload()
+    page.wait_for_selector(mark, timeout=WAIT_MS)
     page.wait_for_function(
-        "selector => document.querySelector(selector)?.getAttribute('data-reply-state') "
-        "=== 'unseen'",
+        "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
+        "=== 'current-awaiting-approval'",
         arg=mark,
         timeout=WAIT_MS,
     )
-
-    # Opening the ticket screen acknowledges the completed response, but the
-    # pending permission keeps the reply unseen.
-    with page.expect_response(
-        lambda response: response.url.endswith(
-            f"/api/tickets/{ticket_id}/acknowledge-completed-response"
-        ),
-        timeout=WAIT_MS,
-    ) as acknowledgement_response:
-        page.goto(f"{server.base}/#/ticket/{ticket_id}")
-    assert acknowledgement_response.value.status == 200
-    page.wait_for_selector(f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS)
-    acknowledged = projection.read(ticket_id)
-    assert acknowledged.has_completed_response_awaiting_user is False
-    assert acknowledged.has_completed_response is True
-    assert acknowledged.has_pending_permission is True
-
-    page.goto(f"{server.base}/#/workspace")
-    page.wait_for_selector(mark, timeout=WAIT_MS)
-    assert page.get_attribute(mark, "data-reply-state") == "unseen"
-    assert page.get_attribute(mark, "data-stage-state") == "current-awaiting-approval"
+    assert page.get_attribute(mark, "data-latest-turn-ended") == "4"
 
 
 def test_workspace_buckets_render_membership_in_canonical_order(
