@@ -361,6 +361,76 @@ def test_claude_reports_its_account_its_models_and_its_effort_levels() -> None:
     _run(exercise)
 
 
+def test_each_model_keeps_the_efforts_it_said_it_takes() -> None:
+    """The backend-wide list is the union, so on its own it offers a model values it
+    refuses. What each model said about itself survives the probe.
+
+    Claude's handshake here is the honest case: two models take five efforts and one
+    says nothing about efforts at all. The union is the same five either way, so only
+    the per-model answer can tell the third one apart.
+    """
+
+    async def exercise() -> None:
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            _installed_claude(),
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
+
+        efforts = {
+            model.model_id: model.reasoning_effort_options
+            for model in card.available_models
+        }
+        assert efforts["opus[1m]"] == ("low", "medium", "high", "xhigh", "max")
+        assert efforts["sonnet"] == ("low", "medium", "high", "xhigh", "max")
+        # Said nothing, so it carries nothing and the backend's own list applies to it.
+        assert efforts["haiku"] == ()
+
+    _run(exercise)
+
+
+def test_a_codex_model_keeps_the_efforts_it_said_it_takes() -> None:
+    """Two codex models that take different efforts stay different after the probe.
+
+    The union offers all four, so a picker reading only the union would offer xhigh on
+    a model that takes low, medium and high.
+    """
+
+    async def exercise() -> None:
+        card = await probe_backend(
+            ConversationBackendKey.codex,
+            _installed_codex(),
+            codex_model_catalog_probe=_codex_that_answers(
+                CodexModel(
+                    model_id="gpt-5.6-sol",
+                    display_name="GPT-5.6-Sol",
+                    reasoning_effort_options=("low", "medium", "high"),
+                    default_reasoning_effort="low",
+                    is_default=True,
+                ),
+                CodexModel(
+                    model_id="gpt-5.5",
+                    display_name="GPT-5.5",
+                    reasoning_effort_options=("medium", "xhigh"),
+                    default_reasoning_effort="medium",
+                    is_default=False,
+                ),
+            ),
+        )
+
+        efforts = {
+            model.model_id: model.reasoning_effort_options
+            for model in card.available_models
+        }
+        assert efforts["gpt-5.6-sol"] == ("low", "medium", "high")
+        assert efforts["gpt-5.5"] == ("medium", "xhigh")
+        # And the backend-wide list is still the union of them, for a model that says
+        # nothing and for a picker with no model chosen yet.
+        assert card.reasoning_effort_options == ("low", "medium", "high", "xhigh")
+
+    _run(exercise)
+
+
 def test_a_resolved_model_id_reads_as_its_versioned_name() -> None:
     assert versioned_display_name("claude-opus-5[1m]") == "Opus 5 (1M)"
     assert versioned_display_name("claude-fable-5") == "Fable 5"

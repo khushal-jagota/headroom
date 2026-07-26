@@ -421,10 +421,13 @@
   onAnswer={(optionId) => void answer(optionId)}
   onCancelTurn={() => void stop()}
   onNewConversation={() => void newConversation()}
->
-  {#snippet emptyState()}
-    {#if !started && emptyState}
-      {@render emptyState()}
-    {/if}
-  {/snippet}
-</ConversationPane>
+  emptyState={emptyState === undefined ? undefined : beforeThereIsAConversation}
+/>
+
+<!-- Named apart from the prop it renders: a snippet takes the name it is declared with,
+     so calling this one emptyState too would shadow the prop and render itself. -->
+{#snippet beforeThereIsAConversation()}
+  {#if !started && emptyState}
+    {@render emptyState()}
+  {/if}
+{/snippet}

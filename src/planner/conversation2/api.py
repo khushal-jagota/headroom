@@ -447,6 +447,7 @@ def _snapshot_json(snapshot: BackendSnapshot) -> dict[str, Any]:
                 "model_id": model.model_id,
                 "display_name": model.display_name,
                 "detail": model.detail,
+                "reasoning_effort_options": list(model.reasoning_effort_options),
             }
             for model in snapshot.available_models
         ],

@@ -16,7 +16,8 @@
     StageOwnershipMode,
     TicketDetail
   } from "../lib/types";
-  import AcpConversation from "../components/AcpConversation.svelte";
+  import LiveConversation from "../components/conversation2/LiveConversation.svelte";
+  import { readBackends, type BackendSnapshot } from "../lib/conversation2/wire";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -61,6 +62,7 @@
 
   let headerError = $state<unknown>(null);
   let copied = $state(false);
+  let conversationBackends = $state<readonly BackendSnapshot[]>([]);
   let projectOptions = $derived([
     { value: "", label: "(no project)" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
@@ -72,7 +74,35 @@
     }).catch((err) => {
       headerError = err;
     });
+    // What the conversation's model and effort pickers offer. Read once on arrival rather
+    // than through the query catalogue: it is a fact about the machine's agents, and
+    // nothing a person does to this Ticket changes it.
+    void readBackends()
+      .then((snapshots) => (conversationBackends = snapshots))
+      .catch(() => {
+        // The pickers fall back to showing the value already in force, which is the same
+        // thing they show before the catalog has arrived. Nothing here is worth a banner.
+      });
   });
+
+  /** Start this Ticket's conversation, so the first message has somewhere to go.
+   *
+   * The readiness loop starts one when it has a step to send; this is what happens when a
+   * person gets there first. The reply carries the Ticket, so the id comes back from the
+   * same write that made the link.
+   */
+  async function startTicketConversation(): Promise<string | null> {
+    const detail = await mutateJson<TicketDetail>(`/api/tickets/${stableId}/conversation`, {
+      method: "POST"
+    });
+    return detail.employee_session_id;
+  }
+
+  /** New: the old conversation is killed and the Ticket stops pointing at it. The next
+   *  message starts a fresh one, through the same door as the first one ever did. */
+  async function resetTicketConversation(): Promise<void> {
+    await mutateJson(`/api/tickets/${stableId}/conversation/reset`, { method: "POST" });
+  }
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
@@ -454,10 +484,13 @@
         </div>
       </main>
       <aside class="chat-rail" data-chat>
-        <AcpConversation
-          employeeId={stableId}
-          employeeLabel={conversationEmployeeLabel(detail)}
-          deferInitialAttach={detail.employee_configuration_editable}
+        <LiveConversation
+          conversationId={detail.employee_session_id}
+          label={conversationEmployeeLabel(detail)}
+          backends={conversationBackends}
+          senderLabel="owner"
+          onStartConversation={startTicketConversation}
+          onNewConversation={resetTicketConversation}
         />
       </aside>
     </div>

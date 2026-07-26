@@ -118,11 +118,17 @@ class BackendModel:
 
     ``detail`` is one honest secondary line where a backend has one — claude's says
     which concrete model an alias reaches right now.
+
+    ``reasoning_effort_options`` are the efforts THIS model takes, which is not always
+    the backend's whole list: codex and claude both say so per model, and a picker that
+    offered a model the efforts of its siblings would offer values that model refuses.
+    Empty means the model said nothing about it, and the backend's own list applies.
     """
 
     model_id: str
     display_name: str | None = None
     detail: str | None = None
+    reasoning_effort_options: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -491,6 +497,7 @@ async def _claude_catalog(request: _CatalogRequest) -> _CatalogAnswer:
                 model_id=model.model_id,
                 display_name=model.display_name,
                 detail=f"{model.model_id} → {model.resolved_model_id}",
+                reasoning_effort_options=model.reasoning_effort_options,
             )
             for model in catalog.models
         ),
@@ -549,7 +556,11 @@ async def _codex_catalog(request: _CatalogRequest) -> _CatalogAnswer:
         )
     return _CatalogAnswer(
         models=tuple(
-            BackendModel(model_id=model.model_id, display_name=model.display_name)
+            BackendModel(
+                model_id=model.model_id,
+                display_name=model.display_name,
+                reasoning_effort_options=model.reasoning_effort_options,
+            )
             for model in catalog.models
         ),
         reasoning_effort_options=catalog.reasoning_effort_options,
