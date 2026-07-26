@@ -59,8 +59,8 @@ assert.deepEqual(requests.at(-1), {
 assert.equal(invalidations.length, 1);
 
 // A write with no options still sends the request.
-await mutateJson("/api/tickets/t_written/acknowledge-completed-response");
-assert.deepEqual(requests.at(-1), { path: "/api/tickets/t_written/acknowledge-completed-response", options: {} });
+await mutateJson("/api/tickets/t_written/conversation");
+assert.deepEqual(requests.at(-1), { path: "/api/tickets/t_written/conversation", options: {} });
 assert.equal(invalidations.length, 2);
 
 // A failed write changed nothing on the server, so it invalidates nothing and

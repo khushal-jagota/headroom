@@ -47,10 +47,6 @@ class TicketConversationProjection:
     def record_permission(self, ticket_id: str, pending: bool) -> bool:
         return self._write(ticket_id, has_pending_permission=pending)
 
-    def acknowledge_completed_response(self, ticket_id: str) -> bool:
-        """Mark only the latest completed Worker response as seen."""
-        return self._write(ticket_id, has_completed_response_awaiting_user=False)
-
     def enter_paired_on_human_prompt(self, ticket_id: str) -> None:
         """Courier a human typed message into the tickets domain's flip to paired.
 

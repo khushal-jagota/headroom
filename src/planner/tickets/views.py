@@ -14,10 +14,8 @@ from planner.tickets.contracts import (
     FieldSlot,
     Ticket,
     TicketStatus,
-    WorkspaceAgentReplyFacts,
 )
 from planner.tickets.logic import fields_codec, machine
-from planner.tickets.logic.workspace_signals import workspace_agent_reply_state
 from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -206,10 +204,11 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     ``employee_session_id`` column. It is what the board route asks the conversation
     system about, and what the browser keys its reply watermark by.
 
-    Two of the three row signals are not database facts and are therefore not answered
-    here: whether the worker is running (``agent_working``) and whether it is waiting on
-    a permission ask (``needs_me``) are added by the async board route, which can await
-    the conversation system.
+    None of the three row signals is a database fact of the tickets domain, so none is
+    answered here: whether the worker is running (``agent_working``), whether it is
+    waiting on a permission ask (``needs_me``), and where its conversation last had a
+    turn end (``latest_turn_ended_sequence``) all belong to the conversation system and
+    are added by the async board route, which can await it.
     """
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
@@ -220,15 +219,10 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.employee_session_id, "
         "tickets.ticket_status, "
         "tickets.backend_error, "
-        "ticket_conversation_projections.has_completed_response_awaiting_user, "
-        "ticket_conversation_projections.has_completed_response, "
-        "ticket_conversation_projections.has_pending_permission, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
-        "LEFT JOIN ticket_conversation_projections "
-        "ON ticket_conversation_projections.ticket_id = tickets.id "
         "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
         "WHERE day_tickets.day_id = ? AND tickets.stage != 'dropped'",
         (day_id,),
@@ -297,15 +291,6 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "conversation_id": (
                 str(row["employee_session_id"]) if row["employee_session_id"] is not None else None
             ),
-            "agent_reply_state": workspace_agent_reply_state(
-                WorkspaceAgentReplyFacts(
-                    has_completed_response_awaiting_user=bool(
-                        row["has_completed_response_awaiting_user"] or 0
-                    ),
-                    has_completed_response=bool(row["has_completed_response"] or 0),
-                    has_pending_permission=bool(row["has_pending_permission"] or 0),
-                )
-            ).value,
         }
         sort_key = (
             _prio_rank(priority),

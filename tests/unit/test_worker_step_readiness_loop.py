@@ -694,7 +694,14 @@ def test_a_ticket_already_in_flight_is_not_scheduled_twice(world: _World) -> Non
         assert readiness_loop.poll_once() == []
 
         held.release(asyncio_loop)
-        assert _waited_for(lambda: world.ticket(ticket_id).ticket_status is TicketStatus.agent)
+        # Wait for the opener to reach the backend, not for the claim. The claim is the
+        # status flip and it happens strictly before the send, so waiting on the status
+        # can return while the send is still in the air — which is what made this test
+        # fail about one run in twenty.
+        assert _waited_for(
+            lambda: len(world.conversations.backend_prompt_writes("conv-inflight")) == 1
+        )
+        assert world.ticket(ticket_id).ticket_status is TicketStatus.agent
         # One step ran, so one opener reached the backend.
         assert len(world.conversations.backend_prompt_writes("conv-inflight")) == 1
     finally:

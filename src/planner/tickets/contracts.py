@@ -52,27 +52,6 @@ class WorkspaceActivityState(StrEnum):
     failed = "failed"
 
 
-class WorkspaceAgentReplyState(StrEnum):
-    """Whether a Worker reply (or permission ask) is waiting, and whether it was seen."""
-
-    none = "none"
-    unseen = "unseen"
-    seen = "seen"
-
-
-@dataclass(frozen=True)
-class WorkspaceAgentReplyFacts:
-    """The conversation-projection flags a Ticket's reply dot is derived from.
-
-    Whether a worker is running now, and whether it is waiting on a permission ask, are
-    the conversation system's facts and are read in the board route, not here.
-    """
-
-    has_completed_response_awaiting_user: bool = False
-    has_completed_response: bool = False
-    has_pending_permission: bool = False
-
-
 @dataclass(frozen=True)
 class Proposal:  # §4.2 proposal slot
     body: str

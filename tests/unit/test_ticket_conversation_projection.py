@@ -114,36 +114,7 @@ def test_projection_permission_fact_only_clears_on_permission_outcome(tmp_path) 
     conn.close()
 
 
-def test_acknowledgement_clears_only_completed_response_and_is_idempotent(tmp_path) -> None:
-    db_path = str(tmp_path / "projection-acknowledgement.db")
-    conn = connect(db_path)
-    create_schema(conn)
-    ticket = tickets_data.create_ticket(
-        conn,
-        worker_type="coding",
-        title="Acknowledge response",
-        actor="human",
-        now=1,
-        title_max_chars=200,
-    )
-    projection = TicketConversationProjection(db_path, now=lambda: 2)
-    projection.record_activity(ticket.id, "thinking")
-    projection.record_activity(ticket.id, "idle")
-    projection.record_permission(ticket.id, True)
-
-    assert projection.acknowledge_completed_response(ticket.id) is True
-    assert projection.acknowledge_completed_response(ticket.id) is False
-
-    row = projection.read(ticket.id)
-    assert row.latest_activity_state == "idle"
-    assert row.has_completed_response_awaiting_user is False
-    # Acknowledging clears only the awaiting bit; the reply stays remembered.
-    assert row.has_completed_response is True
-    assert row.has_pending_permission is True
-    conn.close()
-
-
-def test_has_completed_response_survives_acknowledgement_until_reset(tmp_path) -> None:
+def test_has_completed_response_survives_until_reset(tmp_path) -> None:
     db_path = str(tmp_path / "projection-completed-response.db")
     conn = connect(db_path)
     create_schema(conn)
@@ -165,12 +136,6 @@ def test_has_completed_response_survives_acknowledgement_until_reset(tmp_path) -
     completed = projection.read(ticket.id)
     assert completed.has_completed_response_awaiting_user is True
     assert completed.has_completed_response is True
-
-    # Acknowledging clears only the awaiting bit — the seen reply stays remembered.
-    projection.acknowledge_completed_response(ticket.id)
-    acknowledged = projection.read(ticket.id)
-    assert acknowledged.has_completed_response_awaiting_user is False
-    assert acknowledged.has_completed_response is True
 
     # Reset deletes the row, so the memory clears.
     assert projection.reset(ticket.id) is True

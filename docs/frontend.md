@@ -43,19 +43,20 @@ One screen per part of the system:
   user has not seen, the same dot greyed once the user has opened the ticket since
   that reply, and a faint ring when nothing is waiting.
 
-  The first two are asked of the conversation system directly, for the conversation
-  the ticket is linked to. The reply dot still runs on the older machinery — a small
-  durable ticket-linked projection plus an acknowledge-on-open endpoint — so a browser
-  reload or an unopened conversation does not invent or retain stale activity. A
-  completed response stays unseen through reconnect/load until a new turn, explicit
-  reset, or the user opens that ticket.
+  All three come from the conversation the ticket is linked to. The first two are asked
+  of the conversation system directly. The third is a comparison: the row carries where
+  its conversation last had a turn end, and this browser keeps how far the reader has
+  got in that conversation. A reply is waiting when the ending is past the reading.
 
-  **The seam:** the browser half of the replacement is already here — a per-conversation
-  read position kept in this browser, keyed by conversation id so a fresh conversation
-  starts unread. When the transcript surface lands, a board row will also carry how far
-  its conversation has got; the dot becomes "further than I have read", the ticket pane
-  writes the position when the user looks, and the projection and its endpoint die
-  together. **Chief of Staff** sits first in the rail above the groups.
+  How far somebody has read is about that person at that screen, not about the ticket,
+  so it is kept in their own browser and the server is never told. Nothing is written
+  when a reply is read, which is why opening a ticket clears its dot straight away
+  rather than after something refetches. The position is kept per conversation, so
+  pressing New starts unread rather than inheriting the old conversation's reading. A
+  browser that has never seen a conversation has read none of it, so a reply shows —
+  every failure path over-shows attention rather than hiding a reply.
+
+  **Chief of Staff** sits first in the rail above the groups.
 
   The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
   the same complete ticket screen used by a direct ticket link while leaving the

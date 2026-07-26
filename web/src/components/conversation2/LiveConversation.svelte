@@ -34,6 +34,7 @@
     type OutgoingMessageKnownFate
   } from "../../lib/conversation2/outgoing";
   import { liveAskFrom, transcriptRows } from "../../lib/conversation2/transcript";
+  import { writeReplyWatermark } from "../../lib/replyWatermark";
   import {
     answerPermissionAsk,
     interruptConversation,
@@ -114,6 +115,13 @@
     })
   );
   let ask = $derived(liveAskFrom(rows));
+  // Looking at a conversation is what reading it means. While this pane is showing one,
+  // the reader has seen it as far as the record goes — including mid-turn, because a
+  // turn that has not ended yet is not a reply waiting for anybody. The board's reply
+  // mark is drawn from this and from nothing else.
+  $effect(() => {
+    if (view !== null) writeReplyWatermark(view.conversation_id, view.latest_sequence);
+  });
   let running = $derived(liveness.isRunning);
   let backendKey = $derived<ConversationBackendKey>(view?.backend_key ?? fallbackBackendKey);
   $effect(() => {

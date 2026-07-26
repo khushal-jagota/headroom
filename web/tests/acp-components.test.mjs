@@ -23,10 +23,16 @@ assert.match(ticketRouteSource, /<WorkerConfigurationSetup/);
 assert.match(ticketRouteSource, /contextRow=\{name === "kickoff" && kickoffCardShowsContextRow/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-configuration/);
 assert.match(ticketRouteSource, /mutateJson<TicketDetail>\(/);
-assert.match(ticketRouteSource, /\/acknowledge-completed-response/);
 assert.match(boardRouteSource, /state: "needs-me", ariaLabel: "Needs you"/);
 assert.match(boardRouteSource, /state: "current-running", ariaLabel: "Agent working"/);
 assert.match(boardRouteSource, /state: "reply-seen", ariaLabel: "Agent reply seen"/);
+// The row mark is drawn from the record's last turn ending and this browser's own
+// watermark. Nothing on the card says whether a reply was seen; seen is not a fact about
+// the ticket.
+assert.match(boardRouteSource, /readReplyWatermark\(card\.conversation_id\)/);
+assert.match(boardRouteSource, /latest_turn_ended_sequence/);
+assert.doesNotMatch(boardRouteSource, /agent_reply_state/);
+assert.doesNotMatch(ticketRouteSource, /acknowledge-completed-response/);
 // Nothing is attached on arrival any more, so there is no attach to defer: the
 // conversation system spawns nothing until a message is sent, which is what the old
 // deferInitialAttach existed to avoid while a Ticket's configuration was still editable.

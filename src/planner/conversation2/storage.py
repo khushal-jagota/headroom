@@ -18,7 +18,7 @@ import asyncio
 import json
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -166,6 +166,21 @@ class ConversationStore:
         return await asyncio.to_thread(
             self._read_events_after_sync, conversation_id, after_sequence
         )
+
+    async def latest_turn_ended_sequences(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, int]:
+        """Where each of these conversations last had a turn end, by sequence.
+
+        One question about many conversations, because the surface that asks it is
+        drawing a list and asks about every row at once.
+
+        A conversation that has never had a turn end is absent from the answer rather
+        than present as a zero: there is no such row, and saying so is not the same as
+        naming a position. A caller reading the answer per conversation supplies its own
+        nothing.
+        """
+        return await asyncio.to_thread(self._latest_turn_ended_sequences_sync, conversation_ids)
 
     async def has_delivered_prompt(self, conversation_id: str) -> bool:
         """Whether any prompt has ever reached this conversation's backend.
@@ -350,6 +365,26 @@ class ConversationStore:
         finally:
             conn.close()
         return tuple(_stored_event(row) for row in rows)
+
+    def _latest_turn_ended_sequences_sync(
+        self, conversation_ids: Collection[str]
+    ) -> dict[str, int]:
+        unique = tuple(dict.fromkeys(conversation_ids))
+        if not unique:
+            return {}
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                "SELECT conversation_id, MAX(sequence) AS latest_turn_ended_sequence "
+                "FROM conversation_events WHERE kind = ? AND conversation_id IN "
+                f"({','.join('?' * len(unique))}) GROUP BY conversation_id",
+                (str(ConversationEventKind.turn_ended), *unique),
+            ).fetchall()
+        finally:
+            conn.close()
+        return {
+            str(row["conversation_id"]): int(row["latest_turn_ended_sequence"]) for row in rows
+        }
 
     def _has_delivered_prompt_sync(self, conversation_id: str) -> bool:
         conn = self._connect()

@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { labelize, type FieldStageVisualState } from "../lib/ui";
+  import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -77,17 +79,21 @@
     window.location.hash = "#/workspace";
   }
 
-  type AgentReplyState = "none" | "unseen" | "seen";
-
   type SignalPresentation = {
     state: FieldStageVisualState;
     ariaLabel: string;
   };
 
+  // Reading happens in this browser and writes nothing, so a row redraws when the
+  // watermark moves rather than when something refetches.
+  let watermarkGeneration = $state(0);
+  onMount(() => onReplyWatermarkMoved(() => (watermarkGeneration += 1)));
+
   // The row mark carries three signals in one precedence. A permission ask wins: a
   // turn waiting on an ask is still running, and the ask is the part only the user can
-  // clear. Then an agent working now. Otherwise the reply state shows — accent while
-  // unseen, grey once seen, the reduced ring when nothing is waiting.
+  // clear. Then an agent working now. Otherwise the reply shows — accent while a turn
+  // has ended past where this browser has read, grey once it has been read, the reduced
+  // ring for a conversation whose turns have never ended.
   function signalPresentation(card: Record<string, any>): SignalPresentation {
     if (card.needs_me) {
       return { state: "needs-me", ariaLabel: "Needs you" };
@@ -95,14 +101,15 @@
     if (card.agent_working) {
       return { state: "current-running", ariaLabel: "Agent working" };
     }
-    const reply = card.agent_reply_state as AgentReplyState;
-    if (reply === "unseen") {
+    watermarkGeneration;
+    const latestTurnEnded = Number(card.latest_turn_ended_sequence ?? 0);
+    if (latestTurnEnded === 0 || card.conversation_id === null) {
+      return { state: "upcoming", ariaLabel: "Nothing waiting" };
+    }
+    if (latestTurnEnded > readReplyWatermark(card.conversation_id)) {
       return { state: "current-awaiting-approval", ariaLabel: "Unseen agent reply" };
     }
-    if (reply === "seen") {
-      return { state: "reply-seen", ariaLabel: "Agent reply seen" };
-    }
-    return { state: "upcoming", ariaLabel: "Nothing waiting" };
+    return { state: "reply-seen", ariaLabel: "Agent reply seen" };
   }
 
   // Every ticket sits in exactly one group: its own ticket status, except a done
@@ -227,7 +234,7 @@
                       data-stage-state={presentation.state}
                       data-needs-me={card.needs_me ? "true" : "false"}
                       data-agent-working={card.agent_working ? "true" : "false"}
-                      data-reply-state={card.agent_reply_state}
+                      data-latest-turn-ended={card.latest_turn_ended_sequence}
                       aria-label={presentation.ariaLabel}
                     />
                   </button>

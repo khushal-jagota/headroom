@@ -30,6 +30,7 @@ from planner.conversation2.contracts import (
     require_conversation_backend_key,
 )
 from planner.conversation2.snapshot import BackendSnapshotService
+from planner.conversation2.storage import ConversationStore
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
@@ -70,7 +71,6 @@ from planner.tickets.contracts import (
     TicketEdit,
     ValueEditBody,
 )
-from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
@@ -112,6 +112,18 @@ def get_conversation_system(request: Request) -> ConversationSystem:
     return cast(ConversationSystem, request.app.state.conversation_system)
 
 
+def get_conversation_record(request: Request) -> ConversationStore:
+    runtime = getattr(request.app.state, "conversation2", None)
+    store = getattr(runtime, "store", None) if runtime is not None else None
+    if store is None:
+        raise PlannerError(
+            ErrorCode.gateway_offline,
+            "the conversation record is unavailable",
+            {},
+        )
+    return cast(ConversationStore, store)
+
+
 def get_worker_context_service(request: Request) -> WorkerContextService:
     return cast(WorkerContextService, request.app.state.worker_context_service)
 
@@ -121,6 +133,7 @@ Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
+ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
 WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
 
@@ -650,25 +663,6 @@ async def get_worker_self_ticket(
 @router.get("/tickets/{ticket_id}")
 async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
-
-
-@router.post("/tickets/{ticket_id}/acknowledge-completed-response")
-async def acknowledge_ticket_completed_response(
-    ticket_id: str,
-    conn: DbConn,
-    ctx: Ctx,
-    cfg: Cfg,
-    clk: Clk,
-) -> JsonDict:
-    """Record that a direct user has opened the Ticket's completed response."""
-    require_direct_write(ctx)
-    tickets_data.read_ticket(conn, ticket_id)
-    changed = TicketConversationProjection(
-        cfg.db_path,
-        now=clk.now_unix,
-        busy_timeout_ms=cfg.db_busy_timeout_ms,
-    ).acknowledge_completed_response(ticket_id)
-    return {"acknowledged": changed}
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
@@ -1282,39 +1276,58 @@ async def remove_link(
 async def add_conversation_row_signals(
     board: JsonDict,
     conversation_system: ConversationSystem,
+    conversation_record: ConversationStore,
 ) -> JsonDict:
-    """Add the two conversation-owned row signals to every card on the board.
+    """Add the three conversation-owned row signals to every card on the board.
 
     ``agent_working`` is whether the Ticket's conversation has a turn running right now,
     and ``needs_me`` is whether that turn is waiting on a permission ask only the owner
-    can answer. Neither is a database fact and both are awaited, so ``board_view`` cannot
-    answer them and they are added here instead. A Ticket with no conversation link has
-    no conversation to ask about: both read false.
+    can answer. ``latest_turn_ended_sequence`` is where that conversation last had a turn
+    end — the row's half of the reply mark, which the browser compares against how far
+    the reader has got. None of the three is a tickets-domain fact and all are awaited,
+    so ``board_view`` cannot answer them and they are added here instead. A Ticket with
+    no conversation has no conversation to ask about: the first two read false and the
+    third reads 0, which is before every real position.
+
+    The record is asked once for the whole board rather than once per row: it is one
+    question about a list, and a list is what the board is.
 
     This reads and writes nothing but the payload it was handed — no transaction, no
-    connection.
+    connection of its own.
     """
-    for column in board["columns"]:
-        for card in column["cards"]:
-            conversation_id = card["conversation_id"]
-            card["agent_working"] = (
-                await conversation_system.is_running(conversation_id)
-                if conversation_id is not None
-                else False
-            )
-            card["needs_me"] = (
-                await conversation_system.has_pending_permission_ask(conversation_id)
-                if conversation_id is not None
-                else False
-            )
+    cards = [card for column in board["columns"] for card in column["cards"]]
+    latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
+        [card["conversation_id"] for card in cards if card["conversation_id"] is not None]
+    )
+    for card in cards:
+        conversation_id = card["conversation_id"]
+        card["agent_working"] = (
+            await conversation_system.is_running(conversation_id)
+            if conversation_id is not None
+            else False
+        )
+        card["needs_me"] = (
+            await conversation_system.has_pending_permission_ask(conversation_id)
+            if conversation_id is not None
+            else False
+        )
+        card["latest_turn_ended_sequence"] = (
+            latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
+        )
     return board
 
 
 @router.get("/board")
-async def board(conn: DbConn, cfg: Cfg, clk: Clk, conversations: Conversations) -> JsonDict:
+async def board(
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
     day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     return await add_conversation_row_signals(
-        tickets_views.board_view(conn, day_id=day_id), conversations
+        tickets_views.board_view(conn, day_id=day_id), conversations, conversation_record
     )
 
 

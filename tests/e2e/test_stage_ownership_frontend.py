@@ -132,4 +132,4 @@ def test_workspace_stage_mark_renders_paired_on_desktop_and_mobile(
         )
         assert paired_mark.count() == 1
         assert paired_mark.get_attribute("data-agent-working") == "false"
-        assert paired_mark.get_attribute("data-reply-state") == "none"
+        assert paired_mark.get_attribute("data-latest-turn-ended") == "0"

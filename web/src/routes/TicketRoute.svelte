@@ -69,11 +69,6 @@
   ]);
 
   onMount(() => {
-    void mutateJson(`/api/tickets/${stableId}/acknowledge-completed-response`, {
-      method: "POST"
-    }).catch((err) => {
-      headerError = err;
-    });
     // What the conversation's model and effort pickers offer. Read once on arrival rather
     // than through the query catalogue: it is a fact about the machine's agents, and
     // nothing a person does to this Ticket changes it.
