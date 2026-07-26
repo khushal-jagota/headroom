@@ -158,27 +158,39 @@ share.
   `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
   explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
   unknown files are attachments when opened directly.
-- **File previews use one contract.** Markdown turns normal links such as
-  `/files/tickets/t_123/notes/plan.md` into the shared file preview component.
-  Markdown files render inline through the same markdown renderer, including nested
-  managed links until a fixed depth or self-link bound turns them back into compact
-  preview cards. Embedded HTML files render as cards with a fetched `srcdoc` iframe
-  whose sandbox permits the file's scripts but does not grant same-origin or other
-  host-page privileges. Before HTML enters either iframe lifecycle, the shared
-  preview helper anchors the document's base URL to that HTML file's absolute managed
+- **File previews use one contract.** Markdown turns a link that names a managed file,
+  such as `/files/tickets/t_123/notes/plan.md`, into the shared file preview component,
+  and every image into that same component wherever the image is hosted. Any other link
+  stays an ordinary link: a same-page anchor is still an anchor, one of this app's own
+  routes still navigates inside the app, and an off-site address still goes off-site. An
+  image sitting inside such a link is left alone with it.
+  A preview shows the thing itself, softly rounded, with nothing drawn around it. An image
+  is an image, SVG among them; a video is its own player; audio is its own control. None of
+  the three carries a title, a caption, or anything to click.
+  Markdown and HTML are the only two that keep a header, and the header sits above the
+  document rather than around it: a strip curving over the top, carrying one accent-coloured
+  link that reads "Open plan.md", with the document scrolling underneath it. Markdown renders
+  inline through the same markdown renderer, including nested managed links until a fixed
+  depth or self-link bound turns them into that same "Open" line on its own. HTML renders in
+  a fetched `srcdoc` iframe whose sandbox permits the file's scripts but does not grant
+  same-origin or other host-page privileges. Before HTML enters either iframe lifecycle, the
+  shared preview helper anchors the document's base URL to that HTML file's absolute managed
   URL, so relative stylesheet, script, image, and root-relative managed-file
   references resolve as they would if the file were opened from its `/files/...` URL.
-  A new-tab action opens the Panels preview route. On that route, HTML and Markdown
-  are no longer wrapped in preview-card chrome. HTML is fetched as a document, given
-  to the iframe through a short-lived Blob URL, revoked when the target changes or
-  unmounts, and fills the available page with the same isolated script-enabled iframe.
-  Markdown is fetched as source and rendered directly through `MarkdownBlock` in the
+  Every other kind is a line of text in the accent colour, drawn where it was written: a
+  managed file of no recognized kind is "Download archive.bin", and a bare URL handed to the
+  component by a caller with nothing else to show — an agent's resource link — is "Open" that
+  link, unless the address names an image, video, or audio file, in which case it is shown
+  like any other. A markdown or HTML file that turns out not to be there is also a line,
+  saying what the fetch found; nothing else is fetched, so nothing else can say. One file
+  extension names one kind, so no file is offered as two.
+  The header link opens the Panels preview route, whose targets are
+  `#/preview?source=ticket&ticket=<id>&path=<path>`. On that route HTML is fetched as a
+  document, given to the iframe through a short-lived Blob URL, revoked when the target
+  changes or unmounts, and fills the available page with the same isolated script-enabled
+  iframe. Markdown is fetched as source and rendered directly through `MarkdownBlock` in the
   full-page document area, so managed links keep the same nested-preview and self-link
-  bounds as embedded Markdown without repeating the file title, metadata, or open
-  action. Images, video, and audio render inline; unknown files stay as download cards;
-  ordinary external links stay external-link cards with deterministic host
-  text. Full managed preview targets use
-  `#/preview?source=ticket&ticket=<id>&path=<path>`. ACP message and tool links also use
+  bounds as embedded Markdown, with no header of its own. ACP message and tool links also use
   the shared generic/Ticket preview adapter. Conversation images are inline ACP
   content, not managed files.
 - **Editable Markdown stays one surface.** Ticket notes, recaps, passed fields,

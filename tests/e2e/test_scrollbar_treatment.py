@@ -6,7 +6,7 @@ WAIT_MS = 10_000
 
 SCROLL_SURFACES = {
     ".markdown pre": "x",
-    '.file-preview[data-file-preview-kind="markdown"]': "y",
+    ".file-preview-document-body": "y",
     ".chat-thread": "y",
     ".chat-menu": "y",
     ".chat-image-previews": "x",
@@ -48,13 +48,9 @@ def _mount_scrollbar_fixture(page: Page, base_url: str) -> None:
                 <pre class="probe-box"><code>{long_code_line}</code></pre>
               </div>
 
-              <article
-                class="file-preview probe-box"
-                data-file-preview
-                data-file-preview-kind="markdown"
-              >
+              <div class="file-preview-document-body probe-box">
                 <div class="tall-content">Markdown preview body</div>
-              </article>
+              </div>
 
               <section class="chat-thread">
                 <button type="button">Focusable chat row</button>

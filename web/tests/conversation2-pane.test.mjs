@@ -314,8 +314,10 @@ try {
       sequence: index,
       createdAt: 1_000 + index,
       toolCallId: `t${index}`,
+      // The title names the tool, the way claude's rows do, so what the backend wrote in
+      // the detail is what says which call this was.
       title: `Tool ${index}`,
-      toolKind: "read",
+      toolKind: `Tool ${index}`,
       detail,
       startedDetail: null,
       status,
@@ -405,7 +407,14 @@ try {
   const bareRunning = drawn(TurnAnchor, { startedAtUnixMilliseconds: Date.now() });
   assert.match(bareRunning, /data-conversation2-alive/);
   assert.match(bareRunning, /Working/, "it counts from the moment the prompt landed");
-  assert.match(bareRunning, /c2-alive-dots/, "three dots, as T3 has");
+  // Being alive is said by the words moving, not by dots beside them — the app's own
+  // shimmer, the same one a thought in progress is drawn with.
+  assert.doesNotMatch(bareRunning, /c2-alive-dots/);
+  assert.match(
+    bareRunning,
+    /live-text-shimmer/,
+    "a turn that has only just begun is already alive: starting is the sign of life"
+  );
   assert.doesNotMatch(bareRunning, /data-conversation2-turn-fold/, "nothing to fold yet");
 
   // Settled: the mark is gone and the fold stands in its place.
@@ -846,7 +855,7 @@ try {
       createdAt: 1000 + index,
       toolCallId: "t" + index,
       title: "Tool " + index,
-      toolKind: "read",
+      toolKind: "Tool " + index,
       detail,
       startedDetail: null,
       status: "completed" as const,

@@ -929,14 +929,19 @@ export const TOOL_CALL_SUMMARY_MAXIMUM_CHARACTERS = 80;
  * unalike for one verb to be true of all of them, and the tool's own name beats a wrong
  * verb.
  */
+/** What happened, said the way a person would say it.
+ *
+ * Each is a phrase rather than a verb, because "Ran" and "Read" are the halves of
+ * sentences and a header is not half of anything. This is the brighter part of the line;
+ * the value beside it says which call it was. */
 const TOOL_CALL_PHRASES: Partial<Record<ToolGlyphKind, string>> = {
-  read: "Read",
-  edit: "Edited",
-  delete: "Deleted",
-  move: "Moved",
-  search: "Searched",
-  execute: "Ran",
-  fetch: "Fetched",
+  read: "Read file",
+  edit: "Edited file",
+  delete: "Deleted file",
+  move: "Moved file",
+  search: "Searched files",
+  execute: "Ran command",
+  fetch: "Fetched page",
   switch_mode: "Switched mode"
 };
 
@@ -1012,17 +1017,62 @@ function identifyingFact(startedDetail: string | null, detail: string | null): s
     const trimmed = written.trim();
     if (trimmed === "") continue;
     const given = callArguments(trimmed);
-    if (given !== null) {
-      const subject = subjectOf(given);
-      if (subject !== null) return subject;
-      continue;
-    }
-    // One line is a backend saying what the call is. Several lines is output, and output
-    // belongs behind the row rather than on it.
-    if (!trimmed.includes("\n")) return trimmed;
+    if (given === null) continue;
+    const subject = subjectOf(given);
+    if (subject !== null) return subject;
   }
   return null;
 }
+
+/** A backend saying in one line what the call is, where it sends no arguments at all.
+ *
+ * One line is a description. Several lines is output, and output belongs behind the row
+ * rather than on it. Arguments are skipped here because they are read properly above; a
+ * JSON object that named no subject is not a description of anything.
+ */
+function spokenDetail(startedDetail: string | null, detail: string | null): string | null {
+  for (const written of [startedDetail, detail]) {
+    if (written === null) continue;
+    const trimmed = written.trim();
+    if (trimmed === "" || trimmed.includes("\n") || callArguments(trimmed) !== null) continue;
+    return trimmed;
+  }
+  return null;
+}
+
+/** A backend's own title with the kind it already stated taken off the front.
+ *
+ * Hermes writes both halves of this line itself — "read: /path/to/file", "search: wire.ts"
+ * — which is the same shape the pane draws, in its words instead of ours. Where the header
+ * now says the kind, the backend's copy of it in front of the value is the same word
+ * twice, so it comes off and the value is what remains.
+ */
+function withoutTheKindItStated(text: string, toolKind: string): string {
+  const stated = /^([\p{L}_]+)\s*:\s*(\S[\s\S]*)$/u.exec(text);
+  if (!stated) return text;
+  const front = stated[1].toLowerCase();
+  const kindsItCouldBe = new Set<string>([toolKind.trim().toLowerCase(), toolGlyphKind(toolKind)]);
+  return kindsItCouldBe.has(front) || TOOL_KIND_WORDS.has(front) ? stated[2].trim() : text;
+}
+
+/** The words a backend uses in front of a value to say what kind of call it was. Each is a
+ *  kind this pane already draws a header for, so seeing one means the header has it. */
+const TOOL_KIND_WORDS: ReadonlySet<string> = new Set([
+  "read",
+  "write",
+  "edit",
+  "delete",
+  "move",
+  "search",
+  "grep",
+  "glob",
+  "execute",
+  "terminal",
+  "command",
+  "shell",
+  "bash",
+  "fetch"
+]);
 
 function callArguments(trimmed: string): Record<string, unknown> | null {
   if (!trimmed.startsWith("{")) return null;
@@ -1082,13 +1132,19 @@ function addsNothingTo(said: string, within: string): boolean {
   return false;
 }
 
-/** The line this call is drawn as.
+/** The line this call is drawn as: what happened, then which call it was.
  *
- * The backend's own title stands wherever it describes the call — hermes writes
- * "read: /path/to/file", codex writes the command itself — because the agent that made
- * the call says it better than any table here could. It is replaced only where it is the
- * tool's name repeated, and only when there is a fact to put beside it: "Bash" with
- * nothing after it is still more use than "Ran" with nothing after it.
+ * Both halves, always. The header says the kind of thing that happened in words a person
+ * would use — "Ran command", "Read file" — and the value beside it says which one: the
+ * command that ran, the path that was read. A row showing only the raw thing makes the
+ * reader work out what kind of call it was from its argument; a row showing only the
+ * phrase does not say which call it was. Neither half is worth having alone.
+ *
+ * Where a backend has no phrase this pane knows — an unrecognised tool — its own title
+ * stands as the header, because the agent that made the call still says it better than
+ * nothing. And where the identifying value cannot be read out of the arguments, the
+ * backend's title takes that place instead, since hermes writes "read: /path/to/file" and
+ * codex writes the command, and either is exactly the value the second half is for.
  */
 export function toolCallLine(row: {
   title: string;
@@ -1096,14 +1152,26 @@ export function toolCallLine(row: {
   startedDetail?: string | null;
   detail: string | null;
 }): ToolCallLine {
-  const fact = identifyingFact(row.startedDetail ?? null, row.detail);
-  const summary = fact === null ? null : shortened(commandWithoutShellInvocation(fact));
-  const phrase = TOOL_CALL_PHRASES[toolGlyphKind(row.toolKind)];
+  const written = withoutTheKindItStated(
+    commandWithoutShellInvocation(row.title.trim()),
+    row.toolKind
+  );
   const titleNamesTheTool = row.title.trim().toLowerCase() === row.toolKind.trim().toLowerCase();
-  const title =
-    titleNamesTheTool && phrase !== undefined && summary !== null
-      ? phrase
-      : commandWithoutShellInvocation(row.title);
+  const phrase = TOOL_CALL_PHRASES[toolGlyphKind(row.toolKind)];
+  // The arguments name the call best, because they are what it was asked to do. Failing
+  // those, what the backend titled it is the value — codex titles a call with the command
+  // it ran, hermes with the path it read. A title that is only the tool's name says
+  // nothing, and then a one-line description is the last thing left to try.
+  const spoken =
+    identifyingFact(row.startedDetail ?? null, row.detail) ??
+    (titleNamesTheTool ? spokenDetail(row.startedDetail ?? null, row.detail) : written);
+  const summary = spoken === null ? null : shortened(commandWithoutShellInvocation(spoken));
+  // The phrase is drawn from the icon's kind, which is a loose reading of a tool's name —
+  // near enough to pick a glyph, not always near enough to put in words. With a value
+  // beside it the pair is self-correcting: "Ran command · git status" is right even if the
+  // kind were wrong. Alone it is an unchecked claim, so a call whose value cannot be read
+  // keeps the name the backend gave it, which at least is a fact.
+  const title = phrase !== undefined && summary !== null ? phrase : written;
   return {
     title,
     summary: summary !== null && addsNothingTo(summary, title) ? null : summary

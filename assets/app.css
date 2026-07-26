@@ -27,7 +27,7 @@ textarea {
 }
 
 .markdown pre,
-.file-preview[data-file-preview-kind="markdown"],
+.file-preview-document-body,
 .chat-thread,
 .chat-menu,
 .chat-image-previews,
@@ -40,8 +40,8 @@ textarea {
 
 .markdown pre::-webkit-scrollbar-track,
 .markdown pre::-webkit-scrollbar-corner,
-.file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-track,
-.file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-corner,
+.file-preview-document-body::-webkit-scrollbar-track,
+.file-preview-document-body::-webkit-scrollbar-corner,
 .chat-thread::-webkit-scrollbar-track,
 .chat-thread::-webkit-scrollbar-corner,
 .chat-menu::-webkit-scrollbar-track,
@@ -56,7 +56,7 @@ textarea {
 }
 
 .markdown pre::-webkit-scrollbar-thumb,
-.file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-thumb,
+.file-preview-document-body::-webkit-scrollbar-thumb,
 .chat-thread::-webkit-scrollbar-thumb,
 .chat-menu::-webkit-scrollbar-thumb,
 .chat-image-previews::-webkit-scrollbar-thumb,
@@ -68,7 +68,7 @@ textarea {
 
 @media (hover: hover) and (pointer: fine) and (forced-colors: none) {
   .markdown pre,
-  .file-preview[data-file-preview-kind="markdown"],
+  .file-preview-document-body,
   .chat-thread,
   .chat-menu,
   .chat-image-previews,
@@ -80,9 +80,9 @@ textarea {
   .markdown pre:hover,
   .markdown pre:focus-within,
   .markdown pre:active,
-  .file-preview[data-file-preview-kind="markdown"]:hover,
-  .file-preview[data-file-preview-kind="markdown"]:focus-within,
-  .file-preview[data-file-preview-kind="markdown"]:active,
+  .file-preview-document-body:hover,
+  .file-preview-document-body:focus-within,
+  .file-preview-document-body:active,
   .chat-thread:hover,
   .chat-thread:focus-within,
   .chat-thread:active,
@@ -102,7 +102,7 @@ textarea {
   }
 
   .markdown pre::-webkit-scrollbar-thumb,
-  .file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-thumb,
+  .file-preview-document-body::-webkit-scrollbar-thumb,
   .chat-thread::-webkit-scrollbar-thumb,
   .chat-menu::-webkit-scrollbar-thumb,
   .chat-image-previews::-webkit-scrollbar-thumb,
@@ -114,9 +114,9 @@ textarea {
   .markdown pre:hover::-webkit-scrollbar-thumb,
   .markdown pre:focus-within::-webkit-scrollbar-thumb,
   .markdown pre:active::-webkit-scrollbar-thumb,
-  .file-preview[data-file-preview-kind="markdown"]:hover::-webkit-scrollbar-thumb,
-  .file-preview[data-file-preview-kind="markdown"]:focus-within::-webkit-scrollbar-thumb,
-  .file-preview[data-file-preview-kind="markdown"]:active::-webkit-scrollbar-thumb,
+  .file-preview-document-body:hover::-webkit-scrollbar-thumb,
+  .file-preview-document-body:focus-within::-webkit-scrollbar-thumb,
+  .file-preview-document-body:active::-webkit-scrollbar-thumb,
   .chat-thread:hover::-webkit-scrollbar-thumb,
   .chat-thread:focus-within::-webkit-scrollbar-thumb,
   .chat-thread:active::-webkit-scrollbar-thumb,
@@ -138,7 +138,7 @@ textarea {
 
 @media (forced-colors: active) {
   .markdown pre,
-  .file-preview[data-file-preview-kind="markdown"],
+  .file-preview-document-body,
   .chat-thread,
   .chat-menu,
   .chat-image-previews,
@@ -149,8 +149,8 @@ textarea {
 
   .markdown pre::-webkit-scrollbar-track,
   .markdown pre::-webkit-scrollbar-corner,
-  .file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-track,
-  .file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-corner,
+  .file-preview-document-body::-webkit-scrollbar-track,
+  .file-preview-document-body::-webkit-scrollbar-corner,
   .chat-thread::-webkit-scrollbar-track,
   .chat-thread::-webkit-scrollbar-corner,
   .chat-menu::-webkit-scrollbar-track,
@@ -165,7 +165,7 @@ textarea {
   }
 
   .markdown pre::-webkit-scrollbar-thumb,
-  .file-preview[data-file-preview-kind="markdown"]::-webkit-scrollbar-thumb,
+  .file-preview-document-body::-webkit-scrollbar-thumb,
   .chat-thread::-webkit-scrollbar-thumb,
   .chat-menu::-webkit-scrollbar-thumb,
   .chat-image-previews::-webkit-scrollbar-thumb,
@@ -1071,94 +1071,78 @@ textarea {
   max-width: 100%;
 }
 
-.file-preview-title,
+/* A download, a link, or a target that turned out not to exist is a line of text,
+   so it stays in the line of text it was written in. */
+.file-preview--inline,
+.file-preview-slot:has(> .file-preview--inline) {
+  display: inline;
+  margin: 0;
+}
+
 .file-preview-link {
   color: var(--accent-bright);
   font-size: var(--type-sm);
   font-weight: 600;
+  text-decoration: none;
   overflow-wrap: anywhere;
 }
 
-.file-preview-media,
-.file-preview-doc,
-.file-preview-audio,
-.file-preview-card {
-  min-width: 0;
-  max-width: 100%;
-  margin: 0;
-  padding: var(--space-3);
-  background: var(--surface-sunken);
-  border: var(--border-hairline) solid var(--surface-overlay);
-  border-radius: var(--radius-sm);
-}
-
-.file-preview-media img,
-.file-preview-media video {
+.file-preview-image,
+.file-preview-video {
   display: block;
   max-width: 100%;
   width: auto;
   height: auto;
   max-height: 60vh;
-  margin-top: var(--space-2);
   object-fit: contain;
-  background: var(--surface-base);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 
-.chat-thread .file-preview-media {
-  padding: var(--space-2);
-}
-
-.chat-thread .file-preview-media img,
-.chat-thread .file-preview-media video {
+.chat-thread .file-preview-image,
+.chat-thread .file-preview-video {
   max-height: 10rem;
 }
 
-.file-preview-audio audio {
+.file-preview-audio {
   display: block;
   width: 100%;
-  margin-top: var(--space-2);
 }
 
-.file-preview-doc .markdown-block {
-  margin-top: var(--space-2);
+.file-preview-document {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
 }
 
-.file-preview[data-file-preview-kind="markdown"] {
+/* The header curves over the top of the document and stays put; the document
+   itself scrolls underneath it. */
+.file-preview-document-header {
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+/* The same surface as the header above it: the two are one shape with a rule across it,
+   rather than a tinted bar sitting on top of the page. The document lines up under the
+   name it was opened by, so the padding matches the header's. */
+.file-preview-document-body {
+  min-width: 0;
+  max-width: 100%;
   max-height: var(--file-preview-markdown-max-height);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-raised);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
   overflow-y: auto;
-}
-
-.file-preview-card,
-.file-preview-card-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.file-preview-card-row > * {
-  min-width: 0;
-}
-
-.file-preview-card-body {
-  min-width: 0;
-}
-
-.file-preview-meta {
-  color: var(--text-muted);
-  font-size: var(--type-xs);
-  overflow-wrap: anywhere;
 }
 
 .file-preview-frame {
   display: block;
   width: 100%;
   min-height: 18rem;
-  margin-top: var(--space-2);
   background: var(--surface-base);
-  border: var(--border-hairline) solid var(--surface-overlay);
-  border-radius: var(--radius-sm);
+  border: 0;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
 }
 
 .file-preview--full {
@@ -1843,12 +1827,28 @@ button.list-row:hover .list-row-title {
   color: var(--text-faint);
 }
 
+/* Something happening right now, said in movement: the words themselves travel. The app's
+   one way of showing a thing is live, so a turn working reads the same as a thought
+   forming. Shared rather than component-local — a gradient is a design decision, and the
+   components are held to taking their colours from tokens. */
+.live-text-shimmer {
+  background: linear-gradient(90deg, var(--text-faint) 30%, var(--text-strong) 50%, var(--text-faint) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+          background-clip: text;
+  color: transparent;
+  animation: acp-shimmer var(--motion-loop-bounce) linear infinite;
+}
+
 @keyframes acp-shimmer { to { background-position: -200% 0; } }
 @keyframes acp-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .acp-think.is-live .acp-think-word,
   .acp-compaction.is-live span,
   .acp-spin { animation: none; }
+  /* Still the brighter reading, so being alive is said in colour to anyone who does not
+     want it said in movement. */
+  .live-text-shimmer { background: none; color: var(--text-strong); animation: none; }
 }
 
 /* --- Chat panel (v2 — the ticket's employee; Vylo restraint) ------------- */

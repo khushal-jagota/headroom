@@ -14,6 +14,7 @@
   import TicketRoute from "./routes/TicketRoute.svelte";
   import AgentsRoute from "./routes/AgentsRoute.svelte";
   import DevConversationRoute from "./routes/DevConversationRoute.svelte";
+  import DevFilePreviewGalleryRoute from "./routes/DevFilePreviewGalleryRoute.svelte";
   import VpsStatusPopover from "./components/VpsStatusPopover.svelte";
 
   type Route = {
@@ -89,7 +90,8 @@
         params.roleKind = "unknown";
       }
     }
-    // The conversation system's own page while it is being built. Not in the nav.
+    // Standalone pages for looking at a system while it is being built or redesigned.
+    // Not in the nav, and nothing the app does links to them.
     if (name === "dev" && segments[1]) {
       params.sub = segments[1];
     }
@@ -124,7 +126,9 @@
       return !route.params.sub || route.params.sub === "documents";
     }
     if (route.name === "agents") return route.params.roleKind !== "unknown";
-    if (route.name === "dev") return route.params.sub === "conversation";
+    if (route.name === "dev") {
+      return route.params.sub === "conversation" || route.params.sub === "file-preview-gallery";
+    }
     return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
   }
 
@@ -250,6 +254,8 @@
             />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
+          {:else if route.name === "dev" && route.params.sub === "file-preview-gallery"}
+            <DevFilePreviewGalleryRoute />
           {:else if route.name === "dev"}
             <DevConversationRoute />
           {/if}

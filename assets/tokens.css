@@ -11,12 +11,23 @@
   --surface-overlay: #26221c;
   --surface-sunken: #141210;
 
-  /* Text tokens — descending emphasis */
+  /* Text tokens — descending emphasis.
+   *
+   * Warm rather than neutral: every step keeps more red than blue, so the scale reads as
+   * ink on paper rather than white on grey.
+   *
+   * The bottom three were raised because the bottom of this scale carries most of the
+   * interface — faintest is the most-used token in the codebase — and it used to sit at
+   * 2.9 against the base surface, under the floor for text of any size. Everything on the
+   * scale now clears the body-text floor, and the steps between them are near enough to
+   * even that the quiet end reads as quiet rather than as unfinished.
+   *
+   * Against --surface-base: 15.5, 12.3, 9.8, 7.3, 5.4 to one. */
   --text-strong: #f4f1ea;
   --text-default: #dcd8cf;
-  --text-muted: #b4b0a6;
-  --text-faint: #8a867c;
-  --text-faintest: #66625a;
+  --text-muted: #c5c1b7;
+  --text-faint: #aba79d;
+  --text-faintest: #938f85;
 
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;

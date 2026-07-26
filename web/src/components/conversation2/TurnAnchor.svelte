@@ -65,7 +65,10 @@
     onToggle?: () => void;
   } = $props();
 
-  let fresh = $state(false);
+  // A turn that has only just begun is as alive as it gets: starting is itself the sign of
+  // life, and the wait before the first frame is exactly when a still line would read as
+  // nothing happening. So it starts alive and goes still only if nothing follows.
+  let fresh = $state(true);
   // The one thing that changes every second. The transcript is not rebuilt on a tick and
   // no row is touched: only this number moves.
   let elapsedSeconds = $state<number | null>(null);
@@ -125,23 +128,22 @@
         aria-expanded={expanded}
         onclick={() => onToggle?.()}
       >
-        <span aria-hidden="true" class="c2-turn-chevron" class:is-open={expanded}>›</span>
         <span data-conversation2-turn-label>{foldLabel}</span>
         {#if expanded}
           <span class="c2-turn-count" data-conversation2-turn-count>{countLabel}</span>
         {/if}
+        <span aria-hidden="true" class="c2-turn-chevron" class:is-open={expanded}>›</span>
       </button>
     {:else if settled && !stopped}
       <!-- Nothing was folded away, so there is nothing to open — but the head stays where
            it has been since the turn began. It is the same line that was counting a moment
            ago, and a line that removes itself the instant a turn ends moves everything
-           under it for no reason. The chevron keeps its width so the label sits where the
-           openable ones do.
+           under it for no reason. Nothing is reserved for the missing chevron: it lives on
+           the far side, where coming and going costs the label nothing.
            A turn that stopped without an ending is the one exception: it has no length
            anybody can claim, its own row already says what happened, and "Worked" over a
            dead process would be the head telling a story nobody can stand behind. -->
       <div class="c2-turn-fold c2-turn-settled" data-conversation2-turn-settled-head>
-        <span aria-hidden="true" class="c2-turn-chevron is-absent">›</span>
         <span data-conversation2-turn-label>{foldLabel}</span>
       </div>
     {:else if !settled}
@@ -152,10 +154,11 @@
         data-conversation2-alive-fresh={fresh ? "true" : "false"}
         role="status"
       >
-        <span class="c2-alive-dots" aria-hidden="true">
-          <span></span><span></span><span></span>
-        </span>
-        <span class="c2-alive-word" data-conversation2-alive-word>
+        <span
+          class="c2-alive-word"
+          class:live-text-shimmer={fresh}
+          data-conversation2-alive-word
+        >
           {workingSentence(elapsedSeconds)}
         </span>
       </div>
@@ -178,26 +181,14 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     letter-spacing: var(--tracking-mono);
-    padding: var(--space-1) var(--space-2);
+    /* Flush with the thread, like every other line in it. The head is not a control that
+       sits in from the edge; it is the turn's own line and it starts where they start. */
+    padding: var(--space-1) 0;
   }
   .c2-alive-word { font-variant-numeric: tabular-nums; }
-  .c2-alive-dots { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; }
-  .c2-alive-dots span {
-    width: var(--space-1);
-    height: var(--space-1);
-    border-radius: var(--radius-pill);
-    background: var(--text-faintest);
-    animation: c2-alive-pulse var(--motion-loop-bounce) var(--motion-ease) infinite;
-  }
-  .c2-alive-dots span:nth-child(2) { animation-delay: calc(var(--motion-loop-bounce) / 6); }
-  .c2-alive-dots span:nth-child(3) { animation-delay: calc(var(--motion-loop-bounce) / 3); }
-  /* Recently alive: the same dots, brighter. Nothing bounces. */
-  .c2-alive.is-fresh { color: var(--text-muted); }
-  .c2-alive.is-fresh .c2-alive-dots span { background: var(--accent-bright); }
-  @keyframes c2-alive-pulse {
-    0%, 100% { opacity: 0.25; }
-    50% { opacity: 1; }
-  }
+  /* Alive recently is said by `live-text-shimmer`, the app's shared way of showing a thing
+     is happening now. When frames stop arriving the words go still and the count carries
+     on, so stillness means what it says rather than meaning nothing. */
   .c2-turn-fold {
     justify-self: start;
     display: inline-flex;
@@ -211,14 +202,16 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     letter-spacing: var(--tracking-mono);
+    /* Flush left with the thread, and the hover reaches back out to cover the gap the
+       padding used to hold — the target stays as big as it was, the text stops sitting in. */
     padding: var(--space-1) var(--space-2);
+    margin-inline: calc(var(--space-2) * -1);
     font-variant-numeric: tabular-nums;
   }
   .c2-turn-fold:hover { color: var(--text-muted); background: var(--surface-overlay); }
   /* Same line, same place, nothing to open: it keeps the geometry and drops the affordance. */
   .c2-turn-settled { cursor: default; }
   .c2-turn-settled:hover { color: var(--text-faintest); background: transparent; }
-  .c2-turn-chevron.is-absent { visibility: hidden; }
   .c2-turn-count { color: var(--text-faintest); }
   .c2-turn-chevron {
     display: inline-block;
@@ -226,7 +219,6 @@
   }
   .c2-turn-chevron.is-open { transform: rotate(90deg); }
   @media (prefers-reduced-motion: reduce) {
-    .c2-alive-dots span { animation: none; }
     .c2-turn-chevron { transition: none; }
   }
 </style>
