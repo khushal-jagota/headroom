@@ -3491,11 +3491,12 @@ select {
   grid-template-columns: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
-  /* What the conversation layer comes to at rest. Measured rather than guessed: the
-   * composer is 83px, the layer's own seam and padding 29, the one line above the
-   * composer and the gap over it 32 — a touch under 145. The nearest step of the space
-   * scale carries it, and the document's tail carries that, so the last of the ticket
-   * clears the layer instead of hiding under it. */
+  /* How much room the document leaves at its bottom for the conversation layer at rest.
+   * The layer is not one fixed height — a permission ask, a tray of waiting messages or
+   * an error line all make the composer taller — so TicketRoute measures the layer and
+   * writes the real number over this one. What stands here is the height of an empty
+   * layer, which is what the tail is on the first frame and before there is a layer to
+   * measure at all. */
   --ticket-conversation-rest-height: calc(var(--space-7) * 3);
 }
 

@@ -159,6 +159,28 @@ def test_the_ticket_conversation_is_a_layer_measured_against_the_ticket_screen(
         _assert_bounded(page, CONVERSATION_LAYER)
         rest = _assert_layer_lies_along_the_bottom_of_the_ticket_screen(page, ticket_screen)
         assert rest["layerHeight"] < rest["screenHeight"] / 2, rest
+
+        # The room the document leaves at its bottom is taken from the layer itself, not
+        # written down beside it. The composer at rest grows — a permission ask, a tray of
+        # messages waiting for the agent, an error line — and the tail has to grow with it.
+        page.wait_for_function(
+            """() => document.querySelector('.ticket-page').style
+              .getPropertyValue('--ticket-conversation-rest-height') !== ''""",
+            timeout=WAIT_MS,
+        )
+        tail = page.evaluate(
+            """() => ({
+              roomLeft: parseFloat(
+                getComputedStyle(document.querySelector('.ticket-page'))
+                  .getPropertyValue('--ticket-conversation-rest-height')
+              ),
+              layerHeight: document
+                .querySelector('[data-conversation-layer-host]')
+                .getBoundingClientRect().height,
+            })"""
+        )
+        assert abs(tail["roomLeft"] - tail["layerHeight"]) <= 1, tail
+
         # The ticket underneath is left where it is: the document scrolls to an end that
         # clears the layer rather than to one hidden behind it.
         assert page.evaluate(
