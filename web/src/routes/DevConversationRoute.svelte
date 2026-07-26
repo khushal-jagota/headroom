@@ -5,112 +5,44 @@
    * a second tab the ordinary path rather than a special one: both of them say which row
    * they hold and take everything after it. Nothing here is linked from the app's own
    * navigation, and nothing the app does touches this route.
+   *
+   * What is left here is what only this page does: minting an id, keeping it in the
+   * address, choosing what an unstarted conversation would be started as, and the backend
+   * cards. Being live is LiveConversation's job, and it is the same one a Ticket uses.
    */
   import { onMount } from "svelte";
   import BackendCard from "../components/conversation2/BackendCard.svelte";
-  import ConversationPane from "../components/conversation2/ConversationPane.svelte";
+  import LiveConversation from "../components/conversation2/LiveConversation.svelte";
   import NewConversationForm from "../components/conversation2/NewConversationForm.svelte";
   import {
-    conversationLiveness,
-    createConversationStream,
-    currentRunValues,
-    emptyConversationFeed,
-    type ConversationFeed,
-    type ConversationStream
-  } from "../lib/conversation2/feed";
-  import { fateSentence, sendBodyFor, type RunValues } from "../lib/conversation2/composer";
-  import {
-    mintOutgoingMessage,
-    outgoingMessagesTheRecordHasNot,
-    recallOutgoingMessages,
-    rememberOutgoingMessages,
-    type OutgoingMessage,
-    type OutgoingMessageKnownFate
-  } from "../lib/conversation2/outgoing";
-  import { liveAskFrom, transcriptRows } from "../lib/conversation2/transcript";
-  import {
-    answerPermissionAsk,
-    interruptConversation,
     killConversation,
-    openConversationTail,
     readBackends,
-    readConversation,
-    readEventsAfter,
-    sendPrompt,
     startConversation,
     updateBackend,
     ConversationWireError,
     type BackendSnapshot,
     type BackendUpdateResult,
-    type ConversationBackendKey,
-    type ConversationView,
-    type PromptDeliveryMode
+    type ConversationBackendKey
   } from "../lib/conversation2/wire";
 
   const SENDER_LABEL = "owner";
   const DEFAULT_WORKSPACE_FOLDER = "~/Coding";
 
   let conversationId = $state(readIdFromAddress() ?? mintConversationId());
-  let view = $state<ConversationView | null>(null);
-  let feed = $state<ConversationFeed>(emptyConversationFeed());
-  /** What this browser has sent that the record does not have yet, oldest first. Each one
-   *  is drawn from the moment Enter was pressed and drops out when its row arrives. Kept
-   *  for the tab, so a reload in the middle of one does not take a person's words away. */
-  let sentMessages = $state<readonly OutgoingMessage[]>([]);
+  /** What is on screen. It follows the id above; New is what parts them, until the next
+   *  first message starts one under the new name. */
+  let liveConversationId = $state<string | null>(null);
+  let runningBackendKey = $state<ConversationBackendKey>("codex");
   let backends = $state<BackendSnapshot[]>([]);
   let updatingBackend = $state<ConversationBackendKey | null>(null);
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
-  let connectionTrouble = $state(false);
-  let fateNote = $state<string | null>(null);
-  let fateNoteIsRefusal = $state(false);
   let errorNote = $state<string | null>(null);
-  let askNote = $state<string | null>(null);
-  let busy = $state(false);
-  let opening = $state(false);
 
   // What a conversation that has not been started yet would be started as.
   let newBackendKey = $state<ConversationBackendKey>("codex");
   let newModel = $state<string | null>(null);
   let newReasoningEffort = $state<string | null>(null);
   let newWorkspaceFolder = $state(DEFAULT_WORKSPACE_FOLDER);
-
-  let stream: ConversationStream | null = null;
-
-  let started = $derived(view !== null);
-  // The rows are the record and they are almost always the fresher of the two, so they
-  // win. The one thing they cannot say is that a turn stopped without an ending — ending
-  // a turn is a row, and a server that went away mid-turn wrote none — so a snapshot that
-  // had already seen every row this reader holds is believed about that.
-  let liveness = $derived(
-    conversationLiveness(
-      feed,
-      view === null ? null : { latestSequence: view.latest_sequence, isRunning: view.is_running }
-    )
-  );
-  let rows = $derived(
-    transcriptRows(feed, {
-      turnStoppedWithoutAnEnding: liveness.turnStoppedWithoutAnEnding
-    })
-  );
-  let ask = $derived(liveAskFrom(rows));
-  let running = $derived(liveness.isRunning);
-
-  // A queued or steered note describes traffic that a turn ending settles — the held
-  // message has run, the steered text was taken. A refusal outlives endings: it is
-  // cleared by the next send, not by a turn it never touched.
-  $effect(() => {
-    if (!running && fateNote !== null && !fateNoteIsRefusal) fateNote = null;
-  });
-  let backendKey = $derived<ConversationBackendKey>(view?.backend_key ?? newBackendKey);
-  let backendSnapshot = $derived(
-    backends.find((snapshot) => snapshot.backend_key === backendKey) ?? null
-  );
-  let current = $derived<RunValues>(
-    currentRunValues(
-      { model: view?.model ?? null, reasoningEffort: view?.reasoning_effort ?? null },
-      feed
-    )
-  );
 
   function readIdFromAddress(): string | null {
     const hash = window.location.hash;
@@ -129,215 +61,35 @@
     else window.location.hash = address;
   }
 
-  /** Open, reload, second tab, tab return — one path for all of them. */
-  async function openConversation(): Promise<void> {
-    opening = true;
-    stream?.close();
-    stream = null;
-    feed = emptyConversationFeed();
-    view = null;
-    try {
-      view = await readConversation(conversationId);
-    } catch (error) {
-      if (!(error instanceof ConversationWireError && error.status === 404)) {
-        errorNote = sentenceFor(error);
-      }
-      // A 404 is a conversation that was named but never started. That is the empty
-      // state, not a failure.
-      opening = false;
-      return;
-    }
-    connectionTrouble = false;
-    stream = createConversationStream(
-      conversationId,
-      {
-        readEventsAfter,
-        openTail: (id, after, handlers) =>
-          openConversationTail(id, after, {
-            onCommittedEvent: handlers.onCommittedEvent,
-            onLiveFrame: handlers.onLiveFrame,
-            onTrouble: () => {
-              connectionTrouble = true;
-              handlers.onTrouble();
-            }
-          })
-      },
-      (next) => {
-        feed = next;
-        // The record is what draws a message once it has it. A copy of one it now holds
-        // is not redrawn somewhere else — it simply stops being drawn.
-        const stillOutgoing = outgoingMessagesTheRecordHasNot(sentMessages, next.events);
-        if (stillOutgoing !== sentMessages) holdOnTo(stillOutgoing);
-        connectionTrouble = false;
-      },
-      // Every connect asks the system about itself again, after the rows are in. This is
-      // the after-a-restart path: the rows still leave a turn open, and only the system
-      // can say that nothing is running behind it any more.
-      () => void refreshView()
-    );
-    try {
-      await stream.connect();
-    } catch (error) {
-      connectionTrouble = true;
-      errorNote = sentenceFor(error);
-    } finally {
-      opening = false;
-    }
-  }
-
-  async function refreshView(): Promise<void> {
-    try {
-      view = await readConversation(conversationId);
-    } catch {
-      // The rows are the record; a snapshot that did not come back changes nothing here.
-    }
-  }
-
   function sentenceFor(error: unknown): string {
     if (error instanceof ConversationWireError) return error.message;
     return error instanceof Error ? error.message : String(error);
   }
 
-  /** Send, having already drawn the message.
-   *
-   * The message is this browser's before it is anybody else's: the text is here, so it is
-   * given its id and the instant it was sent and put in the thread straight away. What
-   * follows is the network catching up with something the person has already seen happen.
-   *
-   * How it ends decides what happens to the copy, and there are three endings rather than
-   * two. The server saying no — a refusal, or a request it turned away — means this text
-   * reached nothing: the copy goes and the words go back to the person who wrote them. The
-   * server saying yes means the copy waits for its row. And no answer at all is neither:
-   * the message may have arrived and may not, so the copy stays saying exactly that, and
-   * the words are not put back — a person one keystroke away from sending the same message
-   * twice is a worse place to be left than one who has to look at what they wrote.
-   */
-  async function send(
-    text: string,
-    mode: PromptDeliveryMode,
-    picked: RunValues
-  ): Promise<boolean> {
-    errorNote = null;
-    fateNote = null;
-    const message = mintOutgoingMessage({ text, senderLabel: SENDER_LABEL, mode });
-    holdOnTo([...sentMessages, message]);
-    try {
-      if (!started) {
-        view = await startConversation({
-          conversation_id: conversationId,
-          backend_key: newBackendKey,
-          model: newModel,
-          reasoning_effort: newReasoningEffort,
-          // Left out when untouched, so the server's own default folder applies.
-          ...(newWorkspaceFolder === DEFAULT_WORKSPACE_FOLDER
-            ? {}
-            : { workspace_folder: newWorkspaceFolder })
-        });
-        writeIdToAddress(conversationId);
-        await openConversation();
-      }
-      const fate = await sendPrompt(conversationId, sendBodyFor({ message, current, picked }));
-      fateNote = fateSentence(fate);
-      fateNoteIsRefusal = fate.fate === "refused";
-      if (fate.fate === "refused") {
-        stopDrawing(message.messageId);
-        await refreshView();
-        return false;
-      }
-      // Held for a busy agent: it has reached nothing yet, and it says so rather than
-      // sitting there looking like a message something is answering.
-      if (fate.fate === "queued") whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
-      await refreshView();
-      return true;
-    } catch (error) {
-      errorNote = sentenceFor(error);
-      if (theServerTurnedItAway(error)) {
-        stopDrawing(message.messageId);
-        return false;
-      }
-      whatIsKnownAbout(message.messageId, "answer_never_came_back");
-      return true;
-    }
-  }
-
-  /** Whether the server answered, and answered by rejecting the request itself.
-   *
-   * That is the only failure that says this text got nowhere. A request that never reached
-   * the server, and one the server fell over part-way through, both leave the question
-   * open — the send may have landed, and its row may be on its way.
-   */
-  function theServerTurnedItAway(error: unknown): boolean {
-    return (
-      error instanceof ConversationWireError && error.status >= 400 && error.status < 500
-    );
-  }
-
-  function holdOnTo(messages: readonly OutgoingMessage[]): void {
-    sentMessages = messages;
-    rememberOutgoingMessages(conversationId, messages);
-  }
-
-  function stopDrawing(messageId: string): void {
-    holdOnTo(sentMessages.filter((message) => message.messageId !== messageId));
-  }
-
-  function whatIsKnownAbout(messageId: string, knownFate: OutgoingMessageKnownFate): void {
-    holdOnTo(
-      sentMessages.map((message) =>
-        message.messageId === messageId ? { ...message, knownFate } : message
-      )
-    );
-  }
-
-  async function stop(): Promise<void> {
-    try {
-      await interruptConversation(conversationId);
-      await refreshView();
-    } catch (error) {
-      errorNote = sentenceFor(error);
-    }
-  }
-
-  async function answer(optionId: string): Promise<void> {
-    const askId = ask?.askId;
-    if (askId === undefined) return;
-    askNote = null;
-    busy = true;
-    try {
-      const { landed } = await answerPermissionAsk(conversationId, askId, optionId);
-      askNote = landed
-        ? null
-        : "The backend did not take that answer. Cancelling the turn always works.";
-    } catch (error) {
-      askNote = sentenceFor(error);
-    } finally {
-      busy = false;
-    }
+  /** The first message starts it, as whatever the form was left showing. */
+  async function startTheConversation(): Promise<string | null> {
+    await startConversation({
+      conversation_id: conversationId,
+      backend_key: newBackendKey,
+      model: newModel,
+      reasoning_effort: newReasoningEffort,
+      // Left out when untouched, so the server's own default folder applies.
+      ...(newWorkspaceFolder === DEFAULT_WORKSPACE_FOLDER
+        ? {}
+        : { workspace_folder: newWorkspaceFolder })
+    });
+    writeIdToAddress(conversationId);
+    liveConversationId = conversationId;
+    return conversationId;
   }
 
   /** New kills the old one first: freeing the agent would let its held messages run,
    *  and starting again must not be the thing that finally delivers them. */
   async function newConversation(): Promise<void> {
-    if (started) {
-      try {
-        await killConversation(conversationId);
-      } catch (error) {
-        errorNote = sentenceFor(error);
-      }
-    }
-    stream?.close();
-    stream = null;
-    // The old conversation's activity has just been killed, so nothing this tab was still
-    // holding for it is going anywhere. It is let go before the id changes, or it would be
-    // left behind under a name nothing here answers to any more.
-    holdOnTo([]);
+    if (liveConversationId !== null) await killConversation(liveConversationId);
     conversationId = mintConversationId();
+    liveConversationId = null;
     writeIdToAddress(conversationId);
-    view = null;
-    feed = emptyConversationFeed();
-    fateNote = null;
-    errorNote = null;
-    askNote = null;
   }
 
   async function loadBackends(refresh = false): Promise<void> {
@@ -362,72 +114,36 @@
 
   onMount(() => {
     if (readIdFromAddress() === null) writeIdToAddress(conversationId, { replace: true });
-    // Whatever this tab was still holding when it was last here, which is a question only
-    // this page arriving can ask. Reading a conversation again — after starting one, or on
-    // coming back to the tab — must never reach for it: what is in hand is newer than
-    // anything remembered, and the remembered copy of a message being sent right now would
-    // come back saying nobody ever heard the end of it.
-    sentMessages = recallOutgoingMessages(conversationId);
-    void openConversation();
+    // An id in the address is one this page has been at before, so it is opened straight
+    // away: if it names nothing yet, that is the empty state rather than a failure.
+    liveConversationId = conversationId;
     void loadBackends();
-    const onVisible = (): void => {
-      if (document.visibilityState !== "visible") return;
-      // Coming back to the tab is the same read as opening it: what has happened since
-      // the row this reader holds?
-      stream?.connect().catch(() => (connectionTrouble = true));
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      stream?.close();
-      stream = null;
-    };
   });
 </script>
 
 <div class="c2-route" data-conversation2-route>
   <div class="c2-route-pane">
-    <ConversationPane
-      label={`${backendKey} · ${conversationId}`}
-      {backendKey}
-      workspaceFolder={view?.workspace_folder ?? null}
-      {rows}
-      outgoingMessages={sentMessages}
-      ownSenderLabel={SENDER_LABEL}
-      livenessPulse={feed.livenessPulse}
-      {running}
-      {ask}
-      {askNote}
-      {current}
-      models={backendSnapshot?.available_models ?? []}
-      effortOptions={backendSnapshot?.reasoning_effort_options ?? []}
-      defaultModelId={backendSnapshot?.default_model_id ?? null}
-      defaultReasoningEffort={backendSnapshot?.default_reasoning_effort ?? null}
-      heldPromptCount={view?.held_prompt_count ?? 0}
-      {fateNote}
-      {errorNote}
-      {connectionTrouble}
-      composerPlaceholder={started ? "Message the agent..." : "Send the first message to start it..."}
-      composerDisabled={busy || opening}
-      onSend={send}
-      onStop={() => void stop()}
-      onAnswer={(optionId) => void answer(optionId)}
-      onCancelTurn={() => void stop()}
-      onNewConversation={() => void newConversation()}
+    <LiveConversation
+      conversationId={liveConversationId}
+      label={`${runningBackendKey} · ${liveConversationId ?? conversationId}`}
+      {backends}
+      senderLabel={SENDER_LABEL}
+      fallbackBackendKey={newBackendKey}
+      bind:runningBackendKey
+      onStartConversation={startTheConversation}
+      onNewConversation={newConversation}
     >
       {#snippet emptyState()}
-        {#if !started}
-          <NewConversationForm
-            {conversationId}
-            {backends}
-            bind:backendKey={newBackendKey}
-            bind:model={newModel}
-            bind:reasoningEffort={newReasoningEffort}
-            bind:workspaceFolder={newWorkspaceFolder}
-          />
-        {/if}
+        <NewConversationForm
+          {conversationId}
+          {backends}
+          bind:backendKey={newBackendKey}
+          bind:model={newModel}
+          bind:reasoningEffort={newReasoningEffort}
+          bind:workspaceFolder={newWorkspaceFolder}
+        />
       {/snippet}
-    </ConversationPane>
+    </LiveConversation>
   </div>
 
   <aside class="c2-route-backends" aria-label="Backends on this machine">
@@ -437,6 +153,9 @@
         Look again
       </button>
     </div>
+    {#if errorNote}
+      <div class="c2-route-backends-error" role="alert">{errorNote}</div>
+    {/if}
     {#each backends as snapshot (snapshot.backend_key)}
       <BackendCard
         {snapshot}
@@ -491,6 +210,11 @@
     text-transform: none;
   }
   .c2-route-backends-head button:hover { color: var(--text-strong); }
+  .c2-route-backends-error {
+    color: var(--text-faint);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+  }
   @media (max-width: 60rem) {
     .c2-route { grid-template-columns: minmax(0, 1fr); }
   }

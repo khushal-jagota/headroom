@@ -33,6 +33,7 @@ const expectedInventory = [
   "ConversationComposer.svelte",
   "ConversationPane.svelte",
   "ConversationTranscript.svelte",
+  "LiveConversation.svelte",
   "NewConversationForm.svelte",
   "PermissionAskActions.svelte",
   "PermissionAskCard.svelte",
@@ -114,20 +115,33 @@ assert.ok(
   "New must kill the old conversation before it mints a fresh id"
 );
 
+// Being live belongs to the binder, so that a Ticket and this page are live the same way
+// rather than each in their own. These are assertions about that one piece of code.
+const binderSource = sources["LiveConversation.svelte"];
+
 // Reconnecting is the ordinary read, not a whole-screen refetch.
-assert.match(routeSource, /visibilitychange/);
-assert.match(routeSource, /stream\?\.connect\(\)/);
+assert.match(binderSource, /visibilitychange/);
+assert.match(binderSource, /stream\?\.connect\(\)/);
 
 // The pane never shows a turn running on the rows alone: it reconciles them with what
 // the system says about itself, and asks again every time it reconnects.
-assert.match(routeSource, /conversationLiveness/);
+assert.match(binderSource, /conversationLiveness/);
 assert.doesNotMatch(
-  routeSource,
+  binderSource,
   /conversationIsRunning/,
   "the rows alone cannot say a turn stopped without an ending"
 );
-assert.match(routeSource, /turnStoppedWithoutAnEnding/);
-assert.match(routeSource, /\(\) => void refreshView\(\)/);
+assert.match(binderSource, /turnStoppedWithoutAnEnding/);
+assert.match(binderSource, /\(\) => void refreshView\(\)/);
+
+// The route holds no conversation wiring of its own any more: one binder, two callers.
+for (const owned of ["createConversationStream", "openConversationTail", "sendPrompt"]) {
+  assert.doesNotMatch(
+    routeSource,
+    new RegExp(owned),
+    `${owned} belongs to the binder, not to a route`
+  );
+}
 
 // --- what the components draw ------------------------------------------------------------------
 
