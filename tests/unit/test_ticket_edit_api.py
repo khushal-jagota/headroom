@@ -286,7 +286,7 @@ def test_employee_configuration_stays_editable_when_kickoff_proposal_enters_disc
         tickets_data.enter_paired_on_human_reply(conn, ticket_id, now=2)
         ticket = tickets_data.read_ticket(conn, ticket_id)
         assert ticket.ticket_status is TicketStatus.paired
-        assert tickets_data.employee_configuration_editable(conn, ticket) is True
+        assert tickets_data.employee_configuration_editable(ticket) is True
     finally:
         conn.close()
 

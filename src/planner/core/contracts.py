@@ -67,7 +67,6 @@ class EventKind(StrEnum):
     ticket_status_changed = "ticket_status_changed"  # {ticket_status, optional error}
     employee_session_changed = "employee_session_changed"  # {conversation_id}
     worker_settings_changed = "worker_settings_changed"  # Worker management settings changed
-    ticket_conversation_projection_changed = "ticket_conversation_projection_changed"
 
     # --- supplemental: links ---
     link_added = "link_added"                        # {from_id, to_id, kind}

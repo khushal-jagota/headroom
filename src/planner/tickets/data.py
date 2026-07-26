@@ -23,7 +23,6 @@ from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.contracts import (
     AtCap,
     EmployeeLaunchConfiguration,
-    EmployeeSessionIdTransition,
     FieldSlot,
     NextCeiling,
     Proposal,
@@ -454,71 +453,6 @@ def _write_entered_stage_ticket_status(
     _write_ticket_status(conn, ticket.id, target_status, now)
 
 
-def write_conversation_id_in_transaction(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    transition: EmployeeSessionIdTransition,
-    force_fresh_employee_session: bool,
-    now: int,
-) -> str:
-    """Bind the old ACP layer's session id into the Ticket's conversation-link column.
-
-    This is the old conversation layer's compare-and-set writer, kept until that layer
-    is swapped out. The worker-orchestration side writes the same column through
-    ``write_ticket_conversation_start``; the name and the column stay as they are
-    because renaming a column needs a migration.
-    """
-    candidate = transition.candidate_conversation_id
-    if not isinstance(candidate, str) or not candidate:
-        raise PlannerError(
-            ErrorCode.validation,
-            "candidate Employee session id must be a non-empty string",
-            {"ticket_id": ticket_id},
-        )
-    row = conn.execute(
-        "SELECT conversation_id FROM tickets WHERE id = ?", (ticket_id,)
-    ).fetchone()
-    if row is None:
-        raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
-    current: str | None = row["conversation_id"]
-    if (
-        current == candidate
-        or force_fresh_employee_session
-        or current == transition.expected_conversation_id
-    ):
-        effective_conversation_id = candidate
-    elif current is not None:
-        effective_conversation_id = current
-    else:
-        raise PlannerError(
-            ErrorCode.already_running,
-            "Employee session changed during binding",
-            {"ticket_id": ticket_id},
-        )
-    owning_ticket_rows = conn.execute(
-        "SELECT id FROM tickets WHERE conversation_id = ? AND id != ? ORDER BY id",
-        (effective_conversation_id, ticket_id),
-    ).fetchall()
-    if owning_ticket_rows:
-        raise PlannerError(
-            ErrorCode.validation,
-            "Employee session already belongs to another ticket",
-            {
-                "conversation_id": effective_conversation_id,
-                "binding_ticket_id": ticket_id,
-                "owning_ticket_ids": [str(row["id"]) for row in owning_ticket_rows],
-            },
-        )
-    if current == effective_conversation_id:
-        return effective_conversation_id
-    conn.execute(
-        "UPDATE tickets SET conversation_id = ?, updated_at = ? WHERE id = ?",
-        (effective_conversation_id, now, ticket_id),
-    )
-    return effective_conversation_id
-
-
 def write_ticket_conversation_start(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -618,23 +552,24 @@ def employee_launch_configuration(ticket: Ticket) -> EmployeeLaunchConfiguration
     )
 
 
-def employee_configuration_editable(
-    conn: sqlite3.Connection,
-    ticket: Ticket,
-) -> bool:
-    if (
-        ticket.stage != "needs_kickoff"
-        or ticket.ticket_status
-        not in {
+def employee_configuration_editable(ticket: Ticket) -> bool:
+    """Whether this Ticket's launch values may still be changed.
+
+    A Ticket that names a conversation is frozen: those values are what that conversation
+    was started on, and there is no changing them after the fact. Everything else is a
+    question about the Ticket in hand, so this asks the database nothing.
+    """
+    return (
+        ticket.stage == "needs_kickoff"
+        and ticket.ticket_status
+        in {
             TicketStatus.awaiting_approval,
             TicketStatus.paired,
             TicketStatus.empty,
             TicketStatus.blocked,
         }
-        or ticket.conversation_id is not None
-    ):
-        return False
-    return True
+        and ticket.conversation_id is None
+    )
 
 
 def write_employee_configuration(
@@ -676,7 +611,7 @@ def write_employee_configuration(
         )
         if current == normalized:
             return ticket
-        if not employee_configuration_editable(conn, ticket):
+        if not employee_configuration_editable(ticket):
             raise PlannerError(
                 ErrorCode.already_running,
                 "Employee configuration is frozen after Kickoff or the first worker session",
@@ -1236,19 +1171,10 @@ def mark_ticket_errored(
     ticket_id: str,
     *,
     error: str,
-    employee_session_transition: EmployeeSessionIdTransition | None = None,
     now: int,
 ) -> Ticket:
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        if employee_session_transition is not None:
-            write_conversation_id_in_transaction(
-                conn,
-                ticket_id,
-                transition=employee_session_transition,
-                force_fresh_employee_session=False,
-                now=now,
-            )
         _write_ticket_status(conn, ticket_id, TicketStatus.errored, now, error=error)
         return _load_ticket_for_write(conn, ticket_id)
 

@@ -145,10 +145,11 @@ share.
   the whole recovery story. The server sends an occasional invisible keep-alive line
   down a quiet stream, which changes nothing on screen.
 
-  The browser does not merge a second Panels transcript with backend history. ACP
-  load/replay is the one conversation projection, and reconnect uses the same strict
-  employee/session/generation boundary as live delivery. A pristine-Kickoff Ticket defers
-  the pane's initial attach so merely opening the page cannot freeze its backend choice.
+  There is no second transcript to merge: the record's rows are what a pane shows, read
+  after the position it already holds and then kept up over a live tail of those same
+  rows. Opening a Ticket attaches to nothing and spawns nothing — an agent starts when a
+  message is sent to it — so merely looking at a Ticket during Kickoff cannot freeze its
+  backend choice.
 - **Markdown is GFM and sanitized.** Written text (briefs, notes, ideas) renders
   through a Vite-owned unified pipeline. It supports CommonMark and ordinary GFM,
   including tables, task lists, strikethrough, autolinks, reference links, fenced
@@ -303,4 +304,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-25 (Workspace groups by Ticket status and its row mark carries three signals; single ACP conversation pane, GFM rendering, the change stream feeding cached reads, and shared file previews)._
+_Last verified: 2026-07-26 (Workspace groups by Ticket status and its row mark carries three signals; one conversation pane over the record, GFM rendering, the change stream feeding cached reads, and shared file previews)._

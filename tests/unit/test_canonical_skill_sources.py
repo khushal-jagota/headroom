@@ -105,10 +105,8 @@ def test_native_skills_root_symlink_merges_custom_entries_and_replaces_panels_co
 def test_chief_skill_uses_same_canonical_source(
     tmp_path: Path, canonical_skills_root: Path
 ) -> None:
-    registry = configured_worker_type_registry()
     saved = service.save_chief_skill(
         tmp_path,
-        registry,
         {"description": "chief canonical test", "body": "# chief\n"},
     )
     assert saved.skill.description == "chief canonical test"

@@ -460,7 +460,7 @@ Still open in the seam queue: contract package location/name, permission
 guard placement.
 
 RULED 2026-07-25 (owner: "for now, yeah, Python I'm fine with", after
-the T3 tracer facts): the conversation build is PYTHON with NATIVE
+the T3 tracer facts): the conversation2 build is PYTHON with NATIVE
 front doors per backend — claude via the official Python Agent SDK (no
 ACP bridge; revises the all-ACP ruling), codex via its native app-server
 JSON-RPC with bindings code-generated from the pinned schema (as T3
@@ -623,7 +623,7 @@ scratchpad/t3-adoptable-decisions.md, 72 entries; walk done in-session):
 - Owner: "a lot of good stuff here we should be taking account of" —
   the catalog is standing design input for the conversation build spec.
 History of the reopening, kept for the record: the wire-layer choice
-for the real conversation build — official Python ACP SDK for ALL three
+for the real conversation2 build — official Python ACP SDK for ALL three
 backends (earlier ruling) vs per-backend native protocols (T3 Code's
 production-proven choice: claude via official Agent SDK, codex via native
 app-server, ACP only for ACP-native agents; our hermes is ACP-native).
@@ -662,7 +662,7 @@ driver extractability (clean lift → thin TS sidecar serious; extraction
 
 - CONTRACT PACKAGE: COMPLETE and MERGED into local staging 2026-07-25 on
   owner go (merge commit dab3d026; package commit 0d742a43 off db4e17f8;
-  12 files, 2,414 lines, pure additions). src/planner/conversation/
+  12 files, 2,414 lines, pure additions). src/planner/conversation2/
   contract module + in-memory fake + 42-test conformance suite (backend-
   side proof, mutation-tested) + README naming the three obligations
   conformance can't check (record-first, error-log line, start values
@@ -1162,7 +1162,7 @@ driver extractability (clean lift → thin TS sidecar serious; extraction
   conservative). Acceptance: new Playwright e2e — refetch never steals
   focus/wipes composition/moves scroll — run as a TARGETED package gate
   (only e2e exception to the reserved ./verify). Conversations wholly
-  outside; conversation/ and conversation/ untouched.
+  outside; conversation/ and conversation2/ untouched.
 - STATUSES PACKAGE: COMPLETE and MERGED into local staging 2026-07-25 on
   owner go (merge eeda828c; 4 commits, ~70 files). Spot-check PASSED
   (migration: two-rebuild widen→map→derive→narrow, full table declared
@@ -1195,7 +1195,7 @@ driver extractability (clean lift → thin TS sidecar serious; extraction
   reader; is_blocked dropped; gate = "empty and not user-owned"). OUT:
   optimistic-start rework (goes with runner repoint), step_runs/
   watch-and-settle death (goes with swap), needs_user surfacing mechanism,
-  anything in conversation/ or conversation/. Stated consequence owner
+  anything in conversation/ or conversation2/. Stated consequence owner
   accepted: live loop decides from status alone as soon as this merges,
   ahead of the conversation swap.
 

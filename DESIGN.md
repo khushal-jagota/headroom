@@ -59,11 +59,11 @@ bubble-less assistant, recessed composer).
 
 ## Applied so far
 
-- **ACP conversation** (`web/src/components/AcpConversation.svelte`,
-  `web/src/components/acp/`, conversation styles in `assets/app.css`) — one right-aligned
-  user pill (the only bubble), bubble-less **employee** prose, compact closed thought and tool
-  details, one persistent status line, explicit permissions, and a recessed composer with ACP
-  commands plus Steer, Send Now, Queue, and Stop when applicable.
+- **The conversation** (`web/src/components/conversation/`, `web/src/lib/conversation/`,
+  conversation styles in `assets/app.css`) — one right-aligned user pill (the only bubble),
+  bubble-less **worker** prose, compact closed thought and tool details, one persistent
+  status line, explicit permissions, and a recessed composer carrying the model and effort
+  in force plus Steer, Send Now, run-when-free, Stop and New when applicable.
 - **The serif redesign, across every screen** (`assets/tokens.css` serif ladder;
   `web/src/routes/*` + the `[data-screen="…"]` blocks in `assets/app.css`) — the serif/sans voice
   split, the amber-only accent, the line diet, and the single depth-bearing ask surface, applied

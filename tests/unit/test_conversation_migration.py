@@ -108,12 +108,22 @@ def test_a_row_cannot_belong_to_a_conversation_that_is_not_there(
         )
 
 
-def test_this_revision_has_no_way_back(upgraded: sqlite3.Connection) -> None:
-    """Dropping the tables would throw away every conversation, so it refuses to."""
-    from planner.core.migrations.versions import conversation_system_tables
+def test_neither_revision_has_a_way_back(upgraded: sqlite3.Connection) -> None:
+    """Both would throw away rows nothing could put back, so both refuse to.
+
+    Dropping the conversation tables would throw away every conversation. Undoing the
+    other would have to refill five tables whose writers no longer exist.
+    """
+    del upgraded
+    from planner.core.migrations.versions import (
+        conversation_system_tables,
+        one_conversation_system,
+    )
 
     with pytest.raises(NotImplementedError):
         conversation_system_tables.downgrade()
+    with pytest.raises(NotImplementedError):
+        one_conversation_system.downgrade()
 
 
 # --- what the layer that came before left behind ----------------------------------------

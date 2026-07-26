@@ -24,7 +24,6 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AtCap,
-    EmployeeSessionIdTransition,
     StageOwnershipMode,
     TicketEdit,
     TicketStatus,
@@ -481,16 +480,9 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
 
     t = data.release_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.empty
-    t = data.mark_ticket_errored(
-        tmp_db,
-        t.id,
-        error="boom",
-        employee_session_transition=EmployeeSessionIdTransition(None, "sess-3"),
-        now=now,
-    )
+    t = data.mark_ticket_errored(tmp_db, t.id, error="boom", now=now)
     assert t.ticket_status is TicketStatus.errored
     assert t.backend_error == "boom"
-    assert t.conversation_id == "sess-3"
 
     t = data.drop_ticket(tmp_db, t.id, actor="human", now=now + 1)
     assert t.ticket_status is TicketStatus.empty
@@ -659,135 +651,26 @@ def test_take_over_from_paired_re_derives_the_user_status(
     t = data.take_over_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.user
 
-
-@pytest.mark.parametrize("force_fresh_employee_session", [False, True])
-def test_employee_session_writer_rejects_a_session_owned_by_another_ticket(
-    tmp_db: Connection,
-    cfg: Config,
-    fake_clock: TestClock,
-    force_fresh_employee_session: bool,
-) -> None:
-    now = fake_clock.now_unix()
-    owner = _create(tmp_db, cfg, fake_clock, title="Owner")
-    claimant = _create(tmp_db, cfg, fake_clock, title="Claimant")
-    tmp_db.execute("BEGIN IMMEDIATE")
-    data.write_conversation_id_in_transaction(
-        tmp_db,
-        owner.id,
-        transition=EmployeeSessionIdTransition(None, "shared-session"),
-        force_fresh_employee_session=False,
-        now=now,
-    )
-    tmp_db.commit()
-    claimant_before = tmp_db.execute(
-        "SELECT conversation_id, updated_at FROM tickets WHERE id = ?",
-        (claimant.id,),
-    ).fetchone()
-    tmp_db.execute("BEGIN IMMEDIATE")
-    with pytest.raises(PlannerError) as exc:
-        data.write_conversation_id_in_transaction(
-            tmp_db,
-            claimant.id,
-            transition=EmployeeSessionIdTransition(None, "shared-session"),
-            force_fresh_employee_session=force_fresh_employee_session,
-            now=now + 1,
-        )
-
-    assert exc.value.code is ErrorCode.validation
-    assert exc.value.detail == {
-        "conversation_id": "shared-session",
-        "binding_ticket_id": claimant.id,
-        "owning_ticket_ids": [owner.id],
-    }
-    assert (
-        tmp_db.execute(
-            "SELECT conversation_id, updated_at FROM tickets WHERE id = ?",
-            (claimant.id,),
-        ).fetchone()
-        == claimant_before
-    )
-    tmp_db.rollback()
-
-
-def test_employee_session_writer_rejects_idempotence_when_ownership_is_already_ambiguous(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    first = _create(tmp_db, cfg, fake_clock, title="First")
-    second = _create(tmp_db, cfg, fake_clock, title="Second")
-    tmp_db.execute(
-        "UPDATE tickets SET conversation_id = ? WHERE id IN (?, ?)",
-        ("already-shared", first.id, second.id),
-    )
-    tmp_db.commit()
-
-    tmp_db.execute("BEGIN IMMEDIATE")
-    with pytest.raises(PlannerError) as exc:
-        data.write_conversation_id_in_transaction(
-            tmp_db,
-            first.id,
-            transition=EmployeeSessionIdTransition("already-shared", "already-shared"),
-            force_fresh_employee_session=False,
-            now=now + 1,
-        )
-
-    assert exc.value.code is ErrorCode.validation
-    assert exc.value.detail == {
-        "conversation_id": "already-shared",
-        "binding_ticket_id": first.id,
-        "owning_ticket_ids": [second.id],
-    }
-    tmp_db.rollback()
-
-
-def test_employee_session_writer_rejects_an_ambiguous_compare_and_swap_winner(
-    tmp_db: Connection, cfg: Config, fake_clock: TestClock
-) -> None:
-    now = fake_clock.now_unix()
-    first = _create(tmp_db, cfg, fake_clock, title="First")
-    second = _create(tmp_db, cfg, fake_clock, title="Second")
-    tmp_db.execute(
-        "UPDATE tickets SET conversation_id = ? WHERE id IN (?, ?)",
-        ("ambiguous-winner", first.id, second.id),
-    )
-    tmp_db.commit()
-
-    tmp_db.execute("BEGIN IMMEDIATE")
-    with pytest.raises(PlannerError) as exc:
-        data.write_conversation_id_in_transaction(
-            tmp_db,
-            first.id,
-            transition=EmployeeSessionIdTransition("stale-expected", "losing-candidate"),
-            force_fresh_employee_session=False,
-            now=now + 1,
-        )
-
-    assert exc.value.code is ErrorCode.validation
-    assert exc.value.detail["conversation_id"] == "ambiguous-winner"
-    assert exc.value.detail["owning_ticket_ids"] == [second.id]
-    tmp_db.rollback()
-
-
 def test_an_errored_ticket_stays_errored_and_is_never_claimed(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
     _claim_ready_worker_step(tmp_db, t.id, now=now)
-    t = data.mark_ticket_errored(
-        tmp_db,
-        t.id,
-        error="boom",
-        employee_session_transition=EmployeeSessionIdTransition(None, "sess-error"),
-        now=now,
+    # The Ticket keeps the conversation it named through erroring and release: a worker
+    # that fell over is still the worker that was talking there.
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id = 'conversation-errored' WHERE id = ?", (t.id,)
     )
+    tmp_db.commit()
+    t = data.mark_ticket_errored(tmp_db, t.id, error="boom", now=now)
     assert t.ticket_status is TicketStatus.errored
-    assert t.conversation_id == "sess-error"
+    assert t.conversation_id == "conversation-errored"
 
     t = data.release_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.errored
     assert _claim_ready_worker_step(tmp_db, t.id, now=now) is None
-    assert t.conversation_id == "sess-error"
+    assert t.conversation_id == "conversation-errored"
     assert t.backend_error == "boom"
 
 

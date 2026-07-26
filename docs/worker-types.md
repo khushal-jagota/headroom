@@ -258,14 +258,12 @@ as the Worker type's defaults and are kept up to date with what its conversation
 actually runs on, so a fresh conversation starts from where the last one ended.
 
 Chief settings use the same managed authority for Backend, Model, and Reasoning. A new Chief
-conversation copies the then-current trio into its durable binding. An existing Chief session
-continues with the trio it launched with, including after a server restart.
+conversation is started on the then-current trio. An existing one continues on what it was
+started with, including after a server restart.
 
-Permission is not a launch setting and is never copied into a Ticket or conversation binding.
-Every new or loaded Worker or Chief session enforces the backend's full-access mode before use:
-Codex uses `agent-full-access`, Claude Code uses `bypassPermissions`, and Hermes uses YOLO plus
-`dont_ask`. Loading does not reapply Model or Reasoning. Hermes can still surface permission
-behavior its adapter does not suppress.
+Access is not a launch setting and is never copied onto a Ticket. Every conversation runs
+under full access inside its workspace folder; how each backend realises that belongs to its
+adapter and appears nowhere else.
 
 _Code paths:_ `src/planner/conversation/backend_catalog.py` owns the ordered backend
 catalog; `src/planner/worker_types/configuration.py` composes it with the Worker-type
@@ -281,10 +279,10 @@ The worker runs `panels worker my-ticket`. That response includes the Ticket's s
 Worker type and the specialist skill named by its `WorkerTypeDefinition`. The worker loads
 that skill with `skill_view` and follows its Stage-specific guidance.
 
-Panels opens or resumes the Ticket's durable ACP conversation. The conversation binding
-owns the Employee-to-session relationship and records the Ticket's selected backend. The
-Ticket mirrors its session id, and one ACP session cannot belong to two Employees.
-Restart resumes it rather than reconstructing identity from terminal state.
+Panels starts the Ticket's conversation the first time it has something to send, and uses
+that same one afterwards. The Ticket names it in `tickets.conversation_id` and nothing else
+owns that name. A restart changes nothing: the conversation is the record, and the backend
+process is started again under it when there is a reason to.
 
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
@@ -357,4 +355,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-07-26._

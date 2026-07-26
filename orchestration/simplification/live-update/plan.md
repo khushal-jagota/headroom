@@ -253,7 +253,7 @@ state.
 
 - **Ticket A — backend** (one Opus agent): §1–§6 + python test updates. Owns `src/planner/`,
   `tests/unit/`, `tests/typing/`, `config.yaml`. Does not touch `web/`, `tests/e2e/`, `docs/`,
-  `src/planner/conversation/`; `conversation/` only the one append_event fallout line.
+  `src/planner/conversation2/`; `conversation/` only the one append_event fallout line.
   Gate: full unit suite + ruff + mypy through the worktree venv.
 - **Ticket B — frontend** (one Opus agent, parallel with A — zero file overlap): §7. Owns `web/`
   only. Builds against the fixed SSE contract above (`GET /api/changes`, unnamed `data: change`
@@ -266,6 +266,6 @@ state.
 
 ## Explicitly out of scope
 
-`src/planner/conversation/` (beyond the one line), `src/planner/conversation/`, the conversation
+`src/planner/conversation/` (beyond the one line), `src/planner/conversation2/`, the conversation
 WebSocket and transcript pane, `web/src/vendor/`, per-resource channels, payloads, filtering,
 backpressure — nothing speculative.

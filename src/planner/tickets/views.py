@@ -139,7 +139,7 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
             "effective_sprint_id": tickets_data.get_effective_sprint_id(conn, ticket_id),
             "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
-                conn, ticket
+                ticket
             ),
         }
     )

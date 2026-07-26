@@ -38,20 +38,6 @@ class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer 
     errored = "errored"
 
 
-class WorkspaceActivityState(StrEnum):
-    """ACP activity facts that may affect a Ticket's Workspace dot."""
-
-    connecting = "connecting"
-    loading = "loading"
-    idle = "idle"
-    thinking = "thinking"
-    working = "working"
-    compacting = "compacting"
-    waiting_for_permission = "waiting_for_permission"
-    interrupted = "interrupted"
-    failed = "failed"
-
-
 @dataclass(frozen=True)
 class Proposal:  # §4.2 proposal slot
     body: str
@@ -258,19 +244,6 @@ class EmployeeLaunchConfiguration:
 class EmployeeSessionIdTransition:
     expected_conversation_id: str | None
     candidate_conversation_id: str
-
-
-@dataclass(frozen=True)
-class EmployeeSessionHistoryMessage:
-    role: str
-    text: str
-    created_at: int
-
-
-@dataclass(frozen=True)
-class EmployeeSessionHistory:
-    messages: tuple[EmployeeSessionHistoryMessage, ...]
-    conversation_id: str | None
 
 
 @dataclass(frozen=True)

@@ -9,10 +9,10 @@ Human browser ───────────────► FastAPI + SQLite 
       │                              │                              │
       │ decisions and conversation  │ canonical record             │ proposals only
       │                              ▼                              │
-      └──────────────► ACP Conversation Composition ◄──────────────┘
+      └──────────────►    the conversation system   ◄──────────────┘
                                       │
                                       ▼
-                         selected ACP agent backend
+                       the agent it is running on
 ```
 
 The browser is the human decision surface. Workers use the CLI to inspect Tickets and
@@ -191,11 +191,12 @@ marks every cached read stale and refetches only the ones a screen is currently 
 A refetch that comes back the same leaves the page alone. The server remains the source
 of truth; the browser does not keep a second canonical product store.
 
-Conversation state is separate from that REST cache. Each ACP pane owns a typed
-conversation controller and reducer. Chief, Ticket, and Workspace mounts all use the
-same restrained pane: bubble-less worker prose, one user pill, compact thought/tool
-disclosures, one persistent status line, and permission as the only prominent blocking
-inset. The ACP composer accepts available commands, text, and inline images.
+Conversation state is separate from that REST cache: a pane reads the rows after the
+position it holds and keeps up over a live tail of the same rows. Chief, Ticket and
+Workspace mounts all use the same restrained pane: bubble-less worker prose, one user
+pill, compact thought/tool disclosures, one persistent status line, and permission as
+the only prominent blocking inset. The composer carries the text, the model and effort
+in force, and a message may be aimed at a skill.
 
 Managed Ticket and generic previews share one safety contract. Ticket paths are
 validated on the server, direct responses use `nosniff`, and HTML previews run in a
@@ -259,5 +260,5 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ---
 
-_Last verified: 2026-07-25 (the eight Ticket statuses, one contentless change signal
+_Last verified: 2026-07-26 (the eight Ticket statuses, one contentless change signal
 per commit, and worker orchestration rebuilt on the conversation contract)._

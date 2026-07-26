@@ -792,7 +792,6 @@ def update_chief_launch_defaults(
 
 def save_chief_skill(
     configured_database_parent: Path | str,
-    registry: WorkerTypeRegistry,
     payload: dict[str, Any],
     *,
     after_publish: Callable[[], None] | None = None,

@@ -39,7 +39,7 @@ can never take a decision that belongs to the human.
 **The full-system view**
 
 - **Systems** (`systems.md`) — the cold-start map: the record, ticket gate,
-  runtime, ACP conversation, UI, CLI, and the main boundaries.
+  runtime, the conversation system, UI, CLI, and the main boundaries.
 - **Systems artifact** (`systems.html`) — the same map as a designed, collapsible
   reading artifact.
 

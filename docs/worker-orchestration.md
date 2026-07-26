@@ -132,16 +132,14 @@ conversation, send into it, ask whether it is running, ask whether it is waiting
 permission, kill it. Nothing here knows what a backend is, what ACP is, or what a
 session id looks like.
 
-**The system behind that contract is currently a stand-in.** The server composes an
-in-memory fake: real enough to prove every path above, backed by dictionaries rather
-than agents. The real conversation system is built separately and replaces exactly one
-line at composition. Until it does, the browser's conversation pane still runs on the
-older machinery, and the two systems both write the Ticket's conversation-link column
-— last writer wins. Nothing is deployed in this window.
+The system behind that contract is the real one, and the only one. The same object the
+browser's conversation pane uses is the object a worker step sends into, so a Ticket's
+automatic work and the person typing to it are in one conversation rather than two that
+happen to be started the same way. A test that wants to hold a conversation still passes
+an in-memory implementation of the same contract; production never does.
 
 _Code paths:_ `src/planner/conversation/contracts.py`,
-`src/planner/conversation/in_memory_conversation_system.py`, and
-`src/planner/core/server.py`.
+`src/planner/conversation/system.py`, and `src/planner/core/server.py`.
 
 ## Worker roles and backends
 
@@ -176,14 +174,10 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`, and
 
 ## Deferred
 
-- **The real conversation system.** The stand-in is composed today. Trigger: the
-  sibling system lands and replaces it at composition — at which point the browser
-  pane, the old session-binding writer, and the old conversation-link write all move
-  over with it.
 - **Retry after an errored Ticket.** An errored Ticket still needs a deliberate way
   back. Trigger: a product decision about what retry should mean.
 
 ---
 
-_Last verified: 2026-07-25 (readiness check, one claim flip, no watch-and-settle; the
-conversation system is the in-memory stand-in)._
+_Last verified: 2026-07-26 (readiness check, one claim flip, no watch-and-settle; one
+conversation system, and a worker step sends into the same conversation a person does)._

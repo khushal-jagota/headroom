@@ -174,10 +174,8 @@ async def put_chief_skill(
     raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_chief_skill(
         _database_parent(config),
-        registry,
         raw,
         after_publish=_announce_worker_settings_change,
     )
@@ -191,9 +189,8 @@ async def patch_chief_skill(
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
-    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_chief_skill(
-        _database_parent(config), registry, raw,
+        _database_parent(config), raw,
         after_publish=_announce_worker_settings_change,
     )
     return _chief_json(settings)
