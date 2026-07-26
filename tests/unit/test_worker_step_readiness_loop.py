@@ -99,7 +99,7 @@ class _World:
                 )
             if conversation_id is not None:
                 conn.execute(
-                    "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+                    "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                     (conversation_id, ticket.id),
                 )
             if on_today:
@@ -512,12 +512,12 @@ def test_a_paired_owned_stage_departs_at_paired_and_gets_the_paired_opener(
 
 def test_an_unlinked_ticket_gets_a_conversation_and_the_first_message(world: _World) -> None:
     ticket_id = world.ready_ticket(title="First message")
-    assert world.ticket(ticket_id).employee_session_id is None
+    assert world.ticket(ticket_id).conversation_id is None
 
     assert world.start_step(ticket_id) is True
 
     ticket = world.ticket(ticket_id)
-    conversation_id = ticket.employee_session_id
+    conversation_id = ticket.conversation_id
     assert conversation_id is not None
     assert conversation_id.startswith("conv_")
     assert ticket.ticket_status is TicketStatus.agent
@@ -642,8 +642,8 @@ def test_the_poll_schedules_every_ready_ticket_and_skips_the_rest(world: _World)
         scheduled = readiness_loop.poll_once()
         assert sorted(scheduled) == sorted([ready_one, ready_two])
         assert _waited_for(
-            lambda: world.ticket(ready_one).employee_session_id is not None
-            and world.ticket(ready_two).employee_session_id is not None
+            lambda: world.ticket(ready_one).conversation_id is not None
+            and world.ticket(ready_two).conversation_id is not None
         )
         assert world.ticket(ready_one).ticket_status is TicketStatus.agent
         assert world.ticket(ready_two).ticket_status is TicketStatus.agent
@@ -761,7 +761,7 @@ def test_the_test_mode_route_runs_one_worker_step_against_the_composed_system(
         response = client.post(f"/api/test/run-step/{ticket_id}")
         assert response.status_code == 200, response.text
         assert response.json() == {"dispatched": True, "ticket_id": ticket_id}
-        conversation_id = world.ticket(ticket_id).employee_session_id
+        conversation_id = world.ticket(ticket_id).conversation_id
         assert conversation_id is not None
         writes = app.state.conversation_system.backend_prompt_writes(conversation_id)
         assert len(writes) == 1

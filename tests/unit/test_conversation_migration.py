@@ -13,7 +13,7 @@ import pytest
 
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "agents"
+HEAD_REVISION = "one_conversation_system"
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, int, int]]:
@@ -114,3 +114,77 @@ def test_this_revision_has_no_way_back(upgraded: sqlite3.Connection) -> None:
 
     with pytest.raises(NotImplementedError):
         conversation_system_tables.downgrade()
+
+
+# --- what the layer that came before left behind ----------------------------------------
+
+
+def _build_a_database_at_the_previous_head(path: Path) -> sqlite3.Connection:
+    """A database as it stood before the old conversation layer's tables were dropped.
+
+    It is built the ordinary way and then stopped one revision short, so the shape it has
+    is the shape a real database on the previous release has.
+    """
+    from alembic import command
+
+    from planner.core import db as db_module
+
+    engine = db_module._migration_engine(str(path), 5000)  # noqa: SLF001
+    try:
+        with engine.begin() as connection:
+            command.upgrade(db_module._alembic_config(connection), "agents")  # noqa: SLF001
+    finally:
+        engine.dispose()
+    return connect(str(path))
+
+
+def test_the_retired_tables_go_and_the_ticket_keeps_its_link_under_its_real_name(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "previous-head.db"
+    conn = _build_a_database_at_the_previous_head(path)
+    conn.execute(
+        "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, fields, "
+        "employee_session_id, created_at, updated_at) VALUES ('t_linked', 'Linked', 'coding', "
+        "'codex', 'needs_kickoff', '{}', 'conversation-abc', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO employee_step_runs (employee_step_id, ticket_id, status, started_at, "
+        "updated_at) VALUES ('step', 't_linked', 'complete', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO ticket_conversation_projections (ticket_id, updated_at) VALUES ('t_linked', 1)"
+    )
+    conn.commit()
+
+    create_schema(conn)
+
+    tables = {
+        str(row[0])
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    assert {
+        "conversation_session_bindings",
+        "employee_conversations",
+        "employee_configuration_catalog_cache",
+        "employee_step_runs",
+        "ticket_conversation_projections",
+    }.isdisjoint(tables)
+    # The index went with the table it was on rather than being left dangling.
+    assert not [
+        row
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?",
+            ("idx_employee_step_runs_one_running",),
+        )
+    ]
+    # The link itself is untouched. Only what it is called changed, because what it holds
+    # had already changed.
+    assert (
+        conn.execute("SELECT conversation_id FROM tickets WHERE id = 't_linked'").fetchone()[0]
+        == "conversation-abc"
+    )
+    assert "employee_session_id" not in {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(tickets)")
+    }
+    conn.close()

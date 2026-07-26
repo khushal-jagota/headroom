@@ -490,7 +490,7 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     )
     assert t.ticket_status is TicketStatus.errored
     assert t.backend_error == "boom"
-    assert t.employee_session_id == "sess-3"
+    assert t.conversation_id == "sess-3"
 
     t = data.drop_ticket(tmp_db, t.id, actor="human", now=now + 1)
     assert t.ticket_status is TicketStatus.empty
@@ -576,7 +576,7 @@ def _park_paired(
     t = _claim_ready_worker_step(tmp_db, t.id, now=now)
     assert t is not None
     tmp_db.execute(
-        "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+        "UPDATE tickets SET conversation_id = ? WHERE id = ?",
         (f"conv-{t.id}", t.id),
     )
     t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
@@ -671,7 +671,7 @@ def test_employee_session_writer_rejects_a_session_owned_by_another_ticket(
     owner = _create(tmp_db, cfg, fake_clock, title="Owner")
     claimant = _create(tmp_db, cfg, fake_clock, title="Claimant")
     tmp_db.execute("BEGIN IMMEDIATE")
-    data.write_employee_session_id_in_transaction(
+    data.write_conversation_id_in_transaction(
         tmp_db,
         owner.id,
         transition=EmployeeSessionIdTransition(None, "shared-session"),
@@ -680,12 +680,12 @@ def test_employee_session_writer_rejects_a_session_owned_by_another_ticket(
     )
     tmp_db.commit()
     claimant_before = tmp_db.execute(
-        "SELECT employee_session_id, updated_at FROM tickets WHERE id = ?",
+        "SELECT conversation_id, updated_at FROM tickets WHERE id = ?",
         (claimant.id,),
     ).fetchone()
     tmp_db.execute("BEGIN IMMEDIATE")
     with pytest.raises(PlannerError) as exc:
-        data.write_employee_session_id_in_transaction(
+        data.write_conversation_id_in_transaction(
             tmp_db,
             claimant.id,
             transition=EmployeeSessionIdTransition(None, "shared-session"),
@@ -695,13 +695,13 @@ def test_employee_session_writer_rejects_a_session_owned_by_another_ticket(
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {
-        "employee_session_id": "shared-session",
+        "conversation_id": "shared-session",
         "binding_ticket_id": claimant.id,
         "owning_ticket_ids": [owner.id],
     }
     assert (
         tmp_db.execute(
-            "SELECT employee_session_id, updated_at FROM tickets WHERE id = ?",
+            "SELECT conversation_id, updated_at FROM tickets WHERE id = ?",
             (claimant.id,),
         ).fetchone()
         == claimant_before
@@ -716,14 +716,14 @@ def test_employee_session_writer_rejects_idempotence_when_ownership_is_already_a
     first = _create(tmp_db, cfg, fake_clock, title="First")
     second = _create(tmp_db, cfg, fake_clock, title="Second")
     tmp_db.execute(
-        "UPDATE tickets SET employee_session_id = ? WHERE id IN (?, ?)",
+        "UPDATE tickets SET conversation_id = ? WHERE id IN (?, ?)",
         ("already-shared", first.id, second.id),
     )
     tmp_db.commit()
 
     tmp_db.execute("BEGIN IMMEDIATE")
     with pytest.raises(PlannerError) as exc:
-        data.write_employee_session_id_in_transaction(
+        data.write_conversation_id_in_transaction(
             tmp_db,
             first.id,
             transition=EmployeeSessionIdTransition("already-shared", "already-shared"),
@@ -733,7 +733,7 @@ def test_employee_session_writer_rejects_idempotence_when_ownership_is_already_a
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {
-        "employee_session_id": "already-shared",
+        "conversation_id": "already-shared",
         "binding_ticket_id": first.id,
         "owning_ticket_ids": [second.id],
     }
@@ -747,14 +747,14 @@ def test_employee_session_writer_rejects_an_ambiguous_compare_and_swap_winner(
     first = _create(tmp_db, cfg, fake_clock, title="First")
     second = _create(tmp_db, cfg, fake_clock, title="Second")
     tmp_db.execute(
-        "UPDATE tickets SET employee_session_id = ? WHERE id IN (?, ?)",
+        "UPDATE tickets SET conversation_id = ? WHERE id IN (?, ?)",
         ("ambiguous-winner", first.id, second.id),
     )
     tmp_db.commit()
 
     tmp_db.execute("BEGIN IMMEDIATE")
     with pytest.raises(PlannerError) as exc:
-        data.write_employee_session_id_in_transaction(
+        data.write_conversation_id_in_transaction(
             tmp_db,
             first.id,
             transition=EmployeeSessionIdTransition("stale-expected", "losing-candidate"),
@@ -763,7 +763,7 @@ def test_employee_session_writer_rejects_an_ambiguous_compare_and_swap_winner(
         )
 
     assert exc.value.code is ErrorCode.validation
-    assert exc.value.detail["employee_session_id"] == "ambiguous-winner"
+    assert exc.value.detail["conversation_id"] == "ambiguous-winner"
     assert exc.value.detail["owning_ticket_ids"] == [second.id]
     tmp_db.rollback()
 
@@ -782,12 +782,12 @@ def test_an_errored_ticket_stays_errored_and_is_never_claimed(
         now=now,
     )
     assert t.ticket_status is TicketStatus.errored
-    assert t.employee_session_id == "sess-error"
+    assert t.conversation_id == "sess-error"
 
     t = data.release_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.errored
     assert _claim_ready_worker_step(tmp_db, t.id, now=now) is None
-    assert t.employee_session_id == "sess-error"
+    assert t.conversation_id == "sess-error"
     assert t.backend_error == "boom"
 
 
@@ -1515,15 +1515,15 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
     assert t4.at_cap is at_cap_before
 
 
-def test_read_ticket_by_employee_session_id(
+def test_read_ticket_by_conversation_id(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     """A worker resolves its own ticket from its live session key; unknown key -> not_found."""
     t = _create(tmp_db, cfg, fake_clock)
-    tmp_db.execute("UPDATE tickets SET employee_session_id = ? WHERE id = ?", ("sess_abc", t.id))
-    assert data.read_ticket_by_employee_session_id(tmp_db, "sess_abc").id == t.id
+    tmp_db.execute("UPDATE tickets SET conversation_id = ? WHERE id = ?", ("sess_abc", t.id))
+    assert data.read_ticket_by_conversation_id(tmp_db, "sess_abc").id == t.id
     with pytest.raises(PlannerError) as exc:
-        data.read_ticket_by_employee_session_id(tmp_db, "no_such_session")
+        data.read_ticket_by_conversation_id(tmp_db, "no_such_session")
     assert exc.value.code is ErrorCode.not_found
 
 

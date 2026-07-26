@@ -196,7 +196,7 @@ async def send_to_ticket_conversation(
     no delivery to report on.
     """
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    conversation_id = ticket.employee_session_id
+    conversation_id = ticket.conversation_id
     if conversation_id is None:
         raise PlannerError(
             ErrorCode.not_found,
@@ -326,7 +326,7 @@ async def reset_ticket_conversation(
     newer one is left pointing at it: only the conversation this call silenced is the one
     it may cut loose.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).employee_session_id
+    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
     if conversation_id is None:
         return
     await system.kill(conversation_id)

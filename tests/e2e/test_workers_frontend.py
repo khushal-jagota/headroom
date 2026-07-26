@@ -563,7 +563,7 @@ def test_worker_skill_edit_save_failure_and_session_stability(
     )["id"]
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             ("skill-session-keep", ticket_id),
         )
 
@@ -633,4 +633,4 @@ def test_worker_skill_edit_save_failure_and_session_stability(
     assert saved["description"] == "Saved description"
     assert saved["markdown_body"] == f"\n{attempted_body}\n"
     detail = api.get(server, f"/api/tickets/{ticket_id}")
-    assert detail["employee_session_id"] == "skill-session-keep"
+    assert detail["conversation_id"] == "skill-session-keep"

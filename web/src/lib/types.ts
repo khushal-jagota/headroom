@@ -138,7 +138,7 @@ export type TicketDetail = {
   stage_ownership_overrides: Record<string, StageOwnershipMode>;
   default_stage_ownership_mode: StageOwnershipMode | null;
   effective_stage_ownership_mode: StageOwnershipMode | null;
-  employee_session_id: string | null;
+  conversation_id: string | null;
   day_ids?: string[];
   blocked?: boolean;
   blocker_summary?: BlockerSummary;

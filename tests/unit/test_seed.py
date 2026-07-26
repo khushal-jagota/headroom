@@ -186,7 +186,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     tickets = _rows_by(
         tmp_db,
         "SELECT tickets.id, tickets.alias, tickets.stage, tickets.priority, "
-        "tickets.worker_type, tickets.employee_session_id, tickets.sprint_item_id, "
+        "tickets.worker_type, tickets.conversation_id, tickets.sprint_item_id, "
         "tickets.sprint_id, "
         "tickets.project_id, projects.name AS project, tickets.recap, tickets.ceiling, "
         "tickets.at_cap, tickets.deadline, tickets.fields "
@@ -206,14 +206,14 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
 
     # (6) the historical Chat ID is preserved byte-for-byte as the Employee session id.
     assert (
-        tickets["ticket-20260611-export-format"]["employee_session_id"] == "20260611_090000_abc123"
+        tickets["ticket-20260611-export-format"]["conversation_id"] == "20260611_090000_abc123"
     )
     for alias in (
         "ticket-20260611-onboarding-survey",
         "ticket-20260611-release-branch",
         "ticket-20260611-import-pipeline",
     ):
-        assert tickets[alias]["employee_session_id"] is None
+        assert tickets[alias]["conversation_id"] is None
 
     # (7) fields JSON.
     onboarding = json.loads(tickets["ticket-20260611-onboarding-survey"]["fields"])

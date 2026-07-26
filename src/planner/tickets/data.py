@@ -139,7 +139,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         stage_ownership_overrides=overrides,
         default_stage_ownership_mode=default_ownership,
         effective_stage_ownership_mode=effective_ownership,
-        employee_session_id=row["employee_session_id"],
+        conversation_id=row["conversation_id"],
         alias=row["alias"],
         fields=fields_codec.fields_from_json(row["fields"]),
         created_at=row["created_at"],
@@ -454,7 +454,7 @@ def _write_entered_stage_ticket_status(
     _write_ticket_status(conn, ticket.id, target_status, now)
 
 
-def write_employee_session_id_in_transaction(
+def write_conversation_id_in_transaction(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -469,7 +469,7 @@ def write_employee_session_id_in_transaction(
     ``write_ticket_conversation_start``; the name and the column stay as they are
     because renaming a column needs a migration.
     """
-    candidate = transition.candidate_employee_session_id
+    candidate = transition.candidate_conversation_id
     if not isinstance(candidate, str) or not candidate:
         raise PlannerError(
             ErrorCode.validation,
@@ -477,19 +477,19 @@ def write_employee_session_id_in_transaction(
             {"ticket_id": ticket_id},
         )
     row = conn.execute(
-        "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket_id,)
+        "SELECT conversation_id FROM tickets WHERE id = ?", (ticket_id,)
     ).fetchone()
     if row is None:
         raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
-    current: str | None = row["employee_session_id"]
+    current: str | None = row["conversation_id"]
     if (
         current == candidate
         or force_fresh_employee_session
-        or current == transition.expected_employee_session_id
+        or current == transition.expected_conversation_id
     ):
-        effective_employee_session_id = candidate
+        effective_conversation_id = candidate
     elif current is not None:
-        effective_employee_session_id = current
+        effective_conversation_id = current
     else:
         raise PlannerError(
             ErrorCode.already_running,
@@ -497,26 +497,26 @@ def write_employee_session_id_in_transaction(
             {"ticket_id": ticket_id},
         )
     owning_ticket_rows = conn.execute(
-        "SELECT id FROM tickets WHERE employee_session_id = ? AND id != ? ORDER BY id",
-        (effective_employee_session_id, ticket_id),
+        "SELECT id FROM tickets WHERE conversation_id = ? AND id != ? ORDER BY id",
+        (effective_conversation_id, ticket_id),
     ).fetchall()
     if owning_ticket_rows:
         raise PlannerError(
             ErrorCode.validation,
             "Employee session already belongs to another ticket",
             {
-                "employee_session_id": effective_employee_session_id,
+                "conversation_id": effective_conversation_id,
                 "binding_ticket_id": ticket_id,
                 "owning_ticket_ids": [str(row["id"]) for row in owning_ticket_rows],
             },
         )
-    if current == effective_employee_session_id:
-        return effective_employee_session_id
+    if current == effective_conversation_id:
+        return effective_conversation_id
     conn.execute(
-        "UPDATE tickets SET employee_session_id = ?, updated_at = ? WHERE id = ?",
-        (effective_employee_session_id, now, ticket_id),
+        "UPDATE tickets SET conversation_id = ?, updated_at = ? WHERE id = ?",
+        (effective_conversation_id, now, ticket_id),
     )
-    return effective_employee_session_id
+    return effective_conversation_id
 
 
 def write_ticket_conversation_start(
@@ -532,7 +532,7 @@ def write_ticket_conversation_start(
     """Point the Ticket at the conversation just started for it, and record what it
     runs on.
 
-    ``employee_session_id`` is the Ticket's conversation link. Under the new
+    ``conversation_id`` is the Ticket's conversation link. Under the new
     conversation system the value it holds is the caller-owned conversation id, not an
     ACP session id: the conversation system rebinds its own backend sessions behind that
     one name. The three launch columns are the Ticket's last-chosen values — kept up to
@@ -542,7 +542,7 @@ def write_ticket_conversation_start(
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
         conn.execute(
-            "UPDATE tickets SET employee_session_id = ?, employee_backend = ?, "
+            "UPDATE tickets SET conversation_id = ?, employee_backend = ?, "
             "employee_launch_model = ?, employee_launch_reasoning_effort = ?, "
             "updated_at = ? WHERE id = ?",
             (conversation_id, backend, model, reasoning_effort, now, ticket_id),
@@ -576,7 +576,7 @@ def write_ticket_last_chosen_configuration(
         updated = conn.execute(
             "UPDATE tickets SET employee_launch_model = ?, "
             "employee_launch_reasoning_effort = ?, updated_at = ? "
-            "WHERE id = ? AND employee_session_id = ?",
+            "WHERE id = ? AND conversation_id = ?",
             (model, reasoning_effort, now, ticket_id, expected_conversation_id),
         )
         return updated.rowcount == 1
@@ -603,8 +603,8 @@ def clear_ticket_conversation_link(
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
         updated = conn.execute(
-            "UPDATE tickets SET employee_session_id = NULL, updated_at = ? "
-            "WHERE id = ? AND employee_session_id = ?",
+            "UPDATE tickets SET conversation_id = NULL, updated_at = ? "
+            "WHERE id = ? AND conversation_id = ?",
             (now, ticket_id, expected_conversation_id),
         )
         return updated.rowcount == 1
@@ -631,7 +631,7 @@ def employee_configuration_editable(
             TicketStatus.empty,
             TicketStatus.blocked,
         }
-        or ticket.employee_session_id is not None
+        or ticket.conversation_id is not None
     ):
         return False
     return True
@@ -791,7 +791,7 @@ def create_ticket(
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, "
             "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
-            "employee_session_id, alias, fields, created_at, updated_at, "
+            "conversation_id, alias, fields, created_at, updated_at, "
             "ticket_status_changed_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
@@ -931,7 +931,7 @@ def create_ticket_from_external_work(
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
-            "default_stage_ownership_mode, employee_session_id, alias, fields, "
+            "default_stage_ownership_mode, conversation_id, alias, fields, "
             "created_at, updated_at, ticket_status_changed_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
@@ -1111,28 +1111,28 @@ def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return _load_ticket(conn, ticket_id)
 
 
-def read_ticket_by_employee_session_id(
-    conn: sqlite3.Connection, employee_session_id: str
+def read_ticket_by_conversation_id(
+    conn: sqlite3.Connection, conversation_id: str
 ) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
     rows = conn.execute(
         "SELECT tickets.*, projects.name AS project_name "
         "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
-        "WHERE tickets.employee_session_id = ? ORDER BY tickets.id",
-        (employee_session_id,),
+        "WHERE tickets.conversation_id = ? ORDER BY tickets.id",
+        (conversation_id,),
     ).fetchall()
     if not rows:
         raise PlannerError(
             ErrorCode.not_found,
             "no ticket owns this Employee session",
-            {"employee_session_id": employee_session_id},
+            {"conversation_id": conversation_id},
         )
     if len(rows) > 1:
         raise PlannerError(
             ErrorCode.validation,
             "multiple tickets own this Employee session",
             {
-                "employee_session_id": employee_session_id,
+                "conversation_id": conversation_id,
                 "ticket_ids": sorted(str(row["id"]) for row in rows),
             },
         )
@@ -1242,7 +1242,7 @@ def mark_ticket_errored(
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
         if employee_session_transition is not None:
-            write_employee_session_id_in_transaction(
+            write_conversation_id_in_transaction(
                 conn,
                 ticket_id,
                 transition=employee_session_transition,

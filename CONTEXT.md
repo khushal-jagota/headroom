@@ -19,22 +19,24 @@ The human decision surface for parked Ticket proposals, alongside the current ru
 It does not contain Sprint items or an overdue digest.
 _Avoid_: Queues, approval queue
 
-**Panels Chat**:
-The product-visible conversation with an employee: durable messages and live turn state intended for the
-human to see. It is not the employee's conversation context. Reading it never loads or merges Employee
-session history, and a Panels row alone is not delivery to the employee.
-_Avoid_: Employee session history, worker context
+**Conversation**:
+One agent process working in a folder, plus the permanent notebook of everything that happened in it.
+A Ticket has one; so does the Chief. Everything that talks to that agent — the automatic step and the
+person typing — goes into the same one.
 
-**Employee session history**:
-The authoritative Hermes record of what was delivered to and produced by a Ticket employee's durable
-conversation, identified by `employee_session_id`. It is inspected explicitly, is never silently merged
-into Panels Chat, and may contain internal context absent from Panels Chat.
-_Avoid_: Panels Chat, chat transcript
+**Conversation id**:
+What a conversation is called. Its caller owns it: a Ticket keeps its own in `tickets.conversation_id`
+and the Chief keeps its own in the `agents` table. It is the only name a conversation has outside the
+conversation system. The backend process's own session id is internal to that system, is rebound
+without anything outside noticing, and is never the identity.
+_Avoid_: employee session id, ACP session id, durable session
 
-**Employee session id**:
-The durable Hermes conversation identity stored by a Ticket. Human Ticket Chat and Employee steps both
-deliver through it, and a restart resumes it. Day and top-level-agent Chat keys are separate Chat identity.
-_Avoid_: Ticket chat session key
+**Notebook**:
+A conversation's append-only run of numbered rows. A row is a finished thing — a delivered prompt, a
+completed agent message, a tool call, a permission ask and its answer, a model change, a turn ending.
+A row in it IS what the agent was told, not a record beside it: nothing reaches the agent without
+being one.
+_Avoid_: chat transcript, Panels Chat, employee session history
 
 **Automatic Employee-step eligibility**:
 Whether Planner may automatically start a Ticket's next Employee step now. It includes today's board

@@ -1,23 +1,27 @@
-# Cross-Ticket session identity diagnostics
+# Cross-Ticket worker identity diagnostics
 
 Use this when a Panels worker appears to believe it owns another Ticket, especially when `panels worker my-ticket` returns a plausible but wrong record.
 
+## What identity is
+
+A Ticket names its conversation in one place: `tickets.conversation_id`. That is the whole of it. There is no binding table, no second owner, and no live-versus-durable pair to reconcile — the backend process's own session id belongs to the conversation system and is rebound without anything outside it noticing.
+
+So there are only two ways a worker can be looking at the wrong Ticket: two Ticket rows carry the same conversation id, or the worker was handed the wrong id in its environment.
+
 ## Isolate the boundary before proposing a fix
 
-1. **Confirm the source Ticket.** Read the affected Ticket and record its canonical id, Worker type, Stage, `employee_session_id`, and recent session-binding events. Do not infer identity from the currently open UI route.
-2. **Check database ownership.** Query every Ticket owning the affected and comparison Employee session ids. Verify whether ownership is unique and whether a session change was persisted. A correct Ticket row plus a wrong CLI result points away from creation/persistence.
-3. **Run a controlled CLI lookup.** Invoke `panels worker my-ticket --json` with each durable session id supplied explicitly. If each explicit key resolves its own Ticket, the existing by-Employee-session lookup is behaving consistently; the caller is likely supplying the wrong identity.
-4. **Compare live and durable identity.** Capture the Hermes live-window/session id and the terminal subprocess's session variables without printing unrelated environment values or credentials. Repeat after a fresh session or `/new`. A changed live/durable conversation paired with an unchanged terminal key localizes the leak to gateway/context/environment propagation.
-5. **Inspect shared-process reuse.** Trace where the shared gateway binds stored keys to live ids, where per-turn context is installed, and where a long-lived terminal environment is created or reused. Distinguish process-global environment from per-invocation context.
-6. **Fail closed in the eventual design.** Missing, conflicting, or multiply-owned identity should produce a clear error rather than selecting the first matching Ticket. Preserve legitimate single-session behavior deliberately.
+1. **Confirm the source Ticket.** Read the affected Ticket and record its canonical id, Worker type, Stage, and `conversation_id`. Do not infer identity from the currently open UI route.
+2. **Check for a duplicate.** Ask the database whether any conversation id appears on more than one Ticket. If one does, that is the fault and everything below is a symptom.
+3. **Run a controlled CLI lookup.** Invoke `panels worker my-ticket --json` with each conversation id supplied explicitly. If each id resolves its own Ticket, the lookup is behaving and the caller is supplying the wrong identity.
+4. **Check what the worker was actually launched with.** Read the spawn environment the worker is running under without printing unrelated values or credentials. A correct Ticket row plus a wrong environment localizes the fault to how the worker was started, not to how identity is stored.
 
 ## Reporting checkpoint
 
 After steps 1–4, tell the user the rough result before doing more. State separately:
 
-- whether Ticket/database state appears correct;
+- whether the Ticket rows themselves are correct and unique;
 - which identity the CLI actually consumed;
-- the most likely propagation boundary;
+- what the worker was launched with;
 - what has not yet been proven.
 
 Then ask whether to create a Ticket. Do not continue into patches, restarts, regression suites, or canonical verification without that approval.
@@ -27,10 +31,7 @@ Then ask whether to create a Ticket. Do not continue into patches, restarts, reg
 A complete follow-up Ticket should require:
 
 - a two-concurrent-Ticket reproduction;
-- database uniqueness/integrity checks and session-binding history;
-- fresh, resumed, and `/new` session cases;
-- stale process-environment and correct per-invocation identity cases;
-- gateway restart behavior;
-- explicit missing/ambiguous fail-closed behavior;
+- a uniqueness check over `tickets.conversation_id`;
+- explicit missing/ambiguous fail-closed behavior rather than selecting the first matching Ticket;
 - focused regression tests plus one clean canonical verification;
 - review of any diagnostic patch as evidence, not as an already-approved solution.

@@ -257,13 +257,10 @@ def test_new_worker_declares_expected_default_ownership_modes() -> None:
 
 
 def _worker_session_exists(conn: Connection, tid: str) -> bool:
-    row = conn.execute("SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)).fetchone()
-    if row["employee_session_id"] is not None:
-        return True
-    turns = conn.execute(
-        "SELECT 1 FROM employee_step_runs WHERE ticket_id = ? LIMIT 1", (tid,)
-    ).fetchone()
-    return turns is not None
+    """Whether a worker was ever started on this Ticket. Naming a conversation is the
+    whole of it: a Ticket names one when its first step runs, and never before."""
+    row = conn.execute("SELECT conversation_id FROM tickets WHERE id = ?", (tid,)).fetchone()
+    return row["conversation_id"] is not None
 
 
 def test_new_worker_drives_to_done_via_real_writers(

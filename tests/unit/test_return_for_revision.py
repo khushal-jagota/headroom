@@ -78,7 +78,7 @@ def _ticket_with_pending_plan(
         file_proposal(conn, ticket.id, field="plan", body="bad plan", actor="agent", now=0)
         if conversation_id is not None:
             conn.execute(
-                "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
                 (conversation_id, ticket.id),
             )
         conn.commit()

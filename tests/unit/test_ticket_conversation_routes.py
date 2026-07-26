@@ -69,7 +69,7 @@ def _ticket(db_path: Path) -> str:
 def _conversation_id(db_path: Path, ticket_id: str) -> str | None:
     conn: Connection = connect(str(db_path))
     try:
-        return tickets_data.read_ticket(conn, ticket_id).employee_session_id
+        return tickets_data.read_ticket(conn, ticket_id).conversation_id
     finally:
         conn.close()
 
@@ -85,7 +85,7 @@ def test_starting_gives_a_ticket_that_never_ran_a_conversation_to_talk_to(
         response = client.post(f"/api/tickets/{ticket_id}/conversation")
 
         assert response.status_code == 200, response.text
-        started = response.json()["employee_session_id"]
+        started = response.json()["conversation_id"]
         assert started is not None
         assert started.startswith(CONVERSATION_ID_PREFIX)
         # The Ticket names it, and the conversation system has it: both halves of the link.
@@ -104,7 +104,7 @@ def test_a_ticket_that_already_has_a_conversation_keeps_the_one_it_has(
         first = client.post(f"/api/tickets/{ticket_id}/conversation").json()
         again = client.post(f"/api/tickets/{ticket_id}/conversation").json()
 
-    assert again["employee_session_id"] == first["employee_session_id"]
+    assert again["conversation_id"] == first["conversation_id"]
 
 
 def test_resetting_kills_the_conversation_and_unlinks_it(tmp_path: Path) -> None:
@@ -113,18 +113,18 @@ def test_resetting_kills_the_conversation_and_unlinks_it(tmp_path: Path) -> None
 
     with TestClient(app) as client:
         started = client.post(f"/api/tickets/{ticket_id}/conversation").json()[
-            "employee_session_id"
+            "conversation_id"
         ]
         response = client.post(f"/api/tickets/{ticket_id}/conversation/reset")
 
         assert response.status_code == 200, response.text
-        assert response.json()["employee_session_id"] is None
+        assert response.json()["conversation_id"] is None
         assert _conversation_id(db_path, ticket_id) is None
 
     # And the next start is a fresh conversation rather than the one that was killed.
     with TestClient(app) as client:
         after = client.post(f"/api/tickets/{ticket_id}/conversation").json()
-    assert after["employee_session_id"] != started
+    assert after["conversation_id"] != started
 
 
 def test_resetting_a_ticket_with_no_conversation_changes_nothing(tmp_path: Path) -> None:
@@ -135,7 +135,7 @@ def test_resetting_a_ticket_with_no_conversation_changes_nothing(tmp_path: Path)
         response = client.post(f"/api/tickets/{ticket_id}/conversation/reset")
 
     assert response.status_code == 200, response.text
-    assert response.json()["employee_session_id"] is None
+    assert response.json()["conversation_id"] is None
 
 
 def test_a_running_turn_is_stopped_by_the_reset(tmp_path: Path) -> None:
@@ -145,7 +145,7 @@ def test_a_running_turn_is_stopped_by_the_reset(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         conversation_id = client.post(f"/api/tickets/{ticket_id}/conversation").json()[
-            "employee_session_id"
+            "conversation_id"
         ]
         conversations = app.state.conversation_system
         asyncio.run(conversations.send(conversation_id, "working", sender_label="loop"))

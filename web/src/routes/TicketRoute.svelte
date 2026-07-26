@@ -90,7 +90,7 @@
     const detail = await mutateJson<TicketDetail>(`/api/tickets/${stableId}/conversation`, {
       method: "POST"
     });
-    return detail.employee_session_id;
+    return detail.conversation_id;
   }
 
   /** New: the old conversation is killed and the Ticket stops pointing at it. The next
@@ -479,7 +479,7 @@
       </main>
       <aside class="chat-rail" data-chat>
         <LiveConversation
-          conversationId={detail.employee_session_id}
+          conversationId={detail.conversation_id}
           label={conversationEmployeeLabel(detail)}
           backends={conversationBackends}
           senderLabel="owner"

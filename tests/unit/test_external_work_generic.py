@@ -213,7 +213,7 @@ def _needs_kickoff_ticket(defn: WorkerTypeDefinition) -> Ticket:
         stage_ownership_overrides={},
         default_stage_ownership_mode=StageOwnershipMode.worker,
         effective_stage_ownership_mode=StageOwnershipMode.worker,
-        employee_session_id=None,
+        conversation_id=None,
         employee_backend="hermes",
         employee_launch_model=None,
         employee_launch_reasoning_effort=None,

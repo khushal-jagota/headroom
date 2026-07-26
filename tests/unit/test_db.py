@@ -26,13 +26,14 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "agents"
+HEAD_REVISION = "one_conversation_system"
 
 # How many schema objects a current database holds: the fifteen tables and nine indexes the
 # ladder left, less the event log and its index that ticket_status_changed_at dropped, plus
 # the two tables the conversation system brought and the one recording which conversation
-# an agent that is not a Ticket is currently talking in.
-CURRENT_SCHEMA_OBJECT_COUNT = 25
+# an agent that is not a Ticket is currently talking in, less the five tables and one index
+# the conversation layer that came before it left behind.
+CURRENT_SCHEMA_OBJECT_COUNT = 19
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -87,6 +88,20 @@ def _table_structure_before_status_changed_at(structure: dict[str, object]) -> d
     columns = list(structure["columns"])  # type: ignore[arg-type]
     assert columns[-1] == STATUS_CHANGED_AT_COLUMN
     return {**structure, "columns": columns[:-1]}
+
+
+def _with_the_conversation_link_renamed(structure: dict[str, object]) -> dict[str, object]:
+    """The tickets structure the ladder left, under the one name this build changed.
+
+    A rename is a change of shape, so the adoption promise cannot be "identical". It is
+    "the same table, with exactly the column this build renamed renamed" — which is a
+    claim a silent second change would still break.
+    """
+    columns = [
+        ("conversation_id", *rest) if name == "employee_session_id" else (name, *rest)
+        for name, *rest in structure["columns"]  # type: ignore[union-attr]
+    ]
+    return {**structure, "columns": columns}
 
 
 def _revision(conn: sqlite3.Connection) -> str:
@@ -202,15 +217,16 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_pa
     # promises is that the table keeps its shape and the rows are still there, brought onto
     # the values the revisions since the baseline moved them to.
     assert _revision(conn) == HEAD_REVISION
-    assert (
-        _table_structure_before_status_changed_at(_table_structure(conn, "tickets"))
-        == structure_before
-    )
+    assert _table_structure_before_status_changed_at(
+        _table_structure(conn, "tickets")
+    ) == _with_the_conversation_link_renamed(structure_before)
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
         conn.execute("SELECT title, ticket_status FROM tickets WHERE id = 't_old'").fetchone()
     ) == ("Written before Alembic", "agent")
-    assert conn.execute("SELECT count(*) FROM employee_step_runs").fetchone()[0] == 1
+    # The step run went with its table. Adoption keeps the rows of everything that
+    # survives; a table the conversation layer left behind is not one of those.
+    assert "employee_step_runs" not in _schema_objects(conn)
     conn.close()
 
 
@@ -245,12 +261,11 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path) 
         conn.execute(
             "INSERT INTO links (from_id, to_id, kind) VALUES (?, ?, 'blocks')", (from_id, to_id)
         )
+    # Two children hanging off tickets, so a rebuild that quietly emptied them is caught.
+    conn.execute("INSERT INTO days (id, created_at, updated_at) VALUES ('day_2026-07-04', 1, 1)")
     conn.execute(
-        "INSERT INTO employee_step_runs (employee_step_id, ticket_id, status, started_at, "
-        "updated_at) VALUES ('step_agent', 't_agent', 'complete', 1, 1)"
-    )
-    conn.execute(
-        "INSERT INTO ticket_conversation_projections (ticket_id, updated_at) VALUES ('t_agent', 1)"
+        "INSERT INTO day_tickets (day_id, ticket_id, position) "
+        "VALUES ('day_2026-07-04', 't_agent', 0)"
     )
     structure_before = _table_structure(conn, "tickets")
 
@@ -277,15 +292,14 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path) 
 
     # Two rebuilds dropped and recreated the table the children hang off. With foreign keys
     # enforced those drops would have emptied both of these and said nothing about it.
-    assert conn.execute("SELECT count(*) FROM employee_step_runs").fetchone()[0] == 1
-    assert conn.execute("SELECT count(*) FROM ticket_conversation_projections").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 1
+    assert conn.execute("SELECT count(*) FROM links").fetchone()[0] == 4
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     # Columns, outgoing foreign keys and indexes, including the unique one on alias: a
     # rebuild recreates only what it was handed, and drops the rest without a trace.
-    assert (
-        _table_structure_before_status_changed_at(_table_structure(conn, "tickets"))
-        == structure_before
-    )
+    assert _table_structure_before_status_changed_at(
+        _table_structure(conn, "tickets")
+    ) == _with_the_conversation_link_renamed(structure_before)
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -573,6 +587,9 @@ def test_rebuilding_a_table_keeps_its_rows_children_checks_and_indexes(
     conn = connect(str(tmp_path / "rebuilt.db"))
     create_schema(conn)
     _insert_ticket(conn, "t_parent", "Parent")
+    # The synthetic tree stops at the baseline, so this database is the shape the ladder
+    # left — including the two child tables the conversation layer that came after it took
+    # away. What is under test is the rebuild, not today's schema.
     conn.execute(
         "INSERT INTO employee_step_runs (employee_step_id, ticket_id, status, started_at, "
         "updated_at) VALUES ('step_child', 't_parent', 'complete', 1, 1)"
@@ -758,14 +775,6 @@ def test_fresh_ticket_and_chief_launch_snapshots_are_nullable(tmp_path) -> None:
     for name in ("employee_launch_model", "employee_launch_reasoning_effort"):
         assert columns[name]["notnull"] == 0
         assert columns[name]["dflt_value"] is None
-    binding_columns = {
-        str(row["name"]): row
-        for row in conn.execute("PRAGMA table_info(conversation_session_bindings)")
-    }
-    for name in ("employee_launch_model", "employee_launch_reasoning_effort"):
-        assert binding_columns[name]["notnull"] == 0
-        assert binding_columns[name]["dflt_value"] is None
-
     with pytest.raises(sqlite3.IntegrityError, match="employee_backend"):
         conn.execute(
             "INSERT INTO tickets (id, title, worker_type, ceiling, fields, created_at, updated_at) "
@@ -794,8 +803,8 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(tm
     assert info["stage"]["dflt_value"] == "'needs_kickoff'"
     assert info["fields"]["notnull"] == 1
     assert info["fields"]["dflt_value"] is None
-    assert info["employee_session_id"]["notnull"] == 0
-    assert info["employee_session_id"]["dflt_value"] is None
+    assert info["conversation_id"]["notnull"] == 0
+    assert info["conversation_id"]["dflt_value"] is None
     assert "execution_route" not in info
     assert info["stage_ownership_overrides"]["notnull"] == 1
     assert info["stage_ownership_overrides"]["dflt_value"] == "'{}'"

@@ -51,7 +51,7 @@ for (const [name, source] of [
 // system spawns nothing until a message is sent, which is what the old deferInitialAttach
 // existed to avoid while a Ticket's configuration was still editable. The absence is
 // asserted so the removal carries its reason forward instead of being quietly re-added.
-assert.match(ticketRouteSource, /conversationId=\{detail\.employee_session_id\}/);
+assert.match(ticketRouteSource, /conversationId=\{detail\.conversation_id\}/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation`/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/reset`/);
 assert.doesNotMatch(ticketRouteSource, /deferInitialAttach/);

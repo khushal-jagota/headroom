@@ -233,7 +233,7 @@ class Ticket:  # §3.3 — column names match exactly
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]
     default_stage_ownership_mode: StageOwnershipMode | None
     effective_stage_ownership_mode: StageOwnershipMode | None
-    employee_session_id: str | None  # the Ticket's conversation link (column name is frozen)
+    conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields
     created_at: int
@@ -256,8 +256,8 @@ class EmployeeLaunchConfiguration:
 
 @dataclass(frozen=True)
 class EmployeeSessionIdTransition:
-    expected_employee_session_id: str | None
-    candidate_employee_session_id: str
+    expected_conversation_id: str | None
+    candidate_conversation_id: str
 
 
 @dataclass(frozen=True)
@@ -270,7 +270,7 @@ class EmployeeSessionHistoryMessage:
 @dataclass(frozen=True)
 class EmployeeSessionHistory:
     messages: tuple[EmployeeSessionHistoryMessage, ...]
-    employee_session_id: str | None
+    conversation_id: str | None
 
 
 @dataclass(frozen=True)

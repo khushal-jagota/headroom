@@ -65,7 +65,7 @@ class EventKind(StrEnum):
 
     # --- supplemental: durable ticket runtime/parking status ---
     ticket_status_changed = "ticket_status_changed"  # {ticket_status, optional error}
-    employee_session_changed = "employee_session_changed"  # {employee_session_id}
+    employee_session_changed = "employee_session_changed"  # {conversation_id}
     worker_settings_changed = "worker_settings_changed"  # Worker management settings changed
     ticket_conversation_projection_changed = "ticket_conversation_projection_changed"
 

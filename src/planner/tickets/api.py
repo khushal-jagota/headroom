@@ -149,7 +149,7 @@ async def reject_while_the_conversation_is_running(
     here and writing after is racy by nature; for one person driving one workspace that
     is the honest cost of keeping the writers pure database transactions.
     """
-    conversation_id = tickets_data.read_ticket(conn, ticket_id).employee_session_id
+    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
     if conversation_id is None:
         return
     if await conversation_system.is_running(conversation_id):
@@ -639,15 +639,15 @@ async def get_worker_self_ticket(
     (two tickets sharing one durable session) is rejected. Returns the same detail shape
     (`ticket_detail` + the worker specialist skill) the by-session route returns."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    if ticket.employee_session_id is not None:
-        owner = tickets_data.read_ticket_by_employee_session_id(conn, ticket.employee_session_id)
+    if ticket.conversation_id is not None:
+        owner = tickets_data.read_ticket_by_conversation_id(conn, ticket.conversation_id)
         if owner.id != ticket.id:
             raise PlannerError(
                 ErrorCode.validation,
                 "ticket durable session is owned by another ticket",
                 {
                     "ticket_id": ticket.id,
-                    "employee_session_id": ticket.employee_session_id,
+                    "conversation_id": ticket.conversation_id,
                     "owner_ticket_id": owner.id,
                 },
             )
@@ -964,7 +964,7 @@ async def start_ticket_conversation(
     require_direct_write(ctx)
     now = clk.now_unix()
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    if ticket.employee_session_id is None:
+    if ticket.conversation_id is None:
         await conversation_start.start_ticket_conversation(
             conversations,
             conn,

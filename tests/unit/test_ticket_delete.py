@@ -188,7 +188,7 @@ def test_delete_route_refuses_a_ticket_whose_conversation_is_running(tmp_path: P
         title_max_chars=TITLE_MAX_CHARS,
     )
     conn.execute(
-        "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+        "UPDATE tickets SET conversation_id = ? WHERE id = ?",
         ("conv-live", target.id),
     )
     conn.commit()

@@ -384,7 +384,7 @@ def _append_rows(server, conversation_id: str, *payloads: ConversationEventPaylo
 def _link_conversation(server, ticket_id: str, conversation_id: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
-            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             (conversation_id, ticket_id),
         )
 

@@ -141,7 +141,7 @@ def _ticket_from_bullet(
         stage=stage,
         priority=priority if priority is not None else Priority.P3,
         alias=alias,
-        employee_session_id=chat,
+        conversation_id=chat,
         body="\n".join(parts),
         success=success,
         approach=approach,

@@ -461,7 +461,7 @@ def test_employee_configuration_noop_after_freeze_emits_nothing(
         ("UPDATE tickets SET ticket_status = 'agent' WHERE id = ?", ()),
         ("UPDATE tickets SET ticket_status = 'user' WHERE id = ?", ()),
         ("UPDATE tickets SET ticket_status = 'errored' WHERE id = ?", ()),
-        ("UPDATE tickets SET employee_session_id = 'session-existing' WHERE id = ?", ()),
+        ("UPDATE tickets SET conversation_id = 'session-existing' WHERE id = ?", ()),
     ),
 )
 def test_employee_configuration_change_rejects_every_pristine_freeze_boundary(
@@ -497,7 +497,7 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_bo
     # conversation was started on, and there is no changing them after the fact.
     conn = connect(str(db_path))
     conn.execute(
-        "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+        "UPDATE tickets SET conversation_id = ? WHERE id = ?",
         (f"conversation-for-{ticket_id}", ticket_id),
     )
     conn.commit()

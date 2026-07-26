@@ -58,12 +58,17 @@ def test_fresh_schema_has_employee_correctness_without_legacy_chat_tables(
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             ).fetchall()
         }
-        assert "employee_step_runs" in tables
         assert {
             "chat_messages",
             "chat_turns",
             "chat_turn_activity_entries",
             "agent_chat_sessions",
+            # The conversation layer that came before this one left five tables behind.
+            "conversation_session_bindings",
+            "employee_conversations",
+            "employee_configuration_catalog_cache",
+            "employee_step_runs",
+            "ticket_conversation_projections",
         }.isdisjoint(tables)
         day_columns = {
             str(row["name"])

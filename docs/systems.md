@@ -148,7 +148,7 @@ boundary. In particular there is no read of which backend or model a conversatio
 because those are values a caller passed in rather than questions the contract answers.
 
 A conversation is identified by an id the caller owns. A Ticket stores its own in
-`tickets.employee_session_id`; the Chief stores its own in the `agents` table. The
+`tickets.conversation_id`; the Chief stores its own in the `agents` table. The
 backend process's own session id is an internal, rebindable detail of the conversation
 system and appears nowhere else.
 

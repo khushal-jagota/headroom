@@ -138,7 +138,7 @@ def _board(conn: Connection) -> dict:
 
 def _link_conversation(conn: Connection, ticket_id: str, conversation_id: str) -> None:
     conn.execute(
-        "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+        "UPDATE tickets SET conversation_id = ? WHERE id = ?",
         (conversation_id, ticket_id),
     )
 

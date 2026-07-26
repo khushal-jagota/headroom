@@ -78,7 +78,7 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             if ticket.effective_stage_ownership_mode is not None
             else None
         ),
-        "employee_session_id": ticket.employee_session_id,
+        "conversation_id": ticket.conversation_id,
         "alias": ticket.alias,
         "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
         "created_at": ticket.created_at,
@@ -201,7 +201,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
 
     Each card carries ``conversation_id``: the Ticket's conversation link, which under
     the new conversation system is the caller-owned conversation id stored in the
-    ``employee_session_id`` column. It is what the board route asks the conversation
+    ``conversation_id`` column. It is what the board route asks the conversation
     system about, and what the browser keys its reply watermark by.
 
     None of the three row signals is a database fact of the tickets domain, so none is
@@ -216,7 +216,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "sprint_items.project_id AS parent_project_id, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
         "tickets.employee_backend, "
-        "tickets.employee_session_id, "
+        "tickets.conversation_id, "
         "tickets.ticket_status, "
         "tickets.backend_error, "
         "tickets.created_at, tickets.updated_at FROM tickets "
@@ -289,7 +289,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
             "blocked": str(row["id"]) in blocked_target_ids,
             "conversation_id": (
-                str(row["employee_session_id"]) if row["employee_session_id"] is not None else None
+                str(row["conversation_id"]) if row["conversation_id"] is not None else None
             ),
         }
         sort_key = (

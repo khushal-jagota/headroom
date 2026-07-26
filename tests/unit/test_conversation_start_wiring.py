@@ -85,7 +85,7 @@ class _LinkWatchingConversationSystem:
         await self._system.start_conversation(request)
         self.link_when_the_conversation_existed = read_ticket(
             self._conn, self._ticket_id
-        ).employee_session_id
+        ).conversation_id
 
 
 def test_the_conversation_exists_before_the_ticket_points_at_it(
@@ -101,7 +101,7 @@ def test_the_conversation_exists_before_the_ticket_points_at_it(
 
         # The conversation already existed while the Ticket still pointed at nothing.
         assert watcher.link_when_the_conversation_existed is None
-        assert read_ticket(tmp_db, ticket.id).employee_session_id == conversation_id
+        assert read_ticket(tmp_db, ticket.id).conversation_id == conversation_id
         # And the id the Ticket now holds names a conversation that really takes text.
         assert isinstance(
             await system.send(conversation_id, "hello", sender_label="loop"),
@@ -123,7 +123,7 @@ def test_starting_writes_the_link_and_the_last_chosen_configuration(
 
         assert conversation_id.startswith(CONVERSATION_ID_PREFIX)
         started = read_ticket(tmp_db, ticket.id)
-        assert started.employee_session_id == conversation_id
+        assert started.conversation_id == conversation_id
         assert started.employee_backend == "claude"
         assert started.employee_launch_model == "opus"
         assert started.employee_launch_reasoning_effort == "high"
@@ -182,7 +182,7 @@ def test_a_send_carrying_a_change_records_it_once_the_delivery_started(
         assert after.employee_launch_model == "sonnet"
         assert after.employee_launch_reasoning_effort == "low"
         assert after.employee_backend == "claude"
-        assert after.employee_session_id is not None
+        assert after.conversation_id is not None
 
     asyncio.run(exercise())
 
@@ -311,7 +311,7 @@ class _RelinkingConversationSystem:
 
     def _relink(self) -> None:
         self._conn.execute(
-            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             (self._relink_to, self._ticket_id),
         )
         self._conn.commit()
@@ -376,7 +376,7 @@ def test_a_change_is_not_recorded_on_a_ticket_that_moved_to_another_conversation
         # conversation. Sonnet is true of the one that ran, not of the one it now names.
         assert isinstance(fate, PromptDeliveryStarted)
         after = read_ticket(tmp_db, ticket.id)
-        assert after.employee_session_id == "conv_elsewhere"
+        assert after.conversation_id == "conv_elsewhere"
         assert after.employee_launch_model == "opus"
         assert after.employee_launch_reasoning_effort == "high"
 
@@ -399,7 +399,7 @@ def test_resetting_does_not_unlink_a_conversation_it_did_not_kill(
         # The old conversation was silenced, and the link the Ticket had moved on to is
         # left alone: only what this call killed is what it may cut loose.
         assert await system.is_running(killed) is False
-        assert read_ticket(tmp_db, ticket.id).employee_session_id == "conv_newer"
+        assert read_ticket(tmp_db, ticket.id).conversation_id == "conv_newer"
 
     asyncio.run(exercise())
 
@@ -435,7 +435,7 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
         assert system.backend_cancellations(conversation_id) == 1
         assert await system.is_running(conversation_id) is False
         after = read_ticket(tmp_db, ticket.id)
-        assert after.employee_session_id is None
+        assert after.conversation_id is None
         # The last-chosen values stay: they are what the next conversation starts from.
         assert after.employee_backend == "claude"
         assert after.employee_launch_model == "opus"
@@ -471,7 +471,7 @@ def test_resetting_discards_a_message_the_conversation_was_holding(
         ]
         assert discarded == [("held work", "owner")]
         assert await system.is_running(conversation_id) is False
-        assert read_ticket(tmp_db, ticket.id).employee_session_id is None
+        assert read_ticket(tmp_db, ticket.id).conversation_id is None
 
     asyncio.run(exercise())
 

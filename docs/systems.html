@@ -828,7 +828,7 @@
               </p>
               <p>
                 A conversation is named by an id its caller owns. A Ticket keeps its own
-                in <code>tickets.employee_session_id</code> and the Chief keeps its own in
+                in <code>tickets.conversation_id</code> and the Chief keeps its own in
                 the <code>agents</code> table. The backend process&rsquo;s own session id
                 is internal and rebindable, and appears nowhere outside the system.
               </p>
@@ -1033,7 +1033,7 @@
             <div class="detail-body">
               <p>
                 A Ticket keeps the id of its conversation in
-                <code>tickets.employee_session_id</code>, and the Chief keeps its own in
+                <code>tickets.conversation_id</code>, and the Chief keeps its own in
                 the <code>agents</code> table. There is no separate table owning it and
                 nothing to keep in step: the id is a column on the row it belongs to. The
                 backend process&rsquo;s own session id is internal to the conversation

@@ -353,7 +353,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     conn = connect(str(db_path))
     try:
         conn.execute(
-            "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             ("conv-live", live_id),
         )
         conn.commit()
@@ -530,7 +530,7 @@ def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path)
         )
         assert ticket.ticket_status is TicketStatus.empty
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'paired', employee_session_id = ? "
+            "UPDATE tickets SET ticket_status = 'paired', conversation_id = ? "
             "WHERE id = ?",
             ("paired-session", ticket_id),
         )
@@ -548,7 +548,7 @@ def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path)
 
         assert reconciled.stage == "needs_success"
         assert reconciled.ticket_status is TicketStatus.paired
-        assert reconciled.employee_session_id == "paired-session"
+        assert reconciled.conversation_id == "paired-session"
     finally:
         conn.close()
 
