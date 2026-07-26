@@ -204,11 +204,13 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
         assert row["recap"] == ""
         assert row["deadline"] is None
 
-    # (6) the historical Chat ID is preserved byte-for-byte as the Employee session id.
-    assert (
-        tickets["ticket-20260611-export-format"]["conversation_id"] == "20260611_090000_abc123"
-    )
+    # (6) A historical Chat ID from the planning documents names nothing. The column holds
+    # the id of a conversation this system owns, and a Ticket carrying a made-up one could
+    # never be given a real conversation — the door that starts one only opens on a Ticket
+    # naming none. So the field is read and dropped, and every seeded Ticket arrives with
+    # no conversation.
     for alias in (
+        "ticket-20260611-export-format",
         "ticket-20260611-onboarding-survey",
         "ticket-20260611-release-branch",
         "ticket-20260611-import-pipeline",

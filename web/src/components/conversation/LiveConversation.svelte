@@ -60,7 +60,8 @@
     composerPlaceholder,
     emptyState,
     onStartConversation,
-    onNewConversation
+    onNewConversation,
+    onMessageAccepted
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
@@ -79,6 +80,10 @@
      *  the composer says so rather than swallowing what was typed. */
     onStartConversation?: () => Promise<string | null>;
     onNewConversation?: () => Promise<void>;
+    /** A message typed here reached the conversation — started, held, or steered into the
+     *  running turn. Not called for a refusal, which reached nothing. What that means is
+     *  the caller's business; this only says it happened. */
+    onMessageAccepted?: () => Promise<void>;
   } = $props();
 
   let view = $state<ConversationView | null>(null);
@@ -298,6 +303,9 @@
       // sitting there looking like a message something is answering.
       if (fate.fate === "queued") whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
       await refreshView();
+      // Told after the conversation took it, and never for a refusal: a message that
+      // reached nothing is not something a caller should act on.
+      await onMessageAccepted?.();
       return true;
     } catch (error) {
       errorNote = sentenceFor(error);

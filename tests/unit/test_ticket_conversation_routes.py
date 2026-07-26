@@ -26,6 +26,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.runtime.conversation_start import CONVERSATION_ID_PREFIX
 from planner.tickets import data as tickets_data
+from planner.tickets.contracts import NO_FURTHER, AtCap
 
 _AGENT = {"X-Plan-Actor": "agent"}
 _TITLE_MAX_CHARS = 200
@@ -173,3 +174,87 @@ def test_both_doors_are_human_only(tmp_path: Path) -> None:
     assert start.json()["error"]["code"] == "agent_forbidden", start.text
     assert reset.json()["error"]["code"] == "agent_forbidden", reset.text
     assert _conversation_id(db_path, ticket_id) is None
+
+
+# --- a person replying to the worker -------------------------------------------------------
+
+
+def _ticket_status(db_path: Path, ticket_id: str) -> str:
+    conn: Connection = connect(str(db_path))
+    try:
+        return str(tickets_data.read_ticket(conn, ticket_id).ticket_status)
+    finally:
+        conn.close()
+
+
+def _past_kickoff(db_path: Path, ticket_id: str) -> None:
+    """Accept the kickoff a new Ticket is parked on, leaving it with nothing waiting."""
+    conn: Connection = connect(str(db_path))
+    try:
+        tickets_data.accept_proposal(
+            conn,
+            ticket_id,
+            field="kickoff",
+            actor="human",
+            now=1,
+            next_ceiling=NO_FURTHER,
+            at_cap=AtCap.propose,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _park_on_a_proposal(db_path: Path, ticket_id: str) -> None:
+    _past_kickoff(db_path, ticket_id)
+    conn: Connection = connect(str(db_path))
+    try:
+        tickets_data.file_proposal(
+            conn, ticket_id, field="success", body="how we will know", actor="agent", now=1
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_replying_to_a_parked_proposal_moves_the_ticket_to_paired(tmp_path: Path) -> None:
+    """A Ticket waiting for its owner, answered rather than approved."""
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+    _park_on_a_proposal(db_path, ticket_id)
+    assert _ticket_status(db_path, ticket_id) == "awaiting_approval"
+
+    with TestClient(app) as client:
+        replied = client.post(f"/api/tickets/{ticket_id}/human-reply")
+
+    assert replied.status_code == 200, replied.text
+    assert replied.json()["ticket_status"] == "paired"
+    assert _ticket_status(db_path, ticket_id) == "paired"
+
+
+def test_replying_leaves_every_other_status_exactly_as_it_was(tmp_path: Path) -> None:
+    """The writer owns which statuses move, and this route reports every reply to it."""
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+    _past_kickoff(db_path, ticket_id)
+    assert _ticket_status(db_path, ticket_id) == "empty"
+
+    with TestClient(app) as client:
+        replied = client.post(f"/api/tickets/{ticket_id}/human-reply")
+
+    assert replied.status_code == 200, replied.text
+    assert replied.json()["ticket_status"] == "empty"
+    assert _ticket_status(db_path, ticket_id) == "empty"
+
+
+def test_only_a_person_can_say_they_replied(tmp_path: Path) -> None:
+    """The automatic loop sends into the same conversation; its prompts are not replies."""
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+    _park_on_a_proposal(db_path, ticket_id)
+
+    with TestClient(app) as client:
+        refused = client.post(f"/api/tickets/{ticket_id}/human-reply", headers=_AGENT)
+
+    assert refused.json()["error"]["code"] == "agent_forbidden", refused.text
+    assert _ticket_status(db_path, ticket_id) == "awaiting_approval"

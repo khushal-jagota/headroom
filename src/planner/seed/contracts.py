@@ -77,7 +77,6 @@ class ParsedTicket:  # workspace.md ticket
     stage: str
     priority: Priority
     alias: str | None = None  # "Ticket ID:"
-    conversation_id: str | None = None  # historical "Chat ID:"
     body: str = ""  # -> ticket fields.kickoff intake context
     success: str | None = None
     approach: str | None = None

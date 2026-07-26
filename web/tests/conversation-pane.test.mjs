@@ -133,6 +133,23 @@ assert.doesNotMatch(
 assert.match(binderSource, /turnStoppedWithoutAnEnding/);
 assert.match(binderSource, /\(\) => void refreshView\(\)/);
 
+// A message that reached the conversation is told to whoever mounted the binder, so a
+// caller holding more than a conversation can act on it. Only after it was taken: the
+// refusal path returns before this, because a message that reached nothing is not one
+// anybody should act on.
+assert.match(binderSource, /await onMessageAccepted\?\.\(\)/);
+const acceptedIsToldAt = binderSource.indexOf("await onMessageAccepted?.()");
+const refusalReturnsAt = binderSource.indexOf('if (fate.fate === "refused")');
+assert.ok(
+  refusalReturnsAt > -1 && refusalReturnsAt < acceptedIsToldAt,
+  "a refused send must return before anything is told the message was accepted"
+);
+assert.equal(
+  binderSource.split("onMessageAccepted?.()").length - 1,
+  1,
+  "there is one place a message is reported accepted, not several to keep in step"
+);
+
 // The route holds no conversation wiring of its own any more: one binder, two callers.
 for (const owned of ["createConversationStream", "openConversationTail", "sendPrompt"]) {
   assert.doesNotMatch(

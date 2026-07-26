@@ -665,6 +665,39 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
 
 
+@router.post("/tickets/{ticket_id}/human-reply")
+async def record_human_reply(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    """Record that a person has replied to this Ticket's worker.
+
+    A Ticket parked on a proposal is waiting for its owner. Replying to the worker is an
+    answer of a kind — the proposal is being discussed rather than approved — so the
+    Ticket moves to paired. Every other status is left exactly as it is. Which ones move
+    is the writer's rule and it stays there: this route reports the reply for every
+    status and lets the writer decide, because a caller that decides for a canonical
+    writer is one wrong caller away from a bad status.
+
+    The reply is reported by the screen a person typed on, after the conversation
+    accepted the message, because a reply that reached nothing is not a reply. That
+    screen is the one place that knows both halves — it holds a Ticket and the
+    conversation the Ticket names. The conversation system is told nothing about Tickets
+    and does not need to be.
+
+    Only a person can say this happened. The automatic loop sends into the same
+    conversation and its prompts are not replies, so this is a direct-write door and an
+    agent-claim request is refused at it rather than by convention.
+    """
+    require_direct_write(ctx)
+    now = clk.now_unix()
+    return tickets_views.ticket_json(
+        tickets_data.enter_paired_on_human_reply(conn, ticket_id, now=now), now
+    )
+
+
 @router.put("/tickets/{ticket_id}/employee-configuration")
 async def put_ticket_employee_configuration(
     ticket_id: str,

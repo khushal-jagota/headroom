@@ -80,6 +80,26 @@
       });
   });
 
+  /** Say that the person here has replied to this Ticket's worker.
+   *
+   * A Ticket parked on a proposal is waiting for its owner, and a reply is an answer of a
+   * kind: it moves to paired. The server owns which statuses move — this says only that a
+   * reply happened, and says it after the conversation took the message, because a reply
+   * that reached nothing is not a reply.
+   *
+   * This screen is the one place that knows both halves. The conversation system is told
+   * nothing about Tickets, and the send door it offers knows nothing about them either.
+   */
+  async function recordHumanReply(): Promise<void> {
+    try {
+      await mutateJson(`/api/tickets/${stableId}/human-reply`, { method: "POST" });
+    } catch (err) {
+      // The message itself got through. Failing to move the Ticket is worth saying and
+      // not worth taking the reply back for.
+      headerError = err;
+    }
+  }
+
   /** Start this Ticket's conversation, so the first message has somewhere to go.
    *
    * The readiness loop starts one when it has a step to send; this is what happens when a
@@ -485,6 +505,7 @@
           senderLabel="owner"
           onStartConversation={startTicketConversation}
           onNewConversation={resetTicketConversation}
+          onMessageAccepted={recordHumanReply}
         />
       </aside>
     </div>

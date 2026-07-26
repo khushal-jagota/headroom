@@ -1,5 +1,5 @@
 """Workspace ticket parser: only the ``## Tickets`` section yields tickets;
-Readiness/Ticket ID/Chat ID/Priority/Success/Approach/Body recognized, Mode
+Readiness/Ticket ID/Priority/Success/Approach/Body recognized, Chat ID and Mode
 dropped, Project + everything else reconstructed into the body. Pure."""
 
 from __future__ import annotations
@@ -93,7 +93,6 @@ def _ticket_from_bullet(
     worker_type: str,
 ) -> tuple[ParsedTicket | None, SkippedSection | None]:
     alias: str | None = None
-    chat: str | None = None
     stage = None
     priority: Priority | None = None
     success: str | None = None
@@ -106,8 +105,6 @@ def _ticket_from_bullet(
             label, value = matched
             if label == "Ticket ID":
                 alias = _field_value(child, value)
-            elif label == "Chat ID":
-                chat = _field_value(child, value)
             elif label == "Readiness":
                 stage = READINESS_MAP.get(value)
             elif label == "Priority":
@@ -141,7 +138,6 @@ def _ticket_from_bullet(
         stage=stage,
         priority=priority if priority is not None else Priority.P3,
         alias=alias,
-        conversation_id=chat,
         body="\n".join(parts),
         success=success,
         approach=approach,

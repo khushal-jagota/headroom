@@ -246,6 +246,13 @@ Review shows exactly the tickets whose status is `awaiting_approval` — nothing
 decides membership. So a ticket leaves Review the moment its status changes, whichever
 way that happens.
 
+Replying to the worker is one of those ways. A ticket parked on a proposal is waiting
+for you, and typing an answer into its conversation is an answer of a kind — the
+proposal is being discussed rather than approved — so the ticket moves to `paired` and
+leaves Review. It moves when the message has actually reached the conversation: a reply
+that got nowhere is not a reply. Only a person can do this. The automatic loop sends into
+the same conversation, and its prompts are not replies.
+
 The Review screen can also send a ticket back instead of accepting it, whatever field
 is currently gated. The human writes short guidance in the review card. Panels
 sends that guidance as the real next message into the Ticket's conversation, and only

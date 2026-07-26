@@ -294,9 +294,9 @@ def _import_tickets(
             "id, title, worker_type, employee_backend, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, default_stage_ownership_mode, "
-            "conversation_id, alias, fields, created_at, updated_at, "
+            "alias, fields, created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
                 ticket.title,
@@ -316,7 +316,6 @@ def _import_tickets(
                     if default_stage_ownership_mode is not None
                     else None
                 ),
-                ticket.conversation_id,
                 ticket.alias,
                 fields_codec.fields_to_json(fields),
                 now,

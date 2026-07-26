@@ -62,6 +62,11 @@ assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-config
 assert.match(ticketRouteSource, /mutateJson<TicketDetail>\(/);
 // Reading a reply is this browser's own business, so the screen tells no server about it.
 assert.doesNotMatch(ticketRouteSource, /acknowledge-completed-response/);
+// A Ticket parked on a proposal moves to paired when its owner replies. This screen is
+// the one place that knows both halves — the Ticket, and the conversation it names — so
+// it is the one that says a reply happened.
+assert.match(ticketRouteSource, /onMessageAccepted=\{recordHumanReply\}/);
+assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/human-reply/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
