@@ -21,7 +21,9 @@ One screen per part of the system:
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. One project selector narrows the roster by each ticket's effective project,
-  including **All projects** and **No project**. A ticket parented by a sprint item uses
+  including **All projects** and **No project**. It sits just below the Chief of Staff
+  entry and reads as a small header showing the active project; clicking it opens a
+  menu of the projects. A ticket parented by a sprint item uses
   that item's project; a standalone ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
   tickets into collapsible boxed **status buckets**, in a
