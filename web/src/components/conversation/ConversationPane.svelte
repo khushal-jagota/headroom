@@ -23,12 +23,22 @@
    * The thread also draws the messages this browser has sent that the record does not have
    * yet, after the rows and looking exactly like them. Each one goes the moment its row
    * arrives, so what replaces it is already in the place it was drawn in.
+   *
+   * A page that wants the conversation as a layer says how far open it is, and this is one
+   * conversation at three heights rather than three of anything: at rest the head and the
+   * thread give up their height and the rest bar says what happened last, and peeking and
+   * opening give it back. The same thread, the same composer, the same draft throughout —
+   * a move changes the height and nothing else, which is why what it costs the reader is
+   * their place in the thread and why that place is held over every move.
    */
   import { tick, untrack, type Snippet } from "svelte";
   import ConversationComposer from "./ConversationComposer.svelte";
+  import ConversationRestBar from "./ConversationRestBar.svelte";
   import ConversationTranscript from "./ConversationTranscript.svelte";
   import type { RunValues } from "../../lib/conversation/composer";
+  import type { ConversationState } from "../../lib/conversation/conversationState";
   import { outgoingMessageNote, type OutgoingMessage } from "../../lib/conversation/outgoing";
+  import { restLineFrom } from "../../lib/conversation/restLine";
   import { messageContentText } from "../../lib/conversation/wire";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
@@ -72,6 +82,7 @@
     connectionTrouble = false,
     composerPlaceholder = "Message the agent...",
     composerDisabled = false,
+    conversationState = $bindable(null),
     emptyState,
     onSend,
     onStop,
@@ -111,6 +122,10 @@
     connectionTrouble?: boolean;
     composerPlaceholder?: string;
     composerDisabled?: boolean;
+    /** How far open the conversation is, or null for a page that is not making a layer of
+     *  it — which fills its container exactly as it always has. The page sets what it
+     *  opens in; this writes back when the person moves it. */
+    conversationState?: ConversationState | null;
     emptyState?: Snippet;
     onSend: (text: string, mode: PromptDeliveryMode, picked: RunValues) => Promise<boolean>;
     onStop?: () => void;
@@ -121,6 +136,7 @@
     onNewConversation?: () => void;
   } = $props();
 
+  let paneElement = $state<HTMLDivElement | null>(null);
   let threadElement = $state<HTMLDivElement | null>(null);
   let reservedSpaceElement = $state<HTMLDivElement | null>(null);
   /** The room kept under a message you have just sent, for the answer to arrive into. */
@@ -143,6 +159,14 @@
   let settledMessageIds = new Set<string>();
   let readerDrivingUntilMilliseconds = 0;
   let readerPointerIsDown = false;
+  /** How far open the pane was last drawn, so a run of the effect below that is not a move
+   *  — the thread's binding arriving, say — corrects nothing. */
+  let stateOnScreen: ConversationState | null = null;
+  let stateHasBeenDrawn = false;
+  /** What the reader was looking at when the thread last gave up its height, kept for the
+   *  whole trip. There is nothing to hold on the way back out: the thread the way out
+   *  would measure has no height yet. */
+  let viewHeldAcrossTheMove: HeldView | null = null;
 
   let menuOpen = $state(false);
   let confirmArmed = $state(false);
@@ -155,6 +179,14 @@
     return null;
   });
 
+  // Only at rest is there a bar to put it in, and nowhere else does the line mean
+  // anything: peeked and opened have the turn head itself, six pixels away.
+  // An empty own label is a pane that calls nothing its own, which is what the transcript
+  // makes of a null one too.
+  let restLine = $derived(
+    conversationState === "rest" ? restLineFrom(rows, ownSenderLabel ?? "") : null
+  );
+
   function closeMenu(): void {
     menuOpen = false;
     confirmArmed = false;
@@ -162,13 +194,38 @@
 
   function onWindowPointerDown(event: PointerEvent): void {
     if (menuOpen && menuElement && !menuElement.contains(event.target as Node)) closeMenu();
+    theComposersInputWasPressed(event);
+  }
+
+  /** Pressing the input at rest opens the conversation a little.
+   *
+   * The composer is a child, and one that knows nothing about how far open this is —
+   * every page it draws on has the same box. So the press is read here, off the listener
+   * already watching the window for presses, and only when it landed on this pane's own
+   * input. It is the press rather than the focus because focus is not always a person:
+   * the composer puts the cursor back itself when a send gets nowhere, and nothing may
+   * move this that the person did not do.
+   */
+  function theComposersInputWasPressed(event: PointerEvent): void {
+    if (conversationState !== "rest") return;
+    const pressed = event.target;
+    if (!(pressed instanceof Element) || paneElement === null) return;
+    if (!paneElement.contains(pressed)) return;
+    if (pressed.closest("[data-conversation-input]") === null) return;
+    conversationState = "peeked";
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && menuOpen) {
+    if (event.key !== "Escape") return;
+    if (menuOpen) {
       closeMenu();
       menuButton?.focus();
+      return;
     }
+    // One press, one state back. Rest is as far back as it goes, and a conversation that
+    // is not a layer has no state to be moved.
+    if (conversationState === "opened") conversationState = "peeked";
+    else if (conversationState === "peeked") conversationState = "rest";
   }
 
   function confirmNewConversation(): void {
@@ -213,6 +270,19 @@
     };
     for (const child of thread.children) consider(child);
     return laidOut;
+  }
+
+  /** Whether the thread is on screen at all. At rest it is not: it keeps its rows and
+   *  gives up its height.
+   *
+   * Nothing here has anything to say about a thread with no height. There is no view to
+   * hold, no room to give back, and nothing for a message to settle into — every measure
+   * it would take reads zero and every correction it would make lands on an element the
+   * browser is not laying out. So it all stands down, and what was being held is still
+   * being held when the thread has a shape again.
+   */
+  function theThreadHasAShape(thread: HTMLDivElement): boolean {
+    return thread.clientHeight > 0;
   }
 
   function measureNewestLineBottom(thread: HTMLDivElement): number {
@@ -416,6 +486,7 @@
     const request = ++scrollRenderRequest;
     void tick().then(async () => {
       if (request !== scrollRenderRequest || !threadElement) return;
+      if (!theThreadHasAShape(threadElement)) return;
       newestLineBottomPixels = measureNewestLineBottom(threadElement);
       if (!settledOnOpening) {
         // Opening a conversation puts you at the end of it, wherever that is.
@@ -455,9 +526,34 @@
    */
   function theThreadIsADifferentShapeNow(): void {
     const thread = threadElement;
-    if (thread === null) return;
+    if (thread === null || !theThreadHasAShape(thread)) return;
+    // Nothing to put back: nobody was reading anything that moved, so whoever was
+    // following goes on following and whoever was not stays exactly where they are.
+    settleTheViewAfterAChangeOfShape(thread, null);
+  }
+
+  /** The thread is a different size than it was: work out where the reader belongs in it.
+   *
+   * The same three answers this file gives everywhere. A thread that has never had a shape
+   * has not been opened yet whatever its rows say, so the first shape it gets is what
+   * opening means — a conversation whose page starts it at rest has had rows all along and
+   * has still never been looked at. Otherwise the reader goes back to the line they were
+   * on, and following, which only ever moves forwards, gets the last word.
+   */
+  function settleTheViewAfterAChangeOfShape(
+    thread: HTMLDivElement,
+    held: HeldView | null
+  ): void {
     newestLineBottomPixels = measureNewestLineBottom(thread);
-    if (following) keepTheNewestLineInSight(thread);
+    if (!settledOnOpening) {
+      // Opening a conversation puts you at the end of it, wherever that is.
+      settledOnOpening = true;
+      following = true;
+      keepTheNewestLineInSight(thread);
+    } else {
+      if (held !== null) keepTheReaderWhereTheyWere(thread, held);
+      if (following) keepTheNewestLineInSight(thread);
+    }
     readTheThreadAgain(thread);
   }
 
@@ -467,6 +563,43 @@
     if (threadElement === null) return;
     // After the rewrapping the new size caused, not before it.
     void tick().then(theThreadIsADifferentShapeNow);
+  });
+
+  /** The person moved how far open the conversation is.
+   *
+   * A move is a change of height and nothing else — the same thread, the same composer,
+   * the same draft — so the only thing it can cost is the reader's place, and this is
+   * where that is paid for. Before the DOM, because after it the browser has already
+   * pulled the position to fit the new height and the line the reader was on may have no
+   * height left to measure from; and after the rows effect above, so that a move landing
+   * in the same breath as a row is the one that gets to say where the reader ends up.
+   *
+   * Rest is the state with no height at all. The way out of it has nothing of its own to
+   * hold, so the view taken on the way in is what it restores against.
+   */
+  $effect.pre(() => {
+    const wanted = conversationState;
+    const thread = threadElement;
+    if (thread === null) return;
+    untrack(() => {
+      const previous = stateOnScreen;
+      const isAMove = stateHasBeenDrawn && previous !== wanted;
+      stateOnScreen = wanted;
+      stateHasBeenDrawn = true;
+      if (!isAMove) return;
+      if (previous !== "rest") viewHeldAcrossTheMove = holdWhatTheReaderIsLookingAt(thread);
+      const held = viewHeldAcrossTheMove;
+      // Going to rest there is nothing to correct and nothing that could be corrected:
+      // what was just held is what the way back out will be measured against.
+      if (wanted === "rest") return;
+      viewHeldAcrossTheMove = null;
+      const request = ++scrollRenderRequest;
+      void tick().then(() => {
+        if (request !== scrollRenderRequest || threadElement === null) return;
+        if (!theThreadHasAShape(threadElement)) return;
+        settleTheViewAfterAChangeOfShape(threadElement, held);
+      });
+    });
   });
 
   function onThreadClick(): void {
@@ -491,7 +624,12 @@
   onpointercancel={() => (readerPointerIsDown = false)}
 />
 
-<div class="chat-panel" data-conversation-pane>
+<div
+  class="chat-panel"
+  data-conversation-pane
+  data-conversation-state={conversationState}
+  bind:this={paneElement}
+>
   <div class="chat-head">
     {#if connectionTrouble}
       <span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>
@@ -505,6 +643,27 @@
     <div class="chat-head-right">
       {#if workspaceFolder}
         <span class="chat-usage" data-conversation-workspace>{workspaceFolder}</span>
+      {/if}
+      <!-- The other way through the states, for the person who would rather press
+           something than press Escape. Only a layer has anywhere to go. -->
+      {#if conversationState === "peeked"}
+        <button
+          type="button"
+          class="chat-overflow-btn"
+          data-conversation-expand
+          aria-label="Open the conversation full height"
+          title="Open the conversation full height"
+          onclick={() => (conversationState = "opened")}
+        >⤢</button>
+      {:else if conversationState === "opened"}
+        <button
+          type="button"
+          class="chat-overflow-btn"
+          data-conversation-collapse
+          aria-label="Put the conversation back to a card"
+          title="Put the conversation back to a card"
+          onclick={() => (conversationState = "peeked")}
+        >⤡</button>
       {/if}
       <div class="chat-overflow" bind:this={menuElement}>
         <button
@@ -625,6 +784,13 @@
     {/if}
   </div>
 
+  <!-- At rest the one line above the composer is the whole of the conversation on screen,
+       so it is only ever here: peeked and opened have the turn head itself a few pixels
+       away, saying the same thing twice. -->
+  {#if conversationState === "rest"}
+    <ConversationRestBar line={restLine} />
+  {/if}
+
   <ConversationComposer
     {backendKey}
     {running}
@@ -652,6 +818,15 @@
   /* This pane corrects the reader's position itself when something above them changes
      height, so the browser must not correct it as well and double the move. */
   :global([data-conversation-thread]) { overflow-anchor: none; }
+  /* At rest the conversation is the composer and one line above it. The head and the
+     thread give up their height and keep everything else — their rows, their scroll, the
+     turn they are in the middle of — because this is the same conversation at a different
+     height and not a different conversation. The composer is not in here: it is the one
+     thing that never moves, and a draft in it survives every move by never being touched. */
+  :global([data-conversation-pane][data-conversation-state="rest"] .chat-head),
+  :global([data-conversation-pane][data-conversation-state="rest"] .chat-thread-shell) {
+    display: none;
+  }
   /* Room for an answer, held open under the message that asked for it. It is not content:
      it never shrinks to make room for content, and nothing ever scrolls to it. */
   .c2-reserved { flex: none; }

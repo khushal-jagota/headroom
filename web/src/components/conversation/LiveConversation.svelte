@@ -25,6 +25,7 @@
     type ConversationStream
   } from "../../lib/conversation/feed";
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
+  import type { ConversationState } from "../../lib/conversation/conversationState";
   import {
     mintOutgoingMessage,
     outgoingMessagesTheRecordHasNot,
@@ -57,6 +58,7 @@
     senderLabel = "owner",
     fallbackBackendKey = "codex",
     runningBackendKey = $bindable(),
+    conversationState = $bindable(null),
     composerPlaceholder,
     emptyState,
     onStartConversation,
@@ -74,6 +76,12 @@
     /** The backend this conversation is actually running on, read back out for a caller
      *  that says so in its own words. Only the started conversation's record knows it. */
     runningBackendKey?: ConversationBackendKey;
+    /** How far open the conversation is, for a page that wants it as a layer over itself;
+     *  null for one that does not, which is the conversation filling its container as it
+     *  always has. The page says what it opens in by initialising what it binds; the
+     *  conversation writes back when the person moves it. Nothing here reads it — it goes
+     *  straight through to the pane, which is where the state is drawn. */
+    conversationState?: ConversationState | null;
     composerPlaceholder?: string;
     emptyState?: Snippet;
     /** Start one and say what it is called. Absent means this caller cannot start one, and
@@ -450,6 +458,7 @@
   defaultModelId={backendSnapshot?.default_model_id ?? null}
   defaultReasoningEffort={backendSnapshot?.default_reasoning_effort ?? null}
   heldPromptCount={view?.held_prompt_count ?? 0}
+  bind:conversationState
   {fateNote}
   {errorNote}
   {connectionTrouble}
