@@ -463,8 +463,21 @@ try {
   // happened when the fold opens, is asserted in the browser pass below — an agent message
   // is drawn through MarkdownBlock, which this server-rendering harness cannot mount.
 
-  // A settled turn that did nothing says nothing at all.
-  assert.equal(drawn(TurnAnchor, { settled: true, toolCallCount: 0 }).trim(), "");
+  // A settled turn that folded nothing away still says how long it took, in the place it
+  // has held since the turn began — the head is one line all the way through, and one that
+  // removed itself on settling would move everything under it for nothing. There is simply
+  // nothing to open.
+  const nothingFolded = drawn(TurnAnchor, {
+    settled: true,
+    toolCallCount: 0,
+    durationSeconds: 3
+  });
+  assert.match(nothingFolded, /Worked for 3s/);
+  assert.doesNotMatch(nothingFolded, /data-conversation2-turn-fold/);
+
+  // A turn that stopped without an ending is the exception: no length anybody can claim,
+  // and its own row already says what happened.
+  assert.equal(drawn(TurnAnchor, { settled: true, stopped: true, toolCallCount: 0 }).trim(), "");
 
   // FINDING 8 — the plan reads as a count you can open, in the old strip's own vocabulary.
   const plan = [

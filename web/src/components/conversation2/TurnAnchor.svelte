@@ -9,8 +9,12 @@
    * While the turn runs it counts, honestly, from the moment the prompt landed: a reload
    * mid-turn shows the real elapsed time rather than starting again from zero. The dots
    * beside it say the model was alive recently; they never claim to track progress nobody
-   * can see, and a turn that stopped without an ending gets no head at all, because a dead
-   * process must not look like a live one.
+   * can see.
+   *
+   * It never removes itself. A turn that folded nothing away has nothing to open, but it
+   * still says how long it took, in the place it has occupied since the turn began — the
+   * head is the same line all the way through, and a line that disappears the instant a
+   * turn ends moves everything under it for no reason anybody reading could name.
    */
   import PlanStrip from "./PlanStrip.svelte";
   import {
@@ -71,9 +75,13 @@
   let countLabel = $derived(foldedWorkSentence(toolCallCount, foldedMessageCount));
   // A turn that only talked folds too: five paragraphs of commentary is exactly as long
   // to scroll past as five tool calls.
-  let foldVisible = $derived(settled && (toolCallCount > 0 || foldedMessageCount > 0));
-  // A settled turn that did nothing, and planned nothing, has nothing to report.
-  let visible = $derived(!settled || foldVisible || hasPlan);
+  let somethingBehindTheFold = $derived(toolCallCount > 0 || foldedMessageCount > 0);
+  let foldVisible = $derived(settled && somethingBehindTheFold);
+  // The head is there for every turn but one: a turn that stopped without an ending, with
+  // nothing behind it and no plan, has nothing it can honestly say. It still keeps its
+  // fold when it did work, because that work is behind the fold and this is the only way
+  // to reach it.
+  let visible = $derived(!settled || !stopped || foldVisible || hasPlan);
 
   $effect(() => {
     livenessPulse;
@@ -123,6 +131,19 @@
           <span class="c2-turn-count" data-conversation2-turn-count>{countLabel}</span>
         {/if}
       </button>
+    {:else if settled && !stopped}
+      <!-- Nothing was folded away, so there is nothing to open — but the head stays where
+           it has been since the turn began. It is the same line that was counting a moment
+           ago, and a line that removes itself the instant a turn ends moves everything
+           under it for no reason. The chevron keeps its width so the label sits where the
+           openable ones do.
+           A turn that stopped without an ending is the one exception: it has no length
+           anybody can claim, its own row already says what happened, and "Worked" over a
+           dead process would be the head telling a story nobody can stand behind. -->
+      <div class="c2-turn-fold c2-turn-settled" data-conversation2-turn-settled-head>
+        <span aria-hidden="true" class="c2-turn-chevron is-absent">›</span>
+        <span data-conversation2-turn-label>{foldLabel}</span>
+      </div>
     {:else if !settled}
       <div
         class="c2-alive"
@@ -194,6 +215,10 @@
     font-variant-numeric: tabular-nums;
   }
   .c2-turn-fold:hover { color: var(--text-muted); background: var(--surface-overlay); }
+  /* Same line, same place, nothing to open: it keeps the geometry and drops the affordance. */
+  .c2-turn-settled { cursor: default; }
+  .c2-turn-settled:hover { color: var(--text-faintest); background: transparent; }
+  .c2-turn-chevron.is-absent { visibility: hidden; }
   .c2-turn-count { color: var(--text-faintest); }
   .c2-turn-chevron {
     display: inline-block;
