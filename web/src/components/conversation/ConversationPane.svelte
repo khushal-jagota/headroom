@@ -187,6 +187,20 @@
     conversationState === "rest" ? restLineFrom(rows, ownSenderLabel ?? "") : null
   );
 
+  /** The one control through the states, and what it means where it is standing.
+   *
+   * Peeked has somewhere further to go and opened has somewhere to come back to; rest is
+   * reached by pressing the ticket or Escape, and a conversation that is not a layer has
+   * nowhere to be moved to at all.
+   */
+  let stateControl = $derived(
+    conversationState === "peeked"
+      ? { opensIt: true, glyph: "⤢", label: "Open the conversation full height" }
+      : conversationState === "opened"
+        ? { opensIt: false, glyph: "⤡", label: "Put the conversation back to a card" }
+        : null
+  );
+
   function closeMenu(): void {
     menuOpen = false;
     confirmArmed = false;
@@ -226,6 +240,12 @@
     // is not a layer has no state to be moved.
     if (conversationState === "opened") conversationState = "peeked";
     else if (conversationState === "peeked") conversationState = "rest";
+  }
+
+  /** The control was pressed: forward from peeked, back from opened. */
+  function moveThroughTheStates(): void {
+    if (conversationState === "peeked") conversationState = "opened";
+    else if (conversationState === "opened") conversationState = "peeked";
   }
 
   function confirmNewConversation(): void {
@@ -645,25 +665,21 @@
         <span class="chat-usage" data-conversation-workspace>{workspaceFolder}</span>
       {/if}
       <!-- The other way through the states, for the person who would rather press
-           something than press Escape. Only a layer has anywhere to go. -->
-      {#if conversationState === "peeked"}
+           something than press Escape. Only a layer has anywhere to go.
+           One control that changes what it means, and never two that replace each other:
+           a button that is destroyed on being pressed takes the keyboard down to the body
+           with it, and the person who pressed it is left nowhere. So it is the same
+           element throughout and only the words on it move. -->
+      {#if stateControl !== null}
         <button
           type="button"
           class="chat-overflow-btn"
-          data-conversation-expand
-          aria-label="Open the conversation full height"
-          title="Open the conversation full height"
-          onclick={() => (conversationState = "opened")}
-        >⤢</button>
-      {:else if conversationState === "opened"}
-        <button
-          type="button"
-          class="chat-overflow-btn"
-          data-conversation-collapse
-          aria-label="Put the conversation back to a card"
-          title="Put the conversation back to a card"
-          onclick={() => (conversationState = "peeked")}
-        >⤡</button>
+          data-conversation-expand={stateControl.opensIt ? true : undefined}
+          data-conversation-collapse={stateControl.opensIt ? undefined : true}
+          aria-label={stateControl.label}
+          title={stateControl.label}
+          onclick={moveThroughTheStates}
+        >{stateControl.glyph}</button>
       {/if}
       <div class="chat-overflow" bind:this={menuElement}>
         <button
