@@ -51,13 +51,37 @@ Not fear of losing anything. I was using a 61-second test run as a **search tool
 
 The change moved a type through 38 test files and I had no way to enumerate them. `mypy`
 in this repo checks `src/` and `tests/typing/`, so a broken test call site is invisible to
-every static gate — the only thing that would tell me where they were was running them. So
-I ran them, and the suite answered one class of breakage at a time because that is what a
-test run does: it stops at the first thing that is wrong and tells you about that.
+every static gate.
 
-`.venv/bin/mypy tests/` takes one second and would have listed all 350 at once. I never
-ran it. That single command, used once at step 5, would have replaced roughly twenty
-minutes with one lap. This is the largest single finding in this document.
+**I first wrote that the suite answered one class of breakage at a time "because that is
+what a test run does". That is wrong, and it is the most important correction in this
+document.** The transcript was measured afterwards:
+
+- Of 110 pytest calls, only 13 used `-x`. The other 97 ran without fail-fast, so pytest
+  collected everything and handed back the **complete** list of failures.
+- Of 104 test runs, 85 were piped through `tail` or `head`, showing only the last 25
+  lines. A further 48 were reduced to a count or a `grep`.
+- **Six runs out of 104 saw the actual output.**
+
+So the suite was telling me all 350 at once, every time. I truncated the answer before
+reading it, and then ran the suite again to discover what had been in the output I threw
+away. The loop was not the tool revealing one thing at a time; it was me asking the same
+question repeatedly and reading a quarter of the reply.
+
+The reflex is understandable and still wrong. Full pytest output is enormous and floods
+context, and `tail -25` is the standard defence against that. It is the wrong defence for a
+**failing** run, because the list of failures sits *above* the part `tail` keeps. Asking
+for failed test names only, with no tracebacks, is a handful of lines even for 350
+breakages — I ran exactly that shape a few times (`grep -E "^FAILED"`) and then capped it
+with `head -5`, which threw away the enumeration I had just correctly asked for.
+
+The first-order fix is therefore **read the answer you already have**. Ask a failing run
+for its failure list without tracebacks, and read all of it.
+
+`.venv/bin/mypy tests/` takes one second and would have listed all 350 call sites without
+running anything, which is faster and better still. That finding stands, but it is the
+second-order fix. It would have made a good loop cheaper; reading the output would have
+ended the loop.
 
 ## Why 75 narrow runs for 34 file changes
 
@@ -126,14 +150,23 @@ Being blunt, as asked.
 
 ## What I would do differently
 
-1. After any type change, run `mypy` over `tests/` before running a single test. One
-   second, all call sites at once.
-2. Never run a suite to *discover* breakage. Run it to *confirm* a piece of work.
-3. One check per piece of work, not per edit and not per file.
-4. Batch independent commands into one call. Six gates, one call.
-5. Treat a mechanical migration across many files as fan-out work by default. It is the
+1. **Read the whole answer a failing run gives.** Ask for the failure list without
+   tracebacks and read all of it. Never cap it with `head`. `tail` is a defence against a
+   passing run's volume and is the wrong tool for a failing one, because the failures are
+   above the part it keeps.
+2. After any type change, run `mypy` over `tests/` before running a single test. One
+   second, all call sites, nothing executed.
+3. Never run a suite to *discover* breakage. Run it to *confirm* a piece of work.
+4. One check per piece of work, not per edit and not per file.
+5. Batch independent commands into one call. Six gates, one call.
+6. Treat a mechanical migration across many files as fan-out work by default. It is the
    most parallel thing in any package like this and it contains no judgement to keep.
 
 ## The rule this changed
 
 A check now follows a piece of work — not a file, and not an edit.
+
+And the correction above is worth stating as its own rule, because it is the cheaper of
+the two: **a command you ran and truncated is a command you did not run.** Twenty-seven
+suite runs asked the right question ninety-seven times without fail-fast and read the
+answer six times.
