@@ -635,6 +635,86 @@ def test_every_fate_a_send_can_have_comes_back_tagged(harness: _Harness) -> None
     _run(exercise)
 
 
+def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harness) -> None:
+    """A browser draws its message the moment it is sent, so it has to know its own again.
+
+    A sent message becomes exactly one of three rows, and the id the sender minted is on
+    whichever one it becomes. The instant belongs to the delivery, so it rides the prompt.
+    """
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            delivered = await client.post(
+                "/api/conversation2/conversations/c/send",
+                json={
+                    "text": "first",
+                    "sender_label": "owner",
+                    "sender_message_id": "m-1",
+                    "sent_at_unix_milliseconds": 1_700_000_000_123,
+                },
+            )
+            assert delivered.json() == {"fate": "started"}
+
+            held = await client.post(
+                "/api/conversation2/conversations/c/send",
+                json={
+                    "text": "held",
+                    "sender_label": "owner",
+                    "sender_message_id": "m-2",
+                    "sent_at_unix_milliseconds": 1_700_000_000_456,
+                },
+            )
+            assert held.json() == {"fate": "queued", "queue_position": 1}
+
+            # The agent frees up, and the held message turns out not to be writable.
+            harness.backend("c").write_fails = True
+            await harness.complete_turn("c")
+
+            payloads = {
+                row["kind"]: row["payload"]
+                for row in (
+                    await client.get("/api/conversation2/conversations/c/events")
+                ).json()["events"]
+            }
+            assert payloads["prompt"] == {
+                "text": "first",
+                "sender_label": "owner",
+                "mode": "run_when_free",
+                "sender_message_id": "m-1",
+                "sent_at_unix_milliseconds": 1_700_000_000_123,
+            }
+            assert payloads["prompt_delivery_refused"] == {
+                "text": "held",
+                "sender_label": "owner",
+                "mode": "run_when_free",
+                "refusal_reason": "write_to_backend_failed",
+                "sender_message_id": "m-2",
+            }
+
+            await _start(client, "k")
+            await client.post(
+                "/api/conversation2/conversations/k/send",
+                json={"text": "running", "sender_label": "owner"},
+            )
+            await client.post(
+                "/api/conversation2/conversations/k/send",
+                json={"text": "never ran", "sender_label": "owner", "sender_message_id": "m-3"},
+            )
+            await client.post("/api/conversation2/conversations/k/kill")
+            await harness.settle()
+
+            assert [
+                row["payload"]
+                for row in (
+                    await client.get("/api/conversation2/conversations/k/events")
+                ).json()["events"]
+                if row["kind"] == "prompt_discarded"
+            ] == [{"text": "never ran", "sender_label": "owner", "sender_message_id": "m-3"}]
+
+    _run(exercise)
+
+
 def test_a_steer_carrying_a_change_is_a_caller_error(harness: _Harness) -> None:
     async def exercise() -> None:
         async with harness.client() as client:

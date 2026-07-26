@@ -8,7 +8,12 @@
    * can push the rest of the conversation off the screen.
    */
   import { stepIconPaths } from "../../lib/acp/stepIcons";
-  import { readableDetail, toolGlyphKind } from "../../lib/conversation2/transcript";
+  import {
+    lineShowsWholeDetail,
+    readableDetail,
+    toolCallLine,
+    toolGlyphKind
+  } from "../../lib/conversation2/transcript";
   import type { ToolCallRow } from "../../lib/conversation2/transcript";
 
   let { row }: { row: ToolCallRow } = $props();
@@ -17,13 +22,11 @@
 
   let glyph = $derived(toolGlyphKind(row.toolKind));
   let iconPaths = $derived(stepIconPaths(glyph as never));
+  // What happened, and which call it was. Both are read out of what the row already
+  // holds, so a conversation recorded before this existed reads the same way.
+  let line = $derived(toolCallLine(row));
   let detail = $derived(readableDetail(row.progress ?? row.detail));
-  // A one-line detail is the summary itself — the command that ran, the path that was
-  // read — so it is shown beside the title rather than hidden behind it.
-  let summary = $derived(
-    detail !== null && !detail.includes("\n") && detail.length <= 120 ? detail : null
-  );
-  let expandable = $derived(detail !== null && summary === null);
+  let expandable = $derived(detail !== null && !lineShowsWholeDetail(line, detail));
   let regionId = $derived(`c2-tool-${row.toolCallId}`);
 </script>
 
@@ -33,9 +36,9 @@
       {#each iconPaths as path}<path d={path} />{/each}
     </svg>
   </span>
-  <span class="acp-step-title">{row.title}</span>
-  {#if summary}
-    <span class="c2-tool-summary" data-conversation2-tool-summary>{summary}</span>
+  <span class="acp-step-title">{line.title}</span>
+  {#if line.summary}
+    <span class="c2-tool-summary" data-conversation2-tool-summary>{line.summary}</span>
   {/if}
   {#if row.status === "completed"}
     <span class="acp-step-mark acp-mark-ok" role="img" aria-label="Completed">✓</span>

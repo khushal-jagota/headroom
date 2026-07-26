@@ -158,12 +158,19 @@ class _RunningTurn:
 
 @dataclass(frozen=True, slots=True)
 class _HeldPrompt:
-    """A message waiting for the agent to free up, with the change it carries."""
+    """A message waiting for the agent to free up, with the change it carries.
+
+    The sender's own id and send instant wait here with it: a held message is delivered,
+    refused or discarded long after the caller has gone, and whichever row it becomes has
+    to carry the same id the sender minted.
+    """
 
     text: str
     sender_label: str
     model_change: str | None
     reasoning_effort_change: str | None
+    sender_message_id: str | None
+    sent_at_unix_milliseconds: int | None
 
 
 type _BackendEventHandler = Callable[[], Coroutine[Any, Any, None]]
@@ -260,7 +267,16 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
+        """Send text in. See the contract; the two sender-minted fields are extra.
+
+        ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own facts
+        about this message and are stored on its row exactly as they were given. A sender
+        that mints neither — every caller inside Panels today — leaves both absent and
+        nothing about its rows changes.
+        """
         if mode is PromptDeliveryMode.steer and (
             model_change is not None or reasoning_effort_change is not None
         ):
@@ -277,13 +293,27 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
 
         if mode is PromptDeliveryMode.steer:
-            return await self._steer(state, text, sender_label)
+            return await self._steer(
+                state, text, sender_label, sender_message_id, sent_at_unix_milliseconds
+            )
         if mode is PromptDeliveryMode.send_now:
             return await self._send_now(
-                state, text, sender_label, model_change, reasoning_effort_change
+                state,
+                text,
+                sender_label,
+                model_change,
+                reasoning_effort_change,
+                sender_message_id,
+                sent_at_unix_milliseconds,
             )
         return await self._run_when_free(
-            state, text, sender_label, model_change, reasoning_effort_change
+            state,
+            text,
+            sender_label,
+            model_change,
+            reasoning_effort_change,
+            sender_message_id,
+            sent_at_unix_milliseconds,
         )
 
     async def interrupt(self, conversation_id: str) -> None:
@@ -478,6 +508,8 @@ class SqliteProcessConversationSystem:
         sender_label: str,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        sender_message_id: str | None,
+        sent_at_unix_milliseconds: int | None,
     ) -> PromptDeliveryFate:
         async with state.lock:
             # Held if anything at all is going on, and held if anything is already
@@ -489,6 +521,8 @@ class SqliteProcessConversationSystem:
                         sender_label=sender_label,
                         model_change=model_change,
                         reasoning_effort_change=reasoning_effort_change,
+                        sender_message_id=sender_message_id,
+                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     )
                 )
                 return PromptDeliveryQueued(queue_position=len(state.held_prompts))
@@ -502,6 +536,8 @@ class SqliteProcessConversationSystem:
             mode=PromptDeliveryMode.run_when_free,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
 
     async def _send_now(
@@ -511,6 +547,8 @@ class SqliteProcessConversationSystem:
         sender_label: str,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        sender_message_id: str | None,
+        sent_at_unix_milliseconds: int | None,
     ) -> PromptDeliveryFate:
         await self._acquire_settled(state)
         try:
@@ -536,10 +574,17 @@ class SqliteProcessConversationSystem:
             mode=PromptDeliveryMode.send_now,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
 
     async def _steer(
-        self, state: _ConversationState, text: str, sender_label: str
+        self,
+        state: _ConversationState,
+        text: str,
+        sender_label: str,
+        sender_message_id: str | None,
+        sent_at_unix_milliseconds: int | None,
     ) -> PromptDeliveryFate:
         # Whether a backend can steer is a fact about the backend, settled before any
         # child is touched: a steer at codex or claude spawns nothing.
@@ -572,7 +617,11 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 PromptEventPayload(
-                    text=text, sender_label=sender_label, mode=PromptDeliveryMode.steer
+                    text=text,
+                    sender_label=sender_label,
+                    mode=PromptDeliveryMode.steer,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 ),
             )
         return PromptDeliveryInjected()
@@ -589,6 +638,8 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        sender_message_id: str | None,
+        sent_at_unix_milliseconds: int | None,
     ) -> PromptDeliveryFate:
         try:
             refusal = await self._deliver_prompt(
@@ -609,6 +660,8 @@ class SqliteProcessConversationSystem:
                 mode=mode,
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 record_refusal=False,
                 phase_when_not_started=_ConversationPhase.idle,
             )
@@ -734,6 +787,8 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
+        sender_message_id: str | None,
+        sent_at_unix_milliseconds: int | None,
         record_refusal: bool,
         phase_when_not_started: _ConversationPhase,
     ) -> bool:
@@ -753,6 +808,7 @@ class SqliteProcessConversationSystem:
                                 sender_label=sender_label,
                                 mode=mode,
                                 refusal_reason=refusal,
+                                sender_message_id=sender_message_id,
                             ),
                         )
                     self._set_phase(state, phase_when_not_started)
@@ -775,7 +831,11 @@ class SqliteProcessConversationSystem:
                 written = await self._store.append_delivered_prompt(
                     state.record.conversation_id,
                     prompt=PromptEventPayload(
-                        text=text, sender_label=sender_label, mode=mode
+                        text=text,
+                        sender_label=sender_label,
+                        mode=mode,
+                        sender_message_id=sender_message_id,
+                        sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                     ),
                     model_change=carried_change,
                 )
@@ -839,6 +899,8 @@ class SqliteProcessConversationSystem:
                     mode=PromptDeliveryMode.run_when_free,
                     model_change=held.model_change,
                     reasoning_effort_change=held.reasoning_effort_change,
+                    sender_message_id=held.sender_message_id,
+                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                     record_refusal=True,
                     phase_when_not_started=_ConversationPhase.draining,
                 )
@@ -861,7 +923,9 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 PromptDiscardedEventPayload(
-                    text=discarded.text, sender_label=discarded.sender_label
+                    text=discarded.text,
+                    sender_label=discarded.sender_label,
+                    sender_message_id=discarded.sender_message_id,
                 ),
             )
 

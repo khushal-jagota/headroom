@@ -230,7 +230,8 @@ try {
         createdAt: 1_000,
         text: "go",
         senderLabel: "the automatic loop",
-        mode: "steer"
+        mode: "steer",
+        sentAtUnixMilliseconds: 1_000_000
       },
       {
         key: "e2",
@@ -283,7 +284,8 @@ try {
           createdAt: 1_000,
           text: "go",
           senderLabel,
-          mode: "run_when_free"
+          mode: "run_when_free",
+          sentAtUnixMilliseconds: 1_000_000
         }
       ]
     });
@@ -315,6 +317,7 @@ try {
       title: `Tool ${index}`,
       toolKind: "read",
       detail,
+      startedDetail: null,
       status,
       progress: null
     };
@@ -346,6 +349,23 @@ try {
     drawn(TurnAnchor, { settled: true, toolCallCount: 2, durationSeconds: 80, expanded: true }),
     /2 tool calls/
   );
+  // The fold holds the turn's commentary too, so the label counts that as well.
+  assert.match(
+    drawn(TurnAnchor, {
+      settled: true,
+      toolCallCount: 2,
+      foldedMessageCount: 3,
+      durationSeconds: 80,
+      expanded: true
+    }),
+    /2 tool calls · 3 messages/
+  );
+  // And a turn that only ever talked folds like any other: five paragraphs are exactly as
+  // long to scroll past as five tool calls.
+  assert.match(
+    drawn(TurnAnchor, { settled: true, toolCallCount: 0, foldedMessageCount: 3, durationSeconds: 9 }),
+    /data-conversation2-turn-fold/
+  );
   const hiddenRun = drawn(WorkGroup, { entries: [toolRow(1)], hidden: true });
   assert.equal(hiddenRun.trim(), "", "a settled run draws nothing until its turn is opened");
 
@@ -361,10 +381,28 @@ try {
   assert.match(withSummary, /data-conversation2-tool-summary/);
   assert.match(withSummary, /ls -la \/tmp/, "a one-line detail is the summary itself");
 
+  // A claude row: the backend titles it with the tool's name and hands over the call's
+  // arguments as one JSON object, which is why this row used to read "Bash" and nothing
+  // else. It now says what happened and which call it was.
+  const claudeCall = drawn(WorkGroup, {
+    entries: [
+      {
+        ...toolRow(1, "completed", "total 0\ndrwxr-xr-x  12 khushaljagota  staff  384 ."),
+        title: "Bash",
+        toolKind: "Bash",
+        startedDetail: '{"command": "ls -la /tmp", "description": "List the temp directory"}'
+      }
+    ]
+  });
+  assert.match(claudeCall, /Ran/);
+  assert.match(claudeCall, /ls -la \/tmp/);
+  assert.doesNotMatch(claudeCall, /Bash/, "the tool's name was never the point");
+  assert.doesNotMatch(claudeCall, /drwxr-xr-x/, "and what it gave back is still behind it");
+
   // FINDING 7 — a running turn has one mark that says the model is alive, from the moment
   // it starts. It is there before there is any work to put under it, which is the whole
   // point: the wait before the first tool call is the silence it exists to fill.
-  const bareRunning = drawn(TurnAnchor, { startedAt: Math.floor(Date.now() / 1000) });
+  const bareRunning = drawn(TurnAnchor, { startedAtUnixMilliseconds: Date.now() });
   assert.match(bareRunning, /data-conversation2-alive/);
   assert.match(bareRunning, /Working/, "it counts from the moment the prompt landed");
   assert.match(bareRunning, /c2-alive-dots/, "three dots, as T3 has");
@@ -412,13 +450,18 @@ try {
         createdAt: 1_000,
         text: "go",
         senderLabel: "owner",
-        mode: "run_when_free"
+        mode: "run_when_free",
+        sentAtUnixMilliseconds: 1_000_000
       },
       { key: "turn-stopped", kind: "turn_stopped", sequence: 2, createdAt: 1_005 }
     ]
   });
   assert.doesNotMatch(stoppedTurnThread, /data-conversation2-alive/);
   assert.match(stoppedTurnThread, /turn stopped without an ending/);
+
+  // A settled turn's commentary going behind its fold, and coming back in the place it
+  // happened when the fold opens, is asserted in the browser pass below — an agent message
+  // is drawn through MarkdownBlock, which this server-rendering harness cannot mount.
 
   // A settled turn that did nothing says nothing at all.
   assert.equal(drawn(TurnAnchor, { settled: true, toolCallCount: 0 }).trim(), "");
@@ -792,6 +835,7 @@ try {
       title: "Tool " + index,
       toolKind: "read",
       detail,
+      startedDetail: null,
       status: "completed" as const,
       progress: null
     };
@@ -805,11 +849,26 @@ try {
       createdAt: 1000,
       text: "go",
       senderLabel: "owner",
-      mode: "run_when_free" as const
+      mode: "run_when_free" as const,
+      sentAtUnixMilliseconds: 1_000_000
+    },
+    {
+      key: "sa1",
+      kind: "agent_message" as const,
+      sequence: 15,
+      createdAt: 1001,
+      text: "commentary on the way"
     },
     toolRow(2, "first output line\\nsecond output line"),
     toolRow(3, null),
     toolRow(4, null),
+    {
+      key: "sa2",
+      kind: "agent_message" as const,
+      sequence: 16,
+      createdAt: 1011,
+      text: "the answer itself"
+    },
     {
       key: "e9",
       kind: "turn_ended" as const,
@@ -824,11 +883,15 @@ try {
     {
       key: "rp1",
       kind: "prompt" as const,
-      sequence: 1,
-      createdAt: Math.floor(Date.now() / 1000),
+      // An hour apart on purpose, and only one of them can be what the counter counts
+      // from. The row was written an hour ago; the person pressed send a moment ago. A
+      // counter anchored to the row would say an hour, so what it says settles which of
+      // the two it is using.
+      createdAt: Math.floor(Date.now() / 1000) - 3600,
       text: "go",
       senderLabel: "owner",
-      mode: "run_when_free" as const
+      mode: "run_when_free" as const,
+      sentAtUnixMilliseconds: Date.now() - 400
     },
     { ...toolRow(21, null), key: "r21", toolCallId: "r21", title: "Batch one A" },
     { ...toolRow(22, null), key: "r22", toolCallId: "r22", title: "Batch one B" },
@@ -933,6 +996,7 @@ mount(Host, { target: document.getElementById("app")! });
 
   const browserScript = `
 from playwright.sync_api import sync_playwright
+import re
 import sys
 
 with sync_playwright() as playwright:
@@ -1023,6 +1087,12 @@ with sync_playwright() as playwright:
     settled_thread = page.locator("[data-conversation2-transcript]").first
     assert settled_thread.locator("[data-conversation2-tool]").count() == 0
 
+    # The turn's commentary is behind the same fold, and its answer is not. A settled turn
+    # reads as one paragraph, not as everything it said on the way to one.
+    settled_text = settled_thread.inner_text()
+    assert "commentary on the way" not in settled_text, settled_text
+    assert "the answer itself" in settled_text, settled_text
+
     # Opening the turn brings its run back, still showing only its newest entry — the
     # turn's fold and the run's own count are two different questions.
     fold.click()
@@ -1031,8 +1101,17 @@ with sync_playwright() as playwright:
         "document.querySelector('[data-conversation2-transcript]')"
         ".querySelectorAll('[data-conversation2-tool]').length === 1"
     )
-    assert page.locator("[data-conversation2-turn-count]").first.inner_text() == "3 tool calls"
+    assert page.locator("[data-conversation2-turn-count]").first.inner_text() == (
+        "3 tool calls · 1 message"
+    )
     assert settled.locator(".acp-step-title").all_inner_texts() == ["Tool 4"]
+
+    # And the commentary comes back where it happened: after the person's message and
+    # before the run of tool calls it sat before, rather than gathered up at the end.
+    opened = settled.inner_text()
+    assert "commentary on the way" in opened, opened
+    assert opened.index("go") < opened.index("commentary on the way") < opened.index("Tool 4"), opened
+    assert opened.index("commentary on the way") < opened.index("the answer itself"), opened
 
     settled.locator("[data-conversation2-work-fold]").click()
     page.wait_for_function(
@@ -1057,7 +1136,9 @@ with sync_playwright() as playwright:
     running = page.locator("[data-running-thread]")
     alive = running.locator("[data-conversation2-alive]")
     assert alive.count() == 1
-    assert alive.inner_text().startswith("Working for"), alive.inner_text()
+    # Seconds, not the hour ago the row was written: the counter is anchored to the instant
+    # the person pressed send. Any number of seconds passes, a minute would not.
+    assert re.fullmatch(r"Working for \\d{1,2}s", alive.inner_text()), alive.inner_text()
 
     # FINDING 10 — two batches, each showing only its newest entry, expanded separately.
     groups = running.locator("[data-conversation2-work-group]")

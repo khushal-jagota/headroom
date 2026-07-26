@@ -3,7 +3,8 @@
    *
    * It appears the moment the turn starts, before there is anything to put under it —
    * the wait before the first tool call is exactly the silence it exists to fill — and it
-   * is still there when the turn is over, as the fold across everything the turn did.
+   * is still there when the turn is over, as the fold across everything the turn did: its
+   * tool calls, and everything it said on the way to the answer it left standing.
    *
    * While the turn runs it counts, honestly, from the moment the prompt landed: a reload
    * mid-turn shows the real elapsed time rather than starting again from zero. The dots
@@ -12,7 +13,13 @@
    * process must not look like a live one.
    */
   import PlanStrip from "./PlanStrip.svelte";
-  import { turnFoldLabel, workingSentence } from "../../lib/conversation2/transcript";
+  import {
+    elapsedSecondsSince,
+    foldedWorkSentence,
+    millisecondsUntilNextSecond,
+    turnFoldLabel,
+    workingSentence
+  } from "../../lib/conversation2/transcript";
   import type { ConversationTurnEnding, PlanEntry } from "../../lib/conversation2/wire";
 
   /** How long a sign of life is still recent. Long enough to ride out the gaps between
@@ -23,11 +30,12 @@
     settled = false,
     stopped = false,
     plan = null,
-    startedAt = null,
+    startedAtUnixMilliseconds = null,
     ending = null,
     isLatest = false,
     durationSeconds = null,
     toolCallCount = 0,
+    foldedMessageCount = 0,
     expanded = false,
     livenessPulse = 0,
     onToggle
@@ -36,12 +44,16 @@
     stopped?: boolean;
     /** The plan as it stands, when this head is the one holding the newest. */
     plan?: readonly PlanEntry[] | null;
-    /** When the turn began, in whole unix seconds, so a reload counts from the truth. */
-    startedAt?: number | null;
+    /** When the turn began, in unix milliseconds, so a reload counts from the truth and
+     *  the count turns over on that instant's own seconds. */
+    startedAtUnixMilliseconds?: number | null;
     ending?: ConversationTurnEnding | null;
     isLatest?: boolean;
     durationSeconds?: number | null;
     toolCallCount?: number;
+    /** How much of what the turn said is behind this fold. Everything the turn said but
+     *  the last of it, once the turn has settled. */
+    foldedMessageCount?: number;
     /** Whether this turn's work is showing. The turn owns it, not the individual runs. */
     expanded?: boolean;
     /** Moves whenever a live frame arrives. Only its movement is read. */
@@ -56,8 +68,10 @@
 
   let hasPlan = $derived(plan !== null && plan.length > 0);
   let foldLabel = $derived(turnFoldLabel({ durationSeconds, ending, isLatest }));
-  let countLabel = $derived(`${toolCallCount} tool call${toolCallCount === 1 ? "" : "s"}`);
-  let foldVisible = $derived(settled && toolCallCount > 0);
+  let countLabel = $derived(foldedWorkSentence(toolCallCount, foldedMessageCount));
+  // A turn that only talked folds too: five paragraphs of commentary is exactly as long
+  // to scroll past as five tool calls.
+  let foldVisible = $derived(settled && (toolCallCount > 0 || foldedMessageCount > 0));
   // A settled turn that did nothing, and planned nothing, has nothing to report.
   let visible = $derived(!settled || foldVisible || hasPlan);
 
@@ -69,17 +83,21 @@
   });
 
   $effect(() => {
-    if (settled || startedAt === null) {
+    if (settled || startedAtUnixMilliseconds === null) {
       elapsedSeconds = null;
       return;
     }
-    const begun = startedAt;
+    const begun = startedAtUnixMilliseconds;
+    let waiting: ReturnType<typeof setTimeout> | undefined;
+    // Each tick is aimed at the next whole second since the turn began, and the number is
+    // worked out from that instant every time — so nothing drifts and nothing accumulates.
     const tick = (): void => {
-      elapsedSeconds = Math.max(0, Math.floor(Date.now() / 1000) - begun);
+      const now = Date.now();
+      elapsedSeconds = elapsedSecondsSince(begun, now);
+      waiting = setTimeout(tick, millisecondsUntilNextSecond(begun, now));
     };
     tick();
-    const ticking = setInterval(tick, 1_000);
-    return () => clearInterval(ticking);
+    return () => clearTimeout(waiting);
   });
 </script>
 

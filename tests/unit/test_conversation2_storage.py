@@ -143,6 +143,67 @@ def test_the_stored_text_is_canonical() -> None:
     assert stored == '{"mode":"send_now","sender_label":"owner","text":"日本語"}'
 
 
+def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
+    """The sender's id and instant are kept as given, and survive the round trip."""
+    minted = PromptEventPayload(
+        text="go",
+        sender_label="owner",
+        mode=PromptDeliveryMode.run_when_free,
+        sender_message_id="m-1",
+        sent_at_unix_milliseconds=1_700_000_000_123,
+    )
+
+    stored = conversation_event_payload_to_canonical_json(minted)
+
+    assert stored == (
+        '{"mode":"run_when_free","sender_label":"owner","sender_message_id":"m-1",'
+        '"sent_at_unix_milliseconds":1700000000123,"text":"go"}'
+    )
+    assert (
+        conversation_event_payload_from_canonical_json(ConversationEventKind.prompt, stored)
+        == minted
+    )
+
+
+def test_a_sender_that_minted_nothing_writes_what_it_always_wrote() -> None:
+    """Absent is absent: no key, no null, and the rows already recorded still read."""
+    assert conversation_event_payload_to_canonical_json(A_PROMPT) == (
+        '{"mode":"run_when_free","sender_label":"owner","text":"hello"}'
+    )
+    assert conversation_event_payload_from_canonical_json(
+        ConversationEventKind.prompt,
+        '{"mode":"run_when_free","sender_label":"owner","text":"hello"}',
+    ) == A_PROMPT
+
+
+def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
+    """Delivered, refused, discarded — a sender must recognise its own in all three."""
+    for payload in (
+        PromptEventPayload(
+            text="go",
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+            sender_message_id="m-1",
+        ),
+        PromptDeliveryRefusedEventPayload(
+            text="go",
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+            refusal_reason=PromptDeliveryRefusalReason.backend_did_not_start,
+            sender_message_id="m-1",
+        ),
+        PromptDiscardedEventPayload(text="go", sender_label="owner", sender_message_id="m-1"),
+    ):
+        stored = conversation_event_payload_to_canonical_json(payload)
+        assert '"sender_message_id":"m-1"' in stored
+        assert (
+            conversation_event_payload_from_canonical_json(
+                conversation_event_payload_kind(payload), stored
+            )
+            == payload
+        )
+
+
 # --- the conversation row ----------------------------------------------------------------
 
 

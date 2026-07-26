@@ -39,6 +39,17 @@
   // Opening a turn opens every run inside it, so there is one place to open a turn
   // rather than one per batch of tool calls in it.
   let expandedTurns = $state<Record<string, boolean>>({});
+  // A settled turn reads as one paragraph you can open. Everything it said on the way to
+  // that paragraph is dropped from the thread until its fold is opened, and comes back in
+  // the place it happened rather than gathered up at the end.
+  let shown = $derived(
+    items.filter(
+      (item) =>
+        item.kind !== "row" ||
+        item.behindTheFoldOf === null ||
+        expandedTurns[item.behindTheFoldOf] === true
+    )
+  );
 
   function toggleTurn(turnKey: string): void {
     expandedTurns = { ...expandedTurns, [turnKey]: expandedTurns[turnKey] !== true };
@@ -64,17 +75,18 @@
 </script>
 
 <div class="c2-transcript" data-conversation2-transcript>
-  {#each items as item (item.key)}
+  {#each shown as item (item.key)}
     {#if item.kind === "turn"}
       <TurnAnchor
         settled={item.settled}
         stopped={item.stopped}
         plan={item.plan}
-        startedAt={item.startedAt}
+        startedAtUnixMilliseconds={item.startedAtUnixMilliseconds}
         ending={item.ending}
         isLatest={item.isLatest}
         durationSeconds={item.durationSeconds}
         toolCallCount={item.toolCallCount}
+        foldedMessageCount={item.foldedMessageCount}
         expanded={expandedTurns[item.turnKey] === true}
         {livenessPulse}
         onToggle={() => toggleTurn(item.turnKey)}

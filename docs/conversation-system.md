@@ -25,10 +25,11 @@ that layer when the swap is ruled.
 
 Every conversation owns an append-only run of numbered rows in the database —
 its notebook. A row is a finished thing: a prompt that was actually delivered
-(who sent it and how), a completed agent message, a tool call starting, a tool
-call finishing, a permission ask, its answer, a model change, a discarded held
-message, a turn ending (completed, failed, or interrupted). Rows are written
-once and never edited. Streaming output (the text growing word by word) is live
+(who sent it, how, and — when the sender minted them — the name the sender gave
+the message and the moment it was sent), a completed agent message, a tool call
+starting, a tool call finishing, a permission ask, its answer, a model change, a
+discarded held message, a turn ending (completed, failed, or interrupted). Rows
+are written once and never edited. Streaming output (the text growing word by word) is live
 decoration only — it is never stored, and the agent's private reasoning is
 dropped entirely, not stored and not shown.
 
@@ -59,6 +60,66 @@ message: browsing a picker does nothing, the change lands when the message is
 delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
+
+Nobody waits for the network to see what they typed. The browser gives a message
+its own name and stamps the moment the person pressed send, draws it in the
+thread there and then, and empties the box — which stays typeable, with only the
+send arrow saying anything is still in flight. Those two stamps travel with the
+message and are kept on its row, so when the row comes back the browser knows it
+for its own and simply stops drawing its copy; nothing is swapped and nothing
+moves. If the message turns out to have got nowhere, the copy goes and the exact
+words come back to the box, unless something else has been typed there since. A
+message the agent was too busy for stays in the thread and says it is waiting,
+because nothing is answering it yet.
+
+Sending also decides where the thread sits. The message that was just sent
+settles near the top of the view with the rest of it kept for the answer, and
+then nothing moves for as long as the answer fits in that space. Once the turn
+outgrows the view the thread follows, by the least it can while keeping the
+newest line in sight, and never backwards. Scrolling away is read from the
+person — a wheel, a finger, a hand on the scrollbar — so nothing the thread does
+to itself is mistaken for them; while they are reading elsewhere nothing moves
+them, and the jump button is the way back.
+
+## Reading a turn
+
+A turn is one thing in the thread, however much it took to produce. While it runs
+it has a head that says how long it has been going, counting from the moment the
+person pressed send rather than from the moment the record caught up — so a
+reload part way through shows the real elapsed time instead of starting again
+from zero, and a long wait for the agent to start is counted rather than lost.
+Where the sender minted no such moment, or minted one its own row cannot be
+reconciled with, the whole second the row was written in is counted from instead.
+
+When the turn is over that head becomes a fold, and everything the turn produced
+goes behind it: its tool calls, and everything the agent said on the way to its
+answer. What stays out is the person's own message, the last thing the agent
+said, and — when a turn failed or was stopped — the line saying so. A turn that
+thought out loud for five paragraphs is exactly as long to scroll past as one
+that made five tool calls, so both collapse the same way and a finished turn
+reads as one paragraph with a "Worked for 14s" you can open. Opening it puts
+everything back where it happened, the commentary between the runs of tool calls
+it sat between rather than gathered up at the end. A turn that never said
+anything keeps nothing back, because there is no answer to hold; a turn still
+running folds nothing at all.
+
+Each tool call inside that fold is one line: what happened, and the single fact
+that says which call it was — the command that ran, the path that was read, the
+pattern that was searched for. The three agents do not agree on how they say
+this, so the pane reads what each of them actually gives and says the same kind
+of line either way. One titles every call with the tool's name and hands the
+call's arguments over as a block of machine text, so its rows used to read
+"Bash" and nothing more; the identifying fact is drawn out of those arguments
+instead. Another writes the command itself as the title, wrapped in the shell it
+was run through, so the wrapper is dropped and the command shown. The third
+already writes a title describing the call, and that is left exactly as its agent
+wrote it. Throughout, a command reads as the command rather than the invocation
+that carried it, the fact is kept short enough that a row stays one line, and it
+is dropped when the title already says it. What the tool printed stays behind the
+row, where a directory listing cannot push the conversation off the screen.
+
+All of this is read from what the notebook already holds, so conversations
+recorded before any of it existed read the same way as new ones.
 
 ## Permissions
 

@@ -138,11 +138,22 @@ class StartConversationBody(BaseModel):
 
 
 class SendBody(BaseModel):
+    """A send as JSON.
+
+    ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own two facts
+    about this message, kept on its row exactly as they arrive. A browser mints both before
+    it sends so that it can draw the message straight away and still recognise it when the
+    record hands it back. Both are optional: a sender that mints neither sends what it
+    always sent.
+    """
+
     text: str
     sender_label: str
     mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free
     model_change: str | None = None
     reasoning_effort_change: str | None = None
+    sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
 
 
 class PermissionAnswerBody(BaseModel):
@@ -221,6 +232,8 @@ async def send_into_conversation(
             mode=body.mode,
             model_change=body.model_change,
             reasoning_effort_change=body.reasoning_effort_change,
+            sender_message_id=body.sender_message_id,
+            sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
         )
     except ValueError as invalid:
         raise HTTPException(status_code=422, detail=str(invalid)) from invalid

@@ -26,6 +26,7 @@ import type {
   SendPromptBody
 } from "./wire";
 import { backendSupportsSteer, type ConversationBackendKey } from "./wire";
+import type { OutgoingMessage } from "./outgoing";
 import { refusalSentence } from "./transcript";
 
 // --- how a message meets the agent -------------------------------------------------------
@@ -219,19 +220,23 @@ export function hasArmedChange(
   return Object.keys(armedChangeFor(current, picked, mode)).length > 0;
 }
 
-/** The whole body of a send, change and all. One place builds it, so one place decides. */
+/** The whole body of a send, change and all. One place builds it, so one place decides.
+ *
+ * The message is built from the copy this browser already drew, so what goes out is what
+ * is on screen: the same text, under the same id, stamped with the same instant.
+ */
 export function sendBodyFor(input: {
-  text: string;
-  senderLabel: string;
-  mode: PromptDeliveryMode;
+  message: OutgoingMessage;
   current: RunValues;
   picked: RunValues;
 }): SendPromptBody {
   return {
-    text: input.text,
-    sender_label: input.senderLabel,
-    mode: input.mode,
-    ...armedChangeFor(input.current, input.picked, input.mode)
+    text: input.message.text,
+    sender_label: input.message.senderLabel,
+    mode: input.message.mode,
+    sender_message_id: input.message.messageId,
+    sent_at_unix_milliseconds: input.message.sentAtUnixMilliseconds,
+    ...armedChangeFor(input.current, input.picked, input.message.mode)
   };
 }
 

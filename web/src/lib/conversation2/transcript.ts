@@ -36,6 +36,10 @@ export type TranscriptRow =
       text: string;
       senderLabel: string;
       mode: PromptDeliveryMode;
+      /** The instant the person pressed send, in unix milliseconds by the sender's own
+       *  clock — or the whole second the row was written in, for the messages whose
+       *  senders minted no instant. */
+      sentAtUnixMilliseconds: number;
     }
   | {
       key: string;
@@ -65,6 +69,11 @@ export type TranscriptRow =
       title: string;
       toolKind: string;
       detail: string | null;
+      /** The detail the call's start carried, kept when the finish replaces `detail` with
+       *  what the tool gave back. A backend that puts the call's own arguments here is
+       *  saying what this call was asked to do, which is the thing that says which call it
+       *  was — and it must not disappear the moment the call ends. */
+      startedDetail: string | null;
       status: "running" | "completed" | "failed";
       progress: string | null;
     }
@@ -197,7 +206,8 @@ export function transcriptRows(
           createdAt,
           text: event.payload.text,
           senderLabel: event.payload.sender_label,
-          mode: event.payload.mode
+          mode: event.payload.mode,
+          sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt)
         });
         break;
       case "prompt_delivery_refused":
@@ -242,6 +252,7 @@ export function transcriptRows(
           title: event.payload.title,
           toolKind: event.payload.tool_kind,
           detail: event.payload.detail,
+          startedDetail: event.payload.detail,
           status: "running",
           progress: null
         });
@@ -268,6 +279,7 @@ export function transcriptRows(
           title: event.payload.tool_call_id,
           toolKind: "other",
           detail: event.payload.detail,
+          startedDetail: null,
           status: event.payload.tool_call_status,
           progress: null
         });
@@ -375,6 +387,62 @@ function newestCreatedAt(feed: ConversationFeed): number {
   return feed.events[feed.events.length - 1]?.created_at ?? 0;
 }
 
+/** When a prompt was sent, to the millisecond.
+ *
+ * A row's `created_at` is a whole second — `storage.py` stamps it with `int(time.time())`,
+ * which the wire type's bare `number` does not say and a reader would otherwise have to go
+ * and find out. Hence the thousand.
+ *
+ * A whole second is enough to put a row in its place in a conversation and not enough to
+ * count against: a counter anchored to a rounded second is already up to a second wrong
+ * before it starts. So the sender puts the instant it measured into the payload, and that
+ * is what is counted from where it is there. Where it is not — everything a sender that
+ * mints nothing sent, and every row recorded before the field existed — the whole second
+ * remains the best there is, which is what has always been counted from.
+ *
+ * But the minted instant is somebody else's clock, and a clock that is wrong is not a
+ * clock that says so. A sender running ahead would freeze the counter on "Working for 0s"
+ * for as long as it is ahead; a sender that put seconds where milliseconds belong would
+ * open on a number in the tens of thousands of minutes. The row carries a second opinion
+ * about when it happened, so the two are held up against each other and an instant that
+ * cannot be reconciled with its own row is not believed.
+ */
+function sentAtUnixMilliseconds(
+  payload: { text: string; sent_at_unix_milliseconds?: number },
+  createdAt: number
+): number {
+  const writtenDown = createdAt * 1_000;
+  const minted = payload.sent_at_unix_milliseconds;
+  if (typeof minted !== "number" || !believable(minted, writtenDown)) return writtenDown;
+  return minted;
+}
+
+/** How long before its own row a send may claim to have happened and still be believed.
+ *
+ * A prompt's row is written after the backend has taken the text, so a cold start — a CLI
+ * being spawned, a session being loaded — sits inside this gap, and it is exactly the gap
+ * the minted instant exists to recover: the person has been waiting since they pressed
+ * send, and the row would have the counter open at zero. Generous, therefore. Past this
+ * the value is not measuring this send at all.
+ */
+const SENT_BEFORE_ITS_ROW_LIMIT_MILLISECONDS = 300_000;
+
+/** And how long after its own row, which is a different question with a different answer.
+ *
+ * A send cannot really happen after the row that records it, so this is not latency, it is
+ * the two clocks disagreeing. One second of the allowance is the row's own rounding — the
+ * stamp is a whole second, so it can sit up to a second before the moment it was written —
+ * and the other is ordinary skew. Every millisecond past it is a millisecond the counter
+ * would sit frozen on zero.
+ */
+const SENT_AFTER_ITS_ROW_LIMIT_MILLISECONDS = 2_000;
+
+function believable(minted: number, writtenDown: number): boolean {
+  const apart = minted - writtenDown;
+  return apart <= SENT_AFTER_ITS_ROW_LIMIT_MILLISECONDS
+    && apart >= -SENT_BEFORE_ITS_ROW_LIMIT_MILLISECONDS;
+}
+
 // --- the thread, once the work is put in its place ------------------------------------------
 
 export type ToolCallRow = Extract<TranscriptRow, { kind: "tool_call" }>;
@@ -384,9 +452,26 @@ export type ToolCallRow = Extract<TranscriptRow, { kind: "tool_call" }>;
  * The space between a message and its reply is nearly all tool calls, and showing every
  * one of them in full is how a conversation turns into a log file. So they are not rows
  * here: each turn's tool calls become one thing that knows how to be small.
+ *
+ * The same is true of what the turn said while it worked. A turn that thought out loud
+ * for five paragraphs before answering is exactly as long to scroll past as one that made
+ * five tool calls, so once the turn settles its commentary goes behind the same fold, and
+ * what stays is the last thing it said — the answer somebody came back for.
  */
 export type ThreadItem =
-  | { kind: "row"; key: string; row: TranscriptRow }
+  | {
+      kind: "row";
+      key: string;
+      row: TranscriptRow;
+      /** The turn whose fold this row goes behind, or nothing when it never folds.
+       *
+       * What the agent said along the way is part of the work rather than part of the
+       * answer, so a settled turn keeps only the last thing it said and the rest go behind
+       * the same fold its tool calls go behind. What the person did never folds: their
+       * message started the turn, and the permission they were asked for is a decision they
+       * made rather than something the turn produced. */
+      behindTheFoldOf: string | null;
+    }
   /** A turn's stable head. It appears the moment the turn starts, before there is
    *  anything to put under it, and it is still there — as the fold — when the turn is
    *  over. Nothing about it moves while the turn runs. */
@@ -400,14 +485,20 @@ export type ThreadItem =
       /** The plan as this turn last stated it, when this is the anchor holding the
        *  newest one. A conversation has one plan, so only one anchor ever shows it. */
       plan: readonly PlanEntry[] | null;
-      /** When the turn began, so a live counter can be honest after a reload. */
-      startedAt: number | null;
+      /** When the turn began, in milliseconds, so a live counter can be honest after a
+       *  reload. This is the sender's browser's clock, and `durationSeconds` below is the
+       *  record's own, so the two are never subtracted from each other: a settled turn's
+       *  length is two rows on one clock, and this is what a counter counts from. */
+      startedAtUnixMilliseconds: number | null;
       /** How the turn ended, for the turns that ended. */
       ending: ConversationTurnEnding | null;
       /** The newest turn in the conversation. Only it takes the stopped wording. */
       isLatest: boolean;
       durationSeconds: number | null;
       toolCallCount: number;
+      /** How many of the turn's own messages went behind the fold, so the label can say
+       *  what is behind it rather than counting only the tool calls. */
+      foldedMessageCount: number;
     }
   /** One unbroken run of tool calls, sitting exactly where it happened. A run ends at
    *  the first thing that is not a tool call, so the work between two pieces of the
@@ -428,17 +519,23 @@ export const VISIBLE_RUNNING_WORK_ENTRIES = 1;
 type OpenTurn = {
   turnKey: string;
   startedAt: number | null;
+  startedAtUnixMilliseconds: number | null;
   anchorIndex: number | null;
   groupIndexes: number[];
   openGroupIndex: number | null;
+  /** Where this turn's own messages landed, in the order it said them. The last is the
+   *  answer and stays; the ones before it are commentary and fold. */
+  messageIndexes: number[];
 };
 
 const NO_TURN: OpenTurn = {
   turnKey: "turn:none",
   startedAt: null,
+  startedAtUnixMilliseconds: null,
   anchorIndex: null,
   groupIndexes: [],
-  openGroupIndex: null
+  openGroupIndex: null,
+  messageIndexes: []
 };
 
 /** Lay the thread out: a head for every turn, and its work in the places it happened.
@@ -446,9 +543,13 @@ const NO_TURN: OpenTurn = {
  * Two things are being balanced. A turn needs one place that does not move, so a person
  * has something to hold from the moment they send to the moment it is done. And the work
  * needs to stay where it fell, so the tool calls between two pieces of commentary read as
- * having happened between them. So the head is emitted once, at the turn's start, and the
- * runs of tool calls are emitted in place — and when the turn ends, the head becomes the
- * fold and the runs go behind it.
+ * having happened between them. So the head is emitted once, at the turn's start, and
+ * everything the turn did is emitted in place — and when the turn ends, the head becomes
+ * the fold and the work goes behind it.
+ *
+ * Nothing is ever moved to make that happen. A row that goes behind the fold is marked
+ * where it already sits, so opening the fold puts every piece of commentary back between
+ * the runs of tool calls it sat between rather than gathered up at the end.
  */
 export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
   const items: ThreadItem[] = [];
@@ -459,6 +560,14 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
     stopped: boolean,
     ending: ConversationTurnEnding | null
   ): void {
+    // Everything the turn said except the last of it. A turn that said nothing folds
+    // nothing, which is the whole rule an interrupted turn and a tools-only turn need:
+    // there is no answer to keep, so nothing is kept, and the fold holds the lot.
+    const folded = turn.messageIndexes.slice(0, -1);
+    for (const messageAt of folded) {
+      const said = items[messageAt];
+      if (said?.kind === "row") items[messageAt] = { ...said, behindTheFoldOf: turn.turnKey };
+    }
     const at = turn.anchorIndex;
     if (at !== null) {
       const anchor = items[at];
@@ -468,6 +577,7 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
           settled: true,
           stopped,
           ending,
+          foldedMessageCount: folded.length,
           // A turn nobody saw the end of has no length anybody can claim.
           durationSeconds:
             stopped || turn.startedAt === null || endedAt === null
@@ -533,7 +643,8 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
         ...turn,
         turnKey: `turn:${row.key}`,
         anchorIndex: items.length,
-        groupIndexes: []
+        groupIndexes: [],
+        messageIndexes: []
       };
       items.push({
         kind: "turn",
@@ -542,16 +653,23 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
         settled: false,
         stopped: false,
         plan: row.entries,
-        startedAt: null,
+        startedAtUnixMilliseconds: null,
         ending: null,
         isLatest: false,
         durationSeconds: null,
-        toolCallCount: 0
+        toolCallCount: 0,
+        foldedMessageCount: 0
       });
       continue;
     }
 
-    items.push({ kind: "row", key: row.key, row });
+    // Nothing folds as it arrives: a running turn shows everything it has done, and the
+    // collapse happens once, when the turn settles.
+    items.push({ kind: "row", key: row.key, row, behindTheFoldOf: null });
+
+    if (row.kind === "agent_message" && turn.anchorIndex !== null) {
+      turn.messageIndexes = [...turn.messageIndexes, items.length - 1];
+    }
 
     if (row.kind === "prompt" && turn.startedAt === null) {
       // The prompt that started this turn. A steer's prompt joins one already running,
@@ -559,9 +677,11 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
       turn = {
         turnKey: `turn:${row.key}`,
         startedAt: row.createdAt,
+        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
         anchorIndex: items.length,
         groupIndexes: [],
-        openGroupIndex: null
+        openGroupIndex: null,
+        messageIndexes: []
       };
       items.push({
         kind: "turn",
@@ -570,11 +690,12 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
         settled: false,
         stopped: false,
         plan: null,
-        startedAt: row.createdAt,
+        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
         ending: null,
         isLatest: false,
         durationSeconds: null,
-        toolCallCount: 0
+        toolCallCount: 0,
+        foldedMessageCount: 0
       });
       continue;
     }
@@ -640,6 +761,39 @@ export function workingSentence(elapsedSeconds: number | null): string {
   return `Working for ${formatDuration(elapsedSeconds)}`;
 }
 
+/** How far past the second the counter's tick is aimed.
+ *
+ * A timer asked for exactly the boundary can fire a hair before it, read the second it
+ * has not quite reached, and show the same number twice — then skip one catching up.
+ */
+export const LIVE_COUNTER_TICK_MARGIN_MILLISECONDS = 20;
+
+/** How long a turn has been running, in the whole seconds the counter says.
+ *
+ * One subtraction and one floor. Flooring the two instants separately — the clock to its
+ * own second, the start to its own — is what made the number repeat and skip: the second
+ * it crossed had nothing to do with the moment the turn began.
+ */
+export function elapsedSecondsSince(startedAtUnixMilliseconds: number, now: number): number {
+  return Math.max(0, Math.floor((now - startedAtUnixMilliseconds) / 1_000));
+}
+
+/** How long until the counter's next tick, measured from the start rather than from now.
+ *
+ * Every wait is worked out from the instant the turn began, so the ticks land on that
+ * instant's own seconds instead of the wall clock's. It also means nothing accumulates: a
+ * tab whose timers were throttled while it was in the background comes back to the right
+ * number rather than to the number of ticks it managed to fire.
+ */
+export function millisecondsUntilNextSecond(
+  startedAtUnixMilliseconds: number,
+  now: number
+): number {
+  const since = now - startedAtUnixMilliseconds;
+  const pastTheSecond = ((since % 1_000) + 1_000) % 1_000;
+  return 1_000 - pastTheSecond + LIVE_COUNTER_TICK_MARGIN_MILLISECONDS;
+}
+
 /** The label over a settled turn's fold — which turn it is decides how it reads.
  *
  * Only the latest turn takes the stopped wording. Further back in a conversation "you
@@ -659,6 +813,24 @@ export function turnFoldLabel(item: {
 /** What the affordance over a running turn's older tool calls says. */
 export function hiddenWorkSentence(hiddenCount: number): string {
   return `+${hiddenCount} previous tool call${hiddenCount === 1 ? "" : "s"}`;
+}
+
+/** What is behind an opened turn's fold, counted by what it is.
+ *
+ * The fold used to hold tool calls and say so. It now also holds everything the turn said
+ * on the way to its answer, and a label that still counted only the calls would be telling
+ * a smaller truth than the fold holds. Each kind is named and counted; a kind there is
+ * none of is not mentioned at all.
+ */
+export function foldedWorkSentence(toolCallCount: number, messageCount: number): string {
+  const counted: string[] = [];
+  if (toolCallCount > 0) {
+    counted.push(`${toolCallCount} tool call${toolCallCount === 1 ? "" : "s"}`);
+  }
+  if (messageCount > 0) {
+    counted.push(`${messageCount} message${messageCount === 1 ? "" : "s"}`);
+  }
+  return counted.join(" · ");
 }
 
 /** The glyph vocabulary a tool row is drawn with — the app's existing step icons. */
@@ -728,6 +900,222 @@ export function readableDetail(detail: string | null | undefined): string | null
   } catch {
     return detail;
   }
+}
+
+// --- what a tool call's line says -------------------------------------------------------------
+
+/** A tool call as one line: what happened, and which call it was.
+ *
+ * A row that reads only "Bash" says nothing, because every Bash call reads that. The line
+ * a person needs is a phrase for the kind of thing that happened and, beside it, the one
+ * value that says which call this was — the command that ran, the path that was read, the
+ * pattern that was searched for.
+ */
+export type ToolCallLine = {
+  /** What happened, in the fewest words that say it. */
+  title: string;
+  /** The one value that says which call this was, or nothing when the title already
+   *  contains it. */
+  summary: string | null;
+};
+
+/** How long a summary may be, so a row is always one line. */
+export const TOOL_CALL_SUMMARY_MAXIMUM_CHARACTERS = 80;
+
+/** What each kind of call did, for the rows whose backend titled them with the tool's name.
+ *
+ * The same classification decides the glyph, so a row's picture and its words cannot
+ * disagree. Two kinds get no phrase on purpose: "think" and "other" hold calls too
+ * unalike for one verb to be true of all of them, and the tool's own name beats a wrong
+ * verb.
+ */
+const TOOL_CALL_PHRASES: Partial<Record<ToolGlyphKind, string>> = {
+  read: "Read",
+  edit: "Edited",
+  delete: "Deleted",
+  move: "Moved",
+  search: "Searched",
+  execute: "Ran",
+  fetch: "Fetched",
+  switch_mode: "Switched mode"
+};
+
+/** The argument names that name a call's subject, best first, and the tool behind each.
+ *
+ * Only claude sends a call's arguments at all, so this is its tool set. Four of these are
+ * in conversations already recorded here — `command` and `description` on Bash, `file_path`
+ * on Read and Write, `query` on ToolSearch, `subject` on TaskCreate. The other three are
+ * named by the tools they belong to: `pattern` is what Grep and Glob are asked to find,
+ * `url` is what WebFetch is pointed at, and `notebook_path` is NotebookEdit's own spelling
+ * of the file it edits.
+ *
+ * Nothing outside this list is read, and there is no fallback to whatever text an
+ * unrecognised call happens to carry: a value nobody here has named as a subject may be
+ * anything at all — including the payload the tool was handed — and a line in a
+ * conversation is not the place to find that out.
+ */
+const CALL_SUBJECT_ARGUMENT_NAMES: readonly string[] = [
+  "command",
+  "file_path",
+  "notebook_path",
+  "pattern",
+  "url",
+  "query",
+  "subject",
+  "description"
+];
+
+/** The shells a command arrives wrapped in, each up to the flag that carries it. */
+const SHELL_INVOCATIONS: readonly RegExp[] = [
+  /^(?:\S*\/)?(?:bash|sh|zsh)\s+-[a-z]*c\s+([\s\S]+)$/,
+  /^(?:\S*[/\\])?cmd(?:\.exe)?\s+\/c\s+([\s\S]+)$/i,
+  /^(?:\S*[/\\])?pwsh(?:\.exe)?\s+-(?:command|c)\s+([\s\S]+)$/i
+];
+
+/** The command a shell invocation carried, or the text itself when it is not one.
+ *
+ * Codex runs everything through a login shell, so without this every one of its rows
+ * opens with the same `/bin/zsh -lc` before saying anything about the call. The shell is
+ * how the command was carried; the command is what was done.
+ */
+export function commandWithoutShellInvocation(text: string): string {
+  const trimmed = text.trim();
+  for (const invocation of SHELL_INVOCATIONS) {
+    const wrapped = invocation.exec(trimmed);
+    if (wrapped) return unquoted(wrapped[1].trim());
+  }
+  return text;
+}
+
+function unquoted(text: string): string {
+  const quote = text[0];
+  if ((quote !== '"' && quote !== "'") || text.length < 2 || !text.endsWith(quote)) return text;
+  const inside = text.slice(1, -1);
+  // A double-quoted argument escapes its own quotes and backslashes, and those escapes
+  // belong to the quoting rather than to the command.
+  return quote === '"' ? inside.replace(/\\(["\\])/g, "$1") : inside;
+}
+
+/** The one value that says which call this was, read out of what the call was asked to do.
+ *
+ * A backend that sends the call's arguments sends them as a JSON object, and the subject
+ * is one named value inside it — which is why a claude row could say nothing before: the
+ * whole object was offered as the line, and an object is never one short line.
+ *
+ * The start is read before the finish, because the finish carries what the tool gave back
+ * and that answers a different question. So a row says the same thing while the call runs
+ * as it does once the call is over.
+ */
+function identifyingFact(startedDetail: string | null, detail: string | null): string | null {
+  for (const written of [startedDetail, detail]) {
+    if (written === null) continue;
+    const trimmed = written.trim();
+    if (trimmed === "") continue;
+    const given = callArguments(trimmed);
+    if (given !== null) {
+      const subject = subjectOf(given);
+      if (subject !== null) return subject;
+      continue;
+    }
+    // One line is a backend saying what the call is. Several lines is output, and output
+    // belongs behind the row rather than on it.
+    if (!trimmed.includes("\n")) return trimmed;
+  }
+  return null;
+}
+
+function callArguments(trimmed: string): Record<string, unknown> | null {
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function subjectOf(given: Record<string, unknown>): string | null {
+  for (const name of CALL_SUBJECT_ARGUMENT_NAMES) {
+    const value = given[name];
+    if (typeof value !== "string") continue;
+    const said = firstLine(value);
+    if (said !== "") return said;
+  }
+  return null;
+}
+
+function firstLine(text: string): string {
+  const at = text.indexOf("\n");
+  return (at === -1 ? text : text.slice(0, at)).trim();
+}
+
+function shortened(text: string): string {
+  return text.length <= TOOL_CALL_SUMMARY_MAXIMUM_CHARACTERS
+    ? text
+    : `${text.slice(0, TOOL_CALL_SUMMARY_MAXIMUM_CHARACTERS - 1).trimEnd()}…`;
+}
+
+/** Text as its words: runs of letters and digits, lowercased, punctuation gone. A colon, a
+ *  shell prompt or a pair of quotes must not make a repeat look like news. */
+function words(text: string): string[] {
+  return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** Whether `said` adds nothing to `within`, because its words are already in there — in
+ *  order and together, as a run rather than scattered.
+ *
+ * Comparing the two as one long string of letters would be simpler and wrong: it makes
+ * "Searched" swallow a pattern of "arch", and "Read" swallow a file called "edit.ts",
+ * which leaves a row reading as a bare verb with nothing beside it — the exact thing the
+ * summary exists to prevent. A word is the smallest unit that repeats meaningfully.
+ */
+function addsNothingTo(said: string, within: string): boolean {
+  const sought = words(said);
+  const already = words(within);
+  if (sought.length === 0) return true;
+  if (sought.length > already.length) return false;
+  for (let from = 0; from <= already.length - sought.length; from += 1) {
+    if (sought.every((word, at) => already[from + at] === word)) return true;
+  }
+  return false;
+}
+
+/** The line this call is drawn as.
+ *
+ * The backend's own title stands wherever it describes the call — hermes writes
+ * "read: /path/to/file", codex writes the command itself — because the agent that made
+ * the call says it better than any table here could. It is replaced only where it is the
+ * tool's name repeated, and only when there is a fact to put beside it: "Bash" with
+ * nothing after it is still more use than "Ran" with nothing after it.
+ */
+export function toolCallLine(row: {
+  title: string;
+  toolKind: string;
+  startedDetail?: string | null;
+  detail: string | null;
+}): ToolCallLine {
+  const fact = identifyingFact(row.startedDetail ?? null, row.detail);
+  const summary = fact === null ? null : shortened(commandWithoutShellInvocation(fact));
+  const phrase = TOOL_CALL_PHRASES[toolGlyphKind(row.toolKind)];
+  const titleNamesTheTool = row.title.trim().toLowerCase() === row.toolKind.trim().toLowerCase();
+  const title =
+    titleNamesTheTool && phrase !== undefined && summary !== null
+      ? phrase
+      : commandWithoutShellInvocation(row.title);
+  return {
+    title,
+    summary: summary !== null && addsNothingTo(summary, title) ? null : summary
+  };
+}
+
+/** Whether a line already shows the whole of a detail, so opening the row would only
+ *  repeat it. The detail a backend writes in one short line is usually the same thing the
+ *  line is drawn from, and an expander that opens onto what is already on the screen is
+ *  an affordance that does nothing. */
+export function lineShowsWholeDetail(line: ToolCallLine, detail: string): boolean {
+  return addsNothingTo(detail, `${line.title} ${line.summary ?? ""}`);
 }
 
 /** The label over a prompt bubble, or nothing when it would only say "you".

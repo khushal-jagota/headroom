@@ -103,13 +103,27 @@ class PermissionAskOption:
 
 @dataclass(frozen=True, slots=True)
 class PromptEventPayload:
-    """Text that actually reached the backend, in the mode it was sent under."""
+    """Text that actually reached the backend, in the mode it was sent under.
+
+    ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own two facts
+    about this message, kept exactly as they were given. The id is how a sender recognises
+    its own message when the record hands it back — a browser draws a message the moment a
+    person presses send, and the id is what tells it that the copy it drew and this row are
+    the same message. The instant is when the person pressed send, in unix milliseconds by
+    the sender's clock, which is where a turn's clock starts.
+
+    Neither replaces the row's ``created_at``: that is whole seconds and it is when the row
+    was written, which is a different thing said by a different clock. A sender that minted
+    neither is stored exactly as it always was.
+    """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt
 
     text: str
     sender_label: str
     mode: PromptDeliveryMode
+    sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +133,11 @@ class PromptDeliveryRefusedEventPayload:
     Only a dequeued delivery is recorded this way. A refusal a caller is still waiting on
     is returned as its fate; there is nobody left to tell about a held one, so it goes in
     the record instead.
+
+    ``sender_message_id`` is the id the sender minted for this message. A sent message
+    becomes exactly one of three rows — delivered, refused, or discarded — and a sender
+    has to recognise its own message in whichever of the three it becomes, or it is left
+    drawing a copy of a message the record has already answered for.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_delivery_refused
@@ -127,6 +146,7 @@ class PromptDeliveryRefusedEventPayload:
     sender_label: str
     mode: PromptDeliveryMode
     refusal_reason: PromptDeliveryRefusalReason
+    sender_message_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,12 +159,16 @@ class PromptDiscardedEventPayload:
 
     There is no mode: only a run-when-free message is ever held, so there is nothing a
     mode could tell anyone here.
+
+    ``sender_message_id`` is here for the same reason it is on a refusal: this is one of
+    the three rows a sent message can become, and its sender has to recognise it.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_discarded
 
     text: str
     sender_label: str
+    sender_message_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -334,6 +358,10 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "text": payload.text,
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
+                **_entry_if_minted("sender_message_id", payload.sender_message_id),
+                **_entry_if_minted(
+                    "sent_at_unix_milliseconds", payload.sent_at_unix_milliseconds
+                ),
             }
         case PromptDeliveryRefusedEventPayload():
             return {
@@ -341,9 +369,14 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 "refusal_reason": str(payload.refusal_reason),
+                **_entry_if_minted("sender_message_id", payload.sender_message_id),
             }
         case PromptDiscardedEventPayload():
-            return {"text": payload.text, "sender_label": payload.sender_label}
+            return {
+                "text": payload.text,
+                "sender_label": payload.sender_label,
+                **_entry_if_minted("sender_message_id", payload.sender_message_id),
+            }
         case AgentMessageEventPayload():
             return {"text": payload.text}
         case ToolCallStartedEventPayload():
@@ -399,6 +432,10 @@ def _payload_from_json_object(
                 text=_text(stored, "text"),
                 sender_label=_text(stored, "sender_label"),
                 mode=PromptDeliveryMode(_text(stored, "mode")),
+                sender_message_id=_optional_text(stored, "sender_message_id"),
+                sent_at_unix_milliseconds=_optional_whole_number(
+                    stored, "sent_at_unix_milliseconds"
+                ),
             )
         case ConversationEventKind.prompt_delivery_refused:
             return PromptDeliveryRefusedEventPayload(
@@ -406,10 +443,13 @@ def _payload_from_json_object(
                 sender_label=_text(stored, "sender_label"),
                 mode=PromptDeliveryMode(_text(stored, "mode")),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
+                sender_message_id=_optional_text(stored, "sender_message_id"),
             )
         case ConversationEventKind.prompt_discarded:
             return PromptDiscardedEventPayload(
-                text=_text(stored, "text"), sender_label=_text(stored, "sender_label")
+                text=_text(stored, "text"),
+                sender_label=_text(stored, "sender_label"),
+                sender_message_id=_optional_text(stored, "sender_message_id"),
             )
         case ConversationEventKind.agent_message:
             return AgentMessageEventPayload(text=_text(stored, "text"))
@@ -468,6 +508,15 @@ def _payload_from_json_object(
             assert_never(kind)
 
 
+def _entry_if_minted(field_name: str, value: object) -> dict[str, Any]:
+    """The one entry this field adds to a stored payload, or no entry at all.
+
+    What a sender did not mint is left out rather than stored as a null, so a row written
+    by a sender that mints nothing is the same text it has always been.
+    """
+    return {} if value is None else {field_name: value}
+
+
 def _text(stored: dict[str, Any], field_name: str) -> str:
     value = stored[field_name]
     if not isinstance(value, str):
@@ -481,4 +530,14 @@ def _optional_text(stored: dict[str, Any], field_name: str) -> str | None:
         return None
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be text or absent")
+    return value
+
+
+def _optional_whole_number(stored: dict[str, Any], field_name: str) -> int | None:
+    value = stored.get(field_name)
+    if value is None:
+        return None
+    # A bool is an int in Python and would read as 0 or 1 rather than being refused.
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be a whole number or absent")
     return value

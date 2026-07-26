@@ -31,10 +31,13 @@ async function transpile(name) {
   );
   return ts
     .transpileModule(source, { compilerOptions })
-    .outputText.replace(/from\s+["']\.\/(wire|feed|transcript|composer)["']/g, 'from "./$1.mjs"');
+    .outputText.replace(
+      /from\s+["']\.\/(wire|feed|transcript|composer|outgoing)["']/g,
+      'from "./$1.mjs"'
+    );
 }
 
-for (const name of ["wire", "feed", "transcript", "composer"]) {
+for (const name of ["wire", "feed", "transcript", "composer", "outgoing"]) {
   await writeFile(join(directory, `${name}.mjs`), await transpile(name), "utf8");
 }
 
@@ -54,17 +57,25 @@ const {
   threadItems,
   liveAskFrom,
   askDeadSentence,
+  commandWithoutShellInvocation,
+  elapsedSecondsSince,
+  foldedWorkSentence,
   formatDuration,
   hiddenWorkSentence,
+  lineShowsWholeDetail,
+  millisecondsUntilNextSecond,
   promptLabelFor,
   readableDetail,
   refusalSentence,
+  toolCallLine,
   toolGlyphKind,
   stoppedSentence,
   turnEndingSentence,
   turnFoldLabel,
   workedSentence,
   workingSentence,
+  LIVE_COUNTER_TICK_MARGIN_MILLISECONDS,
+  TOOL_CALL_SUMMARY_MAXIMUM_CHARACTERS,
   VISIBLE_RUNNING_WORK_ENTRIES
 } = await import(join(directory, "transcript.mjs"));
 const {
@@ -84,6 +95,14 @@ const {
   hasArmedChange,
   sendBodyFor
 } = await import(join(directory, "composer.mjs"));
+const {
+  mintOutgoingMessage,
+  outgoingMessageNote,
+  outgoingMessagesTheRecordHasNot,
+  recallOutgoingMessages,
+  rememberOutgoingMessages,
+  senderMessageIdsInTheRecord
+} = await import(join(directory, "outgoing.mjs"));
 
 function event(sequence, kind, payload) {
   return { conversation_id: "c1", sequence, kind, payload, created_at: 1_700_000_000 };
@@ -572,27 +591,158 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.equal(hasArmedChange(current, { model: "sonnet", reasoningEffort: null }, "run_when_free"), true);
   assert.equal(hasArmedChange(current, { model: "sonnet", reasoningEffort: null }, "steer"), false);
 
+  // What goes out is the message that was already drawn: same text, same id, same instant.
+  const drawn = mintOutgoingMessage({
+    text: "go",
+    senderLabel: "owner",
+    mode: "run_when_free",
+    sentAtUnixMilliseconds: 1_700_000_000_123
+  });
   assert.deepEqual(
-    sendBodyFor({
+    sendBodyFor({ message: drawn, current, picked: { model: "sonnet", reasoningEffort: null } }),
+    {
       text: "go",
-      senderLabel: "owner",
+      sender_label: "owner",
       mode: "run_when_free",
-      current,
-      picked: { model: "sonnet", reasoningEffort: null }
-    }),
-    { text: "go", sender_label: "owner", mode: "run_when_free", model_change: "sonnet" }
+      sender_message_id: drawn.messageId,
+      sent_at_unix_milliseconds: 1_700_000_000_123,
+      model_change: "sonnet"
+    }
   );
   assert.deepEqual(
     sendBodyFor({
-      text: "go",
-      senderLabel: "owner",
-      mode: "send_now",
+      message: { ...drawn, mode: "send_now" },
       current,
       picked: { model: null, reasoningEffort: null }
     }),
-    { text: "go", sender_label: "owner", mode: "send_now" },
+    {
+      text: "go",
+      sender_label: "owner",
+      mode: "send_now",
+      sender_message_id: drawn.messageId,
+      sent_at_unix_milliseconds: 1_700_000_000_123
+    },
     "a message with nothing picked carries no change field at all"
   );
+}
+
+// --- a message that has been sent and is not in the record yet -------------------------------
+
+{
+  const first = mintOutgoingMessage({ text: "one", senderLabel: "owner", mode: "run_when_free" });
+  const second = mintOutgoingMessage({ text: "two", senderLabel: "owner", mode: "run_when_free" });
+  assert.notEqual(first.messageId, second.messageId, "two messages are two messages");
+  assert.equal(first.knownFate, "nothing_yet", "nothing is known about its fate yet");
+  assert.equal(outgoingMessageNote(first), null, "and so it says nothing about itself");
+  assert.ok(
+    Math.abs(first.sentAtUnixMilliseconds - Date.now()) < 5_000,
+    "the instant is when it was sent, in unix milliseconds"
+  );
+
+  // The two things a message can be known to be, and the words for each. Neither reads as
+  // a message something is answering, because neither is.
+  assert.equal(
+    outgoingMessageNote({ ...first, knownFate: "waiting_for_the_agent" }),
+    "waiting for the agent to be free"
+  );
+  assert.equal(
+    outgoingMessageNote({ ...first, knownFate: "answer_never_came_back" }),
+    "the server never said whether this arrived"
+  );
+
+  const sent = [first, second];
+  assert.equal(
+    outgoingMessagesTheRecordHasNot(sent, []),
+    sent,
+    "an empty record has caught up with nothing, and the same list is handed back"
+  );
+  const deliveredFirst = event(1, "prompt", {
+    text: "one",
+    sender_label: "owner",
+    mode: "run_when_free",
+    sender_message_id: first.messageId,
+    sent_at_unix_milliseconds: first.sentAtUnixMilliseconds
+  });
+  assert.deepEqual(
+    outgoingMessagesTheRecordHasNot(sent, [deliveredFirst]),
+    [second],
+    "the message the record now holds stops being drawn"
+  );
+  // The other two rows a sent message can become. Neither leaves a copy behind.
+  assert.deepEqual(
+    outgoingMessagesTheRecordHasNot(sent, [
+      event(1, "prompt_delivery_refused", {
+        text: "one",
+        sender_label: "owner",
+        mode: "run_when_free",
+        refusal_reason: "backend_did_not_start",
+        sender_message_id: first.messageId
+      })
+    ]),
+    [second]
+  );
+  assert.deepEqual(
+    outgoingMessagesTheRecordHasNot(sent, [
+      event(2, "prompt_discarded", {
+        text: "two",
+        sender_label: "owner",
+        sender_message_id: second.messageId
+      })
+    ]),
+    [first]
+  );
+  assert.equal(
+    outgoingMessagesTheRecordHasNot(sent, [PROMPT(1, "somebody else's message")]),
+    sent,
+    "a row nobody minted an id for belongs to somebody else and takes nothing away"
+  );
+  assert.deepEqual(
+    senderMessageIdsInTheRecord([deliveredFirst, AGENT(2, "an answer")]),
+    new Set([first.messageId])
+  );
+}
+
+{
+  // A message waiting for a busy agent lives in its tab and nowhere else — it has no row,
+  // and the system knows only how many it holds, never their words. So the tab keeps it.
+  const kept = new Map();
+  globalThis.window = {
+    sessionStorage: {
+      getItem: (key) => (kept.has(key) ? kept.get(key) : null),
+      setItem: (key, value) => kept.set(key, String(value)),
+      removeItem: (key) => kept.delete(key)
+    }
+  };
+
+  const held = {
+    ...mintOutgoingMessage({ text: "held", senderLabel: "owner", mode: "run_when_free" }),
+    knownFate: "waiting_for_the_agent"
+  };
+  const stillGoing = mintOutgoingMessage({
+    text: "in flight",
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
+  rememberOutgoingMessages("c1", [held, stillGoing]);
+
+  const recalled = recallOutgoingMessages("c1");
+  assert.deepEqual(recalled[0], held, "what the system is holding comes back as it was");
+  assert.equal(recalled[1].text, "in flight");
+  assert.equal(
+    recalled[1].knownFate,
+    "answer_never_came_back",
+    "a send the page went away in the middle of is one nobody ever heard the end of"
+  );
+  assert.deepEqual(recallOutgoingMessages("c2"), [], "one conversation's are not another's");
+
+  kept.set("panels.conversation2.outgoing.c3", '[{"messageId":"x"},null,7,{"text":"no id"}]');
+  assert.deepEqual(recallOutgoingMessages("c3"), [], "nothing that is not a message is drawn");
+  kept.set("panels.conversation2.outgoing.c4", "not json at all");
+  assert.deepEqual(recallOutgoingMessages("c4"), []);
+
+  rememberOutgoingMessages("c1", []);
+  assert.deepEqual(recallOutgoingMessages("c1"), [], "and holding nothing keeps nothing");
+  delete globalThis.window;
 }
 
 {
@@ -664,6 +814,138 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
 }
 
 {
+  // A settled turn reads as one paragraph you can open. What the agent said on the way to
+  // it is part of the work rather than part of the answer, so it goes behind the same fold
+  // its tool calls go behind, and the last thing the turn said stays standing.
+  const feed = feedWithCommittedEvents(emptyConversationFeed(), [
+    { ...PROMPT(1, "do the thing"), created_at: 1_000 },
+    { ...AGENT(2, "let me look"), created_at: 1_001 },
+    { ...TOOL_STARTED(3, "t1", "Read one"), created_at: 1_002 },
+    { ...TOOL_FINISHED(4, "t1"), created_at: 1_003 },
+    { ...AGENT(5, "still going"), created_at: 1_004 },
+    { ...AGENT(6, "here you go"), created_at: 1_011 },
+    { ...TURN_ENDED(7), created_at: 1_012 }
+  ]);
+  const items = threadItems(transcriptRows(feed));
+  const anchor = items.find((item) => item.kind === "turn");
+  assert.equal(anchor.foldedMessageCount, 2);
+  assert.equal(anchor.toolCallCount, 1);
+
+  const behind = items.filter((item) => item.kind === "row" && item.behindTheFoldOf !== null);
+  assert.deepEqual(behind.map((item) => item.row.text), ["let me look", "still going"]);
+  assert.ok(
+    behind.every((item) => item.behindTheFoldOf === anchor.turnKey),
+    "and they go behind the fold of the turn that said them"
+  );
+
+  const standing = items.filter((item) => item.kind === "row" && item.behindTheFoldOf === null);
+  assert.deepEqual(standing.map((item) => item.row.kind), ["prompt", "agent_message", "turn_ended"]);
+  assert.equal(standing[1].row.text, "here you go", "the last thing it said is the answer");
+
+  // Opened, everything is where it happened rather than gathered up at the end.
+  assert.deepEqual(
+    items.map((item) =>
+      item.kind === "turn" ? "turn" : item.kind === "work_group" ? "work" : item.row.kind
+    ),
+    ["prompt", "turn", "agent_message", "work", "agent_message", "agent_message", "turn_ended"]
+  );
+}
+
+{
+  // A running turn folds nothing. The collapse happens on settling and only then.
+  const items = threadItems(
+    transcriptRows(
+      feedWithCommittedEvents(emptyConversationFeed(), [
+        PROMPT(1, "go"),
+        AGENT(2, "one"),
+        AGENT(3, "two")
+      ])
+    )
+  );
+  assert.equal(items.find((item) => item.kind === "turn").foldedMessageCount, 0);
+  assert.deepEqual(
+    items.filter((item) => item.kind === "row").map((item) => item.behindTheFoldOf),
+    [null, null, null]
+  );
+}
+
+{
+  // A turn that never said anything has no answer to keep, so nothing is kept and the fold
+  // holds all of it. The two things that never fold still stand: the person's own message,
+  // and the turn's ending — an interrupted turn has to be able to say it was interrupted.
+  const silent = threadItems(
+    transcriptRows(
+      feedWithCommittedEvents(emptyConversationFeed(), [
+        PROMPT(1, "go"),
+        TOOL_STARTED(2, "t1", "Read one"),
+        TOOL_FINISHED(3, "t1"),
+        TURN_ENDED(4, "interrupted")
+      ])
+    )
+  );
+  const silentAnchor = silent.find((item) => item.kind === "turn");
+  assert.equal(silentAnchor.foldedMessageCount, 0);
+  assert.equal(silentAnchor.toolCallCount, 1);
+  assert.deepEqual(
+    silent.filter((item) => item.kind === "row").map((item) => item.row.kind),
+    ["prompt", "turn_ended"]
+  );
+
+  // A turn stopped part way through talking keeps the last thing it managed to say. The
+  // rule does not change with the ending: it is always "everything but the last of it".
+  const cutOff = threadItems(
+    transcriptRows(
+      feedWithCommittedEvents(emptyConversationFeed(), [
+        PROMPT(1, "go"),
+        AGENT(2, "starting"),
+        AGENT(3, "half way"),
+        TURN_ENDED(4, "interrupted")
+      ])
+    )
+  );
+  assert.equal(cutOff.find((item) => item.kind === "turn").foldedMessageCount, 1);
+  assert.equal(
+    cutOff.filter((item) => item.kind === "row" && item.behindTheFoldOf === null)[1].row.text,
+    "half way"
+  );
+}
+
+{
+  // What the person did never folds. A permission ask records a decision they were asked
+  // to make, which is their side of the conversation rather than something the turn made.
+  const asked = threadItems(
+    transcriptRows(
+      feedWithCommittedEvents(emptyConversationFeed(), [
+        PROMPT(1, "go"),
+        event(2, "permission_asked", {
+          ask_id: "a1",
+          title: "Run rm -rf",
+          detail: null,
+          options: []
+        }),
+        AGENT(3, "done"),
+        TURN_ENDED(4)
+      ])
+    )
+  );
+  assert.equal(
+    asked.find((item) => item.kind === "row" && item.row.kind === "permission_ask")
+      .behindTheFoldOf,
+    null
+  );
+}
+
+{
+  // The fold used to hold only tool calls and said so. It holds more now, and the label
+  // counts each kind it holds rather than the one it used to.
+  assert.equal(foldedWorkSentence(3, 2), "3 tool calls · 2 messages");
+  assert.equal(foldedWorkSentence(3, 0), "3 tool calls", "a turn that only worked reads as it did");
+  assert.equal(foldedWorkSentence(0, 1), "1 message");
+  assert.equal(foldedWorkSentence(1, 1), "1 tool call · 1 message");
+  assert.equal(foldedWorkSentence(0, 0), "", "and a fold holding nothing counts nothing");
+}
+
+{
   // The record keeps whole seconds, so a turn too short to measure claims no duration.
   assert.equal(workedSentence(0), "Worked");
   assert.equal(workedSentence(null), "Worked");
@@ -698,6 +980,132 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
 }
 
 {
+  // The live counter turns over on the turn's own second rather than the wall clock's:
+  // one subtraction of the start instant from now, floored once.
+  const begun = 1_000_400;
+  assert.equal(elapsedSecondsSince(begun, begun), 0);
+  assert.equal(elapsedSecondsSince(begun, begun + 999), 0);
+  assert.equal(elapsedSecondsSince(begun, begun + 1_000), 1);
+  assert.equal(
+    elapsedSecondsSince(begun, 1_001_000),
+    0,
+    "the wall clock crossing a second is not this turn crossing one"
+  );
+  assert.equal(
+    elapsedSecondsSince(begun, begun - 5_000),
+    0,
+    "a reader whose clock is behind the sender's counts nothing rather than counting down"
+  );
+
+  // Every wait is measured from the start instant, so the ticks land on its seconds.
+  assert.equal(
+    millisecondsUntilNextSecond(begun, begun),
+    1_000 + LIVE_COUNTER_TICK_MARGIN_MILLISECONDS
+  );
+  assert.equal(
+    millisecondsUntilNextSecond(begun, begun + 300),
+    700 + LIVE_COUNTER_TICK_MARGIN_MILLISECONDS
+  );
+  assert.equal(
+    millisecondsUntilNextSecond(begun, begun + 12_300),
+    700 + LIVE_COUNTER_TICK_MARGIN_MILLISECONDS
+  );
+  assert.equal(
+    millisecondsUntilNextSecond(begun, begun - 4_500),
+    500 + LIVE_COUNTER_TICK_MARGIN_MILLISECONDS
+  );
+
+  // Run the schedule the way the head runs it, against a timer that never fires exactly
+  // when it was asked to. Every second is said once and in order: this is the fault —
+  // the number repeating and then skipping one — proved gone.
+  let now = begun;
+  const said = [];
+  for (const lateness of [3, -4, 11, 0, -9, 7, 2, -1, 5]) {
+    said.push(elapsedSecondsSince(begun, now));
+    now += millisecondsUntilNextSecond(begun, now) + lateness;
+  }
+  assert.deepEqual(said, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+
+  // A tab that was in the background comes back to the right number rather than to the
+  // number of ticks it managed to fire, and goes straight back onto the turn's second.
+  assert.equal(elapsedSecondsSince(begun, begun + 65_000), 65);
+  assert.equal(
+    millisecondsUntilNextSecond(begun, begun + 65_000),
+    1_000 + LIVE_COUNTER_TICK_MARGIN_MILLISECONDS
+  );
+
+  // The running counter and the settled fold say a length the same way.
+  assert.equal(workingSentence(elapsedSecondsSince(begun, begun + 80_000)), "Working for 1m 20s");
+  assert.equal(workedSentence(80), "Worked for 1m 20s");
+}
+
+{
+  // The instant the person pressed send is counted from wherever the record has it.
+  const measured = event(1, "prompt", {
+    text: "go",
+    sender_label: "owner",
+    mode: "run_when_free",
+    sent_at_unix_milliseconds: 1_700_000_000_400
+  });
+  const anchor = threadItems(
+    transcriptRows(feedWithCommittedEvent(emptyConversationFeed(), measured))
+  ).find((item) => item.kind === "turn");
+  assert.equal(anchor.startedAtUnixMilliseconds, 1_700_000_000_400);
+
+  // The minted instant is somebody else's clock, and the row is a second opinion about
+  // when it happened. An instant that cannot be reconciled with its own row is not
+  // believed, and the whole second the row was written in is counted from instead.
+  function anchorOf(sentAt) {
+    const payload = { text: "go", sender_label: "owner", mode: "run_when_free" };
+    return threadItems(
+      transcriptRows(
+        feedWithCommittedEvent(
+          emptyConversationFeed(),
+          event(1, "prompt", sentAt === null ? payload : { ...payload, sent_at_unix_milliseconds: sentAt })
+        )
+      )
+    ).find((item) => item.kind === "turn").startedAtUnixMilliseconds;
+  }
+  const written = 1_700_000_000_000;
+
+  // A sender that put seconds where milliseconds belong would open the counter on a
+  // number in the tens of thousands of minutes.
+  assert.equal(anchorOf(1_700_000_000), written, "seconds in a milliseconds field are refused");
+
+  // A sender running ahead of the record would freeze the counter on "Working for 0s"
+  // for as long as it is ahead.
+  assert.equal(anchorOf(written + 90_000), written, "a clock a minute and a half ahead is refused");
+  assert.equal(
+    anchorOf(written + 1_500),
+    written + 1_500,
+    "but the row's own rounding and ordinary skew are not a wrong clock"
+  );
+
+  // A send really can precede its row by a long way: the row is written after the backend
+  // has taken the text, so a cold start sits in that gap — and recovering exactly that
+  // wait is what the instant is for.
+  assert.equal(anchorOf(written - 20_000), written - 20_000, "a slow delivery is believed");
+  assert.equal(anchorOf(written - 600_000), written, "ten minutes earlier is not this send");
+  assert.equal(anchorOf(null), written, "and a sender that minted nothing counts from the row");
+
+  // A steer joins the turn already running, so it never moves where the counting began.
+  const steered = feedWithCommittedEvents(emptyConversationFeed(), [
+    measured,
+    event(2, "prompt", {
+      text: "also this",
+      sender_label: "owner",
+      mode: "steer",
+      sent_at_unix_milliseconds: 1_700_000_009_100
+    })
+  ]);
+  assert.equal(
+    threadItems(transcriptRows(steered)).find((item) => item.kind === "turn")
+      .startedAtUnixMilliseconds,
+    1_700_000_000_400
+  );
+}
+
+{
   // Two turns keep their own work and their own durations.
   const feed = feedWithCommittedEvents(emptyConversationFeed(), [
     { ...PROMPT(1), created_at: 100 },
@@ -723,7 +1131,11 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.ok(anchor, "a running turn has a head before there is any work to put under it");
   assert.equal(anchor.toolCallCount, 0);
   assert.equal(anchor.settled, false);
-  assert.equal(anchor.startedAt, justStarted.events[0].created_at, "it counts from the prompt");
+  assert.equal(
+    anchor.startedAtUnixMilliseconds,
+    justStarted.events[0].created_at * 1_000,
+    "it counts from the prompt, and a row with no measured instant contributes its second"
+  );
   assert.deepEqual(
     items.map((item) => (item.kind === "turn" ? "turn" : item.row.kind)),
     ["prompt", "turn"],
@@ -977,6 +1389,197 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.equal(toolGlyphKind("NotebookEdit"), "edit");
   assert.equal(toolGlyphKind("Read"), "read");
   assert.equal(toolGlyphKind("something nobody has heard of"), "other");
+}
+
+{
+  // A tool call's line says what happened and which call it was. Every row below is a
+  // payload one of the three backends has actually written into a conversation.
+
+  // claude titles every call with the tool's name and puts the call's own arguments in
+  // the detail as one JSON object, which is why its rows used to read "Bash" and nothing
+  // else — an object is never the one short line the pane was willing to show.
+  assert.deepEqual(
+    toolCallLine({
+      title: "Bash",
+      toolKind: "Bash",
+      startedDetail:
+        '{"command": "ls -la /Users/khushaljagota/Coding", "description": "List project directory"}',
+      detail: "total 0\ndrwxr-xr-x  12 khushaljagota  staff   384 25 Jul 21:38 ."
+    }),
+    { title: "Ran", summary: "ls -la /Users/khushaljagota/Coding" },
+    "the call is read from what it was asked to do, not from what it gave back"
+  );
+  assert.deepEqual(
+    toolCallLine({
+      title: "Read",
+      toolKind: "Read",
+      startedDetail: '{"file_path": "/Users/khushaljagota/Coding/planning-v2/AGENTS.md"}',
+      detail: null
+    }),
+    { title: "Read", summary: "/Users/khushaljagota/Coding/planning-v2/AGENTS.md" }
+  );
+  assert.deepEqual(
+    toolCallLine({
+      title: "Write",
+      toolKind: "Write",
+      startedDetail:
+        '{"content": "# Scratch\\n\\nThrowaway.\\n", "file_path": "/Users/khushaljagota/Coding/scratch.md"}',
+      detail: null
+    }),
+    { title: "Edited", summary: "/Users/khushaljagota/Coding/scratch.md" },
+    "the path a write was given, never the thing it was given to write"
+  );
+
+  // A call whose arguments name no subject keeps the tool's name: "TaskUpdate" with
+  // nothing beside it still says more than "Edited" with nothing beside it.
+  assert.deepEqual(
+    toolCallLine({
+      title: "TaskUpdate",
+      toolKind: "TaskUpdate",
+      startedDetail: '{"status": "completed", "taskId": "1"}',
+      detail: null
+    }),
+    { title: "TaskUpdate", summary: null }
+  );
+  assert.deepEqual(
+    toolCallLine({
+      title: "AskUserQuestion",
+      toolKind: "AskUserQuestion",
+      startedDetail: '{"questions": [{"header": "Colour", "question": "Which colour?"}]}',
+      detail: null
+    }),
+    { title: "AskUserQuestion", summary: null },
+    "and nothing outside the named subjects is fished out of a call's arguments"
+  );
+
+  // codex runs everything through a login shell and titles the row with the invocation.
+  assert.deepEqual(
+    toolCallLine({
+      title: '/bin/zsh -lc "pwd && rg --files | head -25"',
+      toolKind: "execute",
+      startedDetail: "/Users/khushaljagota/Coding",
+      detail: "/Users/khushaljagota/Coding"
+    }),
+    { title: "pwd && rg --files | head -25", summary: "/Users/khushaljagota/Coding" },
+    "the shell is how the command was carried; the command is what was done"
+  );
+
+  // hermes writes a title that already describes the call, so it stands as written — and
+  // the detail that only says it again is dropped rather than said twice.
+  assert.deepEqual(
+    toolCallLine({
+      title: "terminal: ls web/src/lib/conversation2",
+      toolKind: "execute",
+      startedDetail: "$ ls web/src/lib/conversation2",
+      detail: "composer.ts\nfeed.ts\ntranscript.ts\nwire.ts"
+    }),
+    { title: "terminal: ls web/src/lib/conversation2", summary: null }
+  );
+  assert.deepEqual(
+    toolCallLine({
+      title: "search: wire.ts",
+      toolKind: "search",
+      startedDetail: "Searching for 'wire.ts' (files) in /Users/khushaljagota/Coding",
+      detail: null
+    }),
+    {
+      title: "search: wire.ts",
+      summary: "Searching for 'wire.ts' (files) in /Users/khushaljagota/Coding"
+    },
+    "a detail that says more than the title says is kept"
+  );
+  assert.deepEqual(
+    toolCallLine({
+      title: "read: /Users/khushaljagota/Coding/web/src/lib/conversation2/wire.ts",
+      toolKind: "read",
+      startedDetail: null,
+      detail: "line one\nline two\nline three"
+    }),
+    {
+      title: "read: /Users/khushaljagota/Coding/web/src/lib/conversation2/wire.ts",
+      summary: null
+    },
+    "several lines is output, and output belongs behind the row rather than on it"
+  );
+
+  // A row is always one line: the summary is cut short and says that it was.
+  const wordy = toolCallLine({
+    title: "Bash",
+    toolKind: "Bash",
+    startedDetail: JSON.stringify({ command: `echo ${"long ".repeat(40)}` }),
+    detail: null
+  });
+  assert.ok(wordy.summary.length <= TOOL_CALL_SUMMARY_MAXIMUM_CHARACTERS);
+  assert.ok(wordy.summary.endsWith("…"), "and it says that it was cut");
+  assert.equal(
+    toolCallLine({
+      title: "Bash",
+      toolKind: "Bash",
+      startedDetail: JSON.stringify({ command: "cat <<'EOF' > note.txt\nhello\nEOF" }),
+      detail: null
+    }).summary,
+    "cat <<'EOF' > note.txt",
+    "a command written over several lines still gives one line to read"
+  );
+
+  // The shell invocations a command arrives wrapped in, and the quoting they carry it in.
+  assert.equal(commandWithoutShellInvocation('bash -c "npm test"'), "npm test");
+  assert.equal(commandWithoutShellInvocation("sh -c 'npm test'"), "npm test");
+  assert.equal(commandWithoutShellInvocation("/bin/zsh -lc 'npm test'"), "npm test");
+  assert.equal(commandWithoutShellInvocation("cmd /c dir"), "dir");
+  assert.equal(commandWithoutShellInvocation('pwsh -Command "Get-ChildItem"'), "Get-ChildItem");
+  assert.equal(
+    commandWithoutShellInvocation('bash -c "echo \\"hi\\""'),
+    'echo "hi"',
+    "the escapes belong to the quoting rather than to the command"
+  );
+  assert.equal(commandWithoutShellInvocation("npm test"), "npm test", "and a bare command is left alone");
+  assert.equal(commandWithoutShellInvocation("bashful -c thing"), "bashful -c thing");
+
+  // A summary is dropped when the title already says it — as words, in order and
+  // together. Letters alone would be simpler and would eat the summary alive.
+  assert.deepEqual(
+    toolCallLine({
+      title: "Grep",
+      toolKind: "Grep",
+      startedDetail: '{"pattern": "arch"}',
+      detail: null
+    }),
+    { title: "Searched", summary: "arch" },
+    "a pattern spelled out of the letters of its own verb still says which call this was"
+  );
+  assert.deepEqual(
+    toolCallLine({
+      title: "Grep",
+      toolKind: "Grep",
+      startedDetail: '{"pattern": "search"}',
+      detail: null
+    }),
+    { title: "Searched", summary: "search" },
+    "and so does one that is a whole word of the verb — searching for the word search"
+  );
+  assert.equal(
+    lineShowsWholeDetail({ title: "Searched", summary: "arch" }, "arch"),
+    true,
+    "a detail the line already shows in full is still a detail the line shows in full"
+  );
+  assert.equal(
+    lineShowsWholeDetail({ title: "Searched", summary: null }, "arch"),
+    false,
+    "but a row whose line does not say it keeps the way to open it"
+  );
+
+  // Opening a row that would only repeat what its line already says is an affordance
+  // that does nothing, so a row like that does not offer one.
+  const echoed = toolCallLine({
+    title: "Tool 1",
+    toolKind: "read",
+    startedDetail: null,
+    detail: "ls -la /tmp"
+  });
+  assert.equal(echoed.summary, "ls -la /tmp");
+  assert.equal(lineShowsWholeDetail(echoed, "ls -la /tmp"), true);
+  assert.equal(lineShowsWholeDetail(echoed, "ls -la /tmp\nfile one\nfile two"), false);
 }
 
 // --- the three shapes of ask -------------------------------------------------------------------

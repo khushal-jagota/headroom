@@ -6,7 +6,15 @@
    * carries it; closing the picker without sending leaves the conversation exactly as it
    * was. When an ask is waiting the whole box gives way to it, because until it is
    * answered there is nothing else this composer could usefully do.
+   *
+   * Pressing Enter empties the box there and then and the box stays typeable, because the
+   * message is already gone as far as the person is concerned — only the send control says
+   * anything is still happening. If the send turns out not to have gone anywhere, the text
+   * comes back exactly as it was written, with the cursor at the end; unless something else
+   * has been typed in the meantime, in which case that draft is what matters and the error
+   * under the box is the whole of the news.
    */
+  import { tick } from "svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
   import {
@@ -77,14 +85,18 @@
   let mode = $state<PromptDeliveryMode>("run_when_free");
   let pickedModel = $state<string | null>(null);
   let pickedEffort = $state<string | null>(null);
-  let sending = $state(false);
+  let inputElement = $state<HTMLTextAreaElement | null>(null);
+  // Counted rather than flagged: the box stays typeable through a send, so a second
+  // message can be on its way before the first one has landed.
+  let sendsInFlight = $state(0);
 
   let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
   let effectiveMode = $derived<PromptDeliveryMode>(running ? mode : "run_when_free");
   let picked = $derived<RunValues>({ model: pickedModel, reasoningEffort: pickedEffort });
   let armed = $derived(hasArmedChange(current, picked, effectiveMode));
   let takenOver = $derived(ask !== null);
-  let inputDisabled = $derived(disabled || takenOver || sending);
+  let inputDisabled = $derived(disabled || takenOver);
+  let sendIsInFlight = $derived(sendsInFlight > 0 && !running);
   let livePlaceholder = $derived(takenOver ? askPlaceholder(ask) : placeholder);
   // What each selector shows with nothing picked: the concrete value already in force.
   let shownModel = $derived(
@@ -140,19 +152,37 @@
 
   async function send(): Promise<void> {
     const trimmed = text.trim();
-    if (!trimmed || sending || inputDisabled) return;
-    sending = true;
+    if (!trimmed || inputDisabled) return;
+    const carried = picked;
+    text = "";
+    // The change rode out with the message, so it is no longer pending: the selects
+    // fall back to showing what the conversation now runs on.
+    pickedModel = null;
+    pickedEffort = null;
+    sendsInFlight += 1;
     try {
-      const delivered = await onSend(trimmed, effectiveMode, picked);
-      if (!delivered) return;
-      text = "";
-      // The change rode out with the message, so it is no longer pending: the selects
-      // fall back to showing what the conversation now runs on.
-      pickedModel = null;
-      pickedEffort = null;
+      const delivered = await onSend(trimmed, effectiveMode, carried);
+      if (!delivered) await giveTheMessageBack(trimmed, carried);
     } finally {
-      sending = false;
+      sendsInFlight -= 1;
     }
+  }
+
+  /** The message got nowhere, so the person is put back where they were.
+   *
+   * Everything that was about to go comes back together — the text and the change it was
+   * carrying — because that is the state they were in when they pressed Enter.
+   */
+  async function giveTheMessageBack(sent: string, carried: RunValues): Promise<void> {
+    if (text !== "") return;
+    text = sent;
+    pickedModel = carried.model;
+    pickedEffort = carried.reasoningEffort;
+    await tick();
+    const input = inputElement;
+    if (input === null || text !== sent) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -196,6 +226,7 @@
         data-conversation2-input
         rows="1"
         placeholder={livePlaceholder}
+        bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
         onkeydown={onKeydown}
@@ -274,11 +305,18 @@
           <button
             type="button"
             class={`chat-send${running ? " stop" : text.trim() ? " on" : ""}`}
+            class:is-sending={sendIsInFlight}
             data-conversation2-send={running ? undefined : true}
             data-conversation2-stop={running ? true : undefined}
+            data-conversation2-sending={sendIsInFlight ? true : undefined}
+            aria-busy={sendIsInFlight ? "true" : undefined}
             disabled={running ? false : inputDisabled || !text.trim()}
-            title={running ? "Stop the turn — press Enter to send instead" : "Send"}
-            aria-label={running ? "Stop the turn" : "Send"}
+            title={running
+              ? "Stop the turn — press Enter to send instead"
+              : sendIsInFlight
+                ? "On its way"
+                : "Send"}
+            aria-label={running ? "Stop the turn" : sendIsInFlight ? "On its way" : "Send"}
             onclick={() => (running ? onStop?.() : void send())}
           >{running ? "■" : "↑"}</button>
         {/if}
@@ -298,6 +336,13 @@
   /* An ask is a band on top of the box, not a replacement for it: the input keeps its
      resting height underneath, so the composer stays exactly the size it always was. */
   :global(.chat-box.has-ask) { padding-top: 0; }
+  /* A message on its way out. The box is already empty and already typeable, so the arrow
+     staying lit is the one thing on screen that says the send has not landed yet. */
+  :global(.chat-send.is-sending:disabled) {
+    background: var(--surface-overlay);
+    color: var(--accent-bright);
+    opacity: 1;
+  }
   .c2-pick-select {
     min-width: 0;
     max-width: calc(var(--space-page-tail) * 1.25);

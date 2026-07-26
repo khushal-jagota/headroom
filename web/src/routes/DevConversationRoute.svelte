@@ -19,6 +19,14 @@
     type ConversationStream
   } from "../lib/conversation2/feed";
   import { fateSentence, sendBodyFor, type RunValues } from "../lib/conversation2/composer";
+  import {
+    mintOutgoingMessage,
+    outgoingMessagesTheRecordHasNot,
+    recallOutgoingMessages,
+    rememberOutgoingMessages,
+    type OutgoingMessage,
+    type OutgoingMessageKnownFate
+  } from "../lib/conversation2/outgoing";
   import { liveAskFrom, transcriptRows } from "../lib/conversation2/transcript";
   import {
     answerPermissionAsk,
@@ -45,6 +53,10 @@
   let conversationId = $state(readIdFromAddress() ?? mintConversationId());
   let view = $state<ConversationView | null>(null);
   let feed = $state<ConversationFeed>(emptyConversationFeed());
+  /** What this browser has sent that the record does not have yet, oldest first. Each one
+   *  is drawn from the moment Enter was pressed and drops out when its row arrives. Kept
+   *  for the tab, so a reload in the middle of one does not take a person's words away. */
+  let sentMessages = $state<readonly OutgoingMessage[]>([]);
   let backends = $state<BackendSnapshot[]>([]);
   let updatingBackend = $state<ConversationBackendKey | null>(null);
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
@@ -152,6 +164,10 @@
       },
       (next) => {
         feed = next;
+        // The record is what draws a message once it has it. A copy of one it now holds
+        // is not redrawn somewhere else — it simply stops being drawn.
+        const stillOutgoing = outgoingMessagesTheRecordHasNot(sentMessages, next.events);
+        if (stillOutgoing !== sentMessages) holdOnTo(stillOutgoing);
         connectionTrouble = false;
       },
       // Every connect asks the system about itself again, after the rows are in. This is
@@ -182,6 +198,20 @@
     return error instanceof Error ? error.message : String(error);
   }
 
+  /** Send, having already drawn the message.
+   *
+   * The message is this browser's before it is anybody else's: the text is here, so it is
+   * given its id and the instant it was sent and put in the thread straight away. What
+   * follows is the network catching up with something the person has already seen happen.
+   *
+   * How it ends decides what happens to the copy, and there are three endings rather than
+   * two. The server saying no — a refusal, or a request it turned away — means this text
+   * reached nothing: the copy goes and the words go back to the person who wrote them. The
+   * server saying yes means the copy waits for its row. And no answer at all is neither:
+   * the message may have arrived and may not, so the copy stays saying exactly that, and
+   * the words are not put back — a person one keystroke away from sending the same message
+   * twice is a worse place to be left than one who has to look at what they wrote.
+   */
   async function send(
     text: string,
     mode: PromptDeliveryMode,
@@ -189,6 +219,8 @@
   ): Promise<boolean> {
     errorNote = null;
     fateNote = null;
+    const message = mintOutgoingMessage({ text, senderLabel: SENDER_LABEL, mode });
+    holdOnTo([...sentMessages, message]);
     try {
       if (!started) {
         view = await startConversation({
@@ -204,18 +236,57 @@
         writeIdToAddress(conversationId);
         await openConversation();
       }
-      const fate = await sendPrompt(
-        conversationId,
-        sendBodyFor({ text, senderLabel: SENDER_LABEL, mode, current, picked })
-      );
+      const fate = await sendPrompt(conversationId, sendBodyFor({ message, current, picked }));
       fateNote = fateSentence(fate);
       fateNoteIsRefusal = fate.fate === "refused";
+      if (fate.fate === "refused") {
+        stopDrawing(message.messageId);
+        await refreshView();
+        return false;
+      }
+      // Held for a busy agent: it has reached nothing yet, and it says so rather than
+      // sitting there looking like a message something is answering.
+      if (fate.fate === "queued") whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
       await refreshView();
       return true;
     } catch (error) {
       errorNote = sentenceFor(error);
-      return false;
+      if (theServerTurnedItAway(error)) {
+        stopDrawing(message.messageId);
+        return false;
+      }
+      whatIsKnownAbout(message.messageId, "answer_never_came_back");
+      return true;
     }
+  }
+
+  /** Whether the server answered, and answered by rejecting the request itself.
+   *
+   * That is the only failure that says this text got nowhere. A request that never reached
+   * the server, and one the server fell over part-way through, both leave the question
+   * open — the send may have landed, and its row may be on its way.
+   */
+  function theServerTurnedItAway(error: unknown): boolean {
+    return (
+      error instanceof ConversationWireError && error.status >= 400 && error.status < 500
+    );
+  }
+
+  function holdOnTo(messages: readonly OutgoingMessage[]): void {
+    sentMessages = messages;
+    rememberOutgoingMessages(conversationId, messages);
+  }
+
+  function stopDrawing(messageId: string): void {
+    holdOnTo(sentMessages.filter((message) => message.messageId !== messageId));
+  }
+
+  function whatIsKnownAbout(messageId: string, knownFate: OutgoingMessageKnownFate): void {
+    holdOnTo(
+      sentMessages.map((message) =>
+        message.messageId === messageId ? { ...message, knownFate } : message
+      )
+    );
   }
 
   async function stop(): Promise<void> {
@@ -256,6 +327,10 @@
     }
     stream?.close();
     stream = null;
+    // The old conversation's activity has just been killed, so nothing this tab was still
+    // holding for it is going anywhere. It is let go before the id changes, or it would be
+    // left behind under a name nothing here answers to any more.
+    holdOnTo([]);
     conversationId = mintConversationId();
     writeIdToAddress(conversationId);
     view = null;
@@ -287,6 +362,12 @@
 
   onMount(() => {
     if (readIdFromAddress() === null) writeIdToAddress(conversationId, { replace: true });
+    // Whatever this tab was still holding when it was last here, which is a question only
+    // this page arriving can ask. Reading a conversation again — after starting one, or on
+    // coming back to the tab — must never reach for it: what is in hand is newer than
+    // anything remembered, and the remembered copy of a message being sent right now would
+    // come back saying nobody ever heard the end of it.
+    sentMessages = recallOutgoingMessages(conversationId);
     void openConversation();
     void loadBackends();
     const onVisible = (): void => {
@@ -311,6 +392,7 @@
       {backendKey}
       workspaceFolder={view?.workspace_folder ?? null}
       {rows}
+      outgoingMessages={sentMessages}
       ownSenderLabel={SENDER_LABEL}
       livenessPulse={feed.livenessPulse}
       {running}
@@ -373,7 +455,12 @@
     gap: var(--space-5);
     align-items: stretch;
     min-height: 0;
-    height: 100%;
+    /* The pane's thread is the thing that scrolls, so this route has to be as tall as the
+       space it was given rather than as tall as what is in it. Nothing above it sets a
+       height — the shell is a min-height and the screen is just a box — so a percentage
+       resolves to nothing and the page ends up scrolling instead of the thread. The
+       height is the viewport, less the shell's nav bar and the padding around a screen. */
+    height: calc(100vh - var(--shell-nav-height) - var(--space-5) * 2);
   }
   .c2-route-pane { display: flex; min-width: 0; min-height: 0; }
   .c2-route-backends {

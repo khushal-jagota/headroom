@@ -88,8 +88,25 @@ type Row<Kind extends string, Payload> = {
   created_at: number;
 };
 
+/** The sender's own two facts about a message it sent.
+ *
+ * The id is how a sender recognises its own message when the record hands it back: this
+ * browser draws a message the moment Enter is pressed, and the id is what says that the
+ * copy it drew and this row are the same message. The instant is when the person pressed
+ * send, in unix milliseconds by this browser's clock — which is where a turn's clock
+ * starts, and is not the same thing as ``created_at``, the whole second the row was
+ * written in. Both are absent when nobody minted them — a message sent from anywhere
+ * other than a browser has neither, and every row already in a record predates them. */
+type SenderMintedPromptFields = {
+  sender_message_id?: string;
+  sent_at_unix_milliseconds?: number;
+};
+
 export type ConversationEvent =
-  | Row<"prompt", { text: string; sender_label: string; mode: PromptDeliveryMode }>
+  | Row<
+      "prompt",
+      { text: string; sender_label: string; mode: PromptDeliveryMode } & SenderMintedPromptFields
+    >
   | Row<
       "prompt_delivery_refused",
       {
@@ -97,9 +114,10 @@ export type ConversationEvent =
         sender_label: string;
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
+        sender_message_id?: string;
       }
     >
-  | Row<"prompt_discarded", { text: string; sender_label: string }>
+  | Row<"prompt_discarded", { text: string; sender_label: string; sender_message_id?: string }>
   | Row<"agent_message", { text: string }>
   | Row<
       "tool_call_started",
@@ -205,7 +223,7 @@ export type SendPromptBody = {
   mode: PromptDeliveryMode;
   model_change?: string;
   reasoning_effort_change?: string;
-};
+} & SenderMintedPromptFields;
 
 /** A request the server answered with a refusal of the request itself.
  *
