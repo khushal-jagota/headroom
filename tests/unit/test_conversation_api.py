@@ -11,6 +11,7 @@ response that never ends cannot be collected first and handed back afterwards.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sqlite3
 from collections.abc import Callable, Coroutine, Iterator
@@ -57,6 +58,14 @@ from planner.conversation.events import (
     ToolCallStatus,
 )
 from planner.conversation.live_tail import MAXIMUM_HELD_TAIL_ITEMS, ConversationLiveTail
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessageText,
+    message_content_text,
+    text_message_content,
+)
+from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.snapshot import (
     BackendSnapshotService,
     CommandOutcome,
@@ -81,8 +90,13 @@ class _FakeBackend:
     """One conversation's backend side, kept across every child spawned for it."""
 
     conversation_id: str
-    written_texts: list[str] = field(default_factory=list)
-    steered_texts: list[str] = field(default_factory=list)
+    written_contents: list[MessageContent] = field(default_factory=list)
+
+    @property
+    def written_texts(self) -> list[str]:
+        """The words of each message written. The messages themselves are above."""
+        return [message_content_text(content) for content in self.written_contents]
+    steered_contents: list[MessageContent] = field(default_factory=list)
     permission_answers: dict[str, str] = field(default_factory=dict)
     cancellations: int = 0
     live_turn_token: TurnToken | None = None
@@ -108,7 +122,7 @@ class _FakeBackendChild:
     async def write_prompt(
         self,
         turn_token: TurnToken,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode,
@@ -118,12 +132,12 @@ class _FakeBackendChild:
         del sender_label, mode, model_change, reasoning_effort_change
         if self._backend.write_fails:
             raise PromptWriteFailed(self._backend.conversation_id)
-        self._backend.written_texts.append(text)
+        self._backend.written_contents.append(content)
         self._backend.live_turn_token = turn_token
 
-    async def steer(self, text: str, *, sender_label: str) -> None:
+    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
         del sender_label
-        self._backend.steered_texts.append(text)
+        self._backend.steered_contents.append(content)
 
     async def cancel_running_turn(self) -> None:
         self._backend.cancellations += 1
@@ -212,8 +226,10 @@ class _Harness:
         self.live_tail = ConversationLiveTail()
         self.backends: dict[str, _FakeBackend] = {}
         self.machine = _FakeMachine()
+        self.message_files = ConversationMessageFiles(str(db_path))
         self.system = SqliteProcessConversationSystem(
             store=self.store,
+            message_files=self.message_files,
             backend_child_factories={
                 backend_key: self._make_child for backend_key in ConversationBackendKey
             },
@@ -223,6 +239,7 @@ class _Harness:
             store=self.store,
             system=self.system,
             live_tail=self.live_tail,
+            message_files=self.message_files,
             backend_snapshots=BackendSnapshotService(
                 self.machine,
                 codex_model_catalog_probe=_no_codex_to_ask,
@@ -235,7 +252,11 @@ class _Harness:
         self.app.state.conversation = self.runtime
 
     def _make_child(
-        self, *, resolved_start: ResolvedConversationStart, event_sink: BackendEventSink
+        self,
+        *,
+        resolved_start: ResolvedConversationStart,
+        event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> _FakeBackendChild:
         backend = self.backend(resolved_start.conversation_id)
         if backend.spawn_fails:
@@ -604,27 +625,43 @@ def test_every_fate_a_send_can_have_comes_back_tagged(harness: _Harness) -> None
 
             started = await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "first", "sender_label": "owner", "mode": "run_when_free"},
+                json={
+                    "content": [{"piece": "text", "text": "first"}],
+                    "sender_label": "owner",
+                    "mode": "run_when_free",
+                },
             )
             assert started.status_code == 200
             assert started.json() == {"fate": "started"}
 
             queued = await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "held", "sender_label": "owner", "mode": "run_when_free"},
+                json={
+                    "content": [{"piece": "text", "text": "held"}],
+                    "sender_label": "owner",
+                    "mode": "run_when_free",
+                },
             )
             assert queued.json() == {"fate": "queued", "queue_position": 1}
 
             injected = await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "also this", "sender_label": "owner", "mode": "steer"},
+                json={
+                    "content": [{"piece": "text", "text": "also this"}],
+                    "sender_label": "owner",
+                    "mode": "steer",
+                },
             )
             assert injected.json() == {"fate": "injected"}
-            assert harness.backend("c").steered_texts == ["also this"]
+            assert harness.backend("c").steered_contents == [text_message_content("also this")]
 
             refused = await client.post(
                 "/api/conversation/conversations/unknown/send",
-                json={"text": "nowhere", "sender_label": "owner", "mode": "run_when_free"},
+                json={
+                    "content": [{"piece": "text", "text": "nowhere"}],
+                    "sender_label": "owner",
+                    "mode": "run_when_free",
+                },
             )
             assert refused.status_code == 200
             assert refused.json() == {
@@ -648,7 +685,7 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
             delivered = await client.post(
                 "/api/conversation/conversations/c/send",
                 json={
-                    "text": "first",
+                    "content": [{"piece": "text", "text": "first"}],
                     "sender_label": "owner",
                     "sender_message_id": "m-1",
                     "sent_at_unix_milliseconds": 1_700_000_000_123,
@@ -659,7 +696,7 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
             held = await client.post(
                 "/api/conversation/conversations/c/send",
                 json={
-                    "text": "held",
+                    "content": [{"piece": "text", "text": "held"}],
                     "sender_label": "owner",
                     "sender_message_id": "m-2",
                     "sent_at_unix_milliseconds": 1_700_000_000_456,
@@ -695,11 +732,18 @@ def test_what_a_sender_minted_reaches_the_row_its_message_becomes(harness: _Harn
             await _start(client, "k")
             await client.post(
                 "/api/conversation/conversations/k/send",
-                json={"text": "running", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "running"}],
+                    "sender_label": "owner",
+                },
             )
             await client.post(
                 "/api/conversation/conversations/k/send",
-                json={"text": "never ran", "sender_label": "owner", "sender_message_id": "m-3"},
+                json={
+                    "content": [{"piece": "text", "text": "never ran"}],
+                    "sender_label": "owner",
+                    "sender_message_id": "m-3",
+                },
             )
             await client.post("/api/conversation/conversations/k/kill")
             await harness.settle()
@@ -721,13 +765,16 @@ def test_a_steer_carrying_a_change_is_a_caller_error(harness: _Harness) -> None:
             await _start(client, "c")
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "first", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "first"}],
+                    "sender_label": "owner",
+                },
             )
 
             response = await client.post(
                 "/api/conversation/conversations/c/send",
                 json={
-                    "text": "steered",
+                    "content": [{"piece": "text", "text": "steered"}],
                     "sender_label": "owner",
                     "mode": "steer",
                     "model_change": "another-model",
@@ -745,15 +792,24 @@ def test_the_view_says_what_is_running_and_what_is_waiting(harness: _Harness) ->
             await _start(client, "c")
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "work", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "work"}],
+                    "sender_label": "owner",
+                },
             )
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "held one", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "held one"}],
+                    "sender_label": "owner",
+                },
             )
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "held two", "sender_label": "automatic-loop"},
+                json={
+                    "content": [{"piece": "text", "text": "held two"}],
+                    "sender_label": "automatic-loop",
+                },
             )
             ask_id = await harness.raise_permission_ask("c")
 
@@ -786,12 +842,15 @@ def test_a_waiting_message_can_be_taken_back_by_the_name_its_sender_gave_it(
             await _start(client, "c")
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "incumbent", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "incumbent"}],
+                    "sender_label": "owner",
+                },
             )
             queued = await client.post(
                 "/api/conversation/conversations/c/send",
                 json={
-                    "text": "held",
+                    "content": [{"piece": "text", "text": "held"}],
                     "sender_label": "owner",
                     "sender_message_id": "message-one",
                 },
@@ -828,7 +887,10 @@ def test_an_answer_lands_once_and_then_has_nothing_left_to_land_on(harness: _Har
             await _start(client, "c")
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "work", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "work"}],
+                    "sender_label": "owner",
+                },
             )
             ask_id = await harness.raise_permission_ask("c")
 
@@ -867,11 +929,17 @@ def test_interrupting_frees_what_was_held_and_killing_throws_it_away(
             await _start(client, "interrupted")
             await client.post(
                 "/api/conversation/conversations/interrupted/send",
-                json={"text": "incumbent", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "incumbent"}],
+                    "sender_label": "owner",
+                },
             )
             await client.post(
                 "/api/conversation/conversations/interrupted/send",
-                json={"text": "held", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "held"}],
+                    "sender_label": "owner",
+                },
             )
 
             stopped = await client.post("/api/conversation/conversations/interrupted/interrupt")
@@ -883,11 +951,17 @@ def test_interrupting_frees_what_was_held_and_killing_throws_it_away(
             await _start(client, "killed")
             await client.post(
                 "/api/conversation/conversations/killed/send",
-                json={"text": "incumbent", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "incumbent"}],
+                    "sender_label": "owner",
+                },
             )
             await client.post(
                 "/api/conversation/conversations/killed/send",
-                json={"text": "held", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "held"}],
+                    "sender_label": "owner",
+                },
             )
 
             killed = await client.post("/api/conversation/conversations/killed/kill")
@@ -932,7 +1006,11 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
             await _start(client, "c")
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "work", "sender_label": "owner", "mode": "run_when_free"},
+                json={
+                    "content": [{"piece": "text", "text": "work"}],
+                    "sender_label": "owner",
+                    "mode": "run_when_free",
+                },
             )
             await harness.complete_turn("c")
 
@@ -942,6 +1020,8 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
             assert [event["sequence"] for event in everything] == [1, 2]
             assert [event["kind"] for event in everything] == ["prompt", "turn_ended"]
             assert everything[0]["payload"] == {
+                # The compact form: a message that is only words is stored, and comes
+                # back, exactly as it always was. Nothing ordinary grew.
                 "text": "work",
                 "sender_label": "owner",
                 "mode": "run_when_free",
@@ -971,7 +1051,7 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
             await _start(client, "c")
             for text in ("row one", "row two"):
                 stored = await harness.store.append_event(
-                    "c", AgentMessageEventPayload(text=text)
+                    "c", AgentMessageEventPayload(content=text_message_content(text))
                 )
                 harness.live_tail.publish_event(stored)
 
@@ -986,7 +1066,10 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
                     committed_during_the_replay = True
                     for text in ("row three", "row four"):
                         stored = await harness.store.append_event(
-                            conversation_id, AgentMessageEventPayload(text=text)
+                            conversation_id,
+                            AgentMessageEventPayload(
+                                content=text_message_content(text)
+                            ),
                         )
                         harness.live_tail.publish_event(stored)
                 return await read_events_after(conversation_id, after_sequence)
@@ -1004,7 +1087,7 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
 
                 # Committed after the replay was read: it can only arrive live.
                 stored = await harness.store.append_event(
-                    "c", AgentMessageEventPayload(text="row five")
+                    "c", AgentMessageEventPayload(content=text_message_content("row five"))
                 )
                 harness.live_tail.publish_event(stored)
                 name, payload = await stream.next_named_frame()
@@ -1030,7 +1113,10 @@ def test_the_tail_shows_text_that_has_not_finished_arriving_and_never_stores_it(
             await _start(client, "c")
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "work", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "work"}],
+                    "sender_label": "owner",
+                },
             )
 
             async with _EventStreamDrive(
@@ -1071,7 +1157,10 @@ def test_the_tail_shows_a_tool_call_getting_on_with_it_and_keeps_no_row_for_it(
             await _start(client, "c")
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "work", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "work"}],
+                    "sender_label": "owner",
+                },
             )
 
             async with _EventStreamDrive(
@@ -1123,7 +1212,10 @@ def test_the_tail_says_the_model_is_thinking_without_saying_what(
             await _start(client, "c")
             await client.post(
                 "/api/conversation/conversations/c/send",
-                json={"text": "think hard about this", "sender_label": "owner"},
+                json={
+                    "content": [{"piece": "text", "text": "think hard about this"}],
+                    "sender_label": "owner",
+                },
             )
 
             async with _EventStreamDrive(
@@ -1385,3 +1477,141 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         assert app.state.conversation_system is app.state.conversation.system
 
     assert app.state.conversation is None
+
+
+# --- a message that carries more than words --------------------------------------------------
+
+
+# One real PNG, small enough to read: a 1x1 image, which is a genuine file rather than a
+# few bytes pretending to be one.
+A_TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+)
+
+
+def test_a_picture_sent_with_a_message_is_kept_and_the_row_names_what_was_kept(
+    harness: _Harness,
+) -> None:
+    """The whole path in one exercise: bytes in, a file kept, a row that names it.
+
+    The bytes ride with the message they belong to — there is no upload of their own — and
+    what the record holds is the file this system kept, not the bytes. That is what lets
+    one value serve the record, the backend and the browser.
+    """
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            sent = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [
+                        {"piece": "text", "text": "look at this"},
+                        {
+                            "piece": "image",
+                            "data": base64.b64encode(A_TINY_PNG).decode("ascii"),
+                            "media_type": "image/png",
+                            "file_name": "screenshot.png",
+                        },
+                    ],
+                    "sender_label": "owner",
+                },
+            )
+            assert sent.json() == {"fate": "started"}
+
+            rows = (
+                await client.get("/api/conversation/conversations/c/events")
+            ).json()["events"]
+            payload = rows[0]["payload"]
+            assert payload["content"][0] == {"piece": "text", "text": "look at this"}
+            picture = payload["content"][1]
+            assert picture["piece"] == "image"
+            assert picture["media_type"] == "image/png"
+            assert picture["file_name"] == "screenshot.png"
+            # The bytes are not in the row. What is in the row is where they went.
+            assert "data" not in picture
+
+            # And they really are on disk, under this conversation, byte for byte.
+            kept = await harness.message_files.read("c", picture["stored_file_id"])
+            assert kept == A_TINY_PNG
+
+            # The browser fetches them from the route, with the type the record recorded
+            # rather than one guessed from the bytes at serving time.
+            served = await client.get(
+                f"/api/conversation/conversations/c/files/{picture['stored_file_id']}"
+            )
+            assert served.status_code == 200
+            assert served.headers["content-type"] == "image/png"
+            assert served.content == A_TINY_PNG
+
+    _run(exercise)
+
+
+def test_the_picture_reaches_the_backend_and_not_just_the_record(harness: _Harness) -> None:
+    """A row is not delivery. The message the agent was handed carries the picture too."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [
+                        {"piece": "text", "text": "look at this"},
+                        {
+                            "piece": "image",
+                            "data": base64.b64encode(A_TINY_PNG).decode("ascii"),
+                            "media_type": "image/png",
+                        },
+                    ],
+                    "sender_label": "owner",
+                },
+            )
+
+            written = harness.backend("c").written_contents
+            assert len(written) == 1
+            said, picture = written[0]
+            assert said == MessageText(text="look at this")
+            assert isinstance(picture, MessageImage)
+            assert picture.media_type == "image/png"
+            # The adapter is handed the file the record named, so what it delivers and
+            # what the record holds cannot drift apart.
+            assert await harness.message_files.read("c", picture.stored_file_id) == A_TINY_PNG
+
+    _run(exercise)
+
+
+def test_a_file_that_was_never_kept_is_not_there(harness: _Harness) -> None:
+    """An id nobody kept anything under is a plain not-found, not an empty answer."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            missing = await client.get(
+                "/api/conversation/conversations/c/files/f_never_written"
+            )
+            assert missing.status_code == 404
+
+    _run(exercise)
+
+
+def test_a_message_with_nothing_in_it_is_refused_rather_than_recorded(
+    harness: _Harness,
+) -> None:
+    """An empty send would put an empty prompt in front of an agent and tell nobody."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            empty = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={"content": [], "sender_label": "owner"},
+            )
+            assert empty.status_code == 422
+
+            rows = (
+                await client.get("/api/conversation/conversations/c/events")
+            ).json()["events"]
+            assert rows == []
+
+    _run(exercise)

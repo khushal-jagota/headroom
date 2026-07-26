@@ -32,6 +32,8 @@ from planner.conversation.events import (
     PlanEntry,
     ToolCallStatus,
 )
+from planner.conversation.message_content import MessageContent
+from planner.conversation.message_files import ConversationMessageFiles
 
 
 class BackendAdapterError(Exception):
@@ -131,8 +133,15 @@ class BackendEventSink(Protocol):
         of reasoning is one fact — the agent is working — however many pieces it came in.
         """
 
-    async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
-        """The whole of a finished agent message."""
+    async def agent_message_completed(
+        self, turn_token: TurnToken, content: MessageContent
+    ) -> None:
+        """The whole of a finished agent message.
+
+        Nearly always one piece of written words, which is what an agent's message nearly
+        always is. A backend that hands back a file it produced reports that as a piece of
+        the same message rather than as a sentence describing one.
+        """
 
     async def tool_call_started(
         self,
@@ -242,14 +251,24 @@ class BackendChild(Protocol):
     async def write_prompt(
         self,
         turn_token: TurnToken,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> None:
-        """Start a turn with this text, on these values.
+        """Start a turn with this message, on these values.
+
+        **Every piece goes over the wire, or none of it does.** The core has already
+        refused a message carrying a piece this backend cannot be handed, so an adapter
+        reaching one here is looking at a fault rather than at something to drop. A
+        picture that silently did not arrive is a picture the person believes the agent
+        has seen.
+
+        A picture or a sound names a file the record kept; the bytes are on disk and the
+        adapter is handed the way to reach them when it is made. Some backends want the
+        path and some want the bytes, and both are one step from the same value.
 
         ``sender_label`` and ``mode`` travel with the text as the backend's own metadata
         — who sent it and how it was meant to meet the agent. Nothing branches on them,
@@ -270,12 +289,12 @@ class BackendChild(Protocol):
         cannot be made to this child at all.
         """
 
-    async def steer(self, text: str, *, sender_label: str) -> None:
-        """Put text into the turn that is already running, without ending it.
+    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
+        """Put a message into the turn that is already running, without ending it.
 
         Only a backend that can do this ever has it called: the core refuses a steer aimed
         at one that cannot, before any child is touched. ``sender_label`` travels with the
-        text the same way it does on a prompt. Raises ``PromptWriteFailed``.
+        message the same way it does on a prompt. Raises ``PromptWriteFailed``.
         """
 
     async def cancel_running_turn(self) -> None:
@@ -314,6 +333,11 @@ class BackendChildFactory(Protocol):
     The core holds one factory per backend key and calls the one the conversation was
     started on. Making the child does not spawn it — ``start`` does — but a factory that
     already knows the backend cannot run says so with ``BackendSpawnFailed`` here.
+
+    A child is handed two of the record's own things and nothing else: where to report
+    what its backend did, and where the files its messages carry are kept. Both are
+    services rather than rules — the adapter reads bytes and reports facts, and decides
+    none of the conversation's semantics with either.
     """
 
     def __call__(
@@ -321,4 +345,5 @@ class BackendChildFactory(Protocol):
         *,
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> BackendChild: ...

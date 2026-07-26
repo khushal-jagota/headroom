@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 from pathlib import Path
 
@@ -40,27 +41,34 @@ from planner.conversation.events import (
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
+from planner.conversation.message_content import (
+    MessageImage,
+    MessageText,
+    text_message_content,
+)
 from planner.conversation.storage import ConversationRecordMissing, ConversationStore
 from planner.core.db import connect, create_schema
 
 A_PROMPT = PromptEventPayload(
-    text="hello", sender_label="owner", mode=PromptDeliveryMode.run_when_free
+    content=text_message_content("hello"),
+    sender_label="owner",
+    mode=PromptDeliveryMode.run_when_free,
 )
 A_REFUSED_DELIVERY = PromptDeliveryRefusedEventPayload(
-    text="held",
+    content=text_message_content("held"),
     sender_label="automatic-loop",
     mode=PromptDeliveryMode.run_when_free,
     refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed,
 )
 AN_AGENT_MESSAGE = AgentMessageEventPayload(
-    text="# heading\n\nbody with an em dash — and 日本語"
+    content=text_message_content("# heading\n\nbody with an em dash — and 日本語")
 )
 
 # One of every kind, so the codec tests below cover the whole enum rather than a sample.
 EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
     A_PROMPT,
     A_REFUSED_DELIVERY,
-    PromptDiscardedEventPayload(text="never ran", sender_label="owner"),
+    PromptDiscardedEventPayload(content=text_message_content("never ran"), sender_label="owner"),
     AN_AGENT_MESSAGE,
     ToolCallStartedEventPayload(
         tool_call_id="call-1", title="Read file", tool_kind="read", detail="/tmp/x"
@@ -137,7 +145,11 @@ def test_every_kind_has_a_payload_that_writes_under_it() -> None:
 def test_the_stored_text_is_canonical() -> None:
     """One value, one text: keys in order, no filler, non-ASCII left as itself."""
     stored = conversation_event_payload_to_canonical_json(
-        PromptEventPayload(text="日本語", sender_label="owner", mode=PromptDeliveryMode.send_now)
+        PromptEventPayload(
+            content=text_message_content("日本語"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.send_now,
+        )
     )
 
     assert stored == '{"mode":"send_now","sender_label":"owner","text":"日本語"}'
@@ -146,7 +158,7 @@ def test_the_stored_text_is_canonical() -> None:
 def test_what_a_sender_minted_is_stored_and_read_back_exactly() -> None:
     """The sender's id and instant are kept as given, and survive the round trip."""
     minted = PromptEventPayload(
-        text="go",
+        content=text_message_content("go"),
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         sender_message_id="m-1",
@@ -180,19 +192,23 @@ def test_a_sent_message_carries_its_id_into_whichever_row_it_becomes() -> None:
     """Delivered, refused, discarded — a sender must recognise its own in all three."""
     for payload in (
         PromptEventPayload(
-            text="go",
+            content=text_message_content("go"),
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             sender_message_id="m-1",
         ),
         PromptDeliveryRefusedEventPayload(
-            text="go",
+            content=text_message_content("go"),
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             refusal_reason=PromptDeliveryRefusalReason.backend_did_not_start,
             sender_message_id="m-1",
         ),
-        PromptDiscardedEventPayload(text="go", sender_label="owner", sender_message_id="m-1"),
+        PromptDiscardedEventPayload(
+            content=text_message_content("go"),
+            sender_label="owner",
+            sender_message_id="m-1",
+        ),
     ):
         stored = conversation_event_payload_to_canonical_json(payload)
         assert '"sender_message_id":"m-1"' in stored
@@ -424,7 +440,10 @@ def test_appends_racing_each_other_each_get_a_number_of_their_own(
         await store.create_conversation(_resolved())
         written = await asyncio.gather(
             *(
-                store.append_event("c", AgentMessageEventPayload(text=f"message-{index}"))
+                store.append_event(
+                    "c",
+                    AgentMessageEventPayload(content=text_message_content(f"message-{index}")),
+                )
                 for index in range(20)
             )
         )
@@ -491,3 +510,89 @@ def test_a_written_row_is_never_touched_again(store: ConversationStore, tmp_path
         )
 
     asyncio.run(exercise())
+
+
+# --- a message is what it holds, not only what it says ---------------------------------------
+
+
+A_MESSAGE_WITH_MORE_THAN_WORDS = PromptEventPayload(
+    content=(
+        MessageText(text="look at this"),
+        MessageImage(
+            stored_file_id="f_abc", media_type="image/png", file_name="screenshot.png"
+        ),
+        MessageText(text="and tell me what it is"),
+    ),
+    sender_label="owner",
+    mode=PromptDeliveryMode.run_when_free,
+)
+
+
+def test_a_message_of_several_pieces_survives_being_written_and_read_back() -> None:
+    """Every piece, in order, with every field it was given.
+
+    The whole point of the record carrying content: a message that is a sentence, a
+    picture and another sentence comes back as those three things and not as the words.
+    """
+    written = conversation_event_payload_to_canonical_json(A_MESSAGE_WITH_MORE_THAN_WORDS)
+    read_back = conversation_event_payload_from_canonical_json(
+        ConversationEventKind.prompt, written
+    )
+    assert read_back == A_MESSAGE_WITH_MORE_THAN_WORDS
+
+
+def test_a_message_that_is_only_words_is_stored_exactly_as_it_always_was() -> None:
+    """The common case does not pay for the general one.
+
+    A text-only row is the same JSON it was before a message could hold anything else —
+    ``text``, no ``content``, no piece tags — so nothing already in the record has to be
+    rewritten and the ordinary row never grows.
+    """
+    assert json.loads(conversation_event_payload_to_canonical_json(A_PROMPT)) == {
+        "text": "hello",
+        "sender_label": "owner",
+        "mode": "run_when_free",
+    }
+    assert json.loads(conversation_event_payload_to_canonical_json(AN_AGENT_MESSAGE)) == {
+        "text": "# heading\n\nbody with an em dash — and 日本語"
+    }
+
+
+def test_a_row_written_before_messages_could_hold_anything_else_still_reads() -> None:
+    """The live record is full of these, and every one of them must still read.
+
+    A stored row carrying only ``text`` is exactly what every prompt and every agent
+    message in the record looks like today. It reads back as one piece of written words,
+    because that is what it always was.
+    """
+    as_it_was_written = '{"mode":"run_when_free","sender_label":"owner","text":"hello"}'
+    assert conversation_event_payload_from_canonical_json(
+        ConversationEventKind.prompt, as_it_was_written
+    ) == PromptEventPayload(
+        content=(MessageText(text="hello"),),
+        sender_label="owner",
+        mode=PromptDeliveryMode.run_when_free,
+    )
+    assert conversation_event_payload_from_canonical_json(
+        ConversationEventKind.agent_message, '{"text":"the answer"}'
+    ) == AgentMessageEventPayload(content=(MessageText(text="the answer"),))
+
+
+def test_a_message_with_more_than_words_reaches_sqlite_and_comes_back(
+    store: ConversationStore,
+) -> None:
+    """Not the codec on its own: written to the database and read out of it again."""
+    asyncio.run(store.create_conversation(_resolved("c")))
+    asyncio.run(store.append_event("c", A_MESSAGE_WITH_MORE_THAN_WORDS))
+
+    rows = asyncio.run(store.read_events_after("c", 0))
+    assert [row.payload for row in rows] == [A_MESSAGE_WITH_MORE_THAN_WORDS]
+
+
+def test_a_message_may_not_hold_something_that_is_not_a_piece() -> None:
+    """A stored row naming a piece nobody recognises is refused rather than guessed at."""
+    with pytest.raises(ValueError):
+        conversation_event_payload_from_canonical_json(
+            ConversationEventKind.agent_message,
+            '{"content":[{"piece":"hologram","text":"hi"}]}',
+        )

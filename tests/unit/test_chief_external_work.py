@@ -14,6 +14,7 @@ from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -366,7 +367,11 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
             )
         )
         asyncio.run(
-            app.state.conversation_system.send("conv-live", "working", sender_label="loop")
+            app.state.conversation_system.send(
+                "conv-live",
+                text_message_content("working"),
+                sender_label="loop",
+            )
         )
         running = client.post(
             f"/api/chief/tickets/{live_id}/reconcile-from-external-work",

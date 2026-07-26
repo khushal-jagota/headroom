@@ -3,7 +3,7 @@
 This is how Panels talks to an AI agent. One conversation = one agent
 process (hermes, codex, or claude) working in a folder, plus a permanent notebook
 of everything that happened in it. The rest of the planner can do exactly five
-things to a conversation — start it, send text into it, interrupt its running
+things to a conversation — start it, send a message into it, interrupt its running
 turn, kill its activity outright, and ask whether it is running — plus one more
 question: is a permission ask waiting. Nothing else crosses the boundary.
 
@@ -27,8 +27,9 @@ second database, relay, neutral protocol and history adapter that preceded it.
 
 Every conversation owns an append-only run of numbered rows in the database —
 its notebook. A row is a finished thing: a prompt that was actually delivered
-(who sent it, how, and — when the sender minted them — the name the sender gave
-the message and the moment it was sent), a completed agent message, a tool call
+(the message itself, who sent it, how, and — when the sender minted them — the
+name the sender gave the message and the moment it was sent), a completed agent
+message, a tool call
 starting, a tool call finishing, a permission ask, its answer, a model change, a
 discarded held message, a turn ending (completed, failed, or interrupted). Rows
 are written once and never edited. Streaming output (the text growing word by word) is live
@@ -39,6 +40,37 @@ Reading is one rule everywhere: fetch the rows after the last one you hold, then
 listen for new ones. Opening a conversation, reconnecting after a dropped
 connection, and a second device are all that same fetch. Nothing re-downloads
 mid-read.
+
+## What a message is
+
+A message is not a piece of text. It is a run of pieces, in the order they were
+put in, and there are two kinds of piece: written words, and a picture.
+
+There is deliberately no third kind. A voice note becomes words by speech-to-text
+before anything reaches a message, so nothing here ever sees a sound. And a file
+an agent wants you to look at is a markdown link in its own words, which already
+draws as a preview — a separate kind for it would be a second, worse way to draw
+the same thing.
+
+Nearly every message is one piece of written words, and that stays as simple as
+it sounds. A message that is only words is stored exactly the way it was before a
+message could be anything else, so every conversation already in the notebook
+reads unchanged and an ordinary row never grows.
+
+The bytes of a picture do not go in the row. A notebook is read in
+full every time somebody opens a conversation, and a screenshot inside one of
+those rows would be megabytes re-read every time. So the bytes are kept in a file
+beside the notebook, under the conversation that carries them, and the row names
+the file. That one value serves everybody: the notebook holds it, the browser
+fetches the picture from it, and the agent is handed it — codex wants the file's
+path and is given exactly that, while claude and hermes want the bytes and they
+are read from the same file.
+
+Those files last as long as the notebook does, which is forever. Nothing in
+Panels deletes a conversation: resetting one stops it and unlinks it, and
+deleting a Ticket leaves its conversation behind. A file removed by either would
+turn a picture somebody sent into a picture nobody can see, while the row still
+says a picture was sent.
 
 ## Sending
 
@@ -54,7 +86,8 @@ started (the text reached a live agent), queued at a position, injected, or
 refused with a named reason. The only refusals are genuine impossibilities — no
 such conversation, the agent would not start, its session would not load, the
 write failed, a steer with no running turn to join, or a steer at a backend that
-cannot steer. A busy agent is never a refusal. How a turn later ends is never
+cannot steer. A busy agent is never a refusal. A message with nothing in it is not a refusal
+either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
 
 A message that is waiting can be taken back, by the name the sender gave it. It
@@ -177,6 +210,10 @@ names the command.
 - Core, notebook, storage: `src/planner/conversation/` (`system.py`,
   `events.py`, `storage.py`); tables land in
   `src/planner/core/migrations/versions/conversation_system_tables.py`.
+- What a message is made of, and where the files it carries are kept:
+  `src/planner/conversation/message_content.py` and `message_files.py`. The
+  files sit under the same managed root as ticket files, resolved by the same
+  checks in `src/planner/files/logic/paths.py`.
 - The three backends: `src/planner/conversation/backends/`.
 - Reading side, live tail, backend cards: `src/planner/conversation/api.py`,
   `live_tail.py`, `snapshot.py`.

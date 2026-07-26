@@ -46,6 +46,7 @@ from acp.schema import (
     AgentPlanUpdate,
     AgentThoughtChunk,
     ContentToolCallContent,
+    ImageContentBlock,
     Implementation,
     InitializeResponse,
     LoadSessionResponse,
@@ -91,6 +92,24 @@ CHILD_LINE_LIMIT_BYTES = 50 * 1024 * 1024
 STANDARD_INPUT_FILE_DESCRIPTOR = 0
 
 
+def _block_report(block: Any, steered: bool) -> dict[str, Any]:
+    """One prompt block as a plain dictionary, for the account this agent reports.
+
+    Only what a test asks about is reported. The steer command word comes off the first
+    run of words the way it does above, so a steered message reads as the message that
+    was steered.
+    """
+    if isinstance(block, TextContentBlock):
+        text = block.text
+        return {
+            "piece": "text",
+            "text": text.removeprefix(STEER_COMMAND_PREFIX) if steered else text,
+        }
+    if isinstance(block, ImageContentBlock):
+        return {"piece": "image", "media_type": block.mime_type, "data": block.data}
+    return {"piece": "unknown"}
+
+
 @dataclass(slots=True)
 class _PromptWrite:
     """One prompt that actually arrived here, as this agent read it.
@@ -102,6 +121,10 @@ class _PromptWrite:
     """
 
     text: str
+    # Every block of the prompt, as this agent read them off the wire, in order. The text
+    # above is the words out of them; this is what actually arrived, which is what a test
+    # about a message reaching the backend whole has to be able to ask.
+    blocks: tuple[dict[str, Any], ...]
     sender_label: str | None
     delivery_mode: str | None
     turn_open_on_arrival: bool = False
@@ -209,9 +232,11 @@ class ScriptedAcpAgent:
         del session_id
         text = "".join(block.text for block in prompt if isinstance(block, TextContentBlock))
         steered = text.startswith(STEER_COMMAND_PREFIX)
+        blocks = tuple(_block_report(block, steered) for block in prompt)
         self.account.prompt_writes.append(
             _PromptWrite(
                 text=text.removeprefix(STEER_COMMAND_PREFIX) if steered else text,
+                blocks=blocks,
                 sender_label=kwargs.get("sender_label"),
                 delivery_mode=kwargs.get("delivery_mode"),
                 turn_open_on_arrival=not steered and self._open_turn is not None,
@@ -276,6 +301,13 @@ class ScriptedAcpAgent:
                     str(command["text"]), str(command.get("message_id", "scripted-message"))
                 )
                 return {"ok": True}
+            case "emit_agent_image":
+                await self._emit_agent_image(
+                    str(command["data"]),
+                    str(command["media_type"]),
+                    str(command.get("message_id", "scripted-message")),
+                )
+                return {"ok": True}
             case "emit_plan":
                 await self._emit_plan(command)
 
@@ -312,6 +344,7 @@ class ScriptedAcpAgent:
             "prompt_writes": [
                 {
                     "text": write.text,
+                    "blocks": [dict(block) for block in write.blocks],
                     "sender_label": write.sender_label,
                     "delivery_mode": write.delivery_mode,
                     "turn_open_on_arrival": write.turn_open_on_arrival,
@@ -394,6 +427,20 @@ class ScriptedAcpAgent:
             AgentMessageChunk(
                 session_update="agent_message_chunk",
                 content=TextContentBlock(type="text", text=text),
+                message_id=message_id,
+            )
+        )
+
+    async def _emit_agent_image(self, data: str, media_type: str, message_id: str) -> None:
+        """A picture inside the agent's message, which ACP carries as its bytes.
+
+        The same message id as the words around it, so this is one message with a picture
+        in the middle of it rather than three messages in a row.
+        """
+        await self._notify_session_update(
+            AgentMessageChunk(
+                session_update="agent_message_chunk",
+                content=ImageContentBlock(type="image", data=data, mime_type=media_type),
                 message_id=message_id,
             )
         )

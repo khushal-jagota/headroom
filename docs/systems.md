@@ -141,7 +141,7 @@ This is the one way Panels talks to an AI agent. One conversation is one agent p
 everything that happened in it. Every screen that shows a conversation uses it, and so
 does worker orchestration: there is no second path and no stand-in.
 
-The rest of Panels can do exactly five things to a conversation: start it, send text
+The rest of Panels can do exactly five things to a conversation: start it, send a message
 into it, interrupt its running turn, kill its activity outright, and ask whether it is
 running. Plus one more question — is a permission ask waiting. Nothing else crosses the
 boundary. In particular there is no read of which backend or model a conversation is on,
@@ -155,7 +155,9 @@ system and appears nowhere else.
 The notebook is an append-only run of numbered rows in the same database as everything
 else. A row is a finished thing: a delivered prompt, a completed agent message, a tool
 call starting or finishing, a permission ask and its answer, a model change, a turn
-ending. The browser reads the rows after a position over ordinary HTTP and then keeps up
+ending. A message is a run of pieces rather than a piece of text — written words and
+pictures — and a picture's bytes are kept in a file beside the notebook, which the row
+names. The browser reads the rows after a position over ordinary HTTP and then keeps up
 over a live tail. Nothing holds a socket open to Panels.
 
 Sending says what actually happened to that text and never more: it started a turn, it

@@ -265,7 +265,11 @@
     fateNote = null;
     // Drawn before anything is asked of the network, including the start: the person has
     // written it and pressed Enter, so it is in the thread from that moment.
-    const message = mintOutgoingMessage({ text, senderLabel, mode });
+    const message = mintOutgoingMessage({
+      content: [{ piece: "text", text }],
+      senderLabel,
+      mode
+    });
     holdOnTo([...sentMessages, message]);
     try {
       let id = openedId;
@@ -429,6 +433,7 @@
 </script>
 
 <ConversationPane
+  conversationId={openedId ?? ""}
   {label}
   {backendKey}
   workspaceFolder={view?.workspace_folder ?? null}

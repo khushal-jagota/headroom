@@ -223,7 +223,7 @@ export function hasArmedChange(
 /** The whole body of a send, change and all. One place builds it, so one place decides.
  *
  * The message is built from the copy this browser already drew, so what goes out is what
- * is on screen: the same text, under the same id, stamped with the same instant.
+ * is on screen: the same pieces, under the same id, stamped with the same instant.
  */
 export function sendBodyFor(input: {
   message: OutgoingMessage;
@@ -231,7 +231,7 @@ export function sendBodyFor(input: {
   picked: RunValues;
 }): SendPromptBody {
   return {
-    text: input.message.text,
+    content: input.message.content,
     sender_label: input.message.senderLabel,
     mode: input.message.mode,
     sender_message_id: input.message.messageId,

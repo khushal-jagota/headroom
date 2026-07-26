@@ -32,6 +32,11 @@ from planner.conversation.contracts import (
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
+from planner.conversation.message_content import (
+    MessageContent,
+    message_content_text,
+    require_message_content,
+)
 
 
 class InMemoryConversationObservationKind(StrEnum):
@@ -59,7 +64,7 @@ class InMemoryConversationObservation:
     """One thing this fake observed. The fake's own surface, not an event record."""
 
     kind: InMemoryConversationObservationKind
-    text: str | None = None
+    content: MessageContent | None = None
     sender_label: str | None = None
     mode: PromptDeliveryMode | None = None
     turn_ending: InMemoryConversationTurnEnding | None = None
@@ -68,14 +73,29 @@ class InMemoryConversationObservation:
     model: str | None = None
     reasoning_effort: str | None = None
 
+    @property
+    def text(self) -> str | None:
+        """The words of the message this observation is about, when it is about one.
+
+        The message itself is ``content``. This is here because most questions asked of
+        this fake are about what was said, and a message that is only words should be as
+        easy to ask about as it was before a message could be more than words.
+        """
+        return None if self.content is None else message_content_text(self.content)
+
 
 @dataclass(frozen=True, slots=True)
 class InMemoryBackendPromptWrite:
     """One prompt write that actually reached the backend stand-in's wire."""
 
-    text: str
+    content: MessageContent
     sender_label: str
     mode: PromptDeliveryMode
+
+    @property
+    def text(self) -> str:
+        """The words that were written. The whole message is ``content``."""
+        return message_content_text(self.content)
 
 
 class TurnCannotEndWhilePermissionAskIsPending(Exception):
@@ -111,7 +131,7 @@ class _RunningTurn:
 
 @dataclass(frozen=True, slots=True)
 class _HeldPrompt:
-    text: str
+    content: MessageContent
     sender_label: str
     model_change: str | None = None
     reasoning_effort_change: str | None = None
@@ -153,7 +173,7 @@ class InMemoryConversationSystem:
     async def send(
         self,
         conversation_id: str,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
@@ -167,6 +187,7 @@ class InMemoryConversationSystem:
                 "a steer cannot carry a model or reasoning-effort change: the turn it "
                 "joins is already running"
             )
+        require_message_content(content)
 
         state = self._conversations.get(conversation_id)
         if state is None:
@@ -175,12 +196,12 @@ class InMemoryConversationSystem:
             )
 
         if mode is PromptDeliveryMode.steer:
-            return self._steer(state, text, sender_label)
+            return self._steer(state, content, sender_label)
 
         if mode is PromptDeliveryMode.run_when_free and state.running_turn is not None:
             state.held_prompts.append(
                 _HeldPrompt(
-                    text=text,
+                    content=content,
                     sender_label=sender_label,
                     model_change=model_change,
                     reasoning_effort_change=reasoning_effort_change,
@@ -190,14 +211,14 @@ class InMemoryConversationSystem:
 
         if state.running_turn is None:
             return self._start_turn(
-                state, text, sender_label, mode, model_change, reasoning_effort_change
+                state, content, sender_label, mode, model_change, reasoning_effort_change
             )
 
         # send-now against a busy agent: the incumbent dies first, and this message runs
         # next — ahead of everything already held, which keeps its order behind it.
         self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
         fate = self._start_turn(
-            state, text, sender_label, mode, model_change, reasoning_effort_change
+            state, content, sender_label, mode, model_change, reasoning_effort_change
         )
         if isinstance(fate, PromptDeliveryRefused):
             # The incumbent is already dead and the agent is free, so the held prompts
@@ -223,7 +244,7 @@ class InMemoryConversationSystem:
             state.observations.append(
                 InMemoryConversationObservation(
                     kind=InMemoryConversationObservationKind.prompt_discarded,
-                    text=held.text,
+                    content=held.content,
                     sender_label=held.sender_label,
                 )
             )
@@ -376,7 +397,7 @@ class InMemoryConversationSystem:
     def _write_to_backend(
         self,
         state: _ConversationState,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None = None,
@@ -406,12 +427,14 @@ class InMemoryConversationSystem:
                 )
             )
         established.prompt_writes.append(
-            InMemoryBackendPromptWrite(text=text, sender_label=sender_label, mode=mode)
+            InMemoryBackendPromptWrite(
+                content=content, sender_label=sender_label, mode=mode
+            )
         )
         state.observations.append(
             InMemoryConversationObservation(
                 kind=InMemoryConversationObservationKind.prompt_delivered,
-                text=text,
+                content=content,
                 sender_label=sender_label,
                 mode=mode,
             )
@@ -421,14 +444,14 @@ class InMemoryConversationSystem:
     def _start_turn(
         self,
         state: _ConversationState,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
         written = self._write_to_backend(
-            state, text, sender_label, mode, model_change, reasoning_effort_change
+            state, content, sender_label, mode, model_change, reasoning_effort_change
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
@@ -436,7 +459,7 @@ class InMemoryConversationSystem:
         return PromptDeliveryStarted()
 
     def _steer(
-        self, state: _ConversationState, text: str, sender_label: str
+        self, state: _ConversationState, content: MessageContent, sender_label: str
     ) -> PromptDeliveryInjected | PromptDeliveryRefused:
         if not backend_supports_steer(state.resolved_start.backend_key):
             return PromptDeliveryRefused(
@@ -446,7 +469,9 @@ class InMemoryConversationSystem:
             return PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
             )
-        written = self._write_to_backend(state, text, sender_label, PromptDeliveryMode.steer)
+        written = self._write_to_backend(
+            state, content, sender_label, PromptDeliveryMode.steer
+        )
         if isinstance(written, PromptDeliveryRefused):
             return written
         return PromptDeliveryInjected()
@@ -478,7 +503,7 @@ class InMemoryConversationSystem:
             held = state.held_prompts.popleft()
             fate = self._start_turn(
                 state,
-                held.text,
+                held.content,
                 held.sender_label,
                 PromptDeliveryMode.run_when_free,
                 held.model_change,
@@ -488,7 +513,7 @@ class InMemoryConversationSystem:
                 state.observations.append(
                     InMemoryConversationObservation(
                         kind=InMemoryConversationObservationKind.prompt_delivery_refused,
-                        text=held.text,
+                        content=held.content,
                         sender_label=held.sender_label,
                         mode=PromptDeliveryMode.run_when_free,
                         refusal_reason=fate.refusal_reason,

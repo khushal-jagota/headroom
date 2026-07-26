@@ -28,6 +28,7 @@ from planner.conversation.events import (
     TurnEndedEventPayload,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind, Priority
@@ -329,7 +330,10 @@ def test_board_card_carries_where_its_conversation_last_had_a_turn_end(
                 )
             )
             await record.append_event(
-                conversation_id, AgentMessageEventPayload(text="something happened")
+                conversation_id,
+                AgentMessageEventPayload(
+                    content=text_message_content("something happened")
+                ),
             )
         await record.append_event(
             "conv-ended", TurnEndedEventPayload(ending=ConversationTurnEnding.completed)
@@ -420,7 +424,11 @@ def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
             await conversations.start_conversation(
                 ConversationStartRequest(conversation_id=conversation_id)
             )
-            await conversations.send(conversation_id, "next step", sender_label="loop")
+            await conversations.send(
+                conversation_id,
+                text_message_content("next step"),
+                sender_label="loop",
+            )
 
     asyncio.run(start_turns())
     conversations.raise_permission_ask("conv-asking")
@@ -466,7 +474,11 @@ def test_board_route_stops_working_when_the_conversation_turn_ends(
         await conversations.start_conversation(
             ConversationStartRequest(conversation_id="conv-finishing")
         )
-        await conversations.send("conv-finishing", "next step", sender_label="loop")
+        await conversations.send(
+            "conv-finishing",
+            text_message_content("next step"),
+            sender_label="loop",
+        )
 
     asyncio.run(start_turn())
     assert _enriched_board(tmp_db, conversations)["columns"][0]["cards"][0]["agent_working"] is True

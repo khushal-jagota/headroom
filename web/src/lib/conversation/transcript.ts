@@ -13,11 +13,13 @@
 
 import type {
   ConversationTurnEnding,
+  MessagePiece,
   PermissionAskOption,
   PlanEntry,
   PromptDeliveryMode,
   PromptDeliveryRefusalReason
 } from "./wire";
+import { messageContentOf } from "./wire";
 import type { ConversationFeed } from "./feed";
 
 export type PermissionAskState = "live" | "answered" | "dead";
@@ -33,7 +35,7 @@ export type TranscriptRow =
       kind: "prompt";
       sequence: number;
       createdAt: number;
-      text: string;
+      content: readonly MessagePiece[];
       senderLabel: string;
       mode: PromptDeliveryMode;
       /** The instant the person pressed send, in unix milliseconds by the sender's own
@@ -46,7 +48,7 @@ export type TranscriptRow =
       kind: "prompt_refused";
       sequence: number;
       createdAt: number;
-      text: string;
+      content: readonly MessagePiece[];
       senderLabel: string;
       reason: PromptDeliveryRefusalReason;
       sentence: string;
@@ -56,10 +58,16 @@ export type TranscriptRow =
       kind: "prompt_discarded";
       sequence: number;
       createdAt: number;
-      text: string;
+      content: readonly MessagePiece[];
       senderLabel: string;
     }
-  | { key: string; kind: "agent_message"; sequence: number; createdAt: number; text: string }
+  | {
+      key: string;
+      kind: "agent_message";
+      sequence: number;
+      createdAt: number;
+      content: readonly MessagePiece[];
+    }
   | {
       key: string;
       kind: "tool_call";
@@ -204,7 +212,7 @@ export function transcriptRows(
           kind: "prompt",
           sequence,
           createdAt,
-          text: event.payload.text,
+          content: messageContentOf(event.payload),
           senderLabel: event.payload.sender_label,
           mode: event.payload.mode,
           sentAtUnixMilliseconds: sentAtUnixMilliseconds(event.payload, createdAt)
@@ -216,7 +224,7 @@ export function transcriptRows(
           kind: "prompt_refused",
           sequence,
           createdAt,
-          text: event.payload.text,
+          content: messageContentOf(event.payload),
           senderLabel: event.payload.sender_label,
           reason: event.payload.refusal_reason,
           sentence: refusalSentence(event.payload.refusal_reason)
@@ -228,7 +236,7 @@ export function transcriptRows(
           kind: "prompt_discarded",
           sequence,
           createdAt,
-          text: event.payload.text,
+          content: messageContentOf(event.payload),
           senderLabel: event.payload.sender_label
         });
         break;
@@ -238,7 +246,7 @@ export function transcriptRows(
           kind: "agent_message",
           sequence,
           createdAt,
-          text: event.payload.text
+          content: messageContentOf(event.payload)
         });
         break;
       case "tool_call_started":
@@ -408,7 +416,7 @@ function newestCreatedAt(feed: ConversationFeed): number {
  * cannot be reconciled with its own row is not believed.
  */
 function sentAtUnixMilliseconds(
-  payload: { text: string; sent_at_unix_milliseconds?: number },
+  payload: { sent_at_unix_milliseconds?: number },
   createdAt: number
 ): number {
   const writtenDown = createdAt * 1_000;

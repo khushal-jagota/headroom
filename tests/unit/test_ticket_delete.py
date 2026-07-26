@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
 from planner.core import links as core_links
 from planner.core.clock import TestClock as PlannerTestClock
@@ -201,7 +202,11 @@ def test_delete_route_refuses_a_ticket_whose_conversation_is_running(tmp_path: P
             )
         )
         asyncio.run(
-            app.state.conversation_system.send("conv-live", "working", sender_label="loop")
+            app.state.conversation_system.send(
+                "conv-live",
+                text_message_content("working"),
+                sender_label="loop",
+            )
         )
         blocked = client.delete(f"/api/tickets/{target.id}")
         assert blocked.status_code == 409

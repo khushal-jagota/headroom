@@ -18,6 +18,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
     TurnCannotEndWhilePermissionAskIsPending,
 )
+from planner.conversation.message_content import text_message_content
 
 
 async def _system_with_a_pending_ask() -> tuple[InMemoryConversationSystem, str]:
@@ -25,7 +26,7 @@ async def _system_with_a_pending_ask() -> tuple[InMemoryConversationSystem, str]
     await system.start_conversation(
         ConversationStartRequest(conversation_id="c", backend_key=ConversationBackendKey.hermes)
     )
-    await system.send("c", "incumbent", sender_label="owner")
+    await system.send("c", text_message_content("incumbent"), sender_label="owner")
     return system, system.raise_permission_ask("c")
 
 

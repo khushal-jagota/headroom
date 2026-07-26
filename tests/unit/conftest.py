@@ -12,6 +12,7 @@ import pytest
 
 from planner.conversation.backends.contracts import BackendEventSink
 from planner.conversation.contracts import ConversationBackendKey, ResolvedConversationStart
+from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.clock import TestClock
 from planner.core.config import Config, load_config
 from planner.core.db import connect, create_schema
@@ -46,7 +47,10 @@ def _refuse_to_make_a_real_backend_child(
     backend_key: ConversationBackendKey,
 ) -> object:
     def make_child(
-        *, resolved_start: ResolvedConversationStart, event_sink: BackendEventSink
+        *,
+        resolved_start: ResolvedConversationStart,
+        event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> Never:
         del event_sink
         raise RealBackendChildInAUnitTest(

@@ -18,7 +18,11 @@ between pressing Enter and the server answering is a moment the test can stand i
 from __future__ import annotations
 
 import asyncio
+import struct
 import threading
+import zlib
+from collections.abc import Coroutine
+from typing import Any
 
 import httpx
 
@@ -33,6 +37,12 @@ from planner.conversation.events import (
     ToolCallStatus,
     TurnEndedEventPayload,
 )
+from planner.conversation.message_content import (
+    MessageImage,
+    MessageText,
+    text_message_content,
+)
+from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
@@ -115,6 +125,53 @@ def _create_conversation(server, conversation_id: str) -> None:
     assert created.status_code == 201, created.text
 
 
+def _solid_png(red: int, green: int, blue: int) -> bytes:
+    """A real 8x8 PNG of one flat colour, built here rather than checked in.
+
+    A picture a browser can genuinely decode, so that "it loaded" is a real claim. Built
+    by hand because a test fixture that is a binary blob says nothing about what it is.
+    """
+    width = height = 8
+    raw = b"".join(b"\x00" + bytes([red, green, blue]) * width for _ in range(height))
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(body))
+            + kind
+            + body
+            + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+        )
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+_A_RED_PNG = _solid_png(255, 0, 0)
+
+
+def _on_its_own_thread(work: Coroutine[Any, Any, Any]) -> Any:
+    """Run one coroutine to completion from a thread that already has a loop on it."""
+    done: list[Any] = []
+    fell_over: list[BaseException] = []
+
+    def run_it() -> None:
+        try:
+            done.append(asyncio.run(work))
+        except BaseException as trouble:  # noqa: BLE001 - re-raised on the calling thread
+            fell_over.append(trouble)
+
+    worker = threading.Thread(target=run_it)
+    worker.start()
+    worker.join()
+    if fell_over:
+        raise fell_over[0]
+    return done[0]
+
+
 def _append_rows(server, conversation_id: str, *payloads: ConversationEventPayload) -> None:
     """Write rows into the record, exactly as the conversation system writes them.
 
@@ -166,7 +223,7 @@ def _a_turn_full_of_tool_calls(first_call: int) -> tuple[ConversationEventPayloa
     """
     rows: list[ConversationEventPayload] = [
         PromptEventPayload(
-            text="the question with the work",
+            content=text_message_content("the question with the work"),
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
         )
@@ -189,7 +246,9 @@ def _a_turn_full_of_tool_calls(first_call: int) -> tuple[ConversationEventPayloa
         )
     rows.append(
         AgentMessageEventPayload(
-            text="\n\n".join(f"the answer under the work, line {at}" for at in range(4))
+            content=text_message_content(
+                "\n\n".join(f"the answer under the work, line {at}" for at in range(4))
+            )
         )
     )
     return tuple(rows)
@@ -200,14 +259,16 @@ def _a_conversation_worth_scrolling() -> tuple[ConversationEventPayload, ...]:
     for turn in range(8):
         rows.append(
             PromptEventPayload(
-                text=f"question {turn}",
+                content=text_message_content(f"question {turn}"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
             )
         )
         rows.append(
             AgentMessageEventPayload(
-                text="\n\n".join(f"answer {turn} line {at}" for at in range(6))
+                content=text_message_content(
+                    "\n\n".join(f"answer {turn} line {at}" for at in range(6))
+                )
             )
         )
         rows.append(TurnEndedEventPayload(ending=ConversationTurnEnding.completed))
@@ -274,7 +335,9 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
 
     # The message carries the identity and the instant this browser minted for it.
     sent = page.evaluate("() => window.__heldSends[0].body")
-    assert sent["text"] == "what is the plan"
+    # The message goes out as the pieces it is made of, which for words typed into the box
+    # is one piece of written words.
+    assert sent["content"] == [{"piece": "text", "text": "what is the plan"}]
     assert isinstance(sent["sender_message_id"], str)
     assert sent["sender_message_id"] != ""
     assert sent["sent_at_unix_milliseconds"] > 1_700_000_000_000
@@ -427,7 +490,11 @@ def test_a_reader_who_has_gone_elsewhere_is_left_where_they_are(
     assert gone_reading["scrollTop"] < at_the_end["scrollTop"]
 
     # Something arriving does not move somebody who is reading something else.
-    _append_rows(server, conversation_id, AgentMessageEventPayload(text="a new answer"))
+    _append_rows(
+        server,
+        conversation_id,
+        AgentMessageEventPayload(content=text_message_content("a new answer")),
+    )
     _let_the_browser_catch_up(page, 17)
     assert page.evaluate(WHERE_THE_THREAD_IS)["scrollTop"] == gone_reading["scrollTop"]
 
@@ -599,7 +666,7 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
         server,
         conversation_id,
         PromptEventPayload(
-            text="the newest question",
+            content=text_message_content("the newest question"),
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             sender_message_id=minted["sender_message_id"],
@@ -618,7 +685,11 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
 
     # An answer that fits in the space that was kept for it moves nothing at all, and
     # takes up exactly as much of that space as it fills.
-    _append_rows(server, conversation_id, AgentMessageEventPayload(text="a short answer"))
+    _append_rows(
+        server,
+        conversation_id,
+        AgentMessageEventPayload(content=text_message_content("a short answer")),
+    )
     _let_the_browser_catch_up(page, 18)
     fitted = page.evaluate(WHERE_THE_THREAD_IS)
     assert fitted["scrollTop"] == took_over["scrollTop"], fitted
@@ -630,7 +701,9 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
         server,
         conversation_id,
         AgentMessageEventPayload(
-            text="\n\n".join(f"a much longer answer, line {at}" for at in range(60))
+            content=text_message_content(
+                "\n\n".join(f"a much longer answer, line {at}" for at in range(60))
+            )
         ),
     )
     _let_the_browser_catch_up(page, 19)
@@ -644,3 +717,96 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
     assert followed["lastContentBottom"] <= followed["clientHeight"]
     # An answer that outgrew the room has earned all of it back, and none is left over.
     assert followed["roomKept"] == 0, followed
+
+
+def test_a_picture_in_the_record_is_drawn_and_really_loads(
+    server, context_factory, open_page
+) -> None:
+    """The whole path, in a browser, against the real server.
+
+    A row that says a message had a picture in it, bytes kept beside the record, and an
+    image the browser actually fetched and decoded. ``naturalWidth`` is the assertion that
+    matters: an ``<img>`` pointing at nothing draws as a broken image and reports zero, so
+    this fails if the route does not serve the file or serves it as the wrong thing.
+    """
+    _create_conversation(server, "e2e-picture")
+    # This thread already belongs to the browser driver's own loop, so the keeping happens
+    # on a thread of its own — the same way the rows above are written.
+    kept = _on_its_own_thread(
+        ConversationMessageFiles(str(server.db_path)).keep(
+            "e2e-picture", _A_RED_PNG, media_type="image/png"
+        )
+    )
+    _append_rows(
+        server,
+        "e2e-picture",
+        PromptEventPayload(
+            content=(
+                MessageText(text="look at this"),
+                MessageImage(
+                    stored_file_id=kept.stored_file_id,
+                    media_type="image/png",
+                    file_name="red.png",
+                ),
+            ),
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+        ),
+    )
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/dev/conversation?id=e2e-picture",
+        "[data-conversation-pane]",
+    )
+    page.wait_for_selector("[data-conversation-piece='image']", timeout=WAIT_MS)
+    page.wait_for_function(
+        "() => {"
+        "  const drawn = document.querySelector(\"[data-conversation-piece='image']\");"
+        "  return drawn !== null && drawn.complete && drawn.naturalWidth === 8;"
+        "}",
+        timeout=WAIT_MS,
+    )
+    # The words that came with it are still beside it.
+    assert "look at this" in page.inner_text("[data-conversation-row='prompt']")
+
+
+def test_a_link_you_paste_reads_like_the_agent_s_links_do(
+    server, context_factory, open_page
+) -> None:
+    """Your own words go through the same renderer the agent's do.
+
+    A link pasted into your own message used to sit in the thread as literal text while
+    the identical link in the agent's reply became a preview. Same thread, same link, two
+    different things — which is what this asserts is over. It fails on the old behaviour,
+    where a prompt row was drawn as plain text and contained no anchor at all.
+    """
+    _create_conversation(server, "e2e-own-link")
+    _append_rows(
+        server,
+        "e2e-own-link",
+        PromptEventPayload(
+            content=text_message_content("have a look at [the docs](https://example.com/docs)"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+        ),
+        AgentMessageEventPayload(
+            content=text_message_content("I read [the docs](https://example.com/docs)")
+        ),
+    )
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/dev/conversation?id=e2e-own-link",
+        "[data-conversation-pane]",
+    )
+    page.wait_for_selector("[data-conversation-row='prompt'] a", timeout=WAIT_MS)
+    mine = page.locator("[data-conversation-row='prompt'] a").first
+    theirs = page.locator("[data-conversation-row='agent_message'] a").first
+    assert mine.get_attribute("href") == "https://example.com/docs"
+    assert theirs.get_attribute("href") == "https://example.com/docs"
+    # The literal markdown is gone from both, which is what says it was rendered rather
+    # than printed.
+    assert "](" not in page.inner_text("[data-conversation-row='prompt']")

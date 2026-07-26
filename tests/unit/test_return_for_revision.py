@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -190,7 +191,7 @@ def test_a_busy_worker_takes_the_guidance_as_a_held_message(tmp_path: Path) -> N
         _start_conversation(app)
         asyncio.run(
             app.state.conversation_system.send(
-                _CONVERSATION_ID, "already working", sender_label="loop"
+                _CONVERSATION_ID, text_message_content("already working"), sender_label="loop"
             )
         )
         response = client.post(

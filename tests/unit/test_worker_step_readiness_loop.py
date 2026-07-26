@@ -26,6 +26,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core.clock import TestClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
@@ -252,7 +253,13 @@ def test_a_release_does_not_fire_once_the_status_has_been_written_again(
 def test_an_occupied_worker_is_skipped_without_touching_the_ticket(world: _World) -> None:
     ticket_id = world.ready_ticket(conversation_id="conv-busy")
     world.start_conversation("conv-busy")
-    asyncio.run(world.conversations.send("conv-busy", "already working", sender_label="loop"))
+    asyncio.run(
+        world.conversations.send(
+            "conv-busy",
+            text_message_content("already working"),
+            sender_label="loop",
+        )
+    )
 
     assert world.start_step(ticket_id) is False
     assert world.ticket(ticket_id).ticket_status is TicketStatus.empty
@@ -361,10 +368,14 @@ class _QueueingConversationSystem:
         reasoning_effort_change: str | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
-            await self._system.send(self._conversation_id, "collision", sender_label="browser")
+            await self._system.send(
+                self._conversation_id,
+                text_message_content("collision"),
+                sender_label="browser",
+            )
         return await self._system.send(
             conversation_id,
-            text,
+            text_message_content(text),
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,
@@ -581,7 +592,7 @@ class _HeldAtTheOccupancyCheck:
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
-            text,
+            text_message_content(text),
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,

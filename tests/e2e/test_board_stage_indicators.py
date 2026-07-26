@@ -14,6 +14,7 @@ from planner.conversation.events import (
     ConversationTurnEnding,
     TurnEndedEventPayload,
 )
+from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
@@ -418,7 +419,7 @@ def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
     _append_rows(
         server,
         conversation_id,
-        AgentMessageEventPayload(text="the first answer"),
+        AgentMessageEventPayload(content=text_message_content("the first answer")),
         TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
     )
     page.reload()
@@ -449,7 +450,7 @@ def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
     _append_rows(
         server,
         conversation_id,
-        AgentMessageEventPayload(text="the second answer"),
+        AgentMessageEventPayload(content=text_message_content("the second answer")),
         TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
     )
     page.reload()

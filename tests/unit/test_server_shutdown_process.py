@@ -15,6 +15,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
 )
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core.clock import RealClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data
@@ -58,7 +59,7 @@ class _HoldingConversationSystem(InMemoryConversationSystem):
             raise
         return await super().send(
             conversation_id,
-            text,
+            text_message_content(text),
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,

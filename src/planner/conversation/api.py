@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from base64 import b64decode
+from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -46,6 +48,16 @@ from planner.conversation.events import (
     conversation_event_payload_to_canonical_json,
 )
 from planner.conversation.live_tail import ConversationLiveTail, ConversationTailItem
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessagePiece,
+    MessageText,
+)
+from planner.conversation.message_files import (
+    ConversationMessageFiles,
+    MessageFileMissing,
+)
 from planner.conversation.snapshot import (
     BackendSnapshot,
     BackendSnapshotService,
@@ -74,6 +86,7 @@ class ConversationRuntime:
     system: SqliteProcessConversationSystem
     live_tail: ConversationLiveTail
     backend_snapshots: BackendSnapshotService
+    message_files: ConversationMessageFiles
     sse_heartbeat_ms: int
 
     async def shutdown(self) -> None:
@@ -93,18 +106,21 @@ def build_conversation_runtime(
     sse_heartbeat_ms: int,
     backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
 ) -> ConversationRuntime:
-    """Compose the conversation system, its record, and the tail that shows it."""
+    """Compose the conversation system, its record, the files it keeps, and the tail."""
     store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
     live_tail = ConversationLiveTail()
+    message_files = ConversationMessageFiles(db_path)
     return ConversationRuntime(
         store=store,
         system=SqliteProcessConversationSystem(
             store=store,
             backend_child_factories=backend_child_factories,
+            message_files=message_files,
             live_tail=live_tail,
         ),
         live_tail=live_tail,
         backend_snapshots=BackendSnapshotService(),
+        message_files=message_files,
         sse_heartbeat_ms=sse_heartbeat_ms,
     )
 
@@ -137,8 +153,35 @@ class StartConversationBody(BaseModel):
     access: ConversationAccess | None = None
 
 
+class SentTextPiece(BaseModel):
+    piece: Literal["text"]
+    text: str
+
+
+class SentImagePiece(BaseModel):
+    """A picture, with its bytes. This is the only door bytes come in through.
+
+    They ride with the message they belong to rather than going through an upload of
+    their own, so there is no half-sent message: either the picture and the words arrive
+    together or nothing does. The server keeps the bytes and the record names what it
+    kept, so ``data`` appears here and nowhere else.
+    """
+
+    piece: Literal["image"]
+    data: str
+    media_type: str
+    file_name: str | None = None
+
+
+type SentPiece = SentTextPiece | SentImagePiece
+
+
 class SendBody(BaseModel):
     """A send as JSON.
+
+    ``content`` is the message: a run of pieces, which for an ordinary message is one
+    piece of written words. There is no separate ``text`` field — one door in, and a
+    message is the same kind of thing however much is in it.
 
     ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own two facts
     about this message, kept on its row exactly as they arrive. A browser mints both before
@@ -147,7 +190,7 @@ class SendBody(BaseModel):
     always sent.
     """
 
-    text: str
+    content: list[SentPiece]
     sender_label: str
     mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free
     model_change: str | None = None
@@ -219,15 +262,21 @@ async def tail_conversation(
 async def send_into_conversation(
     conversation_id: str, body: SendBody, runtime: Runtime
 ) -> dict[str, Any]:
-    """Send text in, and report the fate the system gave it.
+    """Send a message in, and report the fate the system gave it.
 
     A refusal comes back as a fate on a successful reply. It is what happened to this
-    text, not a complaint about the request.
+    message, not a complaint about the request.
+
+    The bytes a picture or a sound arrived with are kept before anything is sent, so the
+    message that reaches the system names files that are already there. A message that is
+    then refused leaves those files behind unnamed, which costs a few bytes on disk and
+    loses nothing.
     """
     try:
+        content = await _kept_message_content(runtime, conversation_id, body.content)
         fate = await runtime.system.send(
             conversation_id,
-            body.text,
+            content,
             sender_label=body.sender_label,
             mode=body.mode,
             model_change=body.model_change,
@@ -238,6 +287,32 @@ async def send_into_conversation(
     except ValueError as invalid:
         raise HTTPException(status_code=422, detail=str(invalid)) from invalid
     return _fate_json(fate)
+
+
+@router.get("/conversations/{conversation_id}/files/{stored_file_id}")
+async def read_conversation_message_file(
+    conversation_id: str, stored_file_id: str, runtime: Runtime
+) -> Response:
+    """The bytes of one file a message in this conversation carries.
+
+    Both names are ids and the file is resolved under the conversation's own folder, so
+    there is nothing here that reaches another conversation's files. A row is written once
+    and the file it names never changes, so this is cached hard: the id is the version.
+    """
+    await _require_conversation(runtime, conversation_id)
+    try:
+        contents = await runtime.message_files.read(conversation_id, stored_file_id)
+    except (MessageFileMissing, OSError) as gone:
+        raise HTTPException(status_code=404, detail="no such file") from gone
+    media_type = await runtime.message_files.media_type_of(conversation_id, stored_file_id)
+    return Response(
+        content=contents,
+        media_type=media_type or "application/octet-stream",
+        headers={
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/conversations/{conversation_id}/interrupt", status_code=204)
@@ -413,6 +488,49 @@ async def _pending_permission_ask(
                 ],
             }
     return None
+
+
+async def _kept_message_content(
+    runtime: ConversationRuntime, conversation_id: str, sent: list[SentPiece]
+) -> MessageContent:
+    """The message as the record will hold it, with the bytes already kept.
+
+    This is the one place the two shapes meet. What arrives carries bytes, because that is
+    how a browser hands a picture over; what the record holds names the file those bytes
+    were kept as, because a row is read a thousand times and bytes belong beside it. Only
+    the arriving shape ever carries data, and it stops here.
+    """
+    pieces: list[MessagePiece] = []
+    for piece in sent:
+        match piece:
+            case SentTextPiece():
+                pieces.append(MessageText(text=piece.text))
+            case SentImagePiece():
+                kept = await runtime.message_files.keep(
+                    conversation_id, _decoded(piece.data), media_type=piece.media_type
+                )
+                pieces.append(
+                    MessageImage(
+                        stored_file_id=kept.stored_file_id,
+                        media_type=piece.media_type,
+                        file_name=piece.file_name,
+                    )
+                )
+    return tuple(pieces)
+
+
+def _decoded(data: str) -> bytes:
+    """The bytes a piece arrived carrying, or a plain refusal of the request.
+
+    Bytes that will not decode are a broken request rather than a delivery that could not
+    happen, so this is the one thing about a send that is an error instead of a fate.
+    """
+    try:
+        return b64decode(data, validate=True)
+    except BinasciiError as not_bytes:
+        raise HTTPException(
+            status_code=422, detail="a piece's data is not base64"
+        ) from not_bytes
 
 
 def _event_json(event: StoredConversationEvent) -> dict[str, Any]:

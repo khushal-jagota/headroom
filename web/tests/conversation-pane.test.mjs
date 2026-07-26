@@ -34,6 +34,7 @@ const expectedInventory = [
   "ConversationPane.svelte",
   "ConversationTranscript.svelte",
   "LiveConversation.svelte",
+  "MessagePieces.svelte",
   "NewConversationForm.svelte",
   "PermissionAskActions.svelte",
   "PermissionAskCard.svelte",
@@ -84,7 +85,11 @@ for (const className of ["chat-panel", "chat-head", "chat-thread", "chat-jump", 
   );
 }
 assert.match(sources["ConversationTranscript.svelte"], /chat-u|chat-a/);
-assert.match(sources["ConversationTranscript.svelte"], /MarkdownBlock/);
+// The agent's words still go through the markdown renderer; the piece that draws a
+// message is where that now lives, because a message is a run of pieces and its words are
+// one of them.
+assert.match(sources["MessagePieces.svelte"], /MarkdownBlock/);
+assert.match(sources["ConversationTranscript.svelte"], /MessagePieces/);
 assert.match(sources["ConversationComposer.svelte"], /chat-seg/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
@@ -230,7 +235,7 @@ try {
   function outgoing(messageId, knownFate) {
     return {
       messageId,
-      text: `text of ${messageId}`,
+      content: [{ piece: "text", text: `text of ${messageId}` }],
       senderLabel: "owner",
       mode: "run_when_free",
       sentAtUnixMilliseconds: 1_000,
@@ -239,6 +244,7 @@ try {
   }
 
   const waiting = drawn(Pane, {
+    conversationId: "c1",
     label: "Worker",
     outgoingMessages: [
       outgoing("held", "waiting_for_the_agent"),
@@ -254,29 +260,76 @@ try {
   // A caller that cannot take a message back is not offered the control at all, rather
   // than offered one that does nothing.
   const noDiscard = drawn(Pane, {
+    conversationId: "c1",
     label: "Worker",
     outgoingMessages: [outgoing("held", "waiting_for_the_agent")]
   });
   assert.match(noDiscard, /data-conversation-outgoing="held"/);
   assert.doesNotMatch(noDiscard, /data-conversation-outgoing-discard/);
 
+  // A message that holds a picture draws the picture, on both sides of the thread, and
+  // fetches it from the conversation that kept it. A transcript that drew only the words
+  // would show a message the record says had a picture in it and show no picture.
+  const withAPicture = [
+    { piece: "text", text: "look at this" },
+    { piece: "image", stored_file_id: "f_1", media_type: "image/png", file_name: "shot.png" }
+  ];
+  // The agent's side carries only the picture here: its words go through MarkdownBlock,
+  // which this server-rendering harness cannot mount, and the browser pass below is where
+  // an agent's words are asserted.
+  const pictureThread = drawn(Transcript, {
+    conversationId: "c1",
+    rows: [
+      {
+        key: "e1",
+        kind: "prompt",
+        sequence: 1,
+        createdAt: 1_000,
+        content: withAPicture,
+        senderLabel: "owner",
+        mode: "run_when_free",
+        sentAtUnixMilliseconds: 1_000_000
+      },
+      {
+        key: "e2",
+        kind: "agent_message",
+        sequence: 2,
+        createdAt: 1_001,
+        content: [withAPicture[1]]
+      }
+    ]
+  });
+  assert.equal(
+    (pictureThread.match(/data-conversation-piece="image"/g) ?? []).length,
+    2,
+    "your picture and the agent's are both drawn"
+  );
+  assert.match(pictureThread, /src="\/api\/conversation\/conversations\/c1\/files\/f_1"/);
+  assert.match(pictureThread, /alt="shot.png"/, "a picture says what it is called");
+  // The words beside it go through the markdown renderer, which mounts in a browser and
+  // not here, so what they read as is asserted in the browser pass rather than guessed at
+  // from an empty host element.
+  assert.match(pictureThread, /markdown-host/);
+
+
   // A dead ask is drawn plainly dead, and nothing on it is actionable.
-  const deadThread = drawn(Transcript, { rows: [askRow("dead")] });
+  const deadThread = drawn(Transcript, { conversationId: "c1", rows: [askRow("dead")] });
   assert.match(deadThread, /data-conversation-ask-state="dead"/);
   assert.match(deadThread, /expired with the turn/);
   assert.doesNotMatch(deadThread, /<button/, "a dead ask offers nothing to press");
 
-  const liveThread = drawn(Transcript, { rows: [askRow("live")] });
+  const liveThread = drawn(Transcript, { conversationId: "c1", rows: [askRow("live")] });
   assert.match(liveThread, /waiting for you/);
   assert.doesNotMatch(liveThread, /expired with the turn/);
 
-  const answeredThread = drawn(Transcript, { rows: [askRow("answered")] });
+  const answeredThread = drawn(Transcript, { conversationId: "c1", rows: [askRow("answered")] });
   assert.match(answeredThread, /answered · Approve once/);
 
   // An ask whose turn stopped without an ending is dead in the same way, with its own
   // story — a reader told "expired with the turn" would go looking for an ending that
   // was never written.
   const stoppedThread = drawn(Transcript, {
+    conversationId: "c1",
     rows: [
       askRow("dead", "no_ending_recorded"),
       { key: "turn-stopped", kind: "turn_stopped", sequence: 3, createdAt: 1_000 }
@@ -290,6 +343,7 @@ try {
 
   // The thread's other lines: a prompt says how it was sent, a turn ending carries its reason.
   const mixedThread = drawn(Transcript, {
+    conversationId: "c1",
     rows: [
       {
         key: "e1",
@@ -380,6 +434,7 @@ try {
   );
 
   const completedThread = drawn(Transcript, {
+    conversationId: "c1",
     rows: [
       { key: "e1", kind: "turn_ended", sequence: 1, createdAt: 1_000, ending: "completed", errorSummary: null }
     ]
@@ -532,6 +587,7 @@ try {
 
   // And the whole transcript agrees: a stopped turn shows no thinking mark anywhere.
   const stoppedTurnThread = drawn(Transcript, {
+    conversationId: "c1",
     rows: [
       {
         key: "p1",
@@ -950,7 +1006,7 @@ try {
       kind: "prompt" as const,
       sequence: 1,
       createdAt: 1000,
-      text: "go",
+      content: [{ piece: "text", text: "go" }],
       senderLabel: "owner",
       mode: "run_when_free" as const,
       sentAtUnixMilliseconds: 1_000_000
@@ -960,7 +1016,7 @@ try {
       kind: "agent_message" as const,
       sequence: 15,
       createdAt: 1001,
-      text: "commentary on the way"
+      content: [{ piece: "text", text: "commentary on the way" }]
     },
     toolRow(2, "first output line\\nsecond output line"),
     toolRow(3, null),
@@ -970,7 +1026,7 @@ try {
       kind: "agent_message" as const,
       sequence: 16,
       createdAt: 1011,
-      text: "the answer itself"
+      content: [{ piece: "text", text: "the answer itself" }]
     },
     {
       key: "e9",
@@ -991,7 +1047,7 @@ try {
       // counter anchored to the row would say an hour, so what it says settles which of
       // the two it is using.
       createdAt: Math.floor(Date.now() / 1000) - 3600,
-      text: "go",
+      content: [{ piece: "text", text: "go" }],
       senderLabel: "owner",
       mode: "run_when_free" as const,
       sentAtUnixMilliseconds: Date.now() - 400
@@ -1003,7 +1059,7 @@ try {
       kind: "agent_message" as const,
       sequence: 23,
       createdAt: 1023,
-      text: "found it"
+      content: [{ piece: "text", text: "found it" }]
     },
     { ...toolRow(24, null), key: "r24", toolCallId: "r24", title: "Batch two A" },
     { ...toolRow(25, null), key: "r25", toolCallId: "r25", title: "Batch two B" },

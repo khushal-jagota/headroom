@@ -16,9 +16,11 @@ import asyncio
 import os
 import shutil
 import tempfile
+from base64 import b64decode, b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from tempfile import mkdtemp
 
 import pytest
 from tests.support.conversation_scripted_acp_agent import (
@@ -67,6 +69,26 @@ from planner.conversation.events import (
     TurnEndedEventPayload,
 )
 from planner.conversation.live_tail import ConversationTailSubscription
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessageText,
+    message_content_text,
+    text_message_content,
+)
+from planner.conversation.message_files import ConversationMessageFiles
+
+
+def _message_files() -> ConversationMessageFiles:
+    """A file store for this exercise, under a database path of its own.
+
+    Every adapter is handed one, because a message can carry a file and an adapter is
+    what reads it. These exercises send words, so nothing is ever written here — but the
+    adapter is built the way production builds it rather than with a hole where the file
+    store goes.
+    """
+    return ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
+
 
 ROLE_TEXT = "You are the worker on ticket t-1."
 IDENTITY_VARIABLE = ("PANELS_IDENTITY_TICKET_ID", "t-1")
@@ -119,7 +141,11 @@ def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> No
                     access=ConversationAccess.full,
                 )
             )
-            assert await subject.system.send("c", "hello", sender_label="owner") == (
+            assert await subject.system.send(
+                "c",
+                text_message_content("hello"),
+                sender_label="owner",
+            ) == (
                 PromptDeliveryStarted()
             )
 
@@ -144,9 +170,9 @@ def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> No
                     workspace_folder=tmp_path,
                 )
             )
-            await subject.system.send("c", "first", sender_label="owner")
+            await subject.system.send("c", text_message_content("first"), sender_label="owner")
             await subject.complete_running_turn("c")
-            await subject.system.send("c", "second", sender_label="owner")
+            await subject.system.send("c", text_message_content("second"), sender_label="owner")
 
             account = await subject.agent_account("c")
             assert [write["text"] for write in account["prompt_writes"]] == [
@@ -185,7 +211,7 @@ def test_a_thought_is_never_stored_and_only_its_arrival_is_shown(tmp_path: Path)
 
             events = await subject.recorded_events("c")
             texts = [
-                event.payload.text
+                message_content_text(event.payload.content)
                 for event in events
                 if isinstance(event.payload, AgentMessageEventPayload)
             ]
@@ -262,7 +288,7 @@ def test_an_agent_message_is_one_row_however_many_pieces_it_arrived_in(tmp_path:
             await subject.complete_running_turn("c")
 
             texts = [
-                event.payload.text
+                message_content_text(event.payload.content)
                 for event in await subject.recorded_events("c")
                 if isinstance(event.payload, AgentMessageEventPayload)
             ]
@@ -406,14 +432,14 @@ def test_a_change_that_cannot_be_put_back_starts_the_child_again(tmp_path: Path)
                     conversation_id="c", model="first-model", workspace_folder=tmp_path
                 )
             )
-            await subject.system.send("c", "one", sender_label="owner")
+            await subject.system.send("c", text_message_content("one"), sender_label="owner")
             await subject.complete_running_turn("c")
             assert await subject.backend_model("c") == "first-model"
 
             # The next thing this agent answers is the last thing it answers.
             await subject.tell_agent("c", {"command": "break_wire_at_next_answer"})
             fate = await subject.system.send(
-                "c", "two", sender_label="owner", model_change="second-model"
+                "c", text_message_content("two"), sender_label="owner", model_change="second-model"
             )
             assert fate == PromptDeliveryStarted()
 
@@ -448,13 +474,20 @@ def test_a_send_now_waits_for_the_cancelled_turn_to_be_over_at_the_agent(tmp_pat
             await subject.system.start_conversation(
                 ConversationStartRequest(conversation_id="c", workspace_folder=tmp_path)
             )
-            await subject.system.send("c", "the long one", sender_label="owner")
+            await subject.system.send(
+                "c",
+                text_message_content("the long one"),
+                sender_label="owner",
+            )
             await subject.tell_agent(
                 "c", {"command": "take_this_long_over_a_cancel", "seconds": 0.3}
             )
 
             fate = await subject.system.send(
-                "c", "the urgent one", sender_label="owner", mode=PromptDeliveryMode.send_now
+                "c",
+                text_message_content("the urgent one"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.send_now,
             )
             assert fate == PromptDeliveryStarted()
 
@@ -480,8 +513,16 @@ def test_an_interrupt_waits_for_the_cancelled_turn_too(tmp_path: Path) -> None:
             await subject.system.start_conversation(
                 ConversationStartRequest(conversation_id="c", workspace_folder=tmp_path)
             )
-            await subject.system.send("c", "the long one", sender_label="owner")
-            await subject.system.send("c", "the held one", sender_label="owner")
+            await subject.system.send(
+                "c",
+                text_message_content("the long one"),
+                sender_label="owner",
+            )
+            await subject.system.send(
+                "c",
+                text_message_content("the held one"),
+                sender_label="owner",
+            )
             await subject.tell_agent(
                 "c", {"command": "take_this_long_over_a_cancel", "seconds": 0.3}
             )
@@ -578,7 +619,7 @@ def test_an_answer_the_wire_would_not_take_leaves_the_ask_answerable(tmp_path: P
             # knows — and only then is the ask answered.
             await control.send({"command": "break_wire"})
             with pytest.raises(PromptWriteFailed):
-                await child.steer("are you there", sender_label="owner")
+                await child.steer(text_message_content("are you there"), sender_label="owner")
 
             with pytest.raises(PermissionAnswerWriteFailed):
                 await child.answer_permission_ask(ask_id, "allow-once")
@@ -669,7 +710,11 @@ def test_a_backend_that_is_not_there_says_it_would_not_spawn(tmp_path: Path) -> 
                 ConversationStartRequest(conversation_id="c", workspace_folder=tmp_path)
             )
             await subject.arm_backend_start_failure("c")
-            fate = await subject.system.send("c", "hello", sender_label="owner")
+            fate = await subject.system.send(
+                "c",
+                text_message_content("hello"),
+                sender_label="owner",
+            )
             assert not isinstance(fate, PromptDeliveryStarted)
 
     _run(exercise)
@@ -684,7 +729,10 @@ def test_real_hermes_holds_a_turn_and_records_what_it_said(tmp_path: Path) -> No
         sink = _RecordingSink()
         resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
         child = HermesAcpBackendChild(
-            launch=_real_hermes_launch(), resolved_start=resolved, event_sink=sink
+            launch=_real_hermes_launch(),
+            resolved_start=resolved,
+            event_sink=sink,
+            message_files=_message_files(),
         )
         await child.start(resolved, vendor_session_cursor=None)
         try:
@@ -719,7 +767,10 @@ def test_real_hermes_takes_a_model_change_between_turns(tmp_path: Path) -> None:
         sink = _RecordingSink()
         resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
         child = HermesAcpBackendChild(
-            launch=_real_hermes_launch(), resolved_start=resolved, event_sink=sink
+            launch=_real_hermes_launch(),
+            resolved_start=resolved,
+            event_sink=sink,
+            message_files=_message_files(),
         )
         await child.start(resolved, vendor_session_cursor=None)
         try:
@@ -756,7 +807,10 @@ def test_real_hermes_answers_the_message_that_replaced_a_running_turn(tmp_path: 
         sink = _RecordingSink()
         resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
         child = HermesAcpBackendChild(
-            launch=_real_hermes_launch(), resolved_start=resolved, event_sink=sink
+            launch=_real_hermes_launch(),
+            resolved_start=resolved,
+            event_sink=sink,
+            message_files=_message_files(),
         )
         await child.start(resolved, vendor_session_cursor=None)
         try:
@@ -800,7 +854,10 @@ def test_real_hermes_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
         sink = _RecordingSink()
         resolved = _resolved_start(tmp_path, backend_key=ConversationBackendKey.hermes)
         child = HermesAcpBackendChild(
-            launch=_real_hermes_launch(), resolved_start=resolved, event_sink=sink
+            launch=_real_hermes_launch(),
+            resolved_start=resolved,
+            event_sink=sink,
+            message_files=_message_files(),
         )
         await child.start(resolved, vendor_session_cursor=None)
         try:
@@ -829,7 +886,7 @@ async def _start_and_send(subject: ConversationSystemUnderTest, workspace: Path)
     await subject.system.start_conversation(
         ConversationStartRequest(conversation_id="c", workspace_folder=workspace)
     )
-    await subject.system.send("c", "hello", sender_label="owner")
+    await subject.system.send("c", text_message_content("hello"), sender_label="owner")
 
 
 def _resolved_start(
@@ -878,7 +935,8 @@ class _RecordingSink:
     """Everything the adapter reported, for a test driving one child directly."""
 
     def __init__(self) -> None:
-        self.agent_messages: list[str] = []
+        self.agent_contents: list[MessageContent] = []
+        self.message_files: ConversationMessageFiles | None = None
         self.endings: list[ConversationTurnEnding] = []
         self.asks: list[BackendPermissionAsk] = []
         self.vendor_session_cursor: str | None = None
@@ -894,8 +952,10 @@ class _RecordingSink:
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         return None
 
-    async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
-        self.agent_messages.append(text)
+    async def agent_message_completed(
+        self, turn_token: TurnToken, content: MessageContent
+    ) -> None:
+        self.agent_contents.append(content)
 
     async def tool_call_started(self, turn_token: TurnToken, **kwargs: object) -> None:
         return None
@@ -927,19 +987,31 @@ class _RecordingSink:
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.vendor_session_cursor = vendor_session_cursor
 
+    @property
+    def agent_messages(self) -> list[str]:
+        """The words of each finished message. The messages themselves are above."""
+        return [message_content_text(content) for content in self.agent_contents]
+
 
 @asynccontextmanager
 async def _scripted_child(
     workspace: Path, *, arms: tuple[str, ...] = ()
 ) -> AsyncIterator[tuple[HermesAcpBackendChild, ScriptedAcpAgentControl, _RecordingSink]]:
-    """One adapter and one scripted agent, with nothing of the conversation system around."""
+    """One adapter and one scripted agent, with nothing of the conversation system around.
+
+    The sink carries the file store the adapter was built with, so an exercise can keep a
+    file and know the adapter is looking where it was kept — and can read back the file
+    the adapter kept for a picture the agent sent.
+    """
     directory = Path(tempfile.mkdtemp(prefix="pc2u-"))
     control = ScriptedAcpAgentControl(str(directory / "s.sock"))
     sink = _RecordingSink()
+    sink.message_files = ConversationMessageFiles(str(workspace / "planner.db"))
     child = HermesAcpBackendChild(
         launch=scripted_acp_agent_launch(control_socket_path=control.socket_path, arms=arms),
         resolved_start=_resolved_start(workspace),
         event_sink=sink,
+        message_files=sink.message_files,
     )
     try:
         yield child, control, sink
@@ -947,3 +1019,83 @@ async def _scripted_child(
         await control.send({"command": "shutdown"})
         await child.stop()
         shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_a_picture_reaches_hermes_as_its_bytes(tmp_path: Path) -> None:
+    """ACP carries the bytes, so the adapter reads the file the piece names and sends them.
+
+    The exercise asks the agent what it got rather than asking the adapter what it sent:
+    a picture that never left is exactly the failure this is here to catch.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            assert sink.message_files is not None
+            kept = await sink.message_files.keep(
+                "c", b"\x89PNG not really", media_type="image/png"
+            )
+
+            await child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                (
+                    MessageText(text="look at this"),
+                    MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+                ),
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            report = await control.send({"command": "report"})
+
+            blocks = report["prompt_writes"][0]["blocks"]
+            assert blocks[0] == {"piece": "text", "text": "look at this"}
+            assert blocks[1]["piece"] == "image"
+            assert blocks[1]["media_type"] == "image/png"
+            assert b64decode(blocks[1]["data"]) == b"\x89PNG not really"
+
+    _run(exercise)
+
+
+def test_a_picture_hermes_hands_back_is_kept_and_becomes_a_piece_of_its_message(
+    tmp_path: Path,
+) -> None:
+    """The other direction, which is the one that used to be dropped on the floor.
+
+    An image block in an agent's message used to be read for text, find none, and be
+    thrown away. Now its bytes are kept beside the record and the message says it had a
+    picture in it, next to the words that came with it.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                text_message_content("draw me something"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+            await control.send({"command": "emit_agent_message", "text": "here it is"})
+            await control.send(
+                {
+                    "command": "emit_agent_image",
+                    "data": b64encode(b"a drawing").decode("ascii"),
+                    "media_type": "image/png",
+                }
+            )
+            await control.send({"command": "complete_turn"})
+            await sink.wait_for_the_turn_to_end()
+
+            said = sink.agent_contents[-1]
+            assert said[0] == MessageText(text="here it is")
+            picture = said[1]
+            assert isinstance(picture, MessageImage)
+            assert picture.media_type == "image/png"
+            assert sink.message_files is not None
+            assert await sink.message_files.read("c", picture.stored_file_id) == b"a drawing"
+
+    _run(exercise)

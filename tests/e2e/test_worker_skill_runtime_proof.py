@@ -35,6 +35,11 @@ from planner.conversation.contracts import (
     ConversationStartRequest,
 )
 from planner.conversation.events import ConversationEventKind
+from planner.conversation.message_content import (
+    message_content_text,
+    text_message_content,
+)
+from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
@@ -87,6 +92,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
         store = ConversationStore(str(database_path))
         system = SqliteProcessConversationSystem(
             store=store,
+            message_files=ConversationMessageFiles(str(database_path)),
             backend_child_factories={key: factory for key in ConversationBackendKey},
         )
         try:
@@ -100,7 +106,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
             )
             await system.send(
                 CONVERSATION_ID,
-                "Read and acknowledge the installed coding Worker guidance.",
+                text_message_content("Read and acknowledge the installed coding Worker guidance."),
                 sender_label="loop",
             )
             await _waited_for_the_turn_to_end(store)
@@ -116,7 +122,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
         # the claim and its text is the evidence.
         assert str(endings[0].payload.ending) == "completed", endings[0].payload
         assert [
-            event.payload.text
+            message_content_text(event.payload.content)
             for event in events
             if event.kind is ConversationEventKind.agent_message
         ] == [WORKTREE_ACKNOWLEDGEMENT]

@@ -17,8 +17,10 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
-from collections.abc import AsyncIterator, Awaitable, Callable
+from base64 import b64encode
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from pathlib import Path
+from tempfile import mkdtemp
 from typing import Any
 
 import pytest
@@ -70,6 +72,26 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import ConversationTurnEnding, ToolCallStatus
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessageText,
+    message_content_text,
+    text_message_content,
+)
+from planner.conversation.message_files import ConversationMessageFiles
+
+
+def _message_files() -> ConversationMessageFiles:
+    """A file store for this exercise, under a database path of its own.
+
+    Every adapter is handed one, because a message can carry a file and an adapter is
+    what reads it. These exercises send words, so nothing is ever written here — but the
+    adapter is built the way production builds it rather than with a hole where the file
+    store goes.
+    """
+    return ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
+
 
 CONVERSATION_ID = "c-claude-1"
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
@@ -102,6 +124,10 @@ class _ScriptedClaudeSdkClient:
     def __init__(self, options: ClaudeAgentOptions) -> None:
         self.options = options
         self.prompts: list[str] = []
+        # What a message with more than words in it was actually sent as. The SDK takes
+        # either a string or a stream of user messages; this keeps the second, drained,
+        # so a test can see the blocks rather than an exhausted generator.
+        self.streamed_messages: list[dict[str, Any]] = []
         self.interrupts = 0
         self.disconnected = False
         self.connect_failure: BaseException | None = None
@@ -112,10 +138,14 @@ class _ScriptedClaudeSdkClient:
         if self.connect_failure is not None:
             raise self.connect_failure
 
-    async def query(self, prompt: str) -> None:
+    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
         if self.query_failure is not None:
             raise self.query_failure
-        self.prompts.append(prompt)
+        if isinstance(prompt, str):
+            self.prompts.append(prompt)
+            return
+        async for message in prompt:
+            self.streamed_messages.append(message)
 
     def receive_messages(self) -> AsyncIterator[Message]:
         return self._drain()
@@ -153,7 +183,7 @@ class _RecordingSink:
 
     def __init__(self) -> None:
         self.deltas: list[tuple[TurnToken, str]] = []
-        self.messages: list[tuple[TurnToken, str]] = []
+        self.message_contents: list[tuple[TurnToken, MessageContent]] = []
         self.tools_started: list[dict[str, Any]] = []
         self.tools_finished: list[dict[str, Any]] = []
         self.tools_progressed: list[tuple[str, str]] = []
@@ -162,6 +192,13 @@ class _RecordingSink:
         self.asks: list[BackendPermissionAsk] = []
         self.endings: list[dict[str, Any]] = []
         self.cursors: list[str] = []
+        # Set the moment a turn ends, for the exercises that drive a real claude and have
+        # to wait for one rather than pumping a scripted stream themselves.
+        self._turn_over = asyncio.Event()
+
+    async def wait_for_the_turn_to_end(self) -> None:
+        await self._turn_over.wait()
+        self._turn_over.clear()
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         self.deltas.append((turn_token, text_delta))
@@ -172,8 +209,16 @@ class _RecordingSink:
     async def plan_updated(self, turn_token: TurnToken, entries: Any) -> None:
         self.plans.append([(entry.text, str(entry.status)) for entry in entries])
 
-    async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
-        self.messages.append((turn_token, text))
+
+    @property
+    def message_texts(self) -> list[tuple[TurnToken, str]]:
+        """Each finished message's words. The messages themselves are above."""
+        return [(token, message_content_text(content)) for token, content in self.message_contents]
+
+    async def agent_message_completed(
+        self, turn_token: TurnToken, content: MessageContent
+    ) -> None:
+        self.message_contents.append((turn_token, content))
 
     async def tool_call_started(
         self,
@@ -228,6 +273,7 @@ class _RecordingSink:
         error_summary: str | None,
         standard_error_tail: str | None,
     ) -> None:
+        self._turn_over.set()
         self.endings.append(
             {
                 "turn": turn_token,
@@ -275,14 +321,37 @@ def _bench(
         ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")),
         client_factory=make,
     )
-    child = factory(resolved_start=resolved_start, event_sink=sink)
+    message_files = _message_files()
+    child = factory(
+        resolved_start=resolved_start, event_sink=sink, message_files=message_files
+    )
+    _BENCH_MESSAGE_FILES[id(child)] = message_files
+    return child, sink, clients
+
+
+# Which file store each bench built its child with, so an exercise can keep a file where
+# the adapter will look for it.
+_BENCH_MESSAGE_FILES: dict[int, ConversationMessageFiles] = {}
+
+
+def _bench_message_files(child: ClaudeAgentSdkBackendChild) -> ConversationMessageFiles:
+    return _BENCH_MESSAGE_FILES[id(child)]
+
+
+async def _connected_bench(
+    workspace: Path,
+) -> tuple[ClaudeAgentSdkBackendChild, _RecordingSink, list[_ScriptedClaudeSdkClient]]:
+    """A bench whose child is up and whose session is bound, ready to be written to."""
+    resolved_start = _start_request(workspace_folder=workspace)
+    child, sink, clients = _bench(resolved_start)
+    await child.start(resolved_start, vendor_session_cursor=None)
     return child, sink, clients
 
 
 async def _write(child: ClaudeAgentSdkBackendChild, text: str = "hello") -> None:
     await child.write_prompt(
         TURN,
-        text,
+        text_message_content(text),
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=None,
@@ -446,7 +515,9 @@ def _bench_that_will_not_connect(
     factory = ClaudeAgentSdkBackendChildFactory(
         ClaudeAgentSdkChildLaunch(claude_executable=Path("/usr/bin/claude")), client_factory=make
     )
-    return factory(resolved_start=resolved_start, event_sink=sink), sink, clients
+    return factory(
+        resolved_start=resolved_start, event_sink=sink, message_files=_message_files()
+    ), sink, clients
 
 
 def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) -> None:
@@ -598,7 +669,7 @@ def test_a_model_change_asks_for_a_child_started_on_it(tmp_path: Path) -> None:
         with pytest.raises(NeedsRebind):
             await child.write_prompt(
                 TURN,
-                "on the other model please",
+                text_message_content("on the other model please"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change="claude-sonnet-4-5",
@@ -618,7 +689,7 @@ def test_a_reasoning_effort_change_asks_for_a_child_started_on_it(tmp_path: Path
         with pytest.raises(NeedsRebind):
             await child.write_prompt(
                 TURN,
-                "think harder",
+                text_message_content("think harder"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -646,7 +717,7 @@ def test_the_rebound_child_takes_the_prompt_that_asked_for_it(tmp_path: Path) ->
         await child.start(resolved_start, vendor_session_cursor=SESSION_ID)
         await child.write_prompt(
             TURN,
-            "on the other model please",
+            text_message_content("on the other model please"),
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change="claude-sonnet-4-5",
@@ -670,7 +741,7 @@ def test_the_label_and_the_mode_are_taken_and_dropped(tmp_path: Path) -> None:
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
         await child.write_prompt(
             TURN,
-            "hello",
+            text_message_content("hello"),
             sender_label="the automatic loop",
             mode=PromptDeliveryMode.send_now,
             model_change=None,
@@ -687,7 +758,7 @@ def test_claude_cannot_take_text_into_a_running_turn(tmp_path: Path) -> None:
         child, _, _ = _bench(_start_request(workspace_folder=tmp_path))
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
         with pytest.raises(PromptWriteFailed):
-            await child.steer("go left", sender_label="owner")
+            await child.steer(text_message_content("go left"), sender_label="owner")
         await child.stop()
 
     _run(exercise)
@@ -745,7 +816,7 @@ def test_thinking_is_dropped_where_it_arrives_and_only_its_arrival_is_told(
         await clients[0].until_taken_in()
 
         assert sink.deltas == []
-        assert sink.messages == [(TURN, "the answer")]
+        assert sink.message_texts == [(TURN, "the answer")]
         # Both places claude sends thinking said so, and neither carried the thought.
         assert sink.thinking_pulses == [TURN, TURN]
         assert "hmm" not in repr(sink.__dict__)
@@ -776,7 +847,7 @@ def test_streamed_text_is_shown_and_the_finished_message_is_the_row(tmp_path: Pa
         await clients[0].until_taken_in()
 
         assert [text for _, text in sink.deltas] == ["Hel", "lo"]
-        assert sink.messages == [(TURN, "Hello")]
+        assert sink.message_texts == [(TURN, "Hello")]
         await child.stop()
 
     _run(exercise)
@@ -806,7 +877,7 @@ def test_a_message_around_a_tool_call_is_recorded_in_the_order_it_happened(
         )
         await clients[0].until_taken_in()
 
-        assert [text for _, text in sink.messages] == ["Let me look.", "Done."]
+        assert [text for _, text in sink.message_texts] == ["Let me look.", "Done."]
         assert sink.tools_started == [
             {
                 "turn": TURN,
@@ -876,7 +947,7 @@ def test_a_subagents_own_talk_stays_inside_its_tool_call(tmp_path: Path) -> None
         )
         await clients[0].until_taken_in()
 
-        assert sink.messages == []
+        assert sink.message_texts == []
         assert sink.deltas == []
         # Shown against the call it came from, under the id that call started under.
         assert sink.tools_progressed == [("tool-1", "inner")]
@@ -1021,7 +1092,7 @@ def test_news_this_adapter_has_no_use_for_never_stops_the_stream(tmp_path: Path)
         )
         await clients[0].until_taken_in()
 
-        assert sink.messages == [(TURN, "still here")]
+        assert sink.message_texts == [(TURN, "still here")]
         await child.stop()
 
     _run(exercise)
@@ -1574,7 +1645,7 @@ def test_real_claude_holds_a_conversation_across_a_stop_and_a_resume(tmp_path: P
         await resumed.start(resolved_start, vendor_session_cursor=cursor)
         await _write(resumed, "What was the codeword? Reply with just the word.")
         await _until_the_turn_ends(resumed_sink)
-        said = " ".join(text for _, text in resumed_sink.messages)
+        said = " ".join(text for _, text in resumed_sink.message_texts)
         assert "ZARDOZ" in said.upper()
         await resumed.stop()
 
@@ -1630,7 +1701,7 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path
         with pytest.raises(NeedsRebind):
             await child.write_prompt(
                 TURN,
-                "What was the codeword? Reply with just the word.",
+                text_message_content("What was the codeword? Reply with just the word."),
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=CLAUDE_OTHER_MODEL,
@@ -1643,14 +1714,14 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path
         await rebound.start(on_the_new_model, vendor_session_cursor=cursor)
         await rebound.write_prompt(
             TURN,
-            "What was the codeword? Reply with just the word.",
+            text_message_content("What was the codeword? Reply with just the word."),
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change=CLAUDE_OTHER_MODEL,
             reasoning_effort_change=None,
         )
         await _until_the_turn_ends(rebound_sink)
-        said = " ".join(text for _, text in rebound_sink.messages)
+        said = " ".join(text for _, text in rebound_sink.message_texts)
         assert "XANADU" in said.upper()
         await rebound.stop()
 
@@ -1690,7 +1761,7 @@ def test_real_claude_is_told_the_answer_the_owner_chose(tmp_path: Path) -> None:
         await child.answer_permission_ask(ask.ask_id, blue.option_id)
         await _until_the_turn_ends(sink)
         assert sink.endings[-1]["ending"] is ConversationTurnEnding.completed
-        said = " ".join(text for _, text in sink.messages).lower()
+        said = " ".join(text for _, text in sink.message_texts).lower()
         assert "blue" in said
         assert "did not answer" not in said
         await child.stop()
@@ -1706,7 +1777,9 @@ def _bench_on_real_claude(
     factory = ClaudeAgentSdkBackendChildFactory(
         ClaudeAgentSdkChildLaunch(claude_executable=Path(CLAUDE_EXECUTABLE))
     )
-    return factory(resolved_start=resolved_start, event_sink=sink), sink, None
+    return factory(
+        resolved_start=resolved_start, event_sink=sink, message_files=_message_files()
+    ), sink, None
 
 
 async def _until_the_turn_ends(sink: _RecordingSink, *, seconds: float = 180.0) -> None:
@@ -1717,3 +1790,67 @@ async def _until_the_turn_ends(sink: _RecordingSink, *, seconds: float = 180.0) 
             await asyncio.sleep(0.1)
 
     await asyncio.wait_for(wait(), seconds)
+
+
+def test_a_message_that_is_only_words_still_goes_as_the_string_it_always_did(
+    tmp_path: Path,
+) -> None:
+    """The common case is untouched.
+
+    The SDK wraps a string in exactly the envelope the richer form builds by hand, so
+    keeping the string means an ordinary prompt is byte for byte what it has always been
+    and the other form is reached only by a message that needs it.
+    """
+
+    async def exercise() -> None:
+        child, _, clients = await _connected_bench(tmp_path)
+        await _write(child, "just words")
+
+        assert clients[0].prompts == ["just words"]
+        assert clients[0].streamed_messages == []
+
+    _run(exercise)
+
+
+def test_a_picture_reaches_claude_as_a_content_block_beside_the_words(
+    tmp_path: Path,
+) -> None:
+    """Claude takes a picture as base64 inside a user message, so that is what it is sent."""
+
+    async def exercise() -> None:
+        child, _, clients = await _connected_bench(tmp_path)
+        kept = await _bench_message_files(child).keep(
+            "c-claude-1", b"\x89PNG not really", media_type="image/png"
+        )
+
+        await child.write_prompt(
+            TURN,
+            (
+                MessageText(text="look at this"),
+                MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+            ),
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+            model_change=None,
+            reasoning_effort_change=None,
+        )
+
+        assert clients[0].prompts == []
+        assert len(clients[0].streamed_messages) == 1
+        sent = clients[0].streamed_messages[0]
+        assert sent["type"] == "user"
+        assert sent["message"]["role"] == "user"
+        assert sent["message"]["content"] == [
+            {"type": "text", "text": "look at this"},
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": b64encode(b"\x89PNG not really").decode("ascii"),
+                },
+            },
+        ]
+
+    _run(exercise)
+

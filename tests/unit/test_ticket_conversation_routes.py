@@ -20,6 +20,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
+from planner.conversation.message_content import text_message_content
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -149,8 +150,20 @@ def test_a_running_turn_is_stopped_by_the_reset(tmp_path: Path) -> None:
             "conversation_id"
         ]
         conversations = app.state.conversation_system
-        asyncio.run(conversations.send(conversation_id, "working", sender_label="loop"))
-        asyncio.run(conversations.send(conversation_id, "and this", sender_label="loop"))
+        asyncio.run(
+            conversations.send(
+                conversation_id,
+                text_message_content("working"),
+                sender_label="loop",
+            )
+        )
+        asyncio.run(
+            conversations.send(
+                conversation_id,
+                text_message_content("and this"),
+                sender_label="loop",
+            )
+        )
         assert asyncio.run(conversations.is_running(conversation_id)) is True
 
         client.post(f"/api/tickets/{ticket_id}/conversation/reset")

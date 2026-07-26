@@ -37,15 +37,31 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageText,
+    message_content_text,
+    text_message_content,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class BackendWrite:
-    """One prompt write the backend side actually received, in the order received."""
+    """One prompt write the backend side actually received, in the order received.
 
-    text: str
+    ``content`` is the message the backend was handed, whole. ``text`` is the words in it,
+    which is what nearly every exercise here asks about — a message with a picture in it
+    is asserted against ``content``, and one that is only words reads the same as it
+    always did.
+    """
+
+    content: MessageContent
     sender_label: str
     mode: PromptDeliveryMode
+
+    @property
+    def text(self) -> str:
+        return message_content_text(self.content)
 
 
 class RecordedFactKind(StrEnum):
@@ -75,10 +91,15 @@ class RecordedTurnEnding(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RecordedFact:
-    """One recorded fact, normalised into the suite's vocabulary."""
+    """One recorded fact, normalised into the suite's vocabulary.
+
+    ``content`` is the message the fact is about, when it is about one. ``text`` is its
+    words, which is what the exercises that predate a message being more than words ask
+    for.
+    """
 
     kind: RecordedFactKind
-    text: str | None = None
+    content: MessageContent | None = None
     sender_label: str | None = None
     mode: PromptDeliveryMode | None = None
     turn_ending: RecordedTurnEnding | None = None
@@ -86,6 +107,10 @@ class RecordedFact:
     permission_ask_id: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+
+    @property
+    def text(self) -> str | None:
+        return None if self.content is None else message_content_text(self.content)
 
 
 class ConversationSystemUnderTest(Protocol):
@@ -229,7 +254,11 @@ class ConversationContractConformanceSuite:
         """Coverage 1."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
-            fate = await subject.system.send("never-started", "hello", sender_label="owner")
+            fate = await subject.system.send(
+                "never-started",
+                text_message_content("hello"),
+                sender_label="owner",
+            )
             assert fate == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
             )
@@ -245,7 +274,11 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("c"))
             assert await subject.system.is_running("c") is False
             assert await subject.backend_writes("c") == ()
-            fate = await subject.system.send("c", "first", sender_label="owner")
+            fate = await subject.system.send(
+                "c",
+                text_message_content("first"),
+                sender_label="owner",
+            )
             assert fate == PromptDeliveryStarted()
 
         self._run(exercise)
@@ -265,12 +298,16 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(ConversationStartRequest(conversation_id="c"))
-            fate = await subject.system.send("c", "first", sender_label="owner")
+            fate = await subject.system.send(
+                "c",
+                text_message_content("first"),
+                sender_label="owner",
+            )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    text="first",
+                    content=text_message_content("first"),
                     sender_label="owner",
                     mode=PromptDeliveryMode.run_when_free,
                 ),
@@ -286,7 +323,10 @@ class ConversationContractConformanceSuite:
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
             fate = await subject.system.send(
-                "c", "first", sender_label="owner", mode=PromptDeliveryMode.run_when_free
+                "c",
+                text_message_content("first"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
             )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
@@ -300,18 +340,30 @@ class ConversationContractConformanceSuite:
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
             assert await subject.system.send(
-                "c", "incumbent", sender_label="owner"
+                "c", text_message_content("incumbent"), sender_label="owner"
             ) == PromptDeliveryStarted()
-            assert await subject.system.send("c", "held-a", sender_label="owner") == (
+            assert await subject.system.send(
+                "c",
+                text_message_content("held-a"),
+                sender_label="owner",
+            ) == (
                 PromptDeliveryQueued(queue_position=1)
             )
-            assert await subject.system.send("c", "held-b", sender_label="owner") == (
+            assert await subject.system.send(
+                "c",
+                text_message_content("held-b"),
+                sender_label="owner",
+            ) == (
                 PromptDeliveryQueued(queue_position=2)
             )
             # held-a leaves the queue and runs, so held-b is now first in line and the
             # next message held is second — not third.
             await subject.complete_running_turn("c")
-            assert await subject.system.send("c", "held-c", sender_label="owner") == (
+            assert await subject.system.send(
+                "c",
+                text_message_content("held-c"),
+                sender_label="owner",
+            ) == (
                 PromptDeliveryQueued(queue_position=2)
             )
 
@@ -323,7 +375,10 @@ class ConversationContractConformanceSuite:
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
             fate = await subject.system.send(
-                "c", "first", sender_label="owner", mode=PromptDeliveryMode.send_now
+                "c",
+                text_message_content("first"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.send_now,
             )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
@@ -338,10 +393,13 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             assert await subject.backend_cancellations("c") == 0
             fate = await subject.system.send(
-                "c", "urgent", sender_label="owner", mode=PromptDeliveryMode.send_now
+                "c",
+                text_message_content("urgent"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.send_now,
             )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
@@ -359,15 +417,26 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
-            assert await subject.system.send("c", "held-a", sender_label="owner") == (
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
+            assert await subject.system.send(
+                "c",
+                text_message_content("held-a"),
+                sender_label="owner",
+            ) == (
                 PromptDeliveryQueued(queue_position=1)
             )
-            assert await subject.system.send("c", "held-b", sender_label="owner") == (
+            assert await subject.system.send(
+                "c",
+                text_message_content("held-b"),
+                sender_label="owner",
+            ) == (
                 PromptDeliveryQueued(queue_position=2)
             )
             assert await subject.system.send(
-                "c", "urgent", sender_label="owner", mode=PromptDeliveryMode.send_now
+                "c",
+                text_message_content("urgent"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.send_now,
             ) == PromptDeliveryStarted()
             assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "urgent")
             await subject.complete_running_turn("c")
@@ -393,9 +462,12 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 _start_request("c", ConversationBackendKey.hermes)
             )
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             fate = await subject.system.send(
-                "c", "also consider this", sender_label="owner", mode=PromptDeliveryMode.steer
+                "c",
+                text_message_content("also consider this"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             )
             assert fate == PromptDeliveryInjected()
 
@@ -412,15 +484,25 @@ class ConversationContractConformanceSuite:
                 idle_id = f"{backend_key}-idle"
                 await subject.system.start_conversation(_start_request(idle_id, backend_key))
                 assert await subject.system.send(
-                    idle_id, "steered", sender_label="owner", mode=PromptDeliveryMode.steer
+                    idle_id,
+                    text_message_content("steered"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
                 ) == cannot_steer
 
                 running_id = f"{backend_key}-running"
                 await subject.system.start_conversation(_start_request(running_id, backend_key))
-                await subject.system.send(running_id, "incumbent", sender_label="owner")
+                await subject.system.send(
+                    running_id,
+                    text_message_content("incumbent"),
+                    sender_label="owner",
+                )
                 assert await subject.system.is_running(running_id) is True
                 assert await subject.system.send(
-                    running_id, "steered", sender_label="owner", mode=PromptDeliveryMode.steer
+                    running_id,
+                    text_message_content("steered"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
                 ) == cannot_steer
 
         self._run(exercise)
@@ -433,7 +515,10 @@ class ConversationContractConformanceSuite:
                 _start_request("c", ConversationBackendKey.hermes)
             )
             fate = await subject.system.send(
-                "c", "steered", sender_label="owner", mode=PromptDeliveryMode.steer
+                "c",
+                text_message_content("steered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             )
             assert fate == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
@@ -448,23 +533,66 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 _start_request("c", ConversationBackendKey.hermes)
             )
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             await subject.system.send(
-                "c", "steered", sender_label="owner", mode=PromptDeliveryMode.steer
+                "c",
+                text_message_content("steered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             )
             assert await subject.system.is_running("c") is True
             facts = await subject.recorded_facts("c")
             assert _facts_of_kind(facts, RecordedFactKind.turn_ended) == ()
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    text="incumbent",
+                    content=text_message_content("incumbent"),
                     sender_label="owner",
                     mode=PromptDeliveryMode.run_when_free,
                 ),
                 BackendWrite(
-                    text="steered", sender_label="owner", mode=PromptDeliveryMode.steer
+                    content=text_message_content("steered"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.steer,
                 ),
             )
+
+        self._run(exercise)
+
+    def test_a_message_reaches_the_backend_whole_and_is_recorded_whole(self) -> None:
+        """A message is what it holds, all the way through.
+
+        Every piece the sender put in reaches the backend, in the order they were put in,
+        and the record holds the same message rather than the words out of it. A system
+        that carried only the words would pass every other exercise here and fail this
+        one, which is the point of it.
+        """
+
+        async def exercise(subject: ConversationSystemUnderTest) -> None:
+            await subject.system.start_conversation(_start_request("c"))
+            # Two runs of words rather than a picture, because a picture needs bytes
+            # kept for it and this exercise is about the contract rather than about
+            # files: a message of several pieces reaches the backend as several pieces
+            # and is recorded as several pieces. A system that carried only the words
+            # would join these into one and fail here. Where the bytes of a picture go
+            # is proved where they are kept — over HTTP, per adapter, and in a browser.
+            message = (
+                MessageText(text="look at this"),
+                MessageText(text="and tell me what it is"),
+            )
+            fate = await subject.system.send("c", message, sender_label="owner")
+
+            assert fate == PromptDeliveryStarted()
+            assert await subject.backend_writes("c") == (
+                BackendWrite(
+                    content=message,
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.run_when_free,
+                ),
+            )
+            delivered = _facts_of_kind(
+                await subject.recorded_facts("c"), RecordedFactKind.prompt_delivered
+            )
+            assert [fact.content for fact in delivered] == [message]
 
         self._run(exercise)
 
@@ -475,11 +603,15 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            fate = await subject.system.send("c", "the exact text", sender_label="owner")
+            fate = await subject.system.send(
+                "c",
+                text_message_content("the exact text"),
+                sender_label="owner",
+            )
             assert fate == PromptDeliveryStarted()
             assert await subject.backend_writes("c") == (
                 BackendWrite(
-                    text="the exact text",
+                    content=text_message_content("the exact text"),
                     sender_label="owner",
                     mode=PromptDeliveryMode.run_when_free,
                 ),
@@ -494,13 +626,16 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 _start_request("c", ConversationBackendKey.hermes)
             )
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             fate = await subject.system.send(
-                "c", "the exact steer", sender_label="owner", mode=PromptDeliveryMode.steer
+                "c",
+                text_message_content("the exact steer"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             )
             assert fate == PromptDeliveryInjected()
             assert (await subject.backend_writes("c"))[-1] == BackendWrite(
-                text="the exact steer",
+                content=text_message_content("the exact steer"),
                 sender_label="owner",
                 mode=PromptDeliveryMode.steer,
             )
@@ -512,9 +647,13 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             before = await subject.backend_writes("c")
-            fate = await subject.system.send("c", "held", sender_label="owner")
+            fate = await subject.system.send(
+                "c",
+                text_message_content("held"),
+                sender_label="owner",
+            )
             assert fate == PromptDeliveryQueued(queue_position=1)
             assert await subject.backend_writes("c") == before
             await subject.settle()
@@ -528,7 +667,7 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             assert await subject.system.send(
-                "unknown", "refused-text", sender_label="owner"
+                "unknown", text_message_content("refused-text"), sender_label="owner"
             ) == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.no_such_conversation
             )
@@ -537,7 +676,7 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("no-start"))
             await subject.arm_backend_start_failure("no-start")
             assert await subject.system.send(
-                "no-start", "refused-text", sender_label="owner"
+                "no-start", text_message_content("refused-text"), sender_label="owner"
             ) == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.backend_did_not_start
             )
@@ -546,7 +685,7 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("no-load"))
             await subject.arm_session_load_failure("no-load")
             assert await subject.system.send(
-                "no-load", "refused-text", sender_label="owner"
+                "no-load", text_message_content("refused-text"), sender_label="owner"
             ) == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.session_did_not_load
             )
@@ -555,7 +694,7 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("no-write"))
             await subject.arm_backend_write_failure("no-write")
             assert await subject.system.send(
-                "no-write", "refused-text", sender_label="owner"
+                "no-write", text_message_content("refused-text"), sender_label="owner"
             ) == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
             )
@@ -565,7 +704,10 @@ class ConversationContractConformanceSuite:
                 _start_request("idle-steer", ConversationBackendKey.hermes)
             )
             assert await subject.system.send(
-                "idle-steer", "refused-text", sender_label="owner", mode=PromptDeliveryMode.steer
+                "idle-steer",
+                text_message_content("refused-text"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             ) == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
             )
@@ -574,9 +716,16 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 _start_request("no-steer", ConversationBackendKey.codex)
             )
-            await subject.system.send("no-steer", "incumbent", sender_label="owner")
+            await subject.system.send(
+                "no-steer",
+                text_message_content("incumbent"),
+                sender_label="owner",
+            )
             assert await subject.system.send(
-                "no-steer", "refused-text", sender_label="owner", mode=PromptDeliveryMode.steer
+                "no-steer",
+                text_message_content("refused-text"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             ) == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.backend_cannot_steer
             )
@@ -589,13 +738,17 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
-            await subject.system.send("c", "held", sender_label="automatic-loop")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
+            await subject.system.send(
+                "c",
+                text_message_content("held"),
+                sender_label="automatic-loop",
+            )
             await subject.complete_running_turn("c")
             assert await subject.recorded_facts("c") == (
                 RecordedFact(
                     kind=RecordedFactKind.prompt_delivered,
-                    text="incumbent",
+                    content=text_message_content("incumbent"),
                     sender_label="owner",
                     mode=PromptDeliveryMode.run_when_free,
                 ),
@@ -605,7 +758,7 @@ class ConversationContractConformanceSuite:
                 ),
                 RecordedFact(
                     kind=RecordedFactKind.prompt_delivered,
-                    text="held",
+                    content=text_message_content("held"),
                     sender_label="automatic-loop",
                     mode=PromptDeliveryMode.run_when_free,
                 ),
@@ -621,9 +774,9 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
-            await subject.system.send("c", "held-a", sender_label="owner")
-            await subject.system.send("c", "held-b", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
+            await subject.system.send("c", text_message_content("held-a"), sender_label="owner")
+            await subject.system.send("c", text_message_content("held-b"), sender_label="owner")
             await subject.arm_backend_write_failure("c")
             await subject.complete_running_turn("c")
             refusals = _facts_of_kind(
@@ -643,7 +796,11 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            fate = await subject.system.send("c", "incumbent", sender_label="owner")
+            fate = await subject.system.send(
+                "c",
+                text_message_content("incumbent"),
+                sender_label="owner",
+            )
             assert fate == PromptDeliveryStarted()
             assert await subject.system.is_running("c") is True
             assert (
@@ -659,9 +816,13 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             fates = [
-                await subject.system.send("c", f"held-{index}", sender_label="owner")
+                await subject.system.send(
+                    "c",
+                    text_message_content(f"held-{index}"),
+                    sender_label="owner",
+                )
                 for index in range(1, 11)
             ]
             assert fates == [
@@ -675,10 +836,13 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             fates = [
                 await subject.system.send(
-                    "c", f"urgent-{index}", sender_label="owner", mode=PromptDeliveryMode.send_now
+                    "c",
+                    text_message_content(f"urgent-{index}"),
+                    sender_label="owner",
+                    mode=PromptDeliveryMode.send_now,
                 )
                 for index in range(1, 4)
             ]
@@ -693,25 +857,41 @@ class ConversationContractConformanceSuite:
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             produced: dict[str, PromptDeliveryRefusalReason] = {}
 
-            fate = await subject.system.send("unknown", "text", sender_label="owner")
+            fate = await subject.system.send(
+                "unknown",
+                text_message_content("text"),
+                sender_label="owner",
+            )
             assert isinstance(fate, PromptDeliveryRefused)
             produced["never started"] = fate.refusal_reason
 
             await subject.system.start_conversation(_start_request("no-start"))
             await subject.arm_backend_start_failure("no-start")
-            fate = await subject.system.send("no-start", "text", sender_label="owner")
+            fate = await subject.system.send(
+                "no-start",
+                text_message_content("text"),
+                sender_label="owner",
+            )
             assert isinstance(fate, PromptDeliveryRefused)
             produced["backend will not spawn"] = fate.refusal_reason
 
             await subject.system.start_conversation(_start_request("no-load"))
             await subject.arm_session_load_failure("no-load")
-            fate = await subject.system.send("no-load", "text", sender_label="owner")
+            fate = await subject.system.send(
+                "no-load",
+                text_message_content("text"),
+                sender_label="owner",
+            )
             assert isinstance(fate, PromptDeliveryRefused)
             produced["session will not load"] = fate.refusal_reason
 
             await subject.system.start_conversation(_start_request("no-write"))
             await subject.arm_backend_write_failure("no-write")
-            fate = await subject.system.send("no-write", "text", sender_label="owner")
+            fate = await subject.system.send(
+                "no-write",
+                text_message_content("text"),
+                sender_label="owner",
+            )
             assert isinstance(fate, PromptDeliveryRefused)
             produced["write fails"] = fate.refusal_reason
 
@@ -719,7 +899,10 @@ class ConversationContractConformanceSuite:
                 _start_request("idle-steer", ConversationBackendKey.hermes)
             )
             fate = await subject.system.send(
-                "idle-steer", "text", sender_label="owner", mode=PromptDeliveryMode.steer
+                "idle-steer",
+                text_message_content("text"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             )
             assert isinstance(fate, PromptDeliveryRefused)
             produced["steer with no running turn"] = fate.refusal_reason
@@ -727,9 +910,16 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 _start_request("no-steer", ConversationBackendKey.codex)
             )
-            await subject.system.send("no-steer", "incumbent", sender_label="owner")
+            await subject.system.send(
+                "no-steer",
+                text_message_content("incumbent"),
+                sender_label="owner",
+            )
             fate = await subject.system.send(
-                "no-steer", "text", sender_label="owner", mode=PromptDeliveryMode.steer
+                "no-steer",
+                text_message_content("text"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             )
             assert isinstance(fate, PromptDeliveryRefused)
             produced["steer on a backend that cannot"] = fate.refusal_reason
@@ -759,7 +949,7 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("armed"))
             await subject.arm_backend_start_failure("armed")
             assert await subject.system.send(
-                "armed", "text", sender_label="owner"
+                "armed", text_message_content("text"), sender_label="owner"
             ) == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.backend_did_not_start
             )
@@ -767,12 +957,16 @@ class ConversationContractConformanceSuite:
 
             await subject.system.start_conversation(_start_request("unarmed"))
             assert await subject.system.send(
-                "unarmed", "text", sender_label="owner"
+                "unarmed", text_message_content("text"), sender_label="owner"
             ) == PromptDeliveryStarted()
 
             await subject.system.start_conversation(_start_request("write-armed"))
             await subject.arm_backend_write_failure("write-armed")
-            fate = await subject.system.send("write-armed", "text", sender_label="owner")
+            fate = await subject.system.send(
+                "write-armed",
+                text_message_content("text"),
+                sender_label="owner",
+            )
             assert isinstance(fate, PromptDeliveryRefused)
             assert fate.refusal_reason is not PromptDeliveryRefusalReason.backend_did_not_start
 
@@ -785,7 +979,7 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("armed"))
             await subject.arm_session_load_failure("armed")
             assert await subject.system.send(
-                "armed", "text", sender_label="owner"
+                "armed", text_message_content("text"), sender_label="owner"
             ) == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.session_did_not_load
             )
@@ -793,12 +987,16 @@ class ConversationContractConformanceSuite:
 
             await subject.system.start_conversation(_start_request("unarmed"))
             assert await subject.system.send(
-                "unarmed", "text", sender_label="owner"
+                "unarmed", text_message_content("text"), sender_label="owner"
             ) == PromptDeliveryStarted()
 
             await subject.system.start_conversation(_start_request("write-armed"))
             await subject.arm_backend_write_failure("write-armed")
-            fate = await subject.system.send("write-armed", "text", sender_label="owner")
+            fate = await subject.system.send(
+                "write-armed",
+                text_message_content("text"),
+                sender_label="owner",
+            )
             assert isinstance(fate, PromptDeliveryRefused)
             assert fate.refusal_reason is not PromptDeliveryRefusalReason.session_did_not_load
 
@@ -814,17 +1012,29 @@ class ConversationContractConformanceSuite:
 
             await subject.system.start_conversation(_start_request("plain"))
             await subject.arm_backend_write_failure("plain")
-            assert await subject.system.send("plain", "text", sender_label="owner") == write_failed
+            assert (
+                await subject.system.send(
+                    "plain", text_message_content("text"), sender_label="owner"
+                )
+                == write_failed
+            )
             assert await subject.backend_writes("plain") == ()
             assert await subject.system.is_running("plain") is False
 
             await subject.system.start_conversation(
                 _start_request("steered", ConversationBackendKey.hermes)
             )
-            await subject.system.send("steered", "incumbent", sender_label="owner")
+            await subject.system.send(
+                "steered",
+                text_message_content("incumbent"),
+                sender_label="owner",
+            )
             await subject.arm_backend_write_failure("steered")
             assert await subject.system.send(
-                "steered", "text", sender_label="owner", mode=PromptDeliveryMode.steer
+                "steered",
+                text_message_content("text"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             ) == write_failed
             assert _written_texts(await subject.backend_writes("steered")) == ("incumbent",)
             assert await subject.system.is_running("steered") is True
@@ -836,12 +1046,15 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
-            await subject.system.send("c", "held-a", sender_label="owner")
-            await subject.system.send("c", "held-b", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
+            await subject.system.send("c", text_message_content("held-a"), sender_label="owner")
+            await subject.system.send("c", text_message_content("held-b"), sender_label="owner")
             await subject.arm_backend_write_failure("c")
             fate = await subject.system.send(
-                "c", "urgent", sender_label="owner", mode=PromptDeliveryMode.send_now
+                "c",
+                text_message_content("urgent"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.send_now,
             )
             assert fate == PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
@@ -869,15 +1082,15 @@ class ConversationContractConformanceSuite:
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
 
-            await subject.system.send("c", "first", sender_label="owner")
+            await subject.system.send("c", text_message_content("first"), sender_label="owner")
             await subject.complete_running_turn("c")
             assert await subject.backend_cancellations("c") == 0
 
-            await subject.system.send("c", "second", sender_label="owner")
+            await subject.system.send("c", text_message_content("second"), sender_label="owner")
             await subject.fail_running_turn("c")
             assert await subject.backend_cancellations("c") == 0
 
-            await subject.system.send("c", "third", sender_label="owner")
+            await subject.system.send("c", text_message_content("third"), sender_label="owner")
             await subject.system.interrupt("c")
             assert await subject.backend_cancellations("c") == 1
 
@@ -920,7 +1133,7 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             before = await subject.backend_writes("c")
             await subject.system.interrupt("c")
             assert await subject.backend_writes("c") == before
@@ -932,8 +1145,8 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
-            await subject.system.send("c", "held", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
+            await subject.system.send("c", text_message_content("held"), sender_label="owner")
             await subject.system.interrupt("c")
             assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
             assert await subject.system.is_running("c") is True
@@ -949,7 +1162,7 @@ class ConversationContractConformanceSuite:
             assert await subject.system.is_running("c") is False
             await subject.system.start_conversation(_start_request("c"))
             assert await subject.system.is_running("c") is False
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             assert await subject.system.is_running("c") is True
             ask_id = await subject.raise_permission_ask("c")
             assert await subject.system.is_running("c") is True
@@ -964,8 +1177,8 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
-            await subject.system.send("c", "held", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
+            await subject.system.send("c", text_message_content("held"), sender_label="owner")
             await subject.complete_running_turn("c")
             assert await subject.system.is_running("c") is True
             assert _written_texts(await subject.backend_writes("c")) == ("incumbent", "held")
@@ -977,12 +1190,20 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("failed"))
-            await subject.system.send("failed", "incumbent", sender_label="owner")
+            await subject.system.send(
+                "failed",
+                text_message_content("incumbent"),
+                sender_label="owner",
+            )
             await subject.fail_running_turn("failed")
             assert await subject.system.is_running("failed") is False
 
             await subject.system.start_conversation(_start_request("interrupted"))
-            await subject.system.send("interrupted", "incumbent", sender_label="owner")
+            await subject.system.send(
+                "interrupted",
+                text_message_content("incumbent"),
+                sender_label="owner",
+            )
             await subject.system.interrupt("interrupted")
             assert await subject.system.is_running("interrupted") is False
 
@@ -997,10 +1218,17 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 _start_request("c", ConversationBackendKey.hermes)
             )
-            await subject.system.send("c", "incumbent", sender_label="owner")
-            await subject.system.send("c", "held", sender_label="automatic-loop")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             await subject.system.send(
-                "c", "steered", sender_label="owner", mode=PromptDeliveryMode.steer
+                "c",
+                text_message_content("held"),
+                sender_label="automatic-loop",
+            )
+            await subject.system.send(
+                "c",
+                text_message_content("steered"),
+                sender_label="owner",
+                mode=PromptDeliveryMode.steer,
             )
             await subject.complete_running_turn("c")
             delivered = _facts_of_kind(
@@ -1021,7 +1249,7 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             ask_id = await subject.raise_permission_ask("c")
             assert _facts_of_kind(
                 await subject.recorded_facts("c"), RecordedFactKind.permission_asked
@@ -1039,7 +1267,7 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             ask_id = await subject.raise_permission_ask("c")
             await subject.settle()
             assert await subject.backend_permission_answer("c", ask_id) is None
@@ -1056,7 +1284,7 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             ask_id = await subject.raise_permission_ask("c")
 
             await subject.settle()
@@ -1082,7 +1310,7 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             ask_id = await subject.raise_permission_ask("c")
             assert await subject.answer_permission_ask("c", ask_id, "allow-once") is True
             assert await subject.backend_permission_answer("c", ask_id) == "allow-once"
@@ -1111,7 +1339,11 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("live"))
-            await subject.system.send("live", "incumbent", sender_label="owner")
+            await subject.system.send(
+                "live",
+                text_message_content("incumbent"),
+                sender_label="owner",
+            )
             ask_id = await subject.raise_permission_ask("live")
 
             assert await subject.answer_permission_ask("live", "no-such-ask", "allow") is False
@@ -1127,7 +1359,11 @@ class ConversationContractConformanceSuite:
             assert await subject.recorded_facts("live") == facts_after_the_real_answer
 
             await subject.system.start_conversation(_start_request("dead"))
-            await subject.system.send("dead", "incumbent", sender_label="owner")
+            await subject.system.send(
+                "dead",
+                text_message_content("incumbent"),
+                sender_label="owner",
+            )
             dead_ask_id = await subject.raise_permission_ask("dead")
             await subject.system.interrupt("dead")
             assert await subject.answer_permission_ask("dead", dead_ask_id, "allow") is False
@@ -1148,22 +1384,38 @@ class ConversationContractConformanceSuite:
 
             await subject.system.start_conversation(_start_request("completed"))
             returned_fates.append(
-                await subject.system.send("completed", "incumbent", sender_label="owner")
+                await subject.system.send(
+                    "completed",
+                    text_message_content("incumbent"),
+                    sender_label="owner",
+                )
             )
             await subject.complete_running_turn("completed")
 
             await subject.system.start_conversation(_start_request("failed"))
             returned_fates.append(
-                await subject.system.send("failed", "incumbent", sender_label="owner")
+                await subject.system.send(
+                    "failed",
+                    text_message_content("incumbent"),
+                    sender_label="owner",
+                )
             )
             await subject.fail_running_turn("failed")
 
             await subject.system.start_conversation(_start_request("interrupted"))
             returned_fates.append(
-                await subject.system.send("interrupted", "incumbent", sender_label="owner")
+                await subject.system.send(
+                    "interrupted",
+                    text_message_content("incumbent"),
+                    sender_label="owner",
+                )
             )
             returned_fates.append(
-                await subject.system.send("interrupted", "held", sender_label="owner")
+                await subject.system.send(
+                    "interrupted",
+                    text_message_content("held"),
+                    sender_label="owner",
+                )
             )
             await subject.system.interrupt("interrupted")
 
@@ -1211,7 +1463,10 @@ class ConversationContractConformanceSuite:
                 ConversationStartRequest(conversation_id="c", model="first-model")
             )
             fate = await subject.system.send(
-                "c", "switch here", sender_label="owner", model_change="second-model"
+                "c",
+                text_message_content("switch here"),
+                sender_label="owner",
+                model_change="second-model",
             )
             assert isinstance(fate, PromptDeliveryStarted)
             assert await subject.backend_model("c") == "second-model"
@@ -1221,7 +1476,11 @@ class ConversationContractConformanceSuite:
             assert tuple(fact.model for fact in changes) == ("second-model",)
 
             await subject.complete_running_turn("c")
-            await subject.system.send("c", "plain send after", sender_label="owner")
+            await subject.system.send(
+                "c",
+                text_message_content("plain send after"),
+                sender_label="owner",
+            )
             assert await subject.backend_model("c") == "second-model"
 
         self._run(exercise)
@@ -1235,7 +1494,7 @@ class ConversationContractConformanceSuite:
                     conversation_id="c", model="start-model", reasoning_effort="start-effort"
                 )
             )
-            await subject.system.send("c", "plain", sender_label="owner")
+            await subject.system.send("c", text_message_content("plain"), sender_label="owner")
             assert await subject.backend_model("c") == "start-model"
             assert await subject.backend_reasoning_effort("c") == "start-effort"
             facts = await subject.recorded_facts("c")
@@ -1250,9 +1509,12 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 ConversationStartRequest(conversation_id="c", model="start-model")
             )
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             fate = await subject.system.send(
-                "c", "held with change", sender_label="owner", model_change="next-model"
+                "c",
+                text_message_content("held with change"),
+                sender_label="owner",
+                model_change="next-model",
             )
             assert isinstance(fate, PromptDeliveryQueued)
             assert await subject.backend_model("c") == "start-model"
@@ -1270,12 +1532,19 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 ConversationStartRequest(conversation_id="c", model="start-model")
             )
-            await subject.system.send("c", "make the session exist", sender_label="owner")
+            await subject.system.send(
+                "c",
+                text_message_content("make the session exist"),
+                sender_label="owner",
+            )
             await subject.complete_running_turn("c")
             await subject.arm_backend_write_failure("c")
 
             fate = await subject.system.send(
-                "c", "doomed", sender_label="owner", model_change="never-model"
+                "c",
+                text_message_content("doomed"),
+                sender_label="owner",
+                model_change="never-model",
             )
             assert isinstance(fate, PromptDeliveryRefused)
             assert fate.refusal_reason is PromptDeliveryRefusalReason.write_to_backend_failed
@@ -1295,7 +1564,7 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("c"))
             assert not await subject.system.has_pending_permission_ask("c")
 
-            await subject.system.send("c", "work", sender_label="owner")
+            await subject.system.send("c", text_message_content("work"), sender_label="owner")
             assert not await subject.system.has_pending_permission_ask("c")
 
             ask_id = await subject.raise_permission_ask("c")
@@ -1318,9 +1587,9 @@ class ConversationContractConformanceSuite:
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
             await subject.system.start_conversation(_start_request("c"))
-            await subject.system.send("c", "incumbent", sender_label="owner")
-            await subject.system.send("c", "held one", sender_label="owner")
-            await subject.system.send("c", "held two", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
+            await subject.system.send("c", text_message_content("held one"), sender_label="owner")
+            await subject.system.send("c", text_message_content("held two"), sender_label="owner")
             await subject.raise_permission_ask("c")
 
             await subject.system.kill("c")
@@ -1353,9 +1622,13 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(_start_request("c"))
             await subject.system.kill("c")
 
-            await subject.system.send("c", "work", sender_label="owner")
+            await subject.system.send("c", text_message_content("work"), sender_label="owner")
             await subject.system.kill("c")
-            fate = await subject.system.send("c", "after the kill", sender_label="owner")
+            fate = await subject.system.send(
+                "c",
+                text_message_content("after the kill"),
+                sender_label="owner",
+            )
             assert isinstance(fate, PromptDeliveryStarted)
             assert await subject.system.is_running("c")
             assert "after the kill" in _written_texts(await subject.backend_writes("c"))
@@ -1370,11 +1643,11 @@ class ConversationContractConformanceSuite:
             await subject.system.start_conversation(
                 _start_request("c", backend_key=ConversationBackendKey.hermes)
             )
-            await subject.system.send("c", "incumbent", sender_label="owner")
+            await subject.system.send("c", text_message_content("incumbent"), sender_label="owner")
             with pytest.raises(ValueError):
                 await subject.system.send(
                     "c",
-                    "steered",
+                    text_message_content("steered"),
                     sender_label="owner",
                     mode=PromptDeliveryMode.steer,
                     model_change="other-model",

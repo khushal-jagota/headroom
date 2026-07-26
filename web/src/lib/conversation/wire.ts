@@ -46,6 +46,58 @@ export type PromptDeliveryRefusalReason =
   | "no_running_turn_to_steer_into"
   | "backend_cannot_steer";
 
+/** What one message is made of: written words, and pictures.
+ *
+ * Nearly every message is one piece of written words, and that is what a message with
+ * only words is: a run of one. A picture names a file the record kept, which
+ * `conversationFileHref` turns into somewhere to fetch it from.
+ */
+export type MessagePiece =
+  | { piece: "text"; text: string }
+  | { piece: "image"; stored_file_id: string; media_type: string; file_name?: string };
+
+export type MessageContent = MessagePiece[];
+
+/** A message payload as the record stores it, which is one of two shapes.
+ *
+ * A message that is only words is stored under `text`, exactly as every message was
+ * before a message could be anything else — so nothing already recorded has to be
+ * rewritten and an ordinary row never grows. Everything else is stored under `content`.
+ */
+export type StoredMessageContent = { text: string } | { content: MessagePiece[] };
+
+/** Either stored shape, read as the pieces the message is made of.
+ *
+ * The one place in this browser that knows there are two shapes. Everything above it
+ * holds a run of pieces and never asks which form the row was in.
+ */
+export function messageContentOf(payload: StoredMessageContent): MessagePiece[] {
+  if ("content" in payload) return payload.content;
+  return [{ piece: "text", text: payload.text }];
+}
+
+/** Everything a message says in words, for the places that can only hold words.
+ *
+ * The pieces that are not words are left out rather than described: a stand-in sentence
+ * would read as something the sender wrote.
+ */
+export function messageContentText(
+  content: readonly (MessagePiece | SentMessagePiece)[]
+): string {
+  return content
+    .filter(
+      (piece): piece is Extract<MessagePiece, { piece: "text" }> => piece.piece === "text"
+    )
+    .map((piece) => piece.text)
+    .join("\n\n");
+}
+
+/** Where to fetch a file one of this conversation's messages carries. */
+export function conversationFileHref(conversationId: string, storedFileId: string): string {
+  return `${CONVERSATION_BASE}/conversations/${encodeURIComponent(conversationId)}`
+    + `/files/${encodeURIComponent(storedFileId)}`;
+}
+
 /** Where one step of the agent's plan has got to. */
 export type PlanEntryStatus = "pending" | "in_progress" | "completed";
 
@@ -105,20 +157,25 @@ type SenderMintedPromptFields = {
 export type ConversationEvent =
   | Row<
       "prompt",
-      { text: string; sender_label: string; mode: PromptDeliveryMode } & SenderMintedPromptFields
+      StoredMessageContent & {
+        sender_label: string;
+        mode: PromptDeliveryMode;
+      } & SenderMintedPromptFields
     >
   | Row<
       "prompt_delivery_refused",
-      {
-        text: string;
+      StoredMessageContent & {
         sender_label: string;
         mode: PromptDeliveryMode;
         refusal_reason: PromptDeliveryRefusalReason;
         sender_message_id?: string;
       }
     >
-  | Row<"prompt_discarded", { text: string; sender_label: string; sender_message_id?: string }>
-  | Row<"agent_message", { text: string }>
+  | Row<
+      "prompt_discarded",
+      StoredMessageContent & { sender_label: string; sender_message_id?: string }
+    >
+  | Row<"agent_message", StoredMessageContent>
   | Row<
       "tool_call_started",
       { tool_call_id: string; title: string; tool_kind: string; detail: string | null }
@@ -217,8 +274,18 @@ export type StartConversationBody = {
   workspace_folder?: string;
 };
 
+/** A piece as it is sent, which is the one shape that carries bytes.
+ *
+ * A picture goes out with its own bytes, base64, riding with the message it belongs to.
+ * The server keeps them and the record names what it kept, so `data` is written here and
+ * is never read back: what comes back names a file instead.
+ */
+export type SentMessagePiece =
+  | { piece: "text"; text: string }
+  | { piece: "image"; data: string; media_type: string; file_name?: string };
+
 export type SendPromptBody = {
-  text: string;
+  content: SentMessagePiece[];
   sender_label: string;
   mode: PromptDeliveryMode;
   model_change?: string;

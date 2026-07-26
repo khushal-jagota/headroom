@@ -54,8 +54,9 @@ import json
 import logging
 import uuid
 import warnings
+from base64 import b64encode
 from collections import deque
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -108,6 +109,16 @@ from planner.conversation.events import (
     PlanEntry,
     PlanEntryStatus,
     ToolCallStatus,
+)
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessageText,
+    text_message_content,
+)
+from planner.conversation.message_files import (
+    ConversationMessageFiles,
+    MessageFileMissing,
 )
 
 LOGGER = logging.getLogger("planner.conversation.backends.claude_agent_sdk")
@@ -205,7 +216,14 @@ class ClaudeSdkClient(Protocol):
 
     async def connect(self) -> None: ...
 
-    async def query(self, prompt: str) -> None: ...
+    async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
+        """A message as words, or as the content blocks a richer one is made of.
+
+        Both are the SDK's own input shapes. Words stay words: the SDK wraps a string in
+        exactly the envelope this adapter would otherwise build, so an ordinary prompt is
+        untouched by the existence of the other form.
+        """
+        ...
 
     def receive_messages(self) -> AsyncIterator[Message]: ...
 
@@ -283,11 +301,13 @@ class ClaudeAgentSdkBackendChild:
         launch: ClaudeAgentSdkChildLaunch,
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
         client_factory: ClaudeSdkClientFactory = claude_sdk_client,
     ) -> None:
         self._launch = launch
         self._resolved_start = resolved_start
         self._sink = event_sink
+        self._message_files = message_files
         self._client_factory = client_factory
         self._client: ClaudeSdkClient | None = None
         self._session_id: str | None = None
@@ -336,14 +356,14 @@ class ClaudeAgentSdkBackendChild:
     async def write_prompt(
         self,
         turn_token: TurnToken,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> None:
-        """Start a turn with this text, on values this child is already running.
+        """Start a turn with this message, on values this child is already running.
 
         The label and the mode are dropped: the SDK's wire carries a user message and
         nothing alongside it, so there is nowhere for a backend's own metadata to go. The
@@ -358,16 +378,69 @@ class ClaudeAgentSdkBackendChild:
         self._require_the_carried_values_are_in_force(model_change, reasoning_effort_change)
         client = self._connected_client()
         self._require_a_live_wire()
+        asked = await self._query_argument(content)
         try:
-            await client.query(text)
+            await client.query(asked)
         except Exception as did_not_reach:
             self._wire_broken = True
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
         self._turn = _TurnInFlight(token=turn_token)
 
-    async def steer(self, text: str, *, sender_label: str) -> None:
+    async def _query_argument(
+        self, content: MessageContent
+    ) -> str | AsyncIterator[dict[str, Any]]:
+        """The message in the form the SDK takes it.
+
+        A message that is only words stays a string. That is not an optimisation — the SDK
+        wraps a string in exactly the envelope it would build here, so keeping the string
+        keeps every ordinary prompt byte for byte the thing it has always been, and the
+        richer form is reached only by messages that need it.
+
+        A message with more in it goes as one user message carrying content blocks, which
+        is the SDK's other documented input.
+        """
+        if len(content) == 1 and isinstance(content[0], MessageText):
+            return content[0].text
+
+        blocks: list[dict[str, Any]] = []
+        for piece in content:
+            match piece:
+                case MessageText():
+                    blocks.append({"type": "text", "text": piece.text})
+                case MessageImage():
+                    blocks.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": piece.media_type,
+                                "data": await self._encoded_bytes(piece.stored_file_id),
+                            },
+                        }
+                    )
+
+        async def one_user_message() -> AsyncIterator[dict[str, Any]]:
+            yield {
+                "type": "user",
+                "message": {"role": "user", "content": blocks},
+                "parent_tool_use_id": None,
+            }
+
+        return one_user_message()
+
+    async def _encoded_bytes(self, stored_file_id: str) -> str:
+        """The bytes of a kept file, as the SDK's image block wants them."""
+        try:
+            kept = await self._message_files.read(
+                self._resolved_start.conversation_id, stored_file_id
+            )
+        except (MessageFileMissing, OSError) as unreadable:
+            raise PromptWriteFailed(f"{stored_file_id} could not be read") from unreadable
+        return b64encode(kept).decode("ascii")
+
+    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
         """Claude has no way to take text into a turn that is already running."""
-        del text, sender_label
+        del content, sender_label
         raise PromptWriteFailed("claude cannot take text into a turn that is already running")
 
     async def cancel_running_turn(self) -> None:
@@ -712,7 +785,7 @@ class ClaudeAgentSdkBackendChild:
             return
         text = "".join(said)
         said.clear()
-        await self._sink.agent_message_completed(turn.token, text)
+        await self._sink.agent_message_completed(turn.token, text_message_content(text))
 
     async def _on_user_message(self, turn: _TurnInFlight, message: UserMessage) -> None:
         """What the tools gave back. Their results arrive as a message from the user side.
@@ -877,11 +950,13 @@ class ClaudeAgentSdkBackendChildFactory:
         *,
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> ClaudeAgentSdkBackendChild:
         return ClaudeAgentSdkBackendChild(
             launch=self._launch,
             resolved_start=resolved_start,
             event_sink=event_sink,
+            message_files=message_files,
             client_factory=self._client_factory,
         )
 

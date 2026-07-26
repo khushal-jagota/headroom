@@ -76,6 +76,16 @@ from planner.conversation.events import (
     PlanEntryStatus,
     ToolCallStatus,
 )
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessageText,
+    text_message_content,
+)
+from planner.conversation.message_files import (
+    ConversationMessageFiles,
+    MessageFileMissing,
+)
 
 LOGGER = logging.getLogger("planner.conversation.backends.codex_app_server")
 
@@ -204,10 +214,12 @@ class CodexAppServerBackendChild:
         launch: CodexChildLaunch,
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> None:
         self._launch = launch
         self._resolved_start = resolved_start
         self._sink = event_sink
+        self._message_files = message_files
         self._client = CodexAppServerClient(
             handler=_CodexServerMessages(self), description=resolved_start.conversation_id
         )
@@ -255,14 +267,14 @@ class CodexAppServerBackendChild:
     async def write_prompt(
         self,
         turn_token: TurnToken,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> None:
-        """Start a turn with this text, on these values, and return when codex has it.
+        """Start a turn with this message, on these values, and return when codex has it.
 
         The label and the mode have nowhere to go: codex's turn carries the text and the
         values it runs on, and has no place to say who sent it or how it was meant to
@@ -276,7 +288,10 @@ class CodexAppServerBackendChild:
             self._reasoning_effort if reasoning_effort_change is None else reasoning_effort_change
         )
         parameters = self._turn_start_parameters(
-            thread_id=thread_id, text=text, model=model, reasoning_effort=reasoning_effort
+            thread_id=thread_id,
+            content=content,
+            model=model,
+            reasoning_effort=reasoning_effort,
         )
 
         turn = _TurnInFlight(token=turn_token, started=asyncio.get_running_loop().create_future())
@@ -293,7 +308,7 @@ class CodexAppServerBackendChild:
         self._model = model
         self._reasoning_effort = reasoning_effort
 
-    async def steer(self, text: str, *, sender_label: str) -> None:
+    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
         """Never called: codex is one of the backends the contract says cannot steer.
 
         Codex's app-server does have a ``turn/steer`` method. It is not used, because
@@ -301,7 +316,7 @@ class CodexAppServerBackendChild:
         conversation contract, and the core refuses a steer aimed at codex before any child
         is touched. Changing that is a change to the contract, not to this adapter.
         """
-        del text, sender_label
+        del content, sender_label
         raise PromptWriteFailed("codex does not take text into a turn that is already running")
 
     async def cancel_running_turn(self) -> None:
@@ -448,13 +463,51 @@ class CodexAppServerBackendChild:
 
     # --- the turn -----------------------------------------------------------------------
 
+    def _turn_input(self, content: MessageContent) -> list[Any]:
+        """The message as codex's own turn input.
+
+        Codex takes a picture as the file it is, which is exactly what this system already
+        has: the bytes are on disk and the piece names them, so nothing is encoded and
+        nothing is copied.
+        """
+        given: list[Any] = []
+        for piece in content:
+            match piece:
+                case MessageText():
+                    given.append(bindings.TextUserInput(type="text", text=piece.text))
+                case MessageImage():
+                    given.append(
+                        bindings.LocalImageUserInput(
+                            type="localImage", path=str(self._kept_path(piece.stored_file_id))
+                        )
+                    )
+        return given
+
+    def _kept_path(self, stored_file_id: str) -> Path:
+        """Where a kept file is, or a write that does not happen.
+
+        A path handed to codex has to be a path to something. A file that is not there
+        makes this a refusal rather than a turn started on a message with a hole in it.
+        """
+        try:
+            return self._message_files.path_of(
+                self._resolved_start.conversation_id, stored_file_id
+            )
+        except MessageFileMissing as not_there:
+            raise PromptWriteFailed(f"{stored_file_id} is not there") from not_there
+
     def _turn_start_parameters(
-        self, *, thread_id: str, text: str, model: str | None, reasoning_effort: str | None
+        self,
+        *,
+        thread_id: str,
+        content: MessageContent,
+        model: str | None,
+        reasoning_effort: str | None,
     ) -> bindings.TurnStartParams:
         access = self._resolved_start.access
         return bindings.TurnStartParams(
             threadId=thread_id,
-            input=[bindings.TextUserInput(type="text", text=text)],
+            input=self._turn_input(content),
             model=model,
             effort=None if reasoning_effort is None else bindings.ReasoningEffort(reasoning_effort),
             approvalPolicy=_approval_policy(access),
@@ -543,7 +596,9 @@ class CodexAppServerBackendChild:
         """Finish anything the agent was part way through saying when the turn stopped."""
         for texts in list(turn.agent_message_texts.values()):
             if texts:
-                await self._sink.agent_message_completed(turn.token, "".join(texts))
+                await self._sink.agent_message_completed(
+                    turn.token, text_message_content("".join(texts))
+                )
         turn.agent_message_texts.clear()
 
     async def _settle_parked_asks(self, turn: _TurnInFlight) -> None:
@@ -711,7 +766,9 @@ class CodexAppServerBackendChild:
         item = notification.item
         if isinstance(item, bindings.AgentMessageThreadItem):
             turn.agent_message_texts.pop(item.id, None)
-            await self._sink.agent_message_completed(turn.token, item.text)
+            await self._sink.agent_message_completed(
+                turn.token, text_message_content(item.text)
+            )
             return
         finished = _tool_call_finished(item)
         if finished is None:
@@ -804,9 +861,13 @@ class CodexAppServerBackendChildFactory:
         *,
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> CodexAppServerBackendChild:
         return CodexAppServerBackendChild(
-            launch=self._launch, resolved_start=resolved_start, event_sink=event_sink
+            launch=self._launch,
+            resolved_start=resolved_start,
+            event_sink=event_sink,
+            message_files=message_files,
         )
 
 

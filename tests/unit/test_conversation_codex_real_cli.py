@@ -17,6 +17,7 @@ import os
 import shutil
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from tempfile import mkdtemp
 
 import pytest
 from tests.unit.test_conversation_codex_adapter import _RecordingSink
@@ -36,6 +37,19 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import ConversationTurnEnding
+from planner.conversation.message_files import ConversationMessageFiles
+
+
+def _message_files() -> ConversationMessageFiles:
+    """A file store for this exercise, under a database path of its own.
+
+    Every adapter is handed one, because a message can carry a file and an adapter is
+    what reads it. These exercises send words, so nothing is ever written here — but the
+    adapter is built the way production builds it rather than with a hole where the file
+    store goes.
+    """
+    return ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
+
 
 REAL_CODEX_TESTS_ENVIRONMENT_NAME = "PANELS_REAL_CODEX_TESTS"
 CODEX_EXECUTABLE = shutil.which("codex")
@@ -75,6 +89,7 @@ def _real_child(
         launch=codex_app_server_child_launch(codex_executable=Path(CODEX_EXECUTABLE)),
         resolved_start=_resolved_start(workspace, model=model),
         event_sink=sink,
+        message_files=_message_files(),
     )
 
 

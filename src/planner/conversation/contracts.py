@@ -21,6 +21,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, Protocol
 
+from planner.conversation.message_content import MessageContent
 from planner.core.contracts import ErrorCode, PlannerError
 
 
@@ -336,14 +337,20 @@ class ConversationSystem(Protocol):
     async def send(
         self,
         conversation_id: str,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
     ) -> PromptDeliveryFate:
-        """Send text into a conversation. This is the only way text gets to an agent.
+        """Send a message into a conversation. This is the only way anything gets to an agent.
+
+        ``content`` is the message: an ordered run of pieces, which for nearly every
+        message is one piece of written words — ``text_message_content("...")`` is how
+        that is said. A message with nothing in it is refused here rather than recorded
+        (``MessageContentEmpty``, which is a ``ValueError``), because an empty send would
+        put an empty prompt in front of an agent and tell nobody it had.
 
         ``mode`` decides how the text meets the agent — run when free, send now, or
         steer into the running turn — and defaults to run-when-free. See

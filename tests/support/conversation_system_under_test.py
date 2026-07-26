@@ -80,6 +80,13 @@ from planner.conversation.events import (
     TurnEndedEventPayload,
 )
 from planner.conversation.live_tail import ConversationLiveTail, ConversationTailSubscription
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessagePiece,
+    MessageText,
+)
+from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore, StoredConversationEvent
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
@@ -162,8 +169,10 @@ class _ObservingSink:
     ) -> None:
         await self._sink.plan_updated(turn_token, entries)
 
-    async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
-        await self._sink.agent_message_completed(turn_token, text)
+    async def agent_message_completed(
+        self, turn_token: TurnToken, content: MessageContent
+    ) -> None:
+        await self._sink.agent_message_completed(turn_token, content)
 
     async def tool_call_started(
         self,
@@ -256,7 +265,7 @@ class _CountedChild:
     async def write_prompt(
         self,
         turn_token: TurnToken,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode,
@@ -265,7 +274,7 @@ class _CountedChild:
     ) -> None:
         await self._child.write_prompt(
             turn_token,
-            text,
+            content,
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,
@@ -273,8 +282,8 @@ class _CountedChild:
         )
         self._conversation.expected_prompt_writes += 1
 
-    async def steer(self, text: str, *, sender_label: str) -> None:
-        await self._child.steer(text, sender_label=sender_label)
+    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
+        await self._child.steer(content, sender_label=sender_label)
         self._conversation.expected_prompt_writes += 1
 
     async def cancel_running_turn(self) -> None:
@@ -331,7 +340,11 @@ class ConversationSystemUnderTest:
     # --- making the children ---------------------------------------------------------------
 
     def make_child(
-        self, *, resolved_start: ResolvedConversationStart, event_sink: BackendEventSink
+        self,
+        *,
+        resolved_start: ResolvedConversationStart,
+        event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> _CountedChild:
         conversation = self._conversation(resolved_start.conversation_id)
         launch = (
@@ -345,6 +358,7 @@ class ConversationSystemUnderTest:
             launch=launch,
             resolved_start=resolved_start,
             event_sink=_ObservingSink(event_sink, conversation),
+            message_files=message_files,
         )
         return _CountedChild(child, conversation)
 
@@ -397,7 +411,7 @@ class ConversationSystemUnderTest:
         report = await self._account(conversation_id)
         return tuple(
             BackendWrite(
-                text=write["text"],
+                content=_message_from_reported_blocks(write["blocks"]),
                 sender_label=write["sender_label"],
                 mode=PromptDeliveryMode(write["delivery_mode"]),
             )
@@ -521,6 +535,33 @@ def _everything_this_conversation_has_told_its_backend(
     return merged
 
 
+def _message_from_reported_blocks(blocks: list[dict[str, Any]]) -> MessageContent:
+    """What the scripted agent says actually arrived, as a message again.
+
+    The agent reports the blocks it read off the wire, so this is the backend's own
+    account of the message rather than the conversation system's — which is the whole
+    point of asking the backend what it got.
+    """
+    return tuple(_piece_from_reported_block(block) for block in blocks)
+
+
+def _piece_from_reported_block(block: dict[str, Any]) -> MessagePiece:
+    match block["piece"]:
+        case "text":
+            return MessageText(text=str(block["text"]))
+        case "image":
+            return MessageImage(
+                stored_file_id=_ARRIVED_AS_BYTES, media_type=str(block["media_type"])
+            )
+    raise AssertionError(f"the scripted agent reported a block nobody reads: {block}")
+
+
+# A stand-in name for a picture or a sound that arrived as bytes. ACP carries the bytes
+# rather than a name, so the agent has no id to report back; an exercise that cares which
+# file arrived compares the bytes themselves.
+_ARRIVED_AS_BYTES = "f_arrived"
+
+
 def _recorded_fact(event: StoredConversationEvent) -> RecordedFact | None:
     """One stored row in the suite's vocabulary, or nothing when it has no word for it."""
     payload = event.payload
@@ -528,14 +569,14 @@ def _recorded_fact(event: StoredConversationEvent) -> RecordedFact | None:
         case PromptEventPayload():
             return RecordedFact(
                 kind=RecordedFactKind.prompt_delivered,
-                text=payload.text,
+                content=payload.content,
                 sender_label=payload.sender_label,
                 mode=payload.mode,
             )
         case PromptDeliveryRefusedEventPayload():
             return RecordedFact(
                 kind=RecordedFactKind.prompt_delivery_refused,
-                text=payload.text,
+                content=payload.content,
                 sender_label=payload.sender_label,
                 mode=payload.mode,
                 refusal_reason=payload.refusal_reason,
@@ -543,7 +584,7 @@ def _recorded_fact(event: StoredConversationEvent) -> RecordedFact | None:
         case PromptDiscardedEventPayload():
             return RecordedFact(
                 kind=RecordedFactKind.prompt_discarded,
-                text=payload.text,
+                content=payload.content,
                 sender_label=payload.sender_label,
             )
         case TurnEndedEventPayload():
@@ -593,14 +634,23 @@ async def open_conversation_system_under_test() -> AsyncIterator[ConversationSys
     subject: ConversationSystemUnderTest | None = None
 
     def make_child(
-        *, resolved_start: ResolvedConversationStart, event_sink: BackendEventSink
+        *,
+        resolved_start: ResolvedConversationStart,
+        event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> _CountedChild:
         assert subject is not None
-        return subject.make_child(resolved_start=resolved_start, event_sink=event_sink)
+        return subject.make_child(
+            resolved_start=resolved_start,
+            event_sink=event_sink,
+            message_files=message_files,
+        )
 
     live_tail = ConversationLiveTail()
+    message_files = ConversationMessageFiles(str(database_path))
     system = SqliteProcessConversationSystem(
         store=store,
+        message_files=message_files,
         backend_child_factories={key: make_child for key in ConversationBackendKey},
         live_tail=live_tail,
     )

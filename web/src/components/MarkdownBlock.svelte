@@ -20,10 +20,15 @@
     surface.update({ source: text, emptyText: quiet, depth, visited });
   });
 
-  onDestroy(() => {
-    surface?.destroy();
-    surface = null;
-  });
+  // Only in a browser. Nothing is mounted when this is rendered on a server, so there is
+  // nothing to tear down — and asking to be told about a teardown that cannot happen is
+  // what stopped this component being server-rendered at all.
+  if (typeof window !== "undefined") {
+    onDestroy(() => {
+      surface?.destroy();
+      surface = null;
+    });
+  }
 </script>
 
 <div class="markdown-host" bind:this={host}></div>

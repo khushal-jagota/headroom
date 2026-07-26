@@ -29,6 +29,7 @@
   import ConversationTranscript from "./ConversationTranscript.svelte";
   import type { RunValues } from "../../lib/conversation/composer";
   import { outgoingMessageNote, type OutgoingMessage } from "../../lib/conversation/outgoing";
+  import { messageContentText } from "../../lib/conversation/wire";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
     BackendModel,
@@ -49,6 +50,7 @@
   const READER_DRIVING_MILLISECONDS = 400;
 
   let {
+    conversationId,
     label,
     backendKey = null,
     workspaceFolder = null,
@@ -78,6 +80,9 @@
     onDiscardHeldPrompt,
     onNewConversation
   }: {
+    /** Which conversation is on the screen. A message's files are fetched under it, so a
+     *  piece can only ever reach a file kept for the conversation it belongs to. */
+    conversationId: string;
     label: string;
     backendKey?: ConversationBackendKey | null;
     workspaceFolder?: string | null;
@@ -566,7 +571,13 @@
       {#if emptyState && rows.length === 0 && outgoingMessages.length === 0}
         {@render emptyState()}
       {/if}
-      <ConversationTranscript {rows} {models} {ownSenderLabel} {livenessPulse} />
+      <ConversationTranscript
+        {rows}
+        {models}
+        {ownSenderLabel}
+        {livenessPulse}
+        {conversationId}
+      />
       {#each outgoingMessages as message (message.messageId)}
         {@const chip = modeChip(message.mode)}
         {@const note = outgoingMessageNote(message)}
@@ -588,7 +599,10 @@
               {/if}
             </div>
           {/if}
-          {message.text}
+          <!-- A message on its way holds what it is about to send rather than what the
+               record will name, so its words are drawn from that, plainly. It becomes the
+               rendered row the moment the record has it. -->
+          {messageContentText(message.content)}
         </article>
       {/each}
       {#if reservedSpacePixels > 0}

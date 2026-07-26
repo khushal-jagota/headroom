@@ -18,6 +18,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
+from planner.conversation.message_content import text_message_content
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -85,8 +86,20 @@ def test_resetting_silences_the_chief_and_the_next_start_is_a_fresh_one(
     with TestClient(app) as client:
         conversation_id = client.post("/api/chief/conversation").json()["conversation_id"]
         conversations = app.state.conversation_system
-        asyncio.run(conversations.send(conversation_id, "working", sender_label="owner"))
-        asyncio.run(conversations.send(conversation_id, "and this", sender_label="owner"))
+        asyncio.run(
+            conversations.send(
+                conversation_id,
+                text_message_content("working"),
+                sender_label="owner",
+            )
+        )
+        asyncio.run(
+            conversations.send(
+                conversation_id,
+                text_message_content("and this"),
+                sender_label="owner",
+            )
+        )
         assert asyncio.run(conversations.is_running(conversation_id)) is True
 
         reset = client.post("/api/chief/conversation/reset")
@@ -166,7 +179,13 @@ def test_the_chief_starts_on_its_own_managed_settings(tmp_path: Path) -> None:
         conversations = app.state.conversation_system
         # A backend session is established when something is first sent, so the account
         # only exists once there is one.
-        asyncio.run(conversations.send(conversation_id, "hello", sender_label="owner"))
+        asyncio.run(
+            conversations.send(
+                conversation_id,
+                text_message_content("hello"),
+                sender_label="owner",
+            )
+        )
 
     assert conversations.backend_model(conversation_id) == "gpt-5.6-sol"
     assert conversations.backend_reasoning_effort(conversation_id) == "medium"

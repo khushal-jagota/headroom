@@ -86,6 +86,12 @@ from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
+from planner.conversation.message_content import (
+    MessageContent,
+    prefix_message_content_text,
+    require_message_content,
+)
+from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import (
     ConversationRecord,
     ConversationStore,
@@ -165,7 +171,7 @@ class _HeldPrompt:
     to carry the same id the sender minted.
     """
 
-    text: str
+    content: MessageContent
     sender_label: str
     model_change: str | None
     reasoning_effort_change: str | None
@@ -221,6 +227,7 @@ class SqliteProcessConversationSystem:
         *,
         store: ConversationStore,
         backend_child_factories: Mapping[ConversationBackendKey, BackendChildFactory],
+        message_files: ConversationMessageFiles,
         live_tail: ConversationLiveTail | None = None,
         monotonic_now: Callable[[], float] = time.monotonic,
         idle_child_stop_after_seconds: float = IDLE_CHILD_STOP_AFTER_SECONDS,
@@ -230,6 +237,7 @@ class SqliteProcessConversationSystem:
         if missing:
             raise ValueError(f"no backend child factory for {missing}")
         self._store = store
+        self._message_files = message_files
         # Nobody watching is the ordinary case for a system built without one: the record
         # is written exactly the same way, and there is simply nowhere to show it.
         self._live_tail = live_tail
@@ -261,7 +269,7 @@ class SqliteProcessConversationSystem:
     async def send(
         self,
         conversation_id: str,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
@@ -270,7 +278,7 @@ class SqliteProcessConversationSystem:
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
-        """Send text in. See the contract; the two sender-minted fields are extra.
+        """Send a message in. See the contract; the two sender-minted fields are extra.
 
         ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own facts
         about this message and are stored on its row exactly as they were given. A sender
@@ -284,6 +292,7 @@ class SqliteProcessConversationSystem:
                 "a steer cannot carry a model or reasoning-effort change: the turn it "
                 "joins is already running"
             )
+        require_message_content(content)
 
         state = await self._conversation_state(conversation_id)
         if state is None:
@@ -294,12 +303,12 @@ class SqliteProcessConversationSystem:
 
         if mode is PromptDeliveryMode.steer:
             return await self._steer(
-                state, text, sender_label, sender_message_id, sent_at_unix_milliseconds
+                state, content, sender_label, sender_message_id, sent_at_unix_milliseconds
             )
         if mode is PromptDeliveryMode.send_now:
             return await self._send_now(
                 state,
-                text,
+                content,
                 sender_label,
                 model_change,
                 reasoning_effort_change,
@@ -308,7 +317,7 @@ class SqliteProcessConversationSystem:
             )
         return await self._run_when_free(
             state,
-            text,
+            content,
             sender_label,
             model_change,
             reasoning_effort_change,
@@ -436,7 +445,7 @@ class SqliteProcessConversationSystem:
                 await self._append_event(
                     state,
                     PromptDiscardedEventPayload(
-                        text=held.text,
+                        content=held.content,
                         sender_label=held.sender_label,
                         sender_message_id=held.sender_message_id,
                     ),
@@ -543,7 +552,7 @@ class SqliteProcessConversationSystem:
     async def _run_when_free(
         self,
         state: _ConversationState,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -556,7 +565,7 @@ class SqliteProcessConversationSystem:
             if state.phase is not _ConversationPhase.idle or state.held_prompts:
                 state.held_prompts.append(
                     _HeldPrompt(
-                        text=text,
+                        content=content,
                         sender_label=sender_label,
                         model_change=model_change,
                         reasoning_effort_change=reasoning_effort_change,
@@ -570,7 +579,7 @@ class SqliteProcessConversationSystem:
         return await self._deliver_and_finalize(
             state,
             reservation,
-            text=text,
+            content=content,
             sender_label=sender_label,
             mode=PromptDeliveryMode.run_when_free,
             model_change=model_change,
@@ -582,7 +591,7 @@ class SqliteProcessConversationSystem:
     async def _send_now(
         self,
         state: _ConversationState,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         model_change: str | None,
         reasoning_effort_change: str | None,
@@ -608,7 +617,7 @@ class SqliteProcessConversationSystem:
         return await self._deliver_and_finalize(
             state,
             reservation,
-            text=text,
+            content=content,
             sender_label=sender_label,
             mode=PromptDeliveryMode.send_now,
             model_change=model_change,
@@ -620,7 +629,7 @@ class SqliteProcessConversationSystem:
     async def _steer(
         self,
         state: _ConversationState,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         sender_message_id: str | None,
         sent_at_unix_milliseconds: int | None,
@@ -644,19 +653,19 @@ class SqliteProcessConversationSystem:
             state.lock.release()
 
         try:
-            await child.steer(text, sender_label=sender_label)
+            await child.steer(content, sender_label=sender_label)
         except PromptWriteFailed:
             return PromptDeliveryRefused(
                 refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
             )
 
         async with state.lock:
-            # The text entered the wire of the turn that was running, so it is recorded
-            # even in the rare case where that turn ended while it was on its way.
+            # The message entered the wire of the turn that was running, so it is
+            # recorded even in the rare case where that turn ended while it was on its way.
             await self._append_event(
                 state,
                 PromptEventPayload(
-                    text=text,
+                    content=content,
                     sender_label=sender_label,
                     mode=PromptDeliveryMode.steer,
                     sender_message_id=sender_message_id,
@@ -672,7 +681,7 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         reservation: _ReservedTurn,
         *,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -684,7 +693,7 @@ class SqliteProcessConversationSystem:
             refusal = await self._deliver_prompt(
                 state,
                 reservation.token,
-                text=text,
+                content=content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -694,7 +703,7 @@ class SqliteProcessConversationSystem:
                 state,
                 reservation,
                 refusal,
-                text=text,
+                content=content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -710,7 +719,7 @@ class SqliteProcessConversationSystem:
         if started:
             return PromptDeliveryStarted()
         assert refusal is not None
-        # The agent is free and this text is not going anywhere, so whatever was waiting
+        # The agent is free and this message is not going anywhere, so whatever was waiting
         # for it is owed its run. A send-now has already killed the incumbent to get here.
         await self._drain_held_prompts(state)
         return PromptDeliveryRefused(refusal_reason=refusal)
@@ -720,13 +729,13 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         turn_token: TurnToken,
         *,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> PromptDeliveryRefusalReason | None:
-        """Get the text onto a live child's wire, or name why that was impossible.
+        """Get the message onto a live child's wire, or name why that was impossible.
 
         No lock is held here: spawning a process and loading a session take as long as they
         take, and the conversation stays readable while they do.
@@ -738,11 +747,11 @@ class SqliteProcessConversationSystem:
         except SessionLoadFailed:
             return PromptDeliveryRefusalReason.session_did_not_load
 
-        composed_text = await self._compose_prompt_text(state, text)
+        composed = await self._compose_prompt_content(state, content)
         try:
             await child.write_prompt(
                 turn_token,
-                composed_text,
+                composed,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -754,7 +763,7 @@ class SqliteProcessConversationSystem:
             return await self._rebind_and_write_prompt(
                 state,
                 turn_token,
-                text=composed_text,
+                content=composed,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -767,7 +776,7 @@ class SqliteProcessConversationSystem:
         state: _ConversationState,
         turn_token: TurnToken,
         *,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -801,7 +810,7 @@ class SqliteProcessConversationSystem:
         try:
             await child.write_prompt(
                 turn_token,
-                text,
+                content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -821,7 +830,7 @@ class SqliteProcessConversationSystem:
         reservation: _ReservedTurn,
         refusal: PromptDeliveryRefusalReason | None,
         *,
-        text: str,
+        content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -843,7 +852,7 @@ class SqliteProcessConversationSystem:
                         await self._append_event(
                             state,
                             PromptDeliveryRefusedEventPayload(
-                                text=text,
+                                content=content,
                                 sender_label=sender_label,
                                 mode=mode,
                                 refusal_reason=refusal,
@@ -870,7 +879,7 @@ class SqliteProcessConversationSystem:
                 written = await self._store.append_delivered_prompt(
                     state.record.conversation_id,
                     prompt=PromptEventPayload(
-                        text=text,
+                        content=content,
                         sender_label=sender_label,
                         mode=mode,
                         sender_message_id=sender_message_id,
@@ -923,7 +932,7 @@ class SqliteProcessConversationSystem:
                 refusal = await self._deliver_prompt(
                     state,
                     reservation.token,
-                    text=held.text,
+                    content=held.content,
                     sender_label=held.sender_label,
                     mode=PromptDeliveryMode.run_when_free,
                     model_change=held.model_change,
@@ -933,7 +942,7 @@ class SqliteProcessConversationSystem:
                     state,
                     reservation,
                     refusal,
-                    text=held.text,
+                    content=held.content,
                     sender_label=held.sender_label,
                     mode=PromptDeliveryMode.run_when_free,
                     model_change=held.model_change,
@@ -962,7 +971,7 @@ class SqliteProcessConversationSystem:
             await self._append_event(
                 state,
                 PromptDiscardedEventPayload(
-                    text=discarded.text,
+                    content=discarded.content,
                     sender_label=discarded.sender_label,
                     sender_message_id=discarded.sender_message_id,
                 ),
@@ -1088,6 +1097,7 @@ class SqliteProcessConversationSystem:
         child = factory(
             resolved_start=resolved_start,
             event_sink=_CoreBackendEventSink(self, state),
+            message_files=self._message_files,
         )
         # The pump is running before the child is, so news the child makes while it starts
         # up — the session cursor it mints — has somewhere to go.
@@ -1141,21 +1151,28 @@ class SqliteProcessConversationSystem:
             )
         await self._discard_child(state, child)
 
-    async def _compose_prompt_text(self, state: _ConversationState, text: str) -> str:
-        """The text as the backend gets it: the role text rides the very first prompt.
+    async def _compose_prompt_content(
+        self, state: _ConversationState, content: MessageContent
+    ) -> MessageContent:
+        """The message as the backend gets it: the role text rides the very first prompt.
 
         The role is composed here, by the core, so every backend is told what it is in the
         same way. It goes on once, on the first prompt this conversation ever delivers —
-        after that the agent has it. The record keeps the sender's own text: the role is
+        after that the agent has it. The record keeps the sender's own message: the role is
         the conversation's, and it is stored on the conversation.
+
+        A message that opens with words takes the role onto those words, which is what
+        joining two strings always did and leaves an ordinary prompt exactly the text it
+        used to be. A message that opens with a picture takes the role as a piece in front
+        of it, because there is no run of words at the front to join it to.
         """
         role_text = state.record.role_text
         if role_text is None or state.has_delivered_prompt:
-            return text
+            return content
         if await self._store.has_delivered_prompt(state.record.conversation_id):
             state.has_delivered_prompt = True
-            return text
-        return f"{role_text}{ROLE_TEXT_PROMPT_SEPARATOR}{text}"
+            return content
+        return prefix_message_content_text(content, role_text, ROLE_TEXT_PROMPT_SEPARATOR)
 
     # --- backend news -------------------------------------------------------------------
 
@@ -1203,12 +1220,12 @@ class SqliteProcessConversationSystem:
         return running
 
     async def _on_agent_message_completed(
-        self, state: _ConversationState, turn_token: TurnToken, text: str
+        self, state: _ConversationState, turn_token: TurnToken, content: MessageContent
     ) -> None:
         if await self._hold_for_the_live_turn(state, turn_token) is None:
             return
         try:
-            await self._append_event(state, AgentMessageEventPayload(text=text))
+            await self._append_event(state, AgentMessageEventPayload(content=content))
         finally:
             state.lock.release()
 
@@ -1569,9 +1586,11 @@ class _CoreBackendEventSink:
         """
         self._system._publish_model_thinking(self._state, turn_token)
 
-    async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
+    async def agent_message_completed(
+        self, turn_token: TurnToken, content: MessageContent
+    ) -> None:
         self._enqueue(
-            partial(self._system._on_agent_message_completed, self._state, turn_token, text)
+            partial(self._system._on_agent_message_completed, self._state, turn_token, content)
         )
 
     async def tool_call_started(

@@ -28,6 +28,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryStarted,
 )
+from planner.conversation.message_content import text_message_content
 from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -205,7 +206,7 @@ async def send_to_ticket_conversation(
         )
     fate = await system.send(
         conversation_id,
-        text,
+        text_message_content(text),
         sender_label=sender_label,
         mode=mode,
         model_change=model_change,
@@ -291,6 +292,10 @@ async def reset_agent_conversation(
     The agent's row stays and its conversation is what is let go, because the agent did
     not stop existing. The unlink names the conversation that was killed, so an agent
     already pointed at a newer one is left pointing at it.
+
+    Nothing is deleted here — not the conversation's record and not the files its messages
+    carry. Both outlive the reset on purpose: the record still holds those messages, so a
+    file removed now would turn a picture somebody sent into a picture nobody can see.
     """
     conversation_id = read_agent_conversation(conn, agent_key)
     if conversation_id is None:
@@ -325,6 +330,10 @@ async def reset_ticket_conversation(
     The unlink names the conversation that was killed, so a Ticket already pointed at a
     newer one is left pointing at it: only the conversation this call silenced is the one
     it may cut loose.
+
+    Nothing is deleted here — not the conversation's record and not the files its messages
+    carry. Both outlive the reset on purpose, for the reason
+    ``planner.conversation.message_files`` gives: the record still holds those messages.
     """
     conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
     if conversation_id is None:

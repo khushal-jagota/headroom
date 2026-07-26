@@ -15,6 +15,16 @@ def ticket_files_root(db_path: str | Path) -> Path:
     return Path(db_path).parent / "files" / "tickets"
 
 
+def conversation_files_root(db_path: str | Path) -> Path:
+    """Where the files a conversation's messages carry are kept.
+
+    A second family of managed files under the same root as ticket files, resolved by the
+    same rules. A conversation's own folder is named by its id, so a message can only ever
+    reach a file kept for the conversation it belongs to.
+    """
+    return Path(db_path).parent / "files" / "conversations"
+
+
 def resolve_ticket_file(db_path: str | Path, ticket_id: str, relative_path: str) -> TicketFile:
     ticket_id = str(ticket_id)
     relative_path = str(relative_path)
@@ -22,6 +32,25 @@ def resolve_ticket_file(db_path: str | Path, ticket_id: str, relative_path: str)
     _validate_relative_path(relative_path)
     target = _resolve_managed_file(ticket_files_root(db_path), ticket_id, relative_path)
     return TicketFile(ticket_id=ticket_id, relative_path=relative_path, absolute_path=target)
+
+
+def resolve_conversation_file(
+    db_path: str | Path, conversation_id: str, stored_file_id: str
+) -> Path:
+    """Where the bytes of one file a conversation kept actually are.
+
+    Both names are ids rather than paths — the conversation's and the file's — so there is
+    no relative path to walk and nothing a caller could point outside the root. They are
+    still resolved through the same check as any other managed file, because the defence
+    that matters is the one that runs even when the input looked safe.
+    """
+    conversation_id = str(conversation_id)
+    stored_file_id = str(stored_file_id)
+    _validate_safe_id(conversation_id, "conversation")
+    _validate_safe_id(stored_file_id, "stored file")
+    return _resolve_managed_file(
+        conversation_files_root(db_path), conversation_id, stored_file_id
+    )
 
 
 def _validate_safe_id(value: str, label: str) -> None:

@@ -42,6 +42,7 @@ for (const name of ["wire", "feed", "transcript", "composer", "outgoing"]) {
 }
 
 const wire = await import(join(directory, "wire.mjs"));
+const { conversationFileHref, messageContentOf, messageContentText } = wire;
 const {
   emptyConversationFeed,
   feedWithCommittedEvent,
@@ -591,9 +592,10 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.equal(hasArmedChange(current, { model: "sonnet", reasoningEffort: null }, "run_when_free"), true);
   assert.equal(hasArmedChange(current, { model: "sonnet", reasoningEffort: null }, "steer"), false);
 
-  // What goes out is the message that was already drawn: same text, same id, same instant.
+  // What goes out is the message that was already drawn: same pieces, same id, same
+  // instant. A message on its way holds what it is about to send, so the body is that.
   const drawn = mintOutgoingMessage({
-    text: "go",
+    content: [{ piece: "text", text: "go" }],
     senderLabel: "owner",
     mode: "run_when_free",
     sentAtUnixMilliseconds: 1_700_000_000_123
@@ -601,7 +603,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.deepEqual(
     sendBodyFor({ message: drawn, current, picked: { model: "sonnet", reasoningEffort: null } }),
     {
-      text: "go",
+      content: [{ piece: "text", text: "go" }],
       sender_label: "owner",
       mode: "run_when_free",
       sender_message_id: drawn.messageId,
@@ -616,7 +618,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
       picked: { model: null, reasoningEffort: null }
     }),
     {
-      text: "go",
+      content: [{ piece: "text", text: "go" }],
       sender_label: "owner",
       mode: "send_now",
       sender_message_id: drawn.messageId,
@@ -629,8 +631,16 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
 // --- a message that has been sent and is not in the record yet -------------------------------
 
 {
-  const first = mintOutgoingMessage({ text: "one", senderLabel: "owner", mode: "run_when_free" });
-  const second = mintOutgoingMessage({ text: "two", senderLabel: "owner", mode: "run_when_free" });
+  const first = mintOutgoingMessage({
+    content: [{ piece: "text", text: "one" }],
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
+  const second = mintOutgoingMessage({
+    content: [{ piece: "text", text: "two" }],
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
   assert.notEqual(first.messageId, second.messageId, "two messages are two messages");
   assert.equal(first.knownFate, "nothing_yet", "nothing is known about its fate yet");
   assert.equal(outgoingMessageNote(first), null, "and so it says nothing about itself");
@@ -715,11 +725,15 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   };
 
   const held = {
-    ...mintOutgoingMessage({ text: "held", senderLabel: "owner", mode: "run_when_free" }),
+    ...mintOutgoingMessage({
+      content: [{ piece: "text", text: "held" }],
+      senderLabel: "owner",
+      mode: "run_when_free"
+    }),
     knownFate: "waiting_for_the_agent"
   };
   const stillGoing = mintOutgoingMessage({
-    text: "in flight",
+    content: [{ piece: "text", text: "in flight" }],
     senderLabel: "owner",
     mode: "run_when_free"
   });
@@ -727,7 +741,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
 
   const recalled = recallOutgoingMessages("c1");
   assert.deepEqual(recalled[0], held, "what the system is holding comes back as it was");
-  assert.equal(recalled[1].text, "in flight");
+  assert.deepEqual(recalled[1].content, [{ piece: "text", text: "in flight" }]);
   assert.equal(
     recalled[1].knownFate,
     "answer_never_came_back",
@@ -735,7 +749,10 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   );
   assert.deepEqual(recallOutgoingMessages("c2"), [], "one conversation's are not another's");
 
-  kept.set("panels.conversation.outgoing.c3", '[{"messageId":"x"},null,7,{"text":"no id"}]');
+  kept.set(
+    "panels.conversation.outgoing.c3",
+    '[{"messageId":"x"},null,7,{"content":[{"piece":"text","text":"no id"}]}]'
+  );
   assert.deepEqual(recallOutgoingMessages("c3"), [], "nothing that is not a message is drawn");
   kept.set("panels.conversation.outgoing.c4", "not json at all");
   assert.deepEqual(recallOutgoingMessages("c4"), []);
@@ -832,7 +849,10 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.equal(anchor.toolCallCount, 1);
 
   const behind = items.filter((item) => item.kind === "row" && item.behindTheFoldOf !== null);
-  assert.deepEqual(behind.map((item) => item.row.text), ["let me look", "still going"]);
+  assert.deepEqual(
+    behind.map((item) => messageContentText(item.row.content)),
+    ["let me look", "still going"]
+  );
   assert.ok(
     behind.every((item) => item.behindTheFoldOf === anchor.turnKey),
     "and they go behind the fold of the turn that said them"
@@ -840,7 +860,11 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
 
   const standing = items.filter((item) => item.kind === "row" && item.behindTheFoldOf === null);
   assert.deepEqual(standing.map((item) => item.row.kind), ["prompt", "agent_message", "turn_ended"]);
-  assert.equal(standing[1].row.text, "here you go", "the last thing it said is the answer");
+  assert.equal(
+    messageContentText(standing[1].row.content),
+    "here you go",
+    "the last thing it said is the answer"
+  );
 
   // Opened, everything is where it happened rather than gathered up at the end.
   assert.deepEqual(
@@ -905,7 +929,9 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   );
   assert.equal(cutOff.find((item) => item.kind === "turn").foldedMessageCount, 1);
   assert.equal(
-    cutOff.filter((item) => item.kind === "row" && item.behindTheFoldOf === null)[1].row.text,
+    messageContentText(
+      cutOff.filter((item) => item.kind === "row" && item.behindTheFoldOf === null)[1].row.content
+    ),
     "half way"
   );
 }
@@ -1648,6 +1674,67 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.equal(wire.COMMITTED_EVENT_STREAM_NAME, "conversation-event");
   assert.equal(wire.LIVE_FRAME_STREAM_NAME, "conversation-frame");
   assert.deepEqual(wire.CONVERSATION_BACKEND_KEYS, ["hermes", "codex", "claude"]);
+}
+
+// --- a message is what it holds, not only what it says ---------------------------------------
+
+{
+  // The record stores a message that is only words the way it always did, and everything
+  // else under content. Exactly one place in this browser knows that, and this is it.
+  assert.deepEqual(
+    messageContentOf({ text: "hello" }),
+    [{ piece: "text", text: "hello" }],
+    "every row already in the record reads as one piece of written words"
+  );
+  const pieces = [
+    { piece: "text", text: "look at this" },
+    { piece: "image", stored_file_id: "f_1", media_type: "image/png", file_name: "shot.png" }
+  ];
+  assert.deepEqual(messageContentOf({ content: pieces }), pieces);
+
+  assert.equal(
+    messageContentText(pieces),
+    "look at this",
+    "the words out of a message leave out what is not words rather than describing it"
+  );
+
+  assert.equal(
+    conversationFileHref("c1", "f_1"),
+    "/api/conversation/conversations/c1/files/f_1",
+    "a file is fetched under the conversation that kept it"
+  );
+  assert.equal(
+    conversationFileHref("a/b", "f 1"),
+    "/api/conversation/conversations/a%2Fb/files/f%201",
+    "and neither name is trusted to be a path"
+  );
+}
+
+{
+  // A row carrying a picture becomes a transcript row carrying that picture, on both
+  // sides of the thread. A reader that only picked the words out would pass everything
+  // else in this file and fail here.
+  const withAPicture = [
+    { piece: "text", text: "look at this" },
+    { piece: "image", stored_file_id: "f_1", media_type: "image/png" }
+  ];
+  const rows = transcriptRows({
+    events: [
+      event(1, "prompt", {
+        content: withAPicture,
+        sender_label: "owner",
+        mode: "run_when_free"
+      }),
+      event(2, "agent_message", { content: withAPicture }),
+      event(3, "agent_message", { text: "and this is only words" })
+    ],
+    latestSequence: 3,
+    toolCallProgress: {},
+    streamingAgentText: ""
+  });
+  assert.deepEqual(rows[0].content, withAPicture, "your own message keeps its picture");
+  assert.deepEqual(rows[1].content, withAPicture, "and so does the agent's");
+  assert.deepEqual(rows[2].content, [{ piece: "text", text: "and this is only words" }]);
 }
 
 await rm(directory, { recursive: true, force: true });

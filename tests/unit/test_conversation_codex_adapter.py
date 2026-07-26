@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import mkdtemp
 from typing import Any
 
 import pytest
@@ -45,6 +46,26 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
 )
 from planner.conversation.events import ConversationTurnEnding, ToolCallStatus
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessageText,
+    message_content_text,
+    text_message_content,
+)
+from planner.conversation.message_files import ConversationMessageFiles
+
+
+def _message_files() -> ConversationMessageFiles:
+    """A file store for this exercise, under a database path of its own.
+
+    Every adapter is handed one, because a message can carry a file and an adapter is
+    what reads it. These exercises send words, so nothing is ever written here — but the
+    adapter is built the way production builds it rather than with a hole where the file
+    store goes.
+    """
+    return ConversationMessageFiles(str(Path(mkdtemp()) / "planner.db"))
+
 
 ROLE_TEXT = "You are the worker on ticket t-1."
 IDENTITY_VARIABLE = ("PANELS_IDENTITY_TICKET_ID", "t-1")
@@ -163,6 +184,7 @@ def test_a_child_that_will_not_spawn_says_so(tmp_path: Path) -> None:
             launch=CodexChildLaunch(argv=("/nonexistent/codex", "app-server")),
             resolved_start=_resolved_start(tmp_path),
             event_sink=_RecordingSink(),
+            message_files=_message_files(),
         )
         with pytest.raises(BackendSpawnFailed):
             await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
@@ -186,7 +208,7 @@ def test_a_turn_carries_the_text_the_values_and_the_access_posture(tmp_path: Pat
     async def exercise() -> None:
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "hello")
+            await scripted.write_prompt(1, text_message_content("hello"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             turn = scripted.sent("turn/start")["params"]
@@ -221,11 +243,11 @@ def test_what_the_agent_says_becomes_deltas_then_one_finished_message(tmp_path: 
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "say hello")
+            await scripted.write_prompt(1, text_message_content("say hello"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.deltas == ["he", "llo"]
-            assert scripted.sink.agent_messages == ["hello"]
+            assert scripted.sink.agent_message_texts == ["hello"]
             assert scripted.sink.endings == [ConversationTurnEnding.completed]
 
     _run(exercise)
@@ -252,11 +274,11 @@ def test_thinking_is_dropped_where_it_arrives_and_only_its_arrival_is_told(
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "think")
+            await scripted.write_prompt(1, text_message_content("think"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.deltas == []
-            assert scripted.sink.agent_messages == []
+            assert scripted.sink.agent_message_texts == []
             # One pulse per delta the adapter saw, of either kind; the core decides how
             # often anyone hears about them.
             assert scripted.sink.thinking_pulses == 3
@@ -278,10 +300,10 @@ def test_a_message_the_turn_ended_part_way_through_is_still_finished(tmp_path: P
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "say something")
+            await scripted.write_prompt(1, text_message_content("say something"))
             await scripted.sink.wait_for_the_turn_to_end()
 
-            assert scripted.sink.agent_messages == ["half a sen"]
+            assert scripted.sink.agent_message_texts == ["half a sen"]
             assert scripted.sink.endings == [ConversationTurnEnding.interrupted]
 
     _run(exercise)
@@ -307,7 +329,7 @@ def test_the_work_codex_does_becomes_tool_calls(tmp_path: Path) -> None:
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "do some work")
+            await scripted.write_prompt(1, text_message_content("do some work"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.tool_calls_started == [
@@ -352,7 +374,7 @@ def test_both_ways_codex_says_a_tool_call_is_getting_on_become_the_same_frame(
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "do some work")
+            await scripted.write_prompt(1, text_message_content("do some work"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.tool_calls_progressed == [
@@ -392,7 +414,7 @@ def test_the_turns_plan_comes_through_whole_in_this_systems_own_words(
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "plan some work")
+            await scripted.write_prompt(1, text_message_content("plan some work"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.plans == [
@@ -421,7 +443,7 @@ def test_a_turn_still_running_reports_nothing_finished_for_it(tmp_path: Path) ->
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "do some work")
+            await scripted.write_prompt(1, text_message_content("do some work"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.tool_calls_finished == []
@@ -450,7 +472,7 @@ def test_a_failed_turn_carries_what_went_wrong_and_the_childs_standard_error(
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.endings == [ConversationTurnEnding.failed]
@@ -476,7 +498,7 @@ def test_a_retryable_error_is_not_an_ending(tmp_path: Path) -> None:
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.endings == [ConversationTurnEnding.completed]
@@ -490,7 +512,7 @@ def test_a_turn_codex_refuses_to_start_is_a_write_that_did_not_land(tmp_path: Pa
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
             with pytest.raises(PromptWriteFailed):
-                await scripted.write_prompt(1, "go")
+                await scripted.write_prompt(1, text_message_content("go"))
             # Nothing started, so nothing ended: the core hears one refusal and no more.
             assert scripted.sink.endings == []
 
@@ -514,7 +536,7 @@ def test_a_turn_is_accepted_on_its_notification_when_the_answer_is_slow(tmp_path
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.endings == [ConversationTurnEnding.completed]
@@ -531,7 +553,7 @@ def test_the_child_dying_mid_turn_ends_the_turn_as_a_failure(tmp_path: Path) -> 
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             assert scripted.sink.endings == [ConversationTurnEnding.failed]
@@ -558,7 +580,7 @@ def test_an_interrupt_reaches_codex_and_its_outcome_is_the_turns_ending(tmp_path
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             await scripted.child.cancel_running_turn()
             await scripted.sink.wait_for_the_turn_to_end()
 
@@ -602,7 +624,7 @@ def test_a_cancel_returns_only_once_codex_says_the_turn_has_ended(tmp_path: Path
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "something long")
+            await scripted.write_prompt(1, text_message_content("something long"))
 
             await scripted.child.cancel_running_turn()
             # Codex's own account of the ending has arrived by the time this returned.
@@ -610,10 +632,10 @@ def test_a_cancel_returns_only_once_codex_says_the_turn_has_ended(tmp_path: Path
 
             # What a send-now does next: write immediately, with no waiting of its own.
             scripted.sink.expect_another_turn()
-            await scripted.write_prompt(2, "urgent")
+            await scripted.write_prompt(2, text_message_content("urgent"))
             await scripted.sink.wait_for_the_turn_to_end()
 
-            assert scripted.sink.agent_messages == ["urgent"]
+            assert scripted.sink.agent_message_texts == ["urgent"]
             # And at the child: the second turn was asked for after the first had ended.
             assert scripted.what_happened_at_the_child() == [
                 "received turn/start",
@@ -635,13 +657,13 @@ def test_a_cancel_a_codex_never_answers_gives_up_rather_than_wedging(
         script = {"turns": [{"actions": [{"do": "await_interrupt"}]}, {}]}
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "something long")
+            await scripted.write_prompt(1, text_message_content("something long"))
 
             await scripted.child.cancel_running_turn()
             # Codex never said the turn ended, and the conversation carries on regardless.
             assert scripted.sink.endings == []
 
-            await scripted.write_prompt(2, "urgent")
+            await scripted.write_prompt(2, text_message_content("urgent"))
             await scripted.sink.wait_for_the_turn_to_end()
 
     monkeypatch.setattr(adapter, "CANCEL_SETTLING_TIMEOUT_SECONDS", 0.2)
@@ -659,15 +681,20 @@ def test_a_carried_change_is_this_turns_parameters_and_the_conversations_values_
     async def exercise() -> None:
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "first")
+            await scripted.write_prompt(1, text_message_content("first"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             scripted.sink.expect_another_turn()
-            await scripted.write_prompt(2, "second", model="gpt-5.4", reasoning_effort="high")
+            await scripted.write_prompt(
+                2,
+                text_message_content("second"),
+                model="gpt-5.4",
+                reasoning_effort="high",
+            )
             await scripted.sink.wait_for_the_turn_to_end()
 
             scripted.sink.expect_another_turn()
-            await scripted.write_prompt(3, "third")
+            await scripted.write_prompt(3, text_message_content("third"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             turns = scripted.all_sent("turn/start")
@@ -687,9 +714,14 @@ def test_a_change_whose_turn_codex_refused_does_not_stand(tmp_path: Path) -> Non
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
             with pytest.raises(PromptWriteFailed):
-                await scripted.write_prompt(1, "first", model="gpt-5.4", reasoning_effort="high")
+                await scripted.write_prompt(
+                    1,
+                    text_message_content("first"),
+                    model="gpt-5.4",
+                    reasoning_effort="high",
+                )
 
-            await scripted.write_prompt(2, "second")
+            await scripted.write_prompt(2, text_message_content("second"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             second = scripted.all_sent("turn/start")[1]["params"]
@@ -718,7 +750,7 @@ def test_an_ask_is_raised_with_codexs_own_answers_and_the_chosen_one_goes_back(
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "delete it")
+            await scripted.write_prompt(1, text_message_content("delete it"))
             ask = await scripted.sink.wait_for_an_ask()
 
             assert ask.title == "Run rm -rf /tmp/x"
@@ -754,7 +786,7 @@ def test_an_ask_still_waiting_when_its_turn_dies_is_settled_with_codex(tmp_path:
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "change it")
+            await scripted.write_prompt(1, text_message_content("change it"))
             await scripted.sink.wait_for_an_ask()
             await scripted.sink.wait_for_the_turn_to_end()
             await scripted.wait_for_an_answer()
@@ -780,7 +812,7 @@ def test_an_answer_codex_does_not_offer_never_reaches_the_wire(tmp_path: Path) -
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             ask = await scripted.sink.wait_for_an_ask()
 
             with pytest.raises(Exception, match="not an answer codex offers"):
@@ -807,7 +839,7 @@ def test_a_request_codex_makes_that_this_does_not_answer_is_refused(tmp_path: Pa
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             await scripted.sink.wait_for_the_turn_to_end()
             await scripted.wait_for_an_answer()
 
@@ -825,7 +857,7 @@ def test_codex_does_not_take_text_into_a_running_turn(tmp_path: Path) -> None:
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
             with pytest.raises(PromptWriteFailed):
-                await scripted.child.steer("keep going", sender_label="owner")
+                await scripted.child.steer(text_message_content("keep going"), sender_label="owner")
 
     _run(exercise)
 
@@ -856,7 +888,7 @@ def test_a_notification_this_reads_that_will_not_decode_is_said_out_loud(
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             await scripted.sink.wait_for_the_turn_to_end()
 
     with caplog.at_level(logging.DEBUG, logger="planner.conversation.backends.codex_app_server"):
@@ -880,7 +912,7 @@ def test_the_childs_standard_error_is_kept_bounded(tmp_path: Path) -> None:
         flood = ("a codex log line that says very little\n" * 20_000)
         async with _scripted_child(tmp_path, script={"stderr": flood}) as scripted:
             await scripted.start(cursor=None)
-            await scripted.write_prompt(1, "go")
+            await scripted.write_prompt(1, text_message_content("go"))
             await scripted.sink.wait_for_the_turn_to_end()
 
             tail = scripted.child._client.standard_error_tail()
@@ -915,7 +947,7 @@ class _RecordingSink:
 
     def __init__(self) -> None:
         self.deltas: list[str] = []
-        self.agent_messages: list[str] = []
+        self.agent_contents: list[MessageContent] = []
         self.tool_calls_started: list[tuple[str, str, str]] = []
         self.tool_calls_progressed: list[tuple[str, str]] = []
         self.thinking_pulses: int = 0
@@ -949,8 +981,16 @@ class _RecordingSink:
     async def plan_updated(self, turn_token: TurnToken, entries: Any) -> None:
         self.plans.append([(entry.text, str(entry.status)) for entry in entries])
 
-    async def agent_message_completed(self, turn_token: TurnToken, text: str) -> None:
-        self.agent_messages.append(text)
+
+    @property
+    def agent_message_texts(self) -> list[str]:
+        """The words of each finished message. The messages themselves are above."""
+        return [message_content_text(content) for content in self.agent_contents]
+
+    async def agent_message_completed(
+        self, turn_token: TurnToken, content: MessageContent
+    ) -> None:
+        self.agent_contents.append(content)
 
     async def tool_call_started(
         self,
@@ -1009,6 +1049,9 @@ class _ScriptedChild:
     sink: _RecordingSink
     transcript_path: Path
     workspace: Path
+    # The same store the adapter was built with, so a test can keep a file and know the
+    # adapter is looking in the place it was kept.
+    message_files: ConversationMessageFiles
 
     async def start(self, *, cursor: str | None) -> None:
         await self.child.start(_resolved_start(self.workspace), vendor_session_cursor=cursor)
@@ -1101,14 +1144,54 @@ async def _scripted_child(
     )
     argv, environment = scripted_app_server_launch(script_path)
     sink = _RecordingSink()
+    message_files = ConversationMessageFiles(str(workspace / "planner.db"))
     child = CodexAppServerBackendChild(
         launch=CodexChildLaunch(argv=argv, environment_overrides=tuple(environment.items())),
         resolved_start=_resolved_start(workspace),
         event_sink=sink,
+        message_files=message_files,
     )
     try:
         yield _ScriptedChild(
-            child=child, sink=sink, transcript_path=transcript_path, workspace=workspace
+            child=child,
+            sink=sink,
+            transcript_path=transcript_path,
+            workspace=workspace,
+            message_files=message_files,
         )
     finally:
         await child.stop()
+
+
+def test_a_picture_reaches_codex_as_the_file_it_is(tmp_path: Path) -> None:
+    """Codex takes a picture as a path, and a path is exactly what this system has.
+
+    Nothing is encoded and nothing is copied: the bytes are already on disk beside the
+    record, and the piece names them.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            await scripted.start(cursor=None)
+            kept = await scripted.message_files.keep(
+                "c", b"\x89PNG not really", media_type="image/png"
+            )
+            await scripted.child.write_prompt(
+                TurnToken(conversation_id="c", turn_number=1),
+                (
+                    MessageText(text="look at this"),
+                    MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+                ),
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+                model_change=None,
+                reasoning_effort_change=None,
+            )
+
+            given = scripted.sent("turn/start")["params"]["input"]
+            assert given == [
+                {"type": "text", "text": "look at this"},
+                {"type": "localImage", "path": str(kept.absolute_path)},
+            ]
+
+    _run(exercise)

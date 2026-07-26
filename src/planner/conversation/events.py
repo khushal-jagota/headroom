@@ -30,6 +30,11 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefusalReason,
 )
+from planner.conversation.message_content import (
+    MessageContent,
+    message_content_from_stored,
+    message_content_json_entries,
+)
 
 
 class ConversationEventKind(StrEnum):
@@ -103,7 +108,10 @@ class PermissionAskOption:
 
 @dataclass(frozen=True, slots=True)
 class PromptEventPayload:
-    """Text that actually reached the backend, in the mode it was sent under.
+    """The message that actually reached the backend, in the mode it was sent under.
+
+    ``content`` is the message itself — usually one run of written words, sometimes a
+    picture or a file alongside them. See ``planner.conversation.message_content``.
 
     ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own two facts
     about this message, kept exactly as they were given. The id is how a sender recognises
@@ -119,7 +127,7 @@ class PromptEventPayload:
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt
 
-    text: str
+    content: MessageContent
     sender_label: str
     mode: PromptDeliveryMode
     sender_message_id: str | None = None
@@ -142,7 +150,7 @@ class PromptDeliveryRefusedEventPayload:
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_delivery_refused
 
-    text: str
+    content: MessageContent
     sender_label: str
     mode: PromptDeliveryMode
     refusal_reason: PromptDeliveryRefusalReason
@@ -166,18 +174,23 @@ class PromptDiscardedEventPayload:
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.prompt_discarded
 
-    text: str
+    content: MessageContent
     sender_label: str
     sender_message_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class AgentMessageEventPayload:
-    """A completed agent message, as the full markdown the backend finished with."""
+    """A completed agent message, whole, as the backend finished it.
+
+    Usually one run of markdown, which is what an agent's message nearly always is. A
+    backend that hands back a file it produced puts that in the same message, and it is a
+    piece of the message rather than a sentence about one.
+    """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.agent_message
 
-    text: str
+    content: MessageContent
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,7 +368,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
     match payload:
         case PromptEventPayload():
             return {
-                "text": payload.text,
+                **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
@@ -365,7 +378,7 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case PromptDeliveryRefusedEventPayload():
             return {
-                "text": payload.text,
+                **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 "mode": str(payload.mode),
                 "refusal_reason": str(payload.refusal_reason),
@@ -373,12 +386,12 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case PromptDiscardedEventPayload():
             return {
-                "text": payload.text,
+                **message_content_json_entries(payload.content),
                 "sender_label": payload.sender_label,
                 **_entry_if_minted("sender_message_id", payload.sender_message_id),
             }
         case AgentMessageEventPayload():
-            return {"text": payload.text}
+            return message_content_json_entries(payload.content)
         case ToolCallStartedEventPayload():
             return {
                 "tool_call_id": payload.tool_call_id,
@@ -429,7 +442,7 @@ def _payload_from_json_object(
     match kind:
         case ConversationEventKind.prompt:
             return PromptEventPayload(
-                text=_text(stored, "text"),
+                content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
                 mode=PromptDeliveryMode(_text(stored, "mode")),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
@@ -439,7 +452,7 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.prompt_delivery_refused:
             return PromptDeliveryRefusedEventPayload(
-                text=_text(stored, "text"),
+                content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
                 mode=PromptDeliveryMode(_text(stored, "mode")),
                 refusal_reason=PromptDeliveryRefusalReason(_text(stored, "refusal_reason")),
@@ -447,12 +460,12 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.prompt_discarded:
             return PromptDiscardedEventPayload(
-                text=_text(stored, "text"),
+                content=message_content_from_stored(stored),
                 sender_label=_text(stored, "sender_label"),
                 sender_message_id=_optional_text(stored, "sender_message_id"),
             )
         case ConversationEventKind.agent_message:
-            return AgentMessageEventPayload(text=_text(stored, "text"))
+            return AgentMessageEventPayload(content=message_content_from_stored(stored))
         case ConversationEventKind.tool_call_started:
             return ToolCallStartedEventPayload(
                 tool_call_id=_text(stored, "tool_call_id"),

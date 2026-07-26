@@ -30,7 +30,7 @@ from planner.conversation.in_memory_conversation_system import (
 def _recorded_fact(observation: InMemoryConversationObservation) -> RecordedFact:
     return RecordedFact(
         kind=RecordedFactKind(observation.kind.value),
-        text=observation.text,
+        content=observation.content,
         sender_label=observation.sender_label,
         mode=observation.mode,
         turn_ending=(
@@ -62,7 +62,9 @@ class InMemoryConversationSystemUnderTest:
 
     async def backend_writes(self, conversation_id: str) -> tuple[BackendWrite, ...]:
         return tuple(
-            BackendWrite(text=write.text, sender_label=write.sender_label, mode=write.mode)
+            BackendWrite(
+                content=write.content, sender_label=write.sender_label, mode=write.mode
+            )
             for write in self._system.backend_prompt_writes(conversation_id)
         )
 

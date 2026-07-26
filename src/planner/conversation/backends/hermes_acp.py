@@ -37,6 +37,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from base64 import b64decode, b64encode
+from binascii import Error as BinasciiError
 from collections import deque
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, suppress
@@ -57,6 +59,7 @@ from acp.schema import (
     ClientCapabilities,
     ContentToolCallContent,
     DeniedOutcome,
+    ImageContentBlock,
     Implementation,
     PermissionOption,
     RequestPermissionResponse,
@@ -90,6 +93,18 @@ from planner.conversation.events import (
     PlanEntry,
     PlanEntryStatus,
     ToolCallStatus,
+)
+from planner.conversation.message_content import (
+    MessageContent,
+    MessageImage,
+    MessagePiece,
+    MessageText,
+    joined_runs_of_text,
+    prefix_message_content_text,
+)
+from planner.conversation.message_files import (
+    ConversationMessageFiles,
+    MessageFileMissing,
 )
 
 LOGGER = logging.getLogger("planner.conversation.backends.hermes_acp")
@@ -228,7 +243,7 @@ class _TurnInFlight:
     token: TurnToken
     prompt: asyncio.Task[Any]
     ending_reporter: asyncio.Task[None] | None = None
-    agent_message_parts: list[str] = field(default_factory=list)
+    agent_message_pieces: list[MessagePiece] = field(default_factory=list)
     agent_message_id: str | None = None
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
 
@@ -242,10 +257,12 @@ class HermesAcpBackendChild:
         launch: AcpChildLaunch,
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> None:
         self._launch = launch
         self._resolved_start = resolved_start
         self._sink = event_sink
+        self._message_files = message_files
         self._processes = AsyncExitStack()
         self._connection: ClientSideConnection | None = None
         self._session_id: str | None = None
@@ -257,6 +274,11 @@ class HermesAcpBackendChild:
         self._standard_error: deque[str] = deque()
         self._standard_error_reader: asyncio.Task[None] | None = None
         self._prompt_write_waiters: deque[asyncio.Future[None]] = deque()
+        # Held for the whole of taking a piece in and for the whole of handing a finished
+        # message over. Keeping a picture's bytes goes to a thread, which lets go of the
+        # loop, and the turn's ending can arrive in that gap — so without this a picture
+        # at the end of a message is flushed after the message it belongs to has gone.
+        self._agent_message_lock = asyncio.Lock()
         self._incoming_permission_request_ids: deque[Any] = deque()
         self._permission_answer_waiters: dict[Any, asyncio.Future[None]] = {}
         self._child_watcher: asyncio.Task[None] | None = None
@@ -292,7 +314,7 @@ class HermesAcpBackendChild:
     async def write_prompt(
         self,
         turn_token: TurnToken,
-        text: str,
+        content: MessageContent,
         *,
         sender_label: str,
         mode: PromptDeliveryMode,
@@ -315,7 +337,7 @@ class HermesAcpBackendChild:
 
         try:
             prompt = await self._write_prompt_to_the_wire(
-                text, sender_label=sender_label, mode=mode
+                content, sender_label=sender_label, mode=mode
             )
         except PromptWriteFailed:
             if model_change is not None or reasoning_effort_change is not None:
@@ -323,10 +345,15 @@ class HermesAcpBackendChild:
             raise
         self._begin_turn(turn_token, prompt)
 
-    async def steer(self, text: str, *, sender_label: str) -> None:
-        """Send hermes' steer command, which joins the turn instead of starting one."""
+    async def steer(self, content: MessageContent, *, sender_label: str) -> None:
+        """Send hermes' steer command, which joins the turn instead of starting one.
+
+        The command word goes in front of the message the way it always did — onto its
+        opening words when it has them, and as a piece of its own when the message opens
+        with something else, so a steered picture still arrives as a steer.
+        """
         prompt = await self._write_prompt_to_the_wire(
-            f"{HERMES_STEER_COMMAND_PREFIX}{text}",
+            prefix_message_content_text(content, HERMES_STEER_COMMAND_PREFIX, ""),
             sender_label=sender_label,
             mode=PromptDeliveryMode.steer,
         )
@@ -626,8 +653,76 @@ class HermesAcpBackendChild:
 
     # --- writing ------------------------------------------------------------------------
 
+    async def _prompt_blocks(self, content: MessageContent) -> list[Any]:
+        """The message as ACP content blocks.
+
+        A picture is read off disk and sent as its bytes, because ACP's block carries the
+        data itself rather than a place to find it.
+        """
+        blocks: list[Any] = []
+        for piece in content:
+            match piece:
+                case MessageText():
+                    blocks.append(TextContentBlock(type="text", text=piece.text))
+                case MessageImage():
+                    blocks.append(
+                        ImageContentBlock(
+                            type="image",
+                            data=await self._encoded_bytes(piece.stored_file_id),
+                            mime_type=piece.media_type,
+                        )
+                    )
+        return blocks
+
+    async def _encoded_bytes(self, stored_file_id: str) -> str:
+        """The bytes of a kept file, as ACP wants them.
+
+        A file that is not there raises, and the write becomes a refusal rather than a
+        prompt with a piece missing: the person believes the agent can see their picture.
+        """
+        try:
+            kept = await self._message_files.read(
+                self._resolved_start.conversation_id, stored_file_id
+            )
+            return b64encode(kept).decode("ascii")
+        except (MessageFileMissing, OSError) as unreadable:
+            raise PromptWriteFailed(f"{stored_file_id} could not be read") from unreadable
+
+    async def _message_piece_of(self, content: Any) -> MessagePiece | None:
+        """One piece of an agent's message, out of the ACP block it arrived as.
+
+        Words and pictures have somewhere to go. A block of any other kind is dropped,
+        because a piece this system cannot say anything true about is worse in the record
+        than absent — and a file an agent wants read is a markdown link in its own words,
+        which arrives as words and needs nothing here.
+        """
+        match content:
+            case TextContentBlock():
+                return MessageText(text=content.text)
+            case ImageContentBlock():
+                return await self._kept_piece(content.data, content.mime_type)
+            case _:
+                return None
+
+    async def _kept_piece(self, data: str, media_type: str) -> MessagePiece | None:
+        """Keep the bytes of a picture an agent sent and name the piece that points at them.
+
+        Bytes that will not decode, or that cannot be written down, produce no piece at
+        all. The alternative is a row naming a file that is not there, which reads as a
+        picture the agent sent and this system lost.
+        """
+        try:
+            kept = await self._message_files.keep(
+                self._resolved_start.conversation_id,
+                b64decode(data, validate=True),
+                media_type=media_type,
+            )
+        except (BinasciiError, OSError):
+            return None
+        return MessageImage(stored_file_id=kept.stored_file_id, media_type=media_type)
+
     async def _write_prompt_to_the_wire(
-        self, text: str, *, sender_label: str, mode: PromptDeliveryMode
+        self, content: MessageContent, *, sender_label: str, mode: PromptDeliveryMode
     ) -> asyncio.Task[Any]:
         """Start a ``session/prompt`` and return once its bytes are out, not once it answers.
 
@@ -637,12 +732,15 @@ class HermesAcpBackendChild:
         """
         connection, session_id = self._bound_session()
         self._require_a_live_wire()
+        # Read off disk before the wire is touched: a picture that cannot be read is a
+        # write that never happens rather than a turn started on half a message.
+        prompt_blocks = await self._prompt_blocks(content)
         reached_the_wire: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._prompt_write_waiters.append(reached_the_wire)
         prompt = asyncio.create_task(
             connection.prompt(
                 session_id=session_id,
-                prompt=[TextContentBlock(type="text", text=text)],
+                prompt=prompt_blocks,
                 sender_label=sender_label,
                 delivery_mode=str(mode),
             ),
@@ -750,12 +848,23 @@ class HermesAcpBackendChild:
         )
 
     async def _complete_agent_message(self, turn: _TurnInFlight) -> None:
-        if not turn.agent_message_parts:
+        """Hand over the message that has finished arriving, once nothing is still arriving."""
+        async with self._agent_message_lock:
+            await self._hand_over_the_finished_message(turn)
+
+    async def _hand_over_the_finished_message(self, turn: _TurnInFlight) -> None:
+        """The same thing, with the lock already held.
+
+        The runs of words that arrived next to each other are joined back into one piece,
+        because hermes streams a sentence in fragments and a message is not fifty pieces
+        of one word. Anything that is not words stays the piece it arrived as.
+        """
+        if not turn.agent_message_pieces:
             return
-        text = "".join(turn.agent_message_parts)
-        turn.agent_message_parts.clear()
+        pieces = tuple(turn.agent_message_pieces)
+        turn.agent_message_pieces.clear()
         turn.agent_message_id = None
-        await self._sink.agent_message_completed(turn.token, text)
+        await self._sink.agent_message_completed(turn.token, joined_runs_of_text(pieces))
 
     def _settle_parked_asks(self, turn: _TurnInFlight) -> None:
         """A turn's asks die with it, and hermes is told so rather than left waiting."""
@@ -835,20 +944,27 @@ class HermesAcpBackendChild:
     async def _on_agent_message_chunk(
         self, turn: _TurnInFlight, update: AgentMessageChunk
     ) -> None:
-        text = _text_of(update.content)
-        if text is None:
-            return
-        if (
-            update.message_id is not None
-            and turn.agent_message_id is not None
-            and update.message_id != turn.agent_message_id
-        ):
-            # A new message id means the one before it is finished.
-            await self._complete_agent_message(turn)
-        if update.message_id is not None:
-            turn.agent_message_id = update.message_id
-        turn.agent_message_parts.append(text)
-        await self._sink.agent_message_delta(turn.token, text)
+        # The lock is taken before the piece is made, because making it is what lets go
+        # of the loop: a picture is read and written while this runs, and the turn's
+        # ending must not slip in between that and the piece being put on the message.
+        async with self._agent_message_lock:
+            piece = await self._message_piece_of(update.content)
+            if piece is None:
+                return
+            if (
+                update.message_id is not None
+                and turn.agent_message_id is not None
+                and update.message_id != turn.agent_message_id
+            ):
+                # A new message id means the one before it is finished.
+                await self._hand_over_the_finished_message(turn)
+            if update.message_id is not None:
+                turn.agent_message_id = update.message_id
+            turn.agent_message_pieces.append(piece)
+        # Only words stream. A picture arrives whole or not at all, so there is no
+        # half-finished version of one to show and nothing is sent to the tail for it.
+        if isinstance(piece, MessageText):
+            await self._sink.agent_message_delta(turn.token, piece.text)
 
     async def _on_request_permission(
         self, tool_call: ToolCallUpdate, options: Sequence[PermissionOption]
@@ -1013,9 +1129,13 @@ class HermesAcpBackendChildFactory:
         *,
         resolved_start: ResolvedConversationStart,
         event_sink: BackendEventSink,
+        message_files: ConversationMessageFiles,
     ) -> HermesAcpBackendChild:
         return HermesAcpBackendChild(
-            launch=self._launch, resolved_start=resolved_start, event_sink=event_sink
+            launch=self._launch,
+            resolved_start=resolved_start,
+            event_sink=event_sink,
+            message_files=message_files,
         )
 
 

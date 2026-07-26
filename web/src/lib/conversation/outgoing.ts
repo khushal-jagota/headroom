@@ -13,7 +13,7 @@
  * drawn where the record puts it rather than being swapped into place.
  */
 
-import type { ConversationEvent, PromptDeliveryMode } from "./wire";
+import type { ConversationEvent, PromptDeliveryMode, SentMessagePiece } from "./wire";
 
 /** What this browser knows about what happened to a message it sent.
  *
@@ -33,7 +33,10 @@ export type OutgoingMessage = {
   /** What this browser called the message. It rides out with the send and comes back on
    *  the message's row, which is what lets the two be recognised as one message. */
   messageId: string;
-  text: string;
+  /** The message as it will be sent, which is what this browser has until the record
+   *  answers for it. A message on its way names no kept file, because nothing has kept
+   *  anything yet — it holds what it is about to hand over. */
+  content: SentMessagePiece[];
   senderLabel: string;
   mode: PromptDeliveryMode;
   /** When the person pressed send, in unix milliseconds. */
@@ -58,7 +61,7 @@ export function outgoingMessageNote(message: OutgoingMessage): string | null {
  * randomness that two messages in the same millisecond are still two messages.
  */
 export function mintOutgoingMessage(input: {
-  text: string;
+  content: SentMessagePiece[];
   senderLabel: string;
   mode: PromptDeliveryMode;
   sentAtUnixMilliseconds?: number;
@@ -66,7 +69,7 @@ export function mintOutgoingMessage(input: {
   const sentAtUnixMilliseconds = input.sentAtUnixMilliseconds ?? Date.now();
   return {
     messageId: `${sentAtUnixMilliseconds.toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
-    text: input.text,
+    content: input.content,
     senderLabel: input.senderLabel,
     mode: input.mode,
     sentAtUnixMilliseconds,
@@ -173,15 +176,16 @@ const KNOWN_FATES = Object.keys(KNOWN_FATE_NOTES) as readonly OutgoingMessageKno
 function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   if (entry === null || typeof entry !== "object") return null;
   const held = entry as Record<string, unknown>;
-  const { messageId, text, senderLabel, mode, sentAtUnixMilliseconds, knownFate } = held;
+  const { messageId, content, senderLabel, mode, sentAtUnixMilliseconds, knownFate } = held;
   if (typeof messageId !== "string" || messageId === "") return null;
-  if (typeof text !== "string" || typeof senderLabel !== "string") return null;
+  if (!Array.isArray(content) || content.length === 0) return null;
+  if (typeof senderLabel !== "string") return null;
   if (!DELIVERY_MODES.includes(mode as PromptDeliveryMode)) return null;
   if (typeof sentAtUnixMilliseconds !== "number") return null;
   if (!KNOWN_FATES.includes(knownFate as OutgoingMessageKnownFate)) return null;
   return {
     messageId,
-    text,
+    content: content as SentMessagePiece[],
     senderLabel,
     mode: mode as PromptDeliveryMode,
     sentAtUnixMilliseconds,

@@ -27,6 +27,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
+from planner.conversation.message_content import text_message_content
 from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime.conversation_start import (
     CONVERSATION_ID_PREFIX,
@@ -104,7 +105,7 @@ def test_the_conversation_exists_before_the_ticket_points_at_it(
         assert read_ticket(tmp_db, ticket.id).conversation_id == conversation_id
         # And the id the Ticket now holds names a conversation that really takes text.
         assert isinstance(
-            await system.send(conversation_id, "hello", sender_label="loop"),
+            await system.send(conversation_id, text_message_content("hello"), sender_label="loop"),
             PromptDeliveryStarted,
         )
 
@@ -239,7 +240,7 @@ def test_a_change_on_a_held_message_records_nothing_yet(
             system, tmp_db, ticket, _values(ticket.id), now=10
         )
         # Put a turn on the agent, so the next run-when-free message is held.
-        await system.send(conversation_id, "incumbent", sender_label="owner")
+        await system.send(conversation_id, text_message_content("incumbent"), sender_label="owner")
 
         fate = await send_to_ticket_conversation(
             system,
@@ -331,7 +332,7 @@ class _RelinkingConversationSystem:
     ):
         fate = await self._system.send(
             conversation_id,
-            text,
+            text_message_content(text),
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,
@@ -391,7 +392,7 @@ def test_resetting_does_not_unlink_a_conversation_it_did_not_kill(
         killed = await start_ticket_conversation(
             system, tmp_db, ticket, _values(ticket.id), now=10
         )
-        await system.send(killed, "running work", sender_label="loop")
+        await system.send(killed, text_message_content("running work"), sender_label="loop")
         relinking = _RelinkingConversationSystem(system, tmp_db, ticket.id, "conv_newer")
 
         await reset_ticket_conversation(relinking, tmp_db, ticket.id, now=30)
@@ -428,7 +429,11 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
         conversation_id = await start_ticket_conversation(
             system, tmp_db, ticket, _values(ticket.id), now=10
         )
-        await system.send(conversation_id, "running work", sender_label="loop")
+        await system.send(
+            conversation_id,
+            text_message_content("running work"),
+            sender_label="loop",
+        )
 
         await reset_ticket_conversation(system, tmp_db, ticket.id, now=30)
 
@@ -453,8 +458,16 @@ def test_resetting_discards_a_message_the_conversation_was_holding(
         conversation_id = await start_ticket_conversation(
             system, tmp_db, ticket, _values(ticket.id), now=10
         )
-        await system.send(conversation_id, "running work", sender_label="loop")
-        held = await system.send(conversation_id, "held work", sender_label="owner")
+        await system.send(
+            conversation_id,
+            text_message_content("running work"),
+            sender_label="loop",
+        )
+        held = await system.send(
+            conversation_id,
+            text_message_content("held work"),
+            sender_label="owner",
+        )
         assert isinstance(held, PromptDeliveryQueued)
 
         await reset_ticket_conversation(system, tmp_db, ticket.id, now=30)
