@@ -3438,19 +3438,6 @@ select {
   cursor: pointer;
 }
 
-/* Chat rail — defined by its left seam (border-left), no separate fill. It fills
- * the grid row and scrolls within itself so the document column beside it scrolls
- * independently. */
-.chat-rail {
-  border-left: var(--border-hairline) solid var(--border-color);
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
-  padding: var(--space-3) var(--space-3) var(--space-4);
-}
-
 /* Workspace owns the height below the nav,
  * then scrolls its left chooser internally. */
 .shell:has(.board-screen) {
@@ -3471,10 +3458,10 @@ select {
 }
 
 /* --- Ticket page layout (T4 redesign — mockup .page / .doc / .col) --------- */
-/* The two-column page: a scrolling document centered to a readable measure, and a
- * fixed chat rail on the right. The ticket screen claims the whole area below the
- * nav and owns its own scroll, so the shell chrome yields its content padding and
- * a height chain runs from the shell down to the grid. :has scopes this to the
+/* One column: a scrolling document centered to a readable measure, with the
+ * conversation as a layer against its bottom. The ticket screen claims the whole area
+ * below the nav and owns its own scroll, so the shell chrome yields its content padding
+ * and a height chain runs from the shell down to the page. :has scopes this to the
  * ticket screen alone — every other screen keeps the padded, flowing shell. */
 .shell:has(.ticket-screen) {
   height: 100dvh;
@@ -3492,27 +3479,103 @@ select {
   height: 100%;
 }
 
+/* The ticket screen is what the conversation layer is measured and placed against —
+ * see .ticket-conversation-layer for why it is this element and not the viewport. */
 .ticket-screen {
   height: 100%;
+  position: relative;
 }
 
 .ticket-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) calc(var(--space-6) * 10);
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
+  /* What the conversation layer comes to at rest. Measured rather than guessed: the
+   * composer is 83px, the layer's own seam and padding 29, the one line above the
+   * composer and the gap over it 32 — a touch under 145. The nearest step of the space
+   * scale carries it, and the document's tail carries that, so the last of the ticket
+   * clears the layer instead of hiding under it. */
+  --ticket-conversation-rest-height: calc(var(--space-7) * 3);
 }
 
-/* The document column scrolls; the rail stays put. */
+/* The document scrolls inside the page; the conversation layer over it does not move. */
 .ticket-doc {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
 }
 
+/* --- The conversation, a layer at the bottom of the ticket ----------------- */
+/* The conversation is not a column beside the document any more. It is a layer against
+ * the bottom of the TICKET SCREEN — that element and not the viewport, because the whole
+ * of this route also renders inside the Workspace's right pane, where a viewport-fixed
+ * layer would span the window while the ticket occupies part of it. Making the ticket
+ * screen the positioning context gets the full page and the pane right at once, and it
+ * is what decides that Opened covers the page beneath it and not the nav.
+ *
+ * A layer and never a mode: it is only ever as tall as its state, there is no scrim, and
+ * the document above it stays readable, scrollable and clickable. Clicking the document
+ * drops it back a state — TicketRoute owns that gesture.
+ *
+ * The state is drawn on the pane inside, so each height is asked for through :has. All
+ * three read off the ticket screen, so a ticket in the Workspace pane and a ticket on its
+ * own page get the same proportions: rest is its own content, peeked takes a bit over
+ * half from the bottom, opened takes the whole of it. */
+.ticket-conversation-layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* Above the document it covers. Nothing else on this page declares a z-index at all, so
+   * 1 is the whole claim — and the stacking context it opens keeps the conversation's own
+   * ladder (the jump button, the overflow menu, the "/" popover) to itself. */
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: var(--space-3) 0 var(--space-4);
+  /* Rest is no card: the page's own surface and one hairline seam, so the composer reads
+   * as sitting on the page rather than floating over it. */
+  background: var(--surface-base);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+/* The conversation keeps the document's reading measure and its inset, so it stays in the
+ * same column the ticket is written in instead of stretching across the whole screen. */
+.ticket-conversation-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  max-width: calc(var(--space-7) * 16);
+  margin: 0 auto;
+  padding: 0 var(--space-7);
+}
+
+/* Peeked — a card over the page, at the weight this app already gives a raised popover
+ * (.chat-menu): the raised surface, a hairline, the large radius on the two corners that
+ * are not against the page's own edge, and the popover shadow turned to face up. */
+.ticket-conversation-layer:has([data-conversation-state="peeked"]) {
+  top: 40%;
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-color);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* Opened — the same surface taken full. Nothing is added, which is what stops it looking
+ * like a card; the way back is the control in the pane head. */
+.ticket-conversation-layer:has([data-conversation-state="opened"]) {
+  top: 0;
+}
+
 /* Header and body share one centered readable measure (~768px). The header has no
- * bottom hairline — the line diet keeps rules to the stage spine and rail seam only;
- * space, not a line, separates the header from the body. */
+ * bottom hairline — the line diet keeps rules to the stage spine and the conversation
+ * layer's seam only; space, not a line, separates the header from the body. */
 .ticket-head {
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
@@ -3613,10 +3676,13 @@ select {
   display: inline-flex;
 }
 
+/* The read's own generous tail, and under it the room the conversation layer stands in at
+ * rest, so scrolling to the end of the ticket ends at the end of the ticket. */
 .ticket-col {
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
-  padding: var(--space-6) var(--space-7) calc(var(--space-7) * 3);
+  padding: var(--space-6) var(--space-7)
+    calc(var(--space-7) * 3 + var(--ticket-conversation-rest-height));
 }
 
 /* --- Ticket serif voice (t_ui02) ----------------------------------------- */
@@ -3692,15 +3758,15 @@ select {
   visibility: hidden;
 }
 
-/* Narrow: one column, no rail (mockup @960). The breakpoint is a raw px — media
- * features can't read custom properties. */
+/* Narrow (mockup @960). The breakpoint is a raw px — media features can't read custom
+ * properties.
+ *
+ * The ticket keeps its conversation at every width. A rail had to go: it was a second
+ * column, and there was no room for one. A layer is not a column — it lies along the
+ * bottom of a page that is one column at every width already — so nothing about a narrow
+ * screen makes it not fit, and taking it away would take the composer, the one line of
+ * what happened last, and any permission ask waiting on the person with it. */
 @media (max-width: 960px) {
-  .ticket-page {
-    grid-template-columns: 1fr;
-  }
-  .chat-rail {
-    display: none;
-  }
   .board-workspace-shell {
     grid-template-columns: 1fr;
   }

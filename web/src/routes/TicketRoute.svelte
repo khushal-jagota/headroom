@@ -17,6 +17,7 @@
     TicketDetail
   } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
+  import type { ConversationState } from "../lib/conversation/conversationState";
   import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
@@ -63,6 +64,28 @@
   let headerError = $state<unknown>(null);
   let copied = $state(false);
   let conversationBackends = $state<readonly BackendSnapshot[]>([]);
+
+  /** How far open this page's conversation is.
+   *
+   * The state a conversation opens in belongs to the page that shows it, so this page
+   * names its own: a Ticket opens at rest — the composer, and above it one line of
+   * whatever happened last, against the bottom of the ticket. The person moves it from
+   * there and the conversation writes back here when they do.
+   */
+  let conversationState = $state<ConversationState>("rest");
+
+  /** A click on the ticket drops the conversation back one state.
+   *
+   * The conversation is a LAYER over this page, not a mode it puts the page into, so
+   * touching the page is how you put it away. Read while the click is still on its way
+   * down and neither stopped nor prevented: whatever that click was going to do to the
+   * ticket still happens.
+   */
+  function dropConversationBackOneState(): void {
+    if (conversationState === "opened") conversationState = "peeked";
+    else if (conversationState === "peeked") conversationState = "rest";
+  }
+
   let projectOptions = $derived([
     { value: "", label: "(no project)" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
@@ -292,7 +315,11 @@
     {:else if ticket.data}
       {@const detail = ticket.data}
       <div class="ticket-page">
-      <main class="ticket-doc">
+      <!-- The document hears a click only to put the conversation away, and it hears it
+           in the capture phase so nothing inside can have gone yet. There is no keyboard
+           twin here because Escape does the same thing from anywhere on the page, and it
+           belongs to the conversation rather than to the document it sits over. -->
+      <main class="ticket-doc" onclickcapture={dropConversationBackOneState}>
         <header class="ticket-head">
           <div class="ticket-title">
             <InlineEdit
@@ -497,17 +524,20 @@
           </div>
         </div>
       </main>
-      <aside class="chat-rail" data-chat>
-        <LiveConversation
-          conversationId={detail.conversation_id}
-          label={conversationEmployeeLabel(detail)}
-          backends={conversationBackends}
-          senderLabel="owner"
-          onStartConversation={startTicketConversation}
-          onNewConversation={resetTicketConversation}
-          onMessageAccepted={recordHumanReply}
-        />
-      </aside>
+      <div class="ticket-conversation-layer" data-conversation-layer-host>
+        <div class="ticket-conversation-column">
+          <LiveConversation
+            bind:conversationState
+            conversationId={detail.conversation_id}
+            label={conversationEmployeeLabel(detail)}
+            backends={conversationBackends}
+            senderLabel="owner"
+            onStartConversation={startTicketConversation}
+            onNewConversation={resetTicketConversation}
+            onMessageAccepted={recordHumanReply}
+          />
+        </div>
+      </div>
     </div>
     {/if}
   </ResourceState>
