@@ -18,6 +18,7 @@
     readableDetail,
     threadItems,
     turnEndingSentence,
+    PROMPT_DISCARDED_SENTENCE,
     TURN_STOPPED_SENTENCE
   } from "../../lib/conversation/transcript";
   import { modelDisplayName } from "../../lib/conversation/composer";
@@ -131,7 +132,7 @@
     {:else if item.row.kind === "prompt_discarded"}
       <article class="chat-system" data-conversation-row="prompt_discarded">
         <div class="c2-label">
-          {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · discarded without being delivered
+          {promptLabelFor(item.row.senderLabel, ownSenderLabel) ?? "your message"} · {PROMPT_DISCARDED_SENTENCE}
         </div>
         <MessagePieces content={item.row.content} {conversationId} />
       </article>

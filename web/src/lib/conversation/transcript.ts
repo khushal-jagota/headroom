@@ -150,6 +150,10 @@ export function refusalSentence(reason: PromptDeliveryRefusalReason): string {
   return REFUSAL_SENTENCES[reason] ?? "the delivery was impossible";
 }
 
+/** What a message that was taken back before anything received it says about itself. The
+ *  thread says it beside the message, and the rest line says it on its own. */
+export const PROMPT_DISCARDED_SENTENCE = "discarded without being delivered";
+
 const TURN_ENDING_SENTENCES: Record<ConversationTurnEnding, string> = {
   completed: "turn complete",
   failed: "turn failed",
@@ -872,6 +876,28 @@ export function foldedWorkSentence(toolCallCount: number, messageCount: number):
     counted.push(`${messageCount} message${messageCount === 1 ? "" : "s"}`);
   }
   return counted.join(" · ");
+}
+
+/** How far through its plan the conversation is: what it has finished, out of what it
+ *  said it would do.
+ *
+ * Two places read this — the strip under a turn's head, and the line above the composer
+ * when the conversation is shut — and they are two views of one conversation's one plan.
+ * A person moving between them is watching the same thing from further away, so the
+ * number and the words have to be the same number and the same words.
+ */
+export function planProgressSentence(entries: readonly PlanEntry[]): string {
+  return `${completedPlanEntryCount(entries)} / ${entries.length} tasks`;
+}
+
+/** The same fact for anybody hearing the page rather than seeing it. A count written as
+ *  a fraction is read out as one, and "one slash three tasks" is not a sentence. */
+export function planProgressSpokenSentence(entries: readonly PlanEntry[]): string {
+  return `${completedPlanEntryCount(entries)} of ${entries.length} tasks complete`;
+}
+
+function completedPlanEntryCount(entries: readonly PlanEntry[]): number {
+  return entries.filter((entry) => entry.status === "completed").length;
 }
 
 /** The glyph vocabulary a tool row is drawn with — the app's existing step icons. */

@@ -9,14 +9,17 @@
    * Each plan row is the whole plan, so the newest one replaces the last outright. There
    * is no merging: a step that vanished from the plan is gone, not silently kept.
    */
+  import {
+    planProgressSentence,
+    planProgressSpokenSentence
+  } from "../../lib/conversation/transcript";
   import type { PlanEntry } from "../../lib/conversation/wire";
 
   let { entries }: { entries: readonly PlanEntry[] } = $props();
 
   let open = $state(false);
 
-  let doneCount = $derived(entries.filter((entry) => entry.status === "completed").length);
-  let label = $derived(`${doneCount} / ${entries.length} tasks`);
+  let label = $derived(planProgressSentence(entries));
 
   function statusClass(status: string): string {
     if (status === "completed") return "done";
@@ -38,7 +41,7 @@
       class="c2-plan-pill"
       data-conversation-plan-pill
       aria-expanded={open}
-      aria-label={`${doneCount} of ${entries.length} tasks complete`}
+      aria-label={planProgressSpokenSentence(entries)}
       onclick={() => (open = !open)}
     >
       <span aria-hidden="true" class="c2-plan-chevron" class:is-open={open}>›</span>

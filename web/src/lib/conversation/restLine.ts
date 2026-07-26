@@ -17,11 +17,13 @@
 
 import {
   liveAskFrom,
+  planProgressSentence,
   promptLabelFor,
   threadItems,
   toolCallLine,
   turnEndingSentence,
   workingSentence,
+  PROMPT_DISCARDED_SENTENCE,
   TURN_STOPPED_SENTENCE
 } from "./transcript";
 import type { ThreadItem, ToolCallRow, TranscriptRow } from "./transcript";
@@ -49,10 +51,6 @@ export type RestLine = {
  * saying it.
  */
 const YOU = "you";
-
-/** The words for a message that was taken back before anything received it, which is what
- *  the transcript says about the same row. */
-const DISCARDED_SENTENCE = "discarded without being delivered";
 
 /** How long the line may be before it is cut.
  *
@@ -153,7 +151,7 @@ function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened |
         text: oneLine(`not delivered · ${row.sentence}`)
       };
     case "prompt_discarded":
-      return { who: senderOf(row.senderLabel, ownSenderLabel), text: DISCARDED_SENTENCE };
+      return { who: senderOf(row.senderLabel, ownSenderLabel), text: PROMPT_DISCARDED_SENTENCE };
     case "agent_message":
       return { who: null, text: oneLine(messageContentText(row.content)) };
     case "streaming_agent_message":
@@ -208,15 +206,15 @@ function newestToolCallOf(items: readonly ThreadItem[], turnKey: string): ToolCa
   return null;
 }
 
-/** How far through its plan the conversation is, in the words the plan strip says it in.
+/** How far through its plan the conversation is, said the way the strip under the turn's
+ *  head says it.
  *
  * A conversation has one plan, so there is one head holding it however many turns ago it
  * was stated, and that is the one this reads. */
 function planProgress(items: readonly ThreadItem[]): string | null {
   for (const item of items) {
     if (item.kind !== "turn" || item.plan === null || item.plan.length === 0) continue;
-    const done = item.plan.filter((entry) => entry.status === "completed").length;
-    return `${done} / ${item.plan.length} tasks`;
+    return planProgressSentence(item.plan);
   }
   return null;
 }
