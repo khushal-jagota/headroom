@@ -3505,6 +3505,12 @@ select {
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  /* Anything the browser scrolls to itself — a field taking focus from the keyboard, an
+   * anchor, a preview being brought into view — is scrolled the least it can be, which
+   * without this parks it in the strip the layer covers. There it is visible and looks
+   * ordinary, but every click on it lands on the layer instead, silently. The document
+   * keeps the layer's own height clear of the bottom whenever it moves itself. */
+  scroll-padding-bottom: var(--ticket-conversation-rest-height);
 }
 
 /* --- The conversation, a layer at the bottom of the ticket ----------------- */

@@ -69,8 +69,8 @@ One screen per part of the system:
   leash written as one sentence, the recap, then the spine of stages — which stages that
   spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
   `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
-  worker conversation in serif alongside, and a copy button that produces a plain-text block
-  for pasting anywhere. During pristine Kickoff, the facts line also shows a restrained
+  worker conversation in serif along the bottom (see below), and a copy button that produces
+  a plain-text block for pasting anywhere. During pristine Kickoff, the facts line also shows a restrained
   **Worker** pill whose choices come only from the backends this machine actually has —
   the same answer the conversation composer's model and effort pickers read. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
@@ -254,6 +254,25 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ConversationPane / ConversationTranscript / ConversationComposer** — what a
   conversation looks like: the rows, the one raised ask, the status line, and the
   composer with its model, effort and skill choices.
+
+  On the Ticket screen the conversation is a layer along the bottom of the page rather
+  than a column beside it, and it has **three states**. At **rest** it is the composer and
+  one line above it saying what happened last — whoever produced it, so your own message
+  can be that line, and so can a request waiting on you. Clicking the input **peeks** it
+  open: a card over the page, with the line gone because the transcript now says the same
+  thing. A control takes it **opened**, the full height of the page, and the same control
+  brings it back. Clicking the ticket behind it, or pressing Escape, drops it one state.
+
+  Three things are true of all three. Nothing moves it but a person — a request arriving
+  or a turn starting never opens it, which is why the line at rest has to carry that news.
+  It is a layer and never a mode: nothing is locked, and the ticket underneath stays
+  readable and scrollable. And it is one conversation at three heights, never three
+  screens — a move changes how tall it is and nothing else, so the reader keeps their
+  place in the transcript and keeps whatever they had half-typed.
+
+  Which state it opens in is the page's to choose, and the page can change it later. A
+  page that says nothing gets no layer at all: the Chief of Staff, the Workspace desk and
+  the development pane each keep a conversation that simply fills the space it is given.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
@@ -304,4 +323,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-26 (Workspace groups by Ticket status and its row mark carries three signals; one conversation pane over the record, GFM rendering, the change stream feeding cached reads, and shared file previews)._
+_Last verified: 2026-07-27 (the Ticket screen's conversation is a layer along the bottom in three states; Workspace groups by Ticket status and its row mark carries three signals; one conversation pane over the record, GFM rendering, the change stream feeding cached reads, and shared file previews)._

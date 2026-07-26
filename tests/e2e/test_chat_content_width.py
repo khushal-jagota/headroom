@@ -196,7 +196,9 @@ def test_the_ticket_conversation_is_a_layer_measured_against_the_ticket_screen(
         # Peeked: a card taking a bit over half the ticket screen, still inside it, with
         # the transcript drawn and fitting.
         page.click(CONVERSATION_INPUT)
-        page.wait_for_selector(f'{CONVERSATION_PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
+        page.wait_for_selector(
+            f'{CONVERSATION_PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS
+        )
         _assert_bounded(page, CONVERSATION_LAYER)
         peeked = _assert_layer_lies_along_the_bottom_of_the_ticket_screen(page, ticket_screen)
         assert peeked["screenHeight"] / 2 < peeked["layerHeight"] < peeked["screenHeight"], peeked
