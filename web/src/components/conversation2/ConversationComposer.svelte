@@ -191,6 +191,22 @@
       void send();
     }
   }
+
+  /** Aim this message at a skill.
+   *
+   * A skill is asked for by the message starting with a slash, so this puts one there and
+   * hands the box straight back with the cursor at the end. What skill, and everything
+   * after it, is the person's to type — this only saves them reaching for the key and
+   * knowing that a leading slash is what does it.
+   */
+  async function aimAtASkill(): Promise<void> {
+    if (!text.startsWith("/")) text = `/${text}`;
+    await tick();
+    const input = inputElement;
+    if (input === null) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
 </script>
 
 <section class="c2-composer" data-conversation2-composer>
@@ -241,6 +257,16 @@
             onCancelTurn={() => onCancelTurn?.()}
           />
         {:else}
+          <button
+            type="button"
+            class="chat-slash"
+            data-conversation2-slash
+            aria-label="Aim this message at a skill"
+            title="Aim this message at a skill"
+            disabled={inputDisabled}
+            onclick={() => void aimAtASkill()}
+          >/</button>
+
           <select
             class="c2-pick-select"
             class:on={pickedModel !== null}

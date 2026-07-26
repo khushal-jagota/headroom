@@ -1199,6 +1199,23 @@ with sync_playwright() as playwright:
     page.locator("[data-conversation2-input]").type("1")
     assert page.evaluate("window.__answers().length") == 2
 
+    # The slash aims what is already written at a skill, and hands the box back with the
+    # cursor at the end so the next thing typed is the skill's name. Pressing it again
+    # changes nothing: the message is already aimed.
+    page.locator("[data-conversation2-input]").fill("do the thing")
+    page.locator("[data-conversation2-slash]").click()
+    page.wait_for_function(
+        "document.querySelector('[data-conversation2-input]').value === '/do the thing'"
+    )
+    assert page.evaluate(
+        "document.activeElement === document.querySelector('[data-conversation2-input]')"
+    )
+    assert page.evaluate("document.querySelector('[data-conversation2-input]').selectionStart") == (
+        len("/do the thing")
+    )
+    page.locator("[data-conversation2-slash]").click()
+    assert page.locator("[data-conversation2-input]").input_value() == "/do the thing"
+
     browser.close()
 
 print("conversation2 pane runtime assertions passed")
