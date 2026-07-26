@@ -84,10 +84,35 @@
     ariaLabel: string;
   };
 
-  // Reading happens in this browser and writes nothing, so a row redraws when the
-  // watermark moves rather than when something refetches.
-  let watermarkGeneration = $state(0);
-  onMount(() => onReplyWatermarkMoved(() => (watermarkGeneration += 1)));
+  // How far this browser has read each conversation on the board.
+  //
+  // It is held here rather than read while a row is being drawn, and that is the whole
+  // point: reading a conversation writes nothing the server can announce, so no refetch
+  // is coming to redraw the board. Keeping the positions in state is what makes a row
+  // redraw when one of them moves — and it is a value the marks visibly depend on, so
+  // there is nothing here a tidy-up could remove without the dots going wrong loudly.
+  let howFarThisBrowserHasRead = $state<Record<string, number>>({});
+
+  function rereadWhereThisBrowserHasGot(): void {
+    const positions: Record<string, number> = {};
+    for (const column of board.data?.columns || []) {
+      for (const card of column.cards) {
+        const conversationId = card.conversation_id;
+        if (typeof conversationId === "string") {
+          positions[conversationId] = readReplyWatermark(conversationId);
+        }
+      }
+    }
+    howFarThisBrowserHasRead = positions;
+  }
+
+  // Two things move a position: this browser reading a conversation, and a board arriving
+  // with conversations it has not seen before.
+  onMount(() => onReplyWatermarkMoved(rereadWhereThisBrowserHasGot));
+  $effect(() => {
+    board.data;
+    rereadWhereThisBrowserHasGot();
+  });
 
   // The row mark carries three signals in one precedence. A permission ask wins: a
   // turn waiting on an ask is still running, and the ask is the part only the user can
@@ -101,12 +126,14 @@
     if (card.agent_working) {
       return { state: "current-running", ariaLabel: "Agent working" };
     }
-    watermarkGeneration;
     const latestTurnEnded = Number(card.latest_turn_ended_sequence ?? 0);
-    if (latestTurnEnded === 0 || card.conversation_id === null) {
+    if (latestTurnEnded === 0 || typeof card.conversation_id !== "string") {
       return { state: "upcoming", ariaLabel: "Nothing waiting" };
     }
-    if (latestTurnEnded > readReplyWatermark(card.conversation_id)) {
+    // A conversation this browser has never read has got nowhere in it, which is what
+    // an absent position means. Every failure path lands here, so the mark over-shows
+    // attention rather than hiding a reply.
+    if (latestTurnEnded > (howFarThisBrowserHasRead[card.conversation_id] ?? 0)) {
       return { state: "current-awaiting-approval", ariaLabel: "Unseen agent reply" };
     }
     return { state: "reply-seen", ariaLabel: "Agent reply seen" };

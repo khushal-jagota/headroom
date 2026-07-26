@@ -79,8 +79,20 @@ assert.match(boardRouteSource, /state: "reply-seen", ariaLabel: "Agent reply see
 // The mark is drawn from the record's last turn ending and this browser's own watermark.
 // Nothing on the card says whether a reply was seen, because seen is not a fact about the
 // Ticket.
-assert.match(boardRouteSource, /readReplyWatermark\(card\.conversation_id\)/);
+assert.match(boardRouteSource, /howFarThisBrowserHasRead\[card\.conversation_id\]/);
 assert.match(boardRouteSource, /latest_turn_ended_sequence/);
 assert.doesNotMatch(boardRouteSource, /agent_reply_state/);
+// How far this browser has read is held in state and the mark reads it from there.
+// Reading a conversation writes nothing a server can announce, so no refetch is coming
+// to redraw the board — the state is what makes a row go quiet when you open it.
+assert.match(boardRouteSource, /let howFarThisBrowserHasRead = \$state/);
+assert.match(boardRouteSource, /onReplyWatermarkMoved\(rereadWhereThisBrowserHasGot\)/);
+// The mark must not read storage while it draws: a plain call has nothing reactive
+// about it, so a row would keep its old dot until something unrelated refetched.
+assert.doesNotMatch(
+  boardRouteSource.slice(boardRouteSource.indexOf("function signalPresentation")),
+  /readReplyWatermark\(/,
+  "the row mark reads the positions it was given, never storage"
+);
 
 console.log("production-surfaces.test.mjs: all assertions passed");
