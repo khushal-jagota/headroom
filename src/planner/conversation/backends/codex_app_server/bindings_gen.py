@@ -11,8 +11,8 @@ The pin these models were generated under:
     from the dump's        codex_app_server_protocol.schemas.json
     dump digest (sha256)   5469280cfbdaa12f6d28e2206f942da808f8b699ce6c43b13f2439d843432f38
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) b5660308001fe318c25e0dc125e979585091ec34cadf2f340e47de7289ee2779
-    definitions generated  101
+    subset digest (sha256) 4baa7cc1e44c69b08bed0ff7712e703e7e6154ffeb1a9b7e5dfc2ced099058aa
+    definitions generated  104
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -504,6 +504,15 @@ class ActiveThreadStatus(BaseModel):
     type: Annotated[Literal["active"], Field(title="ActiveThreadStatusType")]
 
 
+class TokenUsageBreakdown(BaseModel):
+    cacheWriteInputTokens: int | None = 0
+    cachedInputTokens: int
+    inputTokens: int
+    outputTokens: int
+    reasoningOutputTokens: int
+    totalTokens: int
+
+
 class TurnInterruptParams(BaseModel):
     threadId: str
     turnId: str
@@ -762,6 +771,18 @@ class ThreadStartParams(BaseModel):
     sessionStartSource: Literal["startup", "clear"] | None = None
     model: str | None = None
     modelProvider: str | None = None
+
+
+class ThreadTokenUsage(BaseModel):
+    last: TokenUsageBreakdown
+    modelContextWindow: int | None = None
+    total: TokenUsageBreakdown
+
+
+class ThreadTokenUsageUpdatedNotification(BaseModel):
+    threadId: str
+    tokenUsage: ThreadTokenUsage
+    turnId: str
 
 
 class TurnError(BaseModel):

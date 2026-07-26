@@ -5,7 +5,7 @@ subprocess, the Agent Client Protocol connection to it, and the session that con
 resumes from. It owns none of the conversation's rules: it never decides that a message
 waits, never decides that an ask has expired, and never writes a row.
 
-Four things about ACP shape this adapter, and each one is why a piece of it looks the way
+Five things about ACP shape this adapter, and each one is why a piece of it looks the way
 it does.
 
 **A prompt's response is the turn's ending, not its acknowledgment.** ``session/prompt``
@@ -30,6 +30,13 @@ falls back to the legacy method for the model, which is the path real hermes tak
 reasoning effort has no legacy method, so a hermes session that advertises no
 ``thought_level`` option cannot be put on one, and the adapter says so rather than running
 on a value nobody asked for.
+
+**A compaction is hermes' own news, not ACP's.** ACP has no word for the moment an agent
+summarises what came before and drops it. Hermes does it, and says so on a session info
+update inside its own ``_meta``: it starts a new internal session when it compacts, and
+names compression as the reason that one replaced the last. The ACP session this
+conversation resumes from is unchanged, so that metadata is the only place the boundary
+shows up at all.
 """
 
 from __future__ import annotations
@@ -64,10 +71,13 @@ from acp.schema import (
     PermissionOption,
     RequestPermissionResponse,
     SessionConfigOptionSelect,
+    SessionInfoUpdate,
     TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
     ToolCallUpdate,
+    Usage,
+    UsageUpdate,
 )
 from acp.transports import spawn_stdio_transport
 
@@ -149,6 +159,20 @@ _FINISHED_TOOL_CALL_STATUSES: dict[str, ToolCallStatus] = {
 # it. Everything else — the agent ran out of tokens, ran out of turns, declined — is a turn
 # that ran and stopped on its own account.
 _CANCELLED_STOP_REASON = "cancelled"
+
+# Where in a session info update's ``_meta`` hermes says that its internal session was
+# replaced, and the reason it gives when the replacement was a compaction. A session info
+# update about anything else — a title it has just written — names no reason at all, which
+# is what tells a compaction boundary from an ordinary one.
+HERMES_METADATA_KEY = "hermes"
+SESSION_PROVENANCE_METADATA_KEY = "sessionProvenance"
+SESSION_REPLACEMENT_REASON_KEY = "reason"
+COMPACTION_SESSION_REPLACEMENT_REASON = "compression"
+
+# What hermes calls dollars when it states a cost. A cost in anything else is a true
+# number with nowhere to go — the record's field is dollars — and converting one at a rate
+# nobody supplied would be inventing a figure.
+_DOLLAR_CURRENCY_CODES: frozenset[str] = frozenset({"USD"})
 
 
 class _ConfigurationNotApplied(Exception):
@@ -825,7 +849,40 @@ class HermesAcpBackendChild:
         else:
             if str(response.stop_reason) == _CANCELLED_STOP_REASON:
                 ending = ConversationTurnEnding.interrupted
+            # Before the ending, because the ending is what closes the turn these counts
+            # belong to. A turn that was stopped still spent what it spent.
+            await self._report_what_the_turn_counted(turn, response.usage)
         await self._end_turn(turn, ending, error_summary)
+
+    async def _report_what_the_turn_counted(self, turn: _TurnInFlight, usage: Any) -> None:
+        """The turn's own token counts, which ACP carries on the answer that ends it.
+
+        Only what hermes counted goes over. A turn it said nothing about cached tokens for
+        is not a turn that read none, so an absent count stays absent. The total it also
+        carries is the others added up and is left where it is, as is its count of thinking
+        tokens, which this record has nowhere to put. Hermes knows nothing about money.
+        """
+        if not isinstance(usage, Usage):
+            return
+        await self._sink.token_usage_reported(
+            turn.token,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cached_input_tokens=usage.cached_read_tokens,
+            cost_usd=None,
+        )
+
+    async def _report_a_stated_cost(self, turn: _TurnInFlight, cost: Any) -> None:
+        """What hermes says the session has cost, when it says it in dollars."""
+        if cost is None or str(cost.currency).upper() not in _DOLLAR_CURRENCY_CODES:
+            return
+        await self._sink.token_usage_reported(
+            turn.token,
+            input_tokens=None,
+            output_tokens=None,
+            cached_input_tokens=None,
+            cost_usd=float(cost.amount),
+        )
 
     async def _end_turn(
         self,
@@ -938,6 +995,22 @@ class HermesAcpBackendChild:
                     tool_call_status=status,
                     detail=_tool_call_detail(update.content),
                 )
+            case UsageUpdate():
+                # What this update carries is how full the session's context is — used out
+                # of size — which is what the turn has LEFT rather than what it has spent.
+                # That is a different fact from the turn's own token counts and it has
+                # nowhere to go here, so it goes nowhere: recording occupancy as this
+                # turn's input tokens would put a number in the record under a name that
+                # means something else, and it would disagree with the count the turn's
+                # own answer gives.
+                #
+                # The cost is the one thing only this update knows, and it is reported when
+                # hermes states it in dollars. A cost in another currency is a true number
+                # this record has no field for, so it is left rather than converted.
+                await self._report_a_stated_cost(turn, update.cost)
+            case SessionInfoUpdate():
+                if _names_a_compaction(update.field_meta):
+                    await self._sink.context_compacted(turn.token)
             case _:
                 return
 
@@ -1150,6 +1223,24 @@ def _plan_entries(entries: Any) -> tuple[PlanEntry, ...]:
         PlanEntry(text=entry.content, status=PlanEntryStatus(str(entry.status)))
         for entry in entries
     )
+
+
+def _names_a_compaction(metadata: dict[str, Any] | None) -> bool:
+    """Whether a session info update's hermes metadata says the session was compacted.
+
+    Every step down is checked, because ``_meta`` is a free-form blob an agent may put
+    anything at all in: a shape nobody here recognises is not a compaction.
+    """
+    if not isinstance(metadata, dict):
+        return False
+    hermes_metadata = metadata.get(HERMES_METADATA_KEY)
+    if not isinstance(hermes_metadata, dict):
+        return False
+    provenance = hermes_metadata.get(SESSION_PROVENANCE_METADATA_KEY)
+    if not isinstance(provenance, dict):
+        return False
+    reason = provenance.get(SESSION_REPLACEMENT_REASON_KEY)
+    return reason == COMPACTION_SESSION_REPLACEMENT_REASON
 
 
 def _text_of(content: Any) -> str | None:

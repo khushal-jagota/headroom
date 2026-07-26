@@ -660,6 +660,8 @@ class CodexAppServerBackendChild:
                 await self._on_model_thinking(notification.turnId)
             case bindings.TurnPlanUpdatedNotification():
                 await self._on_plan_updated(notification)
+            case bindings.ThreadTokenUsageUpdatedNotification():
+                await self._on_token_usage_updated(notification)
             case bindings.ItemCompletedNotification():
                 await self._on_item_completed(notification)
             case bindings.ErrorNotification():
@@ -737,6 +739,37 @@ class CodexAppServerBackendChild:
             return
         await self._sink.plan_updated(turn.token, _plan_entries(notification.plan))
 
+    async def _on_token_usage_updated(
+        self, notification: bindings.ThreadTokenUsageUpdatedNotification
+    ) -> None:
+        """What codex has counted so far, every time it recounts.
+
+        Codex counts two breakdowns and both are true: ``last`` is the model request that
+        has just answered, on its own, and ``total`` is everything this thread has spent.
+        The total is the one passed on, because it is codex's own answer to what the work
+        has cost — a turn's share of it is the step between its rows and the turn before's,
+        which single requests cannot be added up into, since every request is charged for
+        the whole conversation it was sent.
+
+        Codex says nothing about money and none is worked out here from a price list this
+        adapter would have to keep up to date. The context window it also sends is a fact
+        about the model rather than about what the turn cost, and there is nowhere for it.
+
+        Codex replays this after a resume, for turns that are long over. Those name a turn
+        that is not running and are dropped, the same as any other late news.
+        """
+        turn = self._turn_this_is_about(notification.turnId)
+        if turn is None:
+            return
+        spent_so_far = notification.tokenUsage.total
+        await self._sink.token_usage_reported(
+            turn.token,
+            input_tokens=spent_so_far.inputTokens,
+            output_tokens=spent_so_far.outputTokens,
+            cached_input_tokens=spent_so_far.cachedInputTokens,
+            cost_usd=None,
+        )
+
     async def _on_item_started(self, notification: bindings.ItemStartedNotification) -> None:
         turn = self._turn_this_is_about(notification.turnId)
         if turn is None:
@@ -769,6 +802,13 @@ class CodexAppServerBackendChild:
             await self._sink.agent_message_completed(
                 turn.token, text_message_content(item.text)
             )
+            return
+        if isinstance(item, bindings.ContextCompactionThreadItem):
+            # Codex summarised the conversation so far and dropped what it summarised. It
+            # sends the compaction as an item like any other — started, then completed —
+            # and the finish is the one read here, because that is where the item is codex's
+            # settled account of itself and reading both would write the row twice.
+            await self._sink.context_compacted(turn.token)
             return
         finished = _tool_call_finished(item)
         if finished is None:

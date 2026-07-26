@@ -189,6 +189,34 @@ class BackendEventSink(Protocol):
         simply has no plan — which is a true thing to show and needs no stand-in.
         """
 
+    async def token_usage_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+        cost_usd: float | None,
+    ) -> None:
+        """What this turn has cost, as the backend counts it.
+
+        Report what the backend actually said and nothing else: a count it did not give is
+        ``None``, never zero, because a backend silent about cached tokens has not said
+        there were none. Only claude knows about money; the other two leave ``cost_usd``
+        absent rather than computing one.
+
+        Report it as it arrives. A backend that reports running totals reports them; the
+        core writes what it is told.
+        """
+
+    async def context_compacted(self, turn_token: TurnToken) -> None:
+        """The backend summarised what came before and dropped it.
+
+        No payload: that it happened, and where in the thread, is the whole of what a
+        reader needs. Panels never asks for this — the backends do it on their own — and
+        without it a transcript's earlier context goes silently.
+        """
+
     async def permission_ask_raised(
         self, turn_token: TurnToken, ask: BackendPermissionAsk
     ) -> None:

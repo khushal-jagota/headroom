@@ -20,6 +20,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageEventPayload,
+    ContextCompactedEventPayload,
     ConversationEventKind,
     ConversationEventPayload,
     ConversationTurnEnding,
@@ -33,6 +34,7 @@ from planner.conversation.events import (
     PromptDeliveryRefusedEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
+    TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallStartedEventPayload,
     ToolCallStatus,
@@ -96,6 +98,11 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
     # A plan can be emptied, and an empty plan is still a plan that was announced.
     PlanUpdatedEventPayload(entries=()),
     ModelChangedEventPayload(model="second-model", reasoning_effort=None),
+    # Every count a backend gave, and the money only one of them knows about.
+    TokenUsageEventPayload(
+        input_tokens=41_000, output_tokens=920, cached_input_tokens=38_400, cost_usd=0.42
+    ),
+    ContextCompactedEventPayload(),
     TurnEndedEventPayload(ending=ConversationTurnEnding.failed, error_summary="it fell over"),
 )
 

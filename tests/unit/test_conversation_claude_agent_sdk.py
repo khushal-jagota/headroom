@@ -192,6 +192,12 @@ class _RecordingSink:
         self.asks: list[BackendPermissionAsk] = []
         self.endings: list[dict[str, Any]] = []
         self.cursors: list[str] = []
+        self.token_usage: list[dict[str, Any]] = []
+        self.compactions: list[TurnToken] = []
+        # The order the facts a result message carries were told in. What is said about a
+        # turn after its ending is said about a turn that has stopped running, and is
+        # dropped — so the order is the whole of whether the counts arrive at all.
+        self.calls_in_order: list[str] = []
         # Set the moment a turn ends, for the exercises that drive a real claude and have
         # to wait for one rather than pumping a scripted stream themselves.
         self._turn_over = asyncio.Event()
@@ -261,6 +267,30 @@ class _RecordingSink:
             }
         )
 
+    async def token_usage_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+        cost_usd: float | None,
+    ) -> None:
+        self.calls_in_order.append("token_usage")
+        self.token_usage.append(
+            {
+                "turn": turn_token,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cached_input_tokens": cached_input_tokens,
+                "cost_usd": cost_usd,
+            }
+        )
+
+    async def context_compacted(self, turn_token: TurnToken) -> None:
+        self.calls_in_order.append("context_compacted")
+        self.compactions.append(turn_token)
+
     async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
         del turn_token
         self.asks.append(ask)
@@ -273,6 +303,7 @@ class _RecordingSink:
         error_summary: str | None,
         standard_error_tail: str | None,
     ) -> None:
+        self.calls_in_order.append("turn_ended")
         self._turn_over.set()
         self.endings.append(
             {
@@ -366,6 +397,8 @@ def _result(
     is_error: bool = False,
     terminal_reason: str | None = "completed",
     errors: list[str] | None = None,
+    usage: dict[str, Any] | None = None,
+    total_cost_usd: float | None = None,
 ) -> ResultMessage:
     return ResultMessage(
         subtype=subtype,
@@ -376,6 +409,8 @@ def _result(
         session_id=session_id,
         terminal_reason=terminal_reason,
         errors=errors,
+        usage=usage,
+        total_cost_usd=total_cost_usd,
     )
 
 
@@ -1212,6 +1247,166 @@ def test_a_child_whose_stream_ends_mid_turn_fails_the_turn(tmp_path: Path) -> No
         await clients[0].until_taken_in()
 
         assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
+        await child.stop()
+
+    _run(exercise)
+
+
+# --- what has been spent -------------------------------------------------------------------------
+
+# A result message's counts as claude 2.1.220 sends them. They are the session's running
+# totals: the CLI adds every request into one tally and puts that tally on every result.
+CLAUDE_COUNTS: dict[str, Any] = {
+    "input_tokens": 120,
+    "output_tokens": 45,
+    "cache_read_input_tokens": 9000,
+    "cache_creation_input_tokens": 300,
+    "server_tool_use": {"web_search_requests": 0},
+}
+
+
+def test_the_counts_claude_gave_are_reported_before_the_turn_is_closed(tmp_path: Path) -> None:
+    """Claude is the one backend with real money in it, and this is where it says how much.
+
+    The money is ``total_cost_usd``, which is claude's own name for the cost. It goes before
+    the ending because the ending stops this turn being the running one, and what is said
+    about a turn that is over is dropped.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        clients[0].say(
+            _result(session_id=session_id, usage=dict(CLAUDE_COUNTS), total_cost_usd=0.0731)
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.token_usage == [
+            {
+                "turn": TURN,
+                "input_tokens": 120,
+                "output_tokens": 45,
+                "cached_input_tokens": 9000,
+                "cost_usd": 0.0731,
+            }
+        ]
+        assert sink.calls_in_order == ["token_usage", "turn_ended"]
+        await child.stop()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("usage", "cached_input_tokens", "input_tokens"),
+    [
+        pytest.param(
+            {"input_tokens": 120, "output_tokens": 45},
+            None,
+            120,
+            id="silent about cached tokens",
+        ),
+        pytest.param(None, None, None, id="silent about every count"),
+    ],
+)
+def test_a_count_claude_did_not_give_is_nothing_rather_than_zero(
+    tmp_path: Path,
+    usage: dict[str, Any] | None,
+    cached_input_tokens: int | None,
+    input_tokens: int | None,
+) -> None:
+    """A result message that says nothing about cached tokens has not said there were none.
+
+    Zero is a count claude gave. Absent is claude not counting, and the two are read very
+    differently by anyone looking at what a conversation cost.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        clients[0].say(_result(session_id=session_id, usage=usage, total_cost_usd=None))
+        await clients[0].until_taken_in()
+
+        assert sink.token_usage == [
+            {
+                "turn": TURN,
+                "input_tokens": input_tokens,
+                "output_tokens": 45 if usage is not None else None,
+                "cached_input_tokens": cached_input_tokens,
+                "cost_usd": None,
+            }
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_turn_that_was_stopped_still_says_what_has_been_spent(tmp_path: Path) -> None:
+    """An interrupted turn spent the money it spent before somebody stopped it."""
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        await child.cancel_running_turn()
+        clients[0].say(
+            _result(
+                session_id=session_id,
+                terminal_reason="aborted_streaming",
+                usage=dict(CLAUDE_COUNTS),
+                total_cost_usd=0.0731,
+            )
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.endings[0]["ending"] is ConversationTurnEnding.interrupted
+        assert [report["cost_usd"] for report in sink.token_usage] == [0.0731]
+        assert sink.calls_in_order == ["token_usage", "turn_ended"]
+        await child.stop()
+
+    _run(exercise)
+
+
+# --- when claude drops what it has summarised --------------------------------------------------
+
+
+def test_a_compaction_is_reported_and_the_rest_of_the_news_is_left_alone(tmp_path: Path) -> None:
+    """Claude summarises what came before and drops it, and says so with a system message.
+
+    Nothing about what was summarised travels: that it happened, and where in the thread, is
+    the whole of what a reader needs. Every other system message stays what it was — news
+    this adapter has no use for, which does not stop the stream.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        clients[0].say(
+            SystemMessage(
+                subtype="compact_boundary",
+                data={
+                    "session_id": session_id,
+                    "compactMetadata": {"trigger": "auto", "pre_tokens": 150000},
+                },
+            ),
+            SystemMessage(subtype="something_new", data={"session_id": session_id}),
+            _assistant(TextBlock(text="carrying on"), session_id=session_id),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.compactions == [TURN]
+        assert sink.calls_in_order == ["context_compacted"]
+        assert sink.message_texts == [(TURN, "carrying on")]
         await child.stop()
 
     _run(exercise)

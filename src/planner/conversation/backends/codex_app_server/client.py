@@ -55,6 +55,7 @@ CONSUMED_SERVER_NOTIFICATIONS: dict[str, type[BaseModel]] = {
     "item/reasoning/textDelta": bindings.ReasoningTextDeltaNotification,
     "item/reasoning/summaryTextDelta": bindings.ReasoningSummaryTextDeltaNotification,
     "turn/plan/updated": bindings.TurnPlanUpdatedNotification,
+    "thread/tokenUsage/updated": bindings.ThreadTokenUsageUpdatedNotification,
     "error": bindings.ErrorNotification,
 }
 

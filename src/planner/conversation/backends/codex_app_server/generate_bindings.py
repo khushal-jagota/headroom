@@ -105,6 +105,8 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     # ``item/plan/delta``, streams a proposed plan *document* and says so — that is prose,
     # not a list of steps, and calling it a todo list would be mislabelling it.
     (_V2_NAMESPACE, "TurnPlanUpdatedNotification"),
+    # What the thread has cost so far, every time codex recounts it.
+    (_V2_NAMESPACE, "ThreadTokenUsageUpdatedNotification"),
     # The two snapshot probes, which are requests like any other.
     (_V2_NAMESPACE, "GetAccountParams"),
     (_V2_NAMESPACE, "GetAccountResponse"),

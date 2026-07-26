@@ -190,6 +190,21 @@ export type ConversationEvent =
     >
   | Row<"permission_answered", { ask_id: string; option_id: string }>
   | Row<"model_changed", { model: string | null; reasoning_effort: string | null }>
+  /** What a turn has cost, as its backend counts it. Every field is absent when the
+   *  backend did not say — never zero, because a backend silent about cached tokens has
+   *  not said there were none. Only claude reports money. */
+  | Row<
+      "token_usage",
+      {
+        input_tokens?: number;
+        output_tokens?: number;
+        cached_input_tokens?: number;
+        cost_usd?: number;
+      }
+    >
+  /** The backend summarised what came before and dropped it. No payload: that it
+   *  happened, and where, is the whole of it. */
+  | Row<"context_compacted", Record<string, never>>
   /** The agent's plan as it stands now. Each row is the whole plan, not a change to it,
    *  so the newest one is the plan and the ones before it are history. */
   | Row<"plan_updated", { entries: PlanEntry[] }>

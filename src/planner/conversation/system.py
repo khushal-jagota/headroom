@@ -64,6 +64,7 @@ from planner.conversation.contracts import (
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
     AgentMessageEventPayload,
+    ContextCompactedEventPayload,
     ConversationEventPayload,
     ConversationLiveTailFrame,
     ConversationTurnEnding,
@@ -76,6 +77,7 @@ from planner.conversation.events import (
     PromptDeliveryRefusedEventPayload,
     PromptDiscardedEventPayload,
     PromptEventPayload,
+    TokenUsageEventPayload,
     ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
     ToolCallStartedEventPayload,
@@ -1219,6 +1221,29 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
         return running
 
+    async def _on_token_usage_reported(
+        self,
+        state: _ConversationState,
+        turn_token: TurnToken,
+        payload: TokenUsageEventPayload,
+    ) -> None:
+        if await self._hold_for_the_live_turn(state, turn_token) is None:
+            return
+        try:
+            await self._append_event(state, payload)
+        finally:
+            state.lock.release()
+
+    async def _on_context_compacted(
+        self, state: _ConversationState, turn_token: TurnToken
+    ) -> None:
+        if await self._hold_for_the_live_turn(state, turn_token) is None:
+            return
+        try:
+            await self._append_event(state, ContextCompactedEventPayload())
+        finally:
+            state.lock.release()
+
     async def _on_agent_message_completed(
         self, state: _ConversationState, turn_token: TurnToken, content: MessageContent
     ) -> None:
@@ -1591,6 +1616,34 @@ class _CoreBackendEventSink:
     ) -> None:
         self._enqueue(
             partial(self._system._on_agent_message_completed, self._state, turn_token, content)
+        )
+
+    async def token_usage_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+        cost_usd: float | None,
+    ) -> None:
+        self._enqueue(
+            partial(
+                self._system._on_token_usage_reported,
+                self._state,
+                turn_token,
+                TokenUsageEventPayload(
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cached_input_tokens=cached_input_tokens,
+                    cost_usd=cost_usd,
+                ),
+            )
+        )
+
+    async def context_compacted(self, turn_token: TurnToken) -> None:
+        self._enqueue(
+            partial(self._system._on_context_compacted, self._state, turn_token)
         )
 
     async def tool_call_started(

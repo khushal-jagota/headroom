@@ -68,6 +68,8 @@ const {
   promptLabelFor,
   readableDetail,
   refusalSentence,
+  tokenUsageSentence,
+  formatCostUsd,
   toolCallLine,
   toolGlyphKind,
   stoppedSentence,
@@ -1735,6 +1737,38 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.deepEqual(rows[0].content, withAPicture, "your own message keeps its picture");
   assert.deepEqual(rows[1].content, withAPicture, "and so does the agent's");
   assert.deepEqual(rows[2].content, [{ piece: "text", text: "and this is only words" }]);
+}
+
+// --- what a turn cost, and where the thread was cut ------------------------------------------
+
+{
+  const rows = transcriptRows({
+    events: [
+      event(1, "token_usage", {
+        input_tokens: 41_000,
+        output_tokens: 920,
+        cached_input_tokens: 38_400,
+        cost_usd: 0.42
+      }),
+      event(2, "context_compacted", {}),
+      // Only what the backend actually counted. A backend that said nothing about cached
+      // tokens or money contributes neither, rather than a zero it never said.
+      event(3, "token_usage", { input_tokens: 512 })
+    ],
+    latestSequence: 3,
+    toolCallProgress: {},
+    streamingAgentText: ""
+  });
+  assert.equal(rows[0].kind, "token_usage");
+  assert.equal(rows[1].kind, "context_compacted");
+  assert.equal(tokenUsageSentence(rows[0]), "41.0k in · 920 out · 38.4k cached · $0.42");
+  assert.equal(tokenUsageSentence(rows[2]), "512 in");
+  assert.equal(rows[2].costUsd, null, "a cost the backend never gave is absent, not zero");
+
+  // Money to the cent, except where that would round a real cost away to nothing.
+  assert.equal(formatCostUsd(1.5), "$1.50");
+  assert.equal(formatCostUsd(0.0004), "$0.0004");
+  assert.equal(formatCostUsd(0), "$0.00");
 }
 
 await rm(directory, { recursive: true, force: true });

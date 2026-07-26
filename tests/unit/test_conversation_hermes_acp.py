@@ -939,9 +939,13 @@ class _RecordingSink:
         self.message_files: ConversationMessageFiles | None = None
         self.endings: list[ConversationTurnEnding] = []
         self.asks: list[BackendPermissionAsk] = []
+        self.token_usage: list[dict[str, object]] = []
+        self.compactions = 0
         self.vendor_session_cursor: str | None = None
         self._turn_over = asyncio.Event()
         self._an_ask_arrived = asyncio.Event()
+        self._a_compaction_arrived = asyncio.Event()
+        self._token_usage_arrived = asyncio.Event()
 
     def expect_another_turn(self) -> None:
         self._turn_over.clear()
@@ -966,6 +970,37 @@ class _RecordingSink:
     async def wait_for_an_ask(self) -> None:
         await self._an_ask_arrived.wait()
         self._an_ask_arrived.clear()
+
+    async def wait_for_token_usage(self) -> None:
+        await self._token_usage_arrived.wait()
+        self._token_usage_arrived.clear()
+
+    async def wait_for_a_compaction(self) -> None:
+        await self._a_compaction_arrived.wait()
+        self._a_compaction_arrived.clear()
+
+    async def token_usage_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+        cost_usd: float | None,
+    ) -> None:
+        self.token_usage.append(
+            {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cached_input_tokens": cached_input_tokens,
+                "cost_usd": cost_usd,
+            }
+        )
+        self._token_usage_arrived.set()
+
+    async def context_compacted(self, turn_token: TurnToken) -> None:
+        self.compactions += 1
+        self._a_compaction_arrived.set()
 
     async def permission_ask_raised(
         self, turn_token: TurnToken, ask: BackendPermissionAsk
@@ -1097,5 +1132,175 @@ def test_a_picture_hermes_hands_back_is_kept_and_becomes_a_piece_of_its_message(
             assert picture.media_type == "image/png"
             assert sink.message_files is not None
             assert await sink.message_files.read("c", picture.stored_file_id) == b"a drawing"
+
+    _run(exercise)
+
+
+# --- what a turn cost, and where the thread was cut ------------------------------------------
+
+
+async def _start_the_child_and_a_turn(child: HermesAcpBackendChild, workspace: Path) -> None:
+    """A spawned child with its first turn running, which is where a turn's news arrives."""
+    await child.start(_resolved_start(workspace), vendor_session_cursor=None)
+    await _write_the_turns_prompt(child, 1)
+
+
+async def _write_the_turns_prompt(child: HermesAcpBackendChild, turn_number: int) -> None:
+    await child.write_prompt(
+        TurnToken(conversation_id="c", turn_number=turn_number),
+        text_message_content("work"),
+        sender_label="owner",
+        mode=PromptDeliveryMode.run_when_free,
+        model_change=None,
+        reasoning_effort_change=None,
+    )
+
+
+def test_the_counts_hermes_put_on_a_turns_answer_are_reported_as_it_counted_them(
+    tmp_path: Path,
+) -> None:
+    """ACP carries a turn's token counts on the answer that ends it, and they were dropped.
+
+    A turn hermes counted nothing for produces nothing at all, and a count it left off the
+    ones it did carry stays off: silence about cached tokens is not a claim that none were
+    read, and a nought here would be a number nobody counted.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            await control.send({"command": "complete_turn"})
+            await sink.wait_for_the_turn_to_end()
+            assert sink.token_usage == []
+
+            sink.expect_another_turn()
+            await _write_the_turns_prompt(child, 2)
+            await control.send(
+                {
+                    "command": "complete_turn",
+                    "usage": {
+                        "input_tokens": 1200,
+                        "output_tokens": 340,
+                        "total_tokens": 1540,
+                        "thought_tokens": 90,
+                    },
+                }
+            )
+            await sink.wait_for_the_turn_to_end()
+
+            assert sink.token_usage == [
+                {
+                    "input_tokens": 1200,
+                    "output_tokens": 340,
+                    "cached_input_tokens": None,
+                    "cost_usd": None,
+                }
+            ]
+
+    _run(exercise)
+
+
+def test_the_cache_hermes_read_from_is_reported_as_the_cached_input_tokens_it_is(
+    tmp_path: Path,
+) -> None:
+    """ACP names a cache read separately from the input, and so does the record."""
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            await control.send(
+                {
+                    "command": "complete_turn",
+                    "usage": {
+                        "input_tokens": 1200,
+                        "output_tokens": 340,
+                        "total_tokens": 1540,
+                        "cached_read_tokens": 900,
+                    },
+                }
+            )
+            await sink.wait_for_the_turn_to_end()
+
+            assert sink.token_usage == [
+                {
+                    "input_tokens": 1200,
+                    "output_tokens": 340,
+                    "cached_input_tokens": 900,
+                    "cost_usd": None,
+                }
+            ]
+
+    _run(exercise)
+
+
+def test_the_tokens_hermes_says_it_is_carrying_are_reported_while_the_turn_runs(
+    tmp_path: Path,
+) -> None:
+    """The one place hermes states a cost, which used to fall past every arm and go.
+
+    What this update mostly carries is how full the context is — used out of size — which
+    is what the turn has LEFT rather than what it spent, and that is a different fact from
+    the turn's own counts with nowhere in the record to go. So an update that states no
+    cost produces no row: recording occupancy as this turn's input tokens would put a
+    number under a name that means something else, and it would disagree with the count
+    the turn's own answer gives.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await _start_the_child_and_a_turn(child, tmp_path)
+
+            # How full the context is, and nothing about money. Nothing is recorded.
+            await control.send({"command": "emit_usage_update", "used": 41000, "size": 200000})
+            # A cost in a currency this record has no field for is left rather than
+            # converted at a rate nobody supplied.
+            await control.send(
+                {
+                    "command": "emit_usage_update",
+                    "used": 42000,
+                    "size": 200000,
+                    "cost": {"amount": 0.31, "currency": "GBP"},
+                }
+            )
+            await control.send(
+                {
+                    "command": "emit_usage_update",
+                    "used": 43000,
+                    "size": 200000,
+                    "cost": {"amount": 0.42, "currency": "USD"},
+                }
+            )
+            await sink.wait_for_token_usage()
+
+            assert sink.token_usage == [
+                {
+                    "input_tokens": None,
+                    "output_tokens": None,
+                    "cached_input_tokens": None,
+                    "cost_usd": 0.42,
+                }
+            ]
+
+    _run(exercise)
+
+
+def test_a_compaction_is_reported_and_the_same_update_about_anything_else_is_not(
+    tmp_path: Path,
+) -> None:
+    """Hermes says it compacted inside its own metadata, and only there.
+
+    The update it says it on is the one it also sends when it has merely retitled the
+    session, so the update arriving is not the fact — the reason it gives for replacing its
+    internal session is. An ordinary one is sent first, and it goes past without a word.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await _start_the_child_and_a_turn(child, tmp_path)
+            await control.send({"command": "emit_session_info_update", "compacted": False})
+            await control.send({"command": "emit_session_info_update", "compacted": True})
+            await sink.wait_for_a_compaction()
+
+            assert sink.compactions == 1
 
     _run(exercise)

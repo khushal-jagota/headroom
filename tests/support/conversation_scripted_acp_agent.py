@@ -46,6 +46,7 @@ from acp.schema import (
     AgentPlanUpdate,
     AgentThoughtChunk,
     ContentToolCallContent,
+    Cost,
     ImageContentBlock,
     Implementation,
     InitializeResponse,
@@ -57,12 +58,15 @@ from acp.schema import (
     RequestPermissionRequest,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
+    SessionInfoUpdate,
     SessionNotification,
     SetSessionConfigOptionResponse,
     TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
     ToolCallUpdate,
+    Usage,
+    UsageUpdate,
 )
 from acp.stdio import stdio_streams
 from acp.utils import serialize_params
@@ -108,6 +112,27 @@ def _block_report(block: Any, steered: bool) -> dict[str, Any]:
     if isinstance(block, ImageContentBlock):
         return {"piece": "image", "media_type": block.mime_type, "data": block.data}
     return {"piece": "unknown"}
+
+
+def _scripted_usage(usage: Any) -> Usage | None:
+    """The token counts a test wants on the answer that ends a turn, if it wants any.
+
+    A count left out of the command is left off the answer, because a turn hermes counted
+    nothing for and a turn it counted zero for are two different things.
+    """
+    if not isinstance(usage, dict):
+        return None
+    return Usage(
+        input_tokens=int(usage["input_tokens"]),
+        output_tokens=int(usage["output_tokens"]),
+        total_tokens=int(usage["total_tokens"]),
+        thought_tokens=_optional_count(usage.get("thought_tokens")),
+        cached_read_tokens=_optional_count(usage.get("cached_read_tokens")),
+    )
+
+
+def _optional_count(value: Any) -> int | None:
+    return None if value is None else int(value)
 
 
 @dataclass(slots=True)
@@ -289,7 +314,11 @@ class ScriptedAcpAgent:
             case "report":
                 return self._report()
             case "complete_turn":
-                self._finish_open_turn(PromptResponse(stop_reason="end_turn"))
+                self._finish_open_turn(
+                    PromptResponse(
+                        stop_reason="end_turn", usage=_scripted_usage(command.get("usage"))
+                    )
+                )
                 return {"ok": True}
             case "fail_turn":
                 self._fail_open_turn(str(command.get("reason", "the agent fell over")))
@@ -322,6 +351,12 @@ class ScriptedAcpAgent:
                 return {"ok": True}
             case "emit_tool_call_finished":
                 await self._emit_tool_call_finished(command)
+                return {"ok": True}
+            case "emit_usage_update":
+                await self._emit_usage_update(command)
+                return {"ok": True}
+            case "emit_session_info_update":
+                await self._emit_session_info_update(bool(command.get("compacted", False)))
                 return {"ok": True}
             case "take_this_long_over_a_cancel":
                 self._seconds_to_take_over_a_cancel = float(command["seconds"])
@@ -514,6 +549,55 @@ class ScriptedAcpAgent:
                         content=TextContentBlock(type="text", text=str(command.get("detail", ""))),
                     )
                 ],
+            )
+        )
+
+    async def _emit_usage_update(self, command: dict[str, Any]) -> None:
+        """Hermes' context indicator: what the session carries, in how big a window, and
+        what it has cost when hermes puts a figure on it."""
+        stated_cost = command.get("cost")
+        await self._notify_session_update(
+            UsageUpdate(
+                session_update="usage_update",
+                used=int(command["used"]),
+                size=int(command["size"]),
+                cost=(
+                    None
+                    if stated_cost is None
+                    else Cost(
+                        amount=float(stated_cost["amount"]),
+                        currency=str(stated_cost["currency"]),
+                    )
+                ),
+            )
+        )
+
+    async def _emit_session_info_update(self, compacted: bool) -> None:
+        """The update hermes sends when it has changed something about the session itself.
+
+        A compaction is one of those things, and the only place it is said is hermes' own
+        ``_meta``: the ACP session id never moves, so what hermes reports is that its
+        internal session was replaced and that compression is why. An update about anything
+        else — a title it has just written — carries the same metadata without a reason.
+        """
+        provenance: dict[str, Any] = {
+            "acpSessionId": self.account.session_id or "",
+            "currentHermesSessionId": "hermes-session-2",
+            "rootHermesSessionId": "hermes-session-1",
+            "parentHermesSessionId": "hermes-session-1",
+            "sessionKind": "continuation" if compacted else "root",
+            "compressionDepth": 1 if compacted else 0,
+        }
+        if compacted:
+            provenance["previousHermesSessionId"] = "hermes-session-1"
+            provenance["reason"] = "compression"
+            provenance["creatorKind"] = "compression"
+        await self._notify_session_update(
+            SessionInfoUpdate(
+                session_update="session_info_update",
+                title="A scripted session",
+                updated_at="2026-01-01T00:00:00+00:00",
+                field_meta={"hermes": {"sessionProvenance": provenance}},
             )
         )
 

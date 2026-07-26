@@ -72,6 +72,29 @@ deleting a Ticket leaves its conversation behind. A file removed by either would
 turn a picture somebody sent into a picture nobody can see, while the row still
 says a picture was sent.
 
+## What a turn cost, and where the thread was cut
+
+Two more kinds of row, both of them facts the backends were already reporting and
+Panels was already throwing away.
+
+**What it cost.** Each backend counts differently and only one of them knows
+about money, so every number is optional and an absent one means the backend did
+not say — never zero. Hermes gives the turn's own input, output and cached counts
+on the answer that ends it, and states a cost on its context update when it
+states one at all; a cost in a currency this record has no field for is left
+alone rather than converted at a rate nobody supplied. Codex gives running totals
+for the thread and no money. Claude gives running totals and `total_cost_usd`,
+which is the one number claude itself calls the cost. The pane draws it as the
+quietest line on the page.
+
+**Where the thread was cut.** A backend that summarises what came before and
+drops it leaves a transcript whose earlier context has silently gone. All three
+do it, none of them was asked to by Panels, and now each says so: codex sends it
+as an item, claude as a system message, and hermes inside its own metadata on a
+session update — the ACP protocol has no word for compaction at all, so hermes'
+own `_meta` is the only place it appears. The thread draws it as a seam, in the
+same stylesheet the pane that came before drew the same thing with.
+
 ## Sending
 
 Send has one knob with three settings. The default runs the message when the

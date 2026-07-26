@@ -428,6 +428,115 @@ def test_the_turns_plan_comes_through_whole_in_this_systems_own_words(
     _run(exercise)
 
 
+def test_what_the_work_has_cost_is_codexs_running_total_and_never_a_price(
+    tmp_path: Path,
+) -> None:
+    """Codex counts two things; the running total is the one this passes on.
+
+    ``last`` is the model request that has just answered, on its own. Every request is
+    charged for the whole conversation it was sent, so requests cannot be added up into
+    what the work cost — ``total`` is codex's own answer to that and is what goes through.
+    The two are given different numbers here so that reporting the wrong one is visible.
+    """
+
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {
+                            "do": "token_usage",
+                            "last": {
+                                "inputTokens": 7,
+                                "outputTokens": 3,
+                                "cachedInputTokens": 1,
+                            },
+                            "total": {
+                                "inputTokens": 900,
+                                "outputTokens": 120,
+                                "cachedInputTokens": 640,
+                            },
+                        },
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("do some work"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            # Codex says nothing about money, and none is worked out here from one.
+            assert scripted.sink.token_usages == [(900, 120, 640, None)]
+
+    _run(exercise)
+
+
+def test_a_count_codex_replays_for_a_turn_that_is_over_is_not_this_turns(
+    tmp_path: Path,
+) -> None:
+    """Codex replays stored usage after a resume, naming turns that are long finished."""
+
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {
+                            "do": "token_usage",
+                            "turn_id": "turn-long-over",
+                            "total": {"inputTokens": 11, "outputTokens": 22},
+                        },
+                        {
+                            "do": "token_usage",
+                            "total": {"inputTokens": 33, "outputTokens": 44},
+                        },
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("do some work"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.token_usages == [(33, 44, 0, None)]
+
+    _run(exercise)
+
+
+def test_a_compaction_codex_did_on_its_own_is_told_once_and_is_not_a_tool_call(
+    tmp_path: Path,
+) -> None:
+    """Codex sends the compaction as an item, started and then completed; one row is right."""
+
+    async def exercise() -> None:
+        compaction = {"type": "contextCompaction", "id": "cc-1"}
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "item_started", "item": compaction},
+                        {"do": "item_completed", "item": compaction},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("keep going"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.compactions == 1
+            assert scripted.sink.tool_calls_started == []
+            assert scripted.sink.tool_calls_finished == []
+
+    _run(exercise)
+
+
 def test_a_turn_still_running_reports_nothing_finished_for_it(tmp_path: Path) -> None:
     async def exercise() -> None:
         script = {
@@ -897,9 +1006,11 @@ def test_a_notification_this_reads_that_will_not_decode_is_said_out_loud(
     warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
     assert any("item/agentMessage/delta" in record.getMessage() for record in warnings)
     # The one nothing here reads is noise from a protocol far larger than this adapter uses.
-    assert not any("thread/tokenUsage/updated" in record.getMessage() for record in warnings)
+    assert not any(
+        "mcpServer/startupStatus/updated" in record.getMessage() for record in warnings
+    )
     assert any(
-        "thread/tokenUsage/updated" in record.getMessage()
+        "mcpServer/startupStatus/updated" in record.getMessage()
         for record in caplog.records
         if record.levelno == logging.DEBUG
     )
@@ -952,6 +1063,8 @@ class _RecordingSink:
         self.tool_calls_progressed: list[tuple[str, str]] = []
         self.thinking_pulses: int = 0
         self.plans: list[list[tuple[str, str]]] = []
+        self.token_usages: list[tuple[int | None, int | None, int | None, float | None]] = []
+        self.compactions: int = 0
         self.tool_calls_finished: list[tuple[str, ToolCallStatus]] = []
         self.asks: list[BackendPermissionAsk] = []
         self.endings: list[ConversationTurnEnding] = []
@@ -980,6 +1093,20 @@ class _RecordingSink:
 
     async def plan_updated(self, turn_token: TurnToken, entries: Any) -> None:
         self.plans.append([(entry.text, str(entry.status)) for entry in entries])
+
+    async def token_usage_reported(
+        self,
+        turn_token: TurnToken,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+        cost_usd: float | None,
+    ) -> None:
+        self.token_usages.append((input_tokens, output_tokens, cached_input_tokens, cost_usd))
+
+    async def context_compacted(self, turn_token: TurnToken) -> None:
+        self.compactions += 1
 
 
     @property

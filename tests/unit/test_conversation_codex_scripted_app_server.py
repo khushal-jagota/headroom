@@ -225,8 +225,23 @@ class ScriptedAppServer:
                         "delta": action["text"],
                     },
                 )
+            case "token_usage":
+                await self._notify(
+                    "thread/tokenUsage/updated",
+                    {
+                        "threadId": self._thread_id,
+                        "turnId": action.get("turn_id", turn_id),
+                        "tokenUsage": {
+                            "last": _token_usage_breakdown(action.get("last", {})),
+                            "total": _token_usage_breakdown(action.get("total", {})),
+                        },
+                    },
+                )
             case "unknown_notification":
-                await self._notify("thread/tokenUsage/updated", {**route, "usage": {}})
+                await self._notify(
+                    "mcpServer/startupStatus/updated",
+                    {"threadId": self._thread_id, "name": "some-server", "status": "ready"},
+                )
             case "undecodable_agent_delta":
                 await self._notify(
                     "item/agentMessage/delta", {**route, "itemId": action["item_id"]}
@@ -336,6 +351,23 @@ class ScriptedAppServer:
     def _write_down(self, entry: dict[str, Any]) -> None:
         with self._transcript.open("a", encoding="utf-8") as transcript:
             transcript.write(json.dumps(entry) + "\n")
+
+
+def _token_usage_breakdown(numbers: dict[str, int]) -> dict[str, int]:
+    """One of codex's two counts, with every field it always sends filled in.
+
+    Codex's breakdown requires all five, so a script that only cares about two still has to
+    send a breakdown that decodes — otherwise the exercise would be against a protocol
+    codex does not speak.
+    """
+    return {
+        "cachedInputTokens": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "reasoningOutputTokens": 0,
+        "totalTokens": 0,
+        **numbers,
+    }
 
 
 def _turn(turn_id: str, *, status: str = "inProgress", error: Any = None) -> dict[str, Any]:

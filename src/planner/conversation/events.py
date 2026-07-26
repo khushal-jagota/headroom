@@ -56,6 +56,8 @@ class ConversationEventKind(StrEnum):
     permission_answered = "permission_answered"
     plan_updated = "plan_updated"
     model_changed = "model_changed"
+    token_usage = "token_usage"
+    context_compacted = "context_compacted"
     turn_ended = "turn_ended"
 
 
@@ -271,6 +273,41 @@ class ModelChangedEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class TokenUsageEventPayload:
+    """What a turn cost, as the backend counted it.
+
+    Every field is optional because the three backends count different things and only one
+    of them knows about money. Absent means the backend did not say — never zero, because a
+    backend that says nothing about cached tokens has not told you there were none.
+
+    It is a row of its own rather than part of the turn's ending, because usage is reported
+    when the backend reports it: sometimes during the turn, sometimes with its result.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.token_usage
+
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    cost_usd: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCompactedEventPayload:
+    """The backend summarised what came before and dropped it.
+
+    No fields: what a reader needs is that it happened, and where. Without this row a
+    transcript's earlier context has silently gone with nothing in the thread saying why —
+    which reads as an agent that has forgotten rather than one that was compacted.
+
+    Panels never initiates it. Compaction has always happened; only the record noting it is
+    new.
+    """
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.context_compacted
+
+
+@dataclass(frozen=True, slots=True)
 class TurnEndedEventPayload:
     """A turn that has stopped running, and why.
 
@@ -295,6 +332,8 @@ type ConversationEventPayload = (
     | PermissionAnsweredEventPayload
     | PlanUpdatedEventPayload
     | ModelChangedEventPayload
+    | TokenUsageEventPayload
+    | ContextCompactedEventPayload
     | TurnEndedEventPayload
 )
 
@@ -430,6 +469,15 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case ModelChangedEventPayload():
             return {"model": payload.model, "reasoning_effort": payload.reasoning_effort}
+        case TokenUsageEventPayload():
+            return {
+                **_entry_if_minted("input_tokens", payload.input_tokens),
+                **_entry_if_minted("output_tokens", payload.output_tokens),
+                **_entry_if_minted("cached_input_tokens", payload.cached_input_tokens),
+                **_entry_if_minted("cost_usd", payload.cost_usd),
+            }
+        case ContextCompactedEventPayload():
+            return {}
         case TurnEndedEventPayload():
             return {"ending": str(payload.ending), "error_summary": payload.error_summary}
         case _:
@@ -512,6 +560,15 @@ def _payload_from_json_object(
                 model=_optional_text(stored, "model"),
                 reasoning_effort=_optional_text(stored, "reasoning_effort"),
             )
+        case ConversationEventKind.token_usage:
+            return TokenUsageEventPayload(
+                input_tokens=_optional_whole_number(stored, "input_tokens"),
+                output_tokens=_optional_whole_number(stored, "output_tokens"),
+                cached_input_tokens=_optional_whole_number(stored, "cached_input_tokens"),
+                cost_usd=_optional_number(stored, "cost_usd"),
+            )
+        case ConversationEventKind.context_compacted:
+            return ContextCompactedEventPayload()
         case ConversationEventKind.turn_ended:
             return TurnEndedEventPayload(
                 ending=ConversationTurnEnding(_text(stored, "ending")),
@@ -544,6 +601,16 @@ def _optional_text(stored: dict[str, Any], field_name: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be text or absent")
     return value
+
+
+def _optional_number(stored: dict[str, Any], field_name: str) -> float | None:
+    """A number that may have a fraction, for the one field that is money."""
+    value = stored.get(field_name)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a number or absent")
+    return float(value)
 
 
 def _optional_whole_number(stored: dict[str, Any], field_name: str) -> int | None:

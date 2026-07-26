@@ -670,6 +670,11 @@ class ClaudeAgentSdkBackendChild:
                 await self._on_user_message(turn, message)
             case ResultMessage():
                 await self._on_result_message(turn, message)
+            case SystemMessage(subtype="compact_boundary"):
+                # Claude summarised the conversation so far and dropped what it summarised.
+                # What it summarised is not kept and there is nothing to keep: that it
+                # happened, and where in the thread, is the whole of what a reader needs.
+                await self._sink.context_compacted(turn.token)
             case _:
                 LOGGER.debug(
                     "conversation %s: nothing to do with a %s",
@@ -813,12 +818,13 @@ class ClaudeAgentSdkBackendChild:
             )
 
     async def _on_result_message(self, turn: _TurnInFlight, message: ResultMessage) -> None:
-        """The turn stopped running, and this says how.
+        """The turn stopped running, and this says how — and what has been spent.
 
         Two things say it was stopped rather than finished, and both are facts rather than
         readings of an error's wording: the CLI's own name for a turn that was aborted, and
         this adapter having asked for the interrupt itself.
         """
+        await self._report_what_has_been_spent(turn, message)
         if turn.cancel_requested or message.terminal_reason in ABORTED_TERMINAL_REASONS:
             await self._end_turn(turn, ConversationTurnEnding.interrupted, None)
             return
@@ -828,6 +834,36 @@ class ClaudeAgentSdkBackendChild:
             )
             return
         await self._end_turn(turn, ConversationTurnEnding.completed, None)
+
+    async def _report_what_has_been_spent(
+        self, turn: _TurnInFlight, message: ResultMessage
+    ) -> None:
+        """The tokens and the money, exactly as claude counts them.
+
+        Claude counts by the session rather than by the turn: every request is added into
+        one running tally for the child, and that tally is what goes on every result message
+        it sends. So these are totals for the conversation so far, which is what the seam
+        asks for from a backend that reports running totals.
+
+        ``total_cost_usd`` is the money, because that is the number claude itself calls the
+        cost. The per-model ``costUSD`` figures beside it are that same total split by which
+        model earned it, and adding them back up would be arriving at the number claude has
+        already given.
+
+        It is reported before the ending because the ending is what stops this turn being
+        the running one, and news about a turn that is over is dropped.
+
+        A count claude did not give is nothing rather than zero: a result message that says
+        nothing about cached tokens has not said the turn read none.
+        """
+        counted = message.usage or {}
+        await self._sink.token_usage_reported(
+            turn.token,
+            input_tokens=_token_count(counted.get("input_tokens")),
+            output_tokens=_token_count(counted.get("output_tokens")),
+            cached_input_tokens=_token_count(counted.get("cache_read_input_tokens")),
+            cost_usd=message.total_cost_usd,
+        )
 
     # --- permission asks -------------------------------------------------------------------
 
@@ -1150,6 +1186,11 @@ def _todo_write_plan(block: ToolUseBlock) -> tuple[PlanEntry, ...] | None:
             # showing a different plan.
             return None
     return tuple(entries)
+
+
+def _token_count(counted: Any) -> int | None:
+    """One of claude's token counts, when what it put there was a whole number."""
+    return counted if isinstance(counted, int) else None
 
 
 def _canonical_json(value: Any) -> str | None:
