@@ -989,10 +989,13 @@ def test_every_backend_has_a_card_whether_or_not_it_is_there() -> None:
 # --- the real machine, only when asked for by name ---------------------------------------------
 
 
-@pytest.mark.skipif(
+real_backend_probes_only = pytest.mark.skipif(
     os.environ.get("PANELS_REAL_BACKEND_PROBES") != "1",
     reason="touches the real CLIs on this machine; set PANELS_REAL_BACKEND_PROBES=1",
 )
+
+
+@real_backend_probes_only
 def test_the_real_backends_on_this_machine_answer() -> None:
     """The same probes against the CLIs that are actually installed here."""
 
