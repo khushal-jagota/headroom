@@ -2,7 +2,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "../lib/queryCatalogue";
   import { labelize, type FieldStageVisualState } from "../lib/ui";
-  import AcpConversation from "../components/AcpConversation.svelte";
+  import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
@@ -10,7 +10,6 @@
 
   let { ticketId }: { ticketId?: string } = $props();
 
-  const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
   const board = createQuery(() => queries.board());
   let columns = $derived(board.data?.columns || []);
   let allCards = $derived(
@@ -245,10 +244,7 @@
         >
           {#if rightPaneMode === "chief"}
             <div class="board-workspace-desk-inner">
-              <AcpConversation
-                employeeId={chiefOfStaffEntityId}
-                employeeLabel="Chief of Staff"
-              />
+              <ChiefConversation />
             </div>
           {:else if selectedCard}
             {#key selectedCard.id}

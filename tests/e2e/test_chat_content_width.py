@@ -1,9 +1,8 @@
 """Route-level geometry and responsive visibility for every chat host.
 
-The pane a host holds is named rather than assumed: the Ticket and the Workspace are on
-the conversation system's own pane, and the Chief is still on the one being replaced. The
-geometry contract is the same for both — the pane fits its host and the thread fits the
-pane — so the selectors are a parameter and the assertions are not.
+Every host is on the conversation system's own pane now. The geometry contract is that
+the pane fits its host and the thread fits the pane, on every route that shows one and at
+the width where each is meant to appear.
 """
 
 from __future__ import annotations
@@ -16,8 +15,6 @@ WAIT_MS = 10_000
 
 CONVERSATION_PANE = "[data-conversation2-pane]"
 CONVERSATION_THREAD = "[data-conversation2-thread]"
-CHIEF_PANE = "[data-acp-conversation-pane]"
-CHIEF_THREAD = "[data-chat-messages]"
 
 
 def _open_route(
@@ -96,37 +93,31 @@ def test_chat_hosts_own_width_and_follow_the_960px_visibility_contract(
     ticket_id = ticket["id"]
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
-    # A Ticket's rail carries the conversation system's pane. The Workspace desk carries
-    # the Chief, which is still on the pane being replaced.
+    # A Ticket's rail, a Ticket inside the Workspace, and the Workspace desk showing the
+    # Chief. All three disappear below 961px rather than squeezing.
     route_cases = [
         (
             f"#/ticket/{ticket_id}",
             f'[data-screen="ticket"][data-ticket-id="{ticket_id}"] .chat-rail',
             ".chat-rail",
-            CONVERSATION_PANE,
-            CONVERSATION_THREAD,
         ),
         (
             f"#/workspace/{ticket_id}",
             f'[data-screen="workspace"] [data-screen="ticket"][data-ticket-id="{ticket_id}"]',
             ".board-workspace-right .chat-rail",
-            CONVERSATION_PANE,
-            CONVERSATION_THREAD,
         ),
         (
             "#/workspace",
             '[data-screen="workspace"] .board-workspace-desk-inner',
             ".board-workspace-desk-inner",
-            CHIEF_PANE,
-            CHIEF_THREAD,
         ),
     ]
 
-    for route, ready_selector, host_selector, pane, thread in route_cases:
+    for route, ready_selector, host_selector in route_cases:
         page = _open_route(browser, server.base, route, ready_selector, 961)
         try:
             assert page.locator(host_selector).is_visible()
-            _assert_bounded(page, host_selector, pane, thread)
+            _assert_bounded(page, host_selector)
             page.set_viewport_size({"width": 960, "height": 720})
             assert not page.locator(host_selector).is_visible()
         finally:
@@ -136,14 +127,14 @@ def test_chat_hosts_own_width_and_follow_the_960px_visibility_contract(
         browser,
         server.base,
         "#/chief",
-        f"[data-chief-of-staff-route] {CHIEF_PANE}",
+        f"[data-chief-of-staff-route] {CONVERSATION_PANE}",
         961,
     )
     try:
         assert chief.locator(".chief-chat-shell").is_visible()
-        _assert_bounded(chief, ".chief-chat-shell", CHIEF_PANE, CHIEF_THREAD)
+        _assert_bounded(chief, ".chief-chat-shell")
         chief.set_viewport_size({"width": 390, "height": 720})
         assert chief.locator(".chief-chat-shell").is_visible()
-        _assert_bounded(chief, ".chief-chat-shell", CHIEF_PANE, CHIEF_THREAD)
+        _assert_bounded(chief, ".chief-chat-shell")
     finally:
         chief.close()

@@ -228,6 +228,77 @@ async def send_to_ticket_conversation(
     return fate
 
 
+def read_agent_conversation(conn: sqlite3.Connection, agent_key: str) -> str | None:
+    """Which conversation this agent is currently talking in, or none.
+
+    An agent with no conversation has no row, so absence is the answer rather than a
+    column holding nothing.
+    """
+    row = conn.execute(
+        "SELECT conversation_id FROM agent_conversations WHERE agent_key = ?",
+        (agent_key,),
+    ).fetchone()
+    return None if row is None else str(row[0])
+
+
+async def start_agent_conversation(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    agent_key: str,
+    values: ConversationStartValues,
+) -> str:
+    """Start a conversation for an agent that is not a Ticket. Returns its id.
+
+    The same two steps a Ticket takes, in the same order: the conversation is created
+    first and the agent is pointed at it second, so the agent never names a conversation
+    that does not exist.
+    """
+    conversation_id = new_conversation_id()
+    await system.start_conversation(
+        ConversationStartRequest(
+            conversation_id=conversation_id,
+            backend_key=values.backend_key,
+            model=values.model,
+            reasoning_effort=values.reasoning_effort,
+            role_materials=values.role_materials,
+            workspace_folder=values.workspace_folder,
+            access=values.access,
+        )
+    )
+    with conn:
+        conn.execute(
+            "INSERT INTO agent_conversations (agent_key, conversation_id) VALUES (?, ?) "
+            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id",
+            (agent_key, conversation_id),
+        )
+    return conversation_id
+
+
+async def reset_agent_conversation(
+    system: ConversationSystem,
+    conn: sqlite3.Connection,
+    agent_key: str,
+) -> None:
+    """Kill this agent's conversation and unlink it, so the next start is a fresh one.
+
+    Killing rather than interrupting, for the reason a Ticket's reset gives: freeing the
+    agent would let the messages it was holding run, and starting again must not be the
+    thing that finally delivers them.
+
+    The unlink names the conversation that was killed, so an agent already pointed at a
+    newer one is left pointing at it.
+    """
+    conversation_id = read_agent_conversation(conn, agent_key)
+    if conversation_id is None:
+        return
+    await system.kill(conversation_id)
+    with conn:
+        conn.execute(
+            "DELETE FROM agent_conversations WHERE agent_key = ? AND conversation_id = ?",
+            (agent_key, conversation_id),
+        )
+
+
 async def reset_ticket_conversation(
     system: ConversationSystem,
     conn: sqlite3.Connection,

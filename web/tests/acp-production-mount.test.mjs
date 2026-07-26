@@ -31,16 +31,22 @@ assert.doesNotMatch(
   /capabilities|relay_chief_enabled|resolveRelayChiefFromMeta|markRelayChiefMetaError/
 );
 
+// Every production surface is on the conversation system's own pane. The Chief appears in
+// two places and both go through one component, so they are the same conversation rather
+// than two that happen to be started the same way.
 const routeExpectations = [
-  ["BoardRoute.svelte", /employeeId=\{chiefOfStaffEntityId\}/, /employeeLabel="Chief of Staff"/],
-  ["TicketRoute.svelte", /employeeId=\{stableId\}/, /employeeLabel=\{/],
-  ["ChiefOfStaffRoute.svelte", /employeeId=\{entityId\}/, /employeeLabel="Chief of Staff"/],
+  ["BoardRoute.svelte", /<ChiefConversation \/>/],
+  ["TicketRoute.svelte", /conversationId=\{detail\.employee_session_id\}/],
+  ["ChiefOfStaffRoute.svelte", /<ChiefConversation \/>/],
 ];
-for (const [fileName, identityPattern, labelPattern] of routeExpectations) {
+for (const [fileName, mountPattern] of routeExpectations) {
   const source = await readFile(new URL(`../src/routes/${fileName}`, import.meta.url), "utf8");
-  assert.match(source, /AcpConversation/);
-  assert.match(source, identityPattern);
-  assert.match(source, labelPattern);
+  assert.match(source, mountPattern);
+  assert.doesNotMatch(
+    source,
+    /AcpConversation/,
+    `${fileName} must not mount the pane being replaced`,
+  );
   assert.doesNotMatch(
     source,
     /ChatPanel|ChiefNeutralPane|relayChief|retryRelayChiefMeta|chatGatewayStatus|\/api\/chat|\/api\/relay/,

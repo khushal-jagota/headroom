@@ -31,7 +31,14 @@ assert.match(ticketRouteSource, /\/acknowledge-completed-response/);
 assert.match(boardRouteSource, /state: "needs-me", ariaLabel: "Needs you"/);
 assert.match(boardRouteSource, /state: "current-running", ariaLabel: "Agent working"/);
 assert.match(boardRouteSource, /state: "reply-seen", ariaLabel: "Agent reply seen"/);
-assert.match(ticketRouteSource, /deferInitialAttach=\{detail\.employee_configuration_editable\}/);
+// Nothing is attached on arrival any more, so there is no attach to defer: the
+// conversation system spawns nothing until a message is sent, which is what the old
+// deferInitialAttach existed to avoid while a Ticket's configuration was still editable.
+// What the route passes instead is the conversation the Ticket names, and the two doors.
+assert.doesNotMatch(ticketRouteSource, /deferInitialAttach/);
+assert.match(ticketRouteSource, /conversationId=\{detail\.employee_session_id\}/);
+assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation`/);
+assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/reset`/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.match(workerConfigurationSource, /employee_launch_model/);
 assert.match(workerConfigurationSource, /employee_launch_reasoning_effort/);

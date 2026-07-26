@@ -414,7 +414,7 @@
   {errorNote}
   {connectionTrouble}
   composerPlaceholder={composerPlaceholder
-    ?? (started ? "Message the agent..." : "Send the first message to start it...")}
+    ?? (started ? `Message ${label}...` : "Send the first message to start it...")}
   composerDisabled={busy || opening}
   onSend={send}
   onStop={() => void stop()}

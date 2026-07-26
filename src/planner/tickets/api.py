@@ -71,6 +71,7 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_context.contracts import WorkerContextService
+from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_runtime_definitions,
     configured_worker_type_registry,
@@ -927,6 +928,44 @@ async def return_ticket_for_revision(
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.get("/chief/conversation")
+async def read_chief_conversation(conn: DbConn) -> JsonDict:
+    """Which conversation the Chief is currently talking in, or none."""
+    return {
+        "conversation_id": conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
+    }
+
+
+@router.post("/chief/conversation")
+async def start_chief_conversation(
+    conn: DbConn, ctx: Ctx, conversations: Conversations
+) -> JsonDict:
+    """Start the Chief's conversation. The same door a Ticket has, on the same writers.
+
+    What it starts as comes from the Chief's own managed settings, exactly as a Ticket's
+    comes from its worker type and its last choice. A Chief that already has a
+    conversation keeps it, for the reason a Ticket does: starting again would leave a
+    live conversation nothing could reach.
+    """
+    require_direct_write(ctx)
+    conversation_id = conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
+    if conversation_id is None:
+        conversation_id = await conversation_start.start_agent_conversation(
+            conversations, conn, CHIEF_SETTINGS_KEY, conversation_start.agent_resolve(conn)
+        )
+    return {"conversation_id": conversation_id}
+
+
+@router.post("/chief/conversation/reset")
+async def reset_chief_conversation(
+    conn: DbConn, ctx: Ctx, conversations: Conversations
+) -> JsonDict:
+    """Cut the Chief loose from its conversation. This is what New does."""
+    require_direct_write(ctx)
+    await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
+    return {"conversation_id": None}
 
 
 @router.post("/tickets/{ticket_id}/conversation")
