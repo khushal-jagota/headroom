@@ -312,6 +312,19 @@ try {
   assert.match(promptThread("the automatic loop", "owner"), /the automatic loop/);
   assert.match(promptThread("owner", null), /owner/, "with no pane label nothing is suppressed");
 
+  // And a message somebody else sent is a different kind of thing on the page, because a
+  // thread is scanned by shape before it is read by label.
+  assert.match(
+    promptThread("owner", "owner"),
+    /class="chat-u"/,
+    "the reader's own message is drawn as theirs"
+  );
+  assert.match(
+    promptThread("the automatic loop", "owner"),
+    /class="chat-system"/,
+    "a message the loop sent is not drawn in the reader's own voice"
+  );
+
   const completedThread = drawn(Transcript, {
     rows: [
       { key: "e1", kind: "turn_ended", sequence: 1, createdAt: 1_000, ending: "completed", errorSummary: null }

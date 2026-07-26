@@ -99,7 +99,14 @@
     {:else if item.row.kind === "prompt"}
       {@const label = promptLabelFor(item.row.senderLabel, ownSenderLabel)}
       {@const chip = modeChip(item.row.mode)}
-      <article class="chat-u" data-conversation2-row="prompt">
+      <!-- A message somebody else sent is a different kind of thing on the page, not the
+           reader's own with a note attached. A thread is scanned by shape before it is
+           read by label, so drawing the loop's prompts in the reader's own voice says
+           "you said this" and only then quietly corrects itself. -->
+      <article
+        class={label === null ? "chat-u" : "chat-system"}
+        data-conversation2-row="prompt"
+      >
         {#if label || chip}
           <div class="c2-label" data-conversation2-prompt-label>
             {label ?? ""}{#if chip}<span class="c2-chip">{chip}</span>{/if}
