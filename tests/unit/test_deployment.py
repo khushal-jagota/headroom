@@ -50,7 +50,7 @@ def test_app_deploy_proves_compatibility_then_backups_and_replaces_only_app(
     tmp_path: Path,
 ) -> None:
     current = tmp_path / "current"
-    _app(current / "app", SHA_A, "old")
+    _app(current / "app", SHA_A, "old", include_cli=False)
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
     data = current / "data"
     logs = current / "logs"
@@ -85,7 +85,8 @@ def test_app_deploy_proves_compatibility_then_backups_and_replaces_only_app(
 
 def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) -> None:
     current = tmp_path / "current"
-    _app(current / "app", SHA_A, "old")
+    _app(current / "app", SHA_A, "old", include_cli=False)
+    prior_artifact_digest = digest_app_artifact(current / "app")
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
     database = _database(current)
     events: list[str] = []
@@ -100,6 +101,10 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     )
     assert result.status == "rolled_back"
     assert (current / "app" / "old").is_file()
+    assert digest_app_artifact(current / "app") == prior_artifact_digest
+    assert json.loads((current / "app" / "manifest.json").read_text(encoding="utf-8"))[
+        "app_sha"
+    ] == SHA_A
     assert events == [
         "compatibility",
         f"backup:{SHA_A}",
@@ -314,6 +319,53 @@ def test_invalid_candidate_does_not_run_any_external_action(tmp_path: Path) -> N
     assert events == []
 
 
+def test_tampered_current_app_does_not_run_any_external_action(tmp_path: Path) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old", include_cli=False)
+    (current / "app" / "old").write_text("tampered", encoding="utf-8")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    database = _database(current)
+    events: list[str] = []
+
+    with pytest.raises(DeploymentError, match="current app"):
+        deploy_app(
+            candidate_app=candidate,
+            current_root=current,
+            source_db=database,
+            prove_compatibility=lambda *_: events.append("compatibility"),
+            backup=lambda _: events.append("backup"),
+            service=FakeService(events),
+            health=FakeHealth(events, set()),
+        )
+
+    assert events == []
+
+
+def test_redigested_incomplete_candidate_does_not_run_any_external_action(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    (candidate / "bin" / "panels").unlink()
+    _rewrite_artifact_digest(candidate)
+    database = _database(current)
+    events: list[str] = []
+
+    with pytest.raises(DeploymentError, match="runtime file is missing: bin/panels"):
+        deploy_app(
+            candidate_app=candidate,
+            current_root=current,
+            source_db=database,
+            prove_compatibility=lambda *_: events.append("compatibility"),
+            backup=lambda _: events.append("backup"),
+            service=FakeService(events),
+            health=FakeHealth(events, set()),
+        )
+
+    assert events == []
+
+
 def test_candidate_copy_failure_leaves_current_app_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -351,11 +403,20 @@ def test_staged_candidate_validation_failure_precedes_old_app_move(
     real_validate_app = deployment._validate_app
 
     def reject_staged(
-        app: Path, label: str, *, expected_sha: str | None = None
+        app: Path,
+        label: str,
+        *,
+        expected_sha: str | None = None,
+        require_runtime: bool = True,
     ):
         if label == "staged candidate app":
             raise DeploymentError("staged candidate app is invalid: injected")
-        return real_validate_app(app, label, expected_sha=expected_sha)
+        return real_validate_app(
+            app,
+            label,
+            expected_sha=expected_sha,
+            require_runtime=require_runtime,
+        )
 
     monkeypatch.setattr("planner.environments.deployment._validate_app", reject_staged)
     with pytest.raises(DeploymentError, match="staged candidate app is invalid"):
@@ -598,7 +659,13 @@ def _database(current: Path) -> Path:
     return database
 
 
-def _app(root: Path, sha: str, marker: str) -> Path:
+def _app(
+    root: Path,
+    sha: str,
+    marker: str,
+    *,
+    include_cli: bool = True,
+) -> Path:
     root.mkdir(parents=True)
     (root / marker).write_text(marker, encoding="utf-8")
     python = root / ".venv" / "bin" / "python"
@@ -617,9 +684,10 @@ def _app(root: Path, sha: str, marker: str) -> Path:
     launcher.parent.mkdir()
     launcher.write_text("#!/bin/sh\n", encoding="utf-8")
     launcher.chmod(0o755)
-    cli = root / "bin" / "panels"
-    cli.write_text("#!/bin/sh\n", encoding="utf-8")
-    cli.chmod(0o755)
+    if include_cli:
+        cli = root / "bin" / "panels"
+        cli.write_text("#!/bin/sh\n", encoding="utf-8")
+        cli.chmod(0o755)
     (root / "web" / "dist").mkdir(parents=True)
     (root / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
     (root / "agent_backends" / "node_modules").mkdir(parents=True)
@@ -638,3 +706,10 @@ def _app(root: Path, sha: str, marker: str) -> Path:
         encoding="utf-8",
     )
     return root
+
+
+def _rewrite_artifact_digest(app: Path) -> None:
+    manifest_path = app / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["artifact_digest"] = digest_app_artifact(app)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

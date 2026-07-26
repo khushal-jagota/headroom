@@ -31,7 +31,7 @@ def prove_previous_app_compatibility(
     if timeout_seconds <= 0:
         raise AppCompatibilityError("compatibility timeout must be positive")
     validate_app_manifest(candidate_app / "manifest.json", require_runtime=True)
-    current = validate_app_manifest(current_app / "manifest.json", require_runtime=True)
+    current = validate_app_manifest(current_app / "manifest.json", require_runtime=False)
     with tempfile.TemporaryDirectory(prefix="panels-app-compatibility-") as temporary:
         root = Path(temporary)
         disposable_db = root / "data" / "planning.db"
