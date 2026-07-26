@@ -42,6 +42,7 @@ from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.projects import data as projects_data
+from planner.runtime import conversation_start
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -926,6 +927,60 @@ async def return_ticket_for_revision(
         now=now,
     )
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/conversation")
+async def start_ticket_conversation(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    """Start this Ticket's conversation, so a person can talk to it before a step runs.
+
+    The readiness loop starts one when it has a step to send. This is the other door: a
+    Ticket nobody has run yet, opened by its owner, who types into it. Both doors reach
+    the same writer, so a conversation started by hand is the conversation the loop will
+    find and use.
+
+    A Ticket that already has one keeps it. Starting again would leave the conversation it
+    is pointing at running with nothing able to reach it.
+    """
+    require_direct_write(ctx)
+    now = clk.now_unix()
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    if ticket.employee_session_id is None:
+        await conversation_start.start_ticket_conversation(
+            conversations,
+            conn,
+            ticket,
+            conversation_start.worker_resolve(conn, ticket),
+            now=now,
+        )
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/conversation/reset")
+async def reset_ticket_conversation(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    """Cut this Ticket loose from its conversation. This is what New does.
+
+    The old conversation is killed rather than interrupted — its running turn stops and
+    everything it was holding is discarded — and the Ticket stops pointing at it. Nothing
+    is started here: the Ticket now has no conversation, which is the state the start door
+    above already knows how to answer.
+    """
+    require_direct_write(ctx)
+    now = clk.now_unix()
+    await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
+    return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
 
 
 @router.put("/tickets/{ticket_id}/notes/{field}")
