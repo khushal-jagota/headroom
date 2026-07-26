@@ -37,7 +37,8 @@ configuration. The existing Tailscale Serve route remains unchanged.
 ## Dedicated GitHub Actions runner
 
 Install the repository's self-hosted runner beneath
-`~/Coding/Panels/.github-runner`, then use `configure-deployment-runner.sh` with the
+`~/Deployments/Panels/deployment-runner`, alongside but outside `current`, then use
+`configure-deployment-runner.sh` with the
 repository URL and a short-lived registration token. The script registers the custom
 labels `production` and `panels-deploy`; GitHub adds `self-hosted` and `linux`. The
 unit requires that configured runner and runs its `run.sh`; the deploy workflow

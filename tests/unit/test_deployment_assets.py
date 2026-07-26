@@ -122,9 +122,9 @@ def test_deploy_workflow_and_user_runner_share_one_real_runner_contract() -> Non
     labels = ("self-hosted", "linux", "production", "panels-deploy")
     assert workflow.count(f"runs-on: [{', '.join(labels)}]") == 1
     assert all(label in unit for label in labels)
-    assert "WorkingDirectory=%h/Coding/Panels/.github-runner" in unit
-    assert "ExecStart=%h/Coding/Panels/.github-runner/run.sh" in unit
-    assert "ConditionPathExists=%h/Coding/Panels/.github-runner/.runner" in unit
+    assert "WorkingDirectory=%h/Deployments/Panels/deployment-runner" in unit
+    assert "ExecStart=%h/Deployments/Panels/deployment-runner/run.sh" in unit
+    assert "ConditionPathExists=%h/Deployments/Panels/deployment-runner/.runner" in unit
     assert "User=" not in unit
     assert "${{ runner.temp }}" not in workflow
     assert "PANELS_CANDIDATE_APP=$RUNNER_TEMP/panels-candidate-" in workflow
@@ -148,7 +148,7 @@ def test_runner_setup_registers_the_labels_requested_by_the_workflow(
 ) -> None:
     source = ASSET_ROOT / "configure-deployment-runner.sh"
     assert source.stat().st_mode & 0o111 == 0o111
-    runner_root = tmp_path / "Coding" / "Panels" / ".github-runner"
+    runner_root = tmp_path / "Deployments" / "Panels" / "deployment-runner"
     runner_root.mkdir(parents=True)
     calls = tmp_path / "calls"
     config = runner_root / "config.sh"
