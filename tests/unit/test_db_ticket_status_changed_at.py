@@ -23,7 +23,9 @@ from planner.tickets.contracts import NO_FURTHER, AtCap
 
 SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_v37.sql"
 PREVIOUS_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "ticket_status_changed_at"
+# The database is brought all the way up, so it comes to rest at the current head rather
+# than at the revision this module is about.
+HEAD_REVISION = "conversation_system_tables"
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {

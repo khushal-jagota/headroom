@@ -1,0 +1,646 @@
+"""The dev conversation pane loads real markup from the real server.
+
+The first two exercises are the ones a browser must make and node tests cannot: the route
+on a running ``panels serve`` renders the distinct empty state with the backend cards, and
+a conversation created through the HTTP API reloads into the pane surface.
+
+The rest are behaviours rather than markup — a message drawn before the server has
+answered, the words coming back when it gets nowhere, and where the thread scrolls to as a
+turn grows. All three are things only a browser does, so they are asserted here rather than
+looked at.
+
+Two things stand in for a real agent, which is not a repeatable gate. Rows are written
+straight into the record with the store the server itself uses, and read back over HTTP the
+way the browser reads any other row. And the send is held in the page, so the moment
+between pressing Enter and the server answering is a moment the test can stand inside.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import threading
+
+import httpx
+
+from planner.conversation2.contracts import PromptDeliveryMode
+from planner.conversation2.events import (
+    AgentMessageEventPayload,
+    ConversationEventPayload,
+    ConversationTurnEnding,
+    PromptEventPayload,
+    ToolCallFinishedEventPayload,
+    ToolCallStartedEventPayload,
+    ToolCallStatus,
+    TurnEndedEventPayload,
+)
+from planner.conversation2.storage import ConversationStore
+
+WAIT_MS = 10_000
+BACKEND_CARD_WAIT_MS = 30_000  # backend cards probe real CLIs with subprocess calls
+JUMP_BUTTON = "[aria-label='Jump to latest message']"
+
+# The send, held in the page until the test lets it go. Nothing else is touched: every
+# other request is the browser's own fetch, and the body handed over is the one the app
+# built, so what the test reads out of it is what the server would have received.
+HOLD_THE_SEND = """
+window.__heldSends = [];
+const realFetch = window.fetch.bind(window);
+window.fetch = (input, init) => {
+  const url = typeof input === 'string' ? input : input.url;
+  if (typeof url === 'string' && url.includes('/send')) {
+    return new Promise((resolve, reject) => {
+      window.__heldSends.push({
+        body: init && init.body ? JSON.parse(init.body) : null,
+        answer: (fate) => resolve(new Response(JSON.stringify(fate), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })),
+        turnAway: (detail) => resolve(new Response(JSON.stringify({ detail }), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' }
+        })),
+        fail: () => reject(new TypeError('the send got nowhere'))
+      });
+    });
+  }
+  return realFetch(input, init);
+};
+"""
+
+# What the thread is doing, in the same terms the pane itself uses: where it is scrolled
+# to, how much of it is in view, and where the bottom of its last piece of content sits.
+WHERE_THE_THREAD_IS = """
+() => {
+  const thread = document.querySelector('[data-conversation2-thread]');
+  // The transcript lays its rows out in the thread rather than in a box of its own, so
+  // anything without a shape is looked through to the things inside it that have one.
+  const content = [];
+  const consider = (element) => {
+    if (element.hasAttribute('data-conversation2-reserved-space')) return;
+    if (element.getClientRects().length > 0) { content.push(element); return; }
+    for (const inside of element.children) consider(inside);
+  };
+  for (const child of thread.children) consider(child);
+  const last = content[content.length - 1];
+  const threadTop = thread.getBoundingClientRect().top;
+  const outgoing = thread.querySelector('[data-conversation2-outgoing]');
+  const room = thread.querySelector('[data-conversation2-reserved-space]');
+  const answers = thread.querySelectorAll('[data-conversation2-row="agent_message"]');
+  const newestAnswer = answers[answers.length - 1] ?? null;
+  return {
+    scrollTop: Math.round(thread.scrollTop),
+    clientHeight: thread.clientHeight,
+    lastContentBottom: Math.round(last.getBoundingClientRect().bottom - threadTop),
+    outgoingTop: outgoing === null
+      ? null
+      : Math.round(outgoing.getBoundingClientRect().top - threadTop),
+    roomKept: room === null ? 0 : Math.round(room.getBoundingClientRect().height),
+    toolCallsOnScreen: thread.querySelectorAll('[data-conversation2-tool]').length,
+    // Where the newest answer sits in the reader's view, which is what has to stay put
+    // when something above it changes height or disappears.
+    newestAnswerTop: newestAnswer === null
+      ? null
+      : Math.round(newestAnswer.getBoundingClientRect().top - threadTop)
+  };
+}
+"""
+
+
+def _create_conversation(server, conversation_id: str) -> None:
+    created = httpx.post(
+        f"{server.base}/api/conversation2/conversations",
+        json={"conversation_id": conversation_id, "backend_key": "codex"},
+        timeout=10.0,
+    )
+    assert created.status_code == 201, created.text
+
+
+def _append_rows(server, conversation_id: str, *payloads: ConversationEventPayload) -> None:
+    """Write rows into the record, exactly as the conversation system writes them.
+
+    The store's calls are awaited, and this thread already belongs to the browser driver's
+    own loop, so the writing happens on a thread of its own and this one waits for it.
+    """
+    store = ConversationStore(str(server.db_path))
+
+    async def write() -> None:
+        for payload in payloads:
+            await store.append_event(conversation_id, payload)
+
+    fell_over: list[BaseException] = []
+
+    def run_it() -> None:
+        try:
+            asyncio.run(write())
+        except BaseException as error:  # noqa: BLE001 - re-raised on the calling thread
+            fell_over.append(error)
+
+    writer = threading.Thread(target=run_it)
+    writer.start()
+    writer.join()
+    if fell_over:
+        raise fell_over[0]
+
+
+def _let_the_browser_catch_up(page, rows_expected: int) -> None:
+    """Ask the page what it asks itself when it comes back to a tab.
+
+    The live tail only carries rows the running server wrote itself, so rows written
+    beside it arrive the other way the pane already has: say which row you hold and take
+    everything after it. That is the same call, down to the function.
+    """
+    page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+    page.wait_for_function(
+        "(expected) => document.querySelectorAll('[data-conversation2-row]').length >= expected",
+        arg=rows_expected,
+        timeout=WAIT_MS,
+    )
+
+
+def _a_turn_full_of_tool_calls(first_call: int) -> tuple[ConversationEventPayload, ...]:
+    """A turn whose work is what a reader scrolls up into — and what a fold takes away.
+
+    A settled turn puts its tool calls behind its fold, which takes them out of the page
+    entirely. That is the one thing in this thread that makes it shorter rather than
+    longer, and it happens under a reader who is reading exactly those lines.
+    """
+    rows: list[ConversationEventPayload] = [
+        PromptEventPayload(
+            text="the question with the work",
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+        )
+    ]
+    for call in range(12):
+        rows.append(
+            ToolCallStartedEventPayload(
+                tool_call_id=f"call-{first_call + call}",
+                title=f"Tool call number {first_call + call}",
+                tool_kind="read",
+                detail=None,
+            )
+        )
+        rows.append(
+            ToolCallFinishedEventPayload(
+                tool_call_id=f"call-{first_call + call}",
+                tool_call_status=ToolCallStatus.completed,
+                detail=None,
+            )
+        )
+    rows.append(
+        AgentMessageEventPayload(
+            text="\n\n".join(f"the answer under the work, line {at}" for at in range(4))
+        )
+    )
+    return tuple(rows)
+
+
+def _a_conversation_worth_scrolling() -> tuple[ConversationEventPayload, ...]:
+    rows: list[ConversationEventPayload] = []
+    for turn in range(8):
+        rows.append(
+            PromptEventPayload(
+                text=f"question {turn}",
+                sender_label="owner",
+                mode=PromptDeliveryMode.run_when_free,
+            )
+        )
+        rows.append(
+            AgentMessageEventPayload(
+                text="\n\n".join(f"answer {turn} line {at}" for at in range(6))
+            )
+        )
+        rows.append(TurnEndedEventPayload(ending=ConversationTurnEnding.completed))
+    return tuple(rows)
+
+
+def test_the_dev_route_renders_the_empty_state_and_backend_cards(
+    server, context_factory, open_page
+) -> None:
+    page = open_page(
+        context_factory(), server, "#/dev/conversation", "[data-conversation2-route]"
+    )
+    # The empty state is a real surface, visibly distinct from a broken blank screen.
+    page.wait_for_selector("[data-conversation2-new]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation2-new-id]", timeout=WAIT_MS)
+    for backend_key in ("hermes", "codex", "claude"):
+        page.wait_for_selector(
+            f'[data-conversation2-backend="{backend_key}"]', timeout=BACKEND_CARD_WAIT_MS
+        )
+
+
+def test_a_started_conversation_reloads_into_the_pane_surface(
+    server, context_factory, open_page
+) -> None:
+    _create_conversation(server, "e2e-dev-pane")
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/dev/conversation?id=e2e-dev-pane",
+        "[data-conversation2-pane]",
+    )
+    page.wait_for_selector("[data-conversation2-thread]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation2-workspace]", timeout=WAIT_MS)
+
+
+def test_a_sent_message_is_in_the_thread_before_the_server_answers(
+    server, context_factory, open_page
+) -> None:
+    """Sending is not a round trip anybody should have to watch.
+
+    Everything asserted while the send is held came out of what this browser already knew:
+    the record has no row for this message and the server has not answered, so the thread
+    can only be drawing the browser's own copy.
+    """
+    _create_conversation(server, "e2e-optimistic")
+    context = context_factory()
+    context.add_init_script(HOLD_THE_SEND)
+    page = open_page(
+        context, server, "#/dev/conversation?id=e2e-optimistic", "[data-conversation2-pane]"
+    )
+
+    page.fill("[data-conversation2-input]", "what is the plan")
+    page.press("[data-conversation2-input]", "Enter")
+    page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
+
+    drawn = page.wait_for_selector("[data-conversation2-outgoing]", timeout=WAIT_MS)
+    assert drawn.inner_text().strip() == "what is the plan"
+    # The box is theirs again straight away, and it never stopped being typeable.
+    assert page.input_value("[data-conversation2-input]") == ""
+    assert page.is_enabled("[data-conversation2-input]")
+    # The one thing that says a send is still happening.
+    page.wait_for_selector("[data-conversation2-sending]", timeout=WAIT_MS)
+
+    # The message carries the identity and the instant this browser minted for it.
+    sent = page.evaluate("() => window.__heldSends[0].body")
+    assert sent["text"] == "what is the plan"
+    assert isinstance(sent["sender_message_id"], str)
+    assert sent["sender_message_id"] != ""
+    assert sent["sent_at_unix_milliseconds"] > 1_700_000_000_000
+
+    # Held for a busy agent. It stays where it was put and says it has reached nothing,
+    # because nothing is answering it yet.
+    page.evaluate("() => window.__heldSends[0].answer({ fate: 'queued', queue_position: 1 })")
+    page.wait_for_selector("[data-conversation2-outgoing-label]", timeout=WAIT_MS)
+    assert "waiting for the agent to be free" in page.inner_text(
+        "[data-conversation2-outgoing-label]"
+    )
+    assert page.query_selector("[data-conversation2-sending]") is None
+
+
+def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
+    server, context_factory, open_page
+) -> None:
+    """The first message is the one that starts the conversation on its way to a backend.
+
+    Everything happens on that send: the conversation is created, its reading is opened,
+    and only then does the message go. It is in flight perfectly normally throughout, so
+    it must say nothing about itself — least of all on a cold start, which is the longest
+    a person ever waits and the worst moment to be told their message may have gone
+    nowhere.
+    """
+    context = context_factory()
+    context.add_init_script(HOLD_THE_SEND)
+    page = open_page(
+        context, server, "#/dev/conversation?id=e2e-first-send", "[data-conversation2-pane]"
+    )
+    # Nothing has been started yet: this is the empty state, not a conversation.
+    page.wait_for_selector("[data-conversation2-new]", timeout=WAIT_MS)
+
+    page.fill("[data-conversation2-input]", "the very first thing")
+    page.press("[data-conversation2-input]", "Enter")
+    page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
+
+    drawn = page.wait_for_selector("[data-conversation2-outgoing]", timeout=WAIT_MS)
+    assert drawn.inner_text().strip() == "the very first thing"
+    assert page.query_selector("[data-conversation2-outgoing-label]") is None, (
+        "a message on its way says nothing about itself"
+    )
+    # The conversation really was created on the way through, and the message really is
+    # still in flight.
+    assert httpx.get(
+        f"{server.base}/api/conversation2/conversations/e2e-first-send", timeout=10.0
+    ).status_code == 200
+    page.wait_for_selector("[data-conversation2-sending]", timeout=WAIT_MS)
+
+    page.evaluate("() => window.__heldSends[0].answer({ fate: 'started' })")
+    page.wait_for_selector("[data-conversation2-sending]", state="detached", timeout=WAIT_MS)
+    assert page.query_selector("[data-conversation2-outgoing-label]") is None
+
+
+def test_a_send_that_gets_nowhere_gives_the_words_back(
+    server, context_factory, open_page
+) -> None:
+    _create_conversation(server, "e2e-send-failed")
+    context = context_factory()
+    context.add_init_script(HOLD_THE_SEND)
+    page = open_page(
+        context, server, "#/dev/conversation?id=e2e-send-failed", "[data-conversation2-pane]"
+    )
+
+    page.fill("[data-conversation2-input]", "try this one")
+    page.press("[data-conversation2-input]", "Enter")
+    page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
+    page.evaluate("() => window.__heldSends[0].turnAway('the server would not take that')")
+
+    page.wait_for_selector("[data-conversation2-error]", timeout=WAIT_MS)
+    # The copy on screen goes, because nothing has it and no row is coming for it.
+    assert page.query_selector("[data-conversation2-outgoing]") is None
+    assert page.input_value("[data-conversation2-input]") == "try this one"
+    assert page.evaluate(
+        """() => {
+          const box = document.querySelector('[data-conversation2-input]');
+          return [box.selectionStart, box.selectionEnd, document.activeElement === box];
+        }"""
+    ) == [len("try this one"), len("try this one"), True]
+
+    # Unless something else has been written in the meantime. That draft is the thing that
+    # matters, so it is left alone and the error under the box is the whole of the news.
+    page.fill("[data-conversation2-input]", "second try")
+    page.press("[data-conversation2-input]", "Enter")
+    page.wait_for_function("() => window.__heldSends.length === 2", timeout=WAIT_MS)
+    page.fill("[data-conversation2-input]", "a different thought")
+    page.evaluate("() => window.__heldSends[1].turnAway('no')")
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation2-outgoing]') === null",
+        timeout=WAIT_MS,
+    )
+    assert page.input_value("[data-conversation2-input]") == "a different thought"
+    assert page.query_selector("[data-conversation2-error]") is not None
+
+
+def test_a_send_nobody_heard_the_end_of_is_not_offered_back_to_be_sent_again(
+    server, context_factory, open_page
+) -> None:
+    """No answer at all is not the same as being told no.
+
+    The message may have arrived and it may not. Putting the words back in the box would
+    leave a person one keystroke from sending the same thing twice, so the copy stays and
+    says what is actually known about it, which is nothing.
+    """
+    _create_conversation(server, "e2e-send-unanswered")
+    context = context_factory()
+    context.add_init_script(HOLD_THE_SEND)
+    page = open_page(
+        context, server, "#/dev/conversation?id=e2e-send-unanswered", "[data-conversation2-pane]"
+    )
+
+    page.fill("[data-conversation2-input]", "did this arrive")
+    page.press("[data-conversation2-input]", "Enter")
+    page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
+    page.evaluate("() => window.__heldSends[0].fail()")
+
+    page.wait_for_selector("[data-conversation2-error]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation2-outgoing-label]", timeout=WAIT_MS)
+    assert "the server never said whether this arrived" in page.inner_text(
+        "[data-conversation2-outgoing-label]"
+    )
+    assert page.inner_text("[data-conversation2-outgoing]").strip().endswith("did this arrive")
+    assert page.input_value("[data-conversation2-input]") == ""
+
+
+def test_a_reader_who_has_gone_elsewhere_is_left_where_they_are(
+    server, context_factory, open_page
+) -> None:
+    """A wheel is a person saying where they want to be. Nothing else here is."""
+    conversation_id = "e2e-reader"
+    _create_conversation(server, conversation_id)
+    _append_rows(server, conversation_id, *_a_conversation_worth_scrolling())
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/dev/conversation?id={conversation_id}",
+        "[data-conversation2-pane]",
+    )
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation2-row]').length >= 16",
+        timeout=WAIT_MS,
+    )
+    at_the_end = page.evaluate(WHERE_THE_THREAD_IS)
+
+    page.hover("[data-conversation2-thread]")
+    page.mouse.wheel(0, -400)
+    page.wait_for_selector(JUMP_BUTTON, timeout=WAIT_MS)
+    gone_reading = page.evaluate(WHERE_THE_THREAD_IS)
+    assert gone_reading["scrollTop"] < at_the_end["scrollTop"]
+
+    # Something arriving does not move somebody who is reading something else.
+    _append_rows(server, conversation_id, AgentMessageEventPayload(text="a new answer"))
+    _let_the_browser_catch_up(page, 17)
+    assert page.evaluate(WHERE_THE_THREAD_IS)["scrollTop"] == gone_reading["scrollTop"]
+
+    # The jump is the way back, and it is the only one this pane offers.
+    page.click(JUMP_BUTTON)
+    page.wait_for_selector(JUMP_BUTTON, state="detached", timeout=WAIT_MS)
+    back = page.evaluate(WHERE_THE_THREAD_IS)
+    assert back["scrollTop"] > gone_reading["scrollTop"]
+    assert back["lastContentBottom"] <= back["clientHeight"]
+
+
+TURN_FOLD = "[data-conversation2-turn-fold]"
+
+
+def test_a_screenful_disappearing_above_the_reader_leaves_them_where_they_are(
+    server, context_factory, open_page
+) -> None:
+    """The thread getting shorter under somebody — the one direction that can strand them.
+
+    Closing a turn's fold takes its whole work log off the page at once. A reader below it
+    is reading something that has not changed at all, so it has to stay exactly where it
+    is on their screen while a screenful vanishes above it.
+    """
+    conversation_id = "e2e-fold-closing"
+    _create_conversation(server, conversation_id)
+    _append_rows(
+        server,
+        conversation_id,
+        *_a_turn_full_of_tool_calls(first_call=100),
+        TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
+        *_a_conversation_worth_scrolling(),
+    )
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/dev/conversation?id={conversation_id}",
+        "[data-conversation2-pane]",
+    )
+    page.wait_for_selector(TURN_FOLD, timeout=WAIT_MS)
+
+    # Open the oldest turn's fold and its run of tool calls: a screenful of work log, back
+    # on the page, well above where the reader is.
+    page.evaluate("() => document.querySelector('[data-conversation2-turn-fold]').click()")
+    page.wait_for_selector("[data-conversation2-work-fold]", timeout=WAIT_MS)
+    page.evaluate("() => document.querySelector('[data-conversation2-work-fold]').click()")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation2-tool]').length > 4",
+        timeout=WAIT_MS,
+    )
+
+    page.hover("[data-conversation2-thread]")
+    page.mouse.wheel(0, -200)
+    page.wait_for_selector(JUMP_BUTTON, timeout=WAIT_MS)
+    reading = page.evaluate(WHERE_THE_THREAD_IS)
+    assert reading["newestAnswerTop"] is not None
+
+    # And now it all goes.
+    page.evaluate("() => document.querySelector('[data-conversation2-turn-fold]').click()")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation2-tool]').length === 0",
+        timeout=WAIT_MS,
+    )
+
+    shrunk = page.evaluate(WHERE_THE_THREAD_IS)
+    assert shrunk["scrollTop"] < reading["scrollTop"], "the thread moved under them"
+    assert abs(shrunk["newestAnswerTop"] - reading["newestAnswerTop"]) <= 2, (reading, shrunk)
+
+
+def test_something_above_the_reader_changing_height_leaves_them_where_they_are(
+    server, context_factory, open_page
+) -> None:
+    """A fold opening further up the thread is a screenful appearing above somebody.
+
+    They asked for none of it and they are reading something else, so the line they are
+    looking at has to stay exactly where it is on their screen — which means the thread
+    has to move underneath them by however much appeared, and only by that much.
+    """
+    conversation_id = "e2e-height-above"
+    _create_conversation(server, conversation_id)
+    _append_rows(
+        server,
+        conversation_id,
+        *_a_turn_full_of_tool_calls(first_call=200),
+        TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
+        *_a_conversation_worth_scrolling(),
+    )
+
+    page = open_page(
+        context_factory(),
+        server,
+        f"#/dev/conversation?id={conversation_id}",
+        "[data-conversation2-pane]",
+    )
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation2-row]').length >= 17",
+        timeout=WAIT_MS,
+    )
+
+    # The reader goes off to read something in the middle. From here on nothing may move
+    # them that they did not do themselves.
+    page.hover("[data-conversation2-thread]")
+    page.mouse.wheel(0, -300)
+    page.wait_for_selector(JUMP_BUTTON, timeout=WAIT_MS)
+    reading = page.evaluate(WHERE_THE_THREAD_IS)
+    assert reading["newestAnswerTop"] is not None
+
+    # The oldest turn's fold — far above them — opens, and its run of tool calls with it.
+    page.evaluate("() => document.querySelector('[data-conversation2-turn-fold]').click()")
+    page.wait_for_selector("[data-conversation2-work-fold]", timeout=WAIT_MS)
+    page.evaluate("() => document.querySelector('[data-conversation2-work-fold]').click()")
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation2-tool]').length > 4",
+        timeout=WAIT_MS,
+    )
+
+    grown = page.evaluate(WHERE_THE_THREAD_IS)
+    assert grown["scrollTop"] > reading["scrollTop"], "the thread moved under them"
+    assert abs(grown["newestAnswerTop"] - reading["newestAnswerTop"]) <= 2, (reading, grown)
+
+
+def test_the_thread_follows_the_answer_instead_of_the_bottom(
+    server, context_factory, open_page
+) -> None:
+    """Where the thread goes when you send, and what moves it afterwards."""
+    conversation_id = "e2e-scroll"
+    _create_conversation(server, conversation_id)
+    _append_rows(server, conversation_id, *_a_conversation_worth_scrolling())
+
+    context = context_factory()
+    context.add_init_script(HOLD_THE_SEND)
+    page = open_page(
+        context,
+        server,
+        f"#/dev/conversation?id={conversation_id}",
+        "[data-conversation2-pane]",
+    )
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation2-row]').length >= 16",
+        timeout=WAIT_MS,
+    )
+
+    # Opening a conversation puts you at the end of it.
+    opened = page.evaluate(WHERE_THE_THREAD_IS)
+    assert opened["scrollTop"] > 0, "a conversation this long has somewhere to scroll"
+    assert opened["lastContentBottom"] <= opened["clientHeight"]
+
+    page.fill("[data-conversation2-input]", "the newest question")
+    page.press("[data-conversation2-input]", "Enter")
+    page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation2-outgoing]", timeout=WAIT_MS)
+    page.wait_for_function(
+        "(was) => document.querySelector('[data-conversation2-thread]').scrollTop > was",
+        arg=opened["scrollTop"],
+        timeout=WAIT_MS,
+    )
+
+    # The message you just sent settles near the top, with the rest of the view left for
+    # the answer.
+    sent_settled = page.evaluate(WHERE_THE_THREAD_IS)
+    assert 0 <= sent_settled["outgoingTop"] <= 48, sent_settled
+    assert sent_settled["scrollTop"] > opened["scrollTop"]
+
+    # Its row arrives carrying the same identity. The copy stops being drawn and the row
+    # is already in the place it was drawn in, so nothing moves.
+    minted = page.evaluate("() => window.__heldSends[0].body")
+    page.evaluate("() => window.__heldSends[0].answer({ fate: 'started' })")
+    _append_rows(
+        server,
+        conversation_id,
+        PromptEventPayload(
+            text="the newest question",
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+            sender_message_id=minted["sender_message_id"],
+            sent_at_unix_milliseconds=minted["sent_at_unix_milliseconds"],
+        ),
+    )
+    _let_the_browser_catch_up(page, 17)
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation2-outgoing]') === null",
+        timeout=WAIT_MS,
+    )
+    took_over = page.evaluate(WHERE_THE_THREAD_IS)
+    assert took_over["scrollTop"] == sent_settled["scrollTop"], took_over
+
+    assert took_over["roomKept"] > 0, "the room for the answer is being kept"
+
+    # An answer that fits in the space that was kept for it moves nothing at all, and
+    # takes up exactly as much of that space as it fills.
+    _append_rows(server, conversation_id, AgentMessageEventPayload(text="a short answer"))
+    _let_the_browser_catch_up(page, 18)
+    fitted = page.evaluate(WHERE_THE_THREAD_IS)
+    assert fitted["scrollTop"] == took_over["scrollTop"], fitted
+    assert 0 < fitted["roomKept"] < took_over["roomKept"], (took_over, fitted)
+
+    # An answer that outgrows it is followed, by the least that keeps its last line in
+    # sight, and never backwards.
+    _append_rows(
+        server,
+        conversation_id,
+        AgentMessageEventPayload(
+            text="\n\n".join(f"a much longer answer, line {at}" for at in range(60))
+        ),
+    )
+    _let_the_browser_catch_up(page, 19)
+    page.wait_for_function(
+        "(was) => document.querySelector('[data-conversation2-thread]').scrollTop > was",
+        arg=fitted["scrollTop"],
+        timeout=WAIT_MS,
+    )
+    followed = page.evaluate(WHERE_THE_THREAD_IS)
+    assert followed["scrollTop"] > fitted["scrollTop"]
+    assert followed["lastContentBottom"] <= followed["clientHeight"]
+    # An answer that outgrew the room has earned all of it back, and none is left over.
+    assert followed["roomKept"] == 0, followed
