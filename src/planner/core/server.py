@@ -16,7 +16,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.composition import ConversationComposition, ConversationTestOptions
+from planner.conversation2.api import build_conversation2_runtime
+from planner.conversation2.api import router as conversation2_router
 from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation2.production_backends import production_backend_child_factories
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.db import connect
@@ -155,6 +158,17 @@ def create_app(
                 await conversation.shutdown(deadline)
                 app.state.conversation = None
                 raise
+        # The new conversation system, alongside the old one and touched by nothing else:
+        # no production screen and no loop calls it. It composes the three real agents on
+        # this machine, and spawns none of them until a conversation has something to send.
+        conversation2 = build_conversation2_runtime(
+            db_path=config.db_path,
+            db_busy_timeout_ms=config.db_busy_timeout_ms,
+            sse_heartbeat_ms=config.sse_heartbeat_ms,
+            backend_child_factories=production_backend_child_factories(),
+        )
+        app.state.conversation2 = conversation2
+        await conversation2.system.start_idle_child_janitor()
         try:
             yield
         finally:
@@ -165,8 +179,12 @@ def create_app(
                 if loops is not None:
                     await _stop_runtime_with_deadline(loops, deadline)
             finally:
-                if conversation is not None:
-                    await conversation.shutdown(deadline)
+                try:
+                    if conversation is not None:
+                        await conversation.shutdown(deadline)
+                finally:
+                    app.state.conversation2 = None
+                    await conversation2.shutdown()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -197,6 +215,7 @@ def create_app(
         lambda: connect(config.db_path, config.db_busy_timeout_ms)
     )
     app.state.conversation = None
+    app.state.conversation2 = None
     configured_vps_status_collector = vps_status_collector or (
         lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
     )
@@ -214,6 +233,7 @@ def create_app(
     ):
         app.include_router(domain_router, prefix="/api")
     app.include_router(files_router)
+    app.include_router(conversation2_router, prefix="/api/conversation2")
 
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:

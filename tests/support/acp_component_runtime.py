@@ -84,9 +84,10 @@ def main() -> None:
                     '.markdown',
                     '.markdown table',
                     '[data-file-preview]',
-                    '.file-preview-media',
-                    '.file-preview-doc',
-                    '.file-preview-card',
+                    '.file-preview-image',
+                    '.file-preview-video',
+                    '.file-preview-document',
+                    '.file-preview-document-body',
                     '.file-preview-frame',
                     '.acp-stanza',
                     '.acp-step-detail',
@@ -149,7 +150,7 @@ def main() -> None:
             assert violations == [], {"host_width": host_width, "violations": violations}
             return geometry
 
-        preview_image = page.locator(".file-preview-media img")
+        preview_image = page.locator("img.file-preview-image")
         preview_image.wait_for(state="visible")
         assert preview_image.evaluate("image => image.complete && image.naturalWidth > 0")
         markdown_preview_heading = page.get_by_text("Ready Markdown preview", exact=True)

@@ -26,7 +26,12 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "ticket_status_changed_at"
+HEAD_REVISION = "conversation_system_tables"
+
+# How many schema objects a current database holds: the fifteen tables and nine indexes the
+# ladder left, less the event log and its index that ticket_status_changed_at dropped, plus
+# the two tables the conversation system brought.
+CURRENT_SCHEMA_OBJECT_COUNT = 24
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -155,7 +160,7 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(tmp_path) ->
     create_schema(conn)
 
     assert _revision(conn) == HEAD_REVISION
-    assert len(_schema_objects(conn)) == 22
+    assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 37
@@ -200,7 +205,7 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_pa
         _table_structure_before_status_changed_at(_table_structure(conn, "tickets"))
         == structure_before
     )
-    assert len(_schema_objects(conn)) == 22
+    assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
         conn.execute("SELECT title, ticket_status FROM tickets WHERE id = 't_old'").fetchone()
     ) == ("Written before Alembic", "agent")
@@ -422,7 +427,7 @@ def test_processes_starting_at_once_agree_on_one_database(tmp_path) -> None:
     assert [
         str(row[0]) for row in conn.execute("SELECT version_num FROM alembic_version")
     ] == [HEAD_REVISION]
-    assert len(_schema_objects(conn)) == 22
+    assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     conn.close()
 
 

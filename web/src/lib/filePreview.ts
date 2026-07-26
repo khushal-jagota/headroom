@@ -18,47 +18,68 @@ export type ResolvedPreview = {
   label: string;
   previewHref?: string;
   displayHref?: string;
-  actionLabel?: string;
 };
 
 export const MANAGED_HTML_PREVIEW_SANDBOX = "allow-scripts";
 
-const MARKDOWN_EXTENSIONS = new Set(["md", "markdown"]);
-const HTML_EXTENSIONS = new Set(["html", "htm"]);
-const IMAGE_EXTENSIONS = new Set(["avif", "bmp", "gif", "jpeg", "jpg", "png", "webp"]);
-const VIDEO_EXTENSIONS = new Set(["m4v", "mov", "mp4", "ogg", "ogv", "webm"]);
-const AUDIO_EXTENSIONS = new Set(["aac", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "webm"]);
+const KIND_BY_EXTENSION = new Map<string, FilePreviewKind>([
+  ["md", "markdown"],
+  ["markdown", "markdown"],
+  ["htm", "html"],
+  ["html", "html"],
+  ["avif", "image"],
+  ["bmp", "image"],
+  ["gif", "image"],
+  ["jpeg", "image"],
+  ["jpg", "image"],
+  ["png", "image"],
+  ["svg", "image"],
+  ["webp", "image"],
+  ["m4v", "video"],
+  ["mov", "video"],
+  ["mp4", "video"],
+  ["ogv", "video"],
+  ["webm", "video"],
+  ["aac", "audio"],
+  ["flac", "audio"],
+  ["m4a", "audio"],
+  ["mp3", "audio"],
+  ["oga", "audio"],
+  ["ogg", "audio"],
+  ["opus", "audio"],
+  ["wav", "audio"]
+]);
+const KINDS_RENDERED_FROM_URL = new Set<FilePreviewKind>(["image", "video", "audio"]);
 const TICKET_ID_RE = /^t_[a-z0-9]+$/;
 const RESIDUAL_UNSAFE_RE = /%(?:25|2e|2f|5c)/i;
 const MAX_MARKDOWN_EMBED_DEPTH = 2;
 
 export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
   if (target.kind === "external-link") {
+    const label = target.label || target.href;
+    const kind = KIND_BY_EXTENSION.get(extensionFor(rawPathnameFromHref(target.href)));
+    if (kind && KINDS_RENDERED_FROM_URL.has(kind)) {
+      return { kind, target, href: target.href, label };
+    }
     return {
       kind: "external",
       target,
       href: target.href,
-      label: target.label || target.href,
-      displayHref: displayHrefForExternal(target.href),
-      actionLabel: "Open external link"
+      label,
+      displayHref: displayHrefForExternal(target.href)
     };
   }
 
-  if (target.kind === "ticket-file" && !ticketFileTarget(target.ticketId, target.path)) {
+  if (!ticketFileTarget(target.ticketId, target.path)) {
     throw new Error("unsafe ticket file target");
   }
-  const href = ticketFileHref(target);
-  const label = filenameLabel(target.path);
-  const previewHref = previewHashHref(target);
-  const extension = extensionFor(target.path);
-  if (MARKDOWN_EXTENSIONS.has(extension)) return { kind: "markdown", target, href, label, previewHref };
-  if (HTML_EXTENSIONS.has(extension)) {
-    return { kind: "html", target, href, label, previewHref, actionLabel: "Open preview" };
-  }
-  if (IMAGE_EXTENSIONS.has(extension)) return { kind: "image", target, href, label, previewHref };
-  if (VIDEO_EXTENSIONS.has(extension)) return { kind: "video", target, href, label, previewHref };
-  if (AUDIO_EXTENSIONS.has(extension)) return { kind: "audio", target, href, label, previewHref };
-  return { kind: "download", target, href, label, previewHref, actionLabel: "Download" };
+  return {
+    kind: KIND_BY_EXTENSION.get(extensionFor(target.path)) || "download",
+    target,
+    href: ticketFileHref(target),
+    label: filenameLabel(target.path),
+    previewHref: previewHashHref(target)
+  };
 }
 
 export function prepareManagedHtmlPreviewDocument(html: string, managedHtmlHref: string): string {
@@ -75,7 +96,7 @@ export function markdownExpansionFor(
   depth: number,
   visited: string[]
 ): { expandable: boolean; nextDepth: number; nextVisited: string[] } {
-  if (resolved.kind !== "markdown" || resolved.target.kind !== "ticket-file") {
+  if (resolved.kind !== "markdown") {
     return { expandable: false, nextDepth: depth, nextVisited: visited };
   }
   if (depth >= MAX_MARKDOWN_EMBED_DEPTH || visited.includes(resolved.href)) {
