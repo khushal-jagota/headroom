@@ -634,13 +634,7 @@ def employee_configuration_editable(
         or ticket.employee_session_id is not None
     ):
         return False
-    return (
-        conn.execute(
-            "SELECT 1 FROM conversation_session_bindings WHERE employee_id = ?",
-            (ticket.id,),
-        ).fetchone()
-        is None
-    )
+    return True
 
 
 def write_employee_configuration(

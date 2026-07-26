@@ -1,15 +1,17 @@
-# The conversation system (new)
+# The conversation system
 
-This is the new home for talking to an AI agent. One conversation = one agent
+This is how Panels talks to an AI agent. One conversation = one agent
 process (hermes, codex, or claude) working in a folder, plus a permanent notebook
 of everything that happened in it. The rest of the planner can do exactly five
 things to a conversation — start it, send text into it, interrupt its running
 turn, kill its activity outright, and ask whether it is running — plus one more
 question: is a permission ask waiting. Nothing else crosses the boundary.
 
-It currently serves the development pane at `#/dev/conversation`. Production
-screens still run on the old conversation layer (`chat.md`); this system replaces
-that layer when the swap is ruled.
+It serves every screen that shows a conversation: a Ticket's, the Chief of
+Staff's, and the development pane at `#/dev/conversation`. There is no second
+one. The layer that came before it — a WebSocket, a session-binding table, a
+per-ticket projection of what the agent was doing — is gone, along with the
+second database, relay, neutral protocol and history adapter that preceded it.
 
 ```
   caller (pane, loop)                the conversation system                agent CLIs
@@ -178,7 +180,6 @@ names the command.
 
 ## Handoffs
 
-- The old conversation layer still serves production screens: `chat.md`.
 - Ticket-side surfacing (which ticket needs you, row dots) is the worker
   orchestration's job, built against this contract: `employee-runtime.md`.
 

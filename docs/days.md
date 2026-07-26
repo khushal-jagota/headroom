@@ -44,7 +44,8 @@ _Code paths:_ `src/planner/days/` (the day record and 5am planning date),
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — the tickets a day lists and the
   scope that governs whether the day's work advances on its own.
-- **Chat** (`chat.md`) — ticket chat is separate from the Day page.
+- **The conversation system** (`conversation-system.md`) — a Ticket's conversation is
+  separate from the Day page.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — where a captured idea lands.
 
 ## Deferred

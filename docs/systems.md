@@ -134,63 +134,46 @@ but chooses a port only while it is running. Ticket worktree servers are tempora
 processes with worktree-local state, not prepared environment instances. See
 [`runtime environments`](environments.md).
 
-### 5. The ACP Conversation System
+### 5. The Conversation System
 
-This is the browser's conversation pane and everything under it. Worker orchestration
-no longer goes through it: it talks to a small conversation contract instead, which the
-server currently composes as an in-memory stand-in until the replacement conversation
-system lands. Both write a Ticket's conversation-link column in the meantime, and the
-last writer wins — an interim wart, and nothing is deployed in this window.
+This is the one way Panels talks to an AI agent. One conversation is one agent process
+— hermes, codex, or claude — working in a folder, plus a permanent notebook of
+everything that happened in it. Every screen that shows a conversation uses it, and so
+does worker orchestration: there is no second path and no stand-in.
 
-`ConversationComposition` is the one production conversation composition. It owns:
+The rest of Panels can do exactly five things to a conversation: start it, send text
+into it, interrupt its running turn, kill its activity outright, and ask whether it is
+running. Plus one more question — is a permission ask waiting. Nothing else crosses the
+boundary. In particular there is no read of which backend or model a conversation is on,
+because those are values a caller passed in rather than questions the contract answers.
 
-- an `AcpEmployeeRegistry` for one live child generation per employee;
-- a `ConversationHub` for typed replay and browser publication;
-- a `ConversationTurnBroker` for active work, Steer, Send Now, Queue, Stop, and
-  compaction;
-- a `ConversationPermissionBroker` for exact pending permission ownership; and
-- a `SqliteConversationBindingRepository` for durable session identity.
+A conversation is identified by an id the caller owns. A Ticket stores its own in
+`tickets.employee_session_id`; the Chief stores its own in the `agents` table. The
+backend process's own session id is an internal, rebindable detail of the conversation
+system and appears nowhere else.
 
-The server uses the official ACP client library. Each selected agent backend runs as a
-child process and speaks ACP with Panels over standard input and output.
+The notebook is an append-only run of numbered rows in the same database as everything
+else. A row is a finished thing: a delivered prompt, a completed agent message, a tool
+call starting or finishing, a permission ask and its answer, a model change, a turn
+ending. The browser reads the rows after a position over ordinary HTTP and then keeps up
+over a live tail. Nothing holds a socket open to Panels.
 
-The browser uses one typed WebSocket at `/api/conversation`. Attach, load, and live
-updates share the same employee, ACP session, binding generation, and sequence. A gap
-or identity mismatch fails closed. The UI renders typed messages, thoughts, tools,
-plans, terminals, permissions, receipts, connection state, and compaction boundaries.
+Sending says what actually happened to that text and never more: it started a turn, it
+is held until the agent is free, it was injected into a running turn, or it was refused
+for a named impossibility. A busy agent is never a refusal — a message the system can
+hold is held.
 
-A Ticket mirrors the binding's ACP session id in `tickets.employee_session_id`; the
-binding table is the owner and the Chief has no second mirror. Binding replacement uses
-compare-and-swap, and an ACP session cannot be owned by two employees.
+Steering is a per-backend fact rather than a negotiation: hermes can take text into a
+running turn, codex and claude cannot, and a steer aimed at one that cannot is refused.
 
-Commands come from ACP. Conversation images are ordered inline ACP content. Durable
-Ticket artifacts remain under `/files/tickets/...`; there is no conversation upload or
-managed conversation-file route.
+Which backends exist is a closed set of three, stated once, and every part of Panels
+that reads a backend name goes through one door that turns text into a member of it.
+What each backend is on this machine — installed, which version, signed in as whom,
+which models it offers and which reasoning efforts each of those takes — is one answer,
+probed when asked and kept until asked again.
 
-Compaction is intentionally small in Panels: show one content-free started boundary
-and then one content-free completed boundary or exact failure. Panels waits up to 300
-seconds to observe the terminal result. The backend's compacted context and summary
-stay private. Later reload and restart resume the resulting durable session with the
-typed boundary.
-
-The production catalog contains exactly `hermes`, `codex`, and `claude`; Gemini is not
-registered. Hermes provisions the planner Hermes home and skills and supports native
-Steer. Codex and Claude Code do not support native Steer, so active work uses Queue or
-Send Now. Claude runs one initialize-only preflight at server startup and closes that
-temporary child without creating a session. Codex starts lazily on first demand.
-
-Each Worker type supplies a default backend. A Ticket may override it during pristine
-Kickoff, before a session or binding exists. Human chat then uses that same selected
-backend and durable session after the choice freezes.
-
-Managed Worker and Chief settings also provide Model and Reasoning defaults. Ticket creation
-copies its Worker's trio once; a new Chief conversation copies the Chief trio into its durable
-empty conversation, and the first demand later creates its backend binding.
-Permission is not managed or persisted. Every new session starts in backend-native full access,
-and every durable-session load reasserts that mode before the runtime can be used.
-
-_Code paths:_ `src/planner/conversation/`, `src/planner/conversation2/`, and
-`/api/conversation` in `src/planner/core/server.py`.
+_Code paths:_ `src/planner/conversation2/`, and `/api/conversation2` in
+`src/planner/core/server.py`.
 
 ### 6. The Human UI System
 
@@ -247,13 +230,13 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
   worker is running now is the conversation system's answer, asked fresh each time.
 - **Stored worker context versus delivered context.** Pending context reaches the model
   only when it is included in a message that was actually sent.
-- **Binding owner versus Ticket mirror.** `conversation_session_bindings` owns ACP
-  identity; a Ticket mirror supports Ticket correctness and worker lookup.
-- **Product cache versus conversation reducer.** REST resources are refetched on a
-  contentless change signal; the ACP pane uses strict typed sequence and generation
-  admission.
-- **Ticket file versus conversation image.** Ticket artifacts use managed paths;
-  images in a prompt are inline ACP blocks.
+- **Conversation id versus backend session id.** The id a Ticket or the Chief names its
+  conversation by is theirs and lives on their own row; the backend process's session id
+  is internal to the conversation system and is rebound without anything outside it
+  noticing.
+- **Product cache versus conversation record.** REST resources are refetched on a
+  contentless change signal; a conversation pane reads the rows after the position it
+  holds and then keeps up over a live tail of the same rows.
 - **Human versus worker authority.** Humans approve and grant scope. Workers propose.
 
 ## System-Level Friction

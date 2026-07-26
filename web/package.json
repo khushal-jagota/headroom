@@ -6,7 +6,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node tests/query-catalogue.test.mjs && node tests/mutate.test.mjs && node tests/change-stream.test.mjs && node tests/file-preview.test.mjs && node tests/lifecycle.test.mjs && node tests/reply-watermark.test.mjs && node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/acp-images.test.mjs && node tests/acp-contracts.test.mjs && node tests/acp-browser-state.test.mjs && node tests/acp-browser-conformance.test.mjs && node tests/acp-browser-components.test.mjs && node tests/acp-components.test.mjs && node tests/worker-configuration-setup.test.mjs && node tests/acp-production-mount.test.mjs && node tests/vps-status.test.mjs && node tests/conversation2-wire.test.mjs && node tests/conversation2-pane.test.mjs"
+    "test": "node tests/query-catalogue.test.mjs && node tests/mutate.test.mjs && node tests/change-stream.test.mjs && node tests/file-preview.test.mjs && node tests/lifecycle.test.mjs && node tests/reply-watermark.test.mjs && node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/vps-status.test.mjs && node tests/production-surfaces.test.mjs && node tests/worker-configuration-setup.test.mjs && node tests/conversation2-wire.test.mjs && node tests/conversation2-pane.test.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.2.1",

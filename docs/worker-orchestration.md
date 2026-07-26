@@ -169,7 +169,8 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`, and
   specialist skill.
 - **Tickets & the gates** (`tickets-and-gates.md`) owns proposals, scope, approval,
   and Ticket status.
-- **Conversation** (`chat.md`) owns the browser pane the human types into.
+- **The conversation system** (`conversation-system.md`) owns the pane the human types
+  into, and the conversation the step is sent into.
 - **The front end** (`frontend.md`) owns the row marks these signals feed.
 - **The command-line tool** (`cli.md`) is the surface the worker acts through.
 

@@ -88,15 +88,14 @@ assert.match(sources["ConversationTranscript.svelte"], /MarkdownBlock/);
 assert.match(sources["ConversationComposer.svelte"], /chat-seg/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
-// Nothing in the new pane reaches into the components serving production today.
-const ALLOWED_ACP_LEAF = "../../lib/acp/stepIcons";
+// The pane that came before this one is gone, and nothing may reach for it. The step
+// glyphs are the one thing that came across, and they moved here rather than being left
+// behind in a package nobody else uses.
 for (const [fileName, source] of Object.entries(sources)) {
-  const reaches = [...source.matchAll(/["'][^"']*(?:lib\/acp\/|components\/acp\/)[^"']*["']/g)]
-    .map((found) => found[0].slice(1, -1))
-    .filter((specifier) => specifier !== ALLOWED_ACP_LEAF);
-  assert.deepEqual(reaches, [], `${fileName} may reuse only the wire-agnostic step glyphs`);
+  assert.doesNotMatch(source, /lib\/acp\/|components\/acp\//, fileName);
 }
 assert.doesNotMatch(routeSource, /lib\/acp\/|components\/acp\//);
+assert.match(sources["ToolCallRow.svelte"], /lib\/conversation2\/stepIcons/);
 
 // The dev route exists, is reachable by hash, and is in no navigation.
 assert.match(appSource, /DevConversationRoute/);

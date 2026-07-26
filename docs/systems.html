@@ -811,57 +811,49 @@
           <details>
             <summary>
               <span class="number">05</span>
-              <span><strong>The ACP Conversation System</strong><span>The browser's conversation pane and everything under it.</span></span>
+              <span><strong>The Conversation System</strong><span>The one way Panels talks to an AI agent.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                <code>ConversationComposition</code> owns the Employee registry,
-                typed publication hub, turn broker, permission broker, and durable binding
-                repository. The server is the ACP client and uses the official ACP client
-                library; an agent backend runs as a child process over ACP standard input
-                and output. Worker orchestration no longer goes through here: it talks to
-                a small conversation contract, composed today as an in-memory stand-in
-                until the replacement conversation system lands.
+                One conversation is one agent process &mdash; hermes, codex, or claude
+                &mdash; working in a folder, plus a permanent notebook of everything that
+                happened in it. Every screen that shows a conversation uses it, and so
+                does worker orchestration. There is no second path and no stand-in.
               </p>
               <p>
-                <code>conversation_session_bindings</code> is the durable owner of ACP
-                session identity. A Ticket mirrors that id in
-                <code>tickets.employee_session_id</code>; the Chief has no second mirror.
-                Human prompts reach that binding and resume it after restart. In the
-                interim both conversation systems write that one column, and the last
-                writer wins.
+                The rest of Panels can do exactly five things to a conversation: start
+                it, send text into it, interrupt its running turn, kill its activity
+                outright, and ask whether it is running &mdash; plus one more question,
+                whether a permission ask is waiting. Nothing else crosses the boundary.
               </p>
               <p>
-                The turn broker owns active work, Steer, Send Now, Queue, Stop, and
-                compaction. Permissions belong to the exact attached browser and exact
-                session generation. Typed replay and live publication retain messages,
-                thoughts, tools, plans, terminals, permissions, receipts, and lifecycle
-                state without flattening them into a second transcript vocabulary.
+                A conversation is named by an id its caller owns. A Ticket keeps its own
+                in <code>tickets.employee_session_id</code> and the Chief keeps its own in
+                the <code>agents</code> table. The backend process&rsquo;s own session id
+                is internal and rebindable, and appears nowhere outside the system.
               </p>
               <p>
-                Compaction is deliberately small in Panels: the transcript shows that it
-                started and then whether it completed or failed with the exact reason.
-                These boundaries contain no context. Panels waits up to 300 seconds to
-                observe the terminal result and never reads or renders compacted context
-                or a summary. Later replay shows the same typed boundary.
+                Sending says what actually happened to that text and never more: it
+                started a turn, it is held until the agent is free, it was injected into
+                a running turn, or it was refused for a named impossibility. A busy agent
+                is never a refusal &mdash; a message the system can hold is held.
+                Steering is a per-backend fact rather than a negotiation: hermes can take
+                text into a running turn and the other two cannot.
               </p>
               <p>
-                The production catalog contains exactly <code>hermes</code>,
-                <code>codex</code>, and <code>claude</code>; Gemini is not registered.
-                Hermes supports native Steer. Codex and Claude Code do not, so their active
-                turns use Queue or Send Now. Claude Code runs one initialize-only startup
-                preflight and closes that temporary child without creating a session.
-                Codex starts lazily on first demand.
+                Which backends exist is a closed set of exactly <code>hermes</code>,
+                <code>codex</code> and <code>claude</code>, and one door turns untrusted
+                text into a member of it. What each one is on this machine &mdash;
+                installed, which version, signed in as whom, which models and which
+                reasoning efforts each model takes &mdash; is one answer, probed when
+                asked and kept until asked again.
               </p>
               <p class="code-paths">
-                Code paths: <code>src/planner/conversation/composition.py</code>,
-                <code>src/planner/conversation/hub.py</code>,
-                <code>src/planner/conversation/turn_broker.py</code>,
-                <code>src/planner/conversation/permission_broker.py</code>,
-                <code>src/planner/conversation/backend_catalog.py</code>,
-                <code>src/planner/conversation/hermes_backend.py</code>,
-                <code>src/planner/conversation/codex_backend.py</code>,
-                <code>src/planner/conversation/claude_backend.py</code>
+                Code paths: <code>src/planner/conversation2/contracts.py</code>,
+                <code>src/planner/conversation2/system.py</code>,
+                <code>src/planner/conversation2/storage.py</code>,
+                <code>src/planner/conversation2/snapshot.py</code>,
+                <code>src/planner/conversation2/backends/</code>
               </p>
             </div>
           </details>
@@ -869,31 +861,29 @@
           <details>
             <summary>
               <span class="number">06</span>
-              <span><strong>The ACP Browser Conversation</strong><span>A typed pane over the server-owned conversation.</span></span>
+              <span><strong>The Browser Conversation</strong><span>A pane over the record, read the way every other screen reads.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                The browser uses one typed WebSocket at <code>/api/conversation</code>.
-                Attach, load, and live updates share the same Employee, ACP session,
-                binding generation, and sequence. A gap or identity mismatch fails closed
-                and a later contiguous ready epoch recovers the pane.
+                A pane reads the rows of its conversation after the position it already
+                holds, then keeps up over a live tail of the same rows. Opening,
+                reloading and opening a second tab are the same act. Nothing holds a
+                socket open to Panels.
               </p>
               <p>
-                The ACP pane renders human and agent messages, collapsed thought and
-                tool detail, plans, diffs, terminal state, permissions, receipts, and one
-                persistent status line. The composer offers Steer when supported, Send
-                Now, Queue, Stop, ACP-advertised commands, and ordered inline images.
+                It renders human and agent messages, collapsed thought and tool detail,
+                plans, diffs, permissions, delivery fates, and one persistent status
+                line. The composer offers Steer where the backend supports it, Send Now,
+                run-when-free, Stop, and New.
               </p>
               <p>
-                Conversation images are ACP content blocks, not files in a separate chat
-                upload system. Generic file previews and durable Ticket artifact previews
-                remain available through their normal file routes.
+                Durable Ticket artifact previews and generic file previews remain
+                available through their normal file routes.
               </p>
               <p class="code-paths">
-                Code paths: <code>src/planner/conversation/api.py</code>,
-                <code>web/src/components/AcpConversation.svelte</code>,
-                <code>web/src/components/acp/</code>,
-                <code>web/src/lib/acp/</code>
+                Code paths: <code>src/planner/conversation2/api.py</code>,
+                <code>web/src/components/conversation2/</code>,
+                <code>web/src/lib/conversation2/</code>
               </p>
             </div>
           </details>
@@ -953,8 +943,8 @@
                 <code>web/src/lib/queryClient.ts</code>,
                 <code>web/src/lib/changeStream.ts</code>,
                 <code>web/src/lib/mutate.ts</code>,
-                <code>web/src/lib/acp/</code>,
-                <code>web/src/components/acp/</code>,
+                <code>web/src/lib/conversation2/</code>,
+                <code>web/src/components/conversation2/</code>,
                 <code>web/src/lib/managedMarkdown.ts</code>,
                 <code>web/src/lib/editableText.ts</code>
               </p>
@@ -1038,14 +1028,16 @@
           <details open>
             <summary>
               <span class="number">01</span>
-              <span><strong>Employee-session ownership is explicit.</strong><span>One binding owner; one Ticket mirror.</span></span>
+              <span><strong>A conversation id is owned by whoever names it.</strong><span>One column, no mirror.</span></span>
             </summary>
             <div class="detail-body">
               <p>
-                <code>conversation_session_bindings</code> owns the ACP session and
-                binding generation. A Ticket mirrors the session id atomically; the Chief
-                has no second mirror. Compare-and-swap replacement prevents two Employees
-                from claiming one ACP session.
+                A Ticket keeps the id of its conversation in
+                <code>tickets.employee_session_id</code>, and the Chief keeps its own in
+                the <code>agents</code> table. There is no separate table owning it and
+                nothing to keep in step: the id is a column on the row it belongs to. The
+                backend process&rsquo;s own session id is internal to the conversation
+                system and is rebound without anything outside it noticing.
               </p>
             </div>
           </details>

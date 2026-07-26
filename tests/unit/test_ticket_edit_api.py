@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import threading
 from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
@@ -15,10 +13,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.conversation import sqlite_binding_repository as binding_repository_module
-from planner.conversation.backend_catalog import build_production_employee_backend_catalog
-from planner.conversation.contracts import ConversationSessionBinding
-from planner.conversation.sqlite_binding_repository import SqliteConversationBindingRepository
 from planner.conversation2.contracts import ConversationBackendKey
 from planner.conversation2.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
@@ -32,7 +26,6 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     NO_FURTHER,
     AtCap,
-    EmployeeLaunchConfiguration,
     TicketStatus,
 )
 from planner.worker_context import data as worker_context_data
@@ -500,14 +493,14 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_bo
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_pristine_ticket(db_path)
+    # A Ticket that names a conversation is frozen: its launch values are what that
+    # conversation was started on, and there is no changing them after the fact.
     conn = connect(str(db_path))
     conn.execute(
-        "INSERT INTO conversation_session_bindings "
-        "(employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
-        "binding_generation, created_at, updated_at) VALUES (?, 'ticket', ?, "
-        "'session-bound', 'claude', 1, 1, 1)",
-        (ticket_id, ticket_id),
+        "UPDATE tickets SET employee_session_id = ? WHERE id = ?",
+        (f"conversation-for-{ticket_id}", ticket_id),
     )
+    conn.commit()
     conn.close()
     before = _snapshot(db_path, ticket_id)
 
@@ -552,212 +545,6 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_bo
     assert detail.status_code == 200
     assert detail.json()["employee_configuration_editable"] is False
     assert _snapshot(db_path, ticket_id) == before
-
-
-def test_employee_configuration_writer_and_first_binding_race_in_both_commit_orders(
-    tmp_path: Path,
-    probe_runtime: None,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def prepare(
-        name: str,
-    ) -> tuple[
-        Path,
-        str,
-        ConversationSessionBinding,
-        EmployeeLaunchConfiguration,
-    ]:
-        db_path = tmp_path / f"{name}.db"
-        conn = connect(str(db_path))
-        create_schema(conn)
-        ticket = tickets_data.create_ticket(
-            conn,
-            title=name,
-            worker_type="probe",
-            actor="human",
-            now=1,
-            title_max_chars=200,
-        )
-        prepared_configuration = tickets_data.employee_launch_configuration(ticket)
-        conn.close()
-        return (
-            db_path,
-            ticket.id,
-            ConversationSessionBinding(
-                employee_id=ticket.id,
-                acp_session_id=f"session-{name}",
-                backend_key="claude",
-                binding_generation=1,
-            ),
-            prepared_configuration,
-        )
-
-    (
-        writer_first_path,
-        writer_first_id,
-        writer_first_candidate,
-        writer_first_prepared,
-    ) = prepare("writer-first")
-    cas_waiting = threading.Event()
-    release_cas = threading.Event()
-    real_binding_connect = binding_repository_module.connect
-
-    def paused_binding_connect(*args, **kwargs):
-        conn = real_binding_connect(*args, **kwargs)
-        paused = False
-
-        def trace(statement: str) -> None:
-            nonlocal paused
-            if statement == "BEGIN IMMEDIATE" and not paused:
-                paused = True
-                cas_waiting.set()
-                assert release_cas.wait(2)
-
-        conn.set_trace_callback(trace)
-        return conn
-
-    writer_first_repository = SqliteConversationBindingRepository(
-        str(writer_first_path),
-        workspace_root=tmp_path,
-        integer_now=lambda: 2,
-        employee_backend_catalog=build_production_employee_backend_catalog(),
-        chief_backend_key="hermes",
-    )
-    cas_errors: list[BaseException] = []
-    with monkeypatch.context() as patch:
-        patch.setattr(binding_repository_module, "connect", paused_binding_connect)
-
-        def bind_after_writer() -> None:
-            try:
-                asyncio.run(
-                    writer_first_repository.compare_and_swap_initial(
-                        writer_first_candidate,
-                        writer_first_prepared,
-                    )
-                )
-            except BaseException as error:
-                cas_errors.append(error)
-
-        cas_thread = threading.Thread(target=bind_after_writer)
-        cas_thread.start()
-        assert cas_waiting.wait(2)
-        writer_conn = connect(str(writer_first_path))
-        tickets_data.write_employee_configuration(
-            writer_conn,
-            writer_first_id,
-            expected_employee_configuration=writer_first_prepared,
-            employee_backend="hermes",
-            employee_launch_model=None,
-            employee_launch_reasoning_effort=None,
-            advertised_models=None,
-            reasoning_supported=None,
-            advertised_reasoning_efforts=None,
-            now=2,
-        )
-        writer_conn.close()
-        release_cas.set()
-        cas_thread.join(2)
-    assert not cas_thread.is_alive()
-    assert len(cas_errors) == 1
-    writer_first_check = connect(str(writer_first_path))
-    assert (
-        tuple(
-            writer_first_check.execute(
-                "SELECT employee_backend, employee_launch_model, "
-                "employee_launch_reasoning_effort FROM tickets WHERE id = ?",
-                (writer_first_id,),
-            ).fetchone()
-        )
-        == ("hermes", None, None)
-    )
-    assert (
-        writer_first_check.execute(
-            "SELECT 1 FROM conversation_session_bindings WHERE employee_id = ?",
-            (writer_first_id,),
-        ).fetchone()
-        is None
-    )
-    writer_first_check.close()
-
-    (
-        binding_first_path,
-        binding_first_id,
-        binding_first_candidate,
-        binding_first_prepared,
-    ) = prepare("binding-first")
-    writer_waiting = threading.Event()
-    release_writer = threading.Event()
-    writer_paused = False
-
-    def pause_writer(statement: str) -> None:
-        nonlocal writer_paused
-        if statement == "BEGIN IMMEDIATE" and not writer_paused:
-            writer_paused = True
-            writer_waiting.set()
-            assert release_writer.wait(2)
-
-    writer_errors: list[BaseException] = []
-
-    def write_after_binding() -> None:
-        writer_conn = connect(str(binding_first_path))
-        writer_conn.set_trace_callback(pause_writer)
-        try:
-            tickets_data.write_employee_configuration(
-                writer_conn,
-                binding_first_id,
-                expected_employee_configuration=binding_first_prepared,
-                employee_backend="hermes",
-                employee_launch_model=None,
-                employee_launch_reasoning_effort=None,
-                advertised_models=None,
-                reasoning_supported=None,
-                advertised_reasoning_efforts=None,
-                now=2,
-            )
-        except BaseException as error:
-            writer_errors.append(error)
-        finally:
-            writer_conn.close()
-
-    writer_thread = threading.Thread(target=write_after_binding)
-    writer_thread.start()
-    assert writer_waiting.wait(2)
-    binding_first_repository = SqliteConversationBindingRepository(
-        str(binding_first_path),
-        workspace_root=tmp_path,
-        integer_now=lambda: 2,
-        employee_backend_catalog=build_production_employee_backend_catalog(),
-        chief_backend_key="hermes",
-    )
-    assert (
-        asyncio.run(
-            binding_first_repository.compare_and_swap_initial(
-                binding_first_candidate,
-                binding_first_prepared,
-            )
-        )
-        == binding_first_candidate
-    )
-    release_writer.set()
-    writer_thread.join(2)
-    assert not writer_thread.is_alive()
-    assert len(writer_errors) == 1
-    binding_first_check = connect(str(binding_first_path))
-    row = binding_first_check.execute(
-        "SELECT tickets.employee_backend, tickets.employee_launch_model, "
-        "tickets.employee_launch_reasoning_effort, "
-        "conversation_session_bindings.backend_key "
-        "FROM tickets JOIN conversation_session_bindings "
-        "ON conversation_session_bindings.employee_id = tickets.id WHERE tickets.id = ?",
-        (binding_first_id,),
-    ).fetchone()
-    assert tuple(row) == (
-        "claude",
-        binding_first_prepared.employee_launch_model,
-        binding_first_prepared.employee_launch_reasoning_effort,
-        "claude",
-    )
-    binding_first_check.close()
 
 
 def test_execution_route_is_absent_and_patch_rejects_it_as_unknown(tmp_path: Path) -> None:

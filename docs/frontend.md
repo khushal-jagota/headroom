@@ -131,13 +131,11 @@ share.
   server remains the source of truth, and the browser holds only the answers it has
   been given.
 
-  Conversation state is deliberately not one of those cached reads. Each ACP pane
-  owns one typed `/api/conversation` WebSocket controller. Its session replay,
-  generation, sequence, queue, permissions, terminal state, and delivery receipts are
-  conversation state rather than cached REST resources. The controller reduces the
-  ordered replay envelopes into a private candidate and publishes the complete
-  conversation to the pane once at `ready`; an existing complete transcript remains
-  visible during a refresh, while post-ready updates still render incrementally.
+  Conversation state is deliberately not one of those cached reads. A pane reads the
+  rows of its conversation after the position it holds, then keeps up over a live tail
+  of the same rows — one seam, whether the pane is opening, reloading, or a second tab.
+  A conversation's rows, what it is running on, and what it is waiting for are the
+  record's own account rather than cached REST resources.
 
   The change stream is also the browser's connection-health owner. The shell starts at
   Reconnecting and says Connected while the stream is open. When the stream drops, the
@@ -235,11 +233,14 @@ hand-rolling the same shapes per screen. Each does one job:
 - **InlineEdit** — product editing and save behavior for Markdown and plain text.
 - **MarkdownBlock** — the read-only product wrapper for managed Markdown.
 - **FilePreview** — the one file preview card/inline renderer (see the file-preview rule).
-- **AcpConversation / AcpConversationPane** — the sole Ticket and Chief-of-Staff
-  conversation surface: typed replay, connection/activity status, transcript,
-  permissions, and the compact work controls.
-- **ConversationComposer** — ACP commands, draft text, and ordered pending image
-  previews for picker, paste, and drop intake. Images become inline ACP blocks.
+- **LiveConversation** — what makes a conversation live, and the only thing that does:
+  it opens one by id, replays the rows after the one it holds and keeps going, keeps the
+  messages this browser has sent that the record has not caught up with, and turns send,
+  stop, answer and New into calls. The Ticket screen, the Chief of Staff and the
+  development pane all mount it.
+- **ConversationPane / ConversationTranscript / ConversationComposer** — what a
+  conversation looks like: the rows, the one raised ask, the status line, and the
+  composer with its model, effort and skill choices.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.
@@ -265,8 +266,8 @@ _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 `web/src/lib/queryCatalogue.ts` (every server read, by name and address),
 `web/src/lib/queryClient.ts` (the one shared cache), `web/src/lib/changeStream.ts`
 (the change stream and connection health), `web/src/lib/mutate.ts` (a write, then the
-refetch it earns), `web/src/lib/acp/` and `web/src/components/acp/` (the typed
-conversation controller, state, transport, transcript, and composer), and the
+refetch it earns), `web/src/lib/conversation2/` and `web/src/components/conversation2/`
+(the conversation wire, feed, transcript and composer), and the
 remaining `web/src/lib/` helpers (API, Managed Markdown, `markdownPipeline.ts`,
 `labelize`, dates), `assets/tokens.css` (design tokens), `assets/app.css` (shared
 styling), `web/dist/` (built app served by FastAPI).
@@ -275,7 +276,8 @@ styling), `web/dist/` (built app served by FastAPI).
 
 - Every backend doc owns the behaviour its screen projects — **Tickets & the gates**
   (`tickets-and-gates.md`), **Days** (`days.md`), **Sprints** (`sprints.md`),
-  **Backlog & Ideas** (`backlog-and-ideas.md`), **Conversation** (`chat.md`).
+  **Backlog & Ideas** (`backlog-and-ideas.md`), **the conversation system**
+  (`conversation-system.md`).
 - **Worker types** (`worker-types.md`) — the served manifest the Ticket screen turns
   into a per-Worker-type lifecycle to render each Ticket's Stages and Worker type pill.
 - **Projects** (`projects.md`) — the shared project selector resource.

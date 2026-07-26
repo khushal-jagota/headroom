@@ -7,7 +7,7 @@
    * find the reply. Opened, the output is capped and scrolls in place, so no single row
    * can push the rest of the conversation off the screen.
    */
-  import { stepIconPaths } from "../../lib/acp/stepIcons";
+  import { stepIconPaths } from "../../lib/conversation2/stepIcons";
   import {
     lineShowsWholeDetail,
     readableDetail,
