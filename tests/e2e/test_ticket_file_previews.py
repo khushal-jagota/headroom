@@ -282,10 +282,19 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}"
         "&path=notes%2Fspace%20name.md"
     )
-    with ticket_page.expect_popup() as markdown_popup_info:
-        markdown_action.click()
-    page = markdown_popup_info.value
-    page.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
+    # A preview opens here rather than in a new tab, so following it is a hash navigation
+    # in this same page: the page that was showing the ticket now shows the preview. This
+    # marker is set on the ticket before the click and read back after it, because the
+    # arrival assertions below would read the same either way if the app had reloaded.
+    ticket_page.evaluate("window.__previewRouteNavigationMarker = 'kept'")
+    markdown_action.click()
+    ticket_page.wait_for_function(
+        "expected => window.location.href === expected",
+        arg=expected_markdown_url,
+        timeout=WAIT_MS,
+    )
+    assert ticket_page.evaluate("window.__previewRouteNavigationMarker") == "kept"
+    page = ticket_page
     assert page.url == expected_markdown_url
     _assert_full_page_markdown_document(page, "File Notes")
     assert (
@@ -314,24 +323,41 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     )
     _assert_full_page_markdown_document(page, "Other Notes")
     assert page.evaluate("window.__previewHashNavigationMarker") == "kept"
-    page.close()
 
-    ticket_page.evaluate("window.__htmlPopupNavigationMarker = 'kept'")
+    # Back is the way out of a preview. Two hops back — the nested markdown, then the
+    # markdown that was opened from the field — return this page to the ticket.
+    page.go_back()
+    page.wait_for_function(
+        "expected => window.location.href === expected",
+        arg=expected_markdown_url,
+        timeout=WAIT_MS,
+    )
+    page.go_back()
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
+
+    ticket_page.evaluate("window.__htmlPreviewNavigationMarker = 'kept'")
+    _open_ticket_field(ticket_page, "success")
     embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
     embedded_preview.locator("iframe").wait_for(state="visible", timeout=WAIT_MS)
     html_action = embedded_preview.locator("a.file-preview-link", has_text="Open page.html")
     expected_html_url = f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=page.html"
-    with ticket_page.expect_popup() as popup_info:
-        html_action.click()
-    popup = popup_info.value
-    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
-    assert popup.url == expected_html_url
+    html_action.click()
+    ticket_page.wait_for_function(
+        "expected => window.location.href === expected",
+        arg=expected_html_url,
+        timeout=WAIT_MS,
+    )
+    assert ticket_page.url == expected_html_url
 
-    full_html_iframe = popup.locator(
+    full_html_iframe = ticket_page.locator(
         "[data-file-preview-route] iframe[data-file-preview-html]"
     )
     full_html_iframe.wait_for(state="visible", timeout=WAIT_MS)
-    html_frame = popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
+    html_frame = ticket_page.frame_locator(
+        "[data-file-preview-route] iframe[data-file-preview-html]"
+    )
     assert full_html_iframe.get_attribute("sandbox") == "allow-scripts"
     assert full_html_iframe.get_attribute("allow") is None
     assert html_frame.locator("h1").inner_text(timeout=WAIT_MS) == "HTML File"
@@ -339,16 +365,16 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert heading_box is not None
     assert heading_box["width"] > 0
     assert heading_box["height"] > 0
-    assert popup.evaluate("window.__ticketFileScriptRan === true") is False
-    assert popup.locator("[data-file-preview-route] > .file-preview-document").count() == 0
-    html_geometry = popup.evaluate(
+    assert ticket_page.evaluate("window.__ticketFileScriptRan === true") is False
+    assert ticket_page.locator("[data-file-preview-route] > .file-preview-document").count() == 0
+    html_geometry = ticket_page.evaluate(
         """() => {
             const shell = document.querySelector('.shell-content').getBoundingClientRect();
             const route = document.querySelector(
                 '[data-file-preview-route]'
             ).getBoundingClientRect();
             const frame = document.querySelector(
-                '[data-file-preview-html]'
+                '[data-file-preview-route] [data-file-preview-html]'
             ).getBoundingClientRect();
             return {
                 shellWidth: shell.width,
@@ -363,8 +389,11 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert html_geometry["frameWidth"] >= html_geometry["shellWidth"] - 2
     assert html_geometry["frameHeight"] >= 0.75 * html_geometry["routeHeight"]
     assert html_geometry["frameBottomGap"] <= 24
-    popup.close()
-    assert ticket_page.evaluate("window.__htmlPopupNavigationMarker") == "kept"
+    ticket_page.go_back()
+    ticket_page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
+    assert ticket_page.evaluate("window.__htmlPreviewNavigationMarker") == "kept"
 
 
 def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
@@ -415,20 +444,25 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
         embedded_preview.frame_locator("iframe[data-file-preview-html]")
     )
 
-    with ticket_page.expect_popup() as popup_info:
-        embedded_preview.locator("a.file-preview-link", has_text="Open page.html").click()
-    popup = popup_info.value
-    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
-    full_iframe = popup.locator(
+    # The second surface is the preview route, which opens here rather than in a new tab.
+    embedded_preview.locator("a.file-preview-link", has_text="Open interactive.html").click()
+    expected_preview_url = (
+        f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=interactive.html"
+    )
+    ticket_page.wait_for_function(
+        "expected => window.location.href === expected",
+        arg=expected_preview_url,
+        timeout=WAIT_MS,
+    )
+    full_iframe = ticket_page.locator(
         "[data-file-preview-route] iframe[data-file-preview-html]"
     )
     full_iframe.wait_for(state="visible", timeout=WAIT_MS)
     assert full_iframe.get_attribute("sandbox") == "allow-scripts"
     assert full_iframe.get_attribute("allow") is None
     _exercise_interactive_workspace_rows(
-        popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
+        ticket_page.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
     )
-    popup.close()
 
 
 def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfaces(
@@ -474,20 +508,25 @@ def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfa
         embedded_preview.frame_locator("iframe[data-file-preview-html]")
     )
 
-    with ticket_page.expect_popup() as popup_info:
-        embedded_preview.locator("a.file-preview-link", has_text="Open page.html").click()
-    popup = popup_info.value
-    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
-    full_iframe = popup.locator(
+    # The second surface is the preview route, which opens here rather than in a new tab.
+    embedded_preview.locator("a.file-preview-link", has_text="Open index.html").click()
+    expected_preview_url = (
+        f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=previews%2Findex.html"
+    )
+    ticket_page.wait_for_function(
+        "expected => window.location.href === expected",
+        arg=expected_preview_url,
+        timeout=WAIT_MS,
+    )
+    full_iframe = ticket_page.locator(
         "[data-file-preview-route] iframe[data-file-preview-html]"
     )
     full_iframe.wait_for(state="visible", timeout=WAIT_MS)
     assert full_iframe.get_attribute("sandbox") == "allow-scripts"
     assert full_iframe.get_attribute("allow") is None
     _assert_managed_html_references_render(
-        popup.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
+        ticket_page.frame_locator("[data-file-preview-route] iframe[data-file-preview-html]")
     )
-    popup.close()
 
 
 def test_markdown_file_preview_has_component_owned_max_height(
@@ -883,12 +922,28 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
     html_action = page.locator(
         f"{editable} [data-file-preview-kind='html'] a.file-preview-link"
     ).first
-    with page.expect_popup() as popup_info:
-        html_action.click()
-    popup = popup_info.value
-    popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
-    assert f"#/preview?source=ticket&ticket={ticket_id}&path=page.html" in popup.url
-    popup.close()
+    # The preview opens here, so this action takes the focused editor off screen and back
+    # again — the whole round trip must still write nothing.
+    html_action.click()
+    preview_hash = f"#/preview?source=ticket&ticket={ticket_id}&path=page.html"
+    page.wait_for_function(
+        "expected => window.location.hash === expected",
+        arg=preview_hash,
+        timeout=WAIT_MS,
+    )
+    page.locator("[data-file-preview-route] iframe[data-file-preview-html]").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    page.go_back()
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS
+    )
+    _open_ticket_field(page, "success")
+    page.locator(f"{editable} [data-file-preview-kind='html'] iframe").first.wait_for(
+        state="visible",
+        timeout=WAIT_MS,
+    )
+    page.locator(editable).focus()
 
     # The off-site link was never claimed, so it is ordinary editable text, not a preview.
     outside_link = page.locator(f'{editable} a[href="https://example.com/outside"]')
