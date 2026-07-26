@@ -187,8 +187,7 @@ def _assert_full_page_markdown_document(page, heading: str) -> None:
     assert page.locator("[data-file-preview-route].file-preview-route--document").count() == 1
     assert page.inner_text("[data-file-preview-route] h1") == heading
     assert page.locator("[data-file-preview-route] > [data-file-preview]").count() == 0
-    assert page.locator("[data-file-preview-route] > .file-preview .file-preview-meta").count() == 0
-    assert page.locator("[data-file-preview-route] > .file-preview a.button").count() == 0
+    assert page.locator("[data-file-preview-route] > .file-preview-document").count() == 0
     geometry = page.evaluate(
         """() => {
             const shellContent = document.querySelector('.shell-content');
@@ -278,7 +277,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     embedded_markdown.locator("h1", has_text="File Notes").wait_for(
         state="visible", timeout=WAIT_MS
     )
-    markdown_action = embedded_markdown.locator("a.file-preview-title").first
+    markdown_action = embedded_markdown.locator("a.file-preview-link").first
     expected_markdown_url = (
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}"
         "&path=notes%2Fspace%20name.md"
@@ -295,11 +294,12 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
         .count()
         == 1
     )
-    self_link_card = page.locator(
-        '[data-file-preview-markdown] [data-file-preview-kind="markdown"] article.file-preview-card'
+    self_link_line = page.locator(
+        "[data-file-preview-markdown] "
+        '.file-preview--inline[data-file-preview-kind="markdown"] a.file-preview-link'
     )
-    assert self_link_card.count() == 1
-    assert "space name.md" in self_link_card.inner_text()
+    assert self_link_line.count() == 1
+    assert self_link_line.inner_text() == "Open space name.md"
     managed_image = page.locator(
         '[data-file-preview-markdown] [data-file-preview-kind="image"] img'
     )
@@ -319,7 +319,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     ticket_page.evaluate("window.__htmlPopupNavigationMarker = 'kept'")
     embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
     embedded_preview.locator("iframe").wait_for(state="visible", timeout=WAIT_MS)
-    html_action = embedded_preview.locator("a.button", has_text="Open preview")
+    html_action = embedded_preview.locator("a.file-preview-link", has_text="Open page.html")
     expected_html_url = f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=page.html"
     with ticket_page.expect_popup() as popup_info:
         html_action.click()
@@ -340,8 +340,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert heading_box["width"] > 0
     assert heading_box["height"] > 0
     assert popup.evaluate("window.__ticketFileScriptRan === true") is False
-    assert popup.locator("[data-file-preview-route] .file-preview-meta").count() == 0
-    assert popup.locator("[data-file-preview-route] a.button").count() == 0
+    assert popup.locator("[data-file-preview-route] > .file-preview-document").count() == 0
     html_geometry = popup.evaluate(
         """() => {
             const shell = document.querySelector('.shell-content').getBoundingClientRect();
@@ -417,7 +416,7 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
     )
 
     with ticket_page.expect_popup() as popup_info:
-        embedded_preview.locator("a.button", has_text="Open preview").click()
+        embedded_preview.locator("a.file-preview-link", has_text="Open page.html").click()
     popup = popup_info.value
     popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
     full_iframe = popup.locator(
@@ -476,7 +475,7 @@ def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfa
     )
 
     with ticket_page.expect_popup() as popup_info:
-        embedded_preview.locator("a.button", has_text="Open preview").click()
+        embedded_preview.locator("a.file-preview-link", has_text="Open page.html").click()
     popup = popup_info.value
     popup.wait_for_load_state("domcontentloaded", timeout=WAIT_MS)
     full_iframe = popup.locator(
@@ -538,22 +537,14 @@ def test_markdown_file_preview_has_component_owned_max_height(
     short_preview.locator("h1", has_text="Short").wait_for(state="visible", timeout=WAIT_MS)
     long_preview.locator("h1", has_text="Long").wait_for(state="visible", timeout=WAIT_MS)
 
-    short_metrics = short_preview.evaluate(
-        """node => ({
+    metrics_script = """node => ({
             clientHeight: node.clientHeight,
             scrollHeight: node.scrollHeight,
             maxHeight: getComputedStyle(node).maxHeight,
             overflowY: getComputedStyle(node).overflowY,
         })"""
-    )
-    long_metrics = long_preview.evaluate(
-        """node => ({
-            clientHeight: node.clientHeight,
-            scrollHeight: node.scrollHeight,
-            maxHeight: getComputedStyle(node).maxHeight,
-            overflowY: getComputedStyle(node).overflowY,
-        })"""
-    )
+    short_metrics = short_preview.locator(".file-preview-document-body").evaluate(metrics_script)
+    long_metrics = long_preview.locator(".file-preview-document-body").evaluate(metrics_script)
 
     assert short_metrics["scrollHeight"] <= short_metrics["clientHeight"] + 1
     assert long_metrics["scrollHeight"] > long_metrics["clientHeight"]
@@ -596,7 +587,7 @@ def test_read_only_ticket_surfaces_share_file_preview(
 
     _open_ticket_field(page, "success")
     success = page.locator('details[data-field="success"]').first
-    for kind in ("markdown", "image", "video", "html", "download", "external"):
+    for kind in ("markdown", "image", "video", "html", "download"):
         success.locator(f'[data-file-preview-kind="{kind}"]').first.wait_for(
             state="visible",
             timeout=WAIT_MS,
@@ -621,23 +612,26 @@ def test_read_only_ticket_surfaces_share_file_preview(
     embedded_html_iframe = success.locator('[data-file-preview-kind="html"] iframe').first
     assert embedded_html_iframe.get_attribute("sandbox") == "allow-scripts"
     assert embedded_html_iframe.get_attribute("allow") is None
-    html_action = success.locator('[data-file-preview-kind="html"] a.button').first
-    assert html_action.get_attribute("target") == "_blank"
+    html_action = success.locator('[data-file-preview-kind="html"] a.file-preview-link').first
+    # Opened here, not in a new tab: one thing at a time, and back is the way out.
+    assert html_action.get_attribute("target") is None
     assert html_action.get_attribute("rel") == "noopener noreferrer"
     assert (
         html_action.get_attribute("href")
         == f"#/preview?source=ticket&ticket={ticket_id}&path=page.html"
     )
     assert success.locator('[data-file-preview-kind="download"] a[download]').count() == 1
-    assert (
-        success.locator('[data-file-preview-kind="external"]', has_text="example.com").count() == 1
+    # An off-site link names no managed file, so the preview system leaves it alone.
+    assert success.locator('[data-file-preview-kind="external"]').count() == 0
+    outside_link = success.locator('a[href="https://example.com/outside"]')
+    assert outside_link.count() == 1
+    assert outside_link.evaluate("anchor => anchor.closest('[data-file-preview]') === null")
+    self_link_line = success.locator(
+        '.file-preview--inline[data-file-preview-kind="markdown"] a.file-preview-link'
     )
-    self_link_card = success.locator(
-        '[data-file-preview-kind="markdown"] article.file-preview-card'
-    )
-    assert self_link_card.count() == 1
-    assert "space name.md" in self_link_card.inner_text()
-    assert self_link_card.locator("h1").count() == 0
+    assert self_link_line.count() == 1
+    assert self_link_line.inner_text() == "Open space name.md"
+    assert self_link_line.locator("h1").count() == 0
     image = success.locator('[data-file-preview-kind="image"] img')
     image.wait_for(state="visible", timeout=WAIT_MS)
     image_metrics = image.evaluate(
@@ -728,7 +722,7 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
         timeout=WAIT_MS,
     )
     page.locator(
-        '[data-field="approach"] .approval-draft [data-file-preview-kind="external"]'
+        '[data-field="approach"] .approval-draft [data-file-preview-kind="download"]'
     ).first.wait_for(state="visible", timeout=WAIT_MS)
     page.locator(
         '[data-field="success"] [data-content-section="note"] [data-file-preview-kind="image"]'
@@ -886,7 +880,9 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
     )
 
     page.locator(editable).focus()
-    html_action = page.locator(f"{editable} [data-file-preview-kind='html'] a.button").first
+    html_action = page.locator(
+        f"{editable} [data-file-preview-kind='html'] a.file-preview-link"
+    ).first
     with page.expect_popup() as popup_info:
         html_action.click()
     popup = popup_info.value
@@ -894,13 +890,10 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
     assert f"#/preview?source=ticket&ticket={ticket_id}&path=page.html" in popup.url
     popup.close()
 
-    external_action = page.locator(f"{editable} [data-file-preview-kind='external'] a.button").first
-    with page.expect_popup() as external_popup_info:
-        external_action.click()
-    external_popup = external_popup_info.value
-    external_popup.wait_for_timeout(100)
-    assert external_popup.url.startswith("https://example.com/outside")
-    external_popup.close()
+    # The off-site link was never claimed, so it is ordinary editable text, not a preview.
+    outside_link = page.locator(f'{editable} a[href="https://example.com/outside"]')
+    assert outside_link.count() == 1
+    assert outside_link.evaluate("anchor => anchor.closest('[data-file-preview]') === null")
 
     with page.expect_download() as download_info:
         page.locator(f"{editable} [data-file-preview-kind='download'] a[download]").first.click()

@@ -1406,7 +1406,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
         '{"command": "ls -la /Users/khushaljagota/Coding", "description": "List project directory"}',
       detail: "total 0\ndrwxr-xr-x  12 khushaljagota  staff   384 25 Jul 21:38 ."
     }),
-    { title: "Ran", summary: "ls -la /Users/khushaljagota/Coding" },
+    { title: "Ran command", summary: "ls -la /Users/khushaljagota/Coding" },
     "the call is read from what it was asked to do, not from what it gave back"
   );
   assert.deepEqual(
@@ -1416,7 +1416,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
       startedDetail: '{"file_path": "/Users/khushaljagota/Coding/planning-v2/AGENTS.md"}',
       detail: null
     }),
-    { title: "Read", summary: "/Users/khushaljagota/Coding/planning-v2/AGENTS.md" }
+    { title: "Read file", summary: "/Users/khushaljagota/Coding/planning-v2/AGENTS.md" }
   );
   assert.deepEqual(
     toolCallLine({
@@ -1426,7 +1426,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
         '{"content": "# Scratch\\n\\nThrowaway.\\n", "file_path": "/Users/khushaljagota/Coding/scratch.md"}',
       detail: null
     }),
-    { title: "Edited", summary: "/Users/khushaljagota/Coding/scratch.md" },
+    { title: "Edited file", summary: "/Users/khushaljagota/Coding/scratch.md" },
     "the path a write was given, never the thing it was given to write"
   );
 
@@ -1460,7 +1460,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
       startedDetail: "/Users/khushaljagota/Coding",
       detail: "/Users/khushaljagota/Coding"
     }),
-    { title: "pwd && rg --files | head -25", summary: "/Users/khushaljagota/Coding" },
+    { title: "Ran command", summary: "pwd && rg --files | head -25" },
     "the shell is how the command was carried; the command is what was done"
   );
 
@@ -1473,7 +1473,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
       startedDetail: "$ ls web/src/lib/conversation",
       detail: "composer.ts\nfeed.ts\ntranscript.ts\nwire.ts"
     }),
-    { title: "terminal: ls web/src/lib/conversation", summary: null }
+    { title: "Ran command", summary: "ls web/src/lib/conversation" }
   );
   assert.deepEqual(
     toolCallLine({
@@ -1482,11 +1482,8 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
       startedDetail: "Searching for 'wire.ts' (files) in /Users/khushaljagota/Coding",
       detail: null
     }),
-    {
-      title: "search: wire.ts",
-      summary: "Searching for 'wire.ts' (files) in /Users/khushaljagota/Coding"
-    },
-    "a detail that says more than the title says is kept"
+    { title: "Searched files", summary: "wire.ts" },
+    "hermes states the kind in front of the value, and the header is where the kind goes"
   );
   assert.deepEqual(
     toolCallLine({
@@ -1496,8 +1493,8 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
       detail: "line one\nline two\nline three"
     }),
     {
-      title: "read: /Users/khushaljagota/Coding/web/src/lib/conversation/wire.ts",
-      summary: null
+      title: "Read file",
+      summary: "/Users/khushaljagota/Coding/web/src/lib/conversation/wire.ts"
     },
     "several lines is output, and output belongs behind the row rather than on it"
   );
@@ -1545,7 +1542,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
       startedDetail: '{"pattern": "arch"}',
       detail: null
     }),
-    { title: "Searched", summary: "arch" },
+    { title: "Searched files", summary: "arch" },
     "a pattern spelled out of the letters of its own verb still says which call this was"
   );
   assert.deepEqual(
@@ -1555,16 +1552,16 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
       startedDetail: '{"pattern": "search"}',
       detail: null
     }),
-    { title: "Searched", summary: "search" },
+    { title: "Searched files", summary: "search" },
     "and so does one that is a whole word of the verb — searching for the word search"
   );
   assert.equal(
-    lineShowsWholeDetail({ title: "Searched", summary: "arch" }, "arch"),
+    lineShowsWholeDetail({ title: "Searched files", summary: "arch" }, "arch"),
     true,
     "a detail the line already shows in full is still a detail the line shows in full"
   );
   assert.equal(
-    lineShowsWholeDetail({ title: "Searched", summary: null }, "arch"),
+    lineShowsWholeDetail({ title: "Searched files", summary: null }, "arch"),
     false,
     "but a row whose line does not say it keeps the way to open it"
   );
@@ -1572,8 +1569,8 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   // Opening a row that would only repeat what its line already says is an affordance
   // that does nothing, so a row like that does not offer one.
   const echoed = toolCallLine({
-    title: "Tool 1",
-    toolKind: "read",
+    title: "Bash",
+    toolKind: "Bash",
     startedDetail: null,
     detail: "ls -la /tmp"
   });

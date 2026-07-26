@@ -370,11 +370,24 @@ globalThis.__managedMarkdownSvelte = {
   },
   FilePreview: {}
 };
-globalThis.__managedMarkdownTargetFromHref = (href, label) => {
-  if (href === "/files/chats/t_demo/images/shot.png") {
-    return { kind: "chat-file", entityId: "t_demo", path: "images/shot.png" };
+const TICKET_FILE_PREFIX = "/files/tickets/t_demo/";
+globalThis.__managedMarkdownFilePreview = {
+  targetFromHref: (href, label) => {
+    if (href.startsWith(TICKET_FILE_PREFIX)) {
+      return {
+        kind: "ticket-file",
+        ticketId: "t_demo",
+        path: href.slice(TICKET_FILE_PREFIX.length)
+      };
+    }
+    return { kind: "external-link", href, label };
+  },
+  resolvePreview: (target) => {
+    const name = target.kind === "ticket-file" ? target.path : target.href;
+    if (/\.(png|jpg|gif|webp|svg)$/i.test(name)) return { kind: "image" };
+    if (/\.md$/i.test(name)) return { kind: "markdown" };
+    return { kind: "external" };
   }
-  return { kind: "external-link", href, label };
 };
 
 function text(value) {
@@ -392,25 +405,53 @@ function renderedMarkdown(source) {
     rendered.appendChild(
       element("p", [
         element("a", [element("img", [], {
-          src: "/files/chats/t_demo/images/shot.png",
+          src: "/files/tickets/t_demo/images/shot.png",
           alt: "Attached image",
           "data-markdown-source-token":
-            "![Attached image](/files/chats/t_demo/images/shot.png)"
+            "![Attached image](/files/tickets/t_demo/images/shot.png)"
         })], {
           href: "https://example.com/image-link",
           "data-markdown-source-token":
-            "[![Attached image](/files/chats/t_demo/images/shot.png)](https://example.com/image-link)"
+            "[![Attached image](/files/tickets/t_demo/images/shot.png)](https://example.com/image-link)"
         })
       ])
     );
   } else if (source.includes("![Attached image]")) {
     rendered.appendChild(
       element("p", [element("img", [], {
-        src: "/files/chats/t_demo/images/shot.png",
+        src: "/files/tickets/t_demo/images/shot.png",
         alt: "Attached image",
         "data-markdown-source-token":
-          "![Attached image](/files/chats/t_demo/images/shot.png)"
+          "![Attached image](/files/tickets/t_demo/images/shot.png)"
       })])
+    );
+  } else if (source.includes("![Remote image]")) {
+    rendered.appendChild(
+      element("p", [element("img", [], {
+        src: "https://example.com/remote.png",
+        alt: "Remote image",
+        "data-markdown-source-token": "![Remote image](https://example.com/remote.png)"
+      })])
+    );
+  } else if (source.includes("[Results]")) {
+    rendered.appendChild(
+      element("p", [
+        text("Jump to "),
+        element("a", [text("Results")], {
+          href: "#results",
+          "data-markdown-source-token": "[Results](#results)"
+        }),
+        text(" or "),
+        element("a", [text("the Day")], {
+          href: "#/day",
+          "data-markdown-source-token": "[the Day](#/day)"
+        }),
+        text(" or "),
+        element("a", [text("elsewhere")], {
+          href: "https://example.com/page",
+          "data-markdown-source-token": "[elsewhere](https://example.com/page)"
+        })
+      ])
     );
   } else if (source.includes("[Doc]")) {
     rendered.appendChild(
@@ -516,8 +557,8 @@ const executableSource = ownerSource
     "const FilePreview = globalThis.__managedMarkdownSvelte.FilePreview;"
   )
   .replace(
-    'import { targetFromHref } from "./filePreview";',
-    "const targetFromHref = globalThis.__managedMarkdownTargetFromHref;"
+    'import { resolvePreview, targetFromHref } from "./filePreview";',
+    "const { resolvePreview, targetFromHref } = globalThis.__managedMarkdownFilePreview;"
   )
   .replace(
     'import { renderMarkdownToElement, serializeMarkdownDomToSource } from "./markdownPipeline";',
@@ -577,11 +618,7 @@ assert.ok(stableRendered.contains(stableSlot));
 assert.equal(mountCalls.length, mountCount);
 assert.equal(unmountCalls.length, unmountCount);
 assert.deepEqual(mountCalls.at(-1).options.props, {
-  target: {
-    kind: "external-link",
-    href: "/files/tickets/t_demo/doc.md",
-    label: "Doc"
-  },
+  target: { kind: "ticket-file", ticketId: "t_demo", path: "doc.md" },
   depth: 1,
   visited: ["first"]
 });
@@ -605,7 +642,7 @@ const imageReadOnlyHost = host();
 const imageReadOnly = createManagedMarkdownSurface(imageReadOnlyHost, { mode: "read-only" });
 const imageMountCount = mountCalls.length;
 imageReadOnly.update({
-  source: "![Attached image](/files/chats/t_demo/images/shot.png)",
+  source: "![Attached image](/files/tickets/t_demo/images/shot.png)",
   emptyText: "",
   depth: 0,
   visited: []
@@ -613,28 +650,70 @@ imageReadOnly.update({
 assert.equal(imageReadOnlyHost.querySelectorAll("img[src]").length, 0);
 assert.equal(mountCalls.length, imageMountCount + 1);
 assert.deepEqual(mountCalls.at(-1).options.props.target, {
-  kind: "chat-file",
-  entityId: "t_demo",
+  kind: "ticket-file",
+  ticketId: "t_demo",
   path: "images/shot.png"
 });
 imageReadOnly.destroy();
 
+// An image from another origin is previewed exactly like a managed one.
+const remoteImageHost = host();
+const remoteImageReadOnly = createManagedMarkdownSurface(remoteImageHost, { mode: "read-only" });
+const remoteImageMountCount = mountCalls.length;
+remoteImageReadOnly.update({
+  source: "![Remote image](https://example.com/remote.png)",
+  emptyText: "",
+  depth: 0,
+  visited: []
+});
+assert.equal(remoteImageHost.querySelectorAll("img[src]").length, 0);
+assert.equal(mountCalls.length, remoteImageMountCount + 1);
+assert.deepEqual(mountCalls.at(-1).options.props.target, {
+  kind: "external-link",
+  href: "https://example.com/remote.png",
+  label: "Remote image"
+});
+remoteImageReadOnly.destroy();
+
+// A link that does not name a managed file stays the anchor markdown rendered:
+// a same-page anchor, an app route, and an off-site address are all left alone.
+const linkHost = host();
+const linkReadOnly = createManagedMarkdownSurface(linkHost, { mode: "read-only" });
+const linkMountCount = mountCalls.length;
+linkReadOnly.update({
+  source: "Jump to [Results](#results) or [the Day](#/day) or [elsewhere](https://example.com/page)",
+  emptyText: "",
+  depth: 0,
+  visited: []
+});
+assert.equal(mountCalls.length, linkMountCount);
+assert.deepEqual(
+  linkHost.querySelectorAll("a[href]").map((anchor) => anchor.getAttribute("href")),
+  ["#results", "#/day", "https://example.com/page"]
+);
+linkReadOnly.destroy();
+
+// An image inside a link the preview system left standing keeps both: the link is
+// still a link and the image is still an image, rather than one card replacing both.
 const linkedImageHost = host();
 const linkedImageReadOnly = createManagedMarkdownSurface(linkedImageHost, { mode: "read-only" });
 const linkedImageMountCount = mountCalls.length;
 linkedImageReadOnly.update({
   source:
-    "[![Attached image](/files/chats/t_demo/images/shot.png)](https://example.com/image-link)",
+    "[![Attached image](/files/tickets/t_demo/images/shot.png)](https://example.com/image-link)",
   emptyText: "",
   depth: 0,
   visited: []
 });
-assert.equal(mountCalls.length, linkedImageMountCount + 1);
-assert.deepEqual(mountCalls.at(-1).options.props.target, {
-  kind: "external-link",
-  href: "https://example.com/image-link",
-  label: "https://example.com/image-link"
-});
+assert.equal(mountCalls.length, linkedImageMountCount);
+assert.deepEqual(
+  linkedImageHost.querySelectorAll("a[href]").map((anchor) => anchor.getAttribute("href")),
+  ["https://example.com/image-link"]
+);
+assert.deepEqual(
+  linkedImageHost.querySelectorAll("img[src]").map((image) => image.getAttribute("src")),
+  ["/files/tickets/t_demo/images/shot.png"]
+);
 linkedImageReadOnly.destroy();
 
 // Editable first paint, dirty same-source reset, observer reuse, and final-DOM reconciliation.

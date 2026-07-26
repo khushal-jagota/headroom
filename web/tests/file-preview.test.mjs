@@ -49,20 +49,58 @@ assert.equal(resolvePreview(ticketVideo).kind, "video");
 const ticketAudio = { kind: "ticket-file", ticketId: "t_file123", path: "audio/demo.mp3" };
 assert.equal(resolvePreview(ticketAudio).kind, "audio");
 
+// SVG is an image like any other.
 const ticketSvg = { kind: "ticket-file", ticketId: "t_file123", path: "icon.svg" };
-assert.equal(resolvePreview(ticketSvg).kind, "download");
+assert.equal(resolvePreview(ticketSvg).kind, "image");
+
+// One extension names one kind: no extension is both video and audio.
+for (const [path, kind] of [
+  ["clips/talk.webm", "video"],
+  ["clips/talk.ogv", "video"],
+  ["audio/talk.ogg", "audio"],
+  ["audio/talk.oga", "audio"],
+  ["code/tool.py", "download"],
+  ["archive/bundle.zip", "download"]
+]) {
+  assert.equal(resolvePreview({ kind: "ticket-file", ticketId: "t_file123", path }).kind, kind, path);
+}
 
 assert.deepEqual(resolvePreview({ kind: "external-link", href: "https://example.com/x", label: "Example" }), {
   kind: "external",
   target: { kind: "external-link", href: "https://example.com/x", label: "Example" },
   href: "https://example.com/x",
   label: "Example",
-  displayHref: "example.com",
-  actionLabel: "Open external link"
+  displayHref: "example.com"
 });
 
-assert.equal(resolvePreview(ticketHtml).actionLabel, "Open preview");
-assert.equal(resolvePreview(ticketSvg).actionLabel, "Download");
+// A URL the browser renders on its own is that kind, wherever it is hosted.
+const externalImage = {
+  kind: "external-link",
+  href: "https://example.com/pictures/photo.png?v=2#top",
+  label: "Photo"
+};
+assert.deepEqual(resolvePreview(externalImage), {
+  kind: "image",
+  target: externalImage,
+  href: "https://example.com/pictures/photo.png?v=2#top",
+  label: "Photo"
+});
+assert.equal(
+  resolvePreview({ kind: "external-link", href: "https://example.com/clip.mp4" }).kind,
+  "video"
+);
+assert.equal(
+  resolvePreview({ kind: "external-link", href: "https://example.com/tone.wav" }).kind,
+  "audio"
+);
+// Markdown and HTML are rendered from bytes we fetch, so a URL stays a link.
+for (const href of ["https://example.com/notes.md", "https://example.com/page.html", "#results", "#/day"]) {
+  assert.equal(resolvePreview({ kind: "external-link", href }).kind, "external", href);
+}
+
+for (const resolved of [resolvePreview(ticketHtml), resolvePreview(ticketSvg), resolvePreview(externalImage)]) {
+  assert.equal("actionLabel" in resolved, false);
+}
 assert.deepEqual(markdownExpansionFor(resolvePreview(ticketMarkdown), 0, []), {
   expandable: true,
   nextDepth: 1,
