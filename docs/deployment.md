@@ -46,6 +46,10 @@ success, or restore and prove the prior app
 The self-hosted runner proves Python is at least 3.12 and Node is version 22. It builds
 under runner-temporary storage and removes that state when the job ends. The resulting
 app contains no Git metadata and carries a validated identity for the requested commit.
+Runtime validation requires both executable entrypoints: `bin/panels` is the
+root-relative interactive CLI that preserves caller context, while
+`bin/panels-launcher` is the isolated launcher for services and other managed runtime
+operations.
 
 The workflow uses the fixed VPS contract:
 
@@ -63,6 +67,14 @@ compatibility before running the deployed application's `backup-current` command
 Only then does it retain the working app as transaction-temporary fallback, install the
 candidate at `current/app`, restart Panels, and require health to report the requested
 commit.
+
+Every candidate, including its staged copy, must contain the complete current runtime
+and both executable entrypoints. The existing app still receives manifest, artifact,
+and safe-tree validation, but it may predate the interactive `bin/panels` entrypoint.
+This allows an intact older production app to upgrade while still rejecting a tampered
+one before compatibility, backup, restart, or filesystem replacement begins. The
+compatibility probe continues to boot and health-check that existing app against a
+disposable upgraded database.
 
 If replacement, restart, or health proof fails, deployment restores the fallback app,
 restarts it, and proves it healthy. If recovery cannot be proved, the retained fallback

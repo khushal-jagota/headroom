@@ -32,8 +32,10 @@ def test_compatibility_upgrades_copy_then_boots_previous_app_with_isolated_state
     candidate.mkdir()
     run_calls: list[tuple[list[str], dict[str, str]]] = []
     popen_calls: list[tuple[list[str], dict[str, str]]] = []
+    validation_modes: list[tuple[Path, bool]] = []
 
-    def validate(path: Path, **_: object) -> AppManifest:
+    def validate(path: Path, *, require_runtime: bool = False, **_: object) -> AppManifest:
+        validation_modes.append((path.parent, require_runtime))
         sha = SHA_A if path.parent == current else SHA_B
         return AppManifest(sha, "a" * 64, "b" * 64)
 
@@ -73,6 +75,7 @@ def test_compatibility_upgrades_copy_then_boots_previous_app_with_isolated_state
         source_db=source_db,
     )
 
+    assert validation_modes == [(candidate, True), (current, False)]
     assert run_calls[0][0][0] == str(candidate / ".venv/bin/python")
     assert popen_calls[0][0] == [
         str(current / ".venv/bin/python"),

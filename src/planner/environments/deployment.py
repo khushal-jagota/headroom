@@ -178,7 +178,9 @@ def deploy_app(
     effective_lock_path = lock_path or (root.parent / ".panels-app-deploy.lock")
     with deployment_lock(effective_lock_path):
         _validate_current_root(root)
-        candidate_manifest = _validate_app(candidate_app, "candidate app")
+        candidate_manifest = _validate_app(
+            candidate_app, "candidate app", require_runtime=True
+        )
         prior_manifest = _validate_optional_current_app(current_app)
         if prior_manifest is None:
             if _persistent_state_exists(root):
@@ -218,7 +220,12 @@ def deploy_app(
         _require_unused(fallback)
         try:
             shutil.copytree(candidate_app, staged, symlinks=True)
-            _validate_app(staged, "staged candidate app", expected_sha=candidate_manifest.app_sha)
+            _validate_app(
+                staged,
+                "staged candidate app",
+                expected_sha=candidate_manifest.app_sha,
+                require_runtime=True,
+            )
             os.replace(current_app, fallback)
             try:
                 os.replace(staged, current_app)
@@ -271,7 +278,12 @@ def _install_first_app(
     _require_unused(staged)
     try:
         shutil.copytree(candidate_app, staged, symlinks=True)
-        _validate_app(staged, "staged candidate app", expected_sha=candidate_manifest.app_sha)
+        _validate_app(
+            staged,
+            "staged candidate app",
+            expected_sha=candidate_manifest.app_sha,
+            require_runtime=True,
+        )
         os.replace(staged, current_app)
         try:
             service.restart()
@@ -298,12 +310,20 @@ def _validate_current_root(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
 
 
-def _validate_app(app: Path, label: str, *, expected_sha: str | None = None) -> AppManifest:
+def _validate_app(
+    app: Path,
+    label: str,
+    *,
+    expected_sha: str | None = None,
+    require_runtime: bool = True,
+) -> AppManifest:
     try:
         if app.is_symlink():
             raise AppValidationError(f"{label} must not be a symlink")
         return validate_app_manifest(
-            app / "manifest.json", expected_sha=expected_sha, require_runtime=True
+            app / "manifest.json",
+            expected_sha=expected_sha,
+            require_runtime=require_runtime,
         )
     except AppValidationError as exc:
         raise DeploymentError(f"{label} is invalid: {exc}") from exc
@@ -312,7 +332,7 @@ def _validate_app(app: Path, label: str, *, expected_sha: str | None = None) -> 
 def _validate_optional_current_app(current_app: Path) -> AppManifest | None:
     if not current_app.exists() and not current_app.is_symlink():
         return None
-    return _validate_app(current_app, "current app")
+    return _validate_app(current_app, "current app", require_runtime=False)
 
 
 def _persistent_state_exists(current_root: Path) -> bool:

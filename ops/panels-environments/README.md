@@ -49,12 +49,18 @@ leaves `current/data` and `current/logs` in place.
 
 ## Commands and non-production
 
-The checked-in `panels` wrapper follows the deployed application and forwards arguments:
+The checked-in `panels` wrapper follows the deployed application's `bin/panels`
+command and forwards the caller's arguments and environment:
 
 ```sh
 install -d "$HOME/.local/bin"
 install -m 0755 panels "$HOME/.local/bin/panels"
 ```
+
+That command is the interactive CLI and works from any directory. The deployed command
+sets its own application root and exact SHA while leaving the rest of the caller
+environment intact. It is separate from `bin/panels-launcher`, which rebuilds an
+isolated environment for the live service, scheduled maintenance, and backups.
 
 Staging is not a service. Prepare its fake state under
 `~/Coding/Panels/data/environments/staging`, start it from `~/Coding/Panels` on demand,

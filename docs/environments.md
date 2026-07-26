@@ -52,6 +52,11 @@ The deployed user service starts
 It binds to `127.0.0.1:8767`. `systemctl --user` starts, stops, restarts, and inspects
 the service without sudo.
 
+Interactive commands use `~/Deployments/Panels/current/app/bin/panels` instead. The
+global `panels` wrapper follows that command. The deployed command establishes its own
+application root and exact SHA, preserves the rest of the caller context, and does not
+enter the managed service launcher's allowlisted environment.
+
 Live host migration is separate operator work. This repository change does not rename
 the account, move existing host state, or alter Tailscale Serve.
 
