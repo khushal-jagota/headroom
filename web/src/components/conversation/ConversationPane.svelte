@@ -231,6 +231,11 @@
 
   function onWindowKeydown(event: KeyboardEvent): void {
     if (event.key !== "Escape") return;
+    // Somebody nearer the key already answered it. Escape means "out of the thing I am
+    // in", and the thing a person is in is rarely this: a ticket field being edited beside
+    // a peeked conversation takes its own Escape to cancel the edit, and a second meaning
+    // taken from the same press would close the conversation out from under them.
+    if (event.defaultPrevented) return;
     if (menuOpen) {
       closeMenu();
       menuButton?.focus();
@@ -410,6 +415,40 @@
     return recorded[recorded.length - 1] ?? null;
   }
 
+  /** The message the room is being held open under: the newest thing the person said,
+   *  whether that is still this browser's own copy of it or the row that replaced it. */
+  function theMessageTheRoomIsFor(thread: HTMLDivElement): Element | null {
+    const drawn = thread.querySelectorAll("[data-conversation-outgoing]");
+    const recorded = thread.querySelectorAll('[data-conversation-row="prompt"]');
+    return drawn[drawn.length - 1] ?? recorded[recorded.length - 1] ?? null;
+  }
+
+  /** Measure the room again, against the height the thread has now.
+   *
+   * The room is a viewport less the message that asked for it, so a thread that has
+   * changed height is holding an amount that was right for a screen it no longer has. It
+   * cannot fix itself: giving room back is all it does on its own, so a thread that has
+   * grown stays too short for where the reader was and the browser pulls them off the
+   * message they just sent to fit what is left. Measured here the way it was measured when
+   * it was first kept, and given back straight afterwards by the usual read — so this only
+   * ever restores the room to what the new height would have kept in the first place.
+   *
+   * A room nobody is waiting on is not a room. Nothing here grows one back.
+   */
+  function measureTheRoomAgainstTheHeightWeHaveNow(thread: HTMLDivElement): void {
+    if (reservedSpacePixels === 0) return;
+    const asking = theMessageTheRoomIsFor(thread);
+    if (asking === null) return;
+    reservedSpacePixels = Math.max(
+      0,
+      Math.ceil(
+        thread.clientHeight
+        - asking.getBoundingClientRect().height
+        - SENT_MESSAGE_TOP_GAP_PIXELS
+      )
+    );
+  }
+
   /** Put a message that has just been sent near the top, with the answer's room under it.
    *
    * The room is a viewport less the message itself, which is what makes the message
@@ -480,12 +519,18 @@
    * Measured from where the reader was rather than from where they are now, because a
    * thread that has just got shorter has already had the browser pull the position back
    * to fit it. Correcting from there would count that pull twice.
+   *
+   * Says whether it found anything of theirs left to measure from. Usually there is —
+   * something changed height above them and everything around it survived. But the longer
+   * they have been away the more of the page can go, and a caller that knows the gap was
+   * a long one needs to know when there is nothing left of where they were.
    */
-  function keepTheReaderWhereTheyWere(thread: HTMLDivElement, held: HeldView): void {
+  function keepTheReaderWhereTheyWere(thread: HTMLDivElement, held: HeldView): boolean {
     const survivor = held.lines.find((line) => thread.contains(line.element));
-    if (survivor === undefined) return;
+    if (survivor === undefined) return false;
     const wanted = Math.max(0, held.scrollTop + topWithin(thread, survivor.element) - survivor.top);
     if (wanted !== thread.scrollTop) thread.scrollTop = wanted;
+    return true;
   }
 
   function messageToSettleOn(): string | null {
@@ -500,6 +545,11 @@
     const thread = threadElement;
     if (thread === null) return;
     if (outgoingMessages.length === 0) settledMessageIds = new Set();
+    // Above the hold, not below it: holding a view means walking every row in the thread,
+    // and a thread with no shape gives back nothing for the whole walk — every element in
+    // it is looked through to its children, all the way down, for a view that is then
+    // thrown away. Nothing under here has anything to say until it is on screen.
+    if (!theThreadHasAShape(thread)) return;
     const held = untrack(() => holdWhatTheReaderIsLookingAt(thread));
     const justSent = untrack(() => messageToSettleOn());
     const wasFollowing = untrack(() => following);
@@ -559,6 +609,13 @@
    * opening means — a conversation whose page starts it at rest has had rows all along and
    * has still never been looked at. Otherwise the reader goes back to the line they were
    * on, and following, which only ever moves forwards, gets the last word.
+   *
+   * With one way out. A view is held over a gap, and the longer the gap the more of the
+   * page can go in it: a turn settling folds its whole run of tool calls out of the
+   * document, so somebody who dropped to rest in the middle of one can come back to find
+   * not one line of what they held still on the page. There is nothing to measure from
+   * then, and leaving them where they landed means the top of a long conversation. The end
+   * of it is the better answer, and being at the end is what following means.
    */
   function settleTheViewAfterAChangeOfShape(
     thread: HTMLDivElement,
@@ -571,7 +628,7 @@
       following = true;
       keepTheNewestLineInSight(thread);
     } else {
-      if (held !== null) keepTheReaderWhereTheyWere(thread, held);
+      if (held !== null && !keepTheReaderWhereTheyWere(thread, held)) following = true;
       if (following) keepTheNewestLineInSight(thread);
     }
     readTheThreadAgain(thread);
@@ -607,14 +664,26 @@
       stateOnScreen = wanted;
       stateHasBeenDrawn = true;
       if (!isAMove) return;
-      if (previous !== "rest") viewHeldAcrossTheMove = holdWhatTheReaderIsLookingAt(thread);
+      // The DOM has not changed yet, so this is the thread as the person still sees it: a
+      // shape here means there is a view worth holding, and no shape means they were at
+      // rest and what was held on the way in is still the only answer.
+      if (theThreadHasAShape(thread)) {
+        viewHeldAcrossTheMove = holdWhatTheReaderIsLookingAt(thread);
+      }
       const held = viewHeldAcrossTheMove;
       // Going to rest there is nothing to correct and nothing that could be corrected:
       // what was just held is what the way back out will be measured against.
       if (wanted === "rest") return;
       viewHeldAcrossTheMove = null;
       const request = ++scrollRenderRequest;
-      void tick().then(() => {
+      void tick().then(async () => {
+        if (request !== scrollRenderRequest || threadElement === null) return;
+        if (!theThreadHasAShape(threadElement)) return;
+        // The room before the reader, and a frame for it to be drawn at its new size in.
+        // The room is what makes the thread long enough to hold where they were, so
+        // putting them back before it has grown only has the browser refuse the move.
+        measureTheRoomAgainstTheHeightWeHaveNow(threadElement);
+        await tick();
         if (request !== scrollRenderRequest || threadElement === null) return;
         if (!theThreadHasAShape(threadElement)) return;
         settleTheViewAfterAChangeOfShape(threadElement, held);
