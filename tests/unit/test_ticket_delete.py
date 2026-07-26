@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.conversation2.contracts import ConversationStartRequest
+from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import change_signal
 from planner.core import links as core_links
 from planner.core.clock import TestClock as PlannerTestClock
@@ -162,7 +163,17 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, clock, conn_factory), db_path
+    return (
+        create_app(
+            config,
+            clock,
+            conn_factory,
+            # The delete route asks the conversation system whether a turn is running, so
+            # this file needs one whose running turn it can start and end by hand.
+            conversation_system_for_test=InMemoryConversationSystem(),
+        ),
+        db_path,
+    )
 
 
 def test_delete_route_refuses_a_ticket_whose_conversation_is_running(tmp_path: Path) -> None:

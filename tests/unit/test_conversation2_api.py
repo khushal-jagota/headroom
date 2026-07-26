@@ -1336,4 +1336,8 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         events = client.get("/api/conversation2/conversations/wired/events")
         assert events.json() == {"events": []}
 
+        # The worker path and the browser's conversation are the same system. A worker's
+        # prompt goes into a real conversation, not a stand-in beside it.
+        assert app.state.conversation_system is app.state.conversation2.system
+
     assert app.state.conversation2 is None

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from planner.conversation.composition import ConversationComposition, ConversationTestOptions
 from planner.conversation2.api import build_conversation2_runtime
 from planner.conversation2.api import router as conversation2_router
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation2.contracts import ConversationSystem
 from planner.conversation2.production_backends import production_backend_child_factories
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -101,10 +101,13 @@ def create_app(
     conn_factory: Callable[[], sqlite3.Connection],
     *,
     conversation_test_options: ConversationTestOptions | None = None,
+    conversation_system_for_test: ConversationSystem | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
 ) -> FastAPI:
     if conversation_test_options is not None and not config.test_mode:
         raise ValueError("conversation_test_options are accepted only in test mode")
+    if conversation_system_for_test is not None and not config.test_mode:
+        raise ValueError("conversation_system_for_test is accepted only in test mode")
 
     @asynccontextmanager
     async def _configured_lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -117,6 +120,25 @@ def create_app(
             tickets_data.audit_ticket_registry_integrity(audit_conn)
         finally:
             audit_conn.close()
+
+        # The conversation system, built before anything that sends into one. It composes
+        # the three real agents on this machine, and spawns none of them until a
+        # conversation has something to send. Everything that starts or steers a worker
+        # goes through it, so it has to exist before the readiness loop starts.
+        conversation2 = build_conversation2_runtime(
+            db_path=config.db_path,
+            db_busy_timeout_ms=config.db_busy_timeout_ms,
+            sse_heartbeat_ms=config.sse_heartbeat_ms,
+            backend_child_factories=production_backend_child_factories(),
+        )
+        app.state.conversation2 = conversation2
+        # A test that drives workers wants a conversation system it can hold still, so it
+        # passes one in. Nothing else does: production always runs the real one.
+        app.state.conversation_system = (
+            conversation2.system if conversation_system_for_test is None
+            else conversation_system_for_test
+        )
+        await conversation2.system.start_idle_child_janitor()
 
         loops: Any = None
         conversation: ConversationComposition | None = None
@@ -158,17 +180,6 @@ def create_app(
                 await conversation.shutdown(deadline)
                 app.state.conversation = None
                 raise
-        # The new conversation system, alongside the old one and touched by nothing else:
-        # no production screen and no loop calls it. It composes the three real agents on
-        # this machine, and spawns none of them until a conversation has something to send.
-        conversation2 = build_conversation2_runtime(
-            db_path=config.db_path,
-            db_busy_timeout_ms=config.db_busy_timeout_ms,
-            sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=production_backend_child_factories(),
-        )
-        app.state.conversation2 = conversation2
-        await conversation2.system.start_idle_child_janitor()
         try:
             yield
         finally:
@@ -205,17 +216,14 @@ def create_app(
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    # THE INTERIM STAND-IN. Everything that starts or steers a worker goes through this
-    # one ConversationSystem, and until the program's swap step it is the in-memory fake:
-    # real enough to prove the wiring, backed by dictionaries rather than agents. The real
-    # conversation system replaces this line and nothing else. Composed for production and
-    # test mode alike, because the readiness loop and the Ticket routes need it in both.
-    app.state.conversation_system = InMemoryConversationSystem()
     app.state.worker_context_service = SqliteWorkerContextService(
         lambda: connect(config.db_path, config.db_busy_timeout_ms)
     )
     app.state.conversation = None
     app.state.conversation2 = None
+    # The conversation system is the running one, so it belongs to the lifespan that
+    # starts and stops it. Outside that window there is none.
+    app.state.conversation_system = None
     configured_vps_status_collector = vps_status_collector or (
         lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
     )

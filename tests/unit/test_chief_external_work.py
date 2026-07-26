@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.conversation2.contracts import ConversationStartRequest
+from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -62,7 +63,14 @@ def _make_app(tmp_path: Path):
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    app = create_app(config, build_clock(config), conn_factory)
+    app = create_app(
+        config,
+        build_clock(config),
+        conn_factory,
+        # Reconciling asks the conversation system whether a turn is running, so this file
+        # needs one whose running turn it can start by hand and that spawns nothing.
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
     return app, db_path
 
 

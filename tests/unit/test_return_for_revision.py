@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -31,7 +32,14 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
         path=None,
         env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
     )
-    app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
+    app = create_app(
+        config,
+        build_clock(config),
+        lambda: connect(str(db_path)),
+        # What this file asserts is where the guidance went, so the conversation system
+        # has to be one that records its writes and never spawns anything.
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
     return app, db_path
 
 

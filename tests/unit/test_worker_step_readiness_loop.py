@@ -741,7 +741,14 @@ def test_the_test_mode_route_runs_one_worker_step_against_the_composed_system(
             "PLAN_FAKE_NOW": FIXED_NOW.isoformat(),
         },
     )
-    app = create_app(config, build_clock(config), world.connect)
+    app = create_app(
+        config,
+        build_clock(config),
+        world.connect,
+        # This asserts what the step wrote to the backend, so it needs a conversation
+        # system that records its writes rather than one that spawns an agent.
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
 
     with TestClient(app) as client:
         response = client.post(f"/api/test/run-step/{ticket_id}")
