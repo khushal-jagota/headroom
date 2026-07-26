@@ -77,10 +77,9 @@ def _scripted_definition(backend_key: str) -> AgentBackendDefinition:
     )
 
 
-def build_scripted_worker_runtime_definitions() -> ConfiguredWorkerRuntimeDefinitions:
+def build_scripted_backends() -> tuple[EmployeeBackendCatalog, ConfiguredWorkerRuntimeDefinitions]:
     definitions = tuple(
-        _scripted_definition(key)
-        for key in ("hermes", "codex", "claude", "probe-backend")
+        _scripted_definition(key) for key in ("hermes", "codex", "claude")
     )
     catalog = EmployeeBackendCatalog(
         tuple(
@@ -98,13 +97,11 @@ def build_scripted_worker_runtime_definitions() -> ConfiguredWorkerRuntimeDefini
             for definition in definitions
         )
     )
-    return ConfiguredWorkerRuntimeDefinitions(
-        catalog,
-        build_probe_registry(catalog),
-    )
+    return catalog, ConfiguredWorkerRuntimeDefinitions(build_probe_registry())
 
 
 def _app() -> object:
+    scripted_catalog, scripted_runtime_definitions = build_scripted_backends()
     config = load_config(env=os.environ)
     clock = build_clock(config)
     return create_app(
@@ -112,7 +109,8 @@ def _app() -> object:
         clock,
         lambda: connect(config.db_path),
         conversation_test_options=ConversationTestOptions(
-            employee_runtime_definitions=(build_scripted_worker_runtime_definitions()),
+            employee_runtime_definitions=scripted_runtime_definitions,
+            employee_backend_catalog=scripted_catalog,
         ),
     )
 

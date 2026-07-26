@@ -289,7 +289,6 @@
 
             <ManagedLaunchDefaults
               label={chief.label}
-              employeeBackends={workers.data.employee_backends}
               value={chief.launch_defaults}
               onSave={saveChiefLaunchDefaults}
             />
@@ -367,7 +366,6 @@
 
             <ManagedLaunchDefaults
               label={manifest.label || labelize(detail.settings.worker_type)}
-              employeeBackends={detail.employee_backends}
               value={detail.settings.launch_defaults}
               onSave={(next) => saveWorkerLaunchDefaults(detail.settings, next)}
             />

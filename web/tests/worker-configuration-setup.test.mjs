@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,6 +15,29 @@ const hostPath = join(webRoot, "tests", `.worker-configuration-host-${process.pi
 const mainPath = join(webRoot, "tests", `.worker-configuration-main-${process.pid}.ts`);
 const indexPath = join(webRoot, "tests", `.worker-configuration-index-${process.pid}.html`);
 let serverProcess;
+
+// Both configuration screens read what the backends on this machine are from the one
+// place that answers it, and neither knows the name of a single backend: the list, the
+// models and the efforts all arrive together, so a fourth agent needs no edit here.
+for (const fileName of ["WorkerConfigurationSetup.svelte", "ManagedLaunchDefaults.svelte"]) {
+  const source = await readFile(
+    new URL(`../src/components/${fileName}`, import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /employee_launch_model/, fileName);
+  assert.match(source, /employee_launch_reasoning_effort/, fileName);
+  assert.match(source, /readBackends/, fileName);
+  assert.match(source, /lib\/conversation2\/wire/, fileName);
+  assert.match(source, /effortOptionsFor/, fileName);
+  assert.match(source, /requestGeneration/, fileName);
+  assert.doesNotMatch(source, /employee-configuration-catalog/, fileName);
+  assert.doesNotMatch(source, /["'](?:hermes|codex|claude(?: code)?)["']/i, fileName);
+}
+const setupSource = await readFile(
+  new URL("../src/components/WorkerConfigurationSetup.svelte", import.meta.url),
+  "utf8",
+);
+assert.match(setupSource, /data-employee-configuration-retry/);
 
 try {
   await writeFile(hostPath, `
@@ -123,7 +146,6 @@ try {
 {#if editable}
   <WorkerConfigurationSetup
     ticketId="ticket-ui"
-    employeeBackends={["hermes", "codex"]}
     employeeBackend={saved.employee_backend}
     employeeLaunchModel={saved.employee_launch_model}
     employeeLaunchReasoningEffort={saved.employee_launch_reasoning_effort}
@@ -134,7 +156,6 @@ try {
 {#if showLaunchDefaults}
   <ManagedLaunchDefaults
     label="Coding"
-    employeeBackends={["hermes", "codex"]}
     value={launchDefaults}
     onSave={onLaunchDefaultsSave}
   />
@@ -181,21 +202,54 @@ mount(Host, { target: document.getElementById("app")! });
 from playwright.sync_api import sync_playwright
 import sys
 
-def catalog(backend, candidate, native_model, models, reasoning_supported=False, reasoning=()):
+def model(model_id, display_name, efforts=()):
     return {
-        "employee_backend": backend,
-        "candidate_model": candidate,
-        "native_model": native_model,
-        "models": [
-            {"value": value, "label": label, "description": None}
-            for value, label in models
-        ],
-        "reasoning_supported": reasoning_supported,
-        "native_reasoning_effort": reasoning[0][0] if reasoning else None,
-        "reasoning_efforts": [
-            {"value": value, "label": label, "description": None}
-            for value, label in reasoning
-        ],
+        "model_id": model_id,
+        "display_name": display_name,
+        "detail": None,
+        "reasoning_effort_options": list(efforts),
+    }
+
+def backend(key, models, efforts=(), default_model=None, default_effort=None):
+    return {
+        "backend_key": key,
+        "installed": True,
+        "executable_path": "/probe/" + key,
+        "version": "1.0.0",
+        "identity": None,
+        "available_models": list(models),
+        "reasoning_effort_options": list(efforts),
+        "default_model_id": default_model,
+        "default_reasoning_effort": default_effort,
+        "update_advisory": None,
+        "diagnoses": [],
+    }
+
+def machine():
+    return {
+        "backends": [
+            backend(
+                "hermes",
+                [model("hermes-native", "Hermes native")],
+                default_model="hermes-native",
+            ),
+            backend(
+                "codex",
+                [
+                    model("codex-native", "Codex native", ("low", "high")),
+                    model("codex-deep", "Codex deep", ("low", "high")),
+                    # A model that says it takes no effort at all is believed, which is
+                    # what makes effort a fact about the model rather than the backend.
+                    model("codex-plain", "Codex plain"),
+                ],
+                ("low", "high"),
+                default_model="codex-native",
+                default_effort="low",
+            ),
+            # A backend that names no model of its own: the control shows nothing rather
+            # than inventing a word for it.
+            backend("claude", [model("claude-a", "Claude A")]),
+        ]
     }
 
 with sync_playwright() as playwright:
@@ -224,16 +278,29 @@ with sync_playwright() as playwright:
     assert focus_style["style"] == "solid"
     assert focus_style["width"] != "0px"
     assert focus_style["color"] not in ("transparent", "rgba(0, 0, 0, 0)")
+
+    # One read of the machine's agents, not one per backend and not one per model.
     assert page.evaluate("window.__requests().length") == 1
-    assert "employee_backend=hermes" in page.evaluate("window.__requests()[0].url")
-    assert "candidate_model" not in page.evaluate("window.__requests()[0].url")
+    assert page.evaluate("window.__requests()[0].url").endswith("/api/conversation2/backends")
 
-    page.evaluate("payload => window.__respond(0, payload)", catalog(
-        "hermes", None, "hermes-native", [("hermes-native", "Hermes native")]
-    ))
+    # A machine that will not answer leaves the saved values on show, and a way back.
+    page.evaluate("window.__fail(0)")
+    page.locator("[data-employee-configuration-error]").wait_for()
+    assert page.locator("[data-employee-configuration-saved-model]").inner_text() == "model"
+    assert page.locator("[data-employee-configuration-refresh]").count() == 0
+    page.locator("[data-employee-configuration-retry]").click()
+    page.wait_for_function("window.__requests().length === 2")
+    assert "refresh=true" in page.evaluate("window.__requests()[1].url")
+    page.evaluate("payload => window.__respond(1, payload)", machine())
+
     page.locator("[data-employee-configuration-model-control]").wait_for()
+    # hermes advertises no reasoning effort, so there is no reasoning control at all.
     assert page.locator("[data-employee-configuration-reasoning-control]").count() == 0
+    assert worker.locator("option").evaluate_all(
+        "options => options.map(option => option.value)"
+    ) == ["hermes", "codex", "claude"]
 
+    # Changing worker is a save, and it asks the machine nothing: one read covers all three.
     worker.select_option("codex")
     page.wait_for_function("window.__saveCalls().length === 1")
     assert page.evaluate("window.__saveCalls()[0]") == {
@@ -241,198 +308,139 @@ with sync_playwright() as playwright:
         "employee_launch_model": None,
         "employee_launch_reasoning_effort": None,
     }
-    page.wait_for_function("window.__requests().length === 2")
-    worker.select_option("hermes")
-    page.wait_for_function("window.__saveCalls().length === 2 && window.__requests().length === 3")
-    assert page.evaluate("window.__requests()[1].aborted") is True
-    page.evaluate("payload => window.__respond(1, payload)", catalog(
-        "codex", None, "codex-native", [("codex-native", "Codex native")], True,
-        (("low", "Low"),)
-    ))
-    page.evaluate("payload => window.__respond(2, payload)", catalog(
-        "hermes", None, "hermes-native", [("hermes-native", "Hermes native")]
-    ))
-    page.locator("[data-employee-configuration-model-control]").wait_for()
-    assert setup.get_attribute("data-employee-configuration-backend") == "hermes"
-    assert page.locator("[data-employee-configuration-reasoning-control]").count() == 0
-
-    worker.select_option("codex")
-    page.wait_for_function("window.__requests().length === 4")
-    page.evaluate("window.__fail(3)")
-    page.locator("[data-employee-configuration-error]").wait_for()
+    assert page.evaluate("window.__requests().length") == 2
     assert setup.get_attribute("data-employee-configuration-backend") == "codex"
-    assert page.locator("[data-employee-configuration-saved-model]").inner_text() == "model"
-    page.locator("[data-employee-configuration-retry]").click()
-    page.wait_for_function("window.__requests().length === 5")
-    page.evaluate("payload => window.__respond(4, payload)", catalog(
-        "codex", None, "codex-native",
-        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
-        True, (("low", "Low"), ("high", "High"))
-    ))
-    model = page.locator("[data-employee-configuration-model-control] select")
-    model.wait_for()
-    model.select_option("codex-deep")
-    page.wait_for_function("window.__saveCalls().length === 4 && window.__requests().length === 6")
-    assert page.evaluate("window.__saveCalls()[3]") == {
+
+    model_select = page.locator("[data-employee-configuration-model-control] select")
+    reasoning = page.locator("[data-employee-configuration-reasoning-control] select")
+    reasoning.wait_for()
+    # Nothing pinned: both controls rest on the backend's own concrete values.
+    assert model_select.input_value() == "codex-native"
+    assert reasoning.input_value() == "low"
+
+    model_select.select_option("codex-deep")
+    page.wait_for_function("window.__saveCalls().length === 2")
+    assert page.evaluate("window.__saveCalls()[1]") == {
         "employee_backend": "codex",
         "employee_launch_model": "codex-deep",
         "employee_launch_reasoning_effort": None,
     }
-    page.evaluate("window.__fail(5)")
-    page.locator("[data-employee-configuration-error]").wait_for()
-    assert page.locator("[data-employee-configuration-saved-model]").inner_text().endswith("codex-deep")
-    page.locator("[data-employee-configuration-retry]").click()
-    page.wait_for_function("window.__requests().length === 7")
-    assert "candidate_model=codex-deep" in page.evaluate("window.__requests()[6].url")
-    page.evaluate("payload => window.__respond(6, payload)", catalog(
-        "codex", "codex-deep", "codex-native",
-        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
-        True, (("low", "Low"), ("high", "High"))
-    ))
-    reasoning = page.locator("[data-employee-configuration-reasoning-control] select")
-    reasoning.wait_for()
     reasoning.select_option("high")
-    page.wait_for_function("window.__saveCalls().length === 5")
-    assert page.evaluate("window.__saveCalls()[4]") == {
+    page.wait_for_function("window.__saveCalls().length === 3")
+    assert page.evaluate("window.__saveCalls()[2]") == {
         "employee_backend": "codex",
         "employee_launch_model": "codex-deep",
         "employee_launch_reasoning_effort": "high",
     }
 
-    # No dropdown offers a "default" entry: only the catalog's real options.
+    # No dropdown offers a "default" entry: only the machine's real options.
     option_labels = page.locator("[data-employee-configuration-setup] option").evaluate_all(
         "options => options.map(option => option.textContent)"
     )
     assert all("default" not in label for label in option_labels)
-    model_option_values = model.locator("option").evaluate_all(
+    assert model_select.locator("option").evaluate_all(
         "options => options.map(option => option.value)"
-    )
-    assert model_option_values == ["codex-native", "codex-deep"]
+    ) == ["codex-native", "codex-deep", "codex-plain"]
+
+    # A model that takes no effort takes the control away with it.
+    model_select.select_option("codex-plain")
+    page.wait_for_function("window.__saveCalls().length === 4")
+    page.locator("[data-employee-configuration-reasoning-control]").wait_for(state="detached")
 
     # Choosing the option equal to the native value stores null ("not pinned").
-    model.select_option("codex-native")
-    page.wait_for_function("window.__saveCalls().length === 6 && window.__requests().length === 8")
-    assert page.evaluate("window.__saveCalls()[5]") == {
+    model_select.select_option("codex-native")
+    page.wait_for_function("window.__saveCalls().length === 5")
+    assert page.evaluate("window.__saveCalls()[4]") == {
         "employee_backend": "codex",
         "employee_launch_model": None,
         "employee_launch_reasoning_effort": "high",
     }
-    page.evaluate("payload => window.__respond(7, payload)", catalog(
-        "codex", None, "codex-native",
-        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
-        True, (("low", "Low"), ("high", "High"))
-    ))
-    model.wait_for()
-    # Not pinned: the control displays and sits on the backend's concrete native value.
+    reasoning.wait_for()
     assert setup.get_attribute("data-employee-configuration-model") == ""
-    assert model.input_value() == "codex-native"
+    assert model_select.input_value() == "codex-native"
     control_text = page.locator("[data-employee-configuration-model-control]").inner_text()
     assert "Codex native" in control_text
     assert "default" not in page.locator("[data-employee-configuration-setup]").inner_text()
+
+    page.locator("[data-employee-configuration-refresh]").click()
+    page.wait_for_function("window.__requests().length === 3")
+    assert "refresh=true" in page.evaluate("window.__requests()[2].url")
+    page.evaluate("payload => window.__respond(2, payload)", machine())
+    model_select.wait_for()
 
     page.evaluate("window.__freeze()")
     page.wait_for_function("document.querySelector('[data-employee-configuration-setup]') === null")
     assert page.locator("text=codex-deep").count() == 0
     assert page.locator("text=high").count() == 0
 
-    # ManagedLaunchDefaults follows the same rules: catalog options only, the
+    # ManagedLaunchDefaults follows the same rules: the machine's options only, the
     # native value as the resting point, native selection stored as null.
     page.evaluate("window.__showLaunchDefaults()")
     page.locator("[data-launch-defaults]").wait_for()
-    page.wait_for_function("window.__requests().length === 9")
-    page.evaluate("payload => window.__respond(8, payload)", catalog(
-        "codex", None, "codex-native",
-        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
-        True, (("low", "Low"), ("high", "High"))
-    ))
+    page.wait_for_function("window.__requests().length === 4")
+    page.evaluate("payload => window.__respond(3, payload)", machine())
     defaults_model = page.locator('select[aria-label="Coding model"]')
     defaults_reasoning = page.locator('select[aria-label="Coding reasoning"]')
     defaults_model.wait_for()
-    # Exactly the catalog's options: no synthetic empty-valued entry, no "default".
     assert defaults_model.locator("option").evaluate_all(
         "options => options.map(option => [option.value, option.textContent])"
-    ) == [["codex-native", "Codex native"], ["codex-deep", "Codex deep"]]
+    ) == [
+        ["codex-native", "Codex native"],
+        ["codex-deep", "Codex deep"],
+        ["codex-plain", "Codex plain"],
+    ]
+    # An effort is the word the backend uses for it, shown as itself — the same way the
+    # conversation composer shows it, so one value is not two names in two places.
     assert defaults_reasoning.locator("option").evaluate_all(
         "options => options.map(option => [option.value, option.textContent])"
-    ) == [["low", "Low"], ["high", "High"]]
+    ) == [["low", "low"], ["high", "high"]]
     assert "default" not in page.locator(
         "[data-launch-defaults] .worker-launch-defaults-controls"
     ).inner_text().lower()
-    # Not pinned: the selects sit on the concrete native values.
     assert defaults_model.input_value() == "codex-native"
     assert defaults_reasoning.input_value() == "low"
 
-    # Selecting a non-native option pins it.
+    # Selecting a non-native option pins it, and asks the machine nothing.
     defaults_model.select_option("codex-deep")
-    page.wait_for_function(
-        "window.__launchDefaultsSaveCalls().length === 1 && window.__requests().length === 10"
-    )
+    page.wait_for_function("window.__launchDefaultsSaveCalls().length === 1")
     assert page.evaluate("window.__launchDefaultsSaveCalls()[0]") == {
         "employee_backend": "codex",
         "employee_launch_model": "codex-deep",
         "employee_launch_reasoning_effort": None,
     }
-    page.evaluate("payload => window.__respond(9, payload)", catalog(
-        "codex", "codex-deep", "codex-native",
-        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
-        True, (("low", "Low"), ("high", "High"))
-    ))
-    defaults_model.wait_for()
+    assert page.evaluate("window.__requests().length") == 4
     assert defaults_model.input_value() == "codex-deep"
 
-    # Selecting the option equal to the native value stores null.
     defaults_model.select_option("codex-native")
-    page.wait_for_function(
-        "window.__launchDefaultsSaveCalls().length === 2 && window.__requests().length === 11"
-    )
+    page.wait_for_function("window.__launchDefaultsSaveCalls().length === 2")
     assert page.evaluate("window.__launchDefaultsSaveCalls()[1]") == {
         "employee_backend": "codex",
         "employee_launch_model": None,
         "employee_launch_reasoning_effort": None,
     }
-    page.evaluate("payload => window.__respond(10, payload)", catalog(
-        "codex", None, "codex-native",
-        [("codex-native", "Codex native"), ("codex-deep", "Codex deep")],
-        True, (("low", "Low"), ("high", "High"))
-    ))
-    defaults_model.wait_for()
-    assert defaults_model.input_value() == "codex-native"
     # Re-selecting the native reasoning while not pinned saves nothing.
     defaults_reasoning.select_option("low")
     assert page.evaluate("window.__launchDefaultsSaveCalls().length") == 2
 
     # No native value and nothing pinned: the control shows nothing.
     page.evaluate(
-        'window.__setLaunchDefaults({ employee_backend: "hermes",'
+        'window.__setLaunchDefaults({ employee_backend: "claude",'
         ' employee_launch_model: null, employee_launch_reasoning_effort: null })'
     )
-    page.wait_for_function("window.__requests().length === 12")
-    page.evaluate("payload => window.__respond(11, payload)", catalog(
-        "hermes", None, None, [("hermes-a", "Hermes A")]
-    ))
-    defaults_model.wait_for()
+    page.wait_for_function(
+        "document.querySelector('select[aria-label=\"Coding model\"]').value === ''"
+    )
     assert defaults_model.locator("option").evaluate_all(
         "options => options.map(option => option.value)"
-    ) == ["hermes-a"]
-    assert defaults_model.input_value() == ""
+    ) == ["claude-a"]
 
-    page.locator("[data-launch-defaults-refresh]").click()
-    page.wait_for_function("window.__requests().length === 13")
-    assert "force_refresh=true" in page.evaluate("window.__requests()[12].url")
-    page.evaluate("payload => window.__respond(12, payload)", catalog(
-        "hermes", None, "hermes-a", [("hermes-a", "Hermes A")]
-    ))
+    # A saved value the machine no longer offers is shown as itself, and refused.
     page.evaluate(
         'window.__setLaunchDefaults({ employee_backend: "codex",'
-        ' employee_launch_model: "codex-deep", employee_launch_reasoning_effort: "high" })'
+        ' employee_launch_model: "codex-gone", employee_launch_reasoning_effort: "extreme" })'
     )
-    page.wait_for_function("window.__requests().length === 14")
-    page.evaluate("payload => window.__respond(13, payload)", catalog(
-        "codex", "codex-deep", "codex-native", [("codex-native", "Codex native")],
-        True, (("low", "Low"),)
-    ))
-    unavailable_model = defaults_model.locator('option[value="codex-deep"]')
-    unavailable_reasoning = defaults_reasoning.locator('option[value="high"]')
+    unavailable_model = defaults_model.locator('option[value="codex-gone"]')
+    unavailable_reasoning = defaults_reasoning.locator('option[value="extreme"]')
     unavailable_model.wait_for(state="attached")
     unavailable_reasoning.wait_for(state="attached")
     assert unavailable_model.get_attribute("disabled") is not None
@@ -441,12 +449,10 @@ with sync_playwright() as playwright:
     assert unavailable_reasoning.inner_text().endswith("unavailable")
 
     page.locator("[data-launch-defaults-refresh]").click()
-    page.wait_for_function("window.__requests().length === 15")
-    assert "force_refresh=true" in page.evaluate("window.__requests()[14].url")
-    page.evaluate("payload => window.__respond(14, payload)", catalog(
-        "codex", "codex-deep", "codex-native", [("codex-native", "Codex native")],
-        True, (("low", "Low"),)
-    ))
+    page.wait_for_function("window.__requests().length === 5")
+    assert "refresh=true" in page.evaluate("window.__requests()[4].url")
+    page.evaluate("payload => window.__respond(4, payload)", machine())
+    unavailable_model.wait_for(state="attached")
     assert unavailable_model.get_attribute("disabled") is not None
     assert unavailable_reasoning.get_attribute("disabled") is not None
     browser.close()

@@ -21,6 +21,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final, Protocol
 
+from planner.core.contracts import ErrorCode, PlannerError
+
 
 class ConversationBackendKey(StrEnum):
     """The production catalog of agent backends a conversation can run on.
@@ -34,6 +36,29 @@ class ConversationBackendKey(StrEnum):
     hermes = "hermes"
     codex = "codex"
     claude = "claude"
+
+
+def require_conversation_backend_key(value: object) -> ConversationBackendKey:
+    """Turn a string that claims to name a backend into the key it names, or refuse it.
+
+    Backend keys reach Panels as untrusted text — a request body, a seed argument, a
+    settings file somebody edited, a row written before a rename. This is the one door
+    that text comes through, so that a name nothing can run is refused where it is read
+    rather than discovered when a conversation fails to start.
+    """
+    if isinstance(value, str):
+        try:
+            return ConversationBackendKey(value)
+        except ValueError:
+            pass
+    raise PlannerError(
+        ErrorCode.validation,
+        "unknown agent backend",
+        {
+            "backend_key": value if isinstance(value, str) else None,
+            "backend_keys": [str(key) for key in ConversationBackendKey],
+        },
+    )
 
 
 class ConversationAccess(StrEnum):

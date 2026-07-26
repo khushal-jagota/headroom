@@ -24,11 +24,12 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 
-from planner.conversation.employee_configuration import (
-    EmployeeConfigurationCatalog,
-    EmployeeConfigurationCatalogService,
+from planner.conversation2.contracts import (
+    ConversationBackendKey,
+    ConversationSystem,
+    require_conversation_backend_key,
 )
-from planner.conversation2.contracts import ConversationSystem
+from planner.conversation2.snapshot import BackendSnapshotService
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
@@ -73,7 +74,6 @@ from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
-    configured_worker_runtime_definitions,
     configured_worker_type_registry,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -567,60 +567,49 @@ async def list_tickets(
     }
 
 
-def _employee_configuration_catalog_service(
-    request: Request,
-) -> EmployeeConfigurationCatalogService:
-    conversation = getattr(request.app.state, "conversation", None)
-    service = (
-        getattr(conversation, "employee_configuration_catalog", None)
-        if conversation is not None
-        else None
-    )
+def _backend_snapshots(request: Request) -> BackendSnapshotService:
+    runtime = getattr(request.app.state, "conversation2", None)
+    service = getattr(runtime, "backend_snapshots", None) if runtime is not None else None
     if service is None:
         raise PlannerError(
             ErrorCode.gateway_offline,
-            "employee configuration catalog is unavailable",
+            "the agent backends are unavailable",
             {},
         )
-    return cast(EmployeeConfigurationCatalogService, service)
+    return cast(BackendSnapshotService, service)
 
 
-async def _load_employee_configuration_catalog(
+async def _advertised_launch_options(
     request: Request,
-    employee_backend: str,
+    backend_key: ConversationBackendKey,
     candidate_model: str | None,
-    force_refresh: bool = False,
-) -> EmployeeConfigurationCatalog:
-    service = _employee_configuration_catalog_service(request)
+) -> tuple[frozenset[str], frozenset[str]]:
+    """What this backend can actually be launched as: its models, and the efforts for one.
+
+    Reasoning effort belongs to the model that will run rather than to the backend in
+    general — a model that names its own efforts is believed, including when it names
+    none, and a model that names nothing takes the backend's list. That is the same rule
+    the composer applies in the browser, stated once more here because this is the door a
+    saved configuration comes through.
+    """
+    service = _backend_snapshots(request)
     try:
-        if force_refresh:
-            return await service.catalog(
-                employee_backend, candidate_model, force_refresh=True
-            )
-        return await service.catalog(employee_backend, candidate_model)
-    except PlannerError:
-        raise
+        snapshot = await service.snapshot(backend_key)
     except Exception as error:
         raise PlannerError(
             ErrorCode.gateway_offline,
-            "employee configuration catalog is unavailable",
+            "the agent backends are unavailable",
             {},
         ) from error
-
-
-@router.get("/employee-configuration-catalog")
-async def get_employee_configuration_catalog(
-    request: Request,
-    employee_backend: str,
-    candidate_model: str | None = None,
-    force_refresh: bool = False,
-) -> JsonDict:
-    definitions = configured_worker_runtime_definitions()
-    registered_backend = definitions.employee_backend_catalog.require_registered(employee_backend)
-    catalog = await _load_employee_configuration_catalog(
-        request, registered_backend, candidate_model, force_refresh
+    efforts = snapshot.reasoning_effort_options
+    for model in snapshot.available_models:
+        if model.model_id == candidate_model:
+            efforts = model.reasoning_effort_options
+            break
+    return (
+        frozenset(model.model_id for model in snapshot.available_models),
+        frozenset(efforts),
     )
-    return catalog.model_dump(mode="json")
 
 
 @router.get("/tickets/{ticket_id}/worker-self")
@@ -710,13 +699,10 @@ async def put_ticket_employee_configuration(
             raw, "employee_launch_reasoning_effort"
         ),
     )
-    definitions = configured_worker_runtime_definitions()
     expected = tickets_data.employee_launch_configuration(
         tickets_data.read_ticket(conn, ticket_id)
     )
-    registered_backend = definitions.employee_backend_catalog.require_registered(
-        body["employee_backend"]
-    )
+    registered_backend = require_conversation_backend_key(body["employee_backend"])
     advertised_models: frozenset[str] | None = None
     reasoning_supported: bool | None = None
     advertised_reasoning_efforts: frozenset[str] | None = None
@@ -726,16 +712,12 @@ async def put_ticket_employee_configuration(
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
     if registered_backend == expected.employee_backend and candidate != expected:
-        catalog = await _load_employee_configuration_catalog(
+        advertised_models, advertised_reasoning_efforts = await _advertised_launch_options(
             request,
             registered_backend,
             body["employee_launch_model"],
         )
-        advertised_models = frozenset(option.value for option in catalog.models)
-        reasoning_supported = catalog.reasoning_supported
-        advertised_reasoning_efforts = frozenset(
-            option.value for option in catalog.reasoning_efforts
-        )
+        reasoning_supported = len(advertised_reasoning_efforts) > 0
     ticket = tickets_data.write_employee_configuration(
         conn,
         ticket_id,
@@ -743,7 +725,6 @@ async def put_ticket_employee_configuration(
         employee_backend=body["employee_backend"],
         employee_launch_model=body["employee_launch_model"],
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
-        employee_backend_catalog=definitions.employee_backend_catalog,
         advertised_models=advertised_models,
         reasoning_supported=reasoning_supported,
         advertised_reasoning_efforts=advertised_reasoning_efforts,

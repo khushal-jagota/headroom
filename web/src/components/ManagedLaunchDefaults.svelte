@@ -1,22 +1,18 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { fetchJson } from "../lib/api";
+  import { onDestroy, onMount } from "svelte";
   import { labelize } from "../lib/ui";
-  import type {
-    EmployeeConfigurationCatalog,
-    EmployeeConfigurationSnapshot
-  } from "../lib/types";
+  import { effortOptionsFor } from "../lib/conversation2/composer";
+  import { readBackends, type BackendSnapshot } from "../lib/conversation2/wire";
+  import type { EmployeeConfigurationSnapshot } from "../lib/types";
   import ErrorLine from "./ErrorLine.svelte";
   import Button from "./Button.svelte";
 
   let {
     label,
-    employeeBackends,
     value,
     onSave
   }: {
     label: string;
-    employeeBackends: string[];
     value: EmployeeConfigurationSnapshot;
     onSave: (next: EmployeeConfigurationSnapshot) => Promise<EmployeeConfigurationSnapshot>;
   } = $props();
@@ -27,22 +23,45 @@
     employee_launch_reasoning_effort: null
   });
   let incomingSignature = $state("");
-  let catalog = $state<EmployeeConfigurationCatalog | null>(null);
-  let catalogError = $state<unknown>(null);
-  let catalogKey = $state("");
+  let backends = $state<readonly BackendSnapshot[]>([]);
+  let backendsError = $state<unknown>(null);
   let saveError = $state<unknown>(null);
   let loading = $state(false);
   let saving = $state(false);
   let requestGeneration = 0;
-  let requestController: AbortController | null = null;
 
-  let modelOptions = $derived(catalog?.models ?? []);
-  let reasoningOptions = $derived(catalog?.reasoning_efforts ?? []);
+  let snapshot = $derived(
+    backends.find((candidate) => candidate.backend_key === selected.employee_backend) ?? null
+  );
+  // Before the machine has answered, the only backend this control knows of is the one
+  // already saved as the default — so that is what it shows, and nothing else is pickable.
+  let backendOptions = $derived(
+    backends.length > 0
+      ? backends.map((candidate) => candidate.backend_key as string)
+      : selected.employee_backend === ""
+        ? []
+        : [selected.employee_backend]
+  );
+  let modelOptions = $derived(
+    (snapshot?.available_models ?? []).map((model) => ({
+      value: model.model_id,
+      label: model.display_name ?? model.model_id
+    }))
+  );
+  // Effort belongs to the model that will actually run: a pinned model's own list when it
+  // names one, the backend's own list when nothing is pinned.
+  let reasoningOptions = $derived(
+    effortOptionsFor(
+      snapshot?.available_models ?? [],
+      selected.employee_launch_model,
+      snapshot?.reasoning_effort_options ?? []
+    ).map((effort) => ({ value: effort, label: effort }))
+  );
 
   function withSavedUnavailable(
-    options: Array<{ value: string; label: string; description?: string | null; unavailable?: boolean }>,
+    options: Array<{ value: string; label: string; unavailable?: boolean }>,
     savedValue: string | null
-  ): Array<{ value: string; label: string; description?: string | null; unavailable?: boolean }> {
+  ): Array<{ value: string; label: string; unavailable?: boolean }> {
     if (savedValue === null || options.some((option) => option.value === savedValue)) return options;
     return [
       ...options,
@@ -50,29 +69,16 @@
     ];
   }
 
-  function selectedSignature(): string {
-    return JSON.stringify([selected.employee_backend, selected.employee_launch_model, selected.employee_launch_reasoning_effort]);
-  }
-
-  async function loadCatalog(forceRefresh = false): Promise<void> {
-    requestController?.abort();
-    const controller = new AbortController();
-    requestController = controller;
+  async function loadBackends(refresh = false): Promise<void> {
     const generation = ++requestGeneration;
-    catalog = null;
-    catalogError = null;
+    backends = [];
+    backendsError = null;
     loading = true;
-    const query = new URLSearchParams({ employee_backend: selected.employee_backend });
-    if (selected.employee_launch_model !== null) query.set("candidate_model", selected.employee_launch_model);
-    if (forceRefresh) query.set("force_refresh", "true");
     try {
-      const response = await fetchJson<EmployeeConfigurationCatalog>(
-        `/api/employee-configuration-catalog?${query.toString()}`,
-        { signal: controller.signal }
-      );
-      if (generation === requestGeneration) catalog = response;
+      const answer = await readBackends(refresh);
+      if (generation === requestGeneration) backends = answer;
     } catch (error) {
-      if (generation === requestGeneration) catalogError = error;
+      if (generation === requestGeneration) backendsError = error;
     } finally {
       if (generation === requestGeneration) loading = false;
     }
@@ -100,14 +106,14 @@
   function selectModel(event: Event): void {
     const raw = (event.currentTarget as HTMLSelectElement).value;
     // Choosing the native value stores null ("not pinned"); anything else pins.
-    const model = raw === (catalog?.native_model ?? "") ? null : raw || null;
+    const model = raw === (snapshot?.default_model_id ?? "") ? null : raw || null;
     if (model === selected.employee_launch_model || saving) return;
     void persist({ ...selected, employee_launch_model: model });
   }
 
   function selectReasoning(event: Event): void {
     const raw = (event.currentTarget as HTMLSelectElement).value;
-    const reasoning = raw === (catalog?.native_reasoning_effort ?? "") ? null : raw || null;
+    const reasoning = raw === (snapshot?.default_reasoning_effort ?? "") ? null : raw || null;
     if (reasoning === selected.employee_launch_reasoning_effort || saving) return;
     void persist({ ...selected, employee_launch_reasoning_effort: reasoning });
   }
@@ -120,16 +126,12 @@
     }
   });
 
-  $effect(() => {
-    const nextKey = selectedSignature();
-    if (!selected.employee_backend || nextKey === catalogKey) return;
-    catalogKey = nextKey;
-    void loadCatalog();
+  onMount(() => {
+    void loadBackends();
   });
 
   onDestroy(() => {
     requestGeneration += 1;
-    requestController?.abort();
   });
 </script>
 
@@ -142,31 +144,31 @@
     <label>
       <span>Backend</span>
       <select aria-label={`${label} backend`} value={selected.employee_backend} disabled={saving} onchange={selectBackend}>
-        {#each employeeBackends as backend}<option value={backend}>{labelize(backend)}</option>{/each}
+        {#each backendOptions as backend}<option value={backend}>{labelize(backend)}</option>{/each}
       </select>
     </label>
-    {#if loading}<span class="worker-launch-defaults-state">loading models…</span>{:else if catalog}
+    {#if loading}<span class="worker-launch-defaults-state">loading models…</span>{:else if snapshot}
       <label>
         <span>Model</span>
-        <select aria-label={`${label} model`} value={selected.employee_launch_model ?? catalog.native_model ?? ""} disabled={saving} onchange={selectModel}>
+        <select aria-label={`${label} model`} value={selected.employee_launch_model ?? snapshot.default_model_id ?? ""} disabled={saving} onchange={selectModel}>
           {#each withSavedUnavailable(modelOptions, selected.employee_launch_model) as option}<option value={option.value} disabled={option.unavailable}>{option.label}</option>{/each}
         </select>
       </label>
-      {#if catalog.reasoning_supported}
+      {#if reasoningOptions.length > 0}
         <label>
           <span>Reasoning</span>
-          <select aria-label={`${label} reasoning`} value={selected.employee_launch_reasoning_effort ?? catalog.native_reasoning_effort ?? ""} disabled={saving} onchange={selectReasoning}>
+          <select aria-label={`${label} reasoning`} value={selected.employee_launch_reasoning_effort ?? snapshot.default_reasoning_effort ?? ""} disabled={saving} onchange={selectReasoning}>
           {#each withSavedUnavailable(reasoningOptions, selected.employee_launch_reasoning_effort) as option}<option value={option.value} disabled={option.unavailable}>{option.label}</option>{/each}
           </select>
         </label>
       {/if}
-    {:else if catalogError}<ErrorLine error={catalogError} />{/if}
-    {#if catalog}
+    {:else if backendsError}<ErrorLine error={backendsError} />{/if}
+    {#if snapshot}
       <Button
         variant="quiet"
         data-launch-defaults-refresh
         disabled={loading || saving}
-        onclick={() => void loadCatalog(true)}
+        onclick={() => void loadBackends(true)}
       >Refresh</Button>
     {/if}
   </div>

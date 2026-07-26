@@ -350,10 +350,8 @@ const researchManifest = {
 };
 
 const response = {
-  employee_backends: ["hermes", "probe-backend"],
   worker_types: [codingManifest, researchManifest]
 };
-assert.deepEqual(response.employee_backends, ["hermes", "probe-backend"]);
 assert.equal(codingManifest.default_employee_backend, "hermes");
 assert.equal(researchManifest.default_employee_backend, "probe-backend");
 const lc2 = lifecycleFor(response, "research");

@@ -22,7 +22,6 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.worker_types.configuration import (
-    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     PRODUCTION_WORKER_TYPE_REGISTRY,
 )
 
@@ -57,7 +56,6 @@ def test_production_serves_all_shipped_worker_types(app) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert served == {
-        "employee_backends": ["hermes", "codex", "claude"],
         "worker_types": [
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker"),
@@ -67,20 +65,19 @@ def test_production_serves_all_shipped_worker_types(app) -> None:
     }
 
 
-def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend_catalog(
+def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
     app,
     probe_installed: None,
 ) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
 
-    assert served["employee_backends"] == ["hermes", "codex", "claude", "probe-backend"]
     assert [item["default_backend"] for item in served["worker_types"]] == [
         "codex",
         "codex",
         "codex",
         "codex",
-        "probe-backend",
+        "claude",
     ]
     assert [item["default_model"] for item in served["worker_types"]] == [
         "gpt-5.6-sol",
@@ -92,10 +89,6 @@ def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend
     assert [
         item["default_reasoning_effort"] for item in served["worker_types"]
     ] == ["medium", "medium", "medium", "medium", "probe-high"]
-    assert (
-        PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
-        == ("hermes", "codex", "claude")
-    )
 
 
 def test_coding_entry_json_roundtrips(app) -> None:
@@ -115,5 +108,4 @@ def test_installed_probe_appears_after_shipped_worker_types(app, probe_installed
         "initiative_planning",
         "probe",
     ]
-    assert served["employee_backends"] == ["hermes", "codex", "claude", "probe-backend"]
     assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")

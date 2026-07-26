@@ -102,9 +102,6 @@ def _detail_json(detail: WorkerManagementDetail) -> JsonDict:
     return {
         "manifest": detail.manifest,
         "settings": _settings_json(detail.settings),
-        "employee_backends": list(
-            configured_worker_runtime_definitions().employee_backend_catalog.registered_backend_keys()
-        ),
     }
 
 
@@ -117,16 +114,12 @@ _announce_worker_settings_change = change_signal.emit
 @router.get("/workers")
 async def list_workers(config: Cfg) -> JsonDict:
     registry = configured_worker_runtime_definitions().worker_type_registry
-    definitions = configured_worker_runtime_definitions()
     return {
         "workers": [
             _summary_json(summary)
             for summary in service.read_worker_management_index(_database_parent(config), registry)
         ],
-        "chief_of_staff": _chief_json(
-            service.read_chief_settings(_database_parent(config), registry)
-        ),
-        "employee_backends": list(definitions.employee_backend_catalog.registered_backend_keys()),
+        "chief_of_staff": _chief_json(service.read_chief_settings(_database_parent(config))),
     }
 
 
@@ -160,8 +153,7 @@ async def patch_skill(
 
 @router.get("/workers/chief-of-staff/settings")
 async def get_chief_settings(config: Cfg) -> JsonDict:
-    registry = configured_worker_runtime_definitions().worker_type_registry
-    return _chief_json(service.read_chief_settings(_database_parent(config), registry))
+    return _chief_json(service.read_chief_settings(_database_parent(config)))
 
 
 @router.put("/workers/chief-of-staff/launch-defaults")
@@ -169,10 +161,8 @@ async def put_chief_launch_defaults(
     raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_chief_launch_defaults(
         _database_parent(config),
-        registry,
         raw,
         after_publish=_announce_worker_settings_change,
     )

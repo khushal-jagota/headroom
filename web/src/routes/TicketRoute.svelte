@@ -439,7 +439,6 @@
               {#if detail.employee_configuration_editable}
                 <WorkerConfigurationSetup
                   ticketId={stableId}
-                  employeeBackends={manifest.data?.employee_backends ?? []}
                   employeeBackend={detail.employee_backend}
                   employeeLaunchModel={detail.employee_launch_model}
                   employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}

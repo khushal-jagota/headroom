@@ -92,7 +92,6 @@ export type WorkerManagementSummary = {
 export type WorkersResponse = {
   workers: WorkerManagementSummary[];
   chief_of_staff: ChiefManagementSettings;
-  employee_backends: string[];
 };
 
 export type ChiefManagementSettings = {
@@ -113,7 +112,6 @@ export type WorkerManagementSettings = {
 export type WorkerManagementDetail = {
   manifest: WorkerTypeManifest;
   settings: WorkerManagementSettings;
-  employee_backends: string[];
 };
 
 
@@ -146,22 +144,6 @@ export type TicketDetail = {
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   fields: Record<string, TicketField>;
-};
-
-export type EmployeeConfigurationOption = {
-  value: string;
-  label: string;
-  description: string | null;
-};
-
-export type EmployeeConfigurationCatalog = {
-  employee_backend: string;
-  candidate_model: string | null;
-  native_model: string | null;
-  models: EmployeeConfigurationOption[];
-  reasoning_supported: boolean;
-  native_reasoning_effort: string | null;
-  reasoning_efforts: EmployeeConfigurationOption[];
 };
 
 export type EmployeeConfigurationSnapshot = {

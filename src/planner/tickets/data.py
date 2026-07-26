@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Protocol
 
-from planner.conversation.backend_catalog import EmployeeBackendCatalog
+from planner.conversation2.contracts import require_conversation_backend_key
 from planner.core import links as core_links
 from planner.core.contracts import EventKind, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -651,7 +651,6 @@ def write_employee_configuration(
     employee_backend: str,
     employee_launch_model: str | None,
     employee_launch_reasoning_effort: str | None,
-    employee_backend_catalog: EmployeeBackendCatalog,
     advertised_models: frozenset[str] | None,
     reasoning_supported: bool | None,
     advertised_reasoning_efforts: frozenset[str] | None,
@@ -660,7 +659,7 @@ def write_employee_configuration(
     """Atomically replace the complete launch request during pristine Kickoff."""
 
     with _txn(conn):
-        registered_backend = employee_backend_catalog.require_registered(employee_backend)
+        registered_backend = require_conversation_backend_key(employee_backend)
         ticket = _load_ticket_for_write(conn, ticket_id)
         current = employee_launch_configuration(ticket)
         if current != expected_employee_configuration:
@@ -730,7 +729,7 @@ def create_ticket(
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
     )
-    selected_employee_backend = runtime_definitions.employee_backend_catalog.require_registered(
+    selected_employee_backend = require_conversation_backend_key(
         employee_backend
         if employee_backend is not None
         else launch_defaults.employee_backend
@@ -871,7 +870,7 @@ def create_ticket_from_external_work(
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
     )
-    selected_employee_backend = runtime_definitions.employee_backend_catalog.require_registered(
+    selected_employee_backend = require_conversation_backend_key(
         employee_backend
         if employee_backend is not None
         else launch_defaults.employee_backend
@@ -1094,9 +1093,7 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
         "SELECT id, worker_type, employee_backend, stage, ceiling, fields FROM tickets ORDER BY id"
     ):
         try:
-            runtime_definitions.employee_backend_catalog.require_registered(
-                str(row["employee_backend"])
-            )
+            require_conversation_backend_key(str(row["employee_backend"]))
             worker_type_definition = registry.require(str(row["worker_type"]))
             worker_type_definition.validate_ticket_position(str(row["stage"]), str(row["ceiling"]))
             fields_codec.declared_fields_from_json(

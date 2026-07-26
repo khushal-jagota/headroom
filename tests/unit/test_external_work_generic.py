@@ -34,7 +34,6 @@ from planner.tickets.logic.external_work import (
     decide_external_work,
 )
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
-from planner.worker_types.configuration import PRODUCTION_WORKER_RUNTIME_DEFINITIONS
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
@@ -231,7 +230,6 @@ def test_type_declining_prefix_reconciliation_is_rejected() -> None:
         (_NO_PREFIX,),
         known_skills=frozenset({"panels-worker"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
     ticket = _needs_kickoff_ticket(_NO_PREFIX)
     with pytest.raises(PlannerError) as exc:

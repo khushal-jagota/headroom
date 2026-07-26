@@ -50,7 +50,6 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.tickets import data as tickets_data
 from planner.worker_types.configuration import (
-    ConfiguredWorkerRuntimeDefinitions,
     build_worker_runtime_definitions,
 )
 
@@ -152,10 +151,10 @@ class _Factory:
         return child
 
 
-def _runtime_definitions(
+def _scripted_catalog(
     definition: AgentBackendDefinition,
     factory: Any,
-) -> ConfiguredWorkerRuntimeDefinitions:
+) -> EmployeeBackendCatalog:
     codex_definition = replace(definition, backend_key="codex")
     claude_definition = replace(definition, backend_key="claude")
     catalog = EmployeeBackendCatalog(
@@ -169,7 +168,7 @@ def _runtime_definitions(
             ),
         )
     )
-    return build_worker_runtime_definitions(catalog)
+    return catalog
 
 
 def _database(tmp_path: Path) -> tuple[str, MutableTestClock, str]:
@@ -251,7 +250,8 @@ def test_production_browser_capacity_is_1024_and_test_options_can_override(
             employee_workspace_root=Path.cwd(),
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
-                employee_runtime_definitions=_runtime_definitions(definition, factory),
+                employee_runtime_definitions=build_worker_runtime_definitions(),
+                employee_backend_catalog=_scripted_catalog(definition, factory),
             ),
         )
         assert ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES == 1_024
@@ -268,7 +268,8 @@ def test_production_browser_capacity_is_1024_and_test_options_can_override(
             employee_workspace_root=tmp_path,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
-                employee_runtime_definitions=_runtime_definitions(
+                employee_runtime_definitions=build_worker_runtime_definitions(),
+                employee_backend_catalog=_scripted_catalog(
                     definition, _Factory(definition)
                 ),
                 browser_capacity=3,
@@ -295,7 +296,8 @@ def test_single_conversation_composition_owns_runtime_and_closes_browser_admissi
             employee_workspace_root=tmp_path,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
-                employee_runtime_definitions=_runtime_definitions(definition, factory),
+                employee_runtime_definitions=build_worker_runtime_definitions(),
+                employee_backend_catalog=_scripted_catalog(definition, factory),
                 connection_id_factory=lambda: "browser-one",
                 worker_client_message_id_factory=lambda: "worker-one",
                 permission_request_id_factory=lambda: "permission-one",
@@ -336,7 +338,8 @@ def test_real_composition_keeps_new_empty_until_the_first_prompt(tmp_path: Path)
             employee_workspace_root=tmp_path,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
-                employee_runtime_definitions=_runtime_definitions(definition, factory),
+                employee_runtime_definitions=build_worker_runtime_definitions(),
+                employee_backend_catalog=_scripted_catalog(definition, factory),
             ),
         )
         browser = await composition.hub.attach_browser(ticket_id)
@@ -438,7 +441,8 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
             employee_workspace_root=employee_workspace_root,
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
-                employee_runtime_definitions=build_worker_runtime_definitions(catalog),
+                employee_runtime_definitions=build_worker_runtime_definitions(),
+                employee_backend_catalog=catalog,
             ),
         )
 
@@ -759,7 +763,8 @@ def test_conversation_test_options_are_rejected_outside_test_mode(
             clock,
             lambda: connect(db_path),
             conversation_test_options=ConversationTestOptions(
-                employee_runtime_definitions=_runtime_definitions(
+                employee_runtime_definitions=build_worker_runtime_definitions(),
+                employee_backend_catalog=_scripted_catalog(
                     definition, cast(Any, _Factory(definition))
                 ),
             ),

@@ -19,10 +19,6 @@ let serverProcess;
 
 const ticketRouteSource = await readFile(new URL("../src/routes/TicketRoute.svelte", import.meta.url), "utf8");
 const boardRouteSource = await readFile(new URL("../src/routes/BoardRoute.svelte", import.meta.url), "utf8");
-const workerConfigurationSource = await readFile(
-  new URL("../src/components/WorkerConfigurationSetup.svelte", import.meta.url),
-  "utf8",
-);
 assert.match(ticketRouteSource, /<WorkerConfigurationSetup/);
 assert.match(ticketRouteSource, /contextRow=\{name === "kickoff" && kickoffCardShowsContextRow/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/employee-configuration/);
@@ -40,15 +36,7 @@ assert.match(ticketRouteSource, /conversationId=\{detail\.employee_session_id\}/
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation`/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/reset`/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
-assert.match(workerConfigurationSource, /employee_launch_model/);
-assert.match(workerConfigurationSource, /employee_launch_reasoning_effort/);
-assert.match(workerConfigurationSource, /employee-configuration-catalog/);
-assert.match(workerConfigurationSource, /query\.set\("candidate_model", model\)/);
-assert.match(workerConfigurationSource, /AbortController/);
-assert.match(workerConfigurationSource, /requestGeneration/);
-assert.match(workerConfigurationSource, /data-employee-configuration-retry/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
-assert.doesNotMatch(workerConfigurationSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
 
 for (const fileName of [

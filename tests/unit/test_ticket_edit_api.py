@@ -13,19 +13,14 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from tests.support.probe import (
-    PROBE_EMPLOYEE_BACKEND_CATALOG,
-    install_probe_registry,
-    uninstall_probe_registry,
-)
+from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.conversation import sqlite_binding_repository as binding_repository_module
+from planner.conversation.backend_catalog import build_production_employee_backend_catalog
 from planner.conversation.contracts import ConversationSessionBinding
-from planner.conversation.employee_configuration import (
-    EmployeeConfigurationCatalog,
-    EmployeeConfigurationCatalogOption,
-)
 from planner.conversation.sqlite_binding_repository import SqliteConversationBindingRepository
+from planner.conversation2.contracts import ConversationBackendKey
+from planner.conversation2.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import Priority
@@ -196,7 +191,7 @@ def test_ticket_creation_copies_worker_type_configuration_once(
         )
 
     assert defaulted.status_code == 200
-    assert defaulted.json()["employee_backend"] == "probe-backend"
+    assert defaulted.json()["employee_backend"] == "claude"
     assert defaulted.json()["employee_launch_model"] == "probe-model"
     assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
     assert overridden.status_code == 200
@@ -303,37 +298,54 @@ def test_employee_configuration_stays_editable_when_kickoff_proposal_enters_disc
         conn.close()
 
 
+def _backend_snapshot(
+    backend_key: str, models: tuple[BackendModel, ...], efforts: tuple[str, ...]
+) -> BackendSnapshot:
+    return BackendSnapshot(
+        backend_key=ConversationBackendKey(backend_key),
+        installed=True,
+        executable_path=f"/probe/{backend_key}",
+        version="1.0.0",
+        identity=None,
+        available_models=models,
+        reasoning_effort_options=efforts,
+        default_model_id=models[0].model_id if models else None,
+        default_reasoning_effort=efforts[0] if efforts else None,
+        update_advisory=None,
+        diagnoses=(),
+    )
+
+
 def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
     tmp_path: Path,
     probe_runtime: None,
 ) -> None:
-    class CatalogService:
-        async def catalog(self, employee_backend: str, candidate_model: str | None):
-            reasoning_values = ("low",) if candidate_model == "probe-b" else ("low", "high")
-            return SimpleNamespace(
-                models=tuple(
-                    SimpleNamespace(value=value) for value in ("probe-a", "probe-b")
+    class BackendSnapshots:
+        async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
+            del refresh
+            return _backend_snapshot(
+                backend_key,
+                (
+                    BackendModel(model_id="probe-a", reasoning_effort_options=("low", "high")),
+                    BackendModel(model_id="probe-b", reasoning_effort_options=("low",)),
                 ),
-                reasoning_supported=True,
-                reasoning_efforts=tuple(
-                    SimpleNamespace(value=value) for value in reasoning_values
-                ),
+                ("low", "high"),
             )
 
     app, db_path = _make_app(tmp_path)
-    app.state.conversation = SimpleNamespace(
-        employee_configuration_catalog=CatalogService()
-    )
     ticket_id = _create_pristine_ticket(db_path)
 
     with TestClient(app) as client:
+        # The lifespan builds the real backend snapshot service on the way up, so the
+        # stand-in goes on once the app is running rather than before it starts.
+        app.state.conversation2 = SimpleNamespace(backend_snapshots=BackendSnapshots())
         selected = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("probe-backend", "probe-a", "high"),
+            json=_employee_configuration_body("claude", "probe-a", "high"),
         )
         model_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("probe-backend", "probe-b", "high"),
+            json=_employee_configuration_body("claude", "probe-b", "high"),
         )
         backend_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -341,7 +353,7 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         )
         switched_back = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("probe-backend", "probe-a", "high"),
+            json=_employee_configuration_body("claude", "probe-a", "high"),
         )
 
     assert selected.status_code == 200
@@ -350,6 +362,8 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         selected.json()["employee_launch_reasoning_effort"],
     ) == ("probe-a", "high")
     assert model_changed.status_code == 200
+    # probe-b takes only "low", and the model changed in the same write, so the effort
+    # that no longer applies falls back to the new model's own rather than being refused.
     assert (
         model_changed.json()["employee_launch_model"],
         model_changed.json()["employee_launch_reasoning_effort"],
@@ -365,118 +379,65 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         switched_back.json()["employee_backend"],
         switched_back.json()["employee_launch_model"],
         switched_back.json()["employee_launch_reasoning_effort"],
-    ) == ("probe-backend", None, None)
+    ) == ("claude", None, None)
 
 
-def test_employee_configuration_catalog_failure_is_a_retryable_product_error(
+def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(
     tmp_path: Path,
     probe_runtime: None,
 ) -> None:
-    class FailingCatalogService:
-        async def catalog(self, employee_backend: str, candidate_model: str | None):
-            del employee_backend, candidate_model
+    class BackendSnapshots:
+        async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
+            del refresh
+            return _backend_snapshot(
+                backend_key,
+                (BackendModel(model_id="probe-a", reasoning_effort_options=("low",)),),
+                ("low",),
+            )
+
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_pristine_ticket(db_path)
+
+    with TestClient(app) as client:
+        app.state.conversation2 = SimpleNamespace(backend_snapshots=BackendSnapshots())
+        response = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("claude", "invented-model", None),
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation"
+    assert response.json()["error"]["message"] == "Employee model is not available"
+
+
+def test_employee_configuration_backend_probe_failure_is_a_retryable_product_error(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    class FailingBackendSnapshots:
+        async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
+            del backend_key, refresh
             raise RuntimeError("private adapter failure")
 
-    app, _db_path = _make_app(tmp_path)
-    app.state.conversation = SimpleNamespace(
-        employee_configuration_catalog=FailingCatalogService()
-    )
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_pristine_ticket(db_path)
+
     with TestClient(app) as client:
-        response = client.get(
-            "/api/employee-configuration-catalog",
-            params={"employee_backend": "probe-backend"},
+        app.state.conversation2 = SimpleNamespace(backend_snapshots=FailingBackendSnapshots())
+        response = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("claude", "probe-a", "high"),
         )
 
     assert response.status_code == 503
     assert response.json() == {
         "error": {
             "code": "gateway_offline",
-            "message": "employee configuration catalog is unavailable",
+            "message": "the agent backends are unavailable",
             "detail": {},
         }
     }
     assert "private adapter failure" not in response.text
-
-
-def test_employee_configuration_catalog_endpoint_serves_the_exact_product_shape(
-    tmp_path: Path,
-    probe_runtime: None,
-) -> None:
-    expected = EmployeeConfigurationCatalog(
-        employee_backend="probe-backend",
-        candidate_model="probe-model",
-        native_model="probe-native",
-        models=(EmployeeConfigurationCatalogOption(value="probe-model", label="Probe"),),
-        reasoning_supported=True,
-        native_reasoning_effort="probe-high",
-        reasoning_efforts=(
-            EmployeeConfigurationCatalogOption(value="probe-high", label="High"),
-        ),
-    )
-
-    class CatalogService:
-        async def catalog(self, employee_backend: str, candidate_model: str | None):
-            assert (employee_backend, candidate_model) == (
-                "probe-backend",
-                "probe-model",
-            )
-            return expected
-
-    app, _db_path = _make_app(tmp_path)
-    app.state.conversation = SimpleNamespace(
-        employee_configuration_catalog=CatalogService()
-    )
-    with TestClient(app) as client:
-        response = client.get(
-            "/api/employee-configuration-catalog",
-            params={
-                "employee_backend": "probe-backend",
-                "candidate_model": "probe-model",
-            },
-        )
-
-    assert response.status_code == 200
-    assert response.json() == expected.model_dump(mode="json")
-
-
-def test_employee_configuration_catalog_endpoint_forwards_deliberate_refresh(
-    tmp_path: Path,
-    probe_runtime: None,
-) -> None:
-    class CatalogService:
-        async def catalog(
-            self,
-            employee_backend: str,
-            candidate_model: str | None,
-            *,
-            force_refresh: bool = False,
-        ) -> EmployeeConfigurationCatalog:
-            assert (employee_backend, candidate_model, force_refresh) == (
-                "probe-backend",
-                None,
-                True,
-            )
-            return EmployeeConfigurationCatalog(
-                employee_backend=employee_backend,
-                candidate_model=candidate_model,
-                native_model=None,
-                models=(),
-                reasoning_supported=False,
-                native_reasoning_effort=None,
-                reasoning_efforts=(),
-            )
-
-    app, _db_path = _make_app(tmp_path)
-    app.state.conversation = SimpleNamespace(
-        employee_configuration_catalog=CatalogService()
-    )
-    with TestClient(app) as client:
-        response = client.get(
-            "/api/employee-configuration-catalog",
-            params={"employee_backend": "probe-backend", "force_refresh": "true"},
-        )
-
-    assert response.status_code == 200
 
 
 def test_employee_configuration_noop_after_freeze_emits_nothing(
@@ -491,7 +452,7 @@ def test_employee_configuration_noop_after_freeze_emits_nothing(
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json=_employee_configuration_body(
-                "probe-backend", "probe-model", "probe-high"
+                "claude", "probe-model", "probe-high"
             ),
         )
 
@@ -544,7 +505,7 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_bo
         "INSERT INTO conversation_session_bindings "
         "(employee_id, entity_kind, entity_id, acp_session_id, backend_key, "
         "binding_generation, created_at, updated_at) VALUES (?, 'ticket', ?, "
-        "'session-bound', 'probe-backend', 1, 1, 1)",
+        "'session-bound', 'claude', 1, 1, 1)",
         (ticket_id, ticket_id),
     )
     conn.close()
@@ -557,12 +518,12 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_bo
         )
         indirect = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("probe-backend"),
+            json=_employee_configuration_body("claude"),
             headers={"X-Plan-Actor": "worker"},
         )
         extra = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json={**_employee_configuration_body("probe-backend"), "extra": True},
+            json={**_employee_configuration_body("claude"), "extra": True},
         )
         unknown = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -570,12 +531,12 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_bo
         )
         missing = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json={"employee_backend": "probe-backend"},
+            json={"employee_backend": "claude"},
         )
         wrong_nullable_type = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json={
-                **_employee_configuration_body("probe-backend"),
+                **_employee_configuration_body("claude"),
                 "employee_launch_model": 42,
             },
         )
@@ -625,7 +586,7 @@ def test_employee_configuration_writer_and_first_binding_race_in_both_commit_ord
             ConversationSessionBinding(
                 employee_id=ticket.id,
                 acp_session_id=f"session-{name}",
-                backend_key="probe-backend",
+                backend_key="claude",
                 binding_generation=1,
             ),
             prepared_configuration,
@@ -659,7 +620,7 @@ def test_employee_configuration_writer_and_first_binding_race_in_both_commit_ord
         str(writer_first_path),
         workspace_root=tmp_path,
         integer_now=lambda: 2,
-        employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
+        employee_backend_catalog=build_production_employee_backend_catalog(),
         chief_backend_key="hermes",
     )
     cas_errors: list[BaseException] = []
@@ -688,7 +649,6 @@ def test_employee_configuration_writer_and_first_binding_race_in_both_commit_ord
             employee_backend="hermes",
             employee_launch_model=None,
             employee_launch_reasoning_effort=None,
-            employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
             advertised_models=None,
             reasoning_supported=None,
             advertised_reasoning_efforts=None,
@@ -749,7 +709,6 @@ def test_employee_configuration_writer_and_first_binding_race_in_both_commit_ord
                 employee_backend="hermes",
                 employee_launch_model=None,
                 employee_launch_reasoning_effort=None,
-                employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
                 advertised_models=None,
                 reasoning_supported=None,
                 advertised_reasoning_efforts=None,
@@ -767,7 +726,7 @@ def test_employee_configuration_writer_and_first_binding_race_in_both_commit_ord
         str(binding_first_path),
         workspace_root=tmp_path,
         integer_now=lambda: 2,
-        employee_backend_catalog=PROBE_EMPLOYEE_BACKEND_CATALOG,
+        employee_backend_catalog=build_production_employee_backend_catalog(),
         chief_backend_key="hermes",
     )
     assert (
@@ -793,10 +752,10 @@ def test_employee_configuration_writer_and_first_binding_race_in_both_commit_ord
         (binding_first_id,),
     ).fetchone()
     assert tuple(row) == (
-        "probe-backend",
+        "claude",
         binding_first_prepared.employee_launch_model,
         binding_first_prepared.employee_launch_reasoning_effort,
-        "probe-backend",
+        "claude",
     )
     binding_first_check.close()
 

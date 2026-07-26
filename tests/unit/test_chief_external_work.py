@@ -165,7 +165,7 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
         )
 
     assert defaulted.status_code == overridden.status_code == 200
-    assert defaulted.json()["employee_backend"] == "probe-backend"
+    assert defaulted.json()["employee_backend"] == "claude"
     assert overridden.json()["employee_backend"] == "hermes"
     assert rejected.status_code == 400
     check = connect(str(db_path))

@@ -45,7 +45,6 @@ export type WorkerTypeManifest = {
 };
 
 export type WorkerTypesResponse = {
-  employee_backends: string[];
   worker_types: WorkerTypeManifest[];
 };
 

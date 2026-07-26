@@ -826,8 +826,7 @@ class SqliteConversationBindingRepository:
                     None,
                 )
             settings = read_chief_settings(
-                Path(self._db_path).expanduser().parent,
-                self._worker_type_registry,
+                Path(self._db_path).expanduser().parent
             ).launch_defaults
             return (
                 "agent",
@@ -850,8 +849,7 @@ class SqliteConversationBindingRepository:
                 None,
             )
         defaults = read_chief_settings(
-            Path(self._db_path).expanduser().parent,
-            self._worker_type_registry,
+            Path(self._db_path).expanduser().parent
         ).launch_defaults
         return EmployeeLaunchConfiguration(
             defaults.employee_backend,

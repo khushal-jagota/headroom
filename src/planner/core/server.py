@@ -271,12 +271,8 @@ def create_app(
 
     @app.get("/api/worker-types")
     async def worker_types() -> dict[str, Any]:
-        runtime_definitions = configured_worker_runtime_definitions()
-        registry = runtime_definitions.worker_type_registry
+        registry = configured_worker_runtime_definitions().worker_type_registry
         return {
-            "employee_backends": list(
-                runtime_definitions.employee_backend_catalog.registered_backend_keys()
-            ),
             "worker_types": [
                 registry.manifest(worker_type) for worker_type in registry.registered_worker_types()
             ],

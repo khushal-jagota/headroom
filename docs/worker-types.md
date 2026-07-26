@@ -121,16 +121,17 @@ definitions, and the production registry built from them. The shipped tuple curr
 contains `coding`, `new_worker`, `exploration`, and `initiative_planning`; its order is
 also the manifest order.
 
-The same composition owns the ordered production Employee-backend catalog. Its exact
-keys are `hermes`, `codex`, and `claude`; Gemini is not registered. Every shipped Worker
-type currently starts with `hermes`, its native model, and no Reasoning choice. Those
-three starting values belong to the Worker-type definition rather than to a global
-fallback.
+Which agent backends exist is not this composition's business. It is the conversation
+system's closed set of three — `hermes`, `codex`, and `claude` — and a Worker type naming
+anything else is refused when the registry validates it. There is one door that turns a
+name into a backend, and every part of Panels that reads one goes through it. A Worker
+type's starting backend, model, and Reasoning choice belong to its own definition rather
+than to a global fallback.
 
-Tests build an explicit Employee-backend catalog and Worker-type registry as one exact
-configuration value. This can include the additional `probe` Worker type and fake backend
-definitions without changing production configuration. The registry retains the same
-catalog instance it was validated against, so the two authorities cannot drift.
+Tests build an explicit Worker-type registry as one exact configuration value. This can
+include the additional `probe` Worker type without changing production configuration. The
+probe names a real backend of its own, deliberately not the one the shipped types name,
+so that "a Worker type may run on a different agent" stays under test.
 
 No registry position means “default.” Order is composition and presentation order only.
 
@@ -152,8 +153,10 @@ There is no `/api/seed` route or `panels seed` command.
 
 ## The served manifest and frontend
 
-`GET /api/worker-types` lists the configured Employee backends in stable catalog order,
-then calls the Worker-type registry's `manifest` method for each definition. Every
+`GET /api/worker-types` calls the Worker-type registry's `manifest` method for each
+definition. It does not list the agent backends: what backends this machine has, which
+models each offers, and which reasoning efforts each of those takes are one answer, and
+it comes from `GET /api/conversation2/backends`. Every
 Worker-type entry contains the label, Stages, gates, advance map, fields, ceiling range,
 default ceiling, specialist skill id, and default Employee backend, model, and reasoning
 effort. Every Stage also carries its default ownership mode; terminal Stages carry none.

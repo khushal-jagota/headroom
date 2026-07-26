@@ -83,7 +83,7 @@ PROBE_MANIFEST = {
     "ceiling_range": ["needs_kickoff", "needs_alpha", "needs_beta", "done"],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
-    "default_backend": "probe-backend",
+    "default_backend": "claude",
     "default_model": "probe-model",
     "default_reasoning_effort": "probe-high",
 }

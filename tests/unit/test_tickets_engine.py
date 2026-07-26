@@ -222,7 +222,7 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
             employee_backend="missing-backend",
         )
 
-    assert defaulted.employee_backend == "probe-backend"
+    assert defaulted.employee_backend == "claude"
     assert overridden.employee_backend == "hermes"
     assert raised.value.code is ErrorCode.validation
     assert tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before

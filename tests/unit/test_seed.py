@@ -15,7 +15,6 @@ from sqlite3 import Connection
 from types import SimpleNamespace
 
 import pytest
-from tests.support.probe import PROBE_EMPLOYEE_BACKEND_CATALOG
 
 from planner.core.contracts import ErrorCode, Priority
 from planner.core.db import connect, create_schema
@@ -31,7 +30,6 @@ from planner.seed.logic.workspace import match_item_title, parse_workspace
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     ConfiguredWorkerRuntimeDefinitions,
     build_worker_runtime_definitions,
     install_worker_runtime_definitions_for_test,
@@ -516,11 +514,10 @@ def test_seed_backend_default_override_and_unknown_roll_back(
         CODING_WORKER_TYPE_DEFINITION,
         worker_profile=replace(
             CODING_WORKER_TYPE_DEFINITION.worker_profile,
-            default_backend="probe-backend",
+            default_backend="claude",
         ),
     )
     definitions = build_worker_runtime_definitions(
-        PROBE_EMPLOYEE_BACKEND_CATALOG,
         worker_type_definitions=(probe_default_coding,),
     )
     previous = install_worker_runtime_definitions_for_test(definitions)
@@ -551,7 +548,7 @@ def test_seed_backend_default_override_and_unknown_roll_back(
         assert {
             str(row["employee_backend"])
             for row in default_conn.execute("SELECT employee_backend FROM tickets")
-        } == {"probe-backend"}
+        } == {"claude"}
         assert {
             str(row["employee_backend"])
             for row in override_conn.execute("SELECT employee_backend FROM tickets")
@@ -608,13 +605,9 @@ def test_seed_fields_follow_the_explicit_registered_definition(tmp_db: Connectio
         (definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
     previous_definitions = install_worker_runtime_definitions_for_test(
-        ConfiguredWorkerRuntimeDefinitions(
-            PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
-            registry,
-        )
+        ConfiguredWorkerRuntimeDefinitions(registry)
     )
     try:
         seed_from_source(tmp_db, FIXTURE, worker_type="seed_probe", now=_FIXED_NOW)
@@ -660,13 +653,9 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
         (incompatible_definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
     previous_definitions = install_worker_runtime_definitions_for_test(
-        ConfiguredWorkerRuntimeDefinitions(
-            PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog,
-            registry,
-        )
+        ConfiguredWorkerRuntimeDefinitions(registry)
     )
     try:
         with pytest.raises(PlannerError) as raised:

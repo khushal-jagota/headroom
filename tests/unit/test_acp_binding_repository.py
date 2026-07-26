@@ -18,6 +18,7 @@ from planner.conversation import sqlite_binding_repository as binding_repository
 from planner.conversation.backend_catalog import (
     EmployeeBackendCatalog,
     EmployeeBackendRegistration,
+    build_production_employee_backend_catalog,
 )
 from planner.conversation.contracts import (
     CHIEF_OF_STAFF_ENTITY_ID,
@@ -35,7 +36,6 @@ from planner.core.db import connect, create_schema
 from planner.tickets.contracts import EmployeeLaunchConfiguration
 from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import (
-    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     configured_worker_type_registry,
 )
 
@@ -74,8 +74,7 @@ def SqliteConversationBindingRepository(
         workspace_root=workspace_root,
         integer_now=integer_now,
         employee_backend_catalog=(
-            employee_backend_catalog
-            or PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog
+            employee_backend_catalog or build_production_employee_backend_catalog()
         ),
         chief_backend_key=chief_backend_key,
     )
@@ -935,7 +934,6 @@ def test_new_chief_conversation_owns_launch_snapshot_until_first_binding(
     registry = configured_worker_type_registry()
     worker_settings_service.update_chief_launch_defaults(
         tmp_path,
-        registry,
         {
             "employee_backend": "codex",
             "employee_launch_model": "gpt-5.6-sol",
@@ -947,7 +945,7 @@ def test_new_chief_conversation_owns_launch_snapshot_until_first_binding(
         workspace_root=tmp_path,
         integer_now=lambda: 30,
         busy_timeout_ms=5000,
-        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=build_production_employee_backend_catalog(),
         chief_backend_key="codex",
         worker_type_registry=registry,
     )
@@ -962,7 +960,6 @@ def test_new_chief_conversation_owns_launch_snapshot_until_first_binding(
 
     worker_settings_service.update_chief_launch_defaults(
         tmp_path,
-        registry,
         {
             "employee_backend": "codex",
             "employee_launch_model": "gpt-5.6-sol-new",
@@ -1001,7 +998,7 @@ def test_chief_settings_save_and_initial_binding_share_settings_then_sqlite_orde
         workspace_root=tmp_path,
         integer_now=lambda: 30,
         busy_timeout_ms=250,
-        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
+        employee_backend_catalog=build_production_employee_backend_catalog(),
         chief_backend_key="codex",
         worker_type_registry=registry,
     )
@@ -1042,7 +1039,6 @@ def test_chief_settings_save_and_initial_binding_share_settings_then_sqlite_orde
     def save_settings() -> None:
         worker_settings_service.update_chief_launch_defaults(
             tmp_path,
-            registry,
             {
                 "employee_backend": "codex",
                 "employee_launch_model": "gpt-5.6-sol-new",

@@ -111,7 +111,6 @@ def _application(tmp_path: Path) -> tuple[Any, Path, str]:
         (static_employee_backend_registration(definition, SdkAcpEmployeeChildFactory(definition)),)
     )
     runtime_definitions = build_worker_runtime_definitions(
-        catalog,
         worker_type_definitions=_SCRIPTED_WORKER_TYPE_DEFINITIONS,
     )
     with connect(str(db_path)) as conn:
@@ -146,6 +145,7 @@ def _application(tmp_path: Path) -> tuple[Any, Path, str]:
         lambda: connect(str(db_path)),
         conversation_test_options=ConversationTestOptions(
             employee_runtime_definitions=runtime_definitions,
+            employee_backend_catalog=catalog,
         ),
     )
     return app, db_path, ticket.id

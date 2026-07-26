@@ -16,7 +16,11 @@ from acp.schema import (
     SessionNotification,
 )
 
-from planner.conversation.backend_catalog import EmployeeBackendBuildContext
+from planner.conversation.backend_catalog import (
+    EmployeeBackendBuildContext,
+    EmployeeBackendCatalog,
+    build_production_employee_backend_catalog,
+)
 from planner.core.clock import Clock
 from planner.tickets.conversation_projection import TicketConversationProjection
 from planner.worker_types.configuration import (
@@ -88,6 +92,7 @@ class ConversationTestOptions:
     """Explicit test-only runtime substitution; production never imports test subjects."""
 
     employee_runtime_definitions: ConfiguredWorkerRuntimeDefinitions
+    employee_backend_catalog: EmployeeBackendCatalog
     ingress_capacity: int = 256
     browser_capacity: int | None = None
     # Temporary live ceiling while the imported durable replay is measured.
@@ -132,6 +137,7 @@ class ConversationComposition:
 
         if test_options is None:
             employee_runtime_definitions = configured_worker_runtime_definitions()
+            catalog = build_production_employee_backend_catalog()
             ingress_capacity = 2_048
             browser_capacity = ACP_BROWSER_LIVE_QUEUE_MAX_ENVELOPES
             # Temporary live ceiling while the imported durable replay is measured.
@@ -141,6 +147,7 @@ class ConversationComposition:
             permission_request_id_factory: Callable[[], str] = cls._new_identifier
         else:
             employee_runtime_definitions = test_options.employee_runtime_definitions
+            catalog = test_options.employee_backend_catalog
             ingress_capacity = test_options.ingress_capacity
             browser_capacity = (
                 test_options.browser_capacity
@@ -153,7 +160,6 @@ class ConversationComposition:
             permission_request_id_factory = (
                 test_options.permission_request_id_factory or cls._new_identifier
             )
-        catalog = employee_runtime_definitions.employee_backend_catalog
         materialized_backends = tuple(
             replace(
                 backend,

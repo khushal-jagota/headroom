@@ -119,7 +119,7 @@ def agent_resolve(
     database_parent = database_parent_from_connection(conn)
     if database_parent is None:
         raise RuntimeError("managed Chief settings need a database that lives in a folder")
-    launch_defaults = read_chief_settings(database_parent, registry).launch_defaults
+    launch_defaults = read_chief_settings(database_parent).launch_defaults
     return resolve_agent_conversation_start(
         chief_launch_defaults=ConversationStartConfiguration(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),

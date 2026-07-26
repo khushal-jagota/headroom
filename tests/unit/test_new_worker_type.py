@@ -35,7 +35,6 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import fields_codec
 from planner.worker_types.configuration import (
-    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     PRODUCTION_WORKER_TYPE_REGISTRY,
 )
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
@@ -72,7 +71,6 @@ def test_registry_validates_new_worker() -> None:
         (NEW_WORKER_TYPE_DEFINITION,),
         known_skills=_KNOWN_SKILLS,
         known_toolset_profiles=_KNOWN_TOOLSET_PROFILES,
-        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 

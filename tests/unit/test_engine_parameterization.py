@@ -9,7 +9,6 @@ from planner.core.errors import PlannerError
 from planner.runtime import worker_step_readiness
 from planner.tickets.contracts import AtCap, StageOwnershipMode, TicketFields
 from planner.tickets.logic import admission, external_work, fields_codec, machine, resolution
-from planner.worker_types.configuration import PRODUCTION_WORKER_RUNTIME_DEFINITIONS
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
@@ -48,7 +47,6 @@ def test_foreign_definition_drives_machine_semantics() -> None:
         (SYNTHETIC_WORKER_TYPE_DEFINITION,),
         known_skills=frozenset({"synthetic-worker"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=(PRODUCTION_WORKER_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
     definition = SYNTHETIC_WORKER_TYPE_DEFINITION
     assert (

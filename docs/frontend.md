@@ -70,7 +70,8 @@ One screen per part of the system:
   `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
   worker conversation in serif alongside, and a copy button that produces a plain-text block
   for pasting anywhere. During pristine Kickoff, the facts line also shows a restrained
-  **Worker** pill whose choices come only from the served backend catalog. Changing
+  **Worker** pill whose choices come only from the backends this machine actually has —
+  the same answer the conversation composer's model and effort pickers read. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
   Ticket has a conversation, the pill becomes read-only. Its project picker is backed by the shared
