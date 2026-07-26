@@ -19,11 +19,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from planner.conversation.hermes_backend_configuration import (
-    hermes_src_root,
-    resolve_hermes_python,
-    resolve_planner_home,
-)
 from planner.conversation2.backends.claude_agent_sdk import (
     ClaudeAgentSdkBackendChildFactory,
     ClaudeAgentSdkChildLaunch,
@@ -40,6 +35,11 @@ from planner.conversation2.backends.hermes_acp import (
     hermes_acp_child_launch,
 )
 from planner.conversation2.contracts import ConversationBackendKey
+from planner.environments.hermes_home import (
+    hermes_src_root,
+    resolve_hermes_python,
+    resolve_planner_home,
+)
 
 # How a binary is found by name. Named as a parameter so a test can compose the real
 # factories against a machine it describes rather than the one it is running on.

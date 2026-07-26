@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.core.contracts import PlannerError
+from planner.environments.hermes_home import provision_planner_home_skills
 from planner.skill_sources import ensure_managed_panels_skills, provision_native_backend_skills
 from planner.worker_settings import service
 from planner.worker_types.configuration import configured_worker_type_registry

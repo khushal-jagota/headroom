@@ -574,7 +574,7 @@ async def _hermes_catalog(request: _CatalogRequest) -> _CatalogAnswer:
     The catalog does not depend on the installed version: it is read out of the install
     itself, so whatever is there is the answer.
     """
-    from planner.conversation.hermes_backend_configuration import (
+    from planner.environments.hermes_home import (
         hermes_src_root,
         resolve_hermes_python,
         resolve_planner_home,

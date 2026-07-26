@@ -7,13 +7,13 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from planner.conversation.hermes_backend_configuration import (
+from planner.core.contracts import ErrorCode, PlannerError
+from planner.environments.hermes_home import (
     hermes_src_root,
     provision_planner_home_skills,
     resolve_hermes_python,
     resolve_planner_home,
 )
-from planner.core.contracts import ErrorCode, PlannerError
 
 from .backend_contracts import AcpEmployeeChildFactory, AgentBackendDefinition
 from .claude_backend import build_claude_employee_backend_registration

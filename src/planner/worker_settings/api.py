@@ -7,12 +7,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
-from planner.conversation.hermes_backend_configuration import resolve_planner_home
 from planner.core import change_signal
 from planner.core.authctx import RequestContext, request_context, require_direct_write
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
+from planner.environments.hermes_home import resolve_planner_home
 from planner.tickets.api import body_str, get_config, parse_enum
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings import service

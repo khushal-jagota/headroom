@@ -29,8 +29,8 @@ from planner.conversation import (
     SdkAcpEmployeeChildFactory,
     build_panels_initialize_request,
 )
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.conversation.role_skill_kickoff import RoleSkillKickoffAcpEmployeeChildFactory
+from planner.environments.hermes_home import provision_planner_home_skills
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTED_AGENT = REPOSITORY_ROOT / "tests" / "support" / "acp_worker_skill_proof_agent.py"

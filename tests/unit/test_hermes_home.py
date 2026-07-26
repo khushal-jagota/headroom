@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from planner.conversation.hermes_backend_configuration import (
+from planner.environments.hermes_home import (
     PLANNER_SKILL_NAMES,
     hermes_src_root,
     provision_planner_home_skills,

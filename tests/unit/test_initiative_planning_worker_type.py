@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import planner.worker_types as worker_types
-from planner.conversation.hermes_backend_configuration import PLANNER_SKILL_NAMES
+from planner.environments.hermes_home import PLANNER_SKILL_NAMES
 from planner.worker_types import configuration
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 

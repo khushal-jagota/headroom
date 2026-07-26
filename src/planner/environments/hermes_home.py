@@ -1,4 +1,11 @@
-"""Resolve the Hermes ACP interpreter and the default Hermes home."""
+"""Where Hermes lives on this machine: its interpreter, its home, and the skills in it.
+
+This is machine provisioning rather than conversation code. It says which Python runs
+Hermes, which folder is its home, and puts Panels' own skills into that home. Everything
+that asks — the backend that spawns Hermes, the worker settings screen, and the release
+and backup tooling — asks the same question about the same machine, which is why it sits
+with the rest of Panels' environment handling.
+"""
 
 from __future__ import annotations
 

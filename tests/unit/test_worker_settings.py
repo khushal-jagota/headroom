@@ -12,13 +12,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.environments.hermes_home import provision_planner_home_skills
 from planner.skill_sources import ensure_managed_panels_skills
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode
