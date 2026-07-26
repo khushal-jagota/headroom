@@ -68,6 +68,14 @@ Only then does it retain the working app as transaction-temporary fallback, inst
 candidate at `current/app`, restart Panels, and require health to report the requested
 commit.
 
+Every candidate, including its staged copy, must contain the complete current runtime
+and both executable entrypoints. The existing app still receives manifest, artifact,
+and safe-tree validation, but it may predate the interactive `bin/panels` entrypoint.
+This allows an intact older production app to upgrade while still rejecting a tampered
+one before compatibility, backup, restart, or filesystem replacement begins. The
+compatibility probe continues to boot and health-check that existing app against a
+disposable upgraded database.
+
 If replacement, restart, or health proof fails, deployment restores the fallback app,
 restarts it, and proves it healthy. If recovery cannot be proved, the retained fallback
 path is the exact operator continuation point. A successful transaction removes it.
