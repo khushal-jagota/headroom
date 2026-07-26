@@ -10,9 +10,9 @@ without reading the source is a section to rewrite, not to leave.
 ## The bar
 
 Write or keep a doc only when the _why_ or the shape of a system isn't already
-visible elsewhere. "Elsewhere" is the source code (including docstrings),
-`PROGRESS.md` (the live build snapshot), `decisions.md` (judgment calls),
-`DESIGN.md` (the visual language), and git history. When a fact is derivable from
+visible elsewhere. "Elsewhere" is the source code (including docstrings), the
+owning Panels ticket (current work and judgment calls), `DESIGN.md` (the visual
+language), and git history. When a fact is derivable from
 code, let the code carry it. When a fact is explained in one place, do not restate
 it in a second — duplication rots, and two of the copies will drift wrong.
 
@@ -21,7 +21,7 @@ it in a second — duplication rots, and two of the copies will drift wrong.
 These docs describe the system **as it is now**. When a feature changes or is
 removed, the doc that described it is wrong and must be corrected in the same
 breath — a doc still describing deleted machinery is a bug, not history. (History
-is git's job; the live build state is `PROGRESS.md`'s.) A doc is not a build log
+is git's job; current work belongs on its Panels ticket.) A doc is not a build log
 and never narrates stages ("Stage 4 did X"); it states what stands today.
 
 ## What a system doc carries

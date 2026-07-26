@@ -50,11 +50,14 @@ One screen per part of the system:
   message-visibility tracking. **Chief of Staff** sits first in the rail above the
   buckets.
 
-  The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
-  the same complete ticket screen used by a direct ticket link while leaving the
-  Workspace rail in place, and records the selection at `#/workspace/<ticket-id>`.
-  That address can be loaded, refreshed, shared, or revisited with browser history;
-  a missing ticket safely leaves the Chief of Staff view open.
+  On screens wider than 960px, the right side opens on the Chief of Staff conversation.
+  Selecting a ticket switches it to the same complete ticket screen used by a direct
+  ticket link while leaving the Workspace rail in place, and records the selection at
+  `#/workspace/<ticket-id>`. That address can be loaded, refreshed, shared, or
+  revisited with browser history; a missing ticket safely leaves the Chief of Staff
+  view open. At 960px or less, selecting a ticket opens its standalone
+  `#/ticket/<ticket-id>` page, and selecting Chief of Staff opens the standalone
+  `#/chief` page.
 - **Ticket** — the whole story of one piece of work: a serif title, a single facts
   line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
   exact backend Worker failure reason directly below that line when one exists, the
@@ -241,8 +244,9 @@ server's per-Worker-type manifest through `web/src/lib/lifecycle.ts`, keyed by e
 Ticket's own Worker type (see `worker-types.md`). `labelize` in `web/src/lib/ui.ts`
 remains only as the fallback that turns a raw field, Stage, or Worker type id into a readable label before a manifest
 has loaded. `web/src/lib/dates.ts` holds the date formatting the Day and Sprint screens
-share — the short-month day label the redesign speaks in, plus the weekday name. (The two visible native selects were left un-unified on purpose —
-they share almost nothing real; see `decisions.md`, D77.)
+share — the short-month day label the redesign speaks in, plus the weekday name. The two
+visible native selects remain separate because they share almost nothing beyond being
+native selects.
 
 **The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
 diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not

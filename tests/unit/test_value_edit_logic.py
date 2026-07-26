@@ -1,4 +1,4 @@
-"""Pure-logic tests for resolution.decide_edit_value (Decision B: the human edit of
+"""Pure-logic tests for resolution.decide_edit_value (the human edit of
 an already-passed settled field value) plus the decide_accept dropped-guard. Values
 stay written solely by the resolution engine; these pin the tightly-guarded human
 write path and its rejections. Supporting tests, no §18.3 anchor.

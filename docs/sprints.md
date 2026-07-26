@@ -43,6 +43,12 @@ ticket or blocked/errored child, and todo otherwise.
 Each sprint item stores a `project_id` from the projects catalog; child tickets
 inherit that classification from the item.
 
+An unwanted Sprint Item can be permanently deleted through
+`panels sprint item delete <item-id> --yes`. Panels refuses deletion while the item
+has child Tickets, so existing work cannot disappear as a side effect. Deleting a
+childless item also removes its blocking links and refreshes sprint, backlog, board,
+and linked-Ticket views.
+
 _Code paths:_ `src/planner/sprints/` (the sprint, its items, and the overview
 fields), `web/src/routes/SprintRoute.svelte` (both tabs).
 
@@ -56,4 +62,4 @@ fields), `web/src/routes/SprintRoute.svelte` (both tabs).
 
 ---
 
-_Last verified: 2026-07-09._
+_Last verified: 2026-07-24._

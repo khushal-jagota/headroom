@@ -1966,13 +1966,7 @@ def write_recap(
     conn: sqlite3.Connection, ticket_id: str, *, body: str, actor: str, now: int
 ) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
-        )
-        admission.check_recap_writable(
-            ticket.stage,
-            worker_type_definition=worker_type_definition,
-        )
+        _load_ticket_for_write(conn, ticket_id)
         conn.execute(
             "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?", (body, now, ticket_id)
         )

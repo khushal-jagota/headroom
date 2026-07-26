@@ -43,11 +43,13 @@ generic Stage setter.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
   backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock`**
+- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
   — manage sprint items and their ticket membership. Creating a ticket is still
   `ticket create`; adding an existing ticket to an item is a sprint-item command.
   `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
   Item status is read-only and derived from child tickets and active blocking links.
+  `sprint item delete <item-id> --yes` permanently removes a childless item. An item
+  with child tickets must have that work explicitly moved or removed first.
 - **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` preserves
@@ -67,19 +69,23 @@ generic Stage setter.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.
-- **`environment status / cleanup / prepare / inspect / import-live / run / reset / remove / render-linux`**
-  — manage prepared live and staging runtime instances. `environment import-live`
-  requires explicit database, managed-files, Hermes-home, runtime-user-home, and logs
-  sources, then atomically switches one complete durable generation into an already
-  prepared and stopped live environment. `environment run` requires one explicit
-  `--repository-root`, validates that checkout and its `.venv`, and launches with that
-  checkout's interpreter. Live uses its configured ingress port; staging chooses an
-  available port each time it runs. `render-linux` requires the pinned
-  `--environment-manager-root` used to launch either private target checkout.
+- **`environment status / cleanup / prepare / inspect / run / reset / remove`**
+  — manage prepared live and staging runtime instances. `environment run` requires one explicit
+  staging `--repository-root`, validates that checkout and its `.venv`, and launches
+  with that checkout's interpreter on an available port. Live is launched only from
+  the deployed app by its user service.
   `environment status --json` is a direct host-local snapshot command and works without the
   server. `environment cleanup` is dry-run by default; only `--apply` mutates a newly collected,
   immediately re-proven inventory under the operator's filesystem permissions. It has no HTTP
-  route and never removes processes, worktrees, caches, prepared environments, or releases.
+  route and never removes processes, worktrees, caches, prepared environments, or the deployed
+  app.
+- **`environment app-build / app-identity / app-deploy / backup-current`** — build and identify
+  one exact-commit Git-free app, replace `current/app` through the serialized backup and recovery
+  transaction, and create a backup labeled from the validated deployed app. `app-build` requires
+  `--source-root`, a lowercase full `--requested-sha`, and `--candidate-app`. `app-deploy` requires
+  `--candidate-app`, `--current-root`, database and backup paths, a health URL, and the service
+  manager and name. Linux systemd control is user-scoped; launchctl remains supported.
+  `backup-current` requires `--current-app`; it does not inspect Git.
 - **`restart`** — ask that running `serve` command to load the current Panels code again.
   The command reports when the request is accepted. If `serve` is not running, it reports
   the connection error and stops.
@@ -135,4 +141,4 @@ lease; the employee runtime runs one step at a time and writes status itself (se
 
 ---
 
-_Last verified: 2026-07-15._
+_Last verified: 2026-07-25._

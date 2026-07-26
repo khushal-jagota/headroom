@@ -61,7 +61,7 @@ def validate_server_control_socket_path_length(path: Path) -> Path:
     return path
 
 
-def validate_nonproduction_credential_reference_outside_live_root(
+def validate_nonproduction_credential_reference_outside_environment_root(
     *,
     kind: EnvironmentKind,
     environment_root: Path,
@@ -71,16 +71,19 @@ def validate_nonproduction_credential_reference_outside_live_root(
         return None
     resolved_credentials_env_file = credentials_env_file.resolve()
     if kind == "live":
-        return resolved_credentials_env_file
+        raise EnvironmentValidationError(
+            "live uses the vps user's normal provider homes and must not register "
+            "a credential file"
+        )
 
-    live_root = validate_absolute_environment_root(environment_root) / "live"
+    resolved_environment_root = validate_absolute_environment_root(environment_root)
     if (
-        resolved_credentials_env_file == live_root
-        or live_root in resolved_credentials_env_file.parents
+        resolved_credentials_env_file == resolved_environment_root
+        or resolved_environment_root in resolved_credentials_env_file.parents
     ):
         raise EnvironmentValidationError(
-            "staging credential references must not be equal to "
-            f"or nested under the live environment root: {resolved_credentials_env_file}"
+            "staging credential references must not be equal to or nested under "
+            f"the environment root: {resolved_credentials_env_file}"
         )
     return resolved_credentials_env_file
 
@@ -174,8 +177,6 @@ def _isolation_paths(instance: ResolvedEnvironmentInstance) -> dict[str, Path]:
         "instance_root": instance.instance_root,
         "db_path": instance.db_path,
         "managed_files_root": instance.managed_files_root,
-        "hermes_home": instance.hermes_home,
-        "runtime_user_home": instance.runtime_user_home,
         "logs_dir": instance.logs_dir,
         "dispatcher_lock_path": instance.dispatcher_lock_path,
         "server_control_socket_path": instance.server_control_socket_path,

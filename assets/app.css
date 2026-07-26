@@ -3934,8 +3934,8 @@ select {
 }
 
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */
-/* orchestration/sprint-redesign/mockup.html: sprint → items → tickets, progressive
-   disclosure, calm at rest. One centered column; the sprint name is the only editable
+/* Sprint → items → tickets, progressive disclosure, calm at rest. One centered
+   column; the sprint name is the only editable
    surface (the .ed inline-edit is reused); everything else is read + navigate. Scoped
    under [data-screen="sprint"] so the generic disclosure/row classes can't collide;
    all values from tokens.css. The Overview sub-page reuses the panel/field styling
@@ -4303,8 +4303,8 @@ select {
 }
 
 /* --- Backlog screen (redesign) ------------------------------------------- */
-/* orchestration/backlog-redesign/backlog.html: SCAN unscheduled work by priority,
-   ADD to it. A centered index column — header → dormant compose → priority groups of
+/* Scan unscheduled work by priority, then add to it. A centered index column —
+   header → dormant compose → priority groups of
    flat, navigable rows. Scoped to [data-screen="backlog"]; reuses the shared .chip and
    the transparent .in caret idiom. Values via tokens.css, except the reading measure. */
 
@@ -4450,8 +4450,8 @@ select {
 }
 
 /* --- Ideas screen (redesign) --------------------------------------------- */
-/* orchestration/backlog-redesign/ideas.html: CAPTURE with least friction, then
-   browse the pile. The compose is the hero (always open, the Today focus-line idiom);
+/* Capture with least friction, then browse the pile. The compose is the hero
+   (always open, the Today focus-line idiom);
    the pile is newest-first, bodies DISCLOSE, title-only ideas are flat. Scoped to
    [data-screen="ideas"]; body renders via the shared markdown block. */
 

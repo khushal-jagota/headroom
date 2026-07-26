@@ -46,13 +46,9 @@ the spec's authoritative record — and preserving them would fail item 34 perma
 ## Why reconciling to §12 is the compliant resolution
 
 When a committed artifact contradicts the source-of-truth specification, the specification
-wins — that is what "single source of truth" means. SPEC §18 says exactly what to do when a
-contradiction surfaces: *"state it in PROGRESS.md and propose a resolution consistent with
-Section 14's rules — do not silently pick."* That procedure was followed to the letter, and
-nothing was silent:
+wins — that is what "single source of truth" means. The contradiction and its resolution were
+made explicit rather than chosen silently:
 
-- The contradiction is stated in PROGRESS.md.
-- The resolution is recorded as decisions D3 and D21 in decisions.md.
 - The reconciliation has its own commit (`2143ce1`) whose message says precisely what changed.
 - Both byte-versions are permanently preserved in git: the original at
   `git show f2f9049:migration/source-snapshot/…`, the reconciled tree from `2143ce1` onward.

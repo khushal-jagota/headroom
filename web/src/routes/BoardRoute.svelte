@@ -67,11 +67,15 @@
   });
 
   function selectCard(ticketId: string): void {
-    window.location.hash = `#/workspace/${encodeURIComponent(ticketId)}`;
+    window.location.hash = window.matchMedia("(max-width: 960px)").matches
+      ? `#/ticket/${encodeURIComponent(ticketId)}`
+      : `#/workspace/${encodeURIComponent(ticketId)}`;
   }
 
   function showChiefOfStaff(): void {
-    window.location.hash = "#/workspace";
+    window.location.hash = window.matchMedia("(max-width: 960px)").matches
+      ? "#/chief"
+      : "#/workspace";
   }
 
   // The project filter is a mini header that opens a dropdown menu, not a form

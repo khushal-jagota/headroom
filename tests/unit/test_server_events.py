@@ -82,20 +82,20 @@ def test_meta_serves_event_stream_heartbeat_cadence(tmp_path: Path) -> None:
     assert response.json()["ws_heartbeat_ms"] == 125
 
 
-def test_meta_and_health_report_and_prove_the_explicit_release_sha(tmp_path: Path) -> None:
+def test_meta_and_health_report_and_prove_the_explicit_app_sha(tmp_path: Path) -> None:
     db_path = _db_path(tmp_path)
     config = load_config(
         env={
             "PLAN_TEST_MODE": "1",
             "PLAN_DB_PATH": str(db_path),
-            "PLAN_RELEASE_SHA": "0123456789abcdef0123456789abcdef01234567",
+            "PLAN_APP_SHA": "0123456789abcdef0123456789abcdef01234567",
         }
     )
     app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
     with TestClient(app) as client:
-        assert client.get("/api/meta").json()["release_sha"] == config.release_sha
+        assert client.get("/api/meta").json()["app_sha"] == config.app_sha
         assert (
-            client.get("/api/health", params={"expected_sha": config.release_sha}).status_code
+            client.get("/api/health", params={"expected_sha": config.app_sha}).status_code
             == 200
         )
         assert client.get("/api/health").status_code == 503

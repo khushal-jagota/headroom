@@ -18,7 +18,7 @@ from planner.environments.contracts import (
 from planner.environments.logic.validation import (
     validate_absolute_environment_root,
     validate_instance_id,
-    validate_nonproduction_credential_reference_outside_live_root,
+    validate_nonproduction_credential_reference_outside_environment_root,
     validate_repository_roots,
     validate_server_control_socket_path_length,
 )
@@ -87,6 +87,15 @@ def resolve_environment_instance(
         requested_repository_roots,
         allowed_repository_roots,
     )
+    if kind == "live" and resolved_repository_roots:
+        raise EnvironmentValidationError(
+            "live runs the deployed app and must not register a source repository"
+        )
+    if kind == "live" and credentials_env_file is not None:
+        raise EnvironmentValidationError(
+            "live uses the vps user's normal provider homes and must not register "
+            "a credential file"
+        )
     resolved_defaults = defaults if defaults is not None else EnvironmentDefaults()
 
     instance_root = _default_instance_root(
@@ -100,12 +109,17 @@ def resolve_environment_instance(
         port=port,
         defaults=resolved_defaults,
     )
-    resolved_credentials_env_file = validate_nonproduction_credential_reference_outside_live_root(
-        kind=kind,
-        environment_root=resolved_environment_root,
-        credentials_env_file=credentials_env_file,
+    resolved_credentials_env_file = (
+        validate_nonproduction_credential_reference_outside_environment_root(
+            kind=kind,
+            environment_root=resolved_environment_root,
+            credentials_env_file=credentials_env_file,
+        )
     )
-    server_control_socket_path = instance_root / "run" / "server-control.sock"
+    runtime_coordination_root = (
+        durable_state_root / "data" if kind == "live" else instance_root / "run"
+    )
+    server_control_socket_path = runtime_coordination_root / "server-control.sock"
     validate_server_control_socket_path_length(server_control_socket_path)
 
     return ResolvedEnvironmentInstance(
@@ -115,19 +129,12 @@ def resolve_environment_instance(
         instance_root=instance_root,
         db_path=durable_state_root / "data" / "planner.db",
         managed_files_root=durable_state_root / "data" / "files",
-        hermes_home=durable_state_root / "hermes-home",
-        runtime_user_home=durable_state_root / "user-home",
-        logs_dir=(
-            durable_state_root / "logs" / "active"
-            if kind == "live"
-            else durable_state_root / "logs"
-        ),
-        dispatcher_lock_path=instance_root / "run" / "dispatcher.lock",
+        logs_dir=durable_state_root / "logs",
+        dispatcher_lock_path=runtime_coordination_root / "dispatcher.lock",
         server_control_socket_path=server_control_socket_path,
         port_policy=resolved_port_policy,
         credentials_env_file=resolved_credentials_env_file,
         allowed_repository_roots=resolved_repository_roots,
-        expected_linux_account="panels-live" if kind == "live" else "panels-worker",
         fixture_version=fixture_version,
         prepared=prepared,
         running=running,
@@ -141,7 +148,7 @@ def _default_instance_root(
     environment_root: Path,
 ) -> Path:
     if kind == "live":
-        return environment_root / "live"
+        return environment_root
     if kind == "staging":
         return environment_root / "staging"
     raise EnvironmentValidationError(f"unknown environment kind: {kind}")

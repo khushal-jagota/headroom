@@ -20,8 +20,6 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from planner.conversation.hermes_backend_configuration import resolve_planner_home
-
 SNAPSHOT_DATABASE_NAME = "database.sqlite"
 SNAPSHOT_METADATA_NAME = "metadata.json"
 SNAPSHOT_FILES_DIR_NAME = "files"
@@ -34,19 +32,16 @@ def managed_file_roots(database_path: Path) -> dict[str, Path]:
     """The managed-file roots protected alongside the database.
 
     The managed files root and worker-settings root anchor on the database's
-    directory.  The skills home is resolved through the same ``resolve_planner_home``
-    the running server uses -- ``PLAN_HERMES_HOME`` when the operator sets it,
-    otherwise ``<db parent>/hermes-home`` -- so backup captures exactly the tree
-    the server reads.  A root that does not exist yet (the skills home, until it
-    becomes canonical managed state) is simply absent here and skipped by capture;
-    it is picked up automatically once it exists.
+    directory. The canonical Panels skills also live there; normal provider homes
+    contain links to that managed authority and are not owned or replaced by backup.
+    A root that does not exist yet is skipped and is picked up automatically once
+    it exists.
     """
     parent = Path(database_path).expanduser().resolve().parent
-    skills_home = resolve_planner_home(default=parent / "hermes-home")
     return {
         "files": parent / "files",
         "worker-settings": parent / "worker-settings",
-        "skills": skills_home / "skills",
+        "skills": parent / "skills",
     }
 
 
@@ -143,6 +138,11 @@ def restore_database_snapshot(
     temporary_database = destination_db.with_name(
         f".{destination_db.name}.restore-tmp-{uuid.uuid4().hex}"
     )
+    temporary_database_files = (
+        temporary_database,
+        Path(str(temporary_database) + "-wal"),
+        Path(str(temporary_database) + "-shm"),
+    )
     sidecar_backups: list[tuple[Path, Path]] = []
     for suffix in ("-wal", "-shm"):
         sidecar = Path(str(destination_db) + suffix)
@@ -152,6 +152,7 @@ def restore_database_snapshot(
             )
     try:
         shutil.copy2(snapshot_database, temporary_database)
+        temporary_database.chmod(temporary_database.stat().st_mode | 0o600)
         _verify_database(temporary_database)
         try:
             for sidecar, sidecar_backup in sidecar_backups:
@@ -165,7 +166,8 @@ def restore_database_snapshot(
         for _, sidecar_backup in sidecar_backups:
             sidecar_backup.unlink(missing_ok=True)
     finally:
-        temporary_database.unlink(missing_ok=True)
+        for temporary_database_file in temporary_database_files:
+            temporary_database_file.unlink(missing_ok=True)
     if managed is not None:
         _restore_managed_files(snapshot / SNAPSHOT_FILES_DIR_NAME, managed, destination_db)
 
@@ -279,6 +281,7 @@ def _restore_managed_files(
             old: Path | None = None
             try:
                 shutil.copytree(source, staged, symlinks=True)
+                _make_owner_writable_tree(staged)
                 if target.exists() or target.is_symlink():
                     old = target.with_name(f".{target.name}.restore-old-{uuid.uuid4().hex}")
                     os.replace(target, old)
@@ -300,6 +303,19 @@ def _restore_managed_files(
             if old is not None:
                 os.replace(old, target)
         raise
+
+
+def _make_owner_writable_tree(root: Path) -> None:
+    """Make one restored managed root usable by its owning live service."""
+    for directory, names, filenames in os.walk(root):
+        directory_path = Path(directory)
+        directory_path.chmod(directory_path.stat().st_mode | 0o700)
+        for name in (*names, *filenames):
+            path = directory_path / name
+            if path.is_symlink():
+                continue
+            owner_permissions = 0o700 if path.is_dir() else 0o600
+            path.chmod(path.stat().st_mode | owner_permissions)
 
 
 def verified_snapshots(backup_dir: Path) -> list[Path]:

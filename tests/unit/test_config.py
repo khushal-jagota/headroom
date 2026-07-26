@@ -144,22 +144,20 @@ def test_checked_in_config_exposes_ws_heartbeat_cadence() -> None:
     assert load_config(path=str(path), env={}).ws_heartbeat_ms == 15000
 
 
-def test_backup_directory_is_configurable_without_reusing_a_release_path() -> None:
+def test_backup_directory_is_independently_configurable() -> None:
     cfg = load_config(path=None, env={"PLAN_BACKUP_DIR": "/operator-state/backups"})
 
     assert cfg.backup_dir == "/operator-state/backups"
 
 
-def test_operator_maintenance_and_live_inputs_propagate_absolute_status_paths(
+def test_user_units_and_status_use_the_same_single_user_live_paths(
     tmp_path: Path,
 ) -> None:
     asset_root = Path(__file__).parents[2] / "ops" / "panels-environments"
-    maintenance = _environment_file_values(asset_root / "maintenance.env.example")
-    live = _environment_file_values(asset_root / "live.env.example")
+    live_service = (asset_root / "panels-live.service").read_text(encoding="utf-8")
     service = (asset_root / "panels-maintenance.service").read_text(encoding="utf-8")
 
     operator_inputs = {
-        **maintenance,
         "PLAN_DB_PATH": str(tmp_path / "state" / "planning.db"),
         "PLAN_LOGS_DIR": str(tmp_path / "logs"),
         "PLAN_BACKUP_DIR": str(tmp_path / "backups"),
@@ -187,16 +185,11 @@ def test_operator_maintenance_and_live_inputs_propagate_absolute_status_paths(
     assert config.backup_dir == operator_inputs["PLAN_BACKUP_DIR"]
     assert {candidate.root for candidate in inventory.candidates} == {logs_root, backup_root}
     assert all(candidate.root != Path("data/backups") for candidate in inventory.candidates)
-    assert live["PLAN_BACKUP_DIR"] == maintenance["PLAN_BACKUP_DIR"]
-    assert "EnvironmentFile=/etc/panels/environments/maintenance.env" in service
-    assert "backup.env" not in service
-
-
-def _environment_file_values(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key] = value
-    return values
+    live_root = "%h/Deployments/Panels/current"
+    for unit in (live_service, service):
+        assert f"Environment=PLAN_DB_PATH={live_root}/data/planner.db" in unit
+        assert f"Environment=PLAN_LOGS_DIR={live_root}/logs" in unit
+        assert f"Environment=PLAN_BACKUP_DIR={live_root}/data/backups" in unit
+        assert "EnvironmentFile=" not in unit
+    assert not (asset_root / "maintenance.env.example").exists()
+    assert not (asset_root / "backup.env.example").exists()

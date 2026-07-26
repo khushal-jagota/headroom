@@ -201,7 +201,8 @@ guidance that should survive for the relevant step.
 
 The **recap** is different from both kinds of user note. It is a short cold-reader
 orientation line that works beside the title: what the ticket is, where it stands now,
-and the key fact for the current step. It is not a detailed log.
+and the key fact for the current step. It is not a detailed log. It can be written or
+updated at any stage — recap is never gated.
 
 _Code paths:_ `src/planner/core/loops.py` (the resolution engine), `src/planner/core/server.py`.
 
@@ -222,7 +223,7 @@ automatically dispatched; paired Stages only get their opening turn. New tickets
 the human-approved intake until the human grants scope onward — review before agents
 start. Every later stage behaves the same way, including the last two: an accepted
 implementation advances to **needs closeout**, and an accepted closeout advances
-straight to **done**. (The threshold three other behaviours key off — the recap gate,
+straight to **done**. (The threshold two other behaviours key off —
 sprint-in-progress, external-work seed — is the *second* stage, held distinct from this
 start ceiling; see `worker-types.md`.)
 

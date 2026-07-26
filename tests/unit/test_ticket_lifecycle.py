@@ -1,4 +1,4 @@
-"""Lifecycle contract (D108): Kickoff plus five worker stages as ordinary gates.
+"""Lifecycle contract: Kickoff plus five worker stages as ordinary gates.
 
 Kickoff -> Success -> Approach -> Plan -> Implementation -> Closeout -> Done.
 Ticket title remains separate metadata; every lifecycle stage gates a field slot.
