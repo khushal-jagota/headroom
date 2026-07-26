@@ -284,20 +284,57 @@ in.
 
 ## The enumeration, as it stands
 
-What the old package serves, and who reaches for it. **One of five has no caller.**
+This is the green light. It is currently **red on four counts of five**, and each red
+count has a named piece of work that turns it green.
+
+### The method — enumerate BY ROUTE, never by screen
+
+Start from what the old package **serves** and find each surface's callers. Do not start
+from the screens and follow them inward.
+
+Doing it by screen would have missed a live caller: the CLI reaches
+`PUT /api/tickets/{id}/employee-configuration` at `cli/main.py:640`. No screen sweep, no
+type check and no frontend grep would ever have surfaced it, and deleting that route
+would have broken `panels` for the owner with every gate green.
+
+This is the method, not a detail about one caller. Redo the enumeration this way before
+any deletion; the lists below are true as at commit `ae626a59` and are not guaranteed to
+stay true.
+
+### What it serves, and who reaches for it
 
 | Surface | Callers |
 |---|---|
-| WebSocket `/api/conversation` | **none** — the only client was `lib/acp`'s transport, mounted nowhere. Nothing in `web/src` outside `lib/acp` constructs a WebSocket. |
-| `GET /api/employee-configuration-catalog` | `WorkerConfigurationSetup.svelte`, `ManagedLaunchDefaults.svelte` |
-| `PUT /api/tickets/{id}/employee-configuration` | `TicketRoute.svelte`, **and the CLI at `cli/main.py:640`** |
-| `GET /api/worker-types` | the query catalogue — it serves `employee_backends` from the old catalog |
-| `POST /api/tickets/{id}/acknowledge-completed-response` | `TicketRoute` on mount — dies with the reply dot, not the package |
+| WebSocket `/api/conversation` | **NONE.** The only client was `lib/acp`'s transport, which no screen mounts. Nothing in `web/src` outside `lib/acp` constructs a WebSocket at all. |
+| `GET /api/employee-configuration-catalog` | `web/src/components/WorkerConfigurationSetup.svelte:112`, `web/src/components/ManagedLaunchDefaults.svelte:70` |
+| `PUT /api/tickets/{id}/employee-configuration` | `web/src/routes/TicketRoute.svelte:159`, **and the CLI at `src/planner/cli/main.py:640`** |
+| `GET /api/worker-types` | `web/src/lib/queryCatalogue.ts:44`, on every screen reading a worker-type manifest. It serves `employee_backends` straight from the old catalog's `registered_backend_keys()`. |
+| `POST /api/tickets/{id}/acknowledge-completed-response` | `web/src/routes/TicketRoute.svelte:72`, on mount. Dies with the reply dot, not with the package. |
 
-Plus `EmployeeBackendCatalog.require_registered` at eight internal call sites with no route
-of their own.
+Plus the internal use with no route of its own: `EmployeeBackendCatalog.require_registered`
+at eight call sites across `tickets/data.py` (×4), `tickets/api.py` (×2),
+`seed/importer.py`, `worker_settings/service.py` and `worker_types/registry.py`.
 
-The CLI caller is the one a screens-only sweep misses. Sweep by route.
+### Start with the WebSocket
+
+**It is the one surface with no callers, so it is the one piece that can be deleted
+first and on its own.** A successor gets a real deletion on the board without waiting for
+the configuration knot: the route in `core/server.py`, the hub it calls, and the transport
+in `lib/acp` that nothing mounts.
+
+### The order to do the rest in
+
+1. **The WebSocket.** No callers, no dependencies, deletable now.
+2. **The configuration knot as one change** — the fourth backend key, `backend_catalog`,
+   `employee_configuration`, the two screens, the CLI caller, and the manifest endpoint.
+   Roughly 4 source files and 5 test files. See section 1 above for why it is one change.
+3. **The reply dot.** Three things die together, one storage read gets added.
+4. **The rest of the package, then the rename** of `conversation2` to `conversation`.
+5. **The migration** — three tables dropped, `employee_session_id` renamed.
+
+The three carried-across capabilities (usage and cost, queue cancel, the compaction
+marker) are independent of this order, but must be sized against the adapters before
+anyone starts them.
 
 ## How things are shaped now
 
