@@ -10,7 +10,8 @@ means a transition is a change of size and nothing else, so the reader must come
 on the line they went into it on, and the draft must come out of it exactly as it went in.
 Both are asserted against a real transcript in a real browser: the line is found by its own
 words and measured from the thread's own top, the way the pane's other scroll tests measure
-it, and the draft is asserted as its text, its caret and its focus together.
+it, and the draft is asserted as its text, its caret, the box being the same box, and where
+the keyboard went.
 
 Rows are written straight into the record with the store the server itself uses and read
 back over HTTP the way the browser reads any other row, so a turn's work and a permission
@@ -81,20 +82,29 @@ WHERE_THE_LAYER_IS = """
   };
   const pane = document.querySelector('[data-conversation-pane]');
   const host = document.querySelector('[data-conversation-layer-host]');
+  const head = document.querySelector('[data-conversation-pane] .chat-head');
   const thread = document.querySelector('[data-conversation-thread]');
   const bar = document.querySelector('[data-conversation-rest-bar]');
   const composer = document.querySelector('[data-conversation-composer]');
   const screen = document.querySelector('[data-screen="ticket"]');
+  const rows = Array.from(document.querySelectorAll('[data-conversation-row]'));
   return {
     state: pane === null ? null : (pane.dataset.conversationState ?? null),
     paneInsideTheHost: host !== null && pane !== null && host.contains(pane),
     paneHeight: pane === null ? 0 : Math.round(pane.getBoundingClientRect().height),
     ticketHeight: screen === null ? 0 : Math.round(screen.getBoundingClientRect().height),
+    // The head itself, rather than what happens to be in it. A control that is not
+    // rendered at rest says nothing about whether the head is hidden.
+    headMounted: head !== null,
+    headOnScreen: onScreen(head),
     // Hidden and gone are different things, and the difference is the whole design: one
     // conversation at three heights keeps the transcript mounted through all of them.
     transcriptMounted: thread !== null,
     transcriptOnScreen: onScreen(thread),
-    rowsMounted: document.querySelectorAll('[data-conversation-row]').length,
+    rowsMounted: rows.length,
+    // What the transcript actually draws, whatever way it is being hidden. At rest this
+    // is the whole claim: every row is still there and not one of them is on the screen.
+    rowsOnScreen: rows.filter(onScreen).length,
     restBarMounted: bar !== null,
     restBarOnScreen: onScreen(bar),
     restBarAboveTheComposer: bar === null || composer === null
@@ -137,16 +147,26 @@ THE_LINE_THE_READER_IS_ON = """
 }
 """
 
-# The draft, as the three things that together mean it survived: the words, where the
-# cursor is in them, and whether the person is still in the box.
+# The draft: the words, where the cursor is in them, whether the box is the same box, and
+# where the keyboard is.
+#
+# Where the keyboard is has two answers worth telling apart. In the box is where a person
+# typing expects it, and it is what has to be true after anything they did from inside the
+# box. Pressing a control is different: focus resting on the thing you just pressed is what
+# a browser does, so the claim there is the weaker one — the keyboard is still on something
+# inside the conversation, not dropped on the page.
 THE_DRAFT_IN_THE_BOX = """
 () => {
   const box = document.querySelector('[data-conversation-input]');
+  const pane = document.querySelector('[data-conversation-pane]');
+  const holding = document.activeElement;
   return {
     text: box.value,
     caret: [box.selectionStart, box.selectionEnd],
-    focused: document.activeElement === box,
-    stillAttached: box.isConnected
+    stillAttached: box.isConnected,
+    focusedInTheBox: holding === box,
+    focusedInTheConversation: holding !== null && pane !== null && pane.contains(holding),
+    focusedOn: holding === null ? null : holding.tagName.toLowerCase()
   };
 }
 """
@@ -250,17 +270,13 @@ def _click_the_ticket_behind(page, lands_on: str) -> None:
     page.wait_for_selector(f'{PANE}[data-conversation-state="{lands_on}"]', timeout=WAIT_MS)
 
 
-def _the_draft_is_still_there(page, where: str, text: str, caret: int) -> None:
-    """The three things that together mean the person can carry on where they were."""
+def _the_draft_is_still_there(page, where: str, text: str, caret: int) -> dict:
+    """What a change of height must not touch: the words, the cursor, and the box itself."""
     draft = page.evaluate(THE_DRAFT_IN_THE_BOX)
     assert draft["stillAttached"] is True, (where, "the box was re-made", draft)
     assert draft["text"] == text, (where, draft)
     assert draft["caret"] == [caret, caret], (where, draft)
-    assert draft["focused"] is True, (
-        where,
-        "the keyboard left the box the person was typing in",
-        draft,
-    )
+    return draft
 
 
 def _rows_on_the_page(page) -> int:
@@ -317,10 +333,17 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert at_rest["paneInsideTheHost"] is True, "the layer sits in the ticket page's host"
     assert at_rest["transcriptMounted"] is True, "one conversation at three heights"
     assert at_rest["transcriptOnScreen"] is False, "there is no transcript at rest"
+    # Every row still in the page, and not one of them drawn. Mounted and hidden is the
+    # whole of what rest is, and it is what the reader's place and the draft ride on.
     assert at_rest["rowsMounted"] >= ROWS_IN_THE_SEED
+    assert at_rest["rowsOnScreen"] == 0, at_rest
     assert at_rest["restBarOnScreen"] is True
     assert at_rest["restBarAboveTheComposer"] is True
-    assert at_rest["expand"] is False, "the pane head is not on screen at rest"
+    # The head itself, not the controls in it: a control that is only rendered at peeked
+    # would answer False here whether the head were hidden or not.
+    assert at_rest["headMounted"] is True
+    assert at_rest["headOnScreen"] is False, "the pane head is hidden at rest"
+    assert at_rest["expand"] is False
     assert at_rest["collapse"] is False
     assert at_rest["ticketOnScreen"] is True
 
@@ -334,7 +357,9 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     peeked = page.evaluate(WHERE_THE_LAYER_IS)
     assert peeked["state"] == "peeked"
     assert peeked["transcriptOnScreen"] is True
+    assert peeked["rowsOnScreen"] > 0, peeked
     assert peeked["restBarMounted"] is False, "the turn head says it; the bar would say it twice"
+    assert peeked["headOnScreen"] is True
     assert peeked["expand"] is True
     assert peeked["collapse"] is False
     assert peeked["paneHeight"] > at_rest["paneHeight"], (at_rest, peeked)
@@ -347,9 +372,13 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert opened["state"] == "opened"
     assert opened["transcriptOnScreen"] is True
     assert opened["restBarMounted"] is False
+    assert opened["headOnScreen"] is True
     assert opened["collapse"] is True, "a control back"
     assert opened["expand"] is False
     assert opened["paneHeight"] > peeked["paneHeight"], (peeked, opened)
+    # Loose on purpose, and it must stay loose. Whether opened covers the nav or only the
+    # page beneath it is one of the three questions the kickoff left open until it can be
+    # seen; a tolerance tight enough to tell those two apart would answer it here instead.
     assert opened["paneHeight"] >= opened["ticketHeight"] * 0.8, (opened, "full height")
 
     # --- and back, by the control that says so ----------------------------------------------
@@ -474,12 +503,15 @@ def test_the_draft_survives_every_transition(
 ) -> None:
     """Half a sentence, and the cursor in the middle of it.
 
-    A transition changes the height of one mounted conversation, so the box is the same
-    box throughout: the words stay, the cursor stays where it was put, and the person is
-    still in the box. Clicking the ticket behind is the one move that is a person leaving
-    the box, so their words and their cursor survive it but their focus does not — and
-    clicking back into the box puts the cursor where they clicked, which is what a click
-    in a box is for.
+    A transition changes the height of one mounted conversation, so the box is the same box
+    throughout every one of them: the words stay and the cursor stays where it was put.
+
+    Where the keyboard ends up is asked for differently depending on what the person did.
+    Moving the conversation from inside the box — clicking into it, pressing Escape while
+    typing — takes nothing off them, so the keyboard is still in the box. Pressing a control
+    is pressing something, and a browser puts the keyboard on what was pressed; the claim
+    there is the weaker one, that it is still on something inside the conversation rather
+    than dropped on the page, which is what a control that removed itself would do.
     """
     ticket_id, conversation_id = _a_ticket_with_a_conversation(server, cli, "The draft")
     _append_rows(server, conversation_id, *_a_settled_conversation_worth_reading(THE_LAST_THING))
@@ -493,33 +525,47 @@ def test_the_draft_survives_every_transition(
     for _ in range(9):
         page.keyboard.press("ArrowLeft")
     mid_sentence = len(draft) - 9
-    _the_draft_is_still_there(page, "typed at peeked", draft, mid_sentence)
-
-    _take_it_full(page)
-    _the_draft_is_still_there(page, "opened", draft, mid_sentence)
-
-    _bring_it_back(page)
-    _the_draft_is_still_there(page, "back at peeked", draft, mid_sentence)
-
     # Typing carries on from where the cursor was, which is what says it is really there.
     page.keyboard.type("was ")
     carried_on = f"{draft[:mid_sentence]}was {draft[mid_sentence:]}"
-    _the_draft_is_still_there(page, "still typing", carried_on, mid_sentence + 4)
+    cursor = mid_sentence + 4
+    typing = _the_draft_is_still_there(page, "typed at peeked", carried_on, cursor)
+    assert typing["focusedInTheBox"] is True, typing
 
-    # Clicking the ticket behind is a person leaving the box, so the keyboard goes with
-    # them. Their words and their cursor do not.
-    _click_the_ticket_behind(page, lands_on="rest")
-    at_rest = page.evaluate(THE_DRAFT_IN_THE_BOX)
-    assert at_rest["stillAttached"] is True, at_rest
-    assert at_rest["text"] == carried_on, at_rest
-    assert at_rest["caret"] == [mid_sentence + 4, mid_sentence + 4], at_rest
+    # Escape, pressed by somebody typing. Nothing about that takes the keyboard off them.
+    page.keyboard.press("Escape")
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
+    at_rest = _the_draft_is_still_there(page, "rest, by Escape", carried_on, cursor)
+    assert at_rest["focusedInTheBox"] is True, ("Escape took the keyboard out of the box", at_rest)
 
-    # And back in, where a click puts the cursor wherever it landed, which is what a click
-    # in a box is for.
+    # Back in by clicking the box, which is where a person's own click puts the cursor.
     _click_the_composers_input(page)
-    back_in_the_box = page.evaluate(THE_DRAFT_IN_THE_BOX)
-    assert back_in_the_box["text"] == carried_on, back_in_the_box
-    assert back_in_the_box["focused"] is True, back_in_the_box
+    back_in = page.evaluate(THE_DRAFT_IN_THE_BOX)
+    assert back_in["text"] == carried_on, back_in
+    assert back_in["focusedInTheBox"] is True, back_in
+    clicked_to = back_in["caret"][0]
+
+    # The controls. They keep the focus, because a browser puts it on what was pressed —
+    # but a control that vanished under the press would drop it on the page instead.
+    _take_it_full(page)
+    opened = _the_draft_is_still_there(page, "opened", carried_on, clicked_to)
+    assert opened["focusedInTheConversation"] is True, (
+        "the keyboard was dropped on the page rather than left in the conversation",
+        opened,
+    )
+
+    _bring_it_back(page)
+    peeked = _the_draft_is_still_there(page, "back at peeked", carried_on, clicked_to)
+    assert peeked["focusedInTheConversation"] is True, peeked
+
+    # And out again by the ticket behind, which changes what is on screen under the draft
+    # and must not change the draft.
+    _click_the_ticket_behind(page, lands_on="rest")
+    # Nothing is asked here about where the keyboard went. The click landed on the ticket,
+    # which is not something that can be focused, so the browser takes the keyboard off the
+    # box — the same rule that leaves it on a control that was pressed. The person pressed
+    # somewhere else, and this is what pressing somewhere else does.
+    _the_draft_is_still_there(page, "rest, by the ticket behind", carried_on, clicked_to)
 
 
 def test_a_turn_starting_does_not_move_the_state_and_the_bar_says_what_is_happening(
@@ -555,10 +601,10 @@ def test_a_turn_starting_does_not_move_the_state_and_the_bar_says_what_is_happen
     said = page.inner_text(REST_LINE)
     assert "Read file" not in said, ("the newest tool call, not the first", said)
     assert "The one line the bar shows" not in said, said
-    # The plan's progress, quieter, beside it: three steps, and how far through them.
-    beside_it = page.inner_text(REST_ASIDE).strip()
-    assert beside_it != ""
-    assert "3" in beside_it, beside_it
+    # The plan's progress, quieter, beside it. One of the three steps is done, so this is
+    # the number it says and not any other: a bar reading "3 / 3 tasks" would be wrong
+    # about the same plan.
+    assert page.inner_text(REST_ASIDE).strip() == "1 / 3 tasks"
 
 
 def test_a_permission_ask_does_not_move_the_state_and_the_bar_is_what_says_it_arrived(
