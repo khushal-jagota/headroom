@@ -164,19 +164,19 @@ names the command.
 
 ## Code paths
 
-- Contract and floor defaults: `src/planner/conversation2/contracts.py` (the
+- Contract and floor defaults: `src/planner/conversation/contracts.py` (the
   docstrings are the documentation of record).
-- Core, notebook, storage: `src/planner/conversation2/` (`system.py`,
+- Core, notebook, storage: `src/planner/conversation/` (`system.py`,
   `events.py`, `storage.py`); tables land in
   `src/planner/core/migrations/versions/conversation_system_tables.py`.
-- The three backends: `src/planner/conversation2/backends/`.
-- Reading side, live tail, backend cards: `src/planner/conversation2/api.py`,
+- The three backends: `src/planner/conversation/backends/`.
+- Reading side, live tail, backend cards: `src/planner/conversation/api.py`,
   `live_tail.py`, `snapshot.py`.
 - The pane: `web/src/routes/DevConversationRoute.svelte`,
-  `web/src/components/conversation2/`, `web/src/lib/conversation2/`.
+  `web/src/components/conversation/`, `web/src/lib/conversation/`.
 - The contract's proof: `tests/support/conversation_contract_conformance.py`,
   run against the real system in
-  `tests/unit/test_conversation2_conformance.py`.
+  `tests/unit/test_conversation_conformance.py`.
 
 ## Handoffs
 

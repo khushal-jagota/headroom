@@ -16,8 +16,8 @@
     StageOwnershipMode,
     TicketDetail
   } from "../lib/types";
-  import LiveConversation from "../components/conversation2/LiveConversation.svelte";
-  import { readBackends, type BackendSnapshot } from "../lib/conversation2/wire";
+  import LiveConversation from "../components/conversation/LiveConversation.svelte";
+  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";

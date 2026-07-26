@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -88,7 +88,7 @@ def _ticket_with_pending_plan(
 
 
 def _start_conversation(app: FastAPI, conversation_id: str = _CONVERSATION_ID) -> None:
-    from planner.conversation2.contracts import ConversationStartRequest
+    from planner.conversation.contracts import ConversationStartRequest
 
     asyncio.run(
         app.state.conversation_system.start_conversation(

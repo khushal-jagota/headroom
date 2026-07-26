@@ -9,7 +9,7 @@ import sqlite3
 from pathlib import Path
 from typing import cast
 
-from planner.conversation2.contracts import require_conversation_backend_key
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.projects import data as projects_data

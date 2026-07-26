@@ -16,7 +16,7 @@ from sqlite3 import Connection
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.conversation2.in_memory_conversation_system import (
+from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )

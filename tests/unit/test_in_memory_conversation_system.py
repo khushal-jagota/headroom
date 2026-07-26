@@ -13,8 +13,8 @@ import asyncio
 
 import pytest
 
-from planner.conversation2.contracts import ConversationBackendKey, ConversationStartRequest
-from planner.conversation2.in_memory_conversation_system import (
+from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
+from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
     TurnCannotEndWhilePermissionAskIsPending,
 )

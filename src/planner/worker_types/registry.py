@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from types import MappingProxyType
 
-from planner.conversation2.contracts import require_conversation_backend_key
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.contracts import (

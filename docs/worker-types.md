@@ -156,7 +156,7 @@ There is no `/api/seed` route or `panels seed` command.
 `GET /api/worker-types` calls the Worker-type registry's `manifest` method for each
 definition. It does not list the agent backends: what backends this machine has, which
 models each offers, and which reasoning efforts each of those takes are one answer, and
-it comes from `GET /api/conversation2/backends`. Every
+it comes from `GET /api/conversation/backends`. Every
 Worker-type entry contains the label, Stages, gates, advance map, fields, ceiling range,
 default ceiling, specialist skill id, and default Employee backend, model, and reasoning
 effort. Every Stage also carries its default ownership mode; terminal Stages carry none.

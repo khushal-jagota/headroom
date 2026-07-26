@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from time import monotonic as _monotonic
 
-from planner.conversation2.contracts import ConversationSystem
+from planner.conversation.contracts import ConversationSystem
 from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import Config

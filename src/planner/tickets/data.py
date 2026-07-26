@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Protocol
 
-from planner.conversation2.contracts import require_conversation_backend_key
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.core import links as core_links
 from planner.core.contracts import EventKind, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError

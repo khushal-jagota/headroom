@@ -13,8 +13,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.conversation2.contracts import ConversationBackendKey
-from planner.conversation2.snapshot import BackendModel, BackendSnapshot
+from planner.conversation.contracts import ConversationBackendKey
+from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.contracts import Priority
@@ -331,7 +331,7 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
     with TestClient(app) as client:
         # The lifespan builds the real backend snapshot service on the way up, so the
         # stand-in goes on once the app is running rather than before it starts.
-        app.state.conversation2 = SimpleNamespace(backend_snapshots=BackendSnapshots())
+        app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
         selected = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json=_employee_configuration_body("claude", "probe-a", "high"),
@@ -392,7 +392,7 @@ def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(
     ticket_id = _create_pristine_ticket(db_path)
 
     with TestClient(app) as client:
-        app.state.conversation2 = SimpleNamespace(backend_snapshots=BackendSnapshots())
+        app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json=_employee_configuration_body("claude", "invented-model", None),
@@ -416,7 +416,7 @@ def test_employee_configuration_backend_probe_failure_is_a_retryable_product_err
     ticket_id = _create_pristine_ticket(db_path)
 
     with TestClient(app) as client:
-        app.state.conversation2 = SimpleNamespace(backend_snapshots=FailingBackendSnapshots())
+        app.state.conversation = SimpleNamespace(backend_snapshots=FailingBackendSnapshots())
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json=_employee_configuration_body("claude", "probe-a", "high"),

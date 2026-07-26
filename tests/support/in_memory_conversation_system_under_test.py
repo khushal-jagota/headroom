@@ -20,8 +20,8 @@ from tests.support.conversation_contract_conformance import (
     RecordedTurnEnding,
 )
 
-from planner.conversation2.contracts import ConversationSystem
-from planner.conversation2.in_memory_conversation_system import (
+from planner.conversation.contracts import ConversationSystem
+from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservation,
     InMemoryConversationSystem,
 )

@@ -266,7 +266,7 @@ _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 `web/src/lib/queryCatalogue.ts` (every server read, by name and address),
 `web/src/lib/queryClient.ts` (the one shared cache), `web/src/lib/changeStream.ts`
 (the change stream and connection health), `web/src/lib/mutate.ts` (a write, then the
-refetch it earns), `web/src/lib/conversation2/` and `web/src/components/conversation2/`
+refetch it earns), `web/src/lib/conversation/` and `web/src/components/conversation/`
 (the conversation wire, feed, transcript and composer), and the
 remaining `web/src/lib/` helpers (API, Managed Markdown, `markdownPipeline.ts`,
 `labelize`, dates), `assets/tokens.css` (design tokens), `assets/app.css` (shared

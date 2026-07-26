@@ -14,7 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.conversation2.in_memory_conversation_system import (
+from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )

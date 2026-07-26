@@ -9,10 +9,10 @@
    * — its own screen and the Workspace desk — and both must be the same conversation.
    */
   import { onMount } from "svelte";
-  import LiveConversation from "./conversation2/LiveConversation.svelte";
+  import LiveConversation from "./conversation/LiveConversation.svelte";
   import { fetchJson } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
-  import { readBackends, type BackendSnapshot } from "../lib/conversation2/wire";
+  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
 
   type ChiefConversation = { conversation_id: string | null };
 

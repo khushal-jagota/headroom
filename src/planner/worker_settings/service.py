@@ -19,7 +19,7 @@ from typing import Any, Final
 
 import yaml
 
-from planner.conversation2.contracts import require_conversation_backend_key
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.contracts import ErrorCode, JsonDict, PlannerError
 from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
 from planner.tickets.contracts import StageOwnershipMode

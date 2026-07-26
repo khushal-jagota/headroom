@@ -11,9 +11,9 @@
    * cards. Being live is LiveConversation's job, and it is the same one a Ticket uses.
    */
   import { onMount } from "svelte";
-  import BackendCard from "../components/conversation2/BackendCard.svelte";
-  import LiveConversation from "../components/conversation2/LiveConversation.svelte";
-  import NewConversationForm from "../components/conversation2/NewConversationForm.svelte";
+  import BackendCard from "../components/conversation/BackendCard.svelte";
+  import LiveConversation from "../components/conversation/LiveConversation.svelte";
+  import NewConversationForm from "../components/conversation/NewConversationForm.svelte";
   import {
     killConversation,
     readBackends,
@@ -23,7 +23,7 @@
     type BackendSnapshot,
     type BackendUpdateResult,
     type ConversationBackendKey
-  } from "../lib/conversation2/wire";
+  } from "../lib/conversation/wire";
 
   const SENDER_LABEL = "owner";
   const DEFAULT_WORKSPACE_FOLDER = "~/Coding";
@@ -121,7 +121,7 @@
   });
 </script>
 
-<div class="c2-route" data-conversation2-route>
+<div class="c2-route" data-conversation-route>
   <div class="c2-route-pane">
     <LiveConversation
       conversationId={liveConversationId}
@@ -149,7 +149,7 @@
   <aside class="c2-route-backends" aria-label="Backends on this machine">
     <div class="c2-route-backends-head">
       <span>backends</span>
-      <button type="button" data-conversation2-backends-refresh onclick={() => void loadBackends(true)}>
+      <button type="button" data-conversation-backends-refresh onclick={() => void loadBackends(true)}>
         Look again
       </button>
     </div>

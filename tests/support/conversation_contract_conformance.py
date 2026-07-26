@@ -25,7 +25,7 @@ from typing import Protocol
 
 import pytest
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationStartRequest,

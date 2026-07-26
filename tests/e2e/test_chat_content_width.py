@@ -13,8 +13,8 @@ from playwright.sync_api import Browser, Page
 
 WAIT_MS = 10_000
 
-CONVERSATION_PANE = "[data-conversation2-pane]"
-CONVERSATION_THREAD = "[data-conversation2-thread]"
+CONVERSATION_PANE = "[data-conversation-pane]"
+CONVERSATION_THREAD = "[data-conversation-thread]"
 
 
 def _open_route(

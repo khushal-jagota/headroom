@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { labelize } from "../lib/ui";
-  import { effortOptionsFor } from "../lib/conversation2/composer";
-  import { readBackends, type BackendSnapshot } from "../lib/conversation2/wire";
+  import { effortOptionsFor } from "../lib/conversation/composer";
+  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";

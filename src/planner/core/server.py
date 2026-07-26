@@ -15,10 +15,10 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from planner.conversation2.api import build_conversation2_runtime
-from planner.conversation2.api import router as conversation2_router
-from planner.conversation2.contracts import ConversationSystem
-from planner.conversation2.production_backends import production_backend_child_factories
+from planner.conversation.api import build_conversation_runtime
+from planner.conversation.api import router as conversation_router
+from planner.conversation.contracts import ConversationSystem
+from planner.conversation.production_backends import production_backend_child_factories
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.db import connect
@@ -119,20 +119,20 @@ def create_app(
         # the three real agents on this machine, and spawns none of them until a
         # conversation has something to send. Everything that starts or steers a worker
         # goes through it, so it has to exist before the readiness loop starts.
-        conversation2 = build_conversation2_runtime(
+        conversation = build_conversation_runtime(
             db_path=config.db_path,
             db_busy_timeout_ms=config.db_busy_timeout_ms,
             sse_heartbeat_ms=config.sse_heartbeat_ms,
             backend_child_factories=production_backend_child_factories(),
         )
-        app.state.conversation2 = conversation2
+        app.state.conversation = conversation
         # A test that drives workers wants a conversation system it can hold still, so it
         # passes one in. Nothing else does: production always runs the real one.
         app.state.conversation_system = (
-            conversation2.system if conversation_system_for_test is None
+            conversation.system if conversation_system_for_test is None
             else conversation_system_for_test
         )
-        await conversation2.system.start_idle_child_janitor()
+        await conversation.system.start_idle_child_janitor()
 
         loops: Any = None
         if not config.test_mode:
@@ -153,8 +153,8 @@ def create_app(
                 if loops is not None:
                     await _stop_runtime_with_deadline(loops, deadline)
             finally:
-                app.state.conversation2 = None
-                await conversation2.shutdown()
+                app.state.conversation = None
+                await conversation.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
@@ -164,7 +164,7 @@ def create_app(
     app.state.worker_context_service = SqliteWorkerContextService(
         lambda: connect(config.db_path, config.db_busy_timeout_ms)
     )
-    app.state.conversation2 = None
+    app.state.conversation = None
     # The conversation system is the running one, so it belongs to the lifespan that
     # starts and stops it. Outside that window there is none.
     app.state.conversation_system = None
@@ -185,7 +185,7 @@ def create_app(
     ):
         app.include_router(domain_router, prefix="/api")
     app.include_router(files_router)
-    app.include_router(conversation2_router, prefix="/api/conversation2")
+    app.include_router(conversation_router, prefix="/api/conversation")
 
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:

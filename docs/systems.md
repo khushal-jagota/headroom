@@ -172,7 +172,7 @@ What each backend is on this machine — installed, which version, signed in as 
 which models it offers and which reasoning efforts each of those takes — is one answer,
 probed when asked and kept until asked again.
 
-_Code paths:_ `src/planner/conversation2/`, and `/api/conversation2` in
+_Code paths:_ `src/planner/conversation/`, and `/api/conversation` in
 `src/planner/core/server.py`.
 
 ### 6. The Human UI System

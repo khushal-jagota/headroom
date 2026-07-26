@@ -8,8 +8,8 @@ checks nothing until someone writes the binding down.
 
 from __future__ import annotations
 
-from planner.conversation2.contracts import ConversationSystem
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.contracts import ConversationSystem
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 
 
 def _in_memory_conversation_system_case() -> ConversationSystem:

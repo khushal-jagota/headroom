@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
 )
-from planner.conversation2.logic.conversation_start_resolution import (
+from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
 

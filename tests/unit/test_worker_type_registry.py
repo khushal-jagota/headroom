@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from tests.support.probe import build_probe_registry
 
-from planner.conversation2.contracts import ConversationBackendKey
+from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
@@ -567,7 +567,7 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
         "registry.py",
     }
     allowed_outbound = {
-        "planner.conversation2.contracts",
+        "planner.conversation.contracts",
         "planner.core.contracts",
         "planner.tickets.contracts",
     }

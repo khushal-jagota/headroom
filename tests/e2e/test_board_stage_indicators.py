@@ -8,13 +8,13 @@ import threading
 
 import httpx
 
-from planner.conversation2.events import (
+from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationEventPayload,
     ConversationTurnEnding,
     TurnEndedEventPayload,
 )
-from planner.conversation2.storage import ConversationStore
+from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
 
@@ -347,7 +347,7 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
 
 def _start_conversation(server, conversation_id: str) -> None:
     created = httpx.post(
-        f"{server.base}/api/conversation2/conversations",
+        f"{server.base}/api/conversation/conversations",
         json={"conversation_id": conversation_id, "backend_key": "codex"},
         timeout=10.0,
     )

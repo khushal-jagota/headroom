@@ -139,8 +139,8 @@ line at composition. Until it does, the browser's conversation pane still runs o
 older machinery, and the two systems both write the Ticket's conversation-link column
 — last writer wins. Nothing is deployed in this window.
 
-_Code paths:_ `src/planner/conversation2/contracts.py`,
-`src/planner/conversation2/in_memory_conversation_system.py`, and
+_Code paths:_ `src/planner/conversation/contracts.py`,
+`src/planner/conversation/in_memory_conversation_system.py`, and
 `src/planner/core/server.py`.
 
 ## Worker roles and backends

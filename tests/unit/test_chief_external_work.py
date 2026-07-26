@@ -12,8 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
-from planner.conversation2.contracts import ConversationStartRequest
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema

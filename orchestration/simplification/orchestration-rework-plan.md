@@ -2,10 +2,10 @@
 
 Branch `simplify/orchestration-rework` off local staging e23a36c4. Part of the Panels
 simplification program. This package rebuilds the worker-orchestration side against the
-new conversation contract (`src/planner/conversation2/contracts.py`). The real
+new conversation contract (`src/planner/conversation/contracts.py`). The real
 conversation system is built in parallel by a sibling; everything here codes against the
 contract and the in-memory fake. Zero Alembic revisions in this package. Nothing under
-`src/planner/conversation2/` or `src/planner/conversation/` changes except recorded
+`src/planner/conversation/` or `src/planner/conversation/` changes except recorded
 mechanical fallout. Commits stay local.
 
 ## What exists today (facts the plan builds on)

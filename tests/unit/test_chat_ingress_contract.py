@@ -30,10 +30,6 @@ def test_only_acp_conversation_and_worker_self_routes_survive(tmp_path: Path) ->
     assert "/api/tickets/{ticket_id}/worker-self" in route_paths
     forbidden = (
         "/api/chat",
-        # The conversation WebSocket and everything it served. A conversation is read
-        # over ordinary HTTP and tailed over the change stream now; nothing holds a
-        # socket open to Panels.
-        "/api/conversation/",
         "/api/employee-configuration-catalog",
         "/api/messages/chief",
         "/api/relay",
@@ -43,7 +39,11 @@ def test_only_acp_conversation_and_worker_self_routes_survive(tmp_path: Path) ->
         "/files/chats",
     )
     assert not [path for path in route_paths if path.startswith(forbidden)]
+    # A conversation is read over ordinary HTTP and tailed over the change stream. Panels
+    # holds no socket open, so the bare path that was the WebSocket is now the prefix the
+    # conversation's own routes live under, and there is no route at the path itself.
     assert "/api/conversation" not in route_paths
+    assert "/api/conversation/conversations" in route_paths
 
 
 def test_fresh_schema_has_employee_correctness_without_legacy_chat_tables(

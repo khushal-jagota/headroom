@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Final
 from uuid import uuid4
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationStartRequest,
     ConversationSystem,

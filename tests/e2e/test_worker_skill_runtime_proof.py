@@ -25,18 +25,18 @@ from tests.support.worker_skill_proof_acp_agent import (
     WORKTREE_GUIDANCE,
 )
 
-from planner.conversation2.backends.hermes_acp import (
+from planner.conversation.backends.hermes_acp import (
     AcpChildLaunch,
     HermesAcpBackendChildFactory,
 )
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
 )
-from planner.conversation2.events import ConversationEventKind
-from planner.conversation2.storage import ConversationStore
-from planner.conversation2.system import SqliteProcessConversationSystem
+from planner.conversation.events import ConversationEventKind
+from planner.conversation.storage import ConversationStore
+from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.db import connect, create_schema
 from planner.environments.hermes_home import provision_planner_home_skills
 

@@ -19,13 +19,13 @@ from typing import cast
 
 import pytest
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationStartRequest,
     ConversationSystem,
     PromptDeliveryFate,
     PromptDeliveryMode,
 )
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core.clock import TestClock
 from planner.core.db import connect, create_schema
 from planner.days import data as days_data

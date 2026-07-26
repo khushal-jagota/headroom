@@ -24,13 +24,13 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationSystem,
     require_conversation_backend_key,
 )
-from planner.conversation2.snapshot import BackendSnapshotService
-from planner.conversation2.storage import ConversationStore
+from planner.conversation.snapshot import BackendSnapshotService
+from planner.conversation.storage import ConversationStore
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
@@ -113,7 +113,7 @@ def get_conversation_system(request: Request) -> ConversationSystem:
 
 
 def get_conversation_record(request: Request) -> ConversationStore:
-    runtime = getattr(request.app.state, "conversation2", None)
+    runtime = getattr(request.app.state, "conversation", None)
     store = getattr(runtime, "store", None) if runtime is not None else None
     if store is None:
         raise PlannerError(
@@ -581,7 +581,7 @@ async def list_tickets(
 
 
 def _backend_snapshots(request: Request) -> BackendSnapshotService:
-    runtime = getattr(request.app.state, "conversation2", None)
+    runtime = getattr(request.app.state, "conversation", None)
     service = getattr(runtime, "backend_snapshots", None) if runtime is not None else None
     if service is None:
         raise PlannerError(

@@ -26,7 +26,7 @@ from collections.abc import Callable
 from time import monotonic as _monotonic
 from typing import Final
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
     PromptDeliveryRefused,

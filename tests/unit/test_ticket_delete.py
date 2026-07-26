@@ -8,8 +8,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from planner.conversation2.contracts import ConversationStartRequest
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import change_signal
 from planner.core import links as core_links
 from planner.core.clock import TestClock as PlannerTestClock

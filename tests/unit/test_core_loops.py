@@ -8,8 +8,8 @@ from typing import Any, cast
 
 import pytest
 
-from planner.conversation2.contracts import ConversationSystem
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.contracts import ConversationSystem
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import change_signal, loops
 from planner.core.clock import TestClock
 from planner.core.config import load_config

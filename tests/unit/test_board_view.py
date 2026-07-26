@@ -16,19 +16,19 @@ from tests.support.probe import (
     uninstall_probe_registry,
 )
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationStartRequest,
     ResolvedConversationStart,
 )
-from planner.conversation2.events import (
+from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationTurnEnding,
     TurnEndedEventPayload,
 )
-from planner.conversation2.in_memory_conversation_system import InMemoryConversationSystem
-from planner.conversation2.storage import ConversationStore
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.storage import ConversationStore
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind, Priority
 from planner.days.data import add_day_ticket

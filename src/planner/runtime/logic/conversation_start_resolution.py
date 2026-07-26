@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     FLOOR_DEFAULT_ACCESS,
     ConversationAccess,
     ConversationBackendKey,

@@ -20,16 +20,16 @@ def test_chief_of_staff_route_nav_and_acp_mount(server, context_factory, open_pa
         context_factory(),
         server,
         "#/chief",
-        'section[data-screen="chief"] [data-conversation2-input]',
+        'section[data-screen="chief"] [data-conversation-input]',
     )
 
     assert page.query_selector('a.nav-link[data-screen="chief"]') is None
     assert page.inner_text("h1") == "Chief of Staff"
-    assert page.get_attribute("[data-conversation2-input]", "placeholder") == (
+    assert page.get_attribute("[data-conversation-input]", "placeholder") == (
         "Send the first message to start it..."
     )
 
-    assert page.locator("[data-conversation2-pane]").count() == 1
+    assert page.locator("[data-conversation-pane]").count() == 1
 
 
 def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
@@ -50,14 +50,14 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
         context_factory(),
         server,
         "#/workspace",
-        'section[data-screen="workspace"] [data-conversation2-input]',
+        'section[data-screen="workspace"] [data-conversation-input]',
     )
 
     assert "active" in (
         page.get_attribute('a.nav-link[data-screen="workspace"]', "class") or ""
     )
     assert page.url == f"{server.base}/#/workspace"
-    assert page.get_attribute("[data-conversation2-input]", "placeholder") == (
+    assert page.get_attribute("[data-conversation-input]", "placeholder") == (
         "Send the first message to start it..."
     )
     assert page.locator("[data-hide-done-toggle]").count() == 0
@@ -67,7 +67,7 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     page.click(card)
     page.wait_for_url(f"{server.base}/#/workspace/{tid}", timeout=WAIT_MS)
     ticket = _workspace_ticket(tid)
-    page.wait_for_selector(f"{ticket} [data-conversation2-input]", timeout=WAIT_MS)
+    page.wait_for_selector(f"{ticket} [data-conversation-input]", timeout=WAIT_MS)
     assert page.query_selector('[aria-label="Workspace tickets by status"]') is not None
     assert page.inner_text(f"{ticket} .ticket-title") == "Workspace selectable ticket"
 
@@ -75,9 +75,9 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
     page.wait_for_url(f"{server.base}/#/workspace", timeout=WAIT_MS)
     page.wait_for_selector(ticket, state="detached", timeout=WAIT_MS)
     page.wait_for_selector(
-        'section[data-screen="workspace"] [data-conversation2-input]', timeout=WAIT_MS
+        'section[data-screen="workspace"] [data-conversation-input]', timeout=WAIT_MS
     )
-    assert page.locator("[data-conversation2-pane]").count() == 1
+    assert page.locator("[data-conversation-pane]").count() == 1
 
 
 def test_workspace_ticket_route_restores_on_load_refresh_and_history(

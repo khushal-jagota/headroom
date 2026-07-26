@@ -3,12 +3,12 @@
 Implements plan.md §1–§6 (as revised after plan review; read plan-review-disposition.md too).
 
 ## Owns
-`src/planner/**` (except `conversation2/`; `conversation/` only the two named fallout lines),
+`src/planner/**` (except `conversation/`; `conversation/` only the two named fallout lines),
 `tests/unit/**`, `tests/typing/**`, `config.yaml`.
 
 ## Must not touch
 `web/`, `tests/e2e/`, `docs/`, root `CLAUDE.md`/`AGENTS.md`, `orchestration/`,
-`src/planner/conversation2/`, `src/planner/skills/`. No commits — leave the working tree for the
+`src/planner/conversation/`, `src/planner/skills/`. No commits — leave the working tree for the
 orchestrator to integrate.
 
 ## Contract fixed for the parallel frontend ticket (do not vary)

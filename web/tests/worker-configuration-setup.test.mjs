@@ -27,7 +27,7 @@ for (const fileName of ["WorkerConfigurationSetup.svelte", "ManagedLaunchDefault
   assert.match(source, /employee_launch_model/, fileName);
   assert.match(source, /employee_launch_reasoning_effort/, fileName);
   assert.match(source, /readBackends/, fileName);
-  assert.match(source, /lib\/conversation2\/wire/, fileName);
+  assert.match(source, /lib\/conversation\/wire/, fileName);
   assert.match(source, /effortOptionsFor/, fileName);
   assert.match(source, /requestGeneration/, fileName);
   assert.doesNotMatch(source, /employee-configuration-catalog/, fileName);
@@ -281,7 +281,7 @@ with sync_playwright() as playwright:
 
     # One read of the machine's agents, not one per backend and not one per model.
     assert page.evaluate("window.__requests().length") == 1
-    assert page.evaluate("window.__requests()[0].url").endswith("/api/conversation2/backends")
+    assert page.evaluate("window.__requests()[0].url").endswith("/api/conversation/backends")
 
     # A machine that will not answer leaves the saved values on show, and a way back.
     page.evaluate("window.__fail(0)")

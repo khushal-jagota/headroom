@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Final
 
-from planner.conversation2.contracts import ConversationSystem, PromptDeliveryRefused
+from planner.conversation.contracts import ConversationSystem, PromptDeliveryRefused
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError

@@ -9,9 +9,9 @@ about this piece of work.
 ## What the cutover is
 
 Two conversation systems ran side by side. The old package `src/planner/conversation/`
-served the ticket pane over a WebSocket. The new `src/planner/conversation2/` served a
+served the ticket pane over a WebSocket. The new `src/planner/conversation/` served a
 dev route, and a deterministic in-memory stand-in satisfied the worker path. The old one
-dies; `conversation2` is then renamed to `conversation` and the numeral goes.
+dies; `conversation` is then renamed to `conversation` and the numeral goes.
 
 **Where it has got to: the old package is mounted nowhere in production and nothing has
 been deleted.** Every screen that shows a conversation is on the new system. The old
@@ -168,7 +168,7 @@ configuration adapters. Eight call sites: `tickets/data.py` (×4), `tickets/api.
 **Also dies:** `conversation/employee_configuration.py`. Not shared infrastructure — old
 first-session machinery, read out of `app.state.conversation`.
 
-**What replaces it:** `/api/conversation2/backends` already serves nearly the same shape.
+**What replaces it:** `/api/conversation/backends` already serves nearly the same shape.
 The mapping is close to one-for-one:
 
 | old catalog | new snapshot |
@@ -218,7 +218,7 @@ moved out; `backend_catalog` and `employee_configuration` die with item 1.)
 `web/src/lib/acp/`:
 
 - **`stepIcons.ts` SURVIVES.** The new `ToolCallRow.svelte` imports it, and
-  `conversation2-pane.test.mjs` whitelists it as the one allowed leaf. Move it into the
+  `conversation-pane.test.mjs` whitelists it as the one allowed leaf. Move it into the
   conversation lib.
 - The other nine die, along with all ten components in `web/src/components/acp/` and
   `web/src/components/AcpConversation.svelte`.
@@ -234,10 +234,10 @@ moved out; `backend_catalog` and `employee_configuration` die with item 1.)
 assertions about the NEW pane that were repointed during the cutover — move those
 somewhere that survives rather than losing them.)
 
-**Then rename** `conversation2` → `conversation`, and `web/src/lib/conversation2` and
-`web/src/components/conversation2` likewise. Nothing keeps a name referring to the thing
-that no longer exists — including the `data-conversation2-*` attributes and
-`/api/conversation2`.
+**Then rename** `conversation` → `conversation`, and `web/src/lib/conversation` and
+`web/src/components/conversation` likewise. Nothing keeps a name referring to the thing
+that no longer exists — including the `data-conversation-*` attributes and
+`/api/conversation`.
 
 ### 4. The migration
 
@@ -329,7 +329,7 @@ in `lib/acp` that nothing mounts.
    `employee_configuration`, the two screens, the CLI caller, and the manifest endpoint.
    Roughly 4 source files and 5 test files. See section 1 above for why it is one change.
 3. **The reply dot.** Three things die together, one storage read gets added.
-4. **The rest of the package, then the rename** of `conversation2` to `conversation`.
+4. **The rest of the package, then the rename** of `conversation` to `conversation`.
 5. **The migration** — three tables dropped, `employee_session_id` renamed.
 
 The three carried-across capabilities (usage and cost, queue cancel, the compaction
@@ -342,7 +342,7 @@ anyone starts them.
 
 `create_app` builds the conversation runtime at the top of the lifespan, **before** the
 readiness loop that sends into it. `app.state.conversation_system` is
-`conversation2.system` — the same object the browser's conversation routes use. One system,
+`conversation.system` — the same object the browser's conversation routes use. One system,
 not two.
 
 `create_app` takes `conversation_system_for_test`, refused outside test mode exactly as
@@ -367,7 +367,7 @@ composition, so the guard structurally cannot reach them.
 
 ### The binder
 
-`web/src/components/conversation2/LiveConversation.svelte` is what makes a conversation
+`web/src/components/conversation/LiveConversation.svelte` is what makes a conversation
 live: it opens one by id, replays the rows after the one it holds and keeps going, keeps
 the messages this browser has sent that the record has not caught up with, and turns send,
 stop, answer and New into calls. Three callers: the dev route, `TicketRoute`, and

@@ -13,7 +13,7 @@ from sqlite3 import Connection
 
 import pytest
 
-from planner.conversation2.contracts import (
+from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationStartRequest,
@@ -23,7 +23,7 @@ from planner.conversation2.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
-from planner.conversation2.in_memory_conversation_system import (
+from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
     InMemoryConversationSystem,
 )
