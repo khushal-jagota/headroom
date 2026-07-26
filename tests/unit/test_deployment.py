@@ -617,6 +617,9 @@ def _app(root: Path, sha: str, marker: str) -> Path:
     launcher.parent.mkdir()
     launcher.write_text("#!/bin/sh\n", encoding="utf-8")
     launcher.chmod(0o755)
+    cli = root / "bin" / "panels"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    cli.chmod(0o755)
     (root / "web" / "dist").mkdir(parents=True)
     (root / "web" / "dist" / "index.html").write_text("ok", encoding="utf-8")
     (root / "agent_backends" / "node_modules").mkdir(parents=True)

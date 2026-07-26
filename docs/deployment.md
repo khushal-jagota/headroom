@@ -46,6 +46,10 @@ success, or restore and prove the prior app
 The self-hosted runner proves Python is at least 3.12 and Node is version 22. It builds
 under runner-temporary storage and removes that state when the job ends. The resulting
 app contains no Git metadata and carries a validated identity for the requested commit.
+Runtime validation requires both executable entrypoints: `bin/panels` is the
+root-relative interactive CLI that preserves caller context, while
+`bin/panels-launcher` is the isolated launcher for services and other managed runtime
+operations.
 
 The workflow uses the fixed VPS contract:
 

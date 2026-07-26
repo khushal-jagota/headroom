@@ -3,6 +3,14 @@
 `panels` is the command-line tool. It speaks to the server over HTTP and answers in
 machine-readable JSON with `--json`.
 
+On the production host, `~/.local/bin/panels` follows
+`~/Deployments/Panels/current/app/bin/panels`. The deployed command locates its own
+interpreter, so it keeps following atomic app replacements and works from any directory.
+It preserves the caller's environment, including the server address and Ticket Worker
+identity. It sets the application root and exact deployed SHA that belong to the
+selected app, then uses Python's isolated mode so `PYTHONPATH` and the working
+directory cannot replace the deployed package.
+
 The command tree matches the system model:
 
 - `day ...` — plan and inspect a day.
@@ -93,6 +101,11 @@ generic Stage setter.
 _Code paths:_ `src/planner/cli/main.py` (the verbs), `src/planner/cli/http.py`
 (the HTTP call, output, and exit codes), `src/planner/server_lifecycle/` (foreground
 ownership and controlled restart).
+
+The interactive `bin/panels` command is distinct from `bin/panels-launcher`.
+Services, scheduled maintenance, and backups use the latter because it validates the
+deployed app and constructs an allowlisted runtime environment. Interactive commands
+do not cross that managed-runtime boundary.
 
 Project-aware commands accept `--project-id` as the preferred selector and keep
 `--project` as legacy name compatibility. Passing both is allowed only when they
