@@ -781,9 +781,16 @@ driver extractability (clean lift → thin TS sidecar serious; extraction
   exercise files (17 skips, env-gated on PANELS_REAL_*) evade it by
   naming the marker first and applying it. Made consistent at 20737657
   rather than left half-and-half, but the rule is being routed around
-  by spelling. Preferred resolution: give the real-CLI exercises their
-  own place verify runs knowingly, rather than teaching the scan a new
-  spelling to forgive.
+  by spelling. RULED by the owner 2026-07-26: give the real-CLI
+  exercises THEIR OWN PLACE that verify runs and reports on knowingly,
+  so they stop being skips at all. Do NOT teach the scan to forgive a
+  named opt-in category — the moment an approved way to be exempt
+  exists, the next inconvenient test reaches for it and "no skips"
+  erodes into "no skips except the ones we allowed". They are not
+  switched-off tests; they are a different kind of check (they spawn
+  real vendor CLIs, cost money, take minutes, and cannot pass on a
+  machine without those tools installed), and they should sit somewhere
+  that says so. Do this before the programme-final ./verify.
 - DOGFOOD WAVE 3 (owner findings 2026-07-26): the live counter jumps;
   a tool call's line reads only the bare tool name; sending is not
   optimistic; scrolling fights the reader. Three researchers read the
@@ -1087,6 +1094,25 @@ driver extractability (clean lift → thin TS sidecar serious; extraction
   threads emit turn/started on the same wire. Today the parent's arrives
   first so it holds; a slow parent and a fast child would bind our turn
   to the sub-agent's turn id.
+- THE origin/staging MERGE, MEASURED 2026-07-26 BEFORE MEETING IT. Local
+  staging is 28 BEHIND and 66 AHEAD of origin/staging. Owner's ordering:
+  the cutover lands, the three conversation states land, THEN merge
+  origin down as its OWN deliberate step with gates after it, THEN push.
+  Nothing pushes before that.
+  THE GOOD NEWS, and it is the thing everyone feared: the remote's 28
+  commits DO NOT TOUCH THE CONVERSATION CODE AT ALL — not conversation2,
+  not conversation. They are deployment work: CI, ops scripts, service
+  units, backup and launcher plumbing. So the package RENAME, the
+  scariest thing on our side, collides with nothing they did.
+  REAL OVERLAP IS 21 FILES, of which one is web/dist — regenerated, so
+  ALWAYS resolve it by rebuilding, never by merging. Most of the other
+  twenty are docs and tests that merge mechanically. FOUR NEED THOUGHT:
+  `core/server.py` (the composition — already resolved by hand twice on
+  this programme, and their deployment work touches it too),
+  `core/config.py`, `cli/main.py` (which the cutover already changed),
+  and `web/src/routes/BoardRoute.svelte` (which the reply dot rewrote).
+  So: a careful morning on four files, not a difficult deliberation over
+  a rename.
 - CONVERSATION BUILD + ORCHESTRATION REWORK: BOTH DISPATCHED 2026-07-25
   in PARALLEL (owner rulings: Fable top-level orchestrators; per-adapter
   children may be Fable if the build orchestrator splits that way;
