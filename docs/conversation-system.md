@@ -57,6 +57,14 @@ write failed, a steer with no running turn to join, or a steer at a backend that
 cannot steer. A busy agent is never a refusal. How a turn later ends is never
 part of the answer — endings are notebook rows.
 
+A message that is waiting can be taken back, by the name the sender gave it. It
+has reached no agent, so taking it back reaches none either — it comes out of the
+line and is written down as discarded, the same row a New writes for everything it
+throws away, because text somebody handed over never disappears without a trace.
+Being told there was nothing to take back is an ordinary answer: a waiting message
+runs the moment the agent frees up, so the one you were looking at may already have
+gone.
+
 A send may also carry a model or reasoning-effort change. The change rides the
 message: browsing a picker does nothing, the change lands when the message is
 delivered, a waiting message applies it when it runs, and a refused delivery

@@ -405,6 +405,45 @@ class SqliteProcessConversationSystem:
         state = await self._conversation_state(conversation_id)
         return 0 if state is None else len(state.held_prompts)
 
+    async def discard_held_prompt(self, conversation_id: str, sender_message_id: str) -> bool:
+        """Throw away one message that is waiting, and say whether there was one to throw.
+
+        A held message is this system's own and nothing else's: it has never been written
+        to a backend, so taking it out of the queue reaches nothing and undoes nothing.
+        It is still written down as discarded — the same row a kill writes — because text
+        somebody handed over must never disappear without a trace.
+
+        It is addressed by the id its sender gave it, which is the only name a held
+        message has. A message sent without one cannot be asked for by name and is never
+        matched here.
+
+        Not finding it is an ordinary answer rather than an error. A held message runs the
+        moment the agent frees up, so the one somebody is looking at may already have
+        gone — and being told so is the truth, not a failure.
+        """
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return False
+        state.last_touched_monotonic = self._monotonic_now()
+
+        async with state.lock:
+            for position, held in enumerate(state.held_prompts):
+                if held.sender_message_id != sender_message_id:
+                    continue
+                # Out of the queue before its row is written, so a write that falls over
+                # leaves the message discarded rather than delivered.
+                del state.held_prompts[position]
+                await self._append_event(
+                    state,
+                    PromptDiscardedEventPayload(
+                        text=held.text,
+                        sender_label=held.sender_label,
+                        sender_message_id=held.sender_message_id,
+                    ),
+                )
+                return True
+        return False
+
     # --- answering a permission ask -----------------------------------------------------
 
     async def answer_permission_ask(

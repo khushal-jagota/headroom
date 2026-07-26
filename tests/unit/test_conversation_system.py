@@ -2160,3 +2160,90 @@ def test_the_system_refuses_to_be_built_without_a_factory_for_every_backend(
             store=harness.store,
             backend_child_factories={ConversationBackendKey.hermes: harness._make_child},
         )
+
+
+# --- taking one waiting message back -------------------------------------------------------
+
+
+def test_one_waiting_message_can_be_taken_back_and_the_rest_still_run(
+    harness: _Harness,
+) -> None:
+    """A held message is this system's own, so taking it back reaches no backend at all."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "incumbent", sender_label="owner")
+        await harness.system.send(
+            "c", "first held", sender_label="owner", sender_message_id="message-one"
+        )
+        await harness.system.send(
+            "c", "second held", sender_label="owner", sender_message_id="message-two"
+        )
+
+        assert await harness.system.discard_held_prompt("c", "message-one") is True
+        assert await harness.system.held_prompt_count("c") == 1
+        # Nothing was asked of the backend: a waiting message had never reached it.
+        assert harness.backend("c").written_texts() == ("incumbent",)
+        assert harness.backend("c").cancellations == 0
+
+        # The one that was taken back is written down as discarded, under the name its
+        # sender gave it, before the one that survived it runs.
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.prompt_discarded,
+        )
+        discarded = [
+            (event.payload.text, event.payload.sender_message_id)
+            for event in await harness.events("c")
+            if event.kind is ConversationEventKind.prompt_discarded
+        ]
+        assert discarded == [("first held", "message-one")]
+
+        await harness.complete_turn("c")
+
+        assert harness.backend("c").written_texts() == ("incumbent", "second held")
+
+    _run(exercise)
+
+
+def test_a_message_that_is_no_longer_waiting_is_an_ordinary_no(harness: _Harness) -> None:
+    """Not finding it is the truth rather than a failure: it ran while you were looking."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "incumbent", sender_label="owner")
+        await harness.system.send(
+            "c", "held", sender_label="owner", sender_message_id="message-one"
+        )
+
+        # A name nothing is holding.
+        assert await harness.system.discard_held_prompt("c", "message-two") is False
+        # A conversation that does not exist.
+        assert await harness.system.discard_held_prompt("nothing", "message-one") is False
+
+        await harness.complete_turn("c")
+
+        # It ran, so asking for it back afterwards finds nothing and changes nothing.
+        assert harness.backend("c").written_texts() == ("incumbent", "held")
+        assert await harness.system.discard_held_prompt("c", "message-one") is False
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.turn_ended,
+            ConversationEventKind.prompt,
+        )
+
+    _run(exercise)
+
+
+def test_a_message_sent_without_a_name_cannot_be_asked_for_by_one(harness: _Harness) -> None:
+    """The sender's id is the only name a held message has, and the loop mints none."""
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", "incumbent", sender_label="owner")
+        await harness.system.send("c", "held", sender_label="automatic-loop")
+
+        assert await harness.system.discard_held_prompt("c", "") is False
+        assert await harness.system.held_prompt_count("c") == 1
+
+    _run(exercise)

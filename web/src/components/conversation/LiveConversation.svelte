@@ -37,6 +37,7 @@
   import { writeReplyWatermark } from "../../lib/replyWatermark";
   import {
     answerPermissionAsk,
+    discardHeldPrompt,
     interruptConversation,
     openConversationTail,
     readConversation,
@@ -346,6 +347,24 @@
     }
   }
 
+  /** Throw away a message that is still waiting for the agent.
+   *
+   * The record is what takes the copy off the screen: a discarded message gets its own
+   * row, and this browser stops drawing anything the record has a row for. So there is
+   * nothing to undo here if the answer is no — the message has already run, and its row
+   * is on its way.
+   */
+  async function discard(messageId: string): Promise<void> {
+    if (openedId === null) return;
+    errorNote = null;
+    try {
+      await discardHeldPrompt(openedId, messageId);
+      await refreshView();
+    } catch (error) {
+      errorNote = sentenceFor(error);
+    }
+  }
+
   async function answer(optionId: string): Promise<void> {
     const askId = ask?.askId;
     if (askId === undefined || openedId === null) return;
@@ -428,6 +447,7 @@
   onStop={() => void stop()}
   onAnswer={(optionId) => void answer(optionId)}
   onCancelTurn={() => void stop()}
+  onDiscardHeldPrompt={(messageId) => void discard(messageId)}
   onNewConversation={() => void newConversation()}
   emptyState={emptyState === undefined ? undefined : beforeThereIsAConversation}
 />

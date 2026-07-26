@@ -258,6 +258,21 @@ async def kill_conversation(conversation_id: str, runtime: Runtime) -> Response:
     return Response(status_code=204)
 
 
+@router.delete("/conversations/{conversation_id}/held-prompts/{sender_message_id}")
+async def discard_held_prompt(
+    conversation_id: str, sender_message_id: str, runtime: Runtime
+) -> dict[str, bool]:
+    """Throw away one message that is waiting, and say whether there was one to throw.
+
+    A held message has reached no backend, so this reaches none either: it comes out of
+    the queue and is written down as discarded. Finding nothing is an ordinary outcome —
+    a held message runs the moment the agent frees up — so it is a false rather than an
+    error.
+    """
+    discarded = await runtime.system.discard_held_prompt(conversation_id, sender_message_id)
+    return {"discarded": discarded}
+
+
 @router.post("/conversations/{conversation_id}/permission-answers")
 async def answer_permission_ask(
     conversation_id: str, body: PermissionAnswerBody, runtime: Runtime

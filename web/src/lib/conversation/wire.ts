@@ -334,6 +334,22 @@ export function answerPermissionAsk(
   );
 }
 
+/** Throw away one message that is waiting, by the name this browser gave it.
+ *
+ * A false is an ordinary answer: a held message runs the moment the agent frees up, so
+ * the one being cancelled may already have gone.
+ */
+export function discardHeldPrompt(
+  conversationId: string,
+  senderMessageId: string
+): Promise<{ discarded: boolean }> {
+  return request<{ discarded: boolean }>(
+    `/conversations/${encodeURIComponent(conversationId)}`
+      + `/held-prompts/${encodeURIComponent(senderMessageId)}`,
+    { method: "DELETE" }
+  );
+}
+
 export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {
   const answer = await request<{ backends: BackendSnapshot[] }>(
     `/backends${refresh ? "?refresh=true" : ""}`

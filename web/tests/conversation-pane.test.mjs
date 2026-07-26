@@ -165,6 +165,7 @@ try {
       'export { default as WorkGroup } from "../src/components/conversation/WorkGroup.svelte";',
       'export { default as PlanStrip } from "../src/components/conversation/PlanStrip.svelte";',
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
+      'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
       ""
     ].join("\n"),
     "utf8"
@@ -181,7 +182,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, Composer, NewForm, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, BackendCard, Composer, NewForm, Pane, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -204,6 +205,43 @@ try {
       answeredOptionLabel: state === "answered" ? "Approve once" : null
     };
   }
+
+  // A message this browser has sent and the record has not caught up with can be taken
+  // back — but only while the system says it is holding it. One whose fate is not known
+  // yet may already be on the wire, and one that never came back is not a message
+  // anybody can decide about.
+  function outgoing(messageId, knownFate) {
+    return {
+      messageId,
+      text: `text of ${messageId}`,
+      senderLabel: "owner",
+      mode: "run_when_free",
+      sentAtUnixMilliseconds: 1_000,
+      knownFate
+    };
+  }
+
+  const waiting = drawn(Pane, {
+    label: "Worker",
+    outgoingMessages: [
+      outgoing("held", "waiting_for_the_agent"),
+      outgoing("in-flight", "nothing_yet"),
+      outgoing("unanswered", "answer_never_came_back")
+    ],
+    onDiscardHeldPrompt: () => undefined
+  });
+  assert.match(waiting, /data-conversation-outgoing-discard="held"/);
+  assert.doesNotMatch(waiting, /data-conversation-outgoing-discard="in-flight"/);
+  assert.doesNotMatch(waiting, /data-conversation-outgoing-discard="unanswered"/);
+
+  // A caller that cannot take a message back is not offered the control at all, rather
+  // than offered one that does nothing.
+  const noDiscard = drawn(Pane, {
+    label: "Worker",
+    outgoingMessages: [outgoing("held", "waiting_for_the_agent")]
+  });
+  assert.match(noDiscard, /data-conversation-outgoing="held"/);
+  assert.doesNotMatch(noDiscard, /data-conversation-outgoing-discard/);
 
   // A dead ask is drawn plainly dead, and nothing on it is actionable.
   const deadThread = drawn(Transcript, { rows: [askRow("dead")] });

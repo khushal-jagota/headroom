@@ -415,3 +415,143 @@ were two separate mounts before, which is two things that can disagree.
 failed once in a full run and passed both in isolation and on the next full run. Not
 chased. It is about scheduling and concurrency, so it is the kind of flake that is
 sometimes real. Recorded so it does not surprise the final verify.
+
+---
+
+# The cutover is done. What follows is what it hands on.
+
+Every piece above landed. The old package, its WebSocket, its browser half, its five
+tables and the tests that held it up are gone; `conversation2` is `conversation`;
+`tickets.employee_session_id` is `tickets.conversation_id`; the reply dot is a comparison
+between the record and this browser; and cancelling one waiting message is in.
+
+The sections above are kept as they were written, because they say what was true when the
+work was planned. What follows is what is true now.
+
+## Carried forward, with the reasoning so nobody re-derives it
+
+### `ConfiguredWorkerRuntimeDefinitions` no longer earns its name
+
+It is a frozen dataclass with one field, `worker_type_registry`, and the module around it
+threads that wrapper through two accessors, two constants and two install/restore helpers
+while every call site immediately reaches through it. It held two authorities and a
+`__post_init__` asserting they were the same one; the second authority was the employee
+backend catalog, which is gone.
+
+It was left alone during the cutover deliberately: roughly half its hundred call sites
+lived in files the deletion took, so collapsing it before the deletion meant paying for
+the same rename twice. That reason has now expired — the deletion has happened — so the
+collapse is a straight mechanical change whenever somebody wants it.
+
+### The reply mark's reactivity rests on one bare expression
+
+`web/src/routes/BoardRoute.svelte` has a bare `watermarkGeneration;` statement inside
+`signalPresentation`, which is what makes a row redraw when this browser's read position
+moves. It works — Svelte compiles it to a read — and the e2e covers the behaviour it
+produces. But a lint rule against unused expressions, or a refactor that tidies it away,
+would silently break clear-on-open with every gate green. If that ever wants hardening,
+the honest form is to read the counter into a named value the function uses.
+
+### The surviving transcript still speaks ACP in its class names
+
+`acp-step`, `acp-turn-end`, `acp-compaction`, `acp-spin` and their siblings survive in
+`ConversationTranscript.svelte` and `ToolCallRow.svelte`. Two of the three backends do not
+speak ACP, so the names are wrong in the same way `conversation2` was. It is a rename of
+the pane's styling rather than a residue of the deletion, which is why it was not done
+here.
+
+## Two capabilities deferred to the package that carries content
+
+Both were ruled to survive and both were sized against the adapters before anything was
+started. Neither is a rendering gap: in both cases the record cannot say the thing. That
+is the same sentence as images, which is why they belong in the same package.
+
+### Token usage and cost
+
+The data is there and thrown away in all three adapters, and no two agree on its shape.
+
+- **hermes** discards it twice. `PromptResponse.usage` carries per-turn token counts and
+  is dropped where only `stop_reason` is read. Separately, the `usage_update` session
+  update — `used`, `size`, and an optional `cost` of `{amount, currency}` — falls into the
+  catch-all arm of `_on_session_update`. Hermes populates the tokens and never sets cost.
+- **codex** is not even subscribed. It emits `thread/tokenUsage/updated`, carrying
+  cumulative `total`, last-turn `last`, and `modelContextWindow` in one payload. Panels
+  drops it before parsing because the notification was never added to `SCHEMA_ROOTS` in
+  `generate_bindings.py`, so no model exists for it. Getting it means regenerating the
+  codex bindings — the one piece of this that touches machinery rather than code. Codex's
+  protocol has no cost at all.
+- **claude** is the only one with real money: `ResultMessage.total_cost_usd`, per-model
+  `ModelUsage.costUSD`, and a `contextWindow`, all discarded where only the terminal
+  reason is read. `AssistantMessage.usage` and the raw `StreamEvent` usage blocks are
+  dropped too.
+
+Above the adapters: `BackendEventSink` has no member that could carry a number about
+tokens, and `turn_ended` takes only an ending, an error summary and a standard-error tail.
+
+**The artefact worth knowing:** the old pane's header slot is still in the new pane. The
+`.chat-usage` class now shows the workspace folder.
+
+### The compaction marker
+
+The exact inverse: a compaction boundary exists nowhere but the adapters.
+
+- **codex** is the cheap one. `ContextCompactionThreadItem` is already a generated binding,
+  already validated, and already delivered to the adapter — where it falls through
+  `_tool_call_started` / `_tool_call_finished` to a default arm returning None.
+- **claude**'s boundary is a `SystemMessage` with `subtype == "compact_boundary"`, which
+  lands in the catch-all of `_take_in`. The type is imported already, but only for reading
+  a session id.
+- **hermes** is the dearest. The update type that carries it, `SessionInfoUpdate`, is not
+  imported at all, and the fact lives in a `_meta` blob under `hermes.sessionProvenance`
+  with `reason == "compression"`. The old reader for it is in this repository's history.
+
+Above them there is nowhere for it to go: no `ConversationEventKind`, no `BackendEventSink`
+method, and both match statements over the payload union are exhaustive and closed.
+
+**The artefact worth knowing:** the old compaction separator's stylesheet outlived the
+concept. `ConversationTranscript.svelte` renders the model-changed row with
+`class="acp-compaction" role="separator"`.
+
+## A behaviour that went missing in the cutover, and was not noticed until the end
+
+`enter_paired_on_human_reply` in `tickets/data.py` is a canonical Ticket-status writer with
+no caller. It used to be invoked through a courier on the ticket conversation projection:
+a human typing into a Ticket parked at `awaiting_approval` flipped it to `paired`. The
+projection is deleted, so the flip no longer happens.
+
+It cannot simply be put back. A person types into the conversation route, which knows
+nothing about Tickets — deliberately, because that is what the contract is for. Making the
+flip happen again means the Ticket domain learning that a human sent into that
+conversation, which is the coupling the contract exists to remove. So it is a design
+question rather than a repair, and the writer and its tests are left in place rather than
+deleting the record of it.
+
+## A trap the rename made visible
+
+The seed importer still parses a historical "Chat ID:" out of the old planning documents
+into `ParsedTicket.conversation_id`, and writes it to the Ticket. That column now means
+"the id of a conversation this system owns". A Ticket seeded with a legacy id therefore
+names a conversation that does not exist — and `POST /api/tickets/{id}/conversation` only
+starts one when the id is null, so that Ticket can never get a conversation at all. It is
+one line to stop importing the field. It predates the cutover; the rename is what makes it
+visible.
+
+## Tests, and what running them is worth
+
+`tests/unit/test_worker_step_readiness_loop.py::test_a_ticket_already_in_flight_is_not_scheduled_twice`
+— the flake recorded above — was a real bug in the test. It waited for the claim and then
+asserted the opener had been sent; the claim happens strictly before the send, so the wait
+could return with the send still in the air. It waits for the send now.
+
+`tests/e2e/test_workers_frontend.py::test_agents_routes_navigation_and_mobile_controls`
+fails when several suites run at once on a loaded machine and passes on a quiet one. The
+identical failure reproduces at the commit before the deletion, so it is a property of the
+machine rather than of the code. It waits on a geometric layout condition across five
+browser contexts with ten-second budgets.
+
+**The lesson worth keeping.** Three specs on this branch were quietly wrong — asserting a
+flip that had stopped being possible, or waiting on a selector nothing mounted — and all
+three passed or failed for reasons unrelated to what they claimed to test. The cause is
+structural: a programme that reserves one full browser run for the settled tree has nothing
+running the browser suite while the screens move underneath it. When a surface changes,
+read what its spec actually asserts. Whether it passes is not the question.

@@ -778,6 +778,50 @@ def test_the_view_says_what_is_running_and_what_is_waiting(harness: _Harness) ->
     _run(exercise)
 
 
+def test_a_waiting_message_can_be_taken_back_by_the_name_its_sender_gave_it(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={"text": "incumbent", "sender_label": "owner"},
+            )
+            queued = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "text": "held",
+                    "sender_label": "owner",
+                    "sender_message_id": "message-one",
+                },
+            )
+            assert queued.json()["fate"] == "queued"
+            assert (await client.get("/api/conversation/conversations/c")).json()[
+                "held_prompt_count"
+            ] == 1
+
+            discarded = await client.delete(
+                "/api/conversation/conversations/c/held-prompts/message-one"
+            )
+            assert discarded.status_code == 200
+            assert discarded.json() == {"discarded": True}
+            assert (await client.get("/api/conversation/conversations/c")).json()[
+                "held_prompt_count"
+            ] == 0
+            # It reached no backend on the way in, so it reaches none on the way out.
+            assert harness.backend("c").written_texts == ["incumbent"]
+
+            # Asking again finds nothing, which is an answer rather than an error.
+            again = await client.delete(
+                "/api/conversation/conversations/c/held-prompts/message-one"
+            )
+            assert again.status_code == 200
+            assert again.json() == {"discarded": False}
+
+    _run(exercise)
+
+
 def test_an_answer_lands_once_and_then_has_nothing_left_to_land_on(harness: _Harness) -> None:
     async def exercise() -> None:
         async with harness.client() as client:

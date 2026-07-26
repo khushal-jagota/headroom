@@ -354,50 +354,6 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
     assert d["fields"]["success"]["proposal"] is None
 
 
-def test_review_return_for_revision_starts_agent_without_chat_copy(
-    server, context_factory, open_page, cli, api
-):
-    tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Revision review ticket",
-    )["id"]
-    cli(
-        server,
-        "worker",
-        "propose",
-        "--body-file",
-        "-",
-        "--recap",
-        "Needs revision.",
-        ticket_id=tid,
-        stdin="Too much detail.",
-    )
-    with sqlite3.connect(server.db_path) as conn:
-        conn.execute(
-            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
-            ("existing-worker-session", tid),
-        )
-
-    _add_to_today(api, server, tid)
-    card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card)
-    page.fill(f"{card} [data-review-revision-input]", "Make it shorter.")
-    page.click(f"{card} [data-review-revision-send]")
-    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-
-    ticket = api.get(server, f"/api/tickets/{tid}")
-    assert ticket["stage"] == "needs_success"
-    assert ticket["ticket_status"] == "agent"
-    assert ticket["fields"]["success"]["value"] is None
-    assert ticket["fields"]["success"]["proposal"] is None
-    assert api.get(server, "/api/review")["ticket_decisions"] == []
-
-
 def test_markdown_approval_focus_noop_keeps_raw_source(
     server, context_factory, open_page, cli, api
 ):

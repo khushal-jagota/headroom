@@ -75,6 +75,7 @@
     onStop,
     onAnswer,
     onCancelTurn,
+    onDiscardHeldPrompt,
     onNewConversation
   }: {
     label: string;
@@ -110,6 +111,8 @@
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
     onCancelTurn?: () => void;
+    /** Throw away one message that is still waiting for the agent, by its own id. */
+    onDiscardHeldPrompt?: (messageId: string) => void;
     onNewConversation?: () => void;
   } = $props();
 
@@ -572,6 +575,17 @@
             <div class="c2-label" data-conversation-outgoing-label>
               {#if note}{note}{/if}
               {#if chip}<span class="c2-chip">{chip}</span>{/if}
+              <!-- Offered only on a message the system said it is holding. One that has
+                   already reached the agent is not a message anybody can take back. -->
+              {#if message.knownFate === "waiting_for_the_agent" && onDiscardHeldPrompt}
+                <button
+                  type="button"
+                  class="c2-discard"
+                  data-conversation-outgoing-discard={message.messageId}
+                  aria-label="Do not send this message"
+                  onclick={() => onDiscardHeldPrompt?.(message.messageId)}
+                >×</button>
+              {/if}
             </div>
           {/if}
           {message.text}
@@ -643,4 +657,17 @@
     color: var(--accent-bright);
     padding: 0 var(--space-2);
   }
+  /* Quiet until wanted: taking a message back is available on every waiting message and
+     asked for by almost none of them, so it sits at the weight of the line it is on. */
+  .c2-discard {
+    margin-inline-start: var(--space-2);
+    border: 0;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    line-height: 1;
+    padding: 0 var(--space-1);
+  }
+  .c2-discard:hover { color: var(--accent-error); }
 </style>

@@ -585,7 +585,14 @@ def write_employee_configuration(
     advertised_reasoning_efforts: frozenset[str] | None,
     now: int,
 ) -> Ticket:
-    """Atomically replace the complete launch request during pristine Kickoff."""
+    """Atomically replace the complete launch request during pristine Kickoff.
+
+    There is no guard here against a conversation being started underneath this write,
+    and none is needed. The Ticket's conversation link is a column on the row this
+    transaction is already updating, so the two serialize. The old layer needed a
+    compare-and-swap because the link lived in a table of its own — two tables, two
+    transactions — and that is the reason it is gone rather than something to add back.
+    """
 
     with _txn(conn):
         registered_backend = require_conversation_backend_key(employee_backend)
