@@ -12,7 +12,6 @@ import click
 
 from planner.core.config import Config, load_config
 from planner.environments.app import build_exported_app, validate_app_manifest
-from planner.environments.app_compatibility import prove_previous_app_compatibility
 from planner.environments.backup import create_database_backup, restore_database_snapshot
 from planner.environments.contracts import (
     DynamicEnvironmentPort,
@@ -220,7 +219,7 @@ def app_deploy(
     service_name: str,
     lock_path: Path | None,
 ) -> None:
-    """Replace the one deployed app with backup, compatibility proof, and recovery."""
+    """Hard-cut over the deployed app with a verified snapshot and full recovery."""
     try:
         result = deploy_app(
             candidate_app=candidate_app,
@@ -229,12 +228,8 @@ def app_deploy(
             backup=lambda _revision: run_current_app_backup(
                 current_root, source_db, backup_dir
             ),
-            prove_compatibility=lambda candidate, current, database: (
-                prove_previous_app_compatibility(
-                    candidate_app=candidate,
-                    current_app=current,
-                    source_db=database,
-                )
+            restore=lambda snapshot: restore_database_snapshot(
+                snapshot, source_db, live_stopped=True
             ),
             service=SubprocessServiceController(service_manager, service_name),
             health=HttpHealthClient(health_url),

@@ -23,6 +23,8 @@ class DeploymentError(RuntimeError):
 
 
 class ServiceController(Protocol):
+    def stop(self) -> None: ...
+
     def restart(self) -> None: ...
 
 
@@ -30,13 +32,27 @@ class HealthClient(Protocol):
     def wait_for_sha(self, sha: str, *, deadline: float) -> bool: ...
 
 
-CompatibilityProof = Callable[[Path, Path, Path], None]
+Backup = Callable[[str], Path]
+Restore = Callable[[Path], None]
 
 
 @dataclass(frozen=True)
 class SubprocessServiceController:
     manager: str
     service_name: str
+
+    def stop(self) -> None:
+        if self.manager == "systemctl":
+            command = ["systemctl", "--user", "stop", self.service_name]
+        elif self.manager == "launchctl":
+            if not self.service_name.startswith("gui/"):
+                raise DeploymentError(
+                    "launchctl hard cutover requires an explicit gui/<uid>/<label> target"
+                )
+            command = ["/bin/launchctl", "bootout", self.service_name]
+        else:
+            raise DeploymentError("unsupported service manager")
+        subprocess.run(command, check=True, shell=False)
 
     def restart(self) -> None:
         if self.manager == "systemctl":
@@ -86,12 +102,12 @@ def run_current_app_backup(
     current_root: Path,
     source_db: Path,
     backup_dir: Path,
-) -> None:
+) -> Path:
     """Run a pre-deployment backup through the app that owns the live database."""
     current_app = current_root.expanduser().resolve() / "app"
     database = source_db.expanduser().resolve()
     backups = backup_dir.expanduser().resolve()
-    subprocess.run(
+    result = subprocess.run(
         [
             str(current_app / "bin" / "panels-launcher"),
             "environment",
@@ -107,7 +123,13 @@ def run_current_app_backup(
         env=os.environ
         | {"PLAN_HERMES_HOME": str(Path.home().expanduser().resolve() / ".hermes")},
         shell=False,
+        capture_output=True,
+        text=True,
     )
+    snapshot = result.stdout.strip()
+    if not snapshot:
+        raise DeploymentError("backup command did not report its snapshot path")
+    return Path(snapshot).expanduser().resolve()
 
 
 @dataclass(frozen=True)
@@ -159,8 +181,8 @@ def deploy_app(
     candidate_app: Path,
     current_root: Path,
     source_db: Path,
-    backup: Callable[[str], object],
-    prove_compatibility: CompatibilityProof,
+    backup: Backup,
+    restore: Restore,
     service: ServiceController,
     health: HealthClient,
     now: Callable[[], float] = time.monotonic,
@@ -204,16 +226,6 @@ def deploy_app(
             )
         if not source_db.is_file():
             raise DeploymentError("current database is missing")
-        try:
-            prove_compatibility(candidate_app, current_app, source_db)
-        except BaseException as exc:
-            raise DeploymentError(
-                "candidate failed one-version database compatibility proof"
-            ) from exc
-        try:
-            backup(prior_manifest.app_sha)
-        except BaseException as exc:
-            raise DeploymentError("database backup failed; current app was unchanged") from exc
         staged = root / f".app-candidate-{os.getpid()}"
         fallback = root / f".app-fallback-{os.getpid()}"
         _require_unused(staged)
@@ -226,7 +238,58 @@ def deploy_app(
                 expected_sha=candidate_manifest.app_sha,
                 require_runtime=True,
             )
-            os.replace(current_app, fallback)
+            try:
+                service.stop()
+            except BaseException as exc:
+                try:
+                    service.restart()
+                    if not health.wait_for_sha(
+                        prior_manifest.app_sha,
+                        deadline=now() + health_timeout_seconds,
+                    ):
+                        raise DeploymentError("prior app did not become healthy")
+                except BaseException as recovery_exc:
+                    raise DeploymentError(
+                        f"service stop failed ({exc}); recovery failed: "
+                        f"{recovery_exc}; operator continuation path: {current_app}"
+                    ) from exc
+                raise DeploymentError(
+                    "service stop failed; current app was unchanged, restarted, and verified"
+                ) from exc
+            try:
+                snapshot = backup(prior_manifest.app_sha)
+            except BaseException as exc:
+                try:
+                    service.restart()
+                    if not health.wait_for_sha(
+                        prior_manifest.app_sha,
+                        deadline=now() + health_timeout_seconds,
+                    ):
+                        raise DeploymentError("prior app did not become healthy")
+                except BaseException as recovery_exc:
+                    raise DeploymentError(
+                        f"database backup failed ({exc}); recovery failed: "
+                        f"{recovery_exc}; operator continuation path: {current_app}"
+                    ) from exc
+                raise DeploymentError(
+                    "database backup failed; current app was unchanged and restarted"
+                ) from exc
+            try:
+                os.replace(current_app, fallback)
+            except BaseException as exc:
+                try:
+                    service.restart()
+                    if not health.wait_for_sha(
+                        prior_manifest.app_sha,
+                        deadline=now() + health_timeout_seconds,
+                    ):
+                        raise DeploymentError("prior app did not become healthy")
+                except BaseException as recovery_exc:
+                    raise DeploymentError(
+                        f"candidate cutover failed ({exc}); recovery failed: "
+                        f"{recovery_exc}; operator continuation path: {current_app}"
+                    ) from exc
+                raise
             try:
                 os.replace(staged, current_app)
                 service.restart()
@@ -239,6 +302,8 @@ def deploy_app(
                 detail = _restore_fallback(
                     current_app=current_app,
                     fallback=fallback,
+                    snapshot=snapshot,
+                    restore=restore,
                     prior_manifest=prior_manifest,
                     service=service,
                     health=health,
@@ -351,6 +416,8 @@ def _restore_fallback(
     *,
     current_app: Path,
     fallback: Path,
+    snapshot: Path,
+    restore: Restore,
     prior_manifest: AppManifest,
     service: ServiceController,
     health: HealthClient,
@@ -360,6 +427,8 @@ def _restore_fallback(
 ) -> str | None:
     failed = current_app.parent / f".app-failed-{os.getpid()}"
     try:
+        service.stop()
+        restore(snapshot)
         _require_unused(failed)
         if current_app.exists() or current_app.is_symlink():
             os.replace(current_app, failed)
