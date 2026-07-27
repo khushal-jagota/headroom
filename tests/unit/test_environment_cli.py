@@ -96,6 +96,50 @@ def test_app_deploy_success_and_unchanged_exit_zero(
         assert f'"status": "{status}"' in result.output
 
 
+def test_app_deploy_wires_full_snapshot_restore(tmp_path: Path, monkeypatch: Any) -> None:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    captured: dict[str, Any] = {}
+    restores: list[tuple[Path, Path, bool]] = []
+
+    def deploy(**kwargs: Any) -> DeploymentResult:
+        captured.update(kwargs)
+        return DeploymentResult("succeeded", "b" * 40, "a" * 40, None)
+
+    monkeypatch.setattr("planner.environments.cli.deploy_app", deploy)
+    monkeypatch.setattr(
+        "planner.environments.cli.restore_database_snapshot",
+        lambda snapshot, database, *, live_stopped: restores.append(
+            (snapshot, database, live_stopped)
+        ),
+    )
+    result = CliRunner().invoke(
+        environment,
+        [
+            "app-deploy",
+            "--candidate-app",
+            str(candidate),
+            "--current-root",
+            str(tmp_path / "current"),
+            "--source-db",
+            str(tmp_path / "planning.db"),
+            "--backup-dir",
+            str(tmp_path / "backups"),
+            "--health-url",
+            "http://127.0.0.1:8767/api/health",
+            "--service-manager",
+            "systemctl",
+            "--service-name",
+            "panels-live",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "prove_compatibility" not in captured
+    snapshot = tmp_path / "snapshot"
+    captured["restore"](snapshot)
+    assert restores == [(snapshot, tmp_path / "planning.db", True)]
+
+
 def _invoke_app_deploy(
     tmp_path: Path,
     monkeypatch: Any,

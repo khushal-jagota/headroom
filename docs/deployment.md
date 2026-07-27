@@ -35,12 +35,15 @@ exact temporary checkout
         │ prove HEAD
         ▼
 build and validate temporary candidate app
-        │ compatibility proof + verified live backup
+        │ stage candidate while production remains live
         ▼
-replace current/app
-        │ restart + prove requested SHA
+stop service → create verified database + managed-files snapshot
+        │ hard cutover
         ▼
-success, or restore and prove the prior app
+replace current/app → restart + prove requested SHA
+        │
+        ▼
+success, or stop candidate → restore snapshot + prior app → prove prior SHA
 ```
 
 The self-hosted runner proves Python is at least 3.12 and Node is version 22. It builds
@@ -62,26 +65,28 @@ The workflow uses the fixed VPS contract:
 
 ## Replacement and recovery
 
-Deployment is serialized. It validates the candidate and proves one-version database
-compatibility before running the deployed application's `backup-current` command.
-Only then does it retain the working app as transaction-temporary fallback, install the
-candidate at `current/app`, restart Panels, and require health to report the requested
-commit.
+Deployment is serialized. It fully stages and validates the candidate while production
+remains live, then stops the service and runs the deployed application's
+`backup-current` command. That command publishes a verified snapshot containing both
+the database and managed files. Deployment then retains the prior app as a temporary
+fallback, installs the candidate at `current/app`, restarts Panels, and requires health
+to report the requested commit.
 
 Every candidate, including its staged copy, must contain the complete current runtime
 and both executable entrypoints. The existing app still receives manifest, artifact,
 and safe-tree validation, but it may predate the interactive `bin/panels` entrypoint.
 This allows an intact older production app to upgrade while still rejecting a tampered
-one before compatibility, backup, restart, or filesystem replacement begins. The
-compatibility probe continues to boot and health-check that existing app against a
-disposable upgraded database.
+one before downtime, backup, restart, or filesystem replacement begins.
 
-If replacement, restart, or health proof fails, deployment restores the fallback app,
-restarts it, and proves it healthy. If recovery cannot be proved, the retained fallback
-path is the exact operator continuation point. A successful transaction removes it.
+If replacement, restart, or health proof fails, deployment stops the candidate, restores
+the verified database-and-files snapshot, restores the fallback app, restarts it, and
+proves the prior SHA healthy. If recovery cannot be completed and proved, the error
+reports the exact retained filesystem paths for operator continuation. A successful
+transaction removes the fallback.
 
-Code rollback uses the same workflow with an earlier full SHA. It replaces only the
-app; it does not restore the database.
+Code rollback uses the same workflow with an earlier full SHA. Because database
+migrations may be destructive, automatic failure recovery restores the pre-cutover
+snapshot; a later intentional rollback deploy does not independently rewind data.
 
 ## Existing-host precondition
 
