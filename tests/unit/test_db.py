@@ -26,7 +26,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "one_conversation_system"
+HEAD_REVISION = "conversation_available_commands"
 
 # How many schema objects a current database holds: the fifteen tables and nine indexes the
 # ladder left, less the event log and its index that ticket_status_changed_at dropped, plus

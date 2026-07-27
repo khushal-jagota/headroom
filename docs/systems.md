@@ -198,7 +198,9 @@ position it holds and keeps up over a live tail of the same rows. Chief, Ticket 
 Workspace mounts all use the same restrained pane: bubble-less worker prose, one user
 pill, compact thought/tool disclosures, one persistent status line, and permission as
 the only prominent blocking inset. The composer carries the text, the model and effort
-in force, and a message may be aimed at a skill.
+in force, and a message may be aimed at a skill. Starting a message with a slash opens
+the commands the agent itself said it takes: hermes and claude each report their own,
+codex has none to report, and the menu says so plainly rather than sitting empty.
 
 Managed Ticket and generic previews share one safety contract. Ticket paths are
 validated on the server, direct responses use `nosniff`, and HTML previews run in a

@@ -273,6 +273,10 @@ hand-rolling the same shapes per screen. Each does one job:
   Which state it opens in is the page's to choose, and the page can change it later. A
   page that says nothing gets no layer at all: the Chief of Staff, the Workspace desk and
   the development pane each keep a conversation that simply fills the space it is given.
+- **AgentCommandMenu** — the list that opens in the composer when a message is started
+  with a slash. It offers the commands this conversation's agent said it takes, narrowed
+  as the name is typed. Choosing one writes the command into the message as ordinary
+  text; the agent reads its own name back out.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.

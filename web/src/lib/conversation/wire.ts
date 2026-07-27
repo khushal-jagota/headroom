@@ -116,6 +116,16 @@ export type PendingPermissionAsk = {
   options: PermissionAskOption[];
 };
 
+/**
+ * One command the agent says a person may type at it. The name carries no leading slash
+ * — the slash is how a person writes a command, not part of what it is called.
+ */
+export type AgentCommand = {
+  name: string;
+  description: string;
+  argument_hint: string | null;
+};
+
 /** What a conversation is, what it is doing, and what it is waiting on. */
 export type ConversationView = {
   conversation_id: string;
@@ -130,6 +140,7 @@ export type ConversationView = {
   is_running: boolean;
   held_prompt_count: number;
   pending_permission_ask: PendingPermissionAsk | null;
+  available_commands: AgentCommand[];
 };
 
 type Row<Kind extends string, Payload> = {

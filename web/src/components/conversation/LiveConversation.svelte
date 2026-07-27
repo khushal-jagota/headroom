@@ -157,6 +157,21 @@
     if (!running && fateNote !== null && !fateNoteIsRefusal) fateNote = null;
   });
 
+  /** What the system said about itself last time it was asked, as far as turns go.
+   *
+   * A turn stopping is when it has something to say that the rows do not carry. The
+   * commands an agent reports arrive moments after its session starts, which is during its
+   * first turn — so a conversation opened before that turn was told none, and only asking
+   * again puts that right. It is the same read a reconnect does, on an occasion that has
+   * already happened rather than on a clock.
+   */
+  let wasRunning = false;
+  $effect(() => {
+    const nowRunning = running;
+    if (wasRunning && !nowRunning) void refreshView();
+    wasRunning = nowRunning;
+  });
+
   // The caller changed which conversation this is. That happens when a Ticket's link is
   // written, when New clears it, and on the first render.
   $effect(() => {
@@ -455,6 +470,7 @@
   {current}
   models={backendSnapshot?.available_models ?? []}
   effortOptions={backendSnapshot?.reasoning_effort_options ?? []}
+  availableCommands={view?.available_commands ?? []}
   defaultModelId={backendSnapshot?.default_model_id ?? null}
   defaultReasoningEffort={backendSnapshot?.default_reasoning_effort ?? null}
   heldPromptCount={view?.held_prompt_count ?? 0}

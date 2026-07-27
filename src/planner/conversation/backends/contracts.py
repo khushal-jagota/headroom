@@ -25,7 +25,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from planner.conversation.contracts import PromptDeliveryMode, ResolvedConversationStart
+from planner.conversation.contracts import (
+    AgentCommand,
+    PromptDeliveryMode,
+    ResolvedConversationStart,
+)
 from planner.conversation.events import (
     ConversationTurnEnding,
     PermissionAskOption,
@@ -244,6 +248,27 @@ class BackendEventSink(Protocol):
 
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         """The backend minted or changed the session id this conversation resumes from."""
+
+    async def available_commands_reported(
+        self, available_commands: tuple[AgentCommand, ...]
+    ) -> None:
+        """The commands this backend says a person may type at it, whole.
+
+        Like the session cursor, this carries no turn token, because it is not a fact
+        about a turn. It arrives when a session is established and it stands until the
+        backend says otherwise, so it is kept whatever turn happened to be running — and
+        it is kept after the child is gone, because the menu a person opens to write their
+        first message is worth more than one that is only right while the agent is up.
+
+        Report the whole list every time it changes rather than what moved in it, and
+        report it as it arrives. The three backends answer this differently and all three
+        answers are true: hermes pushes the list unprompted after every session start and
+        may push it again; claude has it in the handshake its child answers on connect;
+        codex's protocol has no notion of a command a person types, so its adapter reports
+        nothing here and a codex conversation simply has none to offer. A backend with
+        nothing to say says nothing — an empty list is a backend that reported having no
+        commands, which is a different thing and only hermes or claude can say it.
+        """
 
 
 class BackendChild(Protocol):

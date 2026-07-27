@@ -31,6 +31,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -1681,6 +1682,67 @@ def test_a_session_cursor_the_backend_mints_is_kept(harness: _Harness) -> None:
         assert stored.vendor_session_cursor == VENDOR_SESSION_CURSOR
         # It is the conversation's, not a row of its record.
         assert await harness.recorded_kinds("c") == (ConversationEventKind.prompt,)
+
+    _run(exercise)
+
+
+A_MENU = (
+    AgentCommand(name="review", description="Review the diff", argument_hint="[path]"),
+    AgentCommand(name="compact", description="Summarise the conversation so far"),
+)
+A_LATER_MENU = (AgentCommand(name="compact", description="Summarise the conversation so far"),)
+
+
+def test_the_commands_a_backend_reports_are_kept_and_outlive_its_child(
+    harness: _Harness,
+) -> None:
+    """The menu goes onto the conversation and stays there once the child is gone.
+
+    Which commands an agent answers to is something that is true about it rather than
+    something that happened in the conversation, so it leaves the record alone. Keeping it
+    on the conversation is the whole point: the person who most needs the menu is the one
+    opening a conversation to write into it, and nothing is running then.
+    """
+
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        backend = harness.backend("c")
+        assert backend.sink is not None
+        await backend.sink.available_commands_reported(A_MENU)
+        await harness.settle()
+        await harness.complete_turn("c")
+
+        harness.clock.advance(30 * 60 + 1)
+        await harness.system._sweep_idle_children()
+        assert await harness.system.is_running("c") is False
+
+        stored = await harness.store.read_conversation("c")
+        assert stored is not None
+        assert stored.available_commands == A_MENU
+        assert await harness.recorded_kinds("c") == (
+            ConversationEventKind.prompt,
+            ConversationEventKind.turn_ended,
+        )
+
+    _run(exercise)
+
+
+def test_a_second_report_leaves_only_what_the_backend_offers_now(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        backend = harness.backend("c")
+        assert backend.sink is not None
+
+        await backend.sink.available_commands_reported(A_MENU)
+        await harness.settle()
+        await backend.sink.available_commands_reported(A_LATER_MENU)
+        await harness.settle()
+
+        stored = await harness.store.read_conversation("c")
+        assert stored is not None
+        assert stored.available_commands == A_LATER_MENU
 
     _run(exercise)
 

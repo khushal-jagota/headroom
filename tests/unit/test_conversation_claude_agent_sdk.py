@@ -65,6 +65,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -121,8 +122,13 @@ def _run(exercise: Callable[[], Awaitable[None]], *, seconds: float = 30.0) -> N
 class _ScriptedClaudeSdkClient:
     """A claude client that says what a test tells it to, and remembers what it was asked."""
 
-    def __init__(self, options: ClaudeAgentOptions) -> None:
+    def __init__(
+        self, options: ClaudeAgentOptions, *, handshake: dict[str, Any] | None = None
+    ) -> None:
         self.options = options
+        # What this client answers the startup handshake with, which is where the commands
+        # a person may type come from. ``None`` is a child that said nothing.
+        self.handshake = handshake
         self.prompts: list[str] = []
         # What a message with more than words in it was actually sent as. The SDK takes
         # either a string or a stream of user messages; this keeps the second, drained,
@@ -137,6 +143,9 @@ class _ScriptedClaudeSdkClient:
     async def connect(self) -> None:
         if self.connect_failure is not None:
             raise self.connect_failure
+
+    async def get_server_info(self) -> dict[str, Any] | None:
+        return self.handshake
 
     async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
         if self.query_failure is not None:
@@ -192,6 +201,7 @@ class _RecordingSink:
         self.asks: list[BackendPermissionAsk] = []
         self.endings: list[dict[str, Any]] = []
         self.cursors: list[str] = []
+        self.available_commands: list[tuple[AgentCommand, ...]] = []
         self.token_usage: list[dict[str, Any]] = []
         self.compactions: list[TurnToken] = []
         # The order the facts a result message carries were told in. What is said about a
@@ -317,6 +327,11 @@ class _RecordingSink:
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.cursors.append(vendor_session_cursor)
 
+    async def available_commands_reported(
+        self, available_commands: tuple[AgentCommand, ...]
+    ) -> None:
+        self.available_commands.append(available_commands)
+
 
 def _start_request(
     *,
@@ -338,12 +353,19 @@ def _start_request(
 
 def _bench(
     resolved_start: ResolvedConversationStart,
+    *,
+    handshake: dict[str, Any] | None = None,
 ) -> tuple[ClaudeAgentSdkBackendChild, _RecordingSink, list[_ScriptedClaudeSdkClient]]:
-    """A child wired to a scripted client, and the clients it has been given."""
+    """A child wired to a scripted client, and the clients it has been given.
+
+    ``handshake`` is what every client this bench makes answers the startup handshake
+    with. It is given here rather than set on the client afterwards because the child
+    reads it while it is starting, before a test has the client in its hands.
+    """
     clients: list[_ScriptedClaudeSdkClient] = []
 
     def make(options: ClaudeAgentOptions) -> _ScriptedClaudeSdkClient:
-        client = _ScriptedClaudeSdkClient(options)
+        client = _ScriptedClaudeSdkClient(options, handshake=handshake)
         clients.append(client)
         return client
 
@@ -629,6 +651,164 @@ def test_a_confirmed_session_that_moves_is_followed(tmp_path: Path) -> None:
 
         assert sink.cursors == [ANOTHER_SESSION_ID]
         assert sink.endings == []
+        await child.stop()
+
+    _run(exercise)
+
+
+# --- the commands a person may type at this child ---------------------------------------------
+
+
+def test_the_commands_claude_takes_are_reported_as_the_session_is_established(
+    tmp_path: Path,
+) -> None:
+    """They come off the startup handshake, so the menu is right before anyone can type.
+
+    Each is reported under the names Panels knows commands by, which for the argument hint
+    is not the name claude puts it on the wire under.
+    """
+
+    async def exercise() -> None:
+        child, sink, _ = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={
+                "commands": [
+                    {
+                        "name": "review",
+                        "description": "Review the working tree",
+                        "argumentHint": "[path]",
+                    },
+                    {"name": "clear", "description": "Start the conversation again"},
+                ]
+            },
+        )
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+
+        assert sink.available_commands == [
+            (
+                AgentCommand(
+                    name="review", description="Review the working tree", argument_hint="[path]"
+                ),
+                # Nothing to type after it, so there is no hint rather than an empty one.
+                AgentCommand(name="clear", description="Start the conversation again"),
+            )
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_the_commands_are_the_answer_for_this_conversations_own_folder(tmp_path: Path) -> None:
+    """The child that answered about commands is the one running where the work happens.
+
+    Claude's list is not the same everywhere: a project keeps commands of its own in the
+    folder, and the CLI only reports them when it was started there. So the two facts have
+    to be one fact — the client the commands were read off must be the client that was
+    given this conversation's workspace folder. Reading them from any other claude, a
+    machine-wide probe included, would answer about somewhere nobody is working.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={"commands": [{"name": "ship", "description": "This project's own"}]},
+        )
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+
+        assert len(clients) == 1
+        assert clients[0].options.cwd == str(tmp_path)
+        assert sink.available_commands == [
+            (AgentCommand(name="ship", description="This project's own"),)
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_commands_other_spellings_are_dropped_rather_than_offered(tmp_path: Path) -> None:
+    """Claude reports the aliases a command also answers to. Panels offers the one name."""
+
+    async def exercise() -> None:
+        child, sink, _ = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={
+                "commands": [
+                    {
+                        "name": "review",
+                        "description": "Review the working tree",
+                        "aliases": ["r", "rv"],
+                    }
+                ]
+            },
+        )
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+
+        assert sink.available_commands == [
+            (AgentCommand(name="review", description="Review the working tree"),)
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_an_entry_with_no_name_to_type_is_left_out_and_the_rest_stand(tmp_path: Path) -> None:
+    """The handshake is claude's, so a shape this does not recognise is skipped, not read.
+
+    A command nobody could type is no use in a menu, and it is no reason to refuse the
+    session either: the conversation starts and the commands that did make sense are
+    offered.
+    """
+
+    async def exercise() -> None:
+        child, sink, _ = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={
+                "commands": [
+                    "not a command at all",
+                    {"description": "no name to type"},
+                    {"name": 12, "description": "a name that is not words"},
+                    {"name": "review", "description": "Review the working tree"},
+                ]
+            },
+        )
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+
+        assert sink.available_commands == [
+            (AgentCommand(name="review", description="Review the working tree"),)
+        ]
+        assert sink.cursors != []
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_handshake_that_says_nothing_about_commands_reports_nothing(tmp_path: Path) -> None:
+    """A child with nothing to say about commands is a session that starts all the same."""
+
+    async def exercise() -> None:
+        for handshake in (None, {"output_style": "default"}):
+            child, sink, _ = _bench(_start_request(workspace_folder=tmp_path), handshake=handshake)
+            await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+
+            assert sink.available_commands == []
+            assert sink.cursors != []
+            await child.stop()
+
+    _run(exercise)
+
+
+def test_claude_saying_it_has_no_commands_is_not_the_same_as_saying_nothing(
+    tmp_path: Path,
+) -> None:
+    """An empty list is an answer — this child takes no commands — so it is reported."""
+
+    async def exercise() -> None:
+        child, sink, _ = _bench(
+            _start_request(workspace_folder=tmp_path), handshake={"commands": []}
+        )
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+
+        assert sink.available_commands == [()]
         await child.stop()
 
     _run(exercise)

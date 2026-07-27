@@ -42,6 +42,7 @@
   import { messageContentText } from "../../lib/conversation/wire";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
+    AgentCommand,
     BackendModel,
     ConversationBackendKey,
     PermissionAskOption,
@@ -74,6 +75,7 @@
     ownSenderLabel = null,
     livenessPulse = 0,
     effortOptions = [],
+    availableCommands = [],
     defaultModelId = null,
     defaultReasoningEffort = null,
     heldPromptCount = 0,
@@ -114,6 +116,9 @@
     ownSenderLabel?: string | null;
     livenessPulse?: number;
     effortOptions?: readonly string[];
+    /** The commands this conversation's agent reports, which the composer offers under a
+     *  line being written as one. */
+    availableCommands?: readonly AgentCommand[];
     defaultModelId?: string | null;
     defaultReasoningEffort?: string | null;
     heldPromptCount?: number;
@@ -884,6 +889,7 @@
     {current}
     {models}
     {effortOptions}
+    {availableCommands}
     {defaultModelId}
     {defaultReasoningEffort}
     {heldPromptCount}

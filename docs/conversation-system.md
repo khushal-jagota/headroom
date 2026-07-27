@@ -226,6 +226,28 @@ afterwards, and reported as succeeded, unchanged, or failed. All of it is
 advisory; nothing blocks on it. Logging in stays in the terminal, and the card
 names the command.
 
+## The commands an agent takes
+
+Each agent has its own commands — the things you type at it starting with a
+slash. They belong to the agent, not to us: the agent says what it takes, the
+composer offers that list and narrows it as you type, and the command you pick
+goes into the message as ordinary text. The agent reads its own name back out of
+that text. Nothing on our side interprets a command or acts on one, and we do not
+add commands of our own to the list or leave any of the agent's out.
+
+The three agents answer differently, and all three answers are true. Hermes
+volunteers its list as soon as a session starts, unasked, and may send a fresh one
+later. Claude has its list in the handshake its process gives when it connects,
+which is why the list follows the conversation's folder — a project can keep
+commands of its own. Codex's wire has no notion of a typed command at all; its
+slash commands live inside its own terminal program, so a codex conversation has
+none to offer, and the menu says so rather than sitting there empty.
+
+The last list an agent reported is kept on the conversation, so the menu still
+works when nothing is running — which is exactly when you are likely to be writing
+the first message. A conversation nobody has reported for yet offers nothing, and
+that is honest: until an agent has been up once, nothing has said what it takes.
+
 ## Code paths
 
 - Contract and floor defaults: `src/planner/conversation/contracts.py` (the

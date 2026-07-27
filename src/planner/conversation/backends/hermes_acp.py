@@ -5,7 +5,7 @@ subprocess, the Agent Client Protocol connection to it, and the session that con
 resumes from. It owns none of the conversation's rules: it never decides that a message
 waits, never decides that an ask has expired, and never writes a row.
 
-Five things about ACP shape this adapter, and each one is why a piece of it looks the way
+Six things about ACP shape this adapter, and each one is why a piece of it looks the way
 it does.
 
 **A prompt's response is the turn's ending, not its acknowledgment.** ``session/prompt``
@@ -30,6 +30,13 @@ falls back to the legacy method for the model, which is the path real hermes tak
 reasoning effort has no legacy method, so a hermes session that advertises no
 ``thought_level`` option cannot be put on one, and the adapter says so rather than running
 on a value nobody asked for.
+
+**The commands a person may type arrive unasked, and before any turn.** ACP has no way to
+ask an agent what its commands are: hermes pushes them as a session update the moment a
+session is established, and again whenever the list changes. So the only place to hear
+them is the same handler everything else arrives at, and they have to be answered above
+its turn guard — every other update is a piece of some turn's news, and this one is a fact
+about the session, sent when there is no turn to attach it to.
 
 **A compaction is hermes' own news, not ACP's.** ACP has no word for the moment an agent
 summarises what came before and drops it. Hermes does it, and says so on a session info
@@ -63,6 +70,8 @@ from acp.schema import (
     AgentPlanUpdate,
     AgentThoughtChunk,
     AllowedOutcome,
+    AvailableCommand,
+    AvailableCommandsUpdate,
     ClientCapabilities,
     ContentToolCallContent,
     DeniedOutcome,
@@ -93,6 +102,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationAccess,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -953,10 +963,18 @@ class HermesAcpBackendChild:
 
     async def _on_session_update(self, update: Any) -> None:
         """One piece of the agent's news, turned into what the core keeps or shows."""
+        if isinstance(update, AvailableCommandsUpdate):
+            # Answered above the turn, because hermes sends this when a session is
+            # established — before there is a turn for it to belong to. Below the guard
+            # every one of them would be dropped.
+            await self._sink.available_commands_reported(
+                _agent_commands(update.available_commands)
+            )
+            return
         turn = self._turn
         if turn is None:
-            # News with no turn to belong to names nothing the core can place, so there is
-            # nothing to do with it.
+            # The rest of the agent's news is a turn's, and news with no turn to belong to
+            # names nothing the core can place, so there is nothing to do with it.
             return
         match update:
             case AgentThoughtChunk():
@@ -1222,6 +1240,23 @@ def _plan_entries(entries: Any) -> tuple[PlanEntry, ...]:
     return tuple(
         PlanEntry(text=entry.content, status=PlanEntryStatus(str(entry.status)))
         for entry in entries
+    )
+
+
+def _agent_commands(commands: Sequence[AvailableCommand]) -> tuple[AgentCommand, ...]:
+    """The commands hermes says a person may type, in this system's own words.
+
+    ACP words the thing to type after a command's name as an input object, and the only
+    kind of input it has is the unstructured one — a hint, in words, for whoever is
+    writing the message. A command that takes nothing has no input at all, and so no hint.
+    """
+    return tuple(
+        AgentCommand(
+            name=command.name,
+            description=command.description,
+            argument_hint=None if command.input is None else command.input.root.hint,
+        )
+        for command in commands
     )
 
 

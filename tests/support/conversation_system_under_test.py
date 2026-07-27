@@ -62,6 +62,7 @@ from planner.conversation.backends.hermes_acp import (
     HermesAcpBackendChild,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationBackendKey,
     ConversationSystem,
     PromptDeliveryMode,
@@ -240,6 +241,11 @@ class _ObservingSink:
 
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         await self._sink.vendor_session_cursor_rebound(vendor_session_cursor)
+
+    async def available_commands_reported(
+        self, available_commands: tuple[AgentCommand, ...]
+    ) -> None:
+        await self._sink.available_commands_reported(available_commands)
 
 
 class _CountedChild:

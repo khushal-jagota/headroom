@@ -13,8 +13,14 @@
    * comes back exactly as it was written, with the cursor at the end; unless something else
    * has been typed in the meantime, in which case that draft is what matters and the error
    * under the box is the whole of the news.
+   *
+   * Writing a command is writing a line that starts with a slash, and while the cursor is
+   * still inside that first word the agent's own commands are offered under it. Choosing
+   * one writes the words a person would have typed and nothing else: the message goes as
+   * ordinary text, and the agent reads its own command name back out of it.
    */
   import { tick } from "svelte";
+  import AgentCommandMenu from "./AgentCommandMenu.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
   import {
@@ -28,6 +34,7 @@
   } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
   import type {
+    AgentCommand,
     BackendModel,
     ConversationBackendKey,
     PermissionAskOption,
@@ -42,6 +49,7 @@
     current = { model: null, reasoningEffort: null },
     models = [],
     effortOptions = [],
+    availableCommands = [],
     defaultModelId = null,
     defaultReasoningEffort = null,
     heldPromptCount = 0,
@@ -66,6 +74,9 @@
     current?: RunValues;
     models?: readonly BackendModel[];
     effortOptions?: readonly string[];
+    /** The commands this conversation's agent reports. An agent that reports none, and an
+     *  agent that has not been asked yet, are both an empty list. */
+    availableCommands?: readonly AgentCommand[];
     /** The concrete values this backend runs when nobody names one. They are what the
      *  selectors show before anybody picks; they are never offered as an option. */
     defaultModelId?: string | null;
@@ -89,6 +100,18 @@
   // Counted rather than flagged: the box stays typeable through a send, so a second
   // message can be on its way before the first one has landed.
   let sendsInFlight = $state(0);
+  /** Where the cursor is in the box, read back from it after anything that can have moved
+   *  it. Which command is being written is a question about where the cursor is, and the
+   *  text alone cannot answer it. */
+  let cursorAt = $state(0);
+  /** Whether the box has the cursor at all. Where it is is only a question while it is in
+   *  here, so a person who has gone to read the thread is not writing a command and the
+   *  menu is not floating over what they went to read. */
+  let theCursorIsInTheBox = $state(false);
+  /** Escape, on a command still being written. Forgotten as soon as the cursor leaves it,
+   *  so coming back to the command offers the menu again. */
+  let menuWasDismissed = $state(false);
+  let activeCommandIndex = $state(0);
 
   let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
   let effectiveMode = $derived<PromptDeliveryMode>(running ? mode : "run_when_free");
@@ -125,6 +148,32 @@
   // to the affordance that says so and nothing more.
   let effortIsBare = $derived(shownEffort === "");
 
+  // --- the command being written -----------------------------------------------------------
+  let commandUnderway = $derived(commandOnTheCursorsLine(text, cursorAt));
+  /** What has been typed of the command's name, which is what the list is narrowed by.
+   *  Null when the cursor is not inside the name, and then the writing rule offers
+   *  nothing. */
+  let typedCommandName = $derived(commandUnderway?.typedSoFar ?? null);
+  let commandMenuIsOpen = $derived(
+    !inputDisabled
+    && theCursorIsInTheBox
+    && typedCommandName !== null
+    && !menuWasDismissed
+  );
+  let matchingCommands = $derived(commandsMatching(availableCommands, typedCommandName ?? ""));
+
+  // A dismissal belongs to the command it was made on: once the cursor is out of the name,
+  // there is nothing left to have dismissed.
+  $effect(() => {
+    if (typedCommandName === null) menuWasDismissed = false;
+  });
+
+  // A different list is a different highlight, and it starts at the top.
+  $effect(() => {
+    matchingCommands;
+    activeCommandIndex = 0;
+  });
+
   // What the chosen model really is, when the catalog says — an alias and the version it
   // reaches. A native select has nowhere to put a second line, so it is the tooltip.
   let modelTitle = $derived.by(() => {
@@ -155,6 +204,7 @@
     if (!trimmed || inputDisabled) return;
     const carried = picked;
     text = "";
+    cursorAt = 0;
     // The change rode out with the message, so it is no longer pending: the selects
     // fall back to showing what the conversation now runs on.
     pickedModel = null;
@@ -183,29 +233,138 @@
     if (input === null || text !== sent) return;
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
+    cursorAt = input.value.length;
   }
 
   function onKeydown(event: KeyboardEvent): void {
+    if (commandMenuIsOpen) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        menuWasDismissed = true;
+        return;
+      }
+      // Only when there is something to move between or take. A menu that is open saying
+      // there is nothing to offer is a sentence, not a list, and the keys stay the box's.
+      if (matchingCommands.length > 0) {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const step = event.key === "ArrowDown" ? 1 : matchingCommands.length - 1;
+          activeCommandIndex = (activeCommandIndex + step) % matchingCommands.length;
+          return;
+        }
+        const highlighted = matchingCommands[activeCommandIndex];
+        if ((event.key === "Enter" || event.key === "Tab") && highlighted !== undefined) {
+          event.preventDefault();
+          void takeTheCommand(highlighted);
+          return;
+        }
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void send();
     }
   }
 
-  /** Aim this message at a skill.
+  /** Where the cursor is now, after the person typed or clicked.
    *
-   * A skill is asked for by the message starting with a slash, so this puts one there and
-   * hands the box straight back with the cursor at the end. What skill, and everything
-   * after it, is the person's to type — this only saves them reaching for the key and
-   * knowing that a leading slash is what does it.
+   * Read from the box rather than worked out, because every key that moves a cursor moves
+   * it in its own way.
    */
-  async function aimAtASkill(): Promise<void> {
-    if (!text.startsWith("/")) text = `/${text}`;
+  function readWhereTheCursorIs(): void {
+    const input = inputElement;
+    if (input === null) return;
+    theCursorIsInTheBox = true;
+    cursorAt = input.selectionStart ?? 0;
+  }
+
+  /** Where the command being written on this line is, and how much of its name is typed.
+   *
+   * A command is a line that starts with a slash — the line the cursor is on, not the
+   * message, so a command can be written under something already written. Its name runs to
+   * the first space, and the menu is offered while the cursor is still inside that name:
+   * a space between the slash and the cursor means the person has moved on to what they
+   * are asking for.
+   */
+  function commandOnTheCursorsLine(
+    written: string,
+    at: number
+  ): { start: number; end: number; typedSoFar: string | null } | null {
+    const lineStart = at === 0 ? 0 : written.lastIndexOf("\n", at - 1) + 1;
+    if (written[lineStart] !== "/") return null;
+    let end = lineStart + 1;
+    while (end < written.length && !/\s/.test(written[end] ?? "")) end += 1;
+    return {
+      start: lineStart,
+      end,
+      typedSoFar: at > lineStart && at <= end ? written.slice(lineStart + 1, at) : null
+    };
+  }
+
+  /** The commands a typed name reaches, best first: the ones that start with it, then the
+   *  ones that merely contain it, alphabetically within each. Nothing typed reaches them
+   *  all. */
+  function commandsMatching(
+    commands: readonly AgentCommand[],
+    typed: string
+  ): AgentCommand[] {
+    const wanted = typed.toLowerCase();
+    const byName = (one: AgentCommand, other: AgentCommand): number =>
+      one.name.localeCompare(other.name);
+    const startsWithIt = commands.filter((command) =>
+      command.name.toLowerCase().startsWith(wanted)
+    );
+    const containsIt = commands.filter(
+      (command) =>
+        !command.name.toLowerCase().startsWith(wanted)
+        && command.name.toLowerCase().includes(wanted)
+    );
+    return [...startsWithIt.sort(byName), ...containsIt.sort(byName)];
+  }
+
+  /** Take the highlighted command: its name goes in, and the message is the person's again.
+   *
+   * What is written is exactly what they would have typed — the slash, the name, and one
+   * space after it — over the command that was being written. Nothing about the message is
+   * structured by this: it is sent as the words it is, and the agent reads its own command
+   * name back out of them.
+   */
+  async function takeTheCommand(command: AgentCommand): Promise<void> {
+    const underway = commandUnderway;
+    if (underway === null) return;
+    const written = `/${command.name} `;
+    // The space the name is followed by is the one already there, where there is one,
+    // rather than a second one after it.
+    const rest = text.slice(underway.end);
+    text = text.slice(0, underway.start) + written + (rest.startsWith(" ") ? rest.slice(1) : rest);
+    const cursorGoes = underway.start + written.length;
     await tick();
     const input = inputElement;
     if (input === null) return;
     input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
+    input.setSelectionRange(cursorGoes, cursorGoes);
+    theCursorIsInTheBox = true;
+    cursorAt = cursorGoes;
+  }
+
+  /** Start writing a command at the front of this message.
+   *
+   * A command is written by starting the line with a slash, so this puts one there and
+   * hands the box straight back with the cursor just after it — which is where the name
+   * goes, and is exactly where a person who typed the slash themselves would be. So the
+   * menu opens by the one rule that opens it, and what command, and everything after it,
+   * is still theirs to type.
+   */
+  async function startWritingACommand(): Promise<void> {
+    if (!text.startsWith("/")) text = `/${text}`;
+    menuWasDismissed = false;
+    await tick();
+    const input = inputElement;
+    if (input === null) return;
+    input.focus();
+    input.setSelectionRange(1, 1);
+    theCursorIsInTheBox = true;
+    cursorAt = 1;
   }
 </script>
 
@@ -237,6 +396,16 @@
         />
       {/if}
 
+      {#if commandMenuIsOpen}
+        <AgentCommandMenu
+          commands={matchingCommands}
+          activeIndex={activeCommandIndex}
+          anyCommandsAtAll={availableCommands.length > 0}
+          onChoose={(command) => void takeTheCommand(command)}
+          onHighlight={(index) => (activeCommandIndex = index)}
+        />
+      {/if}
+
       <textarea
         class="chat-ta"
         data-conversation-input
@@ -246,6 +415,11 @@
         bind:value={text}
         disabled={inputDisabled}
         onkeydown={onKeydown}
+        oninput={readWhereTheCursorIs}
+        onkeyup={readWhereTheCursorIs}
+        onclick={readWhereTheCursorIs}
+        onfocus={readWhereTheCursorIs}
+        onblur={() => (theCursorIsInTheBox = false)}
       ></textarea>
 
       <div class="chat-foot">
@@ -257,6 +431,8 @@
             onCancelTurn={() => onCancelTurn?.()}
           />
         {:else}
+          <!-- Pressing this leaves the cursor in the box rather than taking it, because
+               everything it does is done to what is being written there. -->
           <button
             type="button"
             class="chat-slash"
@@ -264,7 +440,8 @@
             aria-label="Aim this message at a skill"
             title="Aim this message at a skill"
             disabled={inputDisabled}
-            onclick={() => void aimAtASkill()}
+            onmousedown={(event) => event.preventDefault()}
+            onclick={() => void startWritingACommand()}
           >/</button>
 
           <select
