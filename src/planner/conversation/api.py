@@ -451,6 +451,17 @@ async def _conversation_view(
         "identity_environment_variable_names": [
             name for name, _value in record.identity_environment_variables
         ],
+        # The agent's own menu, as it last reported it. It comes off the conversation
+        # rather than off a running child, so it is there for the person opening a
+        # conversation to write the first message into it.
+        "available_commands": [
+            {
+                "name": command.name,
+                "description": command.description,
+                "argument_hint": command.argument_hint,
+            }
+            for command in record.available_commands
+        ],
         "latest_sequence": record.latest_sequence,
         "is_running": await runtime.system.is_running(conversation_id),
         "held_prompt_count": await runtime.system.held_prompt_count(conversation_id),

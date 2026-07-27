@@ -26,7 +26,7 @@ from typing import Any
 
 import httpx
 
-from planner.conversation.contracts import PromptDeliveryMode
+from planner.conversation.contracts import AgentCommand, PromptDeliveryMode
 from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationEventPayload,
@@ -74,6 +74,47 @@ window.fetch = (input, init) => {
     });
   }
   return realFetch(input, init);
+};
+"""
+
+# The pane's own reads of the conversation, held in the page until the test lets them go.
+# Asked for at the moment the pane asked, and answered later with what came back then — so
+# a read taken while a turn was running still says what was true while it was running,
+# however long the test spends between the two. Everything else is the browser's own fetch.
+HOLD_THE_VIEW_READS = """
+window.__holdViewReads = false;
+window.__heldViewReads = [];
+window.__viewReadsAnswered = 0;
+const realFetch = window.fetch.bind(window);
+const A_VIEW_READ = new RegExp('/api/conversation/conversations/[^/?]+$');
+window.fetch = (input, init) => {
+  const url = typeof input === 'string' ? input : input.url;
+  const method = (init && init.method ? init.method : 'GET').toUpperCase();
+  if (method === 'GET' && A_VIEW_READ.test(url)) {
+    const cameBack = realFetch(input, init).then(async (response) => ({
+      body: await response.text(),
+      status: response.status
+    }));
+    const give = (held) => {
+      window.__viewReadsAnswered += 1;
+      return new Response(held.body, {
+        status: held.status,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    };
+    if (!window.__holdViewReads) return cameBack.then(give);
+    return new Promise((resolve, reject) => {
+      window.__heldViewReads.push(() => cameBack.then((held) => resolve(give(held)), reject));
+    });
+  }
+  return realFetch(input, init);
+};
+window.__letTheHeldViewReadsThrough = () => {
+  const waiting = window.__heldViewReads;
+  window.__heldViewReads = [];
+  window.__holdViewReads = false;
+  for (const release of waiting) release();
+  return waiting.length;
 };
 """
 
@@ -197,6 +238,17 @@ def _append_rows(server, conversation_id: str, *payloads: ConversationEventPaylo
     writer.join()
     if fell_over:
         raise fell_over[0]
+
+
+def _store_the_commands_the_agent_reported(
+    server, conversation_id: str, *commands: AgentCommand
+) -> None:
+    """Put the agent's own menu where the backend puts it when it reports one."""
+    _on_its_own_thread(
+        ConversationStore(str(server.db_path)).replace_available_commands(
+            conversation_id, commands
+        )
+    )
 
 
 def _let_the_browser_catch_up(page, rows_expected: int) -> None:
@@ -810,3 +862,81 @@ def test_a_link_you_paste_reads_like_the_agent_s_links_do(
     # The literal markdown is gone from both, which is what says it was rendered rather
     # than printed.
     assert "](" not in page.inner_text("[data-conversation-row='prompt']")
+
+
+def test_the_commands_an_agent_reports_reach_the_menu_when_its_turn_stops(
+    server, context_factory, open_page
+) -> None:
+    """An agent reports its commands moments after its session starts.
+
+    That is during its first turn, so a conversation opened before that turn was told
+    none and asking again is the only thing that puts it right. A turn stopping is the
+    occasion to ask, and this is that seen from outside: the commands are reported while
+    the turn is open, and they are in the menu once it is over, on the page that was
+    already there.
+
+    What the pane knows about this conversation is held still while the turn runs, so the
+    only thing that can put the commands in front of a person is the pane asking again.
+    """
+    conversation_id = "e2e-commands"
+    _create_conversation(server, conversation_id)
+    context = context_factory()
+    context.add_init_script(HOLD_THE_VIEW_READS)
+    page = open_page(
+        context,
+        server,
+        f"#/dev/conversation?id={conversation_id}",
+        "[data-conversation-pane]",
+    )
+    page.wait_for_selector("[data-conversation-input]:not([disabled])", timeout=WAIT_MS)
+    # Opening asks about the conversation twice — once to have it, once when the reading
+    # of its rows is live. Both are in before anything is held, so what is held after this
+    # is only what the pane asks from here on.
+    page.wait_for_function("() => window.__viewReadsAnswered >= 2", timeout=WAIT_MS)
+    page.evaluate("() => { window.__thisVeryPage = true; window.__holdViewReads = true; }")
+
+    # A turn is open: a prompt reached the backend and nothing has ended it.
+    _append_rows(
+        server,
+        conversation_id,
+        PromptEventPayload(
+            content=text_message_content("get started"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+        ),
+    )
+    _let_the_browser_catch_up(page, 1)
+    page.wait_for_selector("[data-conversation-alive]", timeout=WAIT_MS)
+
+    # Moments into that turn, the agent says what it can be asked to do.
+    _store_the_commands_the_agent_reported(
+        server,
+        conversation_id,
+        AgentCommand(name="plan", description="Write the plan", argument_hint="[what to plan]"),
+        AgentCommand(name="compact", description="Shrink the context"),
+    )
+
+    # Nothing has told the pane and nothing asks on a clock, so the menu is still the one
+    # a conversation that had never run was given.
+    page.fill("[data-conversation-input]", "/")
+    page.wait_for_selector("[data-conversation-commands-empty]", timeout=WAIT_MS)
+    assert page.locator("[data-conversation-command]").count() == 0
+
+    # The turn stops. There is no ending row for it — only the system's own word, which is
+    # the answer the pane has been holding.
+    page.evaluate("() => window.__letTheHeldViewReadsThrough()")
+    page.wait_for_selector("[data-conversation-alive]", state="detached", timeout=WAIT_MS)
+
+    # And the commands are there, under the slash that was already typed.
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-command]').length === 2",
+        timeout=WAIT_MS,
+    )
+    assert page.eval_on_selector_all(
+        "[data-conversation-command]",
+        "rows => rows.map(row => row.dataset.conversationCommand)",
+    ) == ["compact", "plan"]
+    assert "[what to plan]" in page.inner_text("[data-conversation-commands]")
+    assert page.evaluate("() => window.__thisVeryPage === true"), (
+        "the page that has the commands is the page that was already open"
+    )

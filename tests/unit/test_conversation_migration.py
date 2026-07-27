@@ -1,19 +1,22 @@
-"""The revision that gives the conversation system its two tables.
+"""The revisions the conversation system's tables are made of.
 
-A database that has never seen it is brought up from empty, which is how a fresh Panels
+One gives it its two tables and one adds the commands a conversation's agent offers. A
+database that has never seen them is brought up from empty, which is how a fresh Panels
 install gets them and how every other database gets them the next time it is opened.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "one_conversation_system"
+HEAD_REVISION = "conversation_available_commands"
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, int, int]]:
@@ -53,6 +56,7 @@ def test_a_conversation_holds_what_it_was_started_with_and_where_it_has_got_to(
         ("vendor_session_cursor", "TEXT", 0, 0),
         ("latest_sequence", "INTEGER", 1, 0),
         ("created_at", "INTEGER", 1, 0),
+        ("available_commands", "TEXT", 1, 0),
     ]
 
 
@@ -129,11 +133,11 @@ def test_neither_revision_has_a_way_back(upgraded: sqlite3.Connection) -> None:
 # --- what the layer that came before left behind ----------------------------------------
 
 
-def _build_a_database_at_the_previous_head(path: Path) -> sqlite3.Connection:
-    """A database as it stood before the old conversation layer's tables were dropped.
+def _build_a_database_at(path: Path, revision: str) -> sqlite3.Connection:
+    """A database built the ordinary way and then stopped at a revision short of head.
 
-    It is built the ordinary way and then stopped one revision short, so the shape it has
-    is the shape a real database on the previous release has.
+    The shape it has is the shape a real database on that release has, which is what a
+    revision has to be able to arrive on top of.
     """
     from alembic import command
 
@@ -142,7 +146,7 @@ def _build_a_database_at_the_previous_head(path: Path) -> sqlite3.Connection:
     engine = db_module._migration_engine(str(path), 5000)  # noqa: SLF001
     try:
         with engine.begin() as connection:
-            command.upgrade(db_module._alembic_config(connection), "agents")  # noqa: SLF001
+            command.upgrade(db_module._alembic_config(connection), revision)  # noqa: SLF001
     finally:
         engine.dispose()
     return connect(str(path))
@@ -152,7 +156,7 @@ def test_the_retired_tables_go_and_the_ticket_keeps_its_link_under_its_real_name
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "previous-head.db"
-    conn = _build_a_database_at_the_previous_head(path)
+    conn = _build_a_database_at(path, "agents")
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, fields, "
         "employee_session_id, created_at, updated_at) VALUES ('t_linked', 'Linked', 'coding', "
@@ -198,3 +202,39 @@ def test_the_retired_tables_go_and_the_ticket_keeps_its_link_under_its_real_name
         str(row[1]) for row in conn.execute("PRAGMA table_info(tickets)")
     }
     conn.close()
+
+
+# --- the commands a conversation's agent offers ------------------------------------------
+
+
+def test_a_conversation_from_before_the_column_arrives_with_no_commands(
+    tmp_path: Path,
+) -> None:
+    """Every conversation already in a real database comes through this revision.
+
+    None of them has ever had a menu reported, and an empty one is the true answer for
+    them — the same answer a conversation started after the revision begins with.
+    """
+    path = tmp_path / "before-the-column.db"
+    conn = _build_a_database_at(path, "one_conversation_system")
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
+        "created_at) VALUES ('c', 'hermes', '/tmp/workspace', 'full', 1)"
+    )
+    conn.commit()
+
+    create_schema(conn)
+
+    assert (
+        str(
+            conn.execute(
+                "SELECT available_commands FROM conversations WHERE conversation_id = 'c'"
+            ).fetchone()[0]
+        )
+        == "[]"
+    )
+    conn.close()
+
+    read = asyncio.run(ConversationStore(str(path)).read_conversation("c"))
+    assert read is not None
+    assert read.available_commands == ()

@@ -98,6 +98,27 @@ def backend_supports_steer(backend_key: ConversationBackendKey) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class AgentCommand:
+    """One command the agent says a person may type at it.
+
+    A command is the agent's own, not Panels'. The agent reports what it answers to,
+    Panels offers that list, and the chosen command goes in as ordinary text at the start
+    of a message — the agent parses its own name back out exactly as it would from
+    something typed by hand. Nothing here is interpreted on the way through.
+
+    ``name`` carries no leading slash: the slash is how a person writes a command, not
+    part of what it is called. ``description`` is what the backend said the command does,
+    which may be nothing. ``argument_hint`` is what to type after the name, and is absent
+    for a command that takes nothing — the backends that report one each call it something
+    different, and this is the one name Panels knows it by.
+    """
+
+    name: str
+    description: str
+    argument_hint: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ConversationRoleMaterials:
     """What the agent is told to be, and the identity its process runs under.
 

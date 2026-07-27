@@ -254,6 +254,10 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ConversationPane / ConversationTranscript / ConversationComposer** — what a
   conversation looks like: the rows, the one raised ask, the status line, and the
   composer with its model, effort and skill choices.
+- **AgentCommandMenu** — the list that opens in the composer when a message is started
+  with a slash. It offers the commands this conversation's agent said it takes, narrowed
+  as the name is typed. Choosing one writes the command into the message as ordinary
+  text; the agent reads its own name back out.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.

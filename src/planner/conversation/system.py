@@ -50,6 +50,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationBackendKey,
     ConversationStartRequest,
     PromptDeliveryFate,
@@ -1381,6 +1382,20 @@ class SqliteProcessConversationSystem:
         )
         state.record = replace(state.record, vendor_session_cursor=vendor_session_cursor)
 
+    async def _on_available_commands_reported(
+        self, state: _ConversationState, available_commands: tuple[AgentCommand, ...]
+    ) -> None:
+        """The whole menu, as the backend has it now, put where the last one was.
+
+        It goes onto the conversation and nowhere near its record: which commands an agent
+        answers to is something that is true about it, not something that happened in the
+        conversation, so there is nothing here for a transcript to show.
+        """
+        await self._store.replace_available_commands(
+            state.record.conversation_id, available_commands
+        )
+        state.record = replace(state.record, available_commands=available_commands)
+
     def _log_failed_turn(
         self,
         state: _ConversationState,
@@ -1747,6 +1762,17 @@ class _CoreBackendEventSink:
                 self._system._on_vendor_session_cursor_rebound,
                 self._state,
                 vendor_session_cursor,
+            )
+        )
+
+    async def available_commands_reported(
+        self, available_commands: tuple[AgentCommand, ...]
+    ) -> None:
+        self._enqueue(
+            partial(
+                self._system._on_available_commands_reported,
+                self._state,
+                available_commands,
             )
         )
 

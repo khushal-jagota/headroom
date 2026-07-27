@@ -40,6 +40,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationAccess,
     ConversationRoleMaterials,
     PromptDeliveryMode,
@@ -116,6 +117,26 @@ def test_a_fresh_conversation_shakes_hands_starts_a_thread_and_reports_its_curso
             assert started["approvalPolicy"] == "never"
             assert started["approvalsReviewer"] == "user"
             assert started["sandbox"] == "danger-full-access"
+
+    _run(exercise)
+
+
+def test_codex_offers_no_commands_because_its_protocol_has_none_to_declare(
+    tmp_path: Path,
+) -> None:
+    """Not a gap in this adapter — codex's wire has no notion of a command a person types.
+
+    Codex's slash commands live inside its own terminal program and are dispatched there,
+    so nothing declares them over the protocol Panels speaks. A codex conversation has
+    none to offer, and this adapter says nothing at all rather than reporting an empty
+    list, which would be codex claiming it had looked and found none.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            await scripted.start(cursor=None)
+
+            assert scripted.sink.available_commands_reports == []
 
     _run(exercise)
 
@@ -1071,6 +1092,7 @@ class _RecordingSink:
         self.error_summaries: list[str | None] = []
         self.standard_error_tails: list[str | None] = []
         self.vendor_session_cursor: str | None = None
+        self.available_commands_reports: list[tuple[AgentCommand, ...]] = []
         self._turn_over = asyncio.Event()
         self._an_ask = asyncio.Event()
 
@@ -1166,6 +1188,11 @@ class _RecordingSink:
 
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.vendor_session_cursor = vendor_session_cursor
+
+    async def available_commands_reported(
+        self, available_commands: tuple[AgentCommand, ...]
+    ) -> None:
+        self.available_commands_reports.append(available_commands)
 
 
 @dataclass

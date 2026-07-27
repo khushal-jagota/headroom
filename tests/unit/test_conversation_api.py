@@ -46,6 +46,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationBackendKey,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -500,6 +501,53 @@ def test_starting_a_conversation_answers_with_what_it_resolved_to(harness: _Harn
             assert view["latest_sequence"] == 0
             assert view["held_prompt_count"] == 0
             assert view["pending_permission_ask"] is None
+            # Nothing has reported a menu, so there is none to offer.
+            assert view["available_commands"] == []
+
+    _run(exercise)
+
+
+def test_the_view_carries_the_commands_the_agent_says_may_be_typed_at_it(
+    harness: _Harness,
+) -> None:
+    """Each command as its name, what it does, and what to type after it, in order."""
+
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "first"}],
+                    "sender_label": "owner",
+                    "mode": "run_when_free",
+                },
+            )
+            backend = harness.backend("c")
+            assert backend.sink is not None
+            await backend.sink.available_commands_reported(
+                (
+                    AgentCommand(
+                        name="review", description="Review the diff", argument_hint="[path]"
+                    ),
+                    AgentCommand(name="compact", description="Summarise the conversation so far"),
+                )
+            )
+            await harness.settle()
+
+            view = (await client.get("/api/conversation/conversations/c")).json()
+            assert view["available_commands"] == [
+                {
+                    "name": "review",
+                    "description": "Review the diff",
+                    "argument_hint": "[path]",
+                },
+                {
+                    "name": "compact",
+                    "description": "Summarise the conversation so far",
+                    "argument_hint": None,
+                },
+            ]
 
     _run(exercise)
 

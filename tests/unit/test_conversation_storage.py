@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationAccess,
     ConversationAlreadyStarted,
     ConversationBackendKey,
@@ -295,6 +296,70 @@ def test_the_session_cursor_moves(store: ConversationStore) -> None:
 
         assert read is not None
         assert read.vendor_session_cursor == "vendor-session-7"
+
+    asyncio.run(exercise())
+
+
+# --- the commands the agent says a person may type at it -----------------------------------
+
+FIRST_MENU = (
+    AgentCommand(name="review", description="Review the diff", argument_hint="[path]"),
+    AgentCommand(name="compact", description="Summarise the conversation so far"),
+)
+SECOND_MENU = (
+    AgentCommand(name="compact", description="Summarise the conversation so far"),
+    AgentCommand(name="ship", description="Open the pull request", argument_hint="<title>"),
+)
+
+
+def test_the_commands_an_agent_offers_are_kept_and_read_back(store: ConversationStore) -> None:
+    """Every command, in the order it was reported, with and without an argument hint."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.replace_available_commands("c", FIRST_MENU)
+        read = await store.read_conversation("c")
+
+        assert read is not None
+        assert read.available_commands == FIRST_MENU
+
+    asyncio.run(exercise())
+
+
+def test_a_second_report_puts_the_whole_menu_where_the_old_one_was(
+    store: ConversationStore,
+) -> None:
+    """A backend reports the list it has now, so a command it dropped has to go."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        await store.replace_available_commands("c", FIRST_MENU)
+        await store.replace_available_commands("c", SECOND_MENU)
+        read = await store.read_conversation("c")
+
+        assert read is not None
+        assert read.available_commands == SECOND_MENU
+        assert "review" not in {command.name for command in read.available_commands}
+
+    asyncio.run(exercise())
+
+
+def test_a_conversation_nothing_has_reported_for_offers_no_commands(
+    store: ConversationStore,
+) -> None:
+    """Which is also what a backend that reported having none reads back as."""
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved())
+        read = await store.read_conversation("c")
+        assert read is not None
+        assert read.available_commands == ()
+
+        await store.replace_available_commands("c", FIRST_MENU)
+        await store.replace_available_commands("c", ())
+        emptied = await store.read_conversation("c")
+        assert emptied is not None
+        assert emptied.available_commands == ()
 
     asyncio.run(exercise())
 

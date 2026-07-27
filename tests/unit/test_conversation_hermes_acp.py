@@ -48,6 +48,7 @@ from planner.conversation.backends.hermes_acp import (
     hermes_acp_child_launch,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -942,10 +943,12 @@ class _RecordingSink:
         self.token_usage: list[dict[str, object]] = []
         self.compactions = 0
         self.vendor_session_cursor: str | None = None
+        self.available_commands: list[tuple[AgentCommand, ...]] = []
         self._turn_over = asyncio.Event()
         self._an_ask_arrived = asyncio.Event()
         self._a_compaction_arrived = asyncio.Event()
         self._token_usage_arrived = asyncio.Event()
+        self._commands_arrived = asyncio.Event()
 
     def expect_another_turn(self) -> None:
         self._turn_over.clear()
@@ -978,6 +981,10 @@ class _RecordingSink:
     async def wait_for_a_compaction(self) -> None:
         await self._a_compaction_arrived.wait()
         self._a_compaction_arrived.clear()
+
+    async def wait_for_available_commands(self) -> None:
+        await self._commands_arrived.wait()
+        self._commands_arrived.clear()
 
     async def token_usage_reported(
         self,
@@ -1021,6 +1028,14 @@ class _RecordingSink:
 
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.vendor_session_cursor = vendor_session_cursor
+
+    async def available_commands_reported(
+        self, available_commands: tuple[AgentCommand, ...]
+    ) -> None:
+        # Each report is kept whole and on its own, so an exercise can say what the last
+        # one was and how many there have been.
+        self.available_commands.append(available_commands)
+        self._commands_arrived.set()
 
     @property
     def agent_messages(self) -> list[str]:
@@ -1302,5 +1317,93 @@ def test_a_compaction_is_reported_and_the_same_update_about_anything_else_is_not
             await sink.wait_for_a_compaction()
 
             assert sink.compactions == 1
+
+    _run(exercise)
+
+
+# --- the commands hermes says a person may type ------------------------------------------
+
+
+def test_the_commands_hermes_pushes_before_any_turn_reach_the_sink_whole(
+    tmp_path: Path,
+) -> None:
+    """The moment they really arrive: a session is up and nothing is running.
+
+    Hermes pushes its commands the instant a session is established, which is before there
+    is ever a turn for them to belong to. Everything else on this handler is a turn's news
+    and is dropped when there is no turn, so the child here is deliberately left with none:
+    handling that sat under the turn guard would read correctly and never fire once.
+
+    The hint is what to type after the name, and a command that takes nothing has none.
+    """
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            assert child._turn is None
+
+            await control.send(
+                {
+                    "command": "emit_available_commands",
+                    "commands": [
+                        {
+                            "name": "plan",
+                            "description": "Write a plan for the work",
+                            "hint": "what to plan",
+                        },
+                        {"name": "clear", "description": "Start the thread again"},
+                    ],
+                }
+            )
+            await sink.wait_for_available_commands()
+
+            assert child._turn is None
+            assert sink.available_commands[-1] == (
+                AgentCommand(
+                    name="plan",
+                    description="Write a plan for the work",
+                    argument_hint="what to plan",
+                ),
+                AgentCommand(name="clear", description="Start the thread again"),
+            )
+            assert sink.available_commands[-1][1].argument_hint is None
+
+    _run(exercise)
+
+
+def test_the_commands_pushed_a_second_time_replace_the_ones_before_them(
+    tmp_path: Path,
+) -> None:
+    """Each push is the whole list, so the newest one answers what the commands are now."""
+
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path) as (child, control, sink):
+            await child.start(_resolved_start(tmp_path), vendor_session_cursor=None)
+            await control.send(
+                {
+                    "command": "emit_available_commands",
+                    "commands": [{"name": "plan", "description": "Write a plan"}],
+                }
+            )
+            await sink.wait_for_available_commands()
+
+            await control.send(
+                {
+                    "command": "emit_available_commands",
+                    "commands": [
+                        {"name": "review", "description": "Look it over", "hint": "what to read"}
+                    ],
+                }
+            )
+            await sink.wait_for_available_commands()
+
+            assert sink.available_commands == [
+                (AgentCommand(name="plan", description="Write a plan"),),
+                (
+                    AgentCommand(
+                        name="review", description="Look it over", argument_hint="what to read"
+                    ),
+                ),
+            ]
 
     _run(exercise)

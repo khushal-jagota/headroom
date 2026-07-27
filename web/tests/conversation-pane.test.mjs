@@ -29,6 +29,7 @@ const componentDirectory = new URL("../src/components/conversation/", import.met
 // --- what the components are ----------------------------------------------------------------
 
 const expectedInventory = [
+  "AgentCommandMenu.svelte",
   "BackendCard.svelte",
   "ConversationComposer.svelte",
   "ConversationPane.svelte",
@@ -78,7 +79,17 @@ const routeSource = await readFile(
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
 
 // The pane is an adaptation of the conversation styles the app already has, not a second set.
-for (const className of ["chat-panel", "chat-head", "chat-thread", "chat-jump", "chat-box", "chat-ta"]) {
+for (const className of [
+  "chat-panel",
+  "chat-head",
+  "chat-thread",
+  "chat-jump",
+  "chat-box",
+  "chat-ta",
+  // The app already has a "/" command menu's styles, anchored above the box. The menu of
+  // the agent's own commands is drawn in them rather than in a second set of the same.
+  "chat-menu"
+]) {
   assert.ok(
     Object.values(sources).some((source) => source.includes(className)),
     `the pane must reuse .${className} rather than forking the stylesheet`
@@ -138,6 +149,19 @@ assert.doesNotMatch(
 assert.match(binderSource, /turnStoppedWithoutAnEnding/);
 assert.match(binderSource, /\(\) => void refreshView\(\)/);
 
+// The commands an agent reports are what the composer offers, and they arrive moments
+// after its session starts — during its first turn. So a turn stopping is another
+// occasion to ask the system about itself, which is how a conversation opened before its
+// first turn comes to have them without a page being reloaded. That the re-read happens,
+// and that the menu has the commands after it, is asserted in a browser against a real
+// server: tests/e2e/test_dev_conversation_pane.py. What is asserted here is only that
+// nothing polls for it.
+assert.doesNotMatch(
+  binderSource,
+  /setInterval|setTimeout/,
+  "a re-read hangs off something that happened, never off a timer"
+);
+
 // A message that reached the conversation is told to whoever mounted the binder, so a
 // caller holding more than a conversation can act on it. Only after it was taken: the
 // refusal path returns before this, because a message that reached nothing is not one
@@ -188,6 +212,7 @@ try {
       'export { default as PlanStrip } from "../src/components/conversation/PlanStrip.svelte";',
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
       'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
+      'export { default as CommandMenu } from "../src/components/conversation/AgentCommandMenu.svelte";',
       ""
     ].join("\n"),
     "utf8"
@@ -204,7 +229,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, Composer, NewForm, Pane, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, BackendCard, CommandMenu, Composer, NewForm, Pane, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -1003,6 +1028,60 @@ try {
     "no button is offered for an update Panels cannot run"
   );
 
+  // The command menu draws what the agent reported and nothing else: the name a person
+  // types, what the backend said it does, and the argument where it named one.
+  const menu = drawn(CommandMenu, {
+    commands: [
+      { name: "plan", description: "Write the plan", argument_hint: null },
+      { name: "compact", description: "Shrink the context", argument_hint: "[instructions]" }
+    ],
+    activeIndex: 1,
+    anyCommandsAtAll: true,
+    onChoose() {},
+    onHighlight() {}
+  });
+  assert.deepEqual(
+    [...menu.matchAll(/data-conversation-command="([^"]+)"/g)].map((found) => found[1]),
+    ["plan", "compact"],
+    "the rows are drawn in the order they were offered in"
+  );
+  assert.match(menu, /\/plan/);
+  assert.match(menu, /Write the plan/);
+  assert.match(menu, /data-conversation-command-argument[^>]*>\[instructions\]/);
+  assert.equal(
+    (menu.match(/data-conversation-command-active="true"/g) ?? []).length,
+    1,
+    "exactly one row is highlighted"
+  );
+
+  // Both ways of having nothing to offer are said out loud, and they are different
+  // sentences. Nothing to filter says only that: an empty list is an agent that reports no
+  // commands and an agent that has not reported yet, and nothing here knows which, so the
+  // sentence must be true of both and must not put it on the agent.
+  const noCommandsAtAll = drawn(CommandMenu, {
+    commands: [],
+    anyCommandsAtAll: false,
+    onChoose() {},
+    onHighlight() {}
+  });
+  assert.match(noCommandsAtAll, /data-conversation-commands-empty/);
+  assert.match(noCommandsAtAll, /No commands here\./);
+  assert.doesNotMatch(
+    noCommandsAtAll,
+    /agent/i,
+    "an empty list is not something the agent can be said to have reported"
+  );
+  const nothingMatched = drawn(CommandMenu, {
+    commands: [],
+    anyCommandsAtAll: true,
+    onChoose() {},
+    onHighlight() {}
+  });
+  assert.match(nothingMatched, /No command matches that\./);
+
+  // And nothing is on screen until a command is being written.
+  assert.doesNotMatch(idleComposer, /data-conversation-commands/);
+
   // --- what happens when a person clicks ------------------------------------------------------
 
   browserDirectory = await mkdtemp(join(tmpdir(), "panels-conversation-pane-"));
@@ -1022,6 +1101,18 @@ try {
   const answers: string[] = [];
   (window as any).__sends = () => sends;
   (window as any).__answers = () => answers;
+
+  // What the agent reported it can be asked to do. Settable from the test, because an
+  // agent that reports none is a state a person must be able to read, not a second pane.
+  let availableCommands = $state<any[]>([
+    { name: "plan", description: "Write the plan", argument_hint: "[what to plan]" },
+    { name: "replan", description: "Start the plan again", argument_hint: null },
+    { name: "compact", description: "Shrink the context", argument_hint: null },
+    { name: "apply-plan", description: "Do what the plan says", argument_hint: null }
+  ]);
+  (window as any).__setCommands = (next: any[]) => {
+    availableCommands = next;
+  };
 
   async function onSend(text: string, mode: string, picked: unknown): Promise<boolean> {
     sends.push({ text, mode, picked });
@@ -1141,6 +1232,7 @@ try {
     { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] }
   ]}
   effortOptions={["low", "high"]}
+  {availableCommands}
   {onSend}
 />
 
@@ -1389,9 +1481,10 @@ with sync_playwright() as playwright:
     page.locator("[data-conversation-input]").type("1")
     assert page.evaluate("window.__answers().length") == 2
 
-    # The slash aims what is already written at a skill, and hands the box back with the
-    # cursor at the end so the next thing typed is the skill's name. Pressing it again
-    # changes nothing: the message is already aimed.
+    # The slash puts a command at the front of what is already written, and hands the box
+    # back with the cursor just after it — where the command's name goes, and where a
+    # person who typed the slash themselves would be. Pressing it again changes nothing:
+    # the message already starts with one.
     page.locator("[data-conversation-input]").fill("do the thing")
     page.locator("[data-conversation-slash]").click()
     page.wait_for_function(
@@ -1400,11 +1493,184 @@ with sync_playwright() as playwright:
     assert page.evaluate(
         "document.activeElement === document.querySelector('[data-conversation-input]')"
     )
-    assert page.evaluate("document.querySelector('[data-conversation-input]').selectionStart") == (
-        len("/do the thing")
-    )
+    assert page.evaluate("document.querySelector('[data-conversation-input]').selectionStart") == 1
     page.locator("[data-conversation-slash]").click()
     assert page.locator("[data-conversation-input]").input_value() == "/do the thing"
+    assert page.evaluate("document.querySelector('[data-conversation-input]').selectionStart") == 1
+    # Pressing it never takes the cursor out of the box, so the menu it opened is still up.
+    assert page.evaluate(
+        "document.activeElement === document.querySelector('[data-conversation-input]')"
+    )
+
+    # --- the commands the agent reports -----------------------------------------------------
+
+    def listed():
+        return page.eval_on_selector_all(
+            "[data-conversation-command]",
+            "rows => rows.map(row => row.dataset.conversationCommand)",
+        )
+
+    def highlighted():
+        return page.evaluate(
+            "document.querySelector('[data-conversation-command-active]')"
+            "?.dataset.conversationCommand ?? null"
+        )
+
+    # The slash button leaves the cursor inside the command's name, which is the one rule
+    # that opens the menu, and what is in it is what this conversation's agent said it can
+    # be asked to do.
+    assert page.locator("[data-conversation-commands]").count() == 1
+    assert listed() == ["apply-plan", "compact", "plan", "replan"], listed()
+    assert "[what to plan]" in page.locator("[data-conversation-commands]").inner_text()
+
+    box = page.locator("[data-conversation-input]")
+    sent_before_the_menu = page.evaluate("window.__sends().length")
+
+    # An arrow key is a move inside the menu and nothing else, so the menu the button
+    # opened is still open after one and Enter takes the row it landed on. Anything less
+    # loses the message: Enter would fall through and send what was being written.
+    page.keyboard.press("ArrowDown")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-command-active]')"
+        ".dataset.conversationCommand === 'compact'"
+    )
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value === '/compact the thing'"
+    )
+    assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    # Typing narrows it: what starts with the letters first, then what merely contains
+    # them, alphabetically within each.
+    box.fill("")
+    box.type("/pl")
+    page.wait_for_function("document.querySelectorAll('[data-conversation-command]').length === 3")
+    assert listed() == ["plan", "apply-plan", "replan"], listed()
+    assert highlighted() == "plan", highlighted()
+
+    # Up from the top wraps to the bottom, and down comes back.
+    page.keyboard.press("ArrowUp")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-command-active]')"
+        ".dataset.conversationCommand === 'replan'"
+    )
+    page.keyboard.press("ArrowDown")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-command-active]')"
+        ".dataset.conversationCommand === 'plan'"
+    )
+
+    # Down moves the highlight and Enter takes that row: what goes in is the text a person
+    # would have typed, the cursor lands after it, the menu closes, and nothing is sent.
+    page.keyboard.press("ArrowDown")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-command-active]')"
+        ".dataset.conversationCommand === 'apply-plan'"
+    )
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value === '/apply-plan '"
+    )
+    assert page.locator("[data-conversation-commands]").count() == 0
+    assert page.evaluate("document.querySelector('[data-conversation-input]').selectionStart") == (
+        len("/apply-plan ")
+    )
+    assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    # Escape closes it and leaves what was typed exactly where it was.
+    box.fill("")
+    box.type("/pl")
+    page.wait_for_function("document.querySelectorAll('[data-conversation-command]').length === 3")
+    page.keyboard.press("Escape")
+    page.wait_for_function("document.querySelectorAll('[data-conversation-commands]').length === 0")
+    assert box.input_value() == "/pl"
+
+    # A space is the person moving on to what they are asking for, so the menu goes.
+    box.fill("")
+    box.type("/pl")
+    page.wait_for_function("document.querySelectorAll('[data-conversation-command]').length === 3")
+    page.keyboard.type(" ")
+    page.wait_for_function("document.querySelectorAll('[data-conversation-commands]').length === 0")
+
+    # The mouse highlights and takes rows exactly as the keys do.
+    box.fill("")
+    box.type("/")
+    page.wait_for_function("document.querySelectorAll('[data-conversation-command]').length === 4")
+    page.locator('[data-conversation-command="compact"]').hover()
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-command-active]')"
+        ".dataset.conversationCommand === 'compact'"
+    )
+    page.locator('[data-conversation-command="compact"]').click()
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value === '/compact '"
+    )
+
+    # A command is a line that starts with a slash, not a message that does: one written
+    # under something already written is offered the same menu, and replaces only itself.
+    box.fill("")
+    box.type("first line")
+    page.keyboard.press("Shift+Enter")
+    page.keyboard.type("/co")
+    page.wait_for_function("document.querySelectorAll('[data-conversation-command]').length === 1")
+    assert listed() == ["compact"], listed()
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value.endsWith('/compact ')"
+    )
+    assert page.evaluate("document.querySelector('[data-conversation-input]').value") == (
+        "first line\\n/compact "
+    )
+
+    # A filter nothing matches says so, rather than vanishing as if nothing were typed.
+    box.fill("")
+    box.type("/zzz")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation-commands-empty]').length === 1"
+    )
+    assert page.locator("[data-conversation-command]").count() == 0
+    matched_nothing = page.locator("[data-conversation-commands-empty]").inner_text()
+    assert "No command matches" in matched_nothing, matched_nothing
+
+    # The list is the agent's own, and an agent can genuinely report the same name twice —
+    # a project command shadowing a user one. Both rows are drawn, rather than the menu
+    # throwing on a repeated name and taking the composer down with it.
+    page.evaluate(
+        'window.__setCommands(['
+        '{ name: "review", description: "the project one", argument_hint: null },'
+        '{ name: "review", description: "the one in your home directory", argument_hint: null }'
+        '])'
+    )
+    box.fill("")
+    box.type("/rev")
+    page.wait_for_function("document.querySelectorAll('[data-conversation-command]').length === 2")
+    assert listed() == ["review", "review"], listed()
+    assert "the one in your home directory" in page.locator(
+        "[data-conversation-commands]"
+    ).inner_text()
+
+    # The menu belongs to the box. Somebody who has clicked away to read the thread is not
+    # writing a command, so it stops floating over what they went there to read — and what
+    # they had typed is still in the box when they come back to it.
+    page.locator("[data-conversation-alive]").click()
+    page.wait_for_function("document.querySelectorAll('[data-conversation-commands]').length === 0")
+    assert box.input_value() == "/rev"
+    box.click()
+    page.wait_for_function("document.querySelectorAll('[data-conversation-command]').length === 2")
+
+    # Nothing to offer says only that. An empty list is an agent that reports none — codex
+    # reports none — and an agent that has not reported yet, and this page cannot tell them
+    # apart, so it does not say which of the two it is.
+    page.evaluate("window.__setCommands([])")
+    box.fill("")
+    box.type("/")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation-commands-empty]').length === 1"
+    )
+    nothing_to_offer = page.locator("[data-conversation-commands-empty]").inner_text()
+    assert "No commands here." in nothing_to_offer, nothing_to_offer
+    assert "agent" not in nothing_to_offer.lower(), nothing_to_offer
+    assert page.evaluate("window.__sends().length") == sent_before_the_menu
 
     browser.close()
 

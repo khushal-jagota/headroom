@@ -45,6 +45,9 @@ from acp.schema import (
     AgentMessageChunk,
     AgentPlanUpdate,
     AgentThoughtChunk,
+    AvailableCommand,
+    AvailableCommandInput,
+    AvailableCommandsUpdate,
     ContentToolCallContent,
     Cost,
     ImageContentBlock,
@@ -65,6 +68,7 @@ from acp.schema import (
     ToolCallProgress,
     ToolCallStart,
     ToolCallUpdate,
+    UnstructuredCommandInput,
     Usage,
     UsageUpdate,
 )
@@ -355,6 +359,9 @@ class ScriptedAcpAgent:
             case "emit_usage_update":
                 await self._emit_usage_update(command)
                 return {"ok": True}
+            case "emit_available_commands":
+                await self._emit_available_commands(command)
+                return {"ok": True}
             case "emit_session_info_update":
                 await self._emit_session_info_update(bool(command.get("compacted", False)))
                 return {"ok": True}
@@ -569,6 +576,34 @@ class ScriptedAcpAgent:
                         currency=str(stated_cost["currency"]),
                     )
                 ),
+            )
+        )
+
+    async def _emit_available_commands(self, command: dict[str, Any]) -> None:
+        """The commands a person may type, which an agent pushes without being asked.
+
+        There is no request for these in ACP, so a test says them the way hermes does: a
+        session update, sent whenever the agent likes and whatever is or is not running. A
+        command that takes something after its name carries a hint for it, inside the input
+        object ACP wraps one in; a command that takes nothing carries no input at all.
+        """
+        await self._notify_session_update(
+            AvailableCommandsUpdate(
+                session_update="available_commands_update",
+                available_commands=[
+                    AvailableCommand(
+                        name=str(entry["name"]),
+                        description=str(entry["description"]),
+                        input=(
+                            None
+                            if entry.get("hint") is None
+                            else AvailableCommandInput(
+                                root=UnstructuredCommandInput(hint=str(entry["hint"]))
+                            )
+                        ),
+                    )
+                    for entry in command["commands"]
+                ],
             )
         )
 

@@ -99,6 +99,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
+    AgentCommand,
     ConversationAccess,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -211,10 +212,20 @@ class ClaudeSdkClient(Protocol):
 
     It is named here so a test can hand the adapter a client it scripts, and so the whole
     of what this adapter asks of the SDK is one thing to look at: connect, prompt, read,
-    interrupt, disconnect.
+    interrupt, disconnect, and what the child said about itself when it came up.
     """
 
     async def connect(self) -> None: ...
+
+    async def get_server_info(self) -> dict[str, Any] | None:
+        """What the child answered the startup handshake with, exactly as it came.
+
+        ``connect`` performs that handshake, so this is already on the client by the time
+        the session is bound: reading it asks the child nothing and sends no prompt. The
+        SDK keeps the answer as the raw dictionary it arrived as, which is why it is a
+        dictionary here rather than something typed.
+        """
+        ...
 
     async def query(self, prompt: str | AsyncIterable[dict[str, Any]]) -> None:
         """A message as words, or as the content blocks a richer one is made of.
@@ -352,6 +363,24 @@ class ClaudeAgentSdkBackendChild:
         )
         if minted_session_id is not None:
             await self._sink.vendor_session_cursor_rebound(minted_session_id)
+        await self._report_the_available_commands(client)
+
+    async def _report_the_available_commands(self, client: ClaudeSdkClient) -> None:
+        """Tell the core what a person may type at this child, from its startup handshake.
+
+        The list is the CLI's own answer for the folder this child was started in, so a
+        project's own commands are in it because the child was spawned there. That is why
+        it is read off the live client: any other copy of claude would be answering about
+        somewhere else.
+
+        A child that said nothing about commands leaves the menu alone rather than
+        replacing it with an empty one, because having no commands and never having said
+        is not the same thing.
+        """
+        available_commands = _commands_from_the_handshake(await client.get_server_info())
+        if available_commands is None:
+            return
+        await self._sink.available_commands_reported(available_commands)
 
     async def write_prompt(
         self,
@@ -1020,6 +1049,50 @@ def _identity_environment(
     if role_materials is None:
         return ()
     return role_materials.identity_environment_variables
+
+
+def _commands_from_the_handshake(
+    handshake: dict[str, Any] | None,
+) -> tuple[AgentCommand, ...] | None:
+    """The commands the child said it takes, or nothing when it said nothing about them.
+
+    The handshake is raw wire data — the SDK hands it over as it came, with no model of
+    its own for what is in it — so every piece is checked rather than trusted. An entry
+    with no name is a command nobody could type, and it is left out while the rest of the
+    list stands: a menu missing one line is worth more than no menu at all.
+
+    An empty list back is claude saying it has no commands, which is an answer. A
+    handshake that carried no commands at all is claude saying nothing, and that is the
+    ``None``.
+    """
+    if handshake is None:
+        return None
+    listed = handshake.get("commands")
+    if not isinstance(listed, list):
+        return None
+    commands: list[AgentCommand] = []
+    for entry in listed:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        description = entry.get("description")
+        # The CLI's own spelling, kept because the Python SDK does no renaming on the way
+        # through. ``aliases`` arrives beside these and is deliberately left there: a
+        # command has one name in this system, and offering its other spellings would be
+        # offering the same command several times over.
+        argument_hint = entry.get("argumentHint")
+        commands.append(
+            AgentCommand(
+                name=name,
+                description=description if isinstance(description, str) else "",
+                argument_hint=(
+                    argument_hint if isinstance(argument_hint, str) and argument_hint else None
+                ),
+            )
+        )
+    return tuple(commands)
 
 
 def _durable_session_id(message: Message) -> str | None:
