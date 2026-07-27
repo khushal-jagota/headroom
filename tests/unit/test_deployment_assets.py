@@ -284,13 +284,17 @@ def test_service_control_keeps_launchctl_and_uses_systemd_user_manager(
         encoding="utf-8",
     )
     systemctl.chmod(0o755)
+    # A machine with systemctl and no launchctl — the VPS. The script chooses launchctl
+    # whenever it can find one, so the only way to ask it for the systemd branch is a PATH
+    # with no launchctl on it; leaving the system directories in would hand a macOS host
+    # its real /bin/launchctl and run this against the actual service manager.
     subprocess.run(
-        ["sh", str(control_path), "restart"],
+        ["/bin/sh", str(control_path), "restart"],
         check=True,
         env={
             "HOME": str(tmp_path),
             "PANELS_TEST_CALLS": str(calls),
-            "PATH": f"{command_directory}:/usr/bin:/bin",
+            "PATH": str(command_directory),
         },
     )
     assert calls.read_text(encoding="utf-8") == "--user restart panels-live.service\n"
