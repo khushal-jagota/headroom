@@ -1058,7 +1058,7 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
     )
 
 
-def test_ticket_facts_have_owner_without_execution_route(
+def test_ticket_operating_line_has_owner_without_execution_route(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -1082,6 +1082,6 @@ def test_ticket_facts_have_owner_without_execution_route(
         ready,
     )
 
-    assert page.locator(".ticket-facts [data-execution-route]").count() == 0
-    assert page.locator(".ticket-facts [data-stage-owner]").count() == 1
+    assert page.locator(".ticket-operating [data-execution-route]").count() == 0
+    assert page.locator(".ticket-operating [data-stage-owner]").count() == 1
     assert "execution_route" not in api.get(server, f"/api/tickets/{tid}")

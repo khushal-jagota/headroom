@@ -3698,31 +3698,86 @@ select {
   padding: var(--space-6) var(--space-7) 0;
 }
 
-/* The title speaks — serif display size, the system's own voice. */
+/* Exceptional priority interrupts the scan once, above the title. It is still the live
+ * priority picker; the transparent select keeps the eyebrow quiet until it is used. */
+.ticket-priority-alert {
+  position: relative;
+  display: inline-flex;
+  margin-bottom: var(--space-2);
+  color: var(--accent-error);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ticket-priority-alert select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Title and its utility are one row. Copy belongs to the thing it copies rather than to
+ * the Ticket's facts. */
+.ticket-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
 .ticket-title {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
-  margin-bottom: var(--space-3);
 }
 
-/* The facts line: status display, the enum pills, then quiet text actions pushed
- * right by a flexible gap. One line, wraps if it must. */
-.ticket-facts {
+/* Operating state is the first line under the title. Status, ownership, and the action
+ * that changes ownership stay together when the line wraps. */
+.ticket-operating {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  padding-top: var(--space-3);
+  margin-top: var(--space-4);
   font-size: var(--type-xs);
 }
 
-/* Status display — a dot + the status word, quiet by default; brand accent only when the
- * status means "needs you" (awaiting approval). Running conveys itself through the
- * existing marker chips, not this label. */
+/* Planning facts are useful and editable, but quieter than the operating state above.
+ * Empty scheduling values are add affordances, never blank pills. */
+.ticket-planning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--type-xs);
+}
+
+.ticket-planning .pill {
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.ticket-planning .pill:hover {
+  color: var(--text-strong);
+  background: var(--surface-overlay);
+}
+
+.ticket-planning-add .pill,
+.pill.ticket-planning-add {
+  color: var(--text-faintest);
+}
+
+/* Status display — dot + plain-language state, with semantic colour only when attention,
+ * failure, or completion deserves it. */
 .ticket-status-display {
   display: inline-flex;
   align-items: center;
@@ -3747,6 +3802,22 @@ select {
   background: var(--accent-bright);
 }
 
+.ticket-status-display--error {
+  color: var(--accent-error);
+}
+
+.ticket-status-display--error .ticket-status-dot {
+  background: var(--accent-error);
+}
+
+.ticket-status-display--done {
+  color: var(--accent-done);
+}
+
+.ticket-status-display--done .ticket-status-dot {
+  background: var(--accent-done);
+}
+
 .ticket-backend-error {
   margin-top: var(--space-3);
   color: var(--accent-error);
@@ -3755,12 +3826,7 @@ select {
   white-space: pre-wrap;
 }
 
-/* A flexible gap shoves the text actions to the right end of the facts line. */
-.ticket-facts-gap {
-  flex: 1;
-}
-
-/* Take over / Copy — quiet text actions, not pills. */
+/* Take over / Release and Copy are quiet text actions, not facts or pills. */
 .ticket-act {
   background: none;
   border: 0;
@@ -3774,6 +3840,21 @@ select {
 
 .ticket-act:hover {
   color: var(--text-default);
+}
+
+.ticket-copy {
+  flex: none;
+  margin-top: var(--space-1);
+}
+
+@media (max-width: 720px) {
+  .ticket-head {
+    padding-inline: var(--space-5);
+  }
+
+  .ticket-title-row {
+    gap: var(--space-3);
+  }
 }
 
 /* The leash as one sentence: "approved until [stage] then [stop/propose]", the

@@ -23,7 +23,7 @@ def _put_stage_owner(
     return body
 
 
-def test_ticket_facts_edit_current_stage_owner_without_execution_route(
+def test_ticket_operating_line_edits_current_stage_owner_without_execution_route(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -42,10 +42,10 @@ def test_ticket_facts_edit_current_stage_owner_without_execution_route(
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready)
 
-    owner = ".ticket-facts [data-stage-owner]"
-    assert page.locator(".ticket-facts [data-execution-route]").count() == 0
+    owner = ".ticket-operating [data-stage-owner]"
+    assert page.locator(".ticket-operating [data-execution-route]").count() == 0
     assert page.locator(owner).count() == 1
-    assert page.locator(".ticket-facts [data-implementer]").count() == 0
+    assert page.locator(".ticket-operating [data-implementer]").count() == 0
 
     detail = api.get(server, f"/api/tickets/{ticket_id}")
     assert "execution_route" not in detail

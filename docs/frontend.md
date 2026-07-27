@@ -70,8 +70,11 @@ One screen per part of the system:
   view open. At 960px or less, selecting a ticket opens its standalone
   `#/ticket/<ticket-id>` page, and selecting Chief of Staff opens the standalone
   `#/chief` page.
-- **Ticket** — the whole story of one piece of work: a serif title, a single facts
-  line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
+- **Ticket** — the whole story of one piece of work: exceptional priority above a
+  serif title, Copy beside that title, an operating line (status, current Stage owner,
+  and take-over/release), then a quieter planning line (ordinary priority, due, project,
+  and sprint). Empty scheduling values are add affordances rather than blank facts, and
+  Worker type is not repeated in the header. The
   exact backend Worker failure reason directly below that line when one exists, the
   leash written as one sentence, the recap, then the spine of stages — which stages that
   spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
