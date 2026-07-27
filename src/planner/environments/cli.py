@@ -225,8 +225,8 @@ def app_deploy(
             candidate_app=candidate_app,
             current_root=current_root,
             source_db=source_db,
-            backup=lambda _revision: run_current_app_backup(
-                current_root, source_db, backup_dir
+            backup=lambda revision: run_current_app_backup(
+                current_root, source_db, backup_dir, revision
             ),
             restore=lambda snapshot: restore_database_snapshot(
                 snapshot, source_db, live_stopped=True
