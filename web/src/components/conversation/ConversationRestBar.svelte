@@ -68,13 +68,19 @@
 
 <style>
   /* The same mono line the turn head is, because at rest it is standing in for it. */
+  /* The top of the composer's own card, not a bar above it. It carries the card's sides
+     and its rounded top, sits on the page's colour rather than the recessed one the input
+     uses, and rests flush on the box below — whose own top edge is the line between them,
+     which is why that edge is squared off and no rule is drawn here. */
   .c2-rest {
     display: flex;
     align-items: baseline;
     gap: var(--space-2);
     min-width: 0;
     max-width: 100%;
-    padding: var(--space-1) 0;
+    /* Inside the card, above the line. It draws nothing of its own: the card carries the
+       surface and the outline, and the line beneath is the well's own top edge. */
+    padding: var(--space-3) 0;
     color: var(--text-faintest);
     font-family: var(--font-mono);
     font-size: var(--type-xs);

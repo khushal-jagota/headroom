@@ -106,6 +106,19 @@
     else if (conversationState === "peeked") conversationState = "rest";
   }
 
+  /** A press in the space either side of the card puts it away, the same as the ticket does.
+   *
+   * The card is centred in its section, so the section is wider than the card and what is
+   * left is page, not conversation. Pressing page is how you put the conversation away, and
+   * where on the page it was is not the point.
+   */
+  function dropConversationOnAPressBesideTheCard(event: MouseEvent): void {
+    const pressed = event.target;
+    if (!(pressed instanceof Element)) return;
+    if (pressed.closest("[data-conversation-pane]") !== null) return;
+    dropConversationBackOneState();
+  }
+
   let projectOptions = $derived([
     { value: "", label: "(no project)" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
@@ -555,6 +568,7 @@
         class="ticket-conversation-layer"
         data-conversation-layer-host
         bind:offsetHeight={conversationLayerHeightPixels}
+        onclickcapture={dropConversationOnAPressBesideTheCard}
       >
         <div class="ticket-conversation-column">
           <LiveConversation

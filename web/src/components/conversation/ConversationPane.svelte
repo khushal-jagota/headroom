@@ -230,7 +230,14 @@
     const pressed = event.target;
     if (!(pressed instanceof Element) || paneElement === null) return;
     if (!paneElement.contains(pressed)) return;
-    if (pressed.closest("[data-conversation-input]") === null) return;
+    // The line at rest is the conversation as much as the box is — it is the part that says
+    // something happened, so pressing it is asking to see the rest of it.
+    if (
+      pressed.closest("[data-conversation-input]") === null &&
+      pressed.closest("[data-conversation-rest-bar]") === null
+    ) {
+      return;
+    }
     conversationState = "peeked";
   }
 
@@ -906,6 +913,10 @@
 
 <style>
   :global([data-conversation-pane]) { gap: var(--space-2); }
+  /* Inside the ticket's card nothing separates the parts: the well meets the line, and the
+     line meets whatever is above it. The gap belongs between rows of a transcript, not
+     between the halves of one card. */
+  :global(.ticket-conversation-layer [data-conversation-pane]) { gap: 0; }
   /* This pane corrects the reader's position itself when something above them changes
      height, so the browser must not correct it as well and double the move. */
   :global([data-conversation-thread]) { overflow-anchor: none; }

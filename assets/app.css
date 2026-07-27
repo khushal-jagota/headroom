@@ -3486,31 +3486,28 @@ select {
   position: relative;
 }
 
+/* The page is a column of two: the ticket, then the conversation, with the page's own gap
+ * above the first and below the last. The conversation is NOT over the ticket — it is the
+ * section beneath it, and the two share the page's height between them. That is what makes
+ * the whole thing hold together: there is no reserved space to keep in step with anything,
+ * nothing can hide behind anything, and growing the conversation is just the ticket getting
+ * the smaller share. The page is never taller than the page. */
 .ticket-page {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
-  /* How much room the document leaves at its bottom for the conversation layer at rest.
-   * The layer is not one fixed height — a permission ask, a tray of waiting messages or
-   * an error line all make the composer taller — so TicketRoute measures the layer and
-   * writes the real number over this one. What stands here is the height of an empty
-   * layer, which is what the tail is on the first frame and before there is a layer to
-   * measure at all. */
-  --ticket-conversation-rest-height: calc(var(--space-7) * 3);
+  /* The gap under the conversation, matching the one between the nav and the ticket's
+   * title, so the page breathes the same at both ends. */
+  padding-bottom: var(--space-6);
 }
 
-/* The document scrolls inside the page; the conversation layer over it does not move. */
+/* The ticket takes what the conversation is not using, and scrolls inside it. */
 .ticket-doc {
   min-width: 0;
   min-height: 0;
+  flex: 1;
   overflow-y: auto;
-  /* Anything the browser scrolls to itself — a field taking focus from the keyboard, an
-   * anchor, a preview being brought into view — is scrolled the least it can be, which
-   * without this parks it in the strip the layer covers. There it is visible and looks
-   * ordinary, but every click on it lands on the layer instead, silently. The document
-   * keeps the layer's own height clear of the bottom whenever it moves itself. */
-  scroll-padding-bottom: var(--ticket-conversation-rest-height);
 }
 
 /* --- The conversation, a layer at the bottom of the ticket ----------------- */
@@ -3530,22 +3527,14 @@ select {
  * own page get the same proportions: rest is its own content, peeked takes a bit over
  * half from the bottom, opened takes the whole of it. */
 .ticket-conversation-layer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  /* Above the document it covers. Nothing else on this page declares a z-index at all, so
-   * 1 is the whole claim — and the stacking context it opens keeps the conversation's own
-   * ladder (the jump button, the overflow menu, the "/" popover) to itself. */
+  /* The section under the ticket. At rest it is as tall as it needs to be; the two states
+   * above give it a share of the page and the ticket keeps the rest. Its own ladder — the
+   * jump button, the overflow menu, the "/" popover — sits inside this stacking context. */
   z-index: 1;
+  flex: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: var(--space-3) 0 var(--space-4);
-  /* Rest is no card: the page's own surface and one hairline seam, so the composer reads
-   * as sitting on the page rather than floating over it. */
-  background: var(--surface-base);
-  border-top: var(--border-hairline) solid var(--border-color);
 }
 
 /* The conversation keeps the document's reading measure and its inset, so it stays in the
@@ -3562,22 +3551,64 @@ select {
   padding: 0 var(--space-7);
 }
 
-/* Peeked — a card over the page, at the weight this app already gives a raised popover
- * (.chat-menu): the raised surface, a hairline, the large radius on the two corners that
- * are not against the page's own edge, and the popover shadow turned to face up. */
-.ticket-conversation-layer:has([data-conversation-state="peeked"]) {
-  top: 40%;
-  background: var(--surface-raised);
+/* One card, in every state. The recessed well the person types into is cut into its lower
+ * part; one line runs the full width of the card above that well; and what sits above the
+ * line is the status line at rest and the transcript once it grows. Nothing about how it is
+ * drawn changes between rest and peeked — only how much room the part above the line gets. */
+[data-conversation-pane][data-conversation-state="rest"],
+[data-conversation-pane][data-conversation-state="peeked"] {
+  background: var(--surface-base);
   border: var(--border-hairline) solid var(--border-color);
-  border-bottom: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-radius: var(--radius-lg);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
 }
 
-/* Opened — the same surface taken full. Nothing is added, which is what stops it looking
- * like a card; the way back is the control in the pane head. */
+/* Everything inside the card is held off its edges. */
+.ticket-conversation-layer [data-conversation-pane] {
+  padding: 0 var(--space-4);
+}
+
+/* The well is cut into the card rather than floating in it: it runs the card's full width,
+ * meets its bottom corners, and its top edge is the one line across the whole card. It is
+ * the one thing that reaches past the card's inset, so it pulls itself back out by it and
+ * keeps its own padding for the text inside. */
+.ticket-conversation-layer .chat-box {
+  /* All four edges are always there and only their colour changes, so focus moves nothing.
+   * Drawing them on arrival would grow the well by a pixel on three sides and shift the
+   * text under the cursor at the moment the cursor lands in it. Three of them are invisible
+   * until then; the fourth is the line across the card. */
+  border-width: var(--border-hairline);
+  border-color: transparent;
+  border-top-color: var(--border-color);
+  border-radius: 0;
+  margin: 0 calc(var(--space-4) * -1);
+  padding-inline: var(--space-4);
+}
+
+/* Focused, the well shows its whole shape rather than the one edge it normally draws, so
+ * what is lit is the area being typed into and not a line above it. */
+.ticket-conversation-layer .chat-box:focus-within {
+  border-color: color-mix(in srgb, var(--accent-bright) 40%, transparent);
+}
+
+.ticket-conversation-layer [data-conversation-pane]:not([data-conversation-state="opened"]) .chat-box {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* Peeked and opened take a share of the page and leave the rest to the ticket, which keeps
+ * scrolling inside whatever it is given. Nothing is covered, so nothing is unreachable. */
+.ticket-conversation-layer:has([data-conversation-state="peeked"]) {
+  height: 60%;
+}
+
 .ticket-conversation-layer:has([data-conversation-state="opened"]) {
-  top: 0;
+  height: 100%;
+}
+
+/* Opened stops being a card: the whole of the page's height, this column's width, no
+ * outline and no corners. The line above the well can stay — it belongs to the well. */
+[data-conversation-pane][data-conversation-state="opened"] {
+  background: var(--surface-base);
 }
 
 /* Header and body share one centered readable measure (~768px). The header has no
