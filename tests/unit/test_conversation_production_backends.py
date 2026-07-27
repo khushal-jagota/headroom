@@ -33,25 +33,13 @@ def _machine(**found: str) -> Callable[[str], str | None]:
     return executable_path
 
 
-def test_every_backend_has_a_factory_and_making_one_starts_nothing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Composing the agents also puts the role skills where they can be read from.
-
-    A skill is how an agent learns what it is, and an agent can only read one from its
-    home. Both homes here are this test's own, because composing the real agents is the
-    one thing that writes to them.
-    """
-    monkeypatch.setenv("PLAN_HERMES_HOME", str(tmp_path / "hermes-home"))
-
+def test_every_backend_has_a_factory_and_making_one_starts_nothing() -> None:
     factories = production_backend_child_factories(
         panels_server_url=SERVER_URL,
-        data_directory=tmp_path / "data",
         executable_path=_machine(codex="/usr/local/bin/codex", claude="/usr/local/bin/claude"),
     )
 
     assert set(factories) == set(ConversationBackendKey)
-    assert (tmp_path / "hermes-home" / "skills" / "panels-worker").exists()
 
 
 def test_codex_is_taken_from_the_path_and_run_as_an_app_server() -> None:

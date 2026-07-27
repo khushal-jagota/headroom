@@ -37,7 +37,6 @@ from planner.conversation.backends.hermes_acp import (
 from planner.conversation.contracts import ConversationBackendKey
 from planner.environments.hermes_home import (
     hermes_src_root,
-    provision_planner_home_skills,
     resolve_hermes_python,
     resolve_planner_home,
 )
@@ -86,21 +85,9 @@ def production_backend_launches(
 def production_backend_child_factories(
     *,
     panels_server_url: str,
-    data_directory: Path,
     executable_path: ExecutablePathResolver = shutil.which,
 ) -> Mapping[ConversationBackendKey, BackendChildFactory]:
-    """One child factory per backend, pointed at this machine's copy of each agent.
-
-    Composing the real agents includes putting Panels' own role skills where they can be
-    read from. A skill is how an agent learns what it is, and it can only read one from its
-    home, so the home is filled in here — once, before any conversation asks for a child,
-    which also means a change to a packaged skill is picked up by a restart. It belongs to
-    this function rather than to startup at large because this is the part of startup that
-    is about real agents: a test that composes no real agent should write no real skills.
-    """
-    provision_planner_home_skills(
-        resolve_planner_home(), configured_database_parent=data_directory
-    )
+    """One child factory per backend, pointed at this machine's copy of each agent."""
     launches = production_backend_launches(
         panels_server_url=panels_server_url, executable_path=executable_path
     )

@@ -129,7 +129,6 @@ def create_app(
                 # conversation, so a conversation resumed after a restart reaches the
                 # server that resumed it.
                 panels_server_url=f"http://{HOST}:{config.port}",
-                data_directory=Path(config.db_path).parent,
             ),
         )
         app.state.conversation = conversation
