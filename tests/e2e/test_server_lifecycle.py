@@ -94,6 +94,10 @@ def _isolated_server_env(handle: ServerHandle, control_socket: Path) -> dict[str
             "PLAN_LOGS_DIR": str(handle.log_path.parent / "second-logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(handle.log_path.parent / "second-dispatcher.lock"),
             "PLAN_SERVER_CONTROL_SOCKET": str(control_socket),
+            # Never the developer's own agent home, the same as the harness. This one is
+            # refused before it composes anything, but that is the supervisor's doing
+            # rather than something this env should be relying on.
+            "PLAN_HERMES_HOME": str(handle.log_path.parent / "second-hermes-home"),
         }
     )
     return env

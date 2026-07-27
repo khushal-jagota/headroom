@@ -101,6 +101,11 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
                 "PLAN_LOGS_DIR": str(srvdir / "logs"),
                 "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
+                # A real server composes the real agents, and composing them puts Panels'
+                # role skills in the agent home. Without this that home is the developer's
+                # own ~/.hermes, and every server started here would re-point their real
+                # skills at a temporary directory that is deleted when the test ends.
+                "PLAN_HERMES_HOME": str(srvdir / "hermes-home"),
             }
         )
         if trusted_ingress_env is not None:
