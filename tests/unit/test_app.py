@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -52,6 +53,44 @@ def test_app_manifest_requires_full_sha_and_matching_digest(tmp_path: Path) -> N
     )
     with pytest.raises(AppValidationError, match="artifact digest"):
         validate_app_manifest(manifest_path)
+
+
+def test_new_app_digest_ignores_python_caches(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "stable.txt").write_text("stable", encoding="utf-8")
+    digest = digest_app_artifact(app)
+    cache = app / "package" / "__pycache__" / "module.pyc"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"runtime cache")
+
+    assert digest_app_artifact(app) == digest
+
+
+def test_runtime_python_caches_do_not_invalidate_app_manifest(tmp_path: Path) -> None:
+    manifest, _ = _legacy_cached_app(tmp_path / "app")
+
+    assert validate_app_manifest(manifest).app_sha == SHA
+
+
+def test_disappearing_runtime_cache_does_not_break_legacy_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, runtime_cache = _legacy_cached_app(tmp_path / "app")
+    real_lstat = Path.lstat
+    disappeared = False
+
+    def lstat(path: Path, *args: object, **kwargs: object) -> os.stat_result:
+        nonlocal disappeared
+        if path == runtime_cache and not disappeared:
+            disappeared = True
+            runtime_cache.unlink()
+            raise FileNotFoundError(path)
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", lstat)
+
+    assert validate_app_manifest(manifest).app_sha == SHA
 
 
 def test_nested_manifest_is_covered_by_app_digest(tmp_path: Path) -> None:
@@ -247,6 +286,48 @@ def _git_source(tmp_path: Path) -> tuple[Path, str]:
         text=True,
     ).stdout.strip()
     return source, sha
+
+
+def _legacy_cached_app(app: Path) -> tuple[Path, Path]:
+    build_cache = (
+        app
+        / ".venv"
+        / "lib"
+        / "python3.13"
+        / "site-packages"
+        / "package"
+        / "__pycache__"
+        / "built.pyc"
+    )
+    build_cache.parent.mkdir(parents=True)
+    build_cache.write_bytes(b"built during install")
+    stable = app / "stable.txt"
+    stable.write_text("stable", encoding="utf-8")
+    legacy = hashlib.sha256()
+    for path in sorted((build_cache, stable)):
+        legacy.update(path.relative_to(app).as_posix().encode())
+        legacy.update(b"\0")
+        legacy.update(path.read_bytes())
+        legacy.update(b"\0")
+    manifest = app / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "format": "panels-app-v1",
+                "app_sha": SHA,
+                "source_digest": "a" * 64,
+                "artifact_digest": legacy.hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    os.utime(build_cache, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(stable, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(manifest, ns=(2_000_000_000, 2_000_000_000))
+    runtime_cache = build_cache.with_name("runtime.pyc")
+    runtime_cache.write_bytes(b"created after deployment")
+    os.utime(runtime_cache, ns=(3_000_000_000, 3_000_000_000))
+    return manifest, runtime_cache
 
 
 def _runtime_app(app: Path) -> Path:

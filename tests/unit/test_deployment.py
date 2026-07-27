@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import shutil
+import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from planner.environments.app import AppManifest, digest_app_artifact, digest_app_source
+from planner.environments.backup import create_database_backup
 from planner.environments.deployment import (
     DeploymentError,
     DeploymentResult,
@@ -163,6 +165,28 @@ def test_recovery_failure_reports_every_existing_continuation_path(tmp_path: Pat
     assert str(retained[0]) in detail
     assert (current / "app" / "old").is_file()
     assert (retained[0] / "new").is_file()
+
+
+def test_restore_failure_reports_snapshot_path(tmp_path: Path) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    database = _database(current)
+    snapshot = tmp_path / "snapshot"
+
+    with pytest.raises(DeploymentError) as raised:
+        deploy_app(
+            candidate_app=candidate,
+            current_root=current,
+            source_db=database,
+            backup=lambda _: snapshot,
+            restore=lambda _: (_ for _ in ()).throw(OSError("restore failed")),
+            service=FakeService([]),
+            health=FakeHealth([], set()),
+        )
+
+    assert str(snapshot) in str(raised.value)
+    assert "restore failed" in str(raised.value)
 
 
 def test_unhealthy_restored_app_reports_every_existing_continuation_path(
@@ -544,7 +568,7 @@ def test_fallback_cleanup_failure_retains_healthy_candidate_and_fallback(
         real_rmtree(path, ignore_errors=ignore_errors)
 
     monkeypatch.setattr("planner.environments.deployment.shutil.rmtree", fail_fallback_cleanup)
-    with pytest.raises(OSError, match="fallback cleanup failed"):
+    with pytest.raises(DeploymentError) as raised:
         deploy_app(
             candidate_app=candidate,
             current_root=current,
@@ -558,6 +582,9 @@ def test_fallback_cleanup_failure_retains_healthy_candidate_and_fallback(
     fallback = list(current.glob(".app-fallback-*"))
     assert len(fallback) == 1
     assert (fallback[0] / "old").is_file()
+    assert "candidate is healthy" in str(raised.value)
+    assert "fallback cleanup failed" in str(raised.value)
+    assert str(fallback[0]) in str(raised.value)
 
 
 def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> None:
@@ -600,7 +627,7 @@ def test_launchctl_stop_boots_out_explicit_user_domain(
     def run(
         command: list[str], *, check: bool, shell: bool, **_: object
     ) -> subprocess.CompletedProcess[str]:
-        assert check is True
+        assert check is False
         assert shell is False
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -608,6 +635,20 @@ def test_launchctl_stop_boots_out_explicit_user_domain(
     monkeypatch.setattr(subprocess, "run", run)
     SubprocessServiceController("launchctl", "gui/501/com.panels.live").stop()
     assert commands == [["/bin/launchctl", "bootout", "gui/501/com.panels.live"]]
+
+
+def test_launchctl_stop_tolerates_an_already_unloaded_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(
+        command: list[str], *, check: bool, shell: bool, **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        assert check is False
+        assert shell is False
+        return subprocess.CompletedProcess(command, 3, "", "Boot-out failed: 3: No such process")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    SubprocessServiceController("launchctl", "gui/501/com.panels.live").stop()
 
 
 def test_launchctl_restart_accepts_explicit_user_domain(
@@ -671,7 +712,11 @@ def test_predeploy_backup_runs_through_the_current_deployed_launcher(
     launcher = current / "app" / "bin" / "panels-launcher"
     launcher.parent.mkdir(parents=True)
     source_db = current / "data" / "planner.db"
+    source_db.parent.mkdir(parents=True)
+    with sqlite3.connect(source_db) as connection:
+        connection.execute("CREATE TABLE proof (value TEXT)")
     backup_dir = current / "data" / "backups"
+    expected_snapshot = create_database_backup(source_db, backup_dir, SHA_A)
     commands: list[list[str]] = []
     environments: list[dict[str, str]] = []
 
@@ -687,12 +732,12 @@ def test_predeploy_backup_runs_through_the_current_deployed_launcher(
         assert shell is False
         commands.append(command)
         environments.append(env)
-        return subprocess.CompletedProcess(command, 0, f"{backup_dir / 'snapshot-1'}\n", "")
+        return subprocess.CompletedProcess(command, 0, f"{expected_snapshot}\n", "")
 
     monkeypatch.setenv("HOME", str(tmp_path / "vps"))
     monkeypatch.setattr(subprocess, "run", run)
-    snapshot = run_current_app_backup(current, source_db, backup_dir)
-    assert snapshot == (backup_dir / "snapshot-1").resolve()
+    snapshot = run_current_app_backup(current, source_db, backup_dir, SHA_A)
+    assert snapshot == expected_snapshot.resolve()
     assert commands == [
         [
             str(launcher),
@@ -707,6 +752,85 @@ def test_predeploy_backup_runs_through_the_current_deployed_launcher(
         ]
     ]
     assert environments[0]["PLAN_HERMES_HOME"] == str(tmp_path / "vps" / ".hermes")
+
+
+def test_predeploy_backup_rejects_snapshot_outside_backup_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = tmp_path / "current"
+    outside = tmp_path / "outside" / "snapshot-1"
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, f"{outside}\n", ""),
+    )
+
+    with pytest.raises(DeploymentError, match="outside the backup directory"):
+        run_current_app_backup(
+            current,
+            current / "data" / "planner.db",
+            current / "data" / "backups",
+            SHA_A,
+        )
+
+
+def test_predeploy_backup_rejects_unverified_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = tmp_path / "current"
+    backup_dir = current / "data" / "backups"
+    snapshot = backup_dir / "snapshot-bad"
+    snapshot.mkdir(parents=True)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, f"{snapshot}\n", ""),
+    )
+
+    with pytest.raises(DeploymentError, match="unverified snapshot"):
+        run_current_app_backup(
+            current,
+            current / "data" / "planner.db",
+            backup_dir,
+            SHA_A,
+        )
+
+
+def test_predeploy_backup_rejects_wrong_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = tmp_path / "current"
+    source_db = current / "data" / "planner.db"
+    source_db.parent.mkdir(parents=True)
+    with sqlite3.connect(source_db) as connection:
+        connection.execute("CREATE TABLE proof (value TEXT)")
+    backup_dir = current / "data" / "backups"
+    snapshot = create_database_backup(source_db, backup_dir, SHA_A)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, f"{snapshot}\n", ""),
+    )
+
+    with pytest.raises(DeploymentError, match="does not match prior app"):
+        run_current_app_backup(current, source_db, backup_dir, SHA_B)
+
+
+def test_predeploy_backup_preserves_command_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(1, ["panels-launcher"], stderr="disk full")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    current = tmp_path / "current"
+    with pytest.raises(DeploymentError, match="disk full"):
+        run_current_app_backup(
+            current,
+            current / "data" / "planner.db",
+            current / "data" / "backups",
+            SHA_A,
+        )
 
 
 def _database(current: Path) -> Path:
