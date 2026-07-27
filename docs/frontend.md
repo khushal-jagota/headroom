@@ -12,12 +12,14 @@ One screen per part of the system:
 
 - **Day** — the day overview: focus, brief take, watchout, and what makes the day
   land. Read top to bottom in the serif voice, flat, with no boxes.
-- **Review** — the human chamber for parked Ticket proposals and Worker help requests: one centred decision with Skip and
-  Open-ticket top-right, a labelled recap, the ask surface, and a send-back row.
-  Keyboard shortcuts drive it (skip, open, approve) when the cursor is not in a text
-  field, and each decision fades in as it arrives. The approve button physically
-  refuses to work until "how far may the worker go next" has been answered, both
-  halves.
+- **Review** — the human chamber for parked Ticket proposals and Worker help requests:
+  one oldest-first walk with a centred item, its Ticket title, and Skip and Open Ticket
+  top-right. Proposal items add their labelled recap, ask, approval, and send-back
+  controls; needs-user items direct the human to the Ticket conversation without those
+  proposal controls. Keyboard shortcuts drive the actions that apply to the current
+  item when the cursor is not in a text field, and each item fades in as it arrives. A
+  proposal's approve button physically refuses to work until "how far may the worker
+  go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. One project selector narrows the roster by each ticket's effective project,
@@ -69,8 +71,11 @@ One screen per part of the system:
   view open. At 960px or less, selecting a ticket opens its standalone
   `#/ticket/<ticket-id>` page, and selecting Chief of Staff opens the standalone
   `#/chief` page.
-- **Ticket** — the whole story of one piece of work: a serif title, a single facts
-  line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
+- **Ticket** — the whole story of one piece of work: exceptional priority above a
+  serif title, Copy beside that title, an operating line (status, current Stage owner,
+  and take-over/release), then a quieter planning line (ordinary priority, due, project,
+  and sprint). Empty scheduling values are add affordances rather than blank facts, and
+  Worker type is not repeated in the header. The
   exact backend Worker failure reason directly below that line when one exists, the
   leash written as one sentence, the recap, then the spine of stages — which stages that
   spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
@@ -105,10 +110,11 @@ One screen per part of the system:
   The layout collapses cleanly on mobile. Legacy `#/workers` and
   `#/workers/<worker-type>` addresses redirect to their Agents-page equivalents.
 
-The shell itself carries two separate live signals. Worker presence is the small
-spinner and "N working" readout from the global running-worker count. Server
-connection health is the compact Connected / Reconnecting readout beside it, which
-says whether the change stream below is open.
+The shell carries one combined status control and, on desktop, worker presence.
+The status control says Connected or Reconnecting from the change stream and opens
+the manually refreshed VPS health details. Worker presence is the small spinner and
+"N working" readout from the global running-worker count; it is hidden at mobile
+widths so navigation links and connection status keep the available space.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -143,10 +149,11 @@ share.
   A conversation's rows, what it is running on, and what it is waiting for are the
   record's own account rather than cached REST resources.
 
-  The change stream is also the browser's connection-health owner. The shell starts at
-  Reconnecting and says Connected while the stream is open. When the stream drops, the
-  browser retries on its own and the shell says Reconnecting until it is back. Because
-  anything that changed during the gap went unheard, opening the stream refetches
+  The change stream is also the browser's connection-health owner. The shell's VPS
+  status trigger starts at Reconnecting and says Connected while the stream is open.
+  When the stream drops, the browser retries on its own and the trigger says
+  Reconnecting until it is back. Because anything that changed during the gap went
+  unheard, opening the stream refetches
   what is on screen — that, plus the same refetch when the window is focused again, is
   the whole recovery story. The server sends an occasional invisible keep-alive line
   down a quiet stream, which changes nothing on screen.

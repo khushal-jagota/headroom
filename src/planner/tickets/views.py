@@ -331,21 +331,33 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
 # --- Review --------------------------------------------------------------------
 
 
-def _ticket_decisions(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
+def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
     rows = conn.execute(
-        "SELECT id, title, stage, worker_type, ticket_status, fields FROM tickets "
+        "SELECT id, title, stage, worker_type, ticket_status, ticket_status_changed_at, "
+        "fields FROM tickets "
         "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
         (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
-    decisions: list[JsonDict] = []
+    items: list[JsonDict] = []
     for row in rows:
+        ticket_status = str(row["ticket_status"])
+        if ticket_status == TicketStatus.needs_user.value:
+            items.append(
+                {
+                    "review_item_type": TicketStatus.needs_user.value,
+                    "ticket_id": str(row["id"]),
+                    "title": str(row["title"]),
+                    "waiting_since": int(row["ticket_status_changed_at"]),
+                }
+            )
+            continue
+        # Review is a pure filter on the control statuses that mean the user has
+        # something to handle: a parked proposal or an explicit Worker help request.
+        if ticket_status != TicketStatus.awaiting_approval.value:
+            continue
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])
-        # Review is a pure filter on the status: awaiting_approval is exactly "a
-        # proposal is parked for the user".
-        if str(row["ticket_status"]) != TicketStatus.awaiting_approval.value:
-            continue
         field = worker_type_definition.gating_field(stage)
         if field is None:
             continue
@@ -358,16 +370,17 @@ def _ticket_decisions(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict
         proposal = slot.get("proposal")
         if not isinstance(proposal, dict):
             continue
-        decisions.append(
+        items.append(
             {
+                "review_item_type": "proposal",
                 "ticket_id": str(row["id"]),
                 "field": field,
                 "title": str(row["title"]),
                 "waiting_since": proposal["created_at"],
             }
         )
-    decisions.sort(key=lambda decision: (decision["waiting_since"], decision["ticket_id"]))
-    return decisions
+    items.sort(key=lambda item: (item["waiting_since"], item["ticket_id"]))
+    return items
 
 
 def review_view(
@@ -378,21 +391,7 @@ def review_view(
     running_workers = conn.execute(
         "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent'"
     ).fetchone()
-    user_help_requests = [
-        {
-            "ticket_id": str(row["id"]),
-            "title": str(row["title"]),
-            "waiting_since": int(row["waiting_since"]),
-        }
-        for row in conn.execute(
-            "SELECT id, title, ticket_status_changed_at AS waiting_since FROM tickets "
-            "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) "
-            "AND ticket_status = 'needs_user' ORDER BY id",
-            (day_id,),
-        ).fetchall()
-    ]
     return {
-        "ticket_decisions": _ticket_decisions(conn, day_id=day_id),
-        "user_help_requests": user_help_requests,
+        "items": _review_items(conn, day_id=day_id),
         "running_worker_count": int(running_workers["count"] if running_workers is not None else 0),
     }
