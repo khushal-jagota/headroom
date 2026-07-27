@@ -87,7 +87,10 @@ def _real_child(
 ) -> CodexAppServerBackendChild:
     assert CODEX_EXECUTABLE is not None
     return CodexAppServerBackendChild(
-        launch=codex_app_server_child_launch(codex_executable=Path(CODEX_EXECUTABLE)),
+        launch=codex_app_server_child_launch(
+            codex_executable=Path(CODEX_EXECUTABLE),
+            panels_server_url="http://127.0.0.1:8811",
+        ),
         resolved_start=_resolved_start(workspace, model=model),
         event_sink=sink,
         message_files=_message_files(),

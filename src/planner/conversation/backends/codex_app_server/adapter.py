@@ -172,13 +172,20 @@ class CodexChildLaunch:
     environment_overrides: tuple[tuple[str, str], ...] = ()
 
 
-def codex_app_server_child_launch(*, codex_executable: Path) -> CodexChildLaunch:
+def codex_app_server_child_launch(
+    *, codex_executable: Path, panels_server_url: str
+) -> CodexChildLaunch:
     """The launch for the codex on this machine.
 
-    Nothing is added to the environment. Codex has one home and one account, and the login
-    that account lives in is the one this process already inherits.
+    Nothing about the login is added. Codex has one home and one account, and the login that
+    account lives in is the one this process already inherits. The only thing put over it is
+    where Panels is answering, which the ``panels`` CLI in the agent's shell needs and could
+    not work out for itself.
     """
-    return CodexChildLaunch(argv=(str(codex_executable), "app-server"))
+    return CodexChildLaunch(
+        argv=(str(codex_executable), "app-server"),
+        environment_overrides=(("PLAN_SERVER_URL", panels_server_url),),
+    )
 
 
 @dataclass(slots=True)

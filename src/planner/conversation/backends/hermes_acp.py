@@ -207,6 +207,7 @@ def hermes_acp_child_launch(
     hermes_executable: Path,
     hermes_home: Path,
     hermes_python_source_root: Path,
+    panels_server_url: str,
 ) -> AcpChildLaunch:
     """The launch for the hermes on this machine, with the environment it needs."""
     return AcpChildLaunch(
@@ -214,6 +215,7 @@ def hermes_acp_child_launch(
         environment_overrides=(
             ("HERMES_HOME", str(hermes_home)),
             ("HERMES_PYTHON_SRC_ROOT", str(hermes_python_source_root)),
+            ("PLAN_SERVER_URL", panels_server_url),
         ),
     )
 

@@ -196,15 +196,19 @@ USER_ANSWERS_INPUT_FIELD: Final = "answers"
 
 @dataclass(frozen=True, slots=True)
 class ClaudeAgentSdkChildLaunch:
-    """Which Claude Code executable to run the child with.
+    """Which Claude Code executable to run the child with, and what to run it with.
 
     ``claude_executable`` of ``None`` leaves the SDK to find one, which is the copy it
     ships with. Production names the installed CLI instead, so the agent a conversation
     runs on is the one on this machine — the version the owner has, logged in the way the
     owner logged it in.
+
+    ``environment_overrides`` are facts about this machine rather than about the
+    conversation, so the conversation's own identity variables are put over them.
     """
 
     claude_executable: Path | None = None
+    environment_overrides: tuple[tuple[str, str], ...] = ()
 
 
 class ClaudeSdkClient(Protocol):
@@ -547,7 +551,10 @@ class ClaudeAgentSdkBackendChild:
             permission_mode=_permission_mode(resolved_start.access),
             resume=vendor_session_cursor,
             session_id=minted_session_id,
-            env=dict(_identity_environment(resolved_start)),
+            env={
+                **dict(self._launch.environment_overrides),
+                **dict(_identity_environment(resolved_start)),
+            },
             include_partial_messages=True,
             can_use_tool=self._can_use_tool,
             stderr=self._note_standard_error,

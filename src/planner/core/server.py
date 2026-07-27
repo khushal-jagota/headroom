@@ -20,13 +20,17 @@ from planner.conversation.api import router as conversation_router
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
 from planner.core.clock import Clock
-from planner.core.config import Config
+from planner.core.config import HOST, Config
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.days.api import router as days_router
+from planner.environments.hermes_home import (
+    provision_planner_home_skills,
+    resolve_planner_home,
+)
 from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
@@ -115,6 +119,15 @@ def create_app(
         finally:
             audit_conn.close()
 
+        # Panels' own role skills are what an agent reads to learn what it is, and it can
+        # only read them from its home. Putting them there is startup's job: they are in
+        # place before any conversation asks for one, and a change to a packaged skill is
+        # picked up by a restart rather than by a redeploy.
+        provision_planner_home_skills(
+            resolve_planner_home(),
+            configured_database_parent=Path(config.db_path).parent,
+        )
+
         # The conversation system, built before anything that sends into one. It composes
         # the three real agents on this machine, and spawns none of them until a
         # conversation has something to send. Everything that starts or steers a worker
@@ -123,7 +136,13 @@ def create_app(
             db_path=config.db_path,
             db_busy_timeout_ms=config.db_busy_timeout_ms,
             sse_heartbeat_ms=config.sse_heartbeat_ms,
-            backend_child_factories=production_backend_child_factories(),
+            backend_child_factories=production_backend_child_factories(
+                # Where this server is answering, so the `panels` CLI in an agent's shell
+                # can reach it. Read from the running config rather than stored with a
+                # conversation, so a conversation resumed after a restart reaches the
+                # server that resumed it.
+                panels_server_url=f"http://{HOST}:{config.port}",
+            ),
         )
         app.state.conversation = conversation
         # A test that drives workers wants a conversation system it can hold still, so it

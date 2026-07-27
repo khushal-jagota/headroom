@@ -225,8 +225,7 @@ Chief endpoints edit skill description and body or launch defaults; the shared
 announces itself, and any Agents screen on display refetches what it is showing.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
-`src/planner/conversation/hermes_backend_configuration.py`, and
-`web/src/routes/AgentsRoute.svelte`.
+`src/planner/environments/hermes_home.py`, and `web/src/routes/AgentsRoute.svelte`.
 
 ## The Ticket owns its launch setup
 
@@ -265,8 +264,8 @@ Access is not a launch setting and is never copied onto a Ticket. Every conversa
 under full access inside its workspace folder; how each backend realises that belongs to its
 adapter and appears nowhere else.
 
-_Code paths:_ `src/planner/conversation/backend_catalog.py` owns the ordered backend
-catalog; `src/planner/worker_types/configuration.py` composes it with the Worker-type
+_Code paths:_ `src/planner/conversation/production_backends.py` composes the three real
+agents; `src/planner/worker_types/configuration.py` joins them to the Worker-type
 registry; `src/planner/tickets/data.py` stores and freezes the Ticket setup; and
 `web/src/components/WorkerConfigurationSetup.svelte` renders the Kickoff controls.
 
@@ -308,7 +307,8 @@ the backend skill links.
 _Code paths:_ `src/planner/skills/panels-worker/SKILL.md`, the specialist skills under
 `src/planner/skills/`,
 `src/planner/tickets/api.py`, `src/planner/cli/main.py`, and
-`src/planner/conversation/hermes_backend_configuration.py`.
+`src/planner/environments/hermes_home.py` (linked in by `src/planner/core/server.py` at
+startup).
 
 ## Adding a Worker type
 
@@ -325,8 +325,8 @@ One new Worker type needs one definition and one production registration path:
    skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
    register it anywhere else.
 4. Add the skill directory name to `PLANNER_SKILL_NAMES` in
-   `src/planner/conversation/hermes_backend_configuration.py`, so startup provisions it
-   into the worker's Hermes home.
+   `src/planner/environments/hermes_home.py`, so startup provisions it into the
+   worker's Hermes home.
 5. Announce the Worker type at both agent front doors: add the specialist to
    `panels-worker` and describe the new type in `panels-chief-of-staff`.
 6. Restart Panels. Composition validates the complete registry and startup provisions the

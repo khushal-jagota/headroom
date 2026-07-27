@@ -916,6 +916,7 @@ def _real_hermes_launch() -> AcpChildLaunch:
         hermes_executable=HERMES_EXECUTABLE,
         hermes_home=HERMES_HOME,
         hermes_python_source_root=HERMES_PYTHON_SOURCE_ROOT,
+        panels_server_url="http://127.0.0.1:8811",
     )
 
 

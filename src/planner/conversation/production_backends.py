@@ -60,23 +60,37 @@ class ProductionBackendLaunches:
 
 
 def production_backend_launches(
-    *, executable_path: ExecutablePathResolver = shutil.which
+    *,
+    panels_server_url: str,
+    executable_path: ExecutablePathResolver = shutil.which,
 ) -> ProductionBackendLaunches:
-    """This machine's three agents, resolved."""
+    """This machine's three agents, resolved.
+
+    ``panels_server_url`` is where this server is answering, and every agent gets it: the
+    ``panels`` CLI in an agent's shell talks to Panels over HTTP and has no other way to
+    learn the port. It is passed in rather than stored with a conversation because it is a
+    fact about the server that is running now — a conversation resumed after a restart must
+    reach the server that resumed it, not the one it was started under.
+    """
     return ProductionBackendLaunches(
-        hermes=_hermes_launch(),
+        hermes=_hermes_launch(panels_server_url),
         codex=codex_app_server_child_launch(
-            codex_executable=_on_path(executable_path, "codex")
+            codex_executable=_on_path(executable_path, "codex"),
+            panels_server_url=panels_server_url,
         ),
-        claude=_claude_launch(executable_path),
+        claude=_claude_launch(executable_path, panels_server_url),
     )
 
 
 def production_backend_child_factories(
-    *, executable_path: ExecutablePathResolver = shutil.which
+    *,
+    panels_server_url: str,
+    executable_path: ExecutablePathResolver = shutil.which,
 ) -> Mapping[ConversationBackendKey, BackendChildFactory]:
     """One child factory per backend, pointed at this machine's copy of each agent."""
-    launches = production_backend_launches(executable_path=executable_path)
+    launches = production_backend_launches(
+        panels_server_url=panels_server_url, executable_path=executable_path
+    )
     return {
         ConversationBackendKey.hermes: HermesAcpBackendChildFactory(launches.hermes),
         ConversationBackendKey.codex: CodexAppServerBackendChildFactory(launches.codex),
@@ -84,7 +98,7 @@ def production_backend_child_factories(
     }
 
 
-def _hermes_launch() -> AcpChildLaunch:
+def _hermes_launch(panels_server_url: str) -> AcpChildLaunch:
     """Hermes as today's layer resolves it: from its interpreter, not from PATH.
 
     Hermes is a checkout with a virtualenv rather than a packaged binary, so the
@@ -97,10 +111,13 @@ def _hermes_launch() -> AcpChildLaunch:
         hermes_executable=hermes_python.with_name("hermes"),
         hermes_home=resolve_planner_home(),
         hermes_python_source_root=hermes_src_root(hermes_python),
+        panels_server_url=panels_server_url,
     )
 
 
-def _claude_launch(executable_path: ExecutablePathResolver) -> ClaudeAgentSdkChildLaunch:
+def _claude_launch(
+    executable_path: ExecutablePathResolver, panels_server_url: str
+) -> ClaudeAgentSdkChildLaunch:
     """Claude as the CLI this machine has, when it has one.
 
     Naming the installed CLI is what makes a conversation run on the agent the owner
@@ -110,7 +127,8 @@ def _claude_launch(executable_path: ExecutablePathResolver) -> ClaudeAgentSdkChi
     """
     found = executable_path("claude")
     return ClaudeAgentSdkChildLaunch(
-        claude_executable=None if found is None else Path(found)
+        claude_executable=None if found is None else Path(found),
+        environment_overrides=(("PLAN_SERVER_URL", panels_server_url),),
     )
 
 

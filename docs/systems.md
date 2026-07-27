@@ -219,9 +219,12 @@ Human and service actions carry explicit actor and claim context. Direct-only
 operations reject worker claims. Worker writes remain proposals. The Chief's bounded
 operations do not create a second path around the proposal resolver.
 
-Worker identity uses `PLAN_TICKET_ID` and the Ticket's worker-self endpoint. The
-server's ACP child receives the exact Ticket identity and the launching server's local
-HTTP address, so bare Worker CLI commands stay with that server on non-default ports.
+Worker identity uses `PLAN_TICKET_ID` and the Ticket's worker-self endpoint. The agent a
+conversation runs on is told the exact Ticket identity and the address the server that
+started it is answering on, so a bare Worker CLI command reaches that server and not
+another one on another port. All three agents are told it, because a Ticket's worker can
+be any of them, and it is read from the running server rather than remembered with the
+conversation — a conversation resumed after a restart reaches the server that resumed it.
 Duplicate session ownership fails instead of guessing which Ticket a worker belongs to.
 
 _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission rules.
