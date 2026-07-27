@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path
@@ -152,4 +154,13 @@ def _repository(tmp_path: Path, name: str = "repo") -> Path:
 
 
 def _environment_root(tmp_path: Path) -> Path:
-    return Path("/tmp") / f"pe-{tmp_path.parent.name}-{tmp_path.name}"
+    """A short, already-resolved root for a real environment estate.
+
+    Resolved because the code resolves an environment root before measuring the control
+    socket inside it against the AF_UNIX path limit, and ``/tmp`` is a symlink on macOS —
+    the eight characters that resolution adds are on their own enough to push the socket
+    over. Short for the same reason: the whole of that path has to fit in 103 bytes, so
+    the test's identity goes in as a digest rather than as its name.
+    """
+    digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
+    return Path("/tmp").resolve() / f"pe-{os.getpid()}-{digest}"
