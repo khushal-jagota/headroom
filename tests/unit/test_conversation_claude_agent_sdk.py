@@ -698,6 +698,33 @@ def test_the_commands_claude_takes_are_reported_as_the_session_is_established(
     _run(exercise)
 
 
+def test_the_commands_are_the_answer_for_this_conversations_own_folder(tmp_path: Path) -> None:
+    """The child that answered about commands is the one running where the work happens.
+
+    Claude's list is not the same everywhere: a project keeps commands of its own in the
+    folder, and the CLI only reports them when it was started there. So the two facts have
+    to be one fact — the client the commands were read off must be the client that was
+    given this conversation's workspace folder. Reading them from any other claude, a
+    machine-wide probe included, would answer about somewhere nobody is working.
+    """
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(
+            _start_request(workspace_folder=tmp_path),
+            handshake={"commands": [{"name": "ship", "description": "This project's own"}]},
+        )
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+
+        assert len(clients) == 1
+        assert clients[0].options.cwd == str(tmp_path)
+        assert sink.available_commands == [
+            (AgentCommand(name="ship", description="This project's own"),)
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
 def test_a_commands_other_spellings_are_dropped_rather_than_offered(tmp_path: Path) -> None:
     """Claude reports the aliases a command also answers to. Panels offers the one name."""
 
