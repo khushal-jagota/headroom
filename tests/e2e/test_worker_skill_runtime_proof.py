@@ -118,7 +118,11 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_acp(
             if cause is not None:
                 raise cause
 
-        factory = RoleSkillKickoffAcpEmployeeChildFactory(SdkAcpEmployeeChildFactory(definition))
+        factory = RoleSkillKickoffAcpEmployeeChildFactory(
+            SdkAcpEmployeeChildFactory(
+                definition, panels_server_url="http://127.0.0.1:8767"
+            )
+        )
         child = await factory.create(employee, 1, ingress, permission, death)
         try:
             await child.initialize(build_panels_initialize_request(definition))

@@ -8,6 +8,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from acp import PROTOCOL_VERSION
 from acp.client.connection import ClientSideConnection
@@ -96,6 +97,26 @@ class AcpChildEnvironmentPolicyError(AcpChildError):
     pass
 
 
+def validate_panels_server_url(panels_server_url: str) -> str:
+    try:
+        parsed = urlsplit(panels_server_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Panels server URL must be a local HTTP origin") from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost"}
+        or port is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("Panels server URL must be a local HTTP origin")
+    return panels_server_url.rstrip("/")
+
+
 def build_panels_initialize_request(
     definition: AgentBackendDefinition,
 ) -> InitializeRequest:
@@ -117,8 +138,10 @@ def build_confined_child_environment(
     definition: AgentBackendDefinition,
     employee: ConversationEmployee,
     *,
+    panels_server_url: str,
     ambient_environment: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
+    panels_server_url = validate_panels_server_url(panels_server_url)
     ambient = os.environ if ambient_environment is None else ambient_environment
     sdk_defaults = default_environment()
     undeclared_defaults = sorted(
@@ -140,6 +163,7 @@ def build_confined_child_environment(
         if name.startswith("PLAN_") or name == "HERMES_TUI_SKILLS":
             del environment[name]
 
+    environment["PLAN_SERVER_URL"] = panels_server_url
     environment["PLAN_ACTOR"] = "worker" if employee.entity_kind == "ticket" else "chief"
     if employee.entity_kind == "ticket":
         environment["PLAN_TICKET_ID"] = employee.entity_id
@@ -612,6 +636,7 @@ class SdkAcpEmployeeChildFactory:
         self,
         definition: AgentBackendDefinition,
         *,
+        panels_server_url: str,
         stderr_tail_max_bytes: int = ACP_CHILD_STDERR_TAIL_MAX_BYTES,
         ingress_max_items: int | None = None,
         filesystem_service: AcpFilesystemRuntimePort | None = None,
@@ -620,6 +645,7 @@ class SdkAcpEmployeeChildFactory:
         if stderr_tail_max_bytes <= 0:
             raise ValueError("stderr_tail_max_bytes must be positive")
         self.definition = definition
+        self._panels_server_url = validate_panels_server_url(panels_server_url)
         self._stderr_tail_max_bytes = stderr_tail_max_bytes
         self._ingress_max_items = ingress_max_items
         self._filesystem_service = filesystem_service
@@ -645,7 +671,11 @@ class SdkAcpEmployeeChildFactory:
                 "terminal capability requires the complete reverse service"
             )
         working_directory = self.definition.working_directory_for(employee)
-        environment = build_confined_child_environment(self.definition, employee)
+        environment = build_confined_child_environment(
+            self.definition,
+            employee,
+            panels_server_url=self._panels_server_url,
+        )
         close_event = asyncio.Event()
         fatal_event = asyncio.Event()
         fatal_holder: list[BaseException] = []

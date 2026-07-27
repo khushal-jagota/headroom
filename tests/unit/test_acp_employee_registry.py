@@ -526,6 +526,7 @@ def _registry(
             EmployeeBackendBuildContext(
                 data_directory=Path.cwd(),
                 employee_workspace_root=Path.cwd(),
+                panels_server_url="http://127.0.0.1:8767",
             )
         ),
         resolve_binding=resolve or repository.resolve,
@@ -3172,6 +3173,7 @@ def test_crash_respawns_and_loads_same_durable_binding_without_drift() -> None:
                 EmployeeBackendBuildContext(
                     data_directory=Path.cwd(),
                     employee_workspace_root=Path.cwd(),
+                    panels_server_url="http://127.0.0.1:8767",
                 )
             ),
             resolve_binding=repository.resolve,

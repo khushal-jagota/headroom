@@ -292,7 +292,9 @@ def _provider(
     definition = _definition()
     delegate_factory = _ScriptedClaudeFactory(script)
     child_factory = ClaudeAcpEmployeeChildFactory(
-        definition, delegate_factory=delegate_factory
+        definition,
+        panels_server_url="http://127.0.0.1:8767",
+        delegate_factory=delegate_factory,
     )
     adapter = StableAcpEmployeeSessionConfigurationAdapter(
         definition=definition,
@@ -338,6 +340,7 @@ def test_materialized_claude_registration_uses_its_decorated_durable_factory_for
             data_directory=tmp_path,
             repository_root=REPOSITORY_ROOT,
             employee_workspace_root=employee_workspace_root,
+            panels_server_url="http://127.0.0.1:8767",
         )
     )
 
@@ -563,6 +566,7 @@ def test_first_claude_session_configures_before_binding_and_never_reapplies_afte
                 EmployeeBackendBuildContext(
                     data_directory=REPOSITORY_ROOT / "data",
                     employee_workspace_root=REPOSITORY_ROOT,
+                    panels_server_url="http://127.0.0.1:8767",
                 )
             ),
             resolve_binding=repository.resolve,
@@ -650,6 +654,7 @@ def test_invalid_claude_launch_configuration_publishes_no_binding_or_prompt(
                 EmployeeBackendBuildContext(
                     data_directory=REPOSITORY_ROOT / "data",
                     employee_workspace_root=REPOSITORY_ROOT,
+                    panels_server_url="http://127.0.0.1:8767",
                 )
             ),
             resolve_binding=repository.resolve,

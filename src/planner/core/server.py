@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.composition import ConversationComposition, ConversationTestOptions
 from planner.core.clock import Clock
-from planner.core.config import Config
+from planner.core.config import HOST, Config
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.testmode import TestModeAcceptingEmployeeRevisionRunner, build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
@@ -126,6 +126,7 @@ def create_app(
                 clock=clock,
                 repository_root=_REPO_ROOT,
                 employee_workspace_root=resolve_employee_workspace_root(),
+                panels_server_url=f"http://{HOST}:{config.port}",
                 loop=asyncio.get_running_loop(),
                 test_options=conversation_test_options,
             )
@@ -150,6 +151,7 @@ def create_app(
                 clock=clock,
                 repository_root=_REPO_ROOT,
                 employee_workspace_root=resolve_employee_workspace_root(),
+                panels_server_url=f"http://{HOST}:{config.port}",
                 loop=asyncio.get_running_loop(),
             )
             try:

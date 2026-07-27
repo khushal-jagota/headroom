@@ -210,6 +210,7 @@ def test_first_automatic_prompt_uses_selected_model_then_reasoning(
                 clock=RealClock(),
                 repository_root=tmp_path,
                 employee_workspace_root=tmp_path,
+                panels_server_url="http://127.0.0.1:8767",
                 loop=asyncio.get_running_loop(),
                 test_options=ConversationTestOptions(
                     employee_runtime_definitions=(

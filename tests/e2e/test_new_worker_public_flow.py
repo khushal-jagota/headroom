@@ -108,7 +108,14 @@ def _application(tmp_path: Path) -> tuple[Any, Path, str]:
     clock = build_clock(config)
     definition = _definition()
     catalog = EmployeeBackendCatalog(
-        (static_employee_backend_registration(definition, SdkAcpEmployeeChildFactory(definition)),)
+        (
+            static_employee_backend_registration(
+                definition,
+                SdkAcpEmployeeChildFactory(
+                    definition, panels_server_url="http://127.0.0.1:8767"
+                ),
+            ),
+        )
     )
     runtime_definitions = build_employee_runtime_definitions(
         catalog,

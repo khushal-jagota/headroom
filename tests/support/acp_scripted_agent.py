@@ -7,6 +7,7 @@ import copy
 import json
 import os
 import socket
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, cast
@@ -428,6 +429,33 @@ class ScriptedAcpAgent:
         if script == "die":
             _diagnostic("deterministic death")
             os._exit(23)
+
+        if any(
+            "[ACP_TEST_WORKER_CLI]" in str(getattr(item, "text", ""))
+            for item in prompt
+        ):
+            completed = subprocess.run(
+                ["panels", "worker", "my-ticket", "--json"],
+                capture_output=True,
+                check=False,
+                env=os.environ,
+                text=True,
+                timeout=10,
+            )
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "worker CLI probe failed: "
+                    f"exit={completed.returncode} stderr={completed.stderr.strip()!r}"
+                )
+            await self._emit(
+                session_id,
+                AgentMessageChunk(
+                    session_update="agent_message_chunk",
+                    message_id="worker-cli-probe",
+                    content=_text(completed.stdout.strip()),
+                ),
+            )
+            return PromptResponse(stop_reason="end_turn")
 
         if script == "burst":
             burst_count = int(kwargs.get("count", 128))

@@ -81,23 +81,31 @@ def test_hermes_environment_has_explicit_overrides_and_exact_panels_identity() -
         "ANTHROPIC_API_KEY": "no",
         "PLAN_TICKET_ID": "stale",
         "PLAN_ACTOR": "stale",
+        "PLAN_SERVER_URL": "http://127.0.0.1:1",
         "HERMES_HOME": "/ambient",
         "HERMES_TUI_SKILLS": "on",
     }
     ticket_environment = build_confined_child_environment(
-        _definition(), _employee(), ambient_environment=ambient
+        _definition(),
+        _employee(),
+        panels_server_url="http://127.0.0.1:43210",
+        ambient_environment=ambient,
     )
     assert ticket_environment["HERMES_HOME"] == "/srv/panels/hermes-home"
     assert ticket_environment["HERMES_PYTHON_SRC_ROOT"] == "/opt/hermes/source"
     assert ticket_environment["PLAN_TICKET_ID"] == "ticket-hermes"
     assert ticket_environment["PLAN_ACTOR"] == "worker"
+    assert ticket_environment["PLAN_SERVER_URL"] == "http://127.0.0.1:43210"
     assert ticket_environment["HERMES_YOLO_MODE"] == "1"
     assert "OPENAI_API_KEY" not in ticket_environment
     assert "ANTHROPIC_API_KEY" not in ticket_environment
     assert "HERMES_TUI_SKILLS" not in ticket_environment
 
     chief_environment = build_confined_child_environment(
-        _definition(), _employee("agent"), ambient_environment=ambient
+        _definition(),
+        _employee("agent"),
+        panels_server_url="http://127.0.0.1:43210",
+        ambient_environment=ambient,
     )
     assert chief_environment["PLAN_ACTOR"] == "chief"
     assert chief_environment["HERMES_YOLO_MODE"] == "1"
@@ -169,6 +177,7 @@ def test_production_hermes_registration_reuses_exact_resolved_installation(
         EmployeeBackendBuildContext(
             data_directory=tmp_path,
             employee_workspace_root=REPOSITORY_ROOT,
+            panels_server_url="http://127.0.0.1:8767",
             planner_home_default=planner_home,
             repository_root=REPOSITORY_ROOT,
         )

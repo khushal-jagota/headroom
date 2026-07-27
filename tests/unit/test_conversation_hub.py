@@ -3483,7 +3483,9 @@ def test_normalized_codex_edit_over_one_megabyte_replays_through_ready(
         async def ignore_death(_cause: BaseException | None) -> None:
             return None
 
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             employee, 1, hub_ingress, deny_permission, ignore_death
         )
         record = AcpEmployeeRecord(employee, binding, 1, child, identity)

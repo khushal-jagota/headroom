@@ -204,6 +204,7 @@ def build_claude_employee_backend_registration() -> EmployeeBackendRegistration:
         )
         child_factory = ClaudeAcpEmployeeChildFactory(
             definition,
+            panels_server_url=context.panels_server_url,
         )
         employee_configuration_adapter = StableAcpEmployeeSessionConfigurationAdapter(
             definition=definition,
@@ -336,12 +337,16 @@ class ClaudeAcpEmployeeChildFactory(AcpEmployeeChildFactory):
         self,
         definition: AgentBackendDefinition,
         *,
+        panels_server_url: str,
         delegate_factory: AcpEmployeeChildFactory | None = None,
     ) -> None:
         if definition.backend_key != CLAUDE_BACKEND_KEY:
             raise ValueError("Claude child factory requires the Claude backend definition")
         self.definition = definition
-        self._delegate_factory = delegate_factory or SdkAcpEmployeeChildFactory(definition)
+        self._delegate_factory = delegate_factory or SdkAcpEmployeeChildFactory(
+            definition,
+            panels_server_url=panels_server_url,
+        )
 
     async def create(
         self,

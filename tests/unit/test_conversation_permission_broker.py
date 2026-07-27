@@ -347,7 +347,9 @@ def test_real_sdk_permission_callback_is_admitted_by_turn_epoch_and_cancelled_on
                     error,
                 )
 
-        child_factory = SdkAcpEmployeeChildFactory(definition)
+        child_factory = SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        )
         materialized_backend = MaterializedEmployeeBackendRegistration(
             definition=definition,
             child_factory=child_factory,

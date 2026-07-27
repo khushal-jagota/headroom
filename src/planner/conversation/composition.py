@@ -108,6 +108,7 @@ class ConversationComposition:
         clock: Clock,
         repository_root: Path,
         employee_workspace_root: Path,
+        panels_server_url: str,
         loop: asyncio.AbstractEventLoop,
         test_options: ConversationTestOptions | None = None,
         planner_home_default: Path | None = None,
@@ -158,6 +159,7 @@ class ConversationComposition:
                     planner_home_default=planner_home_default,
                     repository_root=repository_root,
                     employee_workspace_root=employee_workspace_root,
+                    panels_server_url=panels_server_url,
                 )
             )
         )

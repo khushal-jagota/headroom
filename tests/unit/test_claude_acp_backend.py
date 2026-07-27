@@ -258,9 +258,13 @@ def test_claude_environment_is_confined_and_keeps_only_panels_worker_identity() 
         "OPENAI_API_KEY": "secret",
         "PLAN_ACTOR": "stale",
         "PLAN_TICKET_ID": "stale",
+        "PLAN_SERVER_URL": "http://127.0.0.1:1",
     }
     environment = build_confined_child_environment(
-        _definition(), _employee(), ambient_environment=ambient
+        _definition(),
+        _employee(),
+        panels_server_url="http://127.0.0.1:43210",
+        ambient_environment=ambient,
     )
 
     assert environment["PLAN_ACTOR"] == "worker"
@@ -269,8 +273,10 @@ def test_claude_environment_is_confined_and_keeps_only_panels_worker_identity() 
         *default_environment(),
         "CLAUDE_CONFIG_DIR",
         "PLAN_ACTOR",
+        "PLAN_SERVER_URL",
         "PLAN_TICKET_ID",
     }
+    assert environment["PLAN_SERVER_URL"] == "http://127.0.0.1:43210"
     assert "ANTHROPIC_API_KEY" not in environment
     assert "CLAUDE_CODE_EXECUTABLE" not in environment
     assert environment["CLAUDE_CONFIG_DIR"] == "/custom/config"
@@ -298,6 +304,7 @@ def test_zero_arg_claude_registration_materializes_decorated_lazy_runtime(
             data_directory=tmp_path,
             repository_root=REPOSITORY_ROOT,
             employee_workspace_root=REPOSITORY_ROOT,
+            panels_server_url="http://127.0.0.1:8767",
         )
     )
     assert materialized.definition.backend_key == CLAUDE_BACKEND_KEY
@@ -338,6 +345,7 @@ def test_claude_factory_passes_new_and_load_metadata_through_unchanged() -> None
         fake = _FakeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
+            panels_server_url="http://127.0.0.1:8767",
             delegate_factory=fake,
         )
         delivered: list[SessionNotification] = []
@@ -411,6 +419,7 @@ def test_claude_factory_suppresses_only_exact_compaction_control_chunks() -> Non
         fake = _FakeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
+            panels_server_url="http://127.0.0.1:8767",
             delegate_factory=fake,
         )
         delivered: list[SessionNotification] = []
@@ -603,6 +612,7 @@ def test_claude_startup_preflight_is_initialize_only_and_closes_before_ready() -
         fake = _FakeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
+            panels_server_url="http://127.0.0.1:8767",
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -657,6 +667,7 @@ def test_claude_startup_preflight_fails_closed_on_mismatch(
         fake = _FakeFactory(response)
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
+            panels_server_url="http://127.0.0.1:8767",
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -746,6 +757,7 @@ def test_claude_startup_preflight_hang_uses_one_deadline_and_force_closes() -> N
         fake = _HangingInitializeAndCloseFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
+            panels_server_url="http://127.0.0.1:8767",
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -808,6 +820,7 @@ def test_claude_startup_preflight_cancellation_during_spawn_settles_late_child()
         fake = _CancellationResistantSpawnFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
+            panels_server_url="http://127.0.0.1:8767",
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -835,6 +848,7 @@ def test_claude_startup_preflight_cancellation_during_initialize_settles_child()
         fake = _HangingInitializeFactory(_initialize_response())
         factory = ClaudeAcpEmployeeChildFactory(
             _definition(),
+            panels_server_url="http://127.0.0.1:8767",
             delegate_factory=fake,
         )
         preflight = ClaudeBackendStartupPreflight(
@@ -868,6 +882,7 @@ def test_exact_claude_package_initialize_preflight_uses_no_session_or_prompt() -
         definition = _definition()
         factory = ClaudeAcpEmployeeChildFactory(
             definition,
+            panels_server_url="http://127.0.0.1:8767",
         )
         preflight = ClaudeBackendStartupPreflight(
             definition=definition,
@@ -882,6 +897,8 @@ def test_exact_claude_package_initialize_preflight_uses_no_session_or_prompt() -
 
 
 def test_factory_conforms_to_generic_child_factory_protocol() -> None:
-    factory = ClaudeAcpEmployeeChildFactory(_definition())
+    factory = ClaudeAcpEmployeeChildFactory(
+        _definition(), panels_server_url="http://127.0.0.1:8767"
+    )
     generic_factory: AcpEmployeeChildFactory = factory
     assert generic_factory is factory

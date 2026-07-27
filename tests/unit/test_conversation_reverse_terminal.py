@@ -617,7 +617,9 @@ def test_official_sdk_bridge_executes_declared_terminal_calls(
             deaths.append(error)
 
         child = await SdkAcpEmployeeChildFactory(
-            definition, terminal_service=service
+            definition,
+            panels_server_url="http://127.0.0.1:8767",
+            terminal_service=service,
         ).create(employee, 1, sink, permission, death)
         try:
             await child.initialize(build_panels_initialize_request(definition))
@@ -672,7 +674,9 @@ def test_declared_terminal_requires_complete_service_before_spawn(
             return None
 
         with pytest.raises(AcpChildUnsupportedReverseService):
-            await SdkAcpEmployeeChildFactory(definition).create(
+            await SdkAcpEmployeeChildFactory(
+                definition, panels_server_url="http://127.0.0.1:8767"
+            ).create(
                 _employee(tmp_path), 1, discard, permission, death
             )
 

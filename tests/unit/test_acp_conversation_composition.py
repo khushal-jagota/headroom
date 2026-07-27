@@ -221,6 +221,7 @@ def test_employee_workspace_contracts_reject_relative_paths(tmp_path: Path) -> N
         EmployeeBackendBuildContext(
             data_directory=tmp_path,
             employee_workspace_root=Path("relative-workspace"),
+            panels_server_url="http://127.0.0.1:8767",
         )
 
     async def exercise() -> None:
@@ -234,10 +235,32 @@ def test_employee_workspace_contracts_reject_relative_paths(tmp_path: Path) -> N
                 clock=clock,
                 repository_root=tmp_path,
                 employee_workspace_root=Path("relative-workspace"),
+                panels_server_url="http://127.0.0.1:8767",
                 loop=asyncio.get_running_loop(),
             )
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "panels_server_url",
+    (
+        "https://127.0.0.1:8767",
+        "http://panels.example:8767",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8767/api",
+    ),
+)
+def test_backend_context_rejects_non_local_server_origin(
+    tmp_path: Path,
+    panels_server_url: str,
+) -> None:
+    with pytest.raises(ValueError, match="local HTTP origin"):
+        EmployeeBackendBuildContext(
+            data_directory=tmp_path,
+            employee_workspace_root=tmp_path,
+            panels_server_url=panels_server_url,
+        )
 
 
 def test_production_browser_capacity_is_1024_and_test_options_can_override(
@@ -253,6 +276,7 @@ def test_production_browser_capacity_is_1024_and_test_options_can_override(
             clock=clock,
             repository_root=Path.cwd(),
             employee_workspace_root=Path.cwd(),
+            panels_server_url="http://127.0.0.1:8767",
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(definition, factory),
@@ -270,6 +294,7 @@ def test_production_browser_capacity_is_1024_and_test_options_can_override(
             clock=clock,
             repository_root=tmp_path,
             employee_workspace_root=tmp_path,
+            panels_server_url="http://127.0.0.1:8767",
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(
@@ -297,6 +322,7 @@ def test_single_conversation_composition_owns_runtime_and_closes_browser_admissi
             clock=clock,
             repository_root=tmp_path,
             employee_workspace_root=tmp_path,
+            panels_server_url="http://127.0.0.1:8767",
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(definition, factory),
@@ -340,6 +366,7 @@ def test_real_composition_keeps_new_empty_until_the_first_prompt(tmp_path: Path)
             clock=clock,
             repository_root=tmp_path,
             employee_workspace_root=tmp_path,
+            panels_server_url="http://127.0.0.1:8767",
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(definition, factory),
@@ -403,6 +430,7 @@ def test_conversation_composition_injects_sqlite_worker_context_into_step_gatewa
             clock=clock,
             repository_root=tmp_path,
             employee_workspace_root=tmp_path,
+            panels_server_url="http://127.0.0.1:8767",
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=_runtime_definitions(definition, _Factory(definition)),
@@ -469,6 +497,7 @@ def test_employee_backend_preflights_run_once_in_catalog_order_without_registry_
             clock=clock,
             repository_root=tmp_path,
             employee_workspace_root=employee_workspace_root,
+            panels_server_url="http://127.0.0.1:8767",
             loop=asyncio.get_running_loop(),
             test_options=ConversationTestOptions(
                 employee_runtime_definitions=build_employee_runtime_definitions(catalog),
@@ -777,6 +806,7 @@ def test_employee_backend_catalog_rejects_empty_duplicate_and_runtime_key_mismat
             EmployeeBackendBuildContext(
                 data_directory=tmp_path,
                 employee_workspace_root=tmp_path,
+                panels_server_url="http://127.0.0.1:8767",
             )
         )
 

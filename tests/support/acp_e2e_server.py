@@ -11,8 +11,10 @@ from acp.transports import default_environment
 from tests.support.probe import build_probe_registry
 
 from planner.conversation.backend_catalog import (
+    EmployeeBackendBuildContext,
     EmployeeBackendCatalog,
-    static_employee_backend_registration,
+    EmployeeBackendRegistration,
+    MaterializedEmployeeBackendRegistration,
 )
 from planner.conversation.backend_contracts import (
     AgentBackendDefinition,
@@ -82,11 +84,19 @@ def build_scripted_employee_runtime_definitions() -> ConfiguredEmployeeRuntimeDe
         _scripted_definition(key)
         for key in ("hermes", "codex", "claude", "probe-backend")
     )
-    catalog = EmployeeBackendCatalog(
-        tuple(
-            static_employee_backend_registration(
+
+    def registration(definition: AgentBackendDefinition) -> EmployeeBackendRegistration:
+        def materialize(
+            context: EmployeeBackendBuildContext,
+        ) -> MaterializedEmployeeBackendRegistration:
+            factory = SdkAcpEmployeeChildFactory(
                 definition,
-                (factory := SdkAcpEmployeeChildFactory(definition)),
+                panels_server_url=context.panels_server_url,
+            )
+            return MaterializedEmployeeBackendRegistration(
+                definition=definition,
+                child_factory=factory,
+                is_executable=lambda: True,
                 employee_configuration_adapter=(
                     StableAcpEmployeeSessionConfigurationAdapter(
                         definition=definition,
@@ -95,8 +105,11 @@ def build_scripted_employee_runtime_definitions() -> ConfiguredEmployeeRuntimeDe
                     )
                 ),
             )
-            for definition in definitions
-        )
+
+        return EmployeeBackendRegistration(definition.backend_key, materialize)
+
+    catalog = EmployeeBackendCatalog(
+        tuple(registration(definition) for definition in definitions)
     )
     return ConfiguredEmployeeRuntimeDefinitions(
         catalog,
@@ -112,7 +125,7 @@ def _app() -> object:
         clock,
         lambda: connect(config.db_path),
         conversation_test_options=ConversationTestOptions(
-            employee_runtime_definitions=(build_scripted_employee_runtime_definitions()),
+            employee_runtime_definitions=build_scripted_employee_runtime_definitions(),
         ),
     )
 
