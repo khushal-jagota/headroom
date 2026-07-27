@@ -24,10 +24,6 @@
   };
 
   const review = createQuery(() => queries.review());
-  const connectionLabels = {
-    connected: "Connected",
-    reconnecting: "Reconnecting"
-  };
   const navStatusClearancePx = 8;
 
   let route = $state<Route>(parseRoute());
@@ -207,23 +203,13 @@
       <a class:active={currentNav("agents")} class="nav-link" data-screen="agents" href="#/agents">Agents</a>
     </nav>
     <div class="shell-statuses">
-      <VpsStatusPopover />
       {#if (review.data?.running_worker_count || 0) > 0}
         <span class="shell-presence" data-shell-presence>
           <span class="shell-presence-spin" aria-hidden="true"></span>
           {review.data?.running_worker_count} working
         </span>
       {/if}
-      <span
-        class="shell-connection"
-        data-connection-status
-        data-state={$connectionStatus}
-        role="status"
-        aria-live="polite"
-      >
-        <span class="shell-connection-mark" aria-hidden="true"></span>
-        <span class="shell-connection-label">{connectionLabels[$connectionStatus]}</span>
-      </span>
+      <VpsStatusPopover connectionState={$connectionStatus} />
     </div>
   </header>
 

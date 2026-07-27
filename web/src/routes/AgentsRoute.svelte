@@ -59,6 +59,18 @@
   let sharedWorkerSkill = $derived(
     skillsHome.data?.skills.find((skill) => skill.name === "panels-worker")
   );
+  // These reads must stay eager. TanStack tracks each property as it is read, so
+  // short-circuiting across the three query proxies can leave a later query's
+  // completion unobserved and the combined loading state stuck on screen.
+  let indexError = $derived(
+    [workers.error, manifests.error, skillsHome.error].find((error) => Boolean(error))
+  );
+  let indexLoading = $derived(
+    [workers.isFetching, manifests.isFetching, skillsHome.isFetching].some(Boolean)
+  );
+  let indexHasData = $derived(
+    [workers.data, manifests.data, skillsHome.data].every((data) => data !== undefined)
+  );
 
   function stageCount(workerSummary: WorkerManagementSummary): number {
     return indexedManifests.get(workerSummary.worker_type)?.stages.length || 0;
@@ -193,9 +205,9 @@
         <p>Every configurable role. Agents run at the top level; Workers run one Ticket at a time.</p>
       </header>
       <ResourceState
-        error={workers.error || manifests.error || skillsHome.error}
-        loading={workers.isFetching || manifests.isFetching || skillsHome.isFetching}
-        hasData={Boolean(workers.data && manifests.data && skillsHome.data)}
+        error={indexError}
+        loading={indexLoading}
+        hasData={indexHasData}
         loadingText="Loading agents..."
       >
         {#if workers.data}

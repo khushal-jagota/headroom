@@ -27,7 +27,10 @@ from planner.environments.deployment import (
     deploy_app,
     run_current_app_backup,
 )
-from planner.environments.hermes_home import resolve_hermes_python
+from planner.environments.hermes_home import (
+    provision_planner_home_skills,
+    resolve_hermes_python,
+)
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (
     build_environment_run_env,
@@ -51,6 +54,7 @@ from planner.environments.vps_status import (
     collect_cleanup_inventory,
     collect_vps_status,
 )
+from planner.skill_sources import provision_native_backend_skills
 
 ExecFn = Callable[[str, list[str], Mapping[str, str]], object]
 ResolveInstanceFn = Callable[..., ResolvedEnvironmentInstance]
@@ -242,6 +246,34 @@ def app_deploy(
     if result.status not in {"succeeded", "unchanged"}:
         detail = result.detail or "requested app is not running"
         raise click.ClickException(f"app deployment {result.status}: {detail}")
+
+
+@environment.command("provision-skills")
+@click.option(
+    "--database-parent",
+    type=click.Path(path_type=Path, exists=True, file_okay=False),
+    required=True,
+)
+@click.option("--hermes-home", type=click.Path(path_type=Path, file_okay=False), required=True)
+@click.option("--codex-home", type=click.Path(path_type=Path, file_okay=False), required=True)
+@click.option("--claude-home", type=click.Path(path_type=Path, file_okay=False), required=True)
+def provision_skills(
+    database_parent: Path,
+    hermes_home: Path,
+    codex_home: Path,
+    claude_home: Path,
+) -> None:
+    """Reconcile Panels skills into each production agent home."""
+    try:
+        provision_planner_home_skills(
+            hermes_home,
+            configured_database_parent=database_parent,
+        )
+        provision_native_backend_skills(codex_home, database_parent)
+        provision_native_backend_skills(claude_home, database_parent)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("provisioned Panels skills for Hermes, Codex, and Claude")
 
 
 @environment.command("restore")

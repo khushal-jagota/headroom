@@ -58,6 +58,34 @@ def test_provision_planner_home_skills_symlinks_packaged_skills_idempotently(
         assert (target / "SKILL.md").is_file()
 
 
+def test_provision_planner_home_skills_removes_retired_exposure_and_preserves_custom(
+    tmp_path: Path,
+) -> None:
+    target_root = tmp_path / "home" / "skills"
+    target_root.mkdir(parents=True)
+    custom = target_root / "custom"
+    custom.mkdir()
+    (custom / "SKILL.md").write_text("custom", encoding="utf-8")
+    retired = target_root / "panels-ticket-management"
+    retired.mkdir()
+    (retired / "SKILL.md").write_text("retired", encoding="utf-8")
+
+    provision_planner_home_skills(
+        tmp_path / "home",
+        ("panels", "panels-ticket-management"),
+        configured_database_parent=tmp_path,
+    )
+    provision_planner_home_skills(
+        tmp_path / "home",
+        ("panels", "panels-ticket-management"),
+        configured_database_parent=tmp_path,
+    )
+
+    assert not retired.exists()
+    assert (custom / "SKILL.md").read_text(encoding="utf-8") == "custom"
+    assert (target_root / "panels").is_symlink()
+
+
 def test_panels_owns_shared_system_and_communication_guidance() -> None:
     root = panels_skill_root()
     shared = (root / "panels" / "SKILL.md").read_text(encoding="utf-8")

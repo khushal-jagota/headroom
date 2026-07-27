@@ -274,12 +274,20 @@ textarea {
   width: var(--space-2);
   height: var(--space-2);
   border-radius: var(--radius-pill);
-  background: var(--text-faintest);
+  background: var(--accent-done);
 }
 
-.vps-status-trigger[data-state="healthy"] .vps-status-mark { background: var(--accent-done); }
-.vps-status-trigger[data-state="warning"] .vps-status-mark { background: var(--accent-bright); }
-.vps-status-trigger[data-state="critical"] .vps-status-mark { background: var(--accent-error); }
+.vps-status-trigger[data-state="reconnecting"] {
+  color: var(--text-faint);
+}
+
+.vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
+  background: transparent;
+  border: var(--border-hairline) solid var(--text-faintest);
+  border-top-color: var(--text-muted);
+  box-sizing: border-box;
+  animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
+}
 
 .vps-status-popover {
   position: absolute;
@@ -330,38 +338,9 @@ textarea {
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
 
-.shell-connection {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  white-space: nowrap;
-}
-
-.shell-connection-mark {
-  flex: none;
-  width: var(--space-2);
-  height: var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--accent-done);
-}
-
-.shell-connection[data-state="reconnecting"] {
-  color: var(--text-faint);
-}
-
-.shell-connection[data-state="reconnecting"] .shell-connection-mark {
-  background: transparent;
-  border: var(--border-hairline) solid var(--text-faintest);
-  border-top-color: var(--text-muted);
-  box-sizing: border-box;
-  animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
-  .shell-connection[data-state="reconnecting"] .shell-connection-mark {
+  .vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
     animation: none;
   }
 }
@@ -384,7 +363,7 @@ textarea {
   }
 
   .shell-presence {
-    flex: none;
+    display: none;
   }
 }
 
