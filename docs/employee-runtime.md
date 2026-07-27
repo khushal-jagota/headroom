@@ -173,6 +173,11 @@ backends support observed compaction and ACP permissions, and can carry both hum
 Automatic Employee work. Hermes supports native Steer. Codex and Claude Code do not;
 Queue and Send Now remain available.
 
+Each ACP child also receives the local HTTP address of the Panels server that launched
+it. Worker CLI commands therefore return to that exact server, including a staging or
+test server on a non-default port. Child launch removes ambient `PLAN_*` values first,
+then adds this server address and the authoritative Worker and Ticket identity.
+
 Hermes exposes Model selection and no Reasoning selection. Codex and Claude Code expose
 both through ACP, with Reasoning choices discovered again for the selected Model. After
 the first binding, the stored launch model and reasoning are historical only. Bound
@@ -211,4 +216,4 @@ startup behavior changes the Ticket's durable backend choice or session identity
 
 ---
 
-_Last verified: 2026-07-23 (Employee workspace and repository infrastructure roots split)._
+_Last verified: 2026-07-27 (ACP child server affinity and confined Worker identity)._

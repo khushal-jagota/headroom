@@ -3,7 +3,7 @@ set -eu
 
 repository_url=${1:?usage: configure-deployment-runner.sh REPOSITORY_URL REGISTRATION_TOKEN}
 registration_token=${2:?usage: configure-deployment-runner.sh REPOSITORY_URL REGISTRATION_TOKEN}
-runner_root="$HOME/Coding/Panels/.github-runner"
+runner_root="$HOME/Deployments/Panels/deployment-runner"
 
 exec "$runner_root/config.sh" \
   --unattended \

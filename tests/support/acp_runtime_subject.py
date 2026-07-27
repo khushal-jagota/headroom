@@ -99,7 +99,9 @@ class ProductionAcp01ConformanceSubject:
             working_directory_resolver=lambda employee: employee.workspace_roots[0],
             turn_strategy=_TurnStrategy(),
         )
-        factory = SdkAcpEmployeeChildFactory(definition)
+        factory = SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        )
         repository = InMemoryAcpBindingRepository()
         notifications: list[SessionNotification] = []
         trace: list[str] = []
@@ -144,6 +146,7 @@ class ProductionAcp01ConformanceSubject:
                 EmployeeBackendBuildContext(
                     data_directory=REPOSITORY_ROOT,
                     employee_workspace_root=REPOSITORY_ROOT,
+                    panels_server_url="http://127.0.0.1:8767",
                 )
             ),
             resolve_binding=repository.resolve,

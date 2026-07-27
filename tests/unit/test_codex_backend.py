@@ -97,10 +97,14 @@ def test_codex_environment_keeps_only_declared_auth_and_panels_identity() -> Non
         "NO_BROWSER": "0",
         "PLAN_ACTOR": "stale",
         "PLAN_TICKET_ID": "stale",
+        "PLAN_SERVER_URL": "http://127.0.0.1:1",
     }
 
     environment = build_confined_child_environment(
-        _definition(), _employee(), ambient_environment=ambient
+        _definition(),
+        _employee(),
+        panels_server_url="http://127.0.0.1:43210",
+        ambient_environment=ambient,
     )
 
     assert environment == {
@@ -113,6 +117,7 @@ def test_codex_environment_keeps_only_declared_auth_and_panels_identity() -> Non
         "INITIAL_AGENT_MODE": "agent-full-access",
         "NO_BROWSER": "1",
         "PLAN_ACTOR": "worker",
+        "PLAN_SERVER_URL": "http://127.0.0.1:43210",
         "PLAN_TICKET_ID": "ticket-codex",
     }
     assert "CODEX_PATH" not in environment
@@ -210,6 +215,7 @@ def test_zero_arg_codex_registration_materializes_sdk_factory_and_exact_probe(
             repository_root=REPOSITORY_ROOT,
             data_directory=tmp_path,
             employee_workspace_root=REPOSITORY_ROOT,
+            panels_server_url="http://127.0.0.1:8767",
         )
     )
     assert materialized.definition.backend_key == CODEX_BACKEND_KEY

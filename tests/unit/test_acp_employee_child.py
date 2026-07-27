@@ -710,7 +710,9 @@ def test_non_draining_retirement_fails_response_observed_load_before_cancelling_
 def test_child_close_retires_unfulfilled_observer_reservation_without_hanging() -> None:
     async def exercise() -> None:
         definition = _definition()
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(),
             1,
             _discard,
@@ -729,7 +731,9 @@ def test_child_close_retires_unfulfilled_observer_reservation_without_hanging() 
 def test_child_force_close_cancels_pending_reservation_without_new_deadline() -> None:
     async def exercise() -> None:
         definition = _definition()
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(),
             1,
             _discard,
@@ -767,12 +771,17 @@ def test_environment_is_explicit_and_employee_identity_overrides_pollution() -> 
         "OPENAI_API_KEY": "must-not-leak",
         "PLAN_TICKET_ID": "stale",
         "PLAN_ACTOR": "stale",
+        "PLAN_SERVER_URL": "http://127.0.0.1:1",
         "HERMES_HOME": "/ambient/hermes",
         "HERMES_TUI_SKILLS": "1",
     }
     environment = build_confined_child_environment(
-        _definition(), employee, ambient_environment=ambient
+        _definition(),
+        employee,
+        panels_server_url="http://127.0.0.1:43210",
+        ambient_environment=ambient,
     )
+    assert environment["PLAN_SERVER_URL"] == "http://127.0.0.1:43210"
     assert environment["PLAN_TICKET_ID"] == "ticket-17"
     assert environment["PLAN_ACTOR"] == "worker"
     assert "OPENAI_API_KEY" not in environment
@@ -790,13 +799,19 @@ def test_environment_fails_before_spawn_for_undeclared_sdk_default() -> None:
         ),
     )
     with pytest.raises(AcpChildEnvironmentPolicyError, match=missing):
-        build_confined_child_environment(definition, _employee())
+        build_confined_child_environment(
+            definition,
+            _employee(),
+            panels_server_url="http://127.0.0.1:8767",
+        )
 
 
 def test_official_sdk_child_delegates_and_load_waits_for_sink_consumption() -> None:
     async def exercise() -> None:
         definition = _definition()
-        factory = SdkAcpEmployeeChildFactory(definition)
+        factory = SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        )
         received: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
         load_sink_entered = asyncio.Event()
         release_load_sink = asyncio.Event()
@@ -863,7 +878,9 @@ def test_official_sdk_child_delegates_and_load_waits_for_sink_consumption() -> N
 def test_official_sdk_child_sets_config_options_and_closes_temporary_session() -> None:
     async def exercise() -> None:
         definition = _definition()
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _discard, _deny_permission, _discard_death
         )
         try:
@@ -895,7 +912,9 @@ def test_official_sdk_child_sends_exact_legacy_model_request_before_prompt(
             _definition(),
             environment_overrides=(("ACP_TEST_LEGACY_MODEL_AUDIT_PATH", str(audit_path)),),
         )
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _discard, _deny_permission, _discard_death
         )
         try:
@@ -936,7 +955,9 @@ def test_official_sdk_child_sends_exact_legacy_model_request_before_prompt(
 def test_official_sdk_child_forks_exact_session_and_privately_loads_ordered_replay() -> None:
     async def exercise() -> None:
         definition = _definition()
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _discard, _deny_permission, _discard_death
         )
         await child.initialize(build_panels_initialize_request(definition))
@@ -1018,7 +1039,9 @@ def test_official_sdk_child_normalizes_live_and_private_load_after_wire_match() 
         definition = replace(_definition(), session_notification_normalizer=mark)
         ordinary: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
         private: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _append_async(ordinary), _deny_permission, _discard_death
         )
         try:
@@ -1087,7 +1110,9 @@ def test_official_sdk_post_fork_updates_route_by_exact_session_without_deadlock(
                 await release_source_update.wait()
             ordinary.append(item)
 
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, ordinary_sink, _deny_permission, _discard_death
         )
         try:
@@ -1218,7 +1243,9 @@ def test_official_sdk_post_load_metadata_returns_to_ordinary_ingress() -> None:
             ):
                 metadata_observed.set()
 
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, ordinary_sink, _deny_permission, _discard_death
         )
         try:
@@ -1257,7 +1284,9 @@ def test_missing_fork_capability_rejects_before_official_rpc() -> None:
             _definition(),
             environment_overrides=(("ACP_TEST_FORK_SESSION", "0"),),
         )
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _discard, _deny_permission, _discard_death
         )
         await child.initialize(build_panels_initialize_request(definition))
@@ -1282,7 +1311,9 @@ def test_empty_official_fork_session_id_fails_closed() -> None:
             _definition(),
             environment_overrides=(("ACP_TEST_EMPTY_FORK_ID", "1"),),
         )
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _discard, _deny_permission, _discard_death
         )
         await child.initialize(build_panels_initialize_request(definition))
@@ -1367,7 +1398,9 @@ def test_response_observed_blocked_load_is_settled_by_child_terminal_path(
             deaths.append(cause)
             death_observed.set()
 
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(),
             1,
             sink,  # type: ignore[arg-type]
@@ -1418,7 +1451,9 @@ def test_response_observed_blocked_load_is_settled_by_child_terminal_path(
 def test_initialize_identity_mismatch_closes_candidate() -> None:
     async def exercise() -> None:
         definition = _definition(expected_name="another-agent")
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(),
             1,
             _discard,
@@ -1451,7 +1486,9 @@ def test_initialize_protocol_identity_version_and_load_capability_fail_closed(
         async def death(cause: BaseException | None) -> None:
             deaths.append(cause)
 
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _discard, _deny_permission, death
         )
         with pytest.raises(AcpChildInitializeMismatch, match=message):
@@ -1469,7 +1506,9 @@ def test_malformed_load_replay_becomes_typed_rejection_and_barrier_completes() -
             environment_overrides=(("ACP_TEST_MALFORMED_LOAD", "future"),),
         )
         received: list[SessionNotification | ProtocolUpdateRejectedPayload] = []
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _append_async(received), _deny_permission, _discard_death
         )
         await child.initialize(build_panels_initialize_request(definition))
@@ -1500,7 +1539,11 @@ def test_stderr_flood_is_continuously_drained_into_bounded_replacement_tail() ->
             _definition(),
             environment_overrides=(("ACP_TEST_STDERR_BYTES", "70000"),),
         )
-        child = await SdkAcpEmployeeChildFactory(definition, stderr_tail_max_bytes=1024).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition,
+            panels_server_url="http://127.0.0.1:8767",
+            stderr_tail_max_bytes=1024,
+        ).create(
             _employee(), 1, _discard, _deny_permission, _discard_death
         )
         # Initialization cannot complete if the subprocess blocks on an undrained
@@ -1520,7 +1563,11 @@ def test_force_shutdown_during_stderr_flood_kills_child_without_stranding_initia
             _definition(),
             environment_overrides=(("ACP_TEST_STDERR_BYTES", "5000000"),),
         )
-        child = await SdkAcpEmployeeChildFactory(definition, stderr_tail_max_bytes=1024).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition,
+            panels_server_url="http://127.0.0.1:8767",
+            stderr_tail_max_bytes=1024,
+        ).create(
             _employee(), 1, _discard, _deny_permission, _discard_death
         )
         initialize = asyncio.create_task(
@@ -1546,7 +1593,9 @@ def test_unexpected_process_death_settles_once_with_status_and_stderr_tail() -> 
             deaths.append(cause)
             death_observed.set()
 
-        child = await SdkAcpEmployeeChildFactory(definition).create(
+        child = await SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        ).create(
             _employee(), 1, _discard, _deny_permission, death
         )
         await child.initialize(build_panels_initialize_request(definition))

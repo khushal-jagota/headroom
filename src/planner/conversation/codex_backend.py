@@ -196,7 +196,10 @@ def build_codex_employee_backend_registration() -> EmployeeBackendRegistration:
             _native_codex_home(), context.data_directory
         )
         entrypoint = Path(definition.argv[1])
-        child_factory = SdkAcpEmployeeChildFactory(definition)
+        child_factory = SdkAcpEmployeeChildFactory(
+            definition,
+            panels_server_url=context.panels_server_url,
+        )
         return MaterializedEmployeeBackendRegistration(
             definition=definition,
             child_factory=child_factory,

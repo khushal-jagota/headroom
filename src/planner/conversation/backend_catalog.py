@@ -27,13 +27,14 @@ from .hermes_employee_configuration import (
     HermesEmployeeSessionConfigurationAdapter,
 )
 from .hermes_turn_strategy import HermesAcpTurnStrategy
-from .sdk_child import SdkAcpEmployeeChildFactory
+from .sdk_child import SdkAcpEmployeeChildFactory, validate_panels_server_url
 
 
 @dataclass(frozen=True, slots=True)
 class EmployeeBackendBuildContext:
     data_directory: Path
     employee_workspace_root: Path
+    panels_server_url: str
     planner_home_default: Path | None = None
     repository_root: Path = Path(__file__).resolve().parents[3]
 
@@ -42,6 +43,7 @@ class EmployeeBackendBuildContext:
             raise ValueError("employee backend repository root must be absolute")
         if not self.employee_workspace_root.is_absolute():
             raise ValueError("employee backend workspace root must be absolute")
+        validate_panels_server_url(self.panels_server_url)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +201,10 @@ def _materialize_hermes(
         hermes_source_root=hermes_source_root,
         turn_strategy=strategy,
     )
-    child_factory = SdkAcpEmployeeChildFactory(definition)
+    child_factory = SdkAcpEmployeeChildFactory(
+        definition,
+        panels_server_url=context.panels_server_url,
+    )
     return MaterializedEmployeeBackendRegistration(
         definition=definition,
         child_factory=child_factory,

@@ -137,8 +137,12 @@ class _GenerationScopedSdkChildFactory:
         source_definition: AgentBackendDefinition,
         replacement_definition: AgentBackendDefinition,
     ) -> None:
-        self._source = SdkAcpEmployeeChildFactory(source_definition)
-        self._replacement = SdkAcpEmployeeChildFactory(replacement_definition)
+        self._source = SdkAcpEmployeeChildFactory(
+            source_definition, panels_server_url="http://127.0.0.1:8767"
+        )
+        self._replacement = SdkAcpEmployeeChildFactory(
+            replacement_definition, panels_server_url="http://127.0.0.1:8767"
+        )
 
     async def create(
         self,
@@ -181,7 +185,9 @@ class _LoadAuditedChild:
 
 class _LoadAuditedSdkChildFactory:
     def __init__(self, definition: AgentBackendDefinition) -> None:
-        self._delegate = SdkAcpEmployeeChildFactory(definition)
+        self._delegate = SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        )
         self.calls = {
             "create": 0,
             "new_session": 0,
@@ -255,7 +261,13 @@ def _application(
     ingress_capacity: int = 256,
     child_factory: Any | None = None,
 ) -> Any:
-    factory = child_factory if child_factory is not None else SdkAcpEmployeeChildFactory(definition)
+    factory = (
+        child_factory
+        if child_factory is not None
+        else SdkAcpEmployeeChildFactory(
+            definition, panels_server_url="http://127.0.0.1:8767"
+        )
+    )
     return _application_with_backends(
         config,
         clock,
@@ -740,8 +752,18 @@ def test_fake_non_hermes_human_and_automatic_step_share_backend_and_session(
     hermes = _definition()
     probe = _definition(backend_key="probe-backend")
     backends = (
-        (hermes, SdkAcpEmployeeChildFactory(hermes)),
-        (probe, SdkAcpEmployeeChildFactory(probe)),
+        (
+            hermes,
+            SdkAcpEmployeeChildFactory(
+                hermes, panels_server_url="http://127.0.0.1:8767"
+            ),
+        ),
+        (
+            probe,
+            SdkAcpEmployeeChildFactory(
+                probe, panels_server_url="http://127.0.0.1:8767"
+            ),
+        ),
     )
     catalog = EmployeeBackendCatalog(
         tuple(
@@ -819,8 +841,18 @@ def test_user_reply_reaches_same_acp_session_while_worker_help_waits(
     hermes = _definition()
     definition = _definition(backend_key="probe-backend")
     backends = (
-        (hermes, SdkAcpEmployeeChildFactory(hermes)),
-        (definition, SdkAcpEmployeeChildFactory(definition)),
+        (
+            hermes,
+            SdkAcpEmployeeChildFactory(
+                hermes, panels_server_url="http://127.0.0.1:8767"
+            ),
+        ),
+        (
+            definition,
+            SdkAcpEmployeeChildFactory(
+                definition, panels_server_url="http://127.0.0.1:8767"
+            ),
+        ),
     )
     catalog = EmployeeBackendCatalog(
         tuple(
@@ -891,7 +923,9 @@ def test_employee_configuration_catalog_does_not_bind_and_first_prompt_uses_sele
     )
     clock = build_clock(config)
     definition = _definition(backend_key="hermes")
-    factory = SdkAcpEmployeeChildFactory(definition)
+    factory = SdkAcpEmployeeChildFactory(
+        definition, panels_server_url="http://127.0.0.1:8767"
+    )
     adapter = StableAcpEmployeeSessionConfigurationAdapter(
         definition=definition,
         child_factory=factory,
@@ -1270,6 +1304,69 @@ def test_fresh_uvicorn_process_resumes_durable_binding(tmp_path: Path) -> None:
             assert resumed_reset["sequence"] > last_sequence
     finally:
         _stop_process(second)
+
+
+def test_worker_child_bare_cli_uses_launching_server_on_non_default_port(
+    tmp_path: Path,
+) -> None:
+    db_path = str(tmp_path / "worker-cli-server-affinity.db")
+    with connect(db_path) as conn:
+        create_schema(conn)
+        ticket = tickets_data.create_ticket(
+            conn,
+            worker_type="coding",
+            title="Worker CLI server affinity",
+            actor="test",
+            now=1,
+            title_max_chars=200,
+            employee_backend="hermes",
+        )
+
+    port = _free_port()
+    while port == 8767:
+        port = _free_port()
+    server = _start_acp_backend(
+        db_path=db_path,
+        logs_dir=tmp_path / "worker-cli-server-affinity-logs",
+        port=port,
+    )
+    try:
+        with connect_websocket(
+            f"ws://127.0.0.1:{port}/api/conversation",
+            origin=f"http://127.0.0.1:{port}",
+        ) as websocket:
+            websocket.send(json.dumps({"type": "attach", "employeeId": ticket.id}))
+            reset = json.loads(websocket.recv())
+            ready = json.loads(websocket.recv())
+            assert _is_ready(ready)
+            websocket.send(
+                json.dumps(
+                    _prompt_action(
+                        ticket.id,
+                        str(reset["acpSessionId"]),
+                        "worker-cli-server-affinity",
+                        "[ACP_TEST_WORKER_CLI]",
+                    )
+                )
+            )
+            turn: list[dict[str, Any]] = []
+            while True:
+                envelope = json.loads(websocket.recv())
+                turn.append(envelope)
+                if _is_idle(envelope):
+                    break
+    finally:
+        _stop_process(server)
+
+    cli_message = next(
+        envelope["payload"]["update"]["content"]["text"]
+        for envelope in turn
+        if envelope["type"] == "acp_session_update"
+        and envelope["payload"]["update"].get("messageId") == "worker-cli-probe"
+    )
+    cli_result = json.loads(cli_message)
+    assert cli_result["id"] == ticket.id
+    assert cli_result["title"] == "Worker CLI server affinity"
 
 
 def test_cold_attach_batches_durable_history_larger_than_ingress_capacity(

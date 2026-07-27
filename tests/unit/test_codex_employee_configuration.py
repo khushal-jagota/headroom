@@ -229,9 +229,15 @@ class _ScriptedChild:
 
 
 class _ScriptedFactory:
-    def __init__(self, definition: Any, scenario: _Scenario) -> None:
+    def __init__(
+        self,
+        definition: Any,
+        scenario: _Scenario,
+        panels_server_url: str,
+    ) -> None:
         self.definition = definition
         self.scenario = scenario
+        self.panels_server_url = panels_server_url
         self.children: list[_ScriptedChild] = []
         self.operations: list[str] = []
         self.session_number = 0
@@ -255,8 +261,17 @@ class _FactoryConstructor:
         self.scenario = scenario
         self.factory: _ScriptedFactory | None = None
 
-    def __call__(self, definition: Any) -> _ScriptedFactory:
-        self.factory = _ScriptedFactory(definition, self.scenario)
+    def __call__(
+        self,
+        definition: Any,
+        *,
+        panels_server_url: str,
+    ) -> _ScriptedFactory:
+        self.factory = _ScriptedFactory(
+            definition,
+            self.scenario,
+            panels_server_url,
+        )
         return self.factory
 
 
@@ -280,6 +295,7 @@ def _materialize(
             repository_root=REPOSITORY_ROOT,
             data_directory=tmp_path,
             employee_workspace_root=employee_workspace_root,
+            panels_server_url="http://127.0.0.1:8767",
         )
     )[0]
     assert constructor.factory is not None
@@ -307,6 +323,7 @@ def test_codex_registration_reuses_one_locked_definition_and_factory_for_configu
         ),
     )
     assert materialized.child_factory is factory
+    assert factory.panels_server_url == "http://127.0.0.1:8767"
     assert factory.definition is materialized.definition
     assert adapter._definition is materialized.definition
     assert adapter._child_factory is factory

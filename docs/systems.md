@@ -209,8 +209,9 @@ operations reject worker claims. Worker writes remain proposals. The Chief's bou
 operations do not create a second path around the resolution engine.
 
 Worker identity uses `PLAN_TICKET_ID` and the Ticket's worker-self endpoint. The
-server's ACP child receives the exact Ticket environment. Duplicate session ownership
-fails instead of guessing which Ticket a worker belongs to.
+server's ACP child receives the exact Ticket identity and the launching server's local
+HTTP address, so bare Worker CLI commands stay with that server on non-default ports.
+Duplicate session ownership fails instead of guessing which Ticket a worker belongs to.
 
 _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission rules.
 
@@ -247,4 +248,4 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ---
 
-_Last verified: 2026-07-21 (three-backend ACP conversation, GFM rendering, and Employee-step runtime)._
+_Last verified: 2026-07-27 (three-backend ACP conversation and Worker server affinity)._
