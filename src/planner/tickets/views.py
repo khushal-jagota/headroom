@@ -11,6 +11,7 @@ from planner.core import links as core_links
 from planner.core.contracts import BlockerSummary, JsonDict
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
+    AtCap,
     FieldSlot,
     Ticket,
     TicketStatus,
@@ -218,6 +219,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.employee_backend, "
         "tickets.conversation_id, "
         "tickets.ticket_status, "
+        "tickets.ceiling, tickets.at_cap, "
         "tickets.backend_error, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
@@ -260,6 +262,15 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         is_parented = row["sprint_item_id"] is not None
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
+        ticket_status = str(row["ticket_status"])
+        stopped_at_current_stage = (
+            str(row["at_cap"]) == AtCap.stop.value
+            and machine.at_or_beyond_ceiling(
+                stage,
+                str(row["ceiling"]),
+                worker_type_definition=worker_type_definition,
+            )
+        )
         card: JsonDict = {
             "id": str(row["id"]),
             "title": str(row["title"]),
@@ -275,7 +286,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
                 fields,
                 worker_type_definition=worker_type_definition,
             ),
-            "ticket_status": str(row["ticket_status"]),
+            "ticket_status": ticket_status,
             "backend_error": (
                 str(row["backend_error"]) if row["backend_error"] is not None else None
             ),
@@ -290,6 +301,11 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "blocked": str(row["id"]) in blocked_target_ids,
             "conversation_id": (
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
+            ),
+            "waiting_to_closeout": (
+                gating_field_id == "closeout"
+                and ticket_status == TicketStatus.empty.value
+                and not stopped_at_current_stage
             ),
         }
         sort_key = (

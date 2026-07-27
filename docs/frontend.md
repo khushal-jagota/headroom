@@ -26,15 +26,16 @@ One screen per part of the system:
   menu of the projects. A ticket parented by a sprint item uses
   that item's project; a standalone ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
-  tickets into collapsible boxed **status groups** — one group per ticket status, in a
-  fixed order that puts what needs the user first: Errored, Needs user, Empty, User,
-  Paired, Agent, Awaiting approval, Blocked, Done. A group with no tickets is not
-  rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group,
-  and the rule is that plain: a done ticket goes to Done, every other ticket goes to
-  its own status. The heading is the status name itself, so the screen holds no second
-  vocabulary that could drift from the statuses, and a status it has never seen still
-  gets its own group at the end rather than being dropped. Rows carry only the ticket
-  title and one mark, sorted by recent activity.
+  tickets into collapsible boxed groups in a fixed order that puts what needs the user
+  first: Errored, Needs user, Waiting to Closeout, Empty, User, Paired, Agent, Awaiting
+  approval, Blocked, Done. A group with no tickets is not rendered; Blocked and Done
+  start collapsed. Every ticket sits in exactly one group. A done ticket goes to Done.
+  A ticket resting at Closeout with an `empty` status goes to Waiting to Closeout when
+  its current Closeout step is still runnable; Stop at its current Closeout ceiling
+  keeps it under Empty, while Stop at a later ceiling does not. Every other ticket goes
+  to its own status. Unknown statuses still get their own group at the end rather than
+  being dropped. Rows carry only the ticket title and one mark, sorted by recent
+  activity.
 
   The mark carries three signals in one order of precedence, and each is one
   system's own fact rather than a blend of several. A **pure white dot** means the

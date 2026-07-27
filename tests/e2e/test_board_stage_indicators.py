@@ -22,11 +22,12 @@ from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
 
-# Workspace groups by the Ticket's own status, except a done Ticket, which groups
-# as done. This is the full display order, top to bottom.
+# Workspace groups by the Ticket's own status, except for done and runnable empty
+# Closeout Tickets. This is the full display order, top to bottom.
 BUCKET_ORDER = [
     "errored",
     "needs_user",
+    "waiting_to_closeout",
     "empty",
     "user",
     "paired",
@@ -40,6 +41,7 @@ BUCKET_ORDER = [
 BUCKET_LABELS = {
     "errored": "Errored",
     "needs_user": "Needs user",
+    "waiting_to_closeout": "Waiting to Closeout",
     "empty": "Empty",
     "user": "User",
     "paired": "Paired",
@@ -78,6 +80,16 @@ def _set_ticket_stage(server: ServerHandle, ticket_id: str, stage: str) -> None:
         conn.execute(
             "UPDATE tickets SET stage = ? WHERE id = ?",
             (stage, ticket_id),
+        )
+
+
+def _set_ticket_scope(
+    server: ServerHandle, ticket_id: str, *, ceiling: str, at_cap: str
+) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET ceiling = ?, at_cap = ? WHERE id = ?",
+            (ceiling, at_cap, ticket_id),
         )
 
 
@@ -541,6 +553,8 @@ def test_workspace_buckets_render_membership_in_canonical_order(
     running = _create_ticket(cli, server, "Agent ticket")
     approval = _create_ticket(cli, server, "Awaiting approval ticket")
     closing = _create_ticket(cli, server, "Closeout idle ticket")
+    closing_stopped = _create_ticket(cli, server, "Closeout stopped ticket")
+    closing_later_stop = _create_ticket(cli, server, "Closeout later-stop ticket")
     done = _create_ticket(cli, server, "Done ticket")
     blocked_idle = cli(
         server,
@@ -584,8 +598,15 @@ def test_workspace_buckets_render_membership_in_canonical_order(
     _set_ticket_status(server, running, "agent")
     _set_ticket_stage(server, approval, "needs_plan")
     _set_ticket_status(server, approval, "awaiting_approval")
-    _set_ticket_stage(server, closing, "needs_closeout")
+    for ticket_id in (closing, closing_stopped, closing_later_stop):
+        _set_ticket_stage(server, ticket_id, "needs_closeout")
+    _set_ticket_scope(
+        server, closing_stopped, ceiling="needs_closeout", at_cap="stop"
+    )
+    _set_ticket_scope(server, closing_later_stop, ceiling="done", at_cap="stop")
     _set_ticket_updated_at(server, closing, 40)
+    _set_ticket_updated_at(server, closing_later_stop, 45)
+    _set_ticket_updated_at(server, closing_stopped, 50)
     _set_ticket_stage(server, done, "done")
     _set_ticket_stage(server, blocked_idle, "needs_success")
     _set_ticket_stage(server, blocked_running, "needs_success")
@@ -598,8 +619,8 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         _bucket("empty"),
     )
 
-    # All nine status groups are populated, so all render, in display order with
-    # the humanized status names as labels.
+    # Every canonical group is populated, so all render in display order with its
+    # explicit label.
     rendered = page.eval_on_selector_all(
         "[data-bucket-section]",
         "els => els.map(el => el.getAttribute('data-bucket-key'))",
@@ -616,16 +637,19 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         is_open = page.get_attribute(_bucket(key), "open") is not None
         assert is_open is (key not in ("blocked", "done")), key
 
-    # Membership: exactly one group per ticket, and the group is the status.
+    # Membership: exactly one group per ticket. Runnable empty Closeout Tickets
+    # get the one semantic group outside their status.
     memberships = {
         errored: "errored",
         needs_user_ticket: "needs_user",
-        # Stage no longer subdivides a group: an idle Ticket resting at the
-        # Kickoff or the Closeout stage is just empty.
+        # An unrelated idle Stage is still Empty.
         kickoff_idle: "empty",
-        closing: "empty",
         empty_older: "empty",
         empty_newer: "empty",
+        # Closeout is separate only while the current step remains runnable.
+        closing: "waiting_to_closeout",
+        closing_later_stop: "waiting_to_closeout",
+        closing_stopped: "empty",
         # ...and an awaiting-approval Ticket is one group whatever its stage.
         kickoff_awaiting: "awaiting_approval",
         approval: "awaiting_approval",
@@ -656,10 +680,18 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         "els => els.map(el => el.textContent.trim())",
     )
     assert empty_titles == [
-        "Closeout idle ticket",
+        "Closeout stopped ticket",
         "Empty newer ticket",
         "Kickoff idle ticket",
         "Empty older ticket",
+    ]
+    waiting_to_closeout_titles = page.eval_on_selector_all(
+        f'{_bucket("waiting_to_closeout")} [data-card] .list-row-title',
+        "els => els.map(el => el.textContent.trim())",
+    )
+    assert waiting_to_closeout_titles == [
+        "Closeout later-stop ticket",
+        "Closeout idle ticket",
     ]
     assert page.locator("[data-card] .chip").count() == 0
     row_child_counts = page.eval_on_selector_all(
