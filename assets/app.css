@@ -2449,6 +2449,10 @@ select {
   margin-bottom: var(--space-2);
 }
 
+.review-needs-user-label {
+  color: var(--accent-bright);
+}
+
 .review-context-recap {
   font-family: var(--font-serif);
   font-size: var(--type-serif-md);

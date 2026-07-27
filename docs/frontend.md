@@ -12,12 +12,14 @@ One screen per part of the system:
 
 - **Day** — the day overview: focus, brief take, watchout, and what makes the day
   land. Read top to bottom in the serif voice, flat, with no boxes.
-- **Review** — the human chamber for parked Ticket proposals and Worker help requests: one centred decision with Skip and
-  Open-ticket top-right, a labelled recap, the ask surface, and a send-back row.
-  Keyboard shortcuts drive it (skip, open, approve) when the cursor is not in a text
-  field, and each decision fades in as it arrives. The approve button physically
-  refuses to work until "how far may the worker go next" has been answered, both
-  halves.
+- **Review** — the human chamber for parked Ticket proposals and Worker help requests:
+  one oldest-first walk with a centred item, its Ticket title, and Skip and Open Ticket
+  top-right. Proposal items add their labelled recap, ask, approval, and send-back
+  controls; needs-user items direct the human to the Ticket conversation without those
+  proposal controls. Keyboard shortcuts drive the actions that apply to the current
+  item when the cursor is not in a text field, and each item fades in as it arrives. A
+  proposal's approve button physically refuses to work until "how far may the worker
+  go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. One project selector narrows the roster by each ticket's effective project,
