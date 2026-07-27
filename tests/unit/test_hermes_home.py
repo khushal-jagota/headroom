@@ -45,12 +45,10 @@ def test_provision_planner_home_skills_symlinks_packaged_skills_idempotently(
 ) -> None:
     names = (
         "panels",
-        "panels-ticket-management",
         "panels-worker",
         "panels-chief-of-staff",
         "panels-update-chief-of-staff",
     )
-    assert "panels-ticket-management" in PLANNER_SKILL_NAMES
     assert panels_skill_root() == Path(__file__).resolve().parents[2] / "src/planner/skills"
     provision_planner_home_skills(tmp_path / "home", names, configured_database_parent=tmp_path)
     provision_planner_home_skills(tmp_path / "home", names, configured_database_parent=tmp_path)

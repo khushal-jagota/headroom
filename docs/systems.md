@@ -220,8 +220,9 @@ operations reject worker claims. Worker writes remain proposals. The Chief's bou
 operations do not create a second path around the proposal resolver.
 
 Worker identity uses `PLAN_TICKET_ID` and the Ticket's worker-self endpoint. The
-server's ACP child receives the exact Ticket environment. Duplicate session ownership
-fails instead of guessing which Ticket a worker belongs to.
+server's ACP child receives the exact Ticket identity and the launching server's local
+HTTP address, so bare Worker CLI commands stay with that server on non-default ports.
+Duplicate session ownership fails instead of guessing which Ticket a worker belongs to.
 
 _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission rules.
 
@@ -259,10 +260,8 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 - An explicit retry/reset policy for an errored Ticket.
 - In-server rollover scheduling, if the product chooses to own it.
-- The replacement conversation system, which takes over from the in-memory stand-in
-  and from the browser pane's older machinery in one swap.
 
 ---
 
-_Last verified: 2026-07-26 (the eight Ticket statuses, one contentless change signal
+_Last verified: 2026-07-27 (the eight Ticket statuses, one contentless change signal
 per commit, and worker orchestration rebuilt on the conversation contract)._

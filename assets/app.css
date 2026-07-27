@@ -2593,18 +2593,113 @@ select {
   --board-workspace-rail-pad-x: var(--space-3);
 }
 
+/* The project filter is a mini header in the rail, not a form control: at rest
+ * it is the active project in the serif header voice (one step below the bucket
+ * titles), with a small caret as the only affordance. Clicking it opens a
+ * dropdown menu — the popover idiom the app already uses elsewhere. */
 .board-workspace-project-filter {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--board-workspace-rail-pad-x) var(--space-4);
-  color: var(--text-muted);
-  font-size: var(--type-ui-sm);
+  position: relative;
+  padding: 0 var(--board-workspace-rail-pad-x);
+  margin: var(--space-2) 0 calc(var(--space-7) - var(--space-1));
 }
 
-.board-workspace-project-filter select {
+.board-workspace-project-filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  border: 0;
+  background: transparent;
+  padding: var(--space-1) 0;
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  font-weight: 500;
+  line-height: 1.1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-project-filter-trigger:hover {
+  color: var(--accent-bright);
+}
+
+.board-workspace-project-filter-value {
   min-width: 0;
-  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The caret is a small chevron drawn from two borders; it flips when open. */
+.board-workspace-project-filter-caret {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: -3px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(45deg);
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-project-filter-trigger[aria-expanded="true"] .board-workspace-project-filter-caret {
+  margin-top: 2px;
+  transform: rotate(-135deg);
+}
+
+.board-workspace-project-filter-menu {
+  position: absolute;
+  left: var(--board-workspace-rail-pad-x);
+  top: 100%;
+  z-index: 20;
+  min-width: 190px;
+  max-width: calc(100% - var(--board-workspace-rail-pad-x));
+  margin-top: var(--space-2);
+  padding: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.board-workspace-project-filter-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-strong);
+  font-size: var(--type-sm);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-project-filter-item:hover {
+  background: var(--surface-overlay);
+}
+
+.board-workspace-project-filter-item[aria-checked="true"] {
+  color: var(--accent-text);
+}
+
+/* The tick reserves fixed width so labels align whether or not they are active. */
+.board-workspace-project-filter-tick {
+  flex: none;
+  width: 14px;
+  color: var(--accent-bright);
+}
+
+.board-workspace-project-filter-item[aria-checked="true"] .board-workspace-project-filter-tick::before {
+  content: "✓";
 }
 
 .board-workspace-right {
@@ -2667,11 +2762,9 @@ select {
   line-height: 1;
 }
 
-/* The first bucket sits one top-level gap below the Chief-of-Staff peer, so
- * Chief of Staff reads as a sibling area above the status buckets. */
-.board-workspace-chief-peer + .disclosure--workspace-bucket {
-  margin-top: calc(var(--space-7) - var(--space-1));
-}
+/* The project filter sits between Chief of Staff and the first bucket, and its
+ * own margin-bottom carries the one top-level gap above the buckets — so Chief
+ * of Staff reads as a sibling area above the filter and status buckets. */
 
 /* Status buckets — the rail's one level. Each bucket is a box (the worker-section
  * idiom), headed by the serif voice one scale below the project headers. A bucket

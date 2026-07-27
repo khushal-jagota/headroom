@@ -90,7 +90,7 @@ def test_fake_fixture_is_same_logical_seed_but_independent_ids_and_database_byte
     assert _sha256(first_db_path) != _sha256(second_db_path)
 
 
-def test_prepare_common_layout_does_not_materialize_a_panels_managed_hermes_home(
+def test_prepare_common_layout_materializes_only_runtime_state_directories(
     tmp_path: Path,
 ) -> None:
     instance = SimpleNamespace(
@@ -98,23 +98,22 @@ def test_prepare_common_layout_does_not_materialize_a_panels_managed_hermes_home
         logs_dir=tmp_path / "logs",
         dispatcher_lock_path=tmp_path / "locks" / "dispatcher.lock",
         server_control_socket_path=tmp_path / "run" / "server.sock",
-        hermes_home=tmp_path / "separate-hermes-home",
-        runtime_user_home=tmp_path / "runtime-user-home",
         db_path=(tmp_path / "instance-data" / "planning.db"),
         allowed_repository_roots=(Path(__file__).resolve().parents[2],),
     )
 
     environment_materialize._prepare_common_layout(instance)
 
-    assert not instance.hermes_home.exists()
+    assert instance.instance_root.is_dir()
+    assert instance.logs_dir.is_dir()
+    assert instance.dispatcher_lock_path.parent.is_dir()
+    assert instance.server_control_socket_path.parent.is_dir()
 
 
-def test_live_prepare_creates_empty_layout_without_fake_fixture(
+def test_live_prepare_records_contract_without_fake_fixture_or_persistent_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    repository_root = _repository_root()
-
     def fail_fixture(*args: object, **kwargs: object) -> None:
         raise AssertionError("live prepare must not build the fake fixture")
 
@@ -126,13 +125,22 @@ def test_live_prepare_creates_empty_layout_without_fake_fixture(
     live = prepare_environment_instance(
         kind="live",
         environment_root=_short_environment_root(tmp_path),
-        repository_roots=(repository_root,),
+        repository_roots=(),
     )
 
     assert live.fixture_version is None
+    assert live.instance_root == _short_environment_root(tmp_path).resolve()
+    assert live.db_path == live.instance_root / "current" / "data" / "planner.db"
+    assert live.logs_dir == live.instance_root / "current" / "logs"
     assert not live.db_path.exists()
-    assert live.managed_files_root.is_dir()
-    assert not live.hermes_home.exists()
+    assert not live.managed_files_root.exists()
+
+    inspected = inspect_environment_instance(
+        kind="live",
+        environment_root=_short_environment_root(tmp_path),
+        repository_roots=(),
+    )
+    assert inspected == live
 
 
 def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Path) -> None:
@@ -158,13 +166,11 @@ def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Pat
 
     assert reset.instance_id == staging.instance_id
     assert reset.port_policy == staging.port_policy
-    assert reset.hermes_home == staging.hermes_home
     assert reset.credentials_env_file == staging.credentials_env_file
     assert reset.fixture_version == FAKE_FIXTURE_VERSION
     assert inspected.prepared_at == reset.prepared_at
     assert not marker.exists()
     assert reset.db_path.is_file()
-    assert not reset.hermes_home.exists()
 
 
 def test_failed_reset_keeps_prior_data_tree(

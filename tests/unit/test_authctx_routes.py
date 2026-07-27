@@ -17,7 +17,9 @@ from fastapi.testclient import TestClient
 
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
+from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
+from planner.core.links import add_link
 from planner.core.server import create_app
 from planner.sprints.data import create_item, create_sprint
 from planner.tickets.contracts import NO_FURTHER, AtCap
@@ -323,6 +325,36 @@ def test_patch_item_agent_plain_field_or_sprint_is_forbidden(tmp_path: Path) -> 
     assert _col(db_path, "sprint_items", iid, "title") == "Item."
     assert _col(db_path, "sprint_items", iid, "priority") == "P3"
     assert _col(db_path, "sprint_items", iid, "sprint_id") is None
+
+
+def test_delete_item_is_direct_only_and_returns_affected_resources(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    sprint_id = _sprint(db_path)
+    item_id = _item_in_sprint(db_path, sprint_id)
+    blocker_id = _ticket(db_path)
+    conn = connect(str(db_path))
+    try:
+        add_link(conn, blocker_id, item_id, LinkKind.blocks, 1)
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        forbidden = client.delete(f"/api/items/{item_id}", headers=_AGENT)
+        assert forbidden.status_code == 400
+        assert forbidden.json()["error"]["code"] == "agent_forbidden"
+        assert _col(db_path, "sprint_items", item_id, "title") == "Sprint item."
+
+        response = client.delete(f"/api/items/{item_id}")
+
+    assert response.status_code == 200, response.json()
+    assert response.json() == {
+        "ok": True,
+        "sprint_item_id": item_id,
+        "title": "Sprint item.",
+        "sprint_ids": [sprint_id],
+        "linked_entity_ids": [blocker_id],
+    }
+    assert _col(db_path, "sprint_items", item_id, "title") is None
 
 
 def test_patch_item_status_write_is_rejected(tmp_path: Path) -> None:

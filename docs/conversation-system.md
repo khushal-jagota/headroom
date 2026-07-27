@@ -271,7 +271,7 @@ that is honest: until an agent has been up once, nothing has said what it takes.
 ## Handoffs
 
 - Ticket-side surfacing (which ticket needs you, row dots) is the worker
-  orchestration's job, built against this contract: `employee-runtime.md`.
+  orchestration's job, built against this contract: `worker-orchestration.md`.
 
 ## Deferred
 

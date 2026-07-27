@@ -42,7 +42,7 @@ def _config(tmp_path: Path) -> Config:
             "PLAN_DB_PATH": str(tmp_path / "planning.db"),
             "PLAN_LOGS_DIR": str(tmp_path / "logs"),
             "PLAN_BACKUP_DIR": str(tmp_path / "backups"),
-            "PLAN_RELEASE_SHA": "0123456789abcdef0123456789abcdef01234567",
+            "PLAN_APP_SHA": "0123456789abcdef0123456789abcdef01234567",
         },
     )
 
@@ -61,7 +61,7 @@ def test_snapshot_has_one_json_safe_shape_and_mac_resources_are_honestly_unavail
         "collected_at",
         "overall_state",
         "environment",
-        "release",
+        "app",
         "backup",
         "disk",
         "workloads",

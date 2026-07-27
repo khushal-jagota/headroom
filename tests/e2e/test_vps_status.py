@@ -14,7 +14,7 @@ def _payload(state: str) -> dict[str, object]:
         "collected_at": "2026-07-24T00:00:00+00:00",
         "overall_state": state,
         "environment": section,
-        "release": section,
+        "app": section,
         "backup": section,
         "disk": section,
         "workloads": {**section, "items": []},

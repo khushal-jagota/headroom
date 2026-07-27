@@ -54,6 +54,11 @@ def _bucket(key: str) -> str:
     return f'[data-bucket-section][data-bucket-key="{key}"]'
 
 
+def _pick_project(page: Page, project_id: str) -> None:
+    page.click("[data-project-filter]")
+    page.click(f'[data-project-option="{project_id}"]')
+
+
 def _add_today(api: ApiHelper, server: ServerHandle, ticket_id: str) -> None:
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
@@ -276,15 +281,39 @@ def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_ope
         f"#/workspace/{no_project}",
         no_project_card,
     )
+    # The filter is a mini-header trigger below Chief of Staff that opens a
+    # dropdown menu — not a native select above it.
     project_filter = page.locator("[data-project-filter]")
-    assert project_filter.locator("option").all_text_contents() == [
-        "All projects",
-        "Vylo",
-        "No project",
-    ]
+    assert (
+        page.evaluate(
+            """() => {
+                const chief = document.querySelector('[data-chief-of-staff-button]');
+                const filter = document.querySelector('[data-project-filter]');
+                return chief.compareDocumentPosition(filter)
+                    & Node.DOCUMENT_POSITION_FOLLOWING ? 'after' : 'before';
+            }"""
+        )
+        == "after"
+    )
+    assert project_filter.inner_text().strip() == "All projects"
+
+    project_filter.click()
+    assert project_filter.get_attribute("aria-expanded") == "true"
+    menu = page.locator("[data-project-menu]")
+    assert [
+        text.strip() for text in menu.locator("[data-project-option]").all_text_contents()
+    ] == ["All projects", "Vylo", "No project"]
     assert page.locator(f'[data-card][data-ticket-id="{other_day}"]').count() == 0
 
-    project_filter.select_option("project_vylo")
+    # Escape closes the menu without changing the selection.
+    page.keyboard.press("Escape")
+    assert menu.count() == 0
+    assert project_filter.get_attribute("aria-expanded") == "false"
+    assert project_filter.get_attribute("data-active-project-id") == "__all_projects__"
+
+    _pick_project(page, "project_vylo")
+    assert project_filter.get_attribute("data-active-project-id") == "project_vylo"
+    assert project_filter.inner_text().strip() == "Vylo"
     assert page.locator(f'[data-card][data-ticket-id="{standalone}"]').count() == 1
     assert page.locator(f'[data-card][data-ticket-id="{parented}"]').count() == 1
     assert page.locator(no_project_card).count() == 0
@@ -293,12 +322,12 @@ def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_ope
     ).count() == 1
     assert page.url.endswith(f"#/workspace/{no_project}")
 
-    project_filter.select_option("__no_project__")
+    _pick_project(page, "__no_project__")
     assert page.locator(no_project_card).count() == 1
     assert page.locator(f'[data-card][data-ticket-id="{standalone}"]').count() == 0
     assert page.locator(f'[data-card][data-ticket-id="{parented}"]').count() == 0
 
-    project_filter.select_option("__all_projects__")
+    _pick_project(page, "__all_projects__")
     assert page.locator(no_project_card).count() == 1
     assert page.locator(f'[data-card][data-ticket-id="{standalone}"]').count() == 1
     assert page.locator(f'[data-card][data-ticket-id="{parented}"]').count() == 1
@@ -306,15 +335,17 @@ def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_ope
     # Live invalidation removes the last cards for the selected concrete
     # project. The stale selection resets to All projects and the remaining
     # roster recovers without a reload.
-    project_filter.select_option("project_vylo")
+    _pick_project(page, "project_vylo")
     cli(server, "day", "remove-ticket", standalone, "--date", "today")
     cli(server, "day", "remove-ticket", parented, "--date", "today")
     page.wait_for_function(
-        "selector => document.querySelector(selector)?.value === '__all_projects__'",
+        "selector => document.querySelector(selector)?.dataset.activeProjectId"
+        " === '__all_projects__'",
         arg="[data-project-filter]",
         timeout=WAIT_MS,
     )
-    assert project_filter.input_value() == "__all_projects__"
+    assert project_filter.get_attribute("data-active-project-id") == "__all_projects__"
+    assert project_filter.inner_text().strip() == "All projects"
     assert page.locator(no_project_card).count() == 1
     assert page.locator(f'[data-card][data-ticket-id="{standalone}"]').count() == 0
     assert page.locator(f'[data-card][data-ticket-id="{parented}"]').count() == 0
@@ -681,9 +712,13 @@ def test_workspace_bucket_disclosures_collapse_and_chevrons_reveal_on_intent(
         arg=f"{bucket} > summary > .disclosure-chev",
         timeout=WAIT_MS,
     )
-    # Keyboard intent reveals the chevron too: Tab from the Chief-of-Staff peer
-    # lands on the bucket summary.
+    # Keyboard intent reveals the chevron too: tabbing from the Chief-of-Staff
+    # peer moves through the project filter to the bucket summary.
     page.click("[data-chief-of-staff-button]")
+    page.keyboard.press("Tab")
+    assert page.evaluate(
+        "() => document.activeElement?.matches('[data-project-filter]')"
+    )
     page.keyboard.press("Tab")
     page.wait_for_function(
         "selector => getComputedStyle(document.querySelector(selector)).opacity === '1'",

@@ -52,9 +52,9 @@ def resolve_application_root(
     module_file: Path | None = None,
 ) -> Path:
     values = os.environ if environment is None else environment
-    release_root = values.get("PLAN_RELEASE_ROOT")
-    if release_root is not None:
-        return Path(release_root).expanduser().resolve()
+    app_root = values.get("PLAN_APP_ROOT")
+    if app_root is not None:
+        return Path(app_root).expanduser().resolve()
     return (Path(__file__) if module_file is None else module_file).resolve().parents[3]
 
 
@@ -191,23 +191,23 @@ def create_app(
     async def meta() -> dict[str, Any]:
         return {
             "test_mode": config.test_mode,
-            "release_sha": config.release_sha,
+            "app_sha": config.app_sha,
         }
 
     @app.get("/api/health")
     async def health(expected_sha: str | None = None) -> JSONResponse:
-        release_sha = config.release_sha
-        if release_sha is None:
+        app_sha = config.app_sha
+        if app_sha is None:
             if config.test_mode:
-                return JSONResponse(status_code=200, content={"ready": True, "release_sha": None})
+                return JSONResponse(status_code=200, content={"ready": True, "app_sha": None})
             return JSONResponse(
-                status_code=503, content={"ready": False, "error": "missing release SHA"}
+                status_code=503, content={"ready": False, "error": "missing app SHA"}
             )
-        if expected_sha is None or expected_sha != release_sha:
+        if expected_sha is None or expected_sha != app_sha:
             return JSONResponse(
-                status_code=503, content={"ready": False, "error": "expected release SHA required"}
+                status_code=503, content={"ready": False, "error": "expected app SHA required"}
             )
-        return JSONResponse(status_code=200, content={"ready": True, "release_sha": release_sha})
+        return JSONResponse(status_code=200, content={"ready": True, "app_sha": app_sha})
 
     @app.get("/api/vps-status")
     async def vps_status() -> dict[str, object]:

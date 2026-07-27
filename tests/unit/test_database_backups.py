@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from planner.environments import backup as backup_module
 from planner.environments.backup import (
     _is_verified_snapshot,
     create_database_backup,
@@ -21,8 +22,9 @@ from planner.environments.cli import environment
 
 
 @pytest.fixture(autouse=True)
-def _default_skills_home(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Resolve the skills home from the database directory unless a test sets it.
+def _default_skills_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Keep ambient provider-home configuration isolated from managed backup roots.
+    monkeypatch.setenv("HOME", str(tmp_path / "user-home"))
     monkeypatch.delenv("PLAN_HERMES_HOME", raising=False)
 
 
@@ -41,8 +43,8 @@ def _seed_managed_tree(data_dir: Path, marker: str) -> None:
     settings = data_dir / "worker-settings" / "coding"
     settings.mkdir(parents=True)
     (settings / "settings.json").write_text(f'{{"marker": "{marker}"}}')
-    skills = data_dir / "hermes-home" / "skills" / "panels"
-    skills.mkdir(parents=True)
+    skills = data_dir / "skills" / "panels"
+    skills.mkdir(parents=True, exist_ok=True)
     (skills / "SKILL.md").write_text(f"# {marker}")
 
 
@@ -298,6 +300,59 @@ def test_restore_replacement_failure_preserves_database_and_sidecars(
     assert shm.read_bytes() == b"old shm"
 
 
+def test_restore_removes_temporary_database_sidecars_created_by_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.db"
+    backup_dir = tmp_path / "backups"
+    destination = tmp_path / "live.db"
+    _seed_database(source)
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+    real_verify_database = backup_module._verify_database
+
+    def verify_with_sidecars(database: Path) -> None:
+        real_verify_database(database)
+        if ".restore-tmp-" in database.name:
+            Path(str(database) + "-wal").write_bytes(b"temporary wal")
+            Path(str(database) + "-shm").write_bytes(b"temporary shm")
+
+    monkeypatch.setattr("planner.environments.backup._verify_database", verify_with_sidecars)
+
+    restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    assert list(tmp_path.glob(".live.db.restore-tmp-*")) == []
+    with sqlite3.connect(destination) as connection:
+        assert connection.execute("SELECT value FROM records").fetchone()[0] == "canonical"
+
+
+def test_restore_verification_failure_removes_temporary_database_and_sidecars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.db"
+    backup_dir = tmp_path / "backups"
+    destination = tmp_path / "live.db"
+    _seed_database(source)
+    snapshot = create_database_backup(source, backup_dir, "rev-1")
+    destination.write_bytes(b"old database")
+    real_verify_database = backup_module._verify_database
+
+    def fail_temporary_verification(database: Path) -> None:
+        if ".restore-tmp-" not in database.name:
+            real_verify_database(database)
+            return
+        Path(str(database) + "-wal").write_bytes(b"temporary wal")
+        Path(str(database) + "-shm").write_bytes(b"temporary shm")
+        raise RuntimeError("verification failed")
+
+    monkeypatch.setattr("planner.environments.backup._verify_database", fail_temporary_verification)
+
+    with pytest.raises(RuntimeError, match="verification failed"):
+        restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    assert destination.read_bytes() == b"old database"
+    assert list(tmp_path.glob(".live.db.restore-tmp-*")) == []
+
+
 def test_restore_rejects_corrupted_snapshot(tmp_path: Path) -> None:
     source = tmp_path / "planning.db"
     backup_dir = tmp_path / "backups"
@@ -382,7 +437,7 @@ def test_missing_skills_home_is_tolerated(tmp_path: Path) -> None:
     source = tmp_path / "data" / "planner.db"
     _seed_database(source)
     _seed_managed_tree(source.parent, marker="captured")
-    shutil.rmtree(source.parent / "hermes-home")
+    shutil.rmtree(source.parent / "skills")
     backup_dir = tmp_path / "backups"
 
     snapshot = create_database_backup(source, backup_dir, "rev-1")
@@ -428,12 +483,40 @@ def test_restore_brings_back_the_managed_file_tree(tmp_path: Path) -> None:
     assert (
         destination.parent / "worker-settings" / "coding" / "settings.json"
     ).read_text() == '{"marker": "snapshot"}'
-    assert (destination.parent / "hermes-home" / "skills" / "panels" / "SKILL.md").read_text() == (
+    assert (destination.parent / "skills" / "panels" / "SKILL.md").read_text() == (
         "# snapshot"
     )
     assert not (destination.parent / "files" / "tickets" / "t_old").exists()
     with sqlite3.connect(destination) as connection:
         assert connection.execute("SELECT value FROM records").fetchone()[0] == "canonical"
+
+
+def test_restore_makes_read_only_snapshot_state_owner_writable(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "planner.db"
+    _seed_database(source)
+    _seed_managed_tree(source.parent, marker="snapshot")
+    snapshot = create_database_backup(source, tmp_path / "backups", "rev-1")
+    snapshot_database = snapshot / "database.sqlite"
+    snapshot_database.chmod(0o400)
+    captured = snapshot / "files"
+    for path in sorted(captured.rglob("*"), reverse=True):
+        if path.is_symlink():
+            continue
+        path.chmod(0o500 if path.is_dir() else 0o400)
+    captured.chmod(0o500)
+
+    destination = tmp_path / "live" / "planner.db"
+    restore_database_snapshot(snapshot, destination, live_stopped=True)
+
+    with sqlite3.connect(destination) as connection:
+        connection.execute("INSERT INTO records VALUES ('writable')")
+        connection.commit()
+    settings = destination.parent / "worker-settings" / "coding" / "settings.json"
+    settings.write_text('{"marker": "writable"}')
+    new_ticket = destination.parent / "files" / "tickets" / "t_new"
+    new_ticket.mkdir()
+    (new_ticket / "note.txt").write_text("writable")
+    assert settings.read_text() == '{"marker": "writable"}'
 
 
 def test_restore_rejects_tampered_managed_capture(tmp_path: Path) -> None:
@@ -491,14 +574,15 @@ def test_restore_managed_replacement_failure_rolls_back_the_live_tree(
     assert leftover == []
 
 
-def test_skills_home_resolves_from_plan_hermes_home(
+def test_plan_hermes_home_does_not_redirect_managed_skill_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     source = tmp_path / "data" / "planner.db"
     _seed_database(source)
+    _seed_managed_tree(source.parent, marker="managed")
     hermes_home = tmp_path / "elsewhere" / "hermes-home"
-    (hermes_home / "skills" / "panels").mkdir(parents=True)
-    (hermes_home / "skills" / "panels" / "SKILL.md").write_text("# from PLAN_HERMES_HOME")
+    (hermes_home / "skills" / "unrelated").mkdir(parents=True)
+    (hermes_home / "skills" / "unrelated" / "SKILL.md").write_text("# user skill")
     monkeypatch.setenv("PLAN_HERMES_HOME", str(hermes_home))
     backup_dir = tmp_path / "backups"
 
@@ -507,8 +591,9 @@ def test_skills_home_resolves_from_plan_hermes_home(
     metadata = json.loads((snapshot / "metadata.json").read_text())
     assert "skills" in metadata["managed_files"]["roots"]
     assert (snapshot / "files" / "skills" / "panels" / "SKILL.md").read_text() == (
-        "# from PLAN_HERMES_HOME"
+        "# managed"
     )
+    assert not (snapshot / "files" / "skills" / "unrelated").exists()
 
 
 def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) -> None:
@@ -517,7 +602,7 @@ def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) 
     packaged = tmp_path / "repo" / "panels"
     packaged.mkdir(parents=True)
     (packaged / "SKILL.md").write_text("# canonical")
-    skills = source.parent / "hermes-home" / "skills"
+    skills = source.parent / "skills"
     skills.mkdir(parents=True)
     (skills / "panels").symlink_to(packaged, target_is_directory=True)
     # A dangling symlink must not abort the backup (the database must still be protected).
@@ -533,7 +618,7 @@ def test_symlinked_skills_are_captured_and_restored_as_symlinks(tmp_path: Path) 
     _seed_database(destination)
     restore_database_snapshot(snapshot, destination, live_stopped=True)
 
-    restored = destination.parent / "hermes-home" / "skills" / "panels"
+    restored = destination.parent / "skills" / "panels"
     assert restored.is_symlink()
     assert (restored / "SKILL.md").read_text() == "# canonical"
 

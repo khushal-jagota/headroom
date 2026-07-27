@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from planner.core.errors import ErrorCode, PlannerError
-from planner.environments.release import ReleaseValidationError, validate_release_sha
+from planner.environments.app import AppValidationError, validate_app_sha
 
 HOST: Final = "127.0.0.1"                    # §2: the bind is fixed, not tunable
 DEFAULT_CONFIG_PATH: Final = "config.yaml"
@@ -45,7 +45,7 @@ class Config:
     # test mode — ENV ONLY, never in config.yaml
     test_mode: bool
     fake_now: str | None
-    release_sha: str | None = None
+    app_sha: str | None = None
 
 
 def _parse_bool(raw: object, key: str) -> bool:
@@ -231,11 +231,11 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         test_mode=test_mode,
     )
 
-    release_sha = _optional_str_value(cfg, env, "release_sha", "PLAN_RELEASE_SHA")
-    if release_sha is not None:
+    app_sha = _optional_str_value(cfg, env, "app_sha", "PLAN_APP_SHA")
+    if app_sha is not None:
         try:
-            validate_release_sha(release_sha)
-        except ReleaseValidationError as exc:
+            validate_app_sha(app_sha)
+        except AppValidationError as exc:
             raise PlannerError(ErrorCode.validation, str(exc)) from exc
 
     return Config(
@@ -263,5 +263,5 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,
         test_mode=test_mode,
         fake_now=fake_now,
-        release_sha=release_sha,
+        app_sha=app_sha,
     )

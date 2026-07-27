@@ -11,6 +11,8 @@ from pathlib import Path
 import click
 
 from planner.core.config import Config, load_config
+from planner.environments.app import build_exported_app, validate_app_manifest
+from planner.environments.app_compatibility import prove_previous_app_compatibility
 from planner.environments.backup import create_database_backup, restore_database_snapshot
 from planner.environments.contracts import (
     DynamicEnvironmentPort,
@@ -23,10 +25,10 @@ from planner.environments.contracts import (
 from planner.environments.deployment import (
     HttpHealthClient,
     SubprocessServiceController,
-    deploy_release,
+    deploy_app,
+    run_current_app_backup,
 )
 from planner.environments.hermes_home import resolve_hermes_python
-from planner.environments.linux import render_linux_specification
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (
     build_environment_run_env,
@@ -35,14 +37,12 @@ from planner.environments.logic.launch_env import (
 from planner.environments.logic.registry import resolve_environment_instance
 from planner.environments.logic.validation import validate_repository_roots
 from planner.environments.materialize import (
-    import_live_environment_state,
     inspect_environment_instance,
     manifest_to_json,
     prepare_environment_instance,
     remove_environment_instance,
     reset_environment_instance,
 )
-from planner.environments.release import build_exported_release, validate_release_manifest
 from planner.environments.repository_runtime import resolve_repository_runtime_python
 from planner.environments.runtime_port import reserve_available_tcp_listener
 from planner.environments.vps_status import (
@@ -57,7 +57,6 @@ ExecFn = Callable[[str, list[str], Mapping[str, str]], object]
 ResolveInstanceFn = Callable[..., ResolvedEnvironmentInstance]
 MaterializeFn = Callable[..., EnvironmentManifest]
 InspectInstanceFn = Callable[..., EnvironmentManifest]
-ImportLiveFn = Callable[..., EnvironmentManifest]
 ResolveRepositoryRuntimePythonFn = Callable[[Path], Path]
 LoadConfigFn = Callable[[], Config]
 
@@ -67,7 +66,6 @@ class EnvironmentCliDependencies:
     resolve_instance: ResolveInstanceFn = resolve_environment_instance
     prepare_instance: MaterializeFn = prepare_environment_instance
     inspect_instance: InspectInstanceFn = inspect_environment_instance
-    import_live_state: ImportLiveFn = import_live_environment_state
     reset_instance: MaterializeFn = reset_environment_instance
     remove_instance: MaterializeFn = remove_environment_instance
     exec_fn: ExecFn = os.execvpe
@@ -148,19 +146,19 @@ def backup(source_db: Path, backup_dir: Path, deployed_revision: str) -> None:
     click.echo(str(snapshot))
 
 
-@environment.command("release-build")
+@environment.command("app-build")
 @click.option(
     "--source-root", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
 )
 @click.option("--requested-sha", required=True)
-@click.option("--release-root", type=click.Path(path_type=Path, file_okay=False), required=True)
-def release_build(source_root: Path, requested_sha: str, release_root: Path) -> None:
-    """Build and validate one host-native exact-SHA release."""
+@click.option("--candidate-app", type=click.Path(path_type=Path, file_okay=False), required=True)
+def app_build(source_root: Path, requested_sha: str, candidate_app: Path) -> None:
+    """Build and validate one host-native exact-SHA app."""
     try:
-        manifest = build_exported_release(
+        manifest = build_exported_app(
             source_root,
             requested_sha=requested_sha,
-            release_root=release_root,
+            candidate_app=candidate_app,
             install_dependencies=True,
         )
     except (OSError, RuntimeError, ValueError) as exc:
@@ -168,17 +166,17 @@ def release_build(source_root: Path, requested_sha: str, release_root: Path) -> 
     click.echo(json.dumps(manifest.as_dict(), sort_keys=True))
 
 
-@environment.command("release-identity")
+@environment.command("app-identity")
 @click.option(
-    "--release", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+    "--app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
 )
-def release_identity(release: Path) -> None:
-    """Print the validated SHA for one release directory."""
+def app_identity(app: Path) -> None:
+    """Print the validated SHA for one app directory."""
     try:
-        manifest = validate_release_manifest(release / "manifest.json")
+        manifest = validate_app_manifest(app / "manifest.json")
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(manifest.release_sha)
+    click.echo(manifest.app_sha)
 
 
 @environment.command("backup-current")
@@ -187,61 +185,68 @@ def release_identity(release: Path) -> None:
 )
 @click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
 @click.option(
-    "--current-release",
+    "--current-app",
     type=click.Path(path_type=Path, exists=True, file_okay=False),
     required=True,
 )
-def backup_current(source_db: Path, backup_dir: Path, current_release: Path) -> None:
-    """Validate the current release and back up the database and file tree with its identity."""
+def backup_current(source_db: Path, backup_dir: Path, current_app: Path) -> None:
+    """Validate the current app and back up the database and file tree with its identity."""
     try:
-        revision = validate_release_manifest(current_release / "manifest.json").release_sha
+        revision = validate_app_manifest(current_app / "manifest.json").app_sha
         snapshot = create_database_backup(source_db, backup_dir, revision)
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo(str(snapshot))
 
 
-@environment.command("deploy")
+@environment.command("app-deploy")
 @click.option(
-    "--candidate", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
+    "--candidate-app", type=click.Path(path_type=Path, exists=True, file_okay=False), required=True
 )
-@click.option("--current", "current_pointer", type=click.Path(path_type=Path), required=True)
+@click.option("--current-root", type=click.Path(path_type=Path), required=True)
 @click.option("--source-db", type=click.Path(path_type=Path, dir_okay=False), required=True)
 @click.option("--backup-dir", type=click.Path(path_type=Path, file_okay=False), required=True)
-@click.option("--records", "records_path", type=click.Path(path_type=Path), required=True)
 @click.option("--health-url", required=True)
 @click.option("--service-manager", type=click.Choice(["systemctl", "launchctl"]), required=True)
 @click.option("--service-name", required=True)
-@click.option("--baseline-release", type=click.Path(path_type=Path, exists=True, file_okay=False))
-def deploy(
-    candidate: Path,
-    current_pointer: Path,
+@click.option("--lock-path", type=click.Path(path_type=Path))
+def app_deploy(
+    candidate_app: Path,
+    current_root: Path,
     source_db: Path,
     backup_dir: Path,
-    records_path: Path,
     health_url: str,
     service_manager: str,
     service_name: str,
-    baseline_release: Path | None,
+    lock_path: Path | None,
 ) -> None:
-    """Deploy one already-built release with backup, health proof, and code rollback."""
+    """Replace the one deployed app with backup, compatibility proof, and recovery."""
     try:
-        baseline_sha = None
-        if baseline_release is not None:
-            baseline_sha = validate_release_manifest(baseline_release / "manifest.json").release_sha
-        result = deploy_release(
-            candidate=candidate,
-            current_pointer=current_pointer,
-            backup=lambda revision: create_database_backup(source_db, backup_dir, revision),
+        result = deploy_app(
+            candidate_app=candidate_app,
+            current_root=current_root,
+            source_db=source_db,
+            backup=lambda _revision: run_current_app_backup(
+                current_root, source_db, backup_dir
+            ),
+            prove_compatibility=lambda candidate, current, database: (
+                prove_previous_app_compatibility(
+                    candidate_app=candidate,
+                    current_app=current,
+                    source_db=database,
+                )
+            ),
             service=SubprocessServiceController(service_manager, service_name),
             health=HttpHealthClient(health_url),
-            records_path=records_path,
-            source_db=source_db,
-            baseline_sha=baseline_sha,
+            lock_path=lock_path,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(json.dumps(result.__dict__, sort_keys=True))
+    payload = json.dumps(result.__dict__, sort_keys=True)
+    click.echo(payload)
+    if result.status not in {"succeeded", "unchanged"}:
+        detail = result.detail or "requested app is not running"
+        raise click.ClickException(f"app deployment {result.status}: {detail}")
 
 
 @environment.command("restore")
@@ -345,62 +350,6 @@ def inspect(
     _emit_manifest(manifest, json_output=json_output)
 
 
-@environment.command("import-live")
-@click.option("--environment-root", type=click.Path(path_type=Path), required=True)
-@click.option(
-    "--source-db",
-    type=click.Path(path_type=Path, exists=True, dir_okay=False),
-    required=True,
-)
-@click.option(
-    "--source-managed-files-root",
-    type=click.Path(path_type=Path, exists=True, file_okay=False),
-    required=True,
-)
-@click.option(
-    "--source-hermes-home",
-    type=click.Path(path_type=Path, exists=True, file_okay=False),
-    required=True,
-)
-@click.option(
-    "--source-runtime-user-home",
-    type=click.Path(path_type=Path, exists=True, file_okay=False),
-    required=True,
-)
-@click.option(
-    "--source-logs-root",
-    type=click.Path(path_type=Path, exists=True, file_okay=False),
-    required=True,
-)
-@click.option("--json", "json_output", is_flag=True)
-@click.pass_context
-def import_live(
-    ctx: click.Context,
-    *,
-    environment_root: Path,
-    source_db: Path,
-    source_managed_files_root: Path,
-    source_hermes_home: Path,
-    source_runtime_user_home: Path,
-    source_logs_root: Path,
-    json_output: bool,
-) -> None:
-    """Import or restore durable state into a prepared, stopped live environment."""
-    deps = _dependencies_from_context(ctx)
-    try:
-        manifest = deps.import_live_state(
-            environment_root=environment_root,
-            source_db_path=source_db,
-            source_managed_files_root=source_managed_files_root,
-            source_hermes_home=source_hermes_home,
-            source_runtime_user_home=source_runtime_user_home,
-            source_logs_root=source_logs_root,
-        )
-    except EnvironmentValidationError as exc:
-        raise click.ClickException(str(exc)) from exc
-    _emit_manifest(manifest, json_output=json_output, running=False)
-
-
 @environment.command("reset")
 @click.option("--kind", type=click.Choice(["staging"]), required=True)
 @click.option("--instance-id")
@@ -487,80 +436,8 @@ def remove(
     _emit_manifest(manifest, json_output=json_output, running=False)
 
 
-@environment.command("render-linux")
-@click.option("--kind", type=click.Choice(["live", "staging"]), required=True)
-@click.option("--instance-id")
-@click.option("--environment-root", type=click.Path(path_type=Path), required=True)
-@click.option(
-    "--environment-manager-root",
-    type=click.Path(path_type=Path, exists=True, file_okay=False),
-    required=True,
-)
-@click.option("--json", "json_output", is_flag=True)
-@click.pass_context
-def render_linux(
-    ctx: click.Context,
-    *,
-    kind: EnvironmentKind,
-    instance_id: str | None,
-    environment_root: Path,
-    environment_manager_root: Path,
-    json_output: bool,
-) -> None:
-    """Render Linux unit and ownership intent without installing it."""
-    deps = _dependencies_from_context(ctx)
-    try:
-        manifest = deps.inspect_instance(
-            kind=kind,
-            instance_id=instance_id,
-            environment_root=environment_root,
-            port=None,
-            credentials_env_file=None,
-            repository_roots=(),
-        )
-        rendered = render_linux_specification(
-            manifest,
-            environment_manager_root=environment_manager_root,
-        )
-    except EnvironmentValidationError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    if json_output:
-        click.echo(
-            json.dumps(
-                {
-                    "required_account": rendered.required_account,
-                    "unit_name": rendered.unit_name,
-                    "unit_text": rendered.unit_text,
-                    "tmpfiles_text": rendered.tmpfiles_text,
-                    "ownership_text": rendered.ownership_text,
-                    "strict_writable_paths": [str(path) for path in rendered.strict_writable_paths],
-                    "repository_path_policy": rendered.repository_path_policy,
-                    "credential_file_reference": (
-                        str(rendered.credential_file_reference)
-                        if rendered.credential_file_reference is not None
-                        else None
-                    ),
-                    "local_effects": rendered.local_effects,
-                    "vps_enforcement_verified": rendered.vps_enforcement_verified,
-                },
-                sort_keys=True,
-            )
-        )
-        return
-
-    click.echo(f"# Unit: {rendered.unit_name}")
-    click.echo(f"# Required account: {rendered.required_account}")
-    click.echo(f"# Credential file: {rendered.credential_file_reference or '(none)'}")
-    click.echo(f"# Repository policy: {rendered.repository_path_policy}")
-    click.echo(f"# Local effects: {rendered.local_effects}")
-    click.echo("\n[unit]\n" + rendered.unit_text)
-    click.echo("\n[tmpfiles]\n" + rendered.tmpfiles_text)
-    click.echo("\n[ownership]\n" + rendered.ownership_text)
-
-
 @environment.command("run")
-@click.option("--kind", type=click.Choice(["live", "staging"]), required=True)
+@click.option("--kind", type=click.Choice(["staging"]), required=True)
 @click.option("--instance-id")
 @click.option("--environment-root", type=click.Path(path_type=Path), required=True)
 @click.option("--port", type=int)
@@ -713,15 +590,12 @@ def _resolved_instance_from_manifest(manifest: EnvironmentManifest) -> ResolvedE
         instance_root=manifest.instance_root,
         db_path=manifest.db_path,
         managed_files_root=manifest.managed_files_root,
-        hermes_home=manifest.hermes_home,
-        runtime_user_home=manifest.runtime_user_home,
         logs_dir=manifest.logs_dir,
         dispatcher_lock_path=manifest.dispatcher_lock_path,
         server_control_socket_path=manifest.server_control_socket_path,
         port_policy=manifest.port_policy,
         credentials_env_file=manifest.credentials_env_file,
         allowed_repository_roots=manifest.repository_roots,
-        expected_linux_account=manifest.expected_linux_account,
         fixture_version=manifest.fixture_version,
         prepared=manifest.prepared_at is not None,
         running=False,

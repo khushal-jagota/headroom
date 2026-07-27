@@ -140,6 +140,7 @@ def test_launch_environment_scrubs_ambient_and_adds_contract_values(
     assert run_env["PLAN_DISPATCHER_LOCK_PATH"] == str(instance.dispatcher_lock_path)
     assert run_env["PLAN_SERVER_CONTROL_SOCKET"] == str(instance.server_control_socket_path)
     assert run_env["PLAN_HERMES_PYTHON"] == "/operator-hermes/bin/python"
+    assert run_env["PLAN_HERMES_HOME"] == str(tmp_path / "ambient-home" / ".hermes")
 
     assert "PYTHONPATH" not in run_env
     assert "PLAN_ACTOR" not in run_env
@@ -149,7 +150,6 @@ def test_launch_environment_scrubs_ambient_and_adds_contract_values(
     assert "PLAN_FAKE_NOW" not in run_env
     assert "HERMES_HOME" not in run_env
     assert "HERMES_SESSION_KEY" not in run_env
-    assert "PLAN_HERMES_HOME" not in run_env
 
 
 def test_hidden_test_launch_seam_injects_fake_runtime_itself(tmp_path: Path) -> None:

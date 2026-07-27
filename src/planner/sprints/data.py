@@ -24,6 +24,7 @@ from planner.sprints.contracts import (
     ItemStatus,
     Sprint,
     SprintItem,
+    SprintItemDeletion,
 )
 from planner.sprints.logic import (
     DateRange,
@@ -31,6 +32,7 @@ from planner.sprints.logic import (
     derive_sprint_item_status,
     find_overlap,
 )
+from planner.tickets.logic import admission
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
 
@@ -355,6 +357,67 @@ def assign_item_sprint(
             (sprint_id, now, item_id),
         )
     return _load_item(conn, item_id)
+
+
+def delete_item(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    actor: str,
+) -> SprintItemDeletion:
+    """Permanently remove a childless Sprint Item and its reference footprint.
+
+    What was removed comes back to the caller — the item, the sprints it sat in, and
+    everything that was linked to it — because those are the things whose own screens
+    just changed. Nothing is written down about the removal: the commit announces
+    itself, and a row describing a row that no longer exists is not a record of
+    anything.
+    """
+    admission.require_direct_actor(actor, "delete_item")
+    with _tx(conn):
+        item = _load_item(conn, item_id)
+        ticket_ids = tuple(
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM tickets WHERE sprint_item_id = ? ORDER BY id",
+                (item_id,),
+            ).fetchall()
+        )
+        if ticket_ids:
+            raise PlannerError(
+                ErrorCode.validation,
+                "sprint item has child tickets",
+                {"sprint_item_id": item_id, "ticket_ids": list(ticket_ids)},
+            )
+
+        link_rows = conn.execute(
+            "SELECT from_id, to_id, kind FROM links "
+            "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
+            (item_id, item_id),
+        ).fetchall()
+        linked_entity_ids = tuple(
+            sorted(
+                {
+                    str(row["to_id"] if row["from_id"] == item_id else row["from_id"])
+                    for row in link_rows
+                }
+            )
+        )
+        sprint_ids = (item.sprint_id,) if item.sprint_id is not None else ()
+
+        for row in link_rows:
+            conn.execute(
+                "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
+                (str(row["from_id"]), str(row["to_id"]), str(row["kind"])),
+            )
+
+        conn.execute("DELETE FROM sprint_items WHERE id = ?", (item_id,))
+        return SprintItemDeletion(
+            sprint_item_id=item_id,
+            title=item.title,
+            sprint_ids=sprint_ids,
+            linked_entity_ids=linked_entity_ids,
+        )
 
 
 # --- reads ----------------------------------------------------------------------

@@ -21,7 +21,9 @@ One screen per part of the system:
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. One project selector narrows the roster by each ticket's effective project,
-  including **All projects** and **No project**. A ticket parented by a sprint item uses
+  including **All projects** and **No project**. It sits just below the Chief of Staff
+  entry and reads as a small header showing the active project; clicking it opens a
+  menu of the projects. A ticket parented by a sprint item uses
   that item's project; a standalone ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
   tickets into collapsible boxed **status groups** — one group per ticket status, in a
@@ -58,11 +60,14 @@ One screen per part of the system:
 
   **Chief of Staff** sits first in the rail above the groups.
 
-  The right side opens on the Chief of Staff conversation. Selecting a ticket switches it to
-  the same complete ticket screen used by a direct ticket link while leaving the
-  Workspace rail in place, and records the selection at `#/workspace/<ticket-id>`.
-  That address can be loaded, refreshed, shared, or revisited with browser history;
-  a missing ticket safely leaves the Chief of Staff view open.
+  On screens wider than 960px, the right side opens on the Chief of Staff conversation.
+  Selecting a ticket switches it to the same complete ticket screen used by a direct
+  ticket link while leaving the Workspace rail in place, and records the selection at
+  `#/workspace/<ticket-id>`. That address can be loaded, refreshed, shared, or
+  revisited with browser history; a missing ticket safely leaves the Chief of Staff
+  view open. At 960px or less, selecting a ticket opens its standalone
+  `#/ticket/<ticket-id>` page, and selecting Chief of Staff opens the standalone
+  `#/chief` page.
 - **Ticket** — the whole story of one piece of work: a serif title, a single facts
   line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
   exact backend Worker failure reason directly below that line when one exists, the

@@ -47,7 +47,7 @@ if [ -n "${PANELS_LAUNCHCTL:-}" ] || command -v launchctl >/dev/null 2>&1; then
   esac
 fi
 if command -v systemctl >/dev/null 2>&1; then
-  exec systemctl "$action" panels-live.service
+  exec systemctl --user "$action" panels-live.service
 fi
 echo "no supported service manager found" >&2
 exit 1

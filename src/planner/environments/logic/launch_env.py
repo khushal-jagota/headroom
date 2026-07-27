@@ -76,6 +76,7 @@ def _contract_owned_env(
     runtime_port: int,
     ambient_home: str | None,
 ) -> dict[str, str]:
+    normal_home = Path(ambient_home) if ambient_home is not None else None
     return {
         "PLAN_DB_PATH": str(instance.db_path),
         "PLAN_PORT": str(runtime_port),
@@ -83,8 +84,11 @@ def _contract_owned_env(
         "PLAN_DISPATCHER_LOCK_PATH": str(instance.dispatcher_lock_path),
         "PLAN_SERVER_CONTROL_SOCKET": str(instance.server_control_socket_path),
         "PLAN_HERMES_PYTHON": str(hermes_python),
-        # Hermes-backed Panels runs now use the operator's normal Hermes home
-        # by default, while provider CLIs use that same native login/keychain
-        # state through the ambient HOME.
-        "HOME": ambient_home or str(instance.runtime_user_home),
+        # Hermes and provider CLIs use the vps user's normal homes.
+        **({"HOME": ambient_home} if ambient_home is not None else {}),
+        **(
+            {"PLAN_HERMES_HOME": str(normal_home / ".hermes")}
+            if normal_home is not None
+            else {}
+        ),
     }

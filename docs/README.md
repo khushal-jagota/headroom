@@ -59,9 +59,10 @@ can never take a decision that belongs to the human.
   notebook of events, honest send fates, and backend cards. It serves every screen that
   shows a conversation — a Ticket's, the Chief of Staff's, and the development pane.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
-  layouts, Ticket worktree servers, scrubbed launch, and Linux render intent.
+  layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
-- **Exact-commit releases** (`release-deployment.md`) — Git-free production releases and deployment.
+- **Production deployment** (`deployment.md`) — exact-commit building, single-app replacement,
+  and automatic recovery.
 
 **The surfaces you plan on**
 
