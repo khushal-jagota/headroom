@@ -12,7 +12,6 @@
   import type { ThreadItem, TranscriptRow } from "../../lib/conversation/transcript";
   import {
     askDeadSentence,
-    tokenUsageSentence,
     CONTEXT_COMPACTED_SENTENCE,
     promptLabelFor,
     readableDetail,
@@ -167,11 +166,6 @@
       <div class="acp-compaction" role="separator" data-conversation-row="context_compacted">
         <span>{CONTEXT_COMPACTED_SENTENCE}</span>
       </div>
-    {:else if item.row.kind === "token_usage"}
-      {@const spent = tokenUsageSentence(item.row)}
-      {#if spent}
-        <div class="c2-usage" data-conversation-row="token_usage">{spent}</div>
-      {/if}
     {:else if item.row.kind === "turn_ended" && item.row.ending === "failed"}
       <div class="acp-turn-end acp-turn-end--error" role="alert" data-conversation-row="turn_ended">
         {turnEndingSentence(item.row.ending, item.row.errorSummary)}
@@ -203,15 +197,6 @@
     padding: 0 var(--space-2);
   }
   .c2-refused .c2-label { color: var(--accent-error); }
-  /* What a turn cost, in the quietest thing on the page: it is there when looked for and
-     never competes with what was said. */
-  .c2-usage {
-    align-self: stretch;
-    color: var(--text-faintest);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
-  }
   .c2-streaming { color: var(--text-muted); }
   .c2-ask-row {
     align-self: stretch;

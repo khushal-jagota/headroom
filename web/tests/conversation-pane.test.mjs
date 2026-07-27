@@ -338,10 +338,9 @@ try {
   assert.match(pictureThread, /markdown-host/);
 
 
-  // What a turn cost is drawn, and where the backend cut the thread is drawn as the seam
-  // it is — reusing the stylesheet the old pane drew the same thing with, rather than a
-  // second one for the same idea.
-  const spentAndCut = drawn(Transcript, {
+  // Usage remains in the conversation record for other consumers, but it is not part of
+  // the transcript. The meaningful seam beside it still renders.
+  const usageAndCut = drawn(Transcript, {
     conversationId: "c1",
     rows: [
       {
@@ -357,30 +356,11 @@ try {
       { key: "e2", kind: "context_compacted", sequence: 2, createdAt: 1_001 }
     ]
   });
-  assert.match(spentAndCut, /data-conversation-row="token_usage"/);
-  assert.match(spentAndCut, /41\.0k in · 920 out · \$0\.42/);
-  assert.doesNotMatch(spentAndCut, /cached/, "a count the backend never gave is not drawn");
-  assert.match(spentAndCut, /data-conversation-row="context_compacted"/);
-  assert.match(spentAndCut, /acp-compaction/, "the seam reuses the stylesheet, not a fork");
-  assert.match(spentAndCut, /context compacted/);
-
-  // A turn whose backend counted nothing draws no line at all, rather than an empty one.
-  const countedNothing = drawn(Transcript, {
-    conversationId: "c1",
-    rows: [
-      {
-        key: "e1",
-        kind: "token_usage",
-        sequence: 1,
-        createdAt: 1_000,
-        inputTokens: null,
-        outputTokens: null,
-        cachedInputTokens: null,
-        costUsd: null
-      }
-    ]
-  });
-  assert.doesNotMatch(countedNothing, /data-conversation-row="token_usage"/);
+  assert.doesNotMatch(usageAndCut, /data-conversation-row="token_usage"/);
+  assert.doesNotMatch(usageAndCut, /41\.0k in|920 out|\$0\.42/);
+  assert.match(usageAndCut, /data-conversation-row="context_compacted"/);
+  assert.match(usageAndCut, /acp-compaction/, "the seam reuses the stylesheet, not a fork");
+  assert.match(usageAndCut, /context compacted/);
 
   // A dead ask is drawn plainly dead, and nothing on it is actionable.
   const deadThread = drawn(Transcript, { conversationId: "c1", rows: [askRow("dead")] });
