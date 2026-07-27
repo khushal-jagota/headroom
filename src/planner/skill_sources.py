@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Final
 
 SKILL_FILE_NAME = "SKILL.md"
 SKILLS_DIR_NAME = "skills"
 LEGACY_WORKER_SETTINGS_DIR_NAME = "worker-settings"
+RETIRED_PANELS_SKILL_NAMES: Final = frozenset({"panels-ticket-management"})
 
 
 def panels_skill_root() -> Path:
@@ -36,11 +38,14 @@ def ensure_managed_panels_skills(
     if not source_root.is_dir():
         raise FileNotFoundError(f"packaged Panels skills not found: {source_root}")
     target_root.mkdir(parents=True, exist_ok=True)
+    remove_retired_panels_skills(target_root)
     legacy_by_name = _legacy_skills_by_name(
         Path(configured_database_parent).expanduser() / LEGACY_WORKER_SETTINGS_DIR_NAME
     )
     for source_dir in sorted(source_root.iterdir(), key=lambda path: path.name):
         if not source_dir.is_dir() or not (source_dir / SKILL_FILE_NAME).is_file():
+            continue
+        if source_dir.name in RETIRED_PANELS_SKILL_NAMES:
             continue
         target_dir = target_root / source_dir.name
         if target_dir.exists() or target_dir.is_symlink():
@@ -69,7 +74,9 @@ def provision_native_backend_skills(
     panels_skill_names = {
         path.name
         for path in source_root.iterdir()
-        if path.is_dir() and (path / SKILL_FILE_NAME).is_file()
+        if path.name not in RETIRED_PANELS_SKILL_NAMES
+        and path.is_dir()
+        and (path / SKILL_FILE_NAME).is_file()
     }
     if target.is_symlink():
         if target.resolve() == source_root:
@@ -79,7 +86,10 @@ def provision_native_backend_skills(
         target.mkdir()
         if legacy_root.is_dir():
             for legacy_skill in legacy_root.iterdir():
-                if legacy_skill.name in panels_skill_names:
+                if (
+                    legacy_skill.name in panels_skill_names
+                    or legacy_skill.name in RETIRED_PANELS_SKILL_NAMES
+                ):
                     continue
                 (target / legacy_skill.name).symlink_to(
                     legacy_skill, target_is_directory=legacy_skill.is_dir()
@@ -89,6 +99,7 @@ def provision_native_backend_skills(
         return source_root
     if not target.is_dir():
         raise FileExistsError(f"native backend skills path is not a directory: {target}")
+    remove_retired_panels_skills(target)
     # Provider homes can already contain user-owned skills. Preserve them and
     # expose each missing Panels skill directly from the managed authority.
     for skill_name in panels_skill_names:
@@ -103,6 +114,22 @@ def provision_native_backend_skills(
                 target_skill.unlink()
         target_skill.symlink_to(source_skill, target_is_directory=True)
     return source_root
+
+
+def remove_retired_panels_skills(skill_root: Path | str) -> None:
+    """Remove only explicitly retired Panels skill paths from one skills home."""
+    root = Path(skill_root).expanduser()
+    for retired_skill_name in RETIRED_PANELS_SKILL_NAMES:
+        _remove_path(root / retired_skill_name)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
 
 
 def _legacy_skills_by_name(legacy_root: Path) -> dict[str, Path]:
