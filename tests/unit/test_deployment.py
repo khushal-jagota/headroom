@@ -4,13 +4,16 @@ import json
 import multiprocessing
 import os
 import shutil
+import sqlite3
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from planner.environments.app import AppManifest, digest_app_artifact, digest_app_source
+from planner.environments.backup import create_database_backup
 from planner.environments.deployment import (
     DeploymentError,
     DeploymentResult,
@@ -24,9 +27,16 @@ SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 
 class FakeService:
-    def __init__(self, events: list[str], *, fail_on: set[int] | None = None) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        fail_on: set[int] | None = None,
+        fail_stop: bool = False,
+    ) -> None:
         self.events = events
         self.fail_on = fail_on or set()
+        self.fail_stop = fail_stop
         self.calls = 0
 
     def restart(self) -> None:
@@ -34,6 +44,11 @@ class FakeService:
         self.events.append("restart")
         if self.calls in self.fail_on:
             raise OSError("restart failed")
+
+    def stop(self) -> None:
+        self.events.append("stop")
+        if self.fail_stop:
+            raise OSError("stop failed")
 
 
 class FakeHealth:
@@ -46,7 +61,15 @@ class FakeHealth:
         return sha in self.healthy
 
 
-def test_app_deploy_proves_compatibility_then_backups_and_replaces_only_app(
+def _recording_backup(events: list[str], snapshot: Path) -> Callable[[str], Path]:
+    def backup(revision: str) -> Path:
+        events.append(f"backup:{revision}")
+        return snapshot
+
+    return backup
+
+
+def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     tmp_path: Path,
 ) -> None:
     current = tmp_path / "current"
@@ -61,20 +84,21 @@ def test_app_deploy_proves_compatibility_then_backups_and_replaces_only_app(
     log = logs / "panels.log"
     log.write_text("log", encoding="utf-8")
     events: list[str] = []
+    snapshot = tmp_path / "snapshot"
 
     result = deploy_app(
         candidate_app=candidate,
         current_root=current,
         source_db=database,
-        prove_compatibility=lambda *_: events.append("compatibility"),
-        backup=lambda revision: events.append(f"backup:{revision}"),
+        backup=_recording_backup(events, snapshot),
+        restore=lambda _: events.append("restore"),
         service=FakeService(events),
         health=FakeHealth(events, {SHA_B}),
         now=lambda: 10.0,
     )
 
     assert result == DeploymentResult("succeeded", SHA_B, SHA_A, None)
-    assert events == ["compatibility", f"backup:{SHA_A}", "restart", f"health:{SHA_B}"]
+    assert events == ["stop", f"backup:{SHA_A}", "restart", f"health:{SHA_B}"]
     assert (current / "app" / "new").is_file()
     assert not (current / "app" / "old").exists()
     assert database.read_text(encoding="utf-8") == "db"
@@ -90,12 +114,13 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
     database = _database(current)
     events: list[str] = []
+    snapshot = tmp_path / "snapshot"
     result = deploy_app(
         candidate_app=candidate,
         current_root=current,
         source_db=database,
-        prove_compatibility=lambda *_: events.append("compatibility"),
-        backup=lambda revision: events.append(f"backup:{revision}"),
+        backup=_recording_backup(events, snapshot),
+        restore=lambda path: events.append(f"restore:{path.name}"),
         service=FakeService(events),
         health=FakeHealth(events, {SHA_A}),
     )
@@ -106,10 +131,12 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
         "app_sha"
     ] == SHA_A
     assert events == [
-        "compatibility",
+        "stop",
         f"backup:{SHA_A}",
         "restart",
         f"health:{SHA_B}",
+        "stop",
+        "restore:snapshot",
         "restart",
         f"health:{SHA_A}",
     ]
@@ -126,8 +153,8 @@ def test_recovery_failure_reports_every_existing_continuation_path(tmp_path: Pat
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
             service=FakeService([], fail_on={2}),
             health=FakeHealth([], set()),
         )
@@ -138,6 +165,28 @@ def test_recovery_failure_reports_every_existing_continuation_path(tmp_path: Pat
     assert str(retained[0]) in detail
     assert (current / "app" / "old").is_file()
     assert (retained[0] / "new").is_file()
+
+
+def test_restore_failure_reports_snapshot_path(tmp_path: Path) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    database = _database(current)
+    snapshot = tmp_path / "snapshot"
+
+    with pytest.raises(DeploymentError) as raised:
+        deploy_app(
+            candidate_app=candidate,
+            current_root=current,
+            source_db=database,
+            backup=lambda _: snapshot,
+            restore=lambda _: (_ for _ in ()).throw(OSError("restore failed")),
+            service=FakeService([]),
+            health=FakeHealth([], set()),
+        )
+
+    assert str(snapshot) in str(raised.value)
+    assert "restore failed" in str(raised.value)
 
 
 def test_unhealthy_restored_app_reports_every_existing_continuation_path(
@@ -152,8 +201,8 @@ def test_unhealthy_restored_app_reports_every_existing_continuation_path(
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
             service=FakeService([]),
             health=FakeHealth([], set()),
         )
@@ -167,38 +216,47 @@ def test_unhealthy_restored_app_reports_every_existing_continuation_path(
     assert (retained[0] / "new").is_file()
 
 
-def test_compatibility_or_backup_failure_leaves_current_app_unchanged(tmp_path: Path) -> None:
+def test_service_stop_failure_restarts_and_proves_current_app(tmp_path: Path) -> None:
     current = tmp_path / "current"
     _app(current / "app", SHA_A, "old")
     candidate = _app(tmp_path / "candidate", SHA_B, "new")
     database = _database(current)
+    events: list[str] = []
 
-    def incompatible(*_: Path) -> None:
-        raise RuntimeError("incompatible")
-
-    with pytest.raises(DeploymentError, match="compatibility"):
+    with pytest.raises(DeploymentError, match="service stop failed"):
         deploy_app(
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=incompatible,
             backup=lambda _: (_ for _ in ()).throw(AssertionError("backup called")),
-            service=FakeService([]),
-            health=FakeHealth([], set()),
+            restore=lambda _: (_ for _ in ()).throw(AssertionError("restore called")),
+            service=FakeService(events, fail_stop=True),
+            health=FakeHealth(events, {SHA_A}),
         )
+
     assert (current / "app" / "old").is_file()
+    assert events == ["stop", "restart", f"health:{SHA_A}"]
+
+
+def test_backup_failure_restarts_current_app_unchanged(tmp_path: Path) -> None:
+    current = tmp_path / "current"
+    _app(current / "app", SHA_A, "old")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+    database = _database(current)
+    events: list[str] = []
 
     with pytest.raises(DeploymentError, match="backup failed"):
         deploy_app(
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
             backup=lambda _: (_ for _ in ()).throw(OSError("unavailable")),
-            service=FakeService([]),
-            health=FakeHealth([], set()),
+            restore=lambda _: (_ for _ in ()).throw(AssertionError("restore called")),
+            service=FakeService(events),
+            health=FakeHealth(events, {SHA_A}),
         )
     assert (current / "app" / "old").is_file()
+    assert events == ["stop", "restart", f"health:{SHA_A}"]
 
 
 def test_existing_state_without_current_app_fails_without_baseline_model(tmp_path: Path) -> None:
@@ -210,8 +268,8 @@ def test_existing_state_without_current_app_fails_without_baseline_model(tmp_pat
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
             service=FakeService([]),
             health=FakeHealth([], {SHA_B}),
         )
@@ -229,8 +287,8 @@ def test_symlinked_current_root_is_rejected(tmp_path: Path) -> None:
             candidate_app=candidate,
             current_root=current,
             source_db=actual / "data/planning.db",
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
             service=FakeService([]),
             health=FakeHealth([], {SHA_B}),
         )
@@ -244,8 +302,8 @@ def test_failed_first_install_removes_unhealthy_app_for_safe_retry(tmp_path: Pat
         candidate_app=candidate,
         current_root=current,
         source_db=current / "data/planning.db",
-        prove_compatibility=lambda *_: None,
-        backup=lambda _: None,
+        backup=lambda _: tmp_path / "snapshot",
+        restore=lambda _: None,
         service=FakeService([]),
         health=FakeHealth([], set()),
     )
@@ -262,8 +320,8 @@ def test_fresh_first_install_and_same_sha_are_bounded(tmp_path: Path) -> None:
         candidate_app=candidate,
         current_root=current,
         source_db=current / "data/planning.db",
-        prove_compatibility=lambda *_: events.append("compatibility"),
-        backup=lambda _: events.append("backup"),
+        backup=_recording_backup(events, tmp_path / "snapshot"),
+        restore=lambda _: events.append("restore"),
         service=FakeService(events),
         health=FakeHealth(events, {SHA_B}),
     )
@@ -275,8 +333,8 @@ def test_fresh_first_install_and_same_sha_are_bounded(tmp_path: Path) -> None:
         candidate_app=candidate,
         current_root=current,
         source_db=current / "data/planning.db",
-        prove_compatibility=lambda *_: events.append("compatibility"),
-        backup=lambda _: events.append("backup"),
+        backup=_recording_backup(events, tmp_path / "snapshot"),
+        restore=lambda _: events.append("restore"),
         service=FakeService(events),
         health=FakeHealth(events, {SHA_B}),
     )
@@ -294,8 +352,8 @@ def test_same_sha_is_not_unchanged_when_installed_app_is_unhealthy(tmp_path: Pat
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
             service=FakeService([]),
             health=FakeHealth([], set()),
         )
@@ -311,8 +369,8 @@ def test_invalid_candidate_does_not_run_any_external_action(tmp_path: Path) -> N
             candidate_app=tmp_path / "missing",
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: events.append("compatibility"),
-            backup=lambda _: events.append("backup"),
+            backup=_recording_backup(events, tmp_path / "snapshot"),
+            restore=lambda _: events.append("restore"),
             service=FakeService(events),
             health=FakeHealth(events, set()),
         )
@@ -332,8 +390,8 @@ def test_tampered_current_app_does_not_run_any_external_action(tmp_path: Path) -
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: events.append("compatibility"),
-            backup=lambda _: events.append("backup"),
+            backup=_recording_backup(events, tmp_path / "snapshot"),
+            restore=lambda _: events.append("restore"),
             service=FakeService(events),
             health=FakeHealth(events, set()),
         )
@@ -357,8 +415,8 @@ def test_redigested_incomplete_candidate_does_not_run_any_external_action(
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: events.append("compatibility"),
-            backup=lambda _: events.append("backup"),
+            backup=_recording_backup(events, tmp_path / "snapshot"),
+            restore=lambda _: events.append("restore"),
             service=FakeService(events),
             health=FakeHealth(events, set()),
         )
@@ -382,8 +440,8 @@ def test_candidate_copy_failure_leaves_current_app_unchanged(
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
             service=FakeService([]),
             health=FakeHealth([], {SHA_B}),
         )
@@ -424,8 +482,8 @@ def test_staged_candidate_validation_failure_precedes_old_app_move(
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
             service=FakeService([]),
             health=FakeHealth([], {SHA_B}),
         )
@@ -447,17 +505,19 @@ def test_old_app_move_failure_leaves_current_app_and_removes_stage(
             raise OSError("old app move failed")
         real_replace(source, destination)
 
+    events: list[str] = []
     monkeypatch.setattr("planner.environments.deployment.os.replace", fail_old_move)
     with pytest.raises(OSError, match="old app move failed"):
         deploy_app(
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
-            service=FakeService([]),
-            health=FakeHealth([], {SHA_B}),
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
+            service=FakeService(events),
+            health=FakeHealth(events, {SHA_A}),
         )
+    assert events == ["stop", "restart", f"health:{SHA_A}"]
     assert (current / "app" / "old").is_file()
     assert list(current.glob(".app-*")) == []
 
@@ -482,14 +542,14 @@ def test_candidate_move_failure_restores_and_proves_prior_app(
         candidate_app=candidate,
         current_root=current,
         source_db=database,
-        prove_compatibility=lambda *_: None,
-        backup=lambda _: None,
+        backup=lambda _: tmp_path / "snapshot",
+        restore=lambda _: None,
         service=FakeService(events),
         health=FakeHealth(events, {SHA_A}),
     )
     assert result.status == "rolled_back"
     assert (current / "app" / "old").is_file()
-    assert events == ["restart", f"health:{SHA_A}"]
+    assert events == ["stop", "stop", "restart", f"health:{SHA_A}"]
     assert list(current.glob(".app-*")) == []
 
 
@@ -508,13 +568,13 @@ def test_fallback_cleanup_failure_retains_healthy_candidate_and_fallback(
         real_rmtree(path, ignore_errors=ignore_errors)
 
     monkeypatch.setattr("planner.environments.deployment.shutil.rmtree", fail_fallback_cleanup)
-    with pytest.raises(OSError, match="fallback cleanup failed"):
+    with pytest.raises(DeploymentError) as raised:
         deploy_app(
             candidate_app=candidate,
             current_root=current,
             source_db=database,
-            prove_compatibility=lambda *_: None,
-            backup=lambda _: None,
+            backup=lambda _: tmp_path / "snapshot",
+            restore=lambda _: None,
             service=FakeService([]),
             health=FakeHealth([], {SHA_B}),
         )
@@ -522,6 +582,9 @@ def test_fallback_cleanup_failure_retains_healthy_candidate_and_fallback(
     fallback = list(current.glob(".app-fallback-*"))
     assert len(fallback) == 1
     assert (fallback[0] / "old").is_file()
+    assert "candidate is healthy" in str(raised.value)
+    assert "fallback cleanup failed" in str(raised.value)
+    assert str(fallback[0]) in str(raised.value)
 
 
 def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> None:
@@ -545,8 +608,8 @@ def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> Non
         candidate_app=candidate,
         current_root=tmp_path / "current",
         source_db=tmp_path / "current/data/planning.db",
-        prove_compatibility=lambda *_: None,
-        backup=lambda _: None,
+        backup=lambda _: tmp_path / "snapshot",
+        restore=lambda _: None,
         service=FakeService([]),
         health=FakeHealth([], {SHA_B}),
         lock_path=lock,
@@ -554,6 +617,38 @@ def test_deployment_uses_operator_owned_interprocess_lock(tmp_path: Path) -> Non
     assert result.status == "succeeded"
     assert time.monotonic() - started >= 0.25
     process.join()
+
+
+def test_launchctl_stop_boots_out_explicit_user_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    def run(
+        command: list[str], *, check: bool, shell: bool, **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        assert check is False
+        assert shell is False
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    SubprocessServiceController("launchctl", "gui/501/com.panels.live").stop()
+    assert commands == [["/bin/launchctl", "bootout", "gui/501/com.panels.live"]]
+
+
+def test_launchctl_stop_tolerates_an_already_unloaded_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run(
+        command: list[str], *, check: bool, shell: bool, **_: object
+    ) -> subprocess.CompletedProcess[str]:
+        assert check is False
+        assert shell is False
+        return subprocess.CompletedProcess(command, 3, "", "Boot-out failed: 3: No such process")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    SubprocessServiceController("launchctl", "gui/501/com.panels.live").stop()
 
 
 def test_launchctl_restart_accepts_explicit_user_domain(
@@ -600,9 +695,12 @@ def test_systemctl_restart_targets_the_callers_user_manager(
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", run)
-    SubprocessServiceController("systemctl", "panels-live.service").restart()
+    controller = SubprocessServiceController("systemctl", "panels-live.service")
+    controller.stop()
+    controller.restart()
     assert commands == [
-        ["systemctl", "--user", "restart", "panels-live.service"]
+        ["systemctl", "--user", "stop", "panels-live.service"],
+        ["systemctl", "--user", "restart", "panels-live.service"],
     ]
 
 
@@ -614,7 +712,11 @@ def test_predeploy_backup_runs_through_the_current_deployed_launcher(
     launcher = current / "app" / "bin" / "panels-launcher"
     launcher.parent.mkdir(parents=True)
     source_db = current / "data" / "planner.db"
+    source_db.parent.mkdir(parents=True)
+    with sqlite3.connect(source_db) as connection:
+        connection.execute("CREATE TABLE proof (value TEXT)")
     backup_dir = current / "data" / "backups"
+    expected_snapshot = create_database_backup(source_db, backup_dir, SHA_A)
     commands: list[list[str]] = []
     environments: list[dict[str, str]] = []
 
@@ -630,11 +732,12 @@ def test_predeploy_backup_runs_through_the_current_deployed_launcher(
         assert shell is False
         commands.append(command)
         environments.append(env)
-        return subprocess.CompletedProcess(command, 0, "", "")
+        return subprocess.CompletedProcess(command, 0, f"{expected_snapshot}\n", "")
 
     monkeypatch.setenv("HOME", str(tmp_path / "vps"))
     monkeypatch.setattr(subprocess, "run", run)
-    run_current_app_backup(current, source_db, backup_dir)
+    snapshot = run_current_app_backup(current, source_db, backup_dir, SHA_A)
+    assert snapshot == expected_snapshot.resolve()
     assert commands == [
         [
             str(launcher),
@@ -649,6 +752,85 @@ def test_predeploy_backup_runs_through_the_current_deployed_launcher(
         ]
     ]
     assert environments[0]["PLAN_HERMES_HOME"] == str(tmp_path / "vps" / ".hermes")
+
+
+def test_predeploy_backup_rejects_snapshot_outside_backup_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = tmp_path / "current"
+    outside = tmp_path / "outside" / "snapshot-1"
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, f"{outside}\n", ""),
+    )
+
+    with pytest.raises(DeploymentError, match="outside the backup directory"):
+        run_current_app_backup(
+            current,
+            current / "data" / "planner.db",
+            current / "data" / "backups",
+            SHA_A,
+        )
+
+
+def test_predeploy_backup_rejects_unverified_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = tmp_path / "current"
+    backup_dir = current / "data" / "backups"
+    snapshot = backup_dir / "snapshot-bad"
+    snapshot.mkdir(parents=True)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, f"{snapshot}\n", ""),
+    )
+
+    with pytest.raises(DeploymentError, match="unverified snapshot"):
+        run_current_app_backup(
+            current,
+            current / "data" / "planner.db",
+            backup_dir,
+            SHA_A,
+        )
+
+
+def test_predeploy_backup_rejects_wrong_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = tmp_path / "current"
+    source_db = current / "data" / "planner.db"
+    source_db.parent.mkdir(parents=True)
+    with sqlite3.connect(source_db) as connection:
+        connection.execute("CREATE TABLE proof (value TEXT)")
+    backup_dir = current / "data" / "backups"
+    snapshot = create_database_backup(source_db, backup_dir, SHA_A)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, f"{snapshot}\n", ""),
+    )
+
+    with pytest.raises(DeploymentError, match="does not match prior app"):
+        run_current_app_backup(current, source_db, backup_dir, SHA_B)
+
+
+def test_predeploy_backup_preserves_command_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(1, ["panels-launcher"], stderr="disk full")
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    current = tmp_path / "current"
+    with pytest.raises(DeploymentError, match="disk full"):
+        run_current_app_backup(
+            current,
+            current / "data" / "planner.db",
+            current / "data" / "backups",
+            SHA_A,
+        )
 
 
 def _database(current: Path) -> Path:
