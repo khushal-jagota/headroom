@@ -43,8 +43,11 @@ def _mount_brand_fixture(page: Page, base_url: str) -> None:
           </body>
         </html>
         """,
-        wait_until="networkidle",
     )
+    # Not "networkidle": this page has already opened the live-change stream, which stays
+    # open for as long as the app runs, so the network never goes quiet and the wait can
+    # only time out. The wait that matters is the next one — the stylesheet having actually
+    # applied, which is the thing this test reads.
     page.wait_for_function(
         """() => getComputedStyle(document.documentElement)
             .getPropertyValue('--accent-bright').trim() !== ''""",
