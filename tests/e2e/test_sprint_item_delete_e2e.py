@@ -3,15 +3,17 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+from tests.e2e.harness import JsonObject, ServerHandle
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
 
 
-def _cli_process(server, *args: str) -> subprocess.CompletedProcess[str]:
+def _cli_process(server: ServerHandle, *args: str) -> subprocess.CompletedProcess[str]:
     env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
     env["PLAN_SERVER_URL"] = server.base
     return subprocess.run(
@@ -24,7 +26,9 @@ def _cli_process(server, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_sprint_item_delete_cli_requires_yes_refuses_children_and_deletes(server, cli) -> None:
+def test_sprint_item_delete_cli_requires_yes_refuses_children_and_deletes(
+    server: ServerHandle, cli: Callable[..., JsonObject]
+) -> None:
     child_item_id = cli(
         server,
         "sprint",

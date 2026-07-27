@@ -10,8 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 from sqlite3 import Connection
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -22,7 +24,7 @@ from planner.tickets.data import accept_proposal, change_scope, create_ticket, f
 _AGENT = {"X-Plan-Actor": "agent"}  # a plain (non-dispatched) agent context
 
 
-def _make_app(tmp_path: Path) -> tuple[object, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -105,36 +107,25 @@ def test_put_value_bad_field_is_validation_error(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "validation"
 
 
-def test_put_value_logs_field_value_edited_event(tmp_path: Path) -> None:
+def test_put_value_signals_the_change_after_a_successful_edit(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _passed_ticket(db_path)
-    with TestClient(app) as client:
-        edit = client.put(f"/api/tickets/{tid}/value/success", json={"body": "edited success"})
-        assert edit.status_code == 200, edit.json()
-        events = client.get(f"/api/tickets/{tid}/events").json()["events"]
-    matching = [e for e in events if e["kind"] == "field_value_edited"]
-    assert len(matching) == 1
-    assert matching[0]["payload"] == {"field": "success", "body": "edited success"}
+    signals = 0
 
+    def record() -> None:
+        nonlocal signals
+        signals += 1
 
-def test_put_value_wakes_automatic_employee_step_eligibility_wake_after_successful_edit(
-    tmp_path: Path,
-) -> None:
-    app, db_path = _make_app(tmp_path)
-    tid = _passed_ticket(db_path)
-
-    class RecordingEligibilityWake:
-        def __init__(self) -> None:
-            self.wakes = 0
-
-        def wake(self) -> None:
-            self.wakes += 1
-
-    eligibility_wake = RecordingEligibilityWake()
-    app.state.automatic_employee_step_eligibility_wake = eligibility_wake
-
-    with TestClient(app) as client:
-        response = client.put(f"/api/tickets/{tid}/value/success", json={"body": "edited success"})
+    unsubscribe = change_signal.subscribe(record)
+    try:
+        with TestClient(app) as client:
+            response = client.put(
+                f"/api/tickets/{tid}/value/success", json={"body": "edited success"}
+            )
+            detail = client.get(f"/api/tickets/{tid}").json()
+    finally:
+        unsubscribe()
 
     assert response.status_code == 200, response.json()
-    assert eligibility_wake.wakes == 1
+    assert detail["fields"]["success"]["value"] == "edited success"
+    assert signals == 1

@@ -7,7 +7,6 @@
     prepareManagedHtmlPreviewDocument,
     resolvePreview
   } from "../lib/filePreview";
-  import Button from "./Button.svelte";
   import MarkdownBlock from "./MarkdownBlock.svelte";
 
   let {
@@ -30,6 +29,11 @@
   let shouldFetchText = $derived(
     (resolved.kind === "markdown" && expansion.expandable) || resolved.kind === "html"
   );
+  let showsMedia = $derived(
+    resolved.kind === "image" || resolved.kind === "video" || resolved.kind === "audio"
+  );
+  let showsDocument = $derived(shouldFetchText && !error);
+  let inline = $derived(!showsMedia && !showsDocument);
 
   $effect(() => {
     const current = resolved;
@@ -65,105 +69,58 @@
   });
 </script>
 
+{#snippet openLink(href: string | undefined)}
+  <!-- Opened here rather than in a new tab. One thing at a time is easier to follow and
+       easier to leave — back is always the way out — and it is the same on a phone, where
+       a second tab is a place you have to go and find. -->
+  <a class="file-preview-link" {href} rel="noopener noreferrer">Open {resolved.label}</a>
+{/snippet}
+
 <div
-  class={`file-preview file-preview--${mode}`}
+  class={`file-preview file-preview--${mode}${inline ? " file-preview--inline" : ""}`}
   data-file-preview
   data-file-preview-kind={resolved.kind}
 >
   {#if resolved.kind === "image"}
-    <figure class="file-preview-media">
-      <a class="file-preview-title" href={resolved.previewHref}>{resolved.label}</a>
-      <img src={resolved.href} alt={resolved.label} loading="lazy" />
-    </figure>
+    <img class="file-preview-image" src={resolved.href} alt={resolved.label} loading="lazy" />
   {:else if resolved.kind === "video"}
-    <figure class="file-preview-media">
-      <a class="file-preview-title" href={resolved.previewHref}>{resolved.label}</a>
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video src={resolved.href} controls preload="metadata"></video>
-    </figure>
+    <!-- svelte-ignore a11y_media_has_caption -->
+    <video class="file-preview-video" src={resolved.href} controls preload="metadata"></video>
   {:else if resolved.kind === "audio"}
-    <div class="file-preview-audio">
-      <a class="file-preview-title" href={resolved.previewHref}>{resolved.label}</a>
-      <audio src={resolved.href} controls preload="metadata"></audio>
-    </div>
-  {:else if resolved.kind === "markdown"}
-    {#if expansion.expandable}
-      <article class="file-preview-doc">
-        <a
-          class="file-preview-title"
-          href={resolved.previewHref}
-          target="_blank"
-          rel="noopener noreferrer"
-        >{resolved.label}</a>
-        {#if error}
-          <div class="quiet-line">{error}</div>
-        {:else if text === null}
+    <audio class="file-preview-audio" src={resolved.href} controls preload="metadata"></audio>
+  {:else if error}
+    <span class="quiet-line">{error}</span>
+  {:else if resolved.kind === "html"}
+    <article class="file-preview-document">
+      <div class="file-preview-document-header">
+        {@render openLink(resolved.previewHref)}
+      </div>
+      <iframe
+        bind:this={htmlFrame}
+        class="file-preview-frame"
+        data-file-preview-html
+        sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
+        title={resolved.label}
+      ></iframe>
+    </article>
+  {:else if resolved.kind === "markdown" && expansion.expandable}
+    <article class="file-preview-document">
+      <div class="file-preview-document-header">
+        {@render openLink(resolved.previewHref)}
+      </div>
+      <div class="file-preview-document-body">
+        {#if text === null}
           <div class="quiet-line">Loading preview...</div>
         {:else}
-          <MarkdownBlock
-            text={text}
-            depth={expansion.nextDepth}
-            visited={expansion.nextVisited}
-          />
+          <MarkdownBlock text={text} depth={expansion.nextDepth} visited={expansion.nextVisited} />
         {/if}
-      </article>
-    {:else}
-      <article class="file-preview-card">
-        <div class="file-preview-card-body">
-          <div class="file-preview-title">{resolved.label}</div>
-          <div class="file-preview-meta">Markdown file</div>
-        </div>
-        <Button
-          variant="quiet"
-          href={resolved.previewHref}
-          target="_blank"
-          rel="noopener noreferrer"
-        >Open preview</Button>
-      </article>
-    {/if}
-  {:else if resolved.kind === "html"}
-    <article class="file-preview-doc file-preview-html-card">
-      <div class="file-preview-card-row">
-        <div class="file-preview-card-body">
-          <div class="file-preview-title">{resolved.label}</div>
-          <div class="file-preview-meta">HTML file</div>
-        </div>
-        <Button
-          variant="quiet"
-          href={resolved.previewHref}
-          target="_blank"
-          rel="noopener noreferrer"
-        >{resolved.actionLabel || "Open preview"}</Button>
       </div>
-      {#if error}
-        <div class="quiet-line">{error}</div>
-      {:else}
-        <iframe
-          bind:this={htmlFrame}
-          class="file-preview-frame"
-          data-file-preview-html
-          sandbox={MANAGED_HTML_PREVIEW_SANDBOX}
-          title={resolved.label}
-        ></iframe>
-      {/if}
     </article>
+  {:else if resolved.kind === "markdown"}
+    {@render openLink(resolved.previewHref)}
   {:else if resolved.kind === "download"}
-    <article class="file-preview-card">
-      <div class="file-preview-card-body">
-        <div class="file-preview-title">{resolved.label}</div>
-        <div class="file-preview-meta">Managed file</div>
-      </div>
-      <Button variant="quiet" href={resolved.href} download="">{resolved.actionLabel || "Download"}</Button>
-    </article>
+    <a class="file-preview-link" href={resolved.href} download="">Download {resolved.label}</a>
   {:else}
-    <article class="file-preview-card">
-      <div class="file-preview-card-body">
-        <div class="file-preview-title">{resolved.label}</div>
-        <div class="file-preview-meta">{resolved.displayHref || resolved.href}</div>
-      </div>
-      <Button variant="quiet" href={resolved.href} rel="noopener noreferrer" target="_blank">
-        {resolved.actionLabel || "Open external link"}
-      </Button>
-    </article>
+    {@render openLink(resolved.href)}
   {/if}
 </div>

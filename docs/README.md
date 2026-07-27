@@ -20,46 +20,44 @@ that system's doc.
    every decision:                       every action is a proposal:
    approve · grant · drop · plan         draft the next blank, park it
         \                                       /
-         \______  the resolution engine  ______/
+         \______  the proposal resolver  ______/
                    (the single door)
                           │
                           ▼
-          the record  +  the normally append-only event log
-                (ticket deletion leaves one audit line)
+                      the record
 ```
 
 Two kinds of user, two surfaces, on purpose. The human uses the web page, where
 every decision that matters lives — approving work, granting how far a worker may
 go, closing things out. AI workers use a command-line tool and can only ever file
-_proposals_. A piece of code called the **resolution engine** is the one thing that
+_proposals_. A piece of code called the **proposal resolver** is the one thing that
 can turn a proposal into a real value or move a ticket to its next stage; a worker
-can never take a decision that belongs to the human. Every normal change also writes
-a permanent event line. Permanently deleting a mistaken ticket is the sole exception:
-its old event lines are replaced by one minimal deletion audit.
+can never take a decision that belongs to the human.
 
 ## The systems
 
 **The full-system view**
 
 - **Systems** (`systems.md`) — the cold-start map: the record, ticket gate,
-  runtime, ACP conversation, UI, CLI, and the main boundaries.
+  runtime, the conversation system, UI, CLI, and the main boundaries.
 - **Systems artifact** (`systems.html`) — the same map as a designed, collapsible
   reading artifact.
 
 **The core of the work**
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
-  it moves through, and the resolution engine, scope, and approval gate that govern
+  it moves through, and the proposal resolver, scope, and approval gate that govern
   every advance. The correctness heart of the system.
 - **Worker types and settings** (`worker-types.md`) — the registry declares each workflow's
-  immutable Stages, gates, fields, specialist identity, and starting Employee setup. Managed
+  immutable Stages, gates, fields, specialist identity, and starting worker setup. Managed
   settings own prospective Stage defaults and editable specialist-skill content.
-- **The employee runtime** (`employee-runtime.md`) — the single AI worker that
-  carries each worker-owned ticket Stage forward, and the loop that fires it, watches
-  it, configures its first session, and feeds proposals back through the gate.
-- **Conversation** (`chat.md`) — the typed ACP pane shared by Ticket workers and the
-  Chief of Staff, including the `hermes`, `codex`, and `claude` backends, live work,
-  commands, permissions, and compaction state.
+- **Worker orchestration** (`worker-orchestration.md`) — how Panels decides a ticket is
+  ready for its next worker step, claims it, and sends the step into that ticket's
+  conversation. It starts work; it does not watch it.
+- **The conversation system** (`conversation-system.md`) — the one way Panels talks to an
+  agent, behind a fixed contract: one agent process per conversation, an append-only
+  notebook of events, honest send fates, and backend cards. It serves every screen that
+  shows a conversation — a Ticket's, the Chief of Staff's, and the development pane.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
@@ -78,17 +76,18 @@ its old event lines are replaced by one minimal deletion audit.
 **The two interfaces**
 
 - **The front end** (`frontend.md`) — the Svelte web app: the screens, shared tokens,
-  and keyed invalidation rule.
+  and how open screens follow the server.
 - **The command-line tool** (`cli.md`) — the `panels` tool workers act through, and
   why it holds no approval powers.
 
 ## Not built yet
 
-- **Recovery from a failed run** — an errored ticket is stuck (see `employee-runtime.md`).
+- **Recovery from a failed run** — an errored ticket is stuck (see
+  `worker-orchestration.md`).
 - **An in-server rollover scheduler** — the agent-owned rollover skill is provisioned,
   while thin morning and afternoon prompts remain external (see `days.md`).
 
 ---
 
-_Last verified: 2026-07-21 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-25 · Covers the system landscape; each doc carries its own
 code paths._

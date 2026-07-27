@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const component = await readFile(new URL("../src/components/VpsStatusPopover.svelte", import.meta.url), "utf8");
 const app = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
-const catalogue = await readFile(new URL("../src/lib/resourceCatalogue.ts", import.meta.url), "utf8");
+const catalogue = await readFile(new URL("../src/lib/queryCatalogue.ts", import.meta.url), "utf8");
 
 assert.match(component, /fetchJson<VpsStatusSnapshot>\("\/api\/vps-status"\)/);
 assert.match(component, /onclick=\{toggle\}/);

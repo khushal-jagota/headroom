@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import { resourceCatalogue } from "../lib/resourceCatalogue";
-  import type { FieldStageVisualState } from "../lib/ui";
-  import AcpConversation from "../components/AcpConversation.svelte";
+  import { onMount } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { queries } from "../lib/queryCatalogue";
+  import { labelize, type FieldStageVisualState } from "../lib/ui";
+  import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
+  import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
@@ -10,8 +12,7 @@
 
   let { ticketId }: { ticketId?: string } = $props();
 
-  const chiefOfStaffEntityId = "agent_panels_chief_of_staff";
-  const board = resourceCatalogue.board();
+  const board = createQuery(() => queries.board());
   let columns = $derived(board.data?.columns || []);
   let allCards = $derived(
     columns.flatMap((column) =>
@@ -45,7 +46,7 @@
             : card.group_project_id === selectedProjectId
         )
   );
-  let buckets = $derived(buildBuckets(rosterCards));
+  let groups = $derived(buildGroups(rosterCards));
 
   $effect(() => {
     const selectedProjectStillExists = projectOptions.some(
@@ -60,8 +61,12 @@
     }
   });
 
+  // The board is settled — loaded, no fetch in flight, and the last read
+  // succeeded — and the ticket in the address is not on it, so the address is
+  // stale: fall back to the board. A failed refetch leaves the previous board in
+  // place, which is not evidence the ticket is gone, so it holds instead.
   $effect(() => {
-    if (ticketId && board.data && !board.loading && !board.stale && !selectedCard) {
+    if (ticketId && board.data && !board.isFetching && !board.isError && !selectedCard) {
       window.location.replace("#/workspace");
     }
   });
@@ -119,115 +124,122 @@
     }
   }
 
-  type AgentReplyState = "none" | "unseen" | "seen";
-
   type SignalPresentation = {
     state: FieldStageVisualState;
     ariaLabel: string;
   };
 
-  // The row mark carries only the two signals: an agent working now wins the
-  // mark; otherwise the reply state shows — accent while unseen, grey once
-  // seen, the reduced ring when nothing is waiting.
+  // How far this browser has read each conversation on the board.
+  //
+  // It is held here rather than read while a row is being drawn, and that is the whole
+  // point: reading a conversation writes nothing the server can announce, so no refetch
+  // is coming to redraw the board. Keeping the positions in state is what makes a row
+  // redraw when one of them moves — and it is a value the marks visibly depend on, so
+  // there is nothing here a tidy-up could remove without the dots going wrong loudly.
+  let howFarThisBrowserHasRead = $state<Record<string, number>>({});
+
+  function rereadWhereThisBrowserHasGot(): void {
+    const positions: Record<string, number> = {};
+    for (const column of board.data?.columns || []) {
+      for (const card of column.cards) {
+        const conversationId = card.conversation_id;
+        if (typeof conversationId === "string") {
+          positions[conversationId] = readReplyWatermark(conversationId);
+        }
+      }
+    }
+    howFarThisBrowserHasRead = positions;
+  }
+
+  // Two things move a position: this browser reading a conversation, and a board arriving
+  // with conversations it has not seen before.
+  onMount(() => onReplyWatermarkMoved(rereadWhereThisBrowserHasGot));
+  $effect(() => {
+    board.data;
+    rereadWhereThisBrowserHasGot();
+  });
+
+  // The row mark carries three signals in one precedence. A permission ask wins: a
+  // turn waiting on an ask is still running, and the ask is the part only the user can
+  // clear. Then an agent working now. Otherwise the reply shows — accent while a turn
+  // has ended past where this browser has read, grey once it has been read, the reduced
+  // ring for a conversation whose turns have never ended.
   function signalPresentation(card: Record<string, any>): SignalPresentation {
+    if (card.needs_me) {
+      return { state: "needs-me", ariaLabel: "Needs you" };
+    }
     if (card.agent_working) {
       return { state: "current-running", ariaLabel: "Agent working" };
     }
-    const reply = card.agent_reply_state as AgentReplyState;
-    if (reply === "unseen") {
+    const latestTurnEnded = Number(card.latest_turn_ended_sequence ?? 0);
+    if (latestTurnEnded === 0 || typeof card.conversation_id !== "string") {
+      return { state: "upcoming", ariaLabel: "Nothing waiting" };
+    }
+    // A conversation this browser has never read has got nowhere in it, which is what
+    // an absent position means. Every failure path lands here, so the mark over-shows
+    // attention rather than hiding a reply.
+    if (latestTurnEnded > (howFarThisBrowserHasRead[card.conversation_id] ?? 0)) {
       return { state: "current-awaiting-approval", ariaLabel: "Unseen agent reply" };
     }
-    if (reply === "seen") {
-      return { state: "reply-seen", ariaLabel: "Agent reply seen" };
-    }
-    return { state: "upcoming", ariaLabel: "Nothing waiting" };
+    return { state: "reply-seen", ariaLabel: "Agent reply seen" };
   }
 
-  type BucketKey =
-    | "errored"
-    | "needs_you"
-    | "kickoff"
-    | "stopped"
-    | "taken_over"
-    | "paired"
-    | "agent_working"
-    | "needs_approval"
-    | "closing_out"
-    | "blocked"
-    | "done";
+  // Every ticket sits in exactly one group: its own ticket status, except a done
+  // ticket, which groups as done.
+  function groupKeyFor(card: Record<string, any>): string {
+    return card.is_done ? "done" : String(card.ticket_status);
+  }
 
-  type BucketDefinition = {
-    key: BucketKey;
-    label: string;
-    defaultCollapsed: boolean;
-  };
-
-  // Canonical order, top to bottom. A bucket with no tickets is not rendered.
-  const BUCKET_DEFINITIONS: readonly BucketDefinition[] = [
-    { key: "errored", label: "Errored", defaultCollapsed: false },
-    { key: "needs_you", label: "Needs you", defaultCollapsed: false },
-    { key: "kickoff", label: "Kickoff", defaultCollapsed: false },
-    { key: "stopped", label: "Stopped", defaultCollapsed: false },
-    { key: "taken_over", label: "Taken over", defaultCollapsed: false },
-    { key: "paired", label: "Paired", defaultCollapsed: false },
-    { key: "agent_working", label: "Agent working", defaultCollapsed: false },
-    { key: "needs_approval", label: "Needs approval", defaultCollapsed: false },
-    { key: "closing_out", label: "Closing out", defaultCollapsed: false },
-    { key: "blocked", label: "Blocked", defaultCollapsed: true },
-    { key: "done", label: "Done", defaultCollapsed: true }
+  // Presentation only: the top-to-bottom order of the status groups. A group with
+  // no tickets is not rendered, and a status not named here appends as its own
+  // group after these, in the order first seen.
+  const GROUP_ORDER: readonly string[] = [
+    "errored",
+    "needs_user",
+    "empty",
+    "user",
+    "paired",
+    "agent",
+    "awaiting_approval",
+    "blocked",
+    "done"
   ];
 
-  // Every ticket sits in exactly one bucket. Status decides first; Blocked
-  // claims only idle tickets. The one exception: a kickoff-stage ticket with a
-  // parked proposal belongs in Kickoff, not Needs approval.
-  function bucketFor(card: Record<string, any>): BucketKey {
-    if (card.is_done) return "done";
-    const status = String(card.ticket_status);
-    if (status === "errored") return "errored";
-    if (status === "needs_user") return "needs_you";
-    if (status === "awaiting_approval") {
-      return card.stage === "needs_kickoff" ? "kickoff" : "needs_approval";
-    }
-    if (status === "proposal_discussion" || status === "paired_work") return "paired";
-    if (status === "agent_running_step") return "agent_working";
-    if (status === "user_takeover") return "taken_over";
-    if (card.blocked) return "blocked";
-    if (card.stage === "needs_kickoff") return "kickoff";
-    if (card.stage === "needs_closeout") return "closing_out";
-    return "stopped";
-  }
+  const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set(["blocked", "done"]);
 
-  type BucketSection = {
-    key: BucketKey;
+  type GroupSection = {
+    key: string;
     label: string;
     defaultCollapsed: boolean;
     cards: Record<string, any>[];
   };
 
-  function buildBuckets(cards: Record<string, any>[]): BucketSection[] {
-    const byBucket = new Map<BucketKey, Record<string, any>[]>();
+  function buildGroups(cards: Record<string, any>[]): GroupSection[] {
+    const byGroup = new Map<string, Record<string, any>[]>();
+    const firstSeen: string[] = [];
     for (const card of cards) {
-      const key = bucketFor(card);
-      if (!byBucket.has(key)) byBucket.set(key, []);
-      byBucket.get(key)?.push(card);
+      const key = groupKeyFor(card);
+      if (!byGroup.has(key)) {
+        byGroup.set(key, []);
+        firstSeen.push(key);
+      }
+      byGroup.get(key)?.push(card);
     }
-    return BUCKET_DEFINITIONS.filter((definition) => byBucket.has(definition.key)).map(
-      (definition) => ({
-        key: definition.key,
-        label: definition.label,
-        defaultCollapsed: definition.defaultCollapsed,
-        cards: (byBucket.get(definition.key) ?? []).sort((left, right) => {
-          const activityDelta =
-            Number(right.activity_at ?? 0) - Number(left.activity_at ?? 0);
-          return activityDelta || String(left.id).localeCompare(String(right.id));
-        })
-      })
+    const orderedKeys = GROUP_ORDER.filter((key) => byGroup.has(key)).concat(
+      firstSeen.filter((key) => !GROUP_ORDER.includes(key))
     );
+    return orderedKeys.map((key) => ({
+      key,
+      label: labelize(key),
+      defaultCollapsed: DEFAULT_COLLAPSED_GROUPS.has(key),
+      cards: (byGroup.get(key) ?? []).sort((left, right) => {
+        const activityDelta =
+          Number(right.activity_at ?? 0) - Number(left.activity_at ?? 0);
+        return activityDelta || String(left.id).localeCompare(String(right.id));
+      })
+    }));
   }
 
-  onDestroy(() => {
-    board.dispose();
-  });
 </script>
 
 <svelte:window
@@ -238,7 +250,7 @@
 <section class="board-screen" data-screen="workspace">
   <ResourceState
     error={board.error}
-    loading={board.loading}
+    loading={board.isFetching}
     hasData={Boolean(board.data)}
     loadingText="Loading workspace..."
   >
@@ -313,20 +325,20 @@
             {/if}
           </div>
 
-          {#each buckets as bucket (bucket.key)}
+          {#each groups as group (group.key)}
             <Disclosure
               variant="workspace-bucket"
               chevron="trailing"
-              defaultOpen={!bucket.defaultCollapsed}
+              defaultOpen={!group.defaultCollapsed}
               data-bucket-section=""
-              data-bucket-key={bucket.key}
+              data-bucket-key={group.key}
             >
               {#snippet summary()}
-                <span class="board-workspace-bucket-label">{bucket.label}</span>
+                <span class="board-workspace-bucket-label">{group.label}</span>
               {/snippet}
 
               <div class="board-workspace-bucket-tickets">
-                {#each bucket.cards as card (card.id)}
+                {#each group.cards as card (card.id)}
                   {@const presentation = signalPresentation(card)}
                   <button
                     type="button"
@@ -343,8 +355,9 @@
                       state={presentation.state}
                       class="board-workspace-stage-mark"
                       data-stage-state={presentation.state}
+                      data-needs-me={card.needs_me ? "true" : "false"}
                       data-agent-working={card.agent_working ? "true" : "false"}
-                      data-reply-state={card.agent_reply_state}
+                      data-latest-turn-ended={card.latest_turn_ended_sequence}
                       aria-label={presentation.ariaLabel}
                     />
                   </button>
@@ -361,10 +374,7 @@
         >
           {#if rightPaneMode === "chief"}
             <div class="board-workspace-desk-inner">
-              <AcpConversation
-                employeeId={chiefOfStaffEntityId}
-                employeeLabel="Chief of Staff"
-              />
+              <ChiefConversation />
             </div>
           {:else if selectedCard}
             {#key selectedCard.id}

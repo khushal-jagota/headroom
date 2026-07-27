@@ -12,7 +12,7 @@
   } = $props();
 
   let waitingCompatibleClass = $derived(
-    state === "current-paired-work" ? " stage-mark--current-waiting" : ""
+    state === "current-paired" ? " stage-mark--current-waiting" : ""
   );
 </script>
 

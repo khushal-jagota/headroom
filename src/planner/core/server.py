@@ -11,32 +11,31 @@ from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any
 
-from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from planner.conversation.composition import ConversationComposition, ConversationTestOptions
+from planner.conversation.api import build_conversation_runtime
+from planner.conversation.api import router as conversation_router
+from planner.conversation.contracts import ConversationSystem
+from planner.conversation.production_backends import production_backend_child_factories
 from planner.core.clock import Clock
 from planner.core.config import HOST, Config
+from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.testmode import TestModeAcceptingEmployeeRevisionRunner, build_test_router
+from planner.core.sse import change_stream
+from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
-from planner.core.ws import tail_events
 from planner.days.api import router as days_router
 from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    NoOpAutomaticEmployeeStepEligibilityWake,
-)
-from planner.runtime.employee_step_runner import EmployeeStepRunner
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
+from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_settings.api import router as worker_settings_router
 from planner.worker_types.configuration import (
-    configured_employee_runtime_definitions,
-    install_employee_runtime_definitions_for_test,
-    restore_employee_runtime_definitions_for_test,
+    configured_worker_runtime_definitions,
 )
 
 _STATUS_BY_CODE: dict[ErrorCode, int] = {
@@ -60,16 +59,16 @@ def resolve_application_root(
 
 
 _REPO_ROOT = resolve_application_root()
-_PREFERRED_EMPLOYEE_WORKSPACE_ROOT = Path.home() / "Coding"
+_PREFERRED_WORKER_WORKSPACE_ROOT = Path.home() / "Coding"
 _WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_INDEX = _WEB_DIST / "index.html"
 _ASSETS_DIR = _REPO_ROOT / "assets"
 _STATIC_DIR = _REPO_ROOT / "static"
 
 
-def resolve_employee_workspace_root() -> Path:
-    if _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.is_dir():
-        return _PREFERRED_EMPLOYEE_WORKSPACE_ROOT.resolve(strict=False)
+def resolve_worker_workspace_root() -> Path:
+    if _PREFERRED_WORKER_WORKSPACE_ROOT.is_dir():
+        return _PREFERRED_WORKER_WORKSPACE_ROOT.resolve(strict=False)
     return _REPO_ROOT.resolve(strict=False)
 
 
@@ -98,11 +97,11 @@ def create_app(
     clock: Clock,
     conn_factory: Callable[[], sqlite3.Connection],
     *,
-    conversation_test_options: ConversationTestOptions | None = None,
+    conversation_system_for_test: ConversationSystem | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
 ) -> FastAPI:
-    if conversation_test_options is not None and not config.test_mode:
-        raise ValueError("conversation_test_options are accepted only in test mode")
+    if conversation_system_for_test is not None and not config.test_mode:
+        raise ValueError("conversation_system_for_test is accepted only in test mode")
 
     @asynccontextmanager
     async def _configured_lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -116,101 +115,65 @@ def create_app(
         finally:
             audit_conn.close()
 
-        loops: Any = None
-        test_runner: EmployeeStepRunner | None = None
-        conversation: ConversationComposition | None = None
-        if conversation_test_options is not None:
-            conversation = ConversationComposition.build(
-                db_path=config.db_path,
-                busy_timeout_ms=config.db_busy_timeout_ms,
-                clock=clock,
-                repository_root=_REPO_ROOT,
-                employee_workspace_root=resolve_employee_workspace_root(),
+        # The conversation system, built before anything that sends into one. It composes
+        # the three real agents on this machine, and spawns none of them until a
+        # conversation has something to send. Everything that starts or steers a worker
+        # goes through it, so it has to exist before the readiness loop starts.
+        conversation = build_conversation_runtime(
+            db_path=config.db_path,
+            db_busy_timeout_ms=config.db_busy_timeout_ms,
+            sse_heartbeat_ms=config.sse_heartbeat_ms,
+            backend_child_factories=production_backend_child_factories(
+                # Where this server is answering, so the `panels` CLI in an agent's shell
+                # can reach it. Read from the running config rather than stored with a
+                # conversation, so a conversation resumed after a restart reaches the
+                # server that resumed it.
                 panels_server_url=f"http://{HOST}:{config.port}",
-                loop=asyncio.get_running_loop(),
-                test_options=conversation_test_options,
-            )
-            app.state.conversation = conversation
-            test_runner = EmployeeStepRunner(
-                config.db_path,
-                clock,
-                gateway=conversation.step_gateway,
-                automatic_employee_step_eligibility_wake=(
-                    NoOpAutomaticEmployeeStepEligibilityWake()
-                ),
-                boundary_hour=config.boundary_hour,
-                busy_timeout_ms=config.db_busy_timeout_ms,
-            )
-            app.state.employee_step_runner = test_runner
-        elif not config.test_mode:
+            ),
+        )
+        app.state.conversation = conversation
+        # A test that drives workers wants a conversation system it can hold still, so it
+        # passes one in. Nothing else does: production always runs the real one.
+        app.state.conversation_system = (
+            conversation.system if conversation_system_for_test is None
+            else conversation_system_for_test
+        )
+        await conversation.system.start_idle_child_janitor()
+
+        loops: Any = None
+        if not config.test_mode:
             from planner.core.loops import start_background_loops
 
-            conversation = ConversationComposition.build(
-                db_path=config.db_path,
-                busy_timeout_ms=config.db_busy_timeout_ms,
-                clock=clock,
-                repository_root=_REPO_ROOT,
-                employee_workspace_root=resolve_employee_workspace_root(),
-                panels_server_url=f"http://{HOST}:{config.port}",
-                loop=asyncio.get_running_loop(),
-            )
-            try:
-                await conversation.run_employee_backend_startup_preflights()
-                app.state.conversation = conversation
-                loops = start_background_loops(
-                    config,
-                    clock,
-                    step_gateway=conversation.step_gateway,
-                )
-            except BaseException:
-                deadline = _monotonic() + float(config.shutdown_grace_seconds)
-                await conversation.close_admission()
-                await conversation.shutdown(deadline)
-                app.state.conversation = None
-                raise
-            app.state.employee_step_runner = loops.employee_step_runner
-            app.state.automatic_employee_step_eligibility_wake = (
-                loops.automatic_employee_step_eligibility_wake
+            loops = start_background_loops(
+                config,
+                clock,
+                conversation_system=app.state.conversation_system,
+                worker_context_service=app.state.worker_context_service,
+                asyncio_loop=asyncio.get_running_loop(),
             )
         try:
             yield
         finally:
             deadline = _monotonic() + float(config.shutdown_grace_seconds)
-            if conversation is not None:
-                await conversation.close_admission()
             try:
                 if loops is not None:
                     await _stop_runtime_with_deadline(loops, deadline)
-                if test_runner is not None:
-                    await asyncio.to_thread(test_runner.stop, deadline=deadline)
             finally:
-                if conversation is not None:
-                    await conversation.shutdown(deadline)
+                app.state.conversation = None
+                await conversation.shutdown()
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        previous_definitions = None
-        if conversation_test_options is not None:
-            previous_definitions = install_employee_runtime_definitions_for_test(
-                conversation_test_options.employee_runtime_definitions
-            )
-        try:
-            async with _configured_lifespan(app):
-                yield
-        finally:
-            if previous_definitions is not None:
-                restore_employee_runtime_definitions_for_test(previous_definitions)
-
-    app = FastAPI(title="planner", version="2.0.0", lifespan=lifespan)
+    app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
     app.state.config = config
     app.state.clock = clock
     app.state.conn_factory = conn_factory
-    app.state.automatic_employee_step_eligibility_wake = NoOpAutomaticEmployeeStepEligibilityWake()
-    app.state.employee_step_runner = (
-        TestModeAcceptingEmployeeRevisionRunner() if config.test_mode else None
+    app.state.worker_context_service = SqliteWorkerContextService(
+        lambda: connect(config.db_path, config.db_busy_timeout_ms)
     )
     app.state.conversation = None
+    # The conversation system is the running one, so it belongs to the lifespan that
+    # starts and stops it. Outside that window there is none.
+    app.state.conversation_system = None
     configured_vps_status_collector = vps_status_collector or (
         lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
     )
@@ -228,13 +191,11 @@ def create_app(
     ):
         app.include_router(domain_router, prefix="/api")
     app.include_router(files_router)
+    app.include_router(conversation_router, prefix="/api/conversation")
 
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:
         return {
-            "ui_debounce_ms": config.ui_debounce_ms,
-            "ws_poll_ms": config.ws_poll_ms,
-            "ws_heartbeat_ms": config.ws_heartbeat_ms,
             "test_mode": config.test_mode,
             "app_sha": config.app_sha,
         }
@@ -260,35 +221,19 @@ def create_app(
 
     @app.get("/api/worker-types")
     async def worker_types() -> dict[str, Any]:
-        runtime_definitions = configured_employee_runtime_definitions()
-        registry = runtime_definitions.worker_type_registry
+        registry = configured_worker_runtime_definitions().worker_type_registry
         return {
-            "employee_backends": list(
-                runtime_definitions.employee_backend_catalog.registered_backend_keys()
-            ),
             "worker_types": [
                 registry.manifest(worker_type) for worker_type in registry.registered_worker_types()
             ],
         }
 
-    @app.websocket("/api/events")
-    async def events_ws(websocket: WebSocket, since: int = 0) -> None:
-        await tail_events(
-            websocket,
-            since,
-            conn_factory,
-            config.ws_poll_ms,
-            config.events_read_limit,
-            config.ws_heartbeat_ms,
+    @app.get("/api/changes")
+    async def changes() -> StreamingResponse:
+        return StreamingResponse(
+            change_stream(config.sse_heartbeat_ms),
+            media_type="text/event-stream",
         )
-
-    @app.websocket("/api/conversation")
-    async def conversation_ws(websocket: WebSocket) -> None:
-        conversation = app.state.conversation
-        if conversation is None:
-            await websocket.close(code=1013, reason="conversation service is unavailable")
-            return
-        await conversation.hub.websocket(websocket)
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:

@@ -1,6 +1,6 @@
 import { mount, unmount } from "svelte";
 import FilePreview from "../components/FilePreview.svelte";
-import { targetFromHref } from "./filePreview";
+import { resolvePreview, targetFromHref } from "./filePreview";
 import { renderMarkdownToElement, serializeMarkdownDomToSource } from "./markdownPipeline";
 
 export type ReadOnlyManagedMarkdownInput = Readonly<{
@@ -138,7 +138,13 @@ export function createManagedMarkdownSurface(
         ? renderedTarget.getAttribute("alt") || href
         : renderedTarget.textContent || href;
       const target = targetFromHref(href, label);
-      if (isImage && target.kind === "external-link") continue;
+      // Links are claimed only when they name a managed ticket file; every other link
+      // stays the anchor markdown rendered. Images are claimed wherever the preview
+      // renders one, except inside a link that was left standing.
+      const claimed = isImage
+        ? !withinLink(renderedTarget, root) && resolvePreview(target).kind === "image"
+        : target.kind === "ticket-file";
+      if (!claimed) continue;
       const slot = document.createElement("span");
       slot.className = "file-preview-slot";
       if (mode === "editable") {
@@ -271,6 +277,15 @@ function sameReadOnlyInput(
     previous.visited.length === next.visited.length &&
     previous.visited.every((value, index) => value === next.visited[index])
   );
+}
+
+function withinLink(element: Element, root: HTMLElement): boolean {
+  let node: Node | null = element.parentNode;
+  while (node && node !== root) {
+    if (node instanceof HTMLElement && node.tagName === "A") return true;
+    node = node.parentNode;
+  }
+  return false;
 }
 
 function directMarkdownBlock(host: HTMLElement): HTMLElement | null {

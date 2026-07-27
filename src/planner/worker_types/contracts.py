@@ -27,10 +27,10 @@ class FieldDefinition:
 @dataclass(frozen=True, slots=True)
 class WorkerProfile:
     specialist_skill: str
-    default_employee_model: str | None
-    default_employee_reasoning_effort: str | None
+    default_model: str | None
+    default_reasoning_effort: str | None
     toolset_profile: str
-    default_employee_backend: str
+    default_backend: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +177,6 @@ class WorkerTypeManifest(TypedDict):
     ceiling_range: list[str]
     default_ceiling: str
     worker_profile_id: str
-    default_employee_backend: str
-    default_employee_model: str | None
-    default_employee_reasoning_effort: str | None
+    default_backend: str
+    default_model: str | None
+    default_reasoning_effort: str | None

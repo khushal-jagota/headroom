@@ -1,7 +1,7 @@
 """Ticket routes (§9), plus the ticket-anchored links and the ticket-centric
 derived views (board, Review). Thin HTTP shells over the stage-3 writers and the
 pure read views: every handler is parse -> auth -> writer -> serialize. No route
-re-implements a domain rule and no route appends events.
+re-implements a domain rule.
 
 This module also homes the shared request plumbing (config/clock accessors, the
 per-request connection dependency, the transaction context manager, and the enum
@@ -24,11 +24,13 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 
-from planner.conversation.employee_configuration import (
-    EmployeeConfigurationCatalog,
-    EmployeeConfigurationCatalogService,
+from planner.conversation.contracts import (
+    ConversationBackendKey,
+    ConversationSystem,
+    require_conversation_backend_key,
 )
-from planner.core import link_actions
+from planner.conversation.snapshot import BackendSnapshotService
+from planner.conversation.storage import ConversationStore
 from planner.core.authctx import (
     RequestContext,
     reject_agent_fields,
@@ -42,10 +44,7 @@ from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.projects import data as projects_data
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    AutomaticEmployeeStepEligibilityWake,
-)
-from planner.runtime.contracts import EmployeeRevisionRunner
+from planner.runtime import conversation_start
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -72,9 +71,9 @@ from planner.tickets.contracts import (
     TicketEdit,
     ValueEditBody,
 )
-from planner.tickets.conversation_projection import TicketConversationProjection
+from planner.worker_context.contracts import WorkerContextService
+from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
-    configured_employee_runtime_definitions,
     configured_worker_type_registry,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -109,28 +108,56 @@ async def db_conn(request: Request) -> AsyncIterator[sqlite3.Connection]:
         conn.close()
 
 
-def get_automatic_employee_step_eligibility_wake(
-    request: Request,
-) -> AutomaticEmployeeStepEligibilityWake:
-    return cast(
-        AutomaticEmployeeStepEligibilityWake,
-        request.app.state.automatic_employee_step_eligibility_wake,
-    )
+def get_conversation_system(request: Request) -> ConversationSystem:
+    return cast(ConversationSystem, request.app.state.conversation_system)
 
 
-def get_employee_revision_runner(request: Request) -> EmployeeRevisionRunner | None:
-    runner: EmployeeRevisionRunner | None = getattr(request.app.state, "employee_step_runner", None)
-    return runner
+def get_conversation_record(request: Request) -> ConversationStore:
+    runtime = getattr(request.app.state, "conversation", None)
+    store = getattr(runtime, "store", None) if runtime is not None else None
+    if store is None:
+        raise PlannerError(
+            ErrorCode.gateway_offline,
+            "the conversation record is unavailable",
+            {},
+        )
+    return cast(ConversationStore, store)
+
+
+def get_worker_context_service(request: Request) -> WorkerContextService:
+    return cast(WorkerContextService, request.app.state.worker_context_service)
 
 
 DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
-AutomaticEmployeeStepEligibilityWakeDependency = Annotated[
-    AutomaticEmployeeStepEligibilityWake, Depends(get_automatic_employee_step_eligibility_wake)
-]
-EmployeeRunner = Annotated[EmployeeRevisionRunner | None, Depends(get_employee_revision_runner)]
+Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
+ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
+WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
+
+
+async def reject_while_the_conversation_is_running(
+    conn: sqlite3.Connection,
+    conversation_system: ConversationSystem,
+    ticket_id: str,
+) -> None:
+    """Refuse to write over a Ticket whose worker is mid-turn.
+
+    Whether a conversation is live is the conversation system's fact, and asking it is
+    awaited, so the question belongs in the route rather than inside a writer. Checking
+    here and writing after is racy by nature; for one person driving one workspace that
+    is the honest cost of keeping the writers pure database transactions.
+    """
+    conversation_id = tickets_data.read_ticket(conn, ticket_id).conversation_id
+    if conversation_id is None:
+        return
+    if await conversation_system.is_running(conversation_id):
+        raise PlannerError(
+            ErrorCode.already_running,
+            "ticket conversation is still running",
+            {"ticket_id": ticket_id},
+        )
 
 
 @contextmanager
@@ -410,7 +437,6 @@ async def create_ticket(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = _marshal_create_ticket(raw)
     now = clk.now_unix()
@@ -442,7 +468,6 @@ async def create_ticket(
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
         sprint_id_explicit="sprint_id" in raw,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -454,7 +479,6 @@ async def create_ticket_from_external_work(
     ctx: Ctx,
     cfg: Cfg,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_chief(ctx)
     worker_type = _require_create_worker_type(raw)
@@ -492,7 +516,6 @@ async def create_ticket_from_external_work(
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
         sprint_id_explicit="sprint_id" in raw,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -504,14 +527,15 @@ async def reconcile_ticket_from_external_work(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
+    conversations: Conversations,
 ) -> JsonDict:
     require_chief(ctx)
+    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     body = _marshal_external_reconcile(raw, worker_type_definition)
     target_stage = _validate_external_stage(body["stage"], worker_type_definition)
     now = clk.now_unix()
-    ticket = tickets_actions.reconcile_ticket_from_external_work(
+    ticket = tickets_data.reconcile_ticket_from_external_work(
         conn,
         ticket_id,
         kickoff_note=body["kickoff_note"],
@@ -520,7 +544,6 @@ async def reconcile_ticket_from_external_work(
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -557,60 +580,49 @@ async def list_tickets(
     }
 
 
-def _employee_configuration_catalog_service(
-    request: Request,
-) -> EmployeeConfigurationCatalogService:
-    conversation = getattr(request.app.state, "conversation", None)
-    service = (
-        getattr(conversation, "employee_configuration_catalog", None)
-        if conversation is not None
-        else None
-    )
+def _backend_snapshots(request: Request) -> BackendSnapshotService:
+    runtime = getattr(request.app.state, "conversation", None)
+    service = getattr(runtime, "backend_snapshots", None) if runtime is not None else None
     if service is None:
         raise PlannerError(
             ErrorCode.gateway_offline,
-            "employee configuration catalog is unavailable",
+            "the agent backends are unavailable",
             {},
         )
-    return cast(EmployeeConfigurationCatalogService, service)
+    return cast(BackendSnapshotService, service)
 
 
-async def _load_employee_configuration_catalog(
+async def _advertised_launch_options(
     request: Request,
-    employee_backend: str,
+    backend_key: ConversationBackendKey,
     candidate_model: str | None,
-    force_refresh: bool = False,
-) -> EmployeeConfigurationCatalog:
-    service = _employee_configuration_catalog_service(request)
+) -> tuple[frozenset[str], frozenset[str]]:
+    """What this backend can actually be launched as: its models, and the efforts for one.
+
+    Reasoning effort belongs to the model that will run rather than to the backend in
+    general — a model that names its own efforts is believed, including when it names
+    none, and a model that names nothing takes the backend's list. That is the same rule
+    the composer applies in the browser, stated once more here because this is the door a
+    saved configuration comes through.
+    """
+    service = _backend_snapshots(request)
     try:
-        if force_refresh:
-            return await service.catalog(
-                employee_backend, candidate_model, force_refresh=True
-            )
-        return await service.catalog(employee_backend, candidate_model)
-    except PlannerError:
-        raise
+        snapshot = await service.snapshot(backend_key)
     except Exception as error:
         raise PlannerError(
             ErrorCode.gateway_offline,
-            "employee configuration catalog is unavailable",
+            "the agent backends are unavailable",
             {},
         ) from error
-
-
-@router.get("/employee-configuration-catalog")
-async def get_employee_configuration_catalog(
-    request: Request,
-    employee_backend: str,
-    candidate_model: str | None = None,
-    force_refresh: bool = False,
-) -> JsonDict:
-    definitions = configured_employee_runtime_definitions()
-    registered_backend = definitions.employee_backend_catalog.require_registered(employee_backend)
-    catalog = await _load_employee_configuration_catalog(
-        request, registered_backend, candidate_model, force_refresh
+    efforts = snapshot.reasoning_effort_options
+    for model in snapshot.available_models:
+        if model.model_id == candidate_model:
+            efforts = model.reasoning_effort_options
+            break
+    return (
+        frozenset(model.model_id for model in snapshot.available_models),
+        frozenset(efforts),
     )
-    return catalog.model_dump(mode="json")
 
 
 @router.get("/tickets/{ticket_id}/worker-self")
@@ -627,15 +639,15 @@ async def get_worker_self_ticket(
     (two tickets sharing one durable session) is rejected. Returns the same detail shape
     (`ticket_detail` + the worker specialist skill) the by-session route returns."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
-    if ticket.employee_session_id is not None:
-        owner = tickets_data.read_ticket_by_employee_session_id(conn, ticket.employee_session_id)
+    if ticket.conversation_id is not None:
+        owner = tickets_data.read_ticket_by_conversation_id(conn, ticket.conversation_id)
         if owner.id != ticket.id:
             raise PlannerError(
                 ErrorCode.validation,
                 "ticket durable session is owned by another ticket",
                 {
                     "ticket_id": ticket.id,
-                    "employee_session_id": ticket.employee_session_id,
+                    "conversation_id": ticket.conversation_id,
                     "owner_ticket_id": owner.id,
                 },
             )
@@ -653,23 +665,37 @@ async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
     return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
 
 
-@router.post("/tickets/{ticket_id}/acknowledge-completed-response")
-async def acknowledge_ticket_completed_response(
+@router.post("/tickets/{ticket_id}/human-reply")
+async def record_human_reply(
     ticket_id: str,
     conn: DbConn,
     ctx: Ctx,
-    cfg: Cfg,
     clk: Clk,
 ) -> JsonDict:
-    """Record that a direct user has opened the Ticket's completed response."""
+    """Record that a person has replied to this Ticket's worker.
+
+    A Ticket parked on a proposal is waiting for its owner. Replying to the worker is an
+    answer of a kind — the proposal is being discussed rather than approved — so the
+    Ticket moves to paired. Every other status is left exactly as it is. Which ones move
+    is the writer's rule and it stays there: this route reports the reply for every
+    status and lets the writer decide, because a caller that decides for a canonical
+    writer is one wrong caller away from a bad status.
+
+    The reply is reported by the screen a person typed on, after the conversation
+    accepted the message, because a reply that reached nothing is not a reply. That
+    screen is the one place that knows both halves — it holds a Ticket and the
+    conversation the Ticket names. The conversation system is told nothing about Tickets
+    and does not need to be.
+
+    Only a person can say this happened. The automatic loop sends into the same
+    conversation and its prompts are not replies, so this is a direct-write door and an
+    agent-claim request is refused at it rather than by convention.
+    """
     require_direct_write(ctx)
-    tickets_data.read_ticket(conn, ticket_id)
-    changed = TicketConversationProjection(
-        cfg.db_path,
-        now=clk.now_unix,
-        busy_timeout_ms=cfg.db_busy_timeout_ms,
-    ).acknowledge_completed_response(ticket_id)
-    return {"acknowledged": changed}
+    now = clk.now_unix()
+    return tickets_views.ticket_json(
+        tickets_data.enter_paired_on_human_reply(conn, ticket_id, now=now), now
+    )
 
 
 @router.put("/tickets/{ticket_id}/employee-configuration")
@@ -700,13 +726,10 @@ async def put_ticket_employee_configuration(
             raw, "employee_launch_reasoning_effort"
         ),
     )
-    definitions = configured_employee_runtime_definitions()
     expected = tickets_data.employee_launch_configuration(
         tickets_data.read_ticket(conn, ticket_id)
     )
-    registered_backend = definitions.employee_backend_catalog.require_registered(
-        body["employee_backend"]
-    )
+    registered_backend = require_conversation_backend_key(body["employee_backend"])
     advertised_models: frozenset[str] | None = None
     reasoning_supported: bool | None = None
     advertised_reasoning_efforts: frozenset[str] | None = None
@@ -716,16 +739,12 @@ async def put_ticket_employee_configuration(
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
     if registered_backend == expected.employee_backend and candidate != expected:
-        catalog = await _load_employee_configuration_catalog(
+        advertised_models, advertised_reasoning_efforts = await _advertised_launch_options(
             request,
             registered_backend,
             body["employee_launch_model"],
         )
-        advertised_models = frozenset(option.value for option in catalog.models)
-        reasoning_supported = catalog.reasoning_supported
-        advertised_reasoning_efforts = frozenset(
-            option.value for option in catalog.reasoning_efforts
-        )
+        reasoning_supported = len(advertised_reasoning_efforts) > 0
     ticket = tickets_data.write_employee_configuration(
         conn,
         ticket_id,
@@ -733,7 +752,6 @@ async def put_ticket_employee_configuration(
         employee_backend=body["employee_backend"],
         employee_launch_model=body["employee_launch_model"],
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
-        employee_backend_catalog=definitions.employee_backend_catalog,
         advertised_models=advertised_models,
         reasoning_supported=reasoning_supported,
         advertised_reasoning_efforts=advertised_reasoning_efforts,
@@ -748,15 +766,15 @@ async def delete_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
+    conversations: Conversations,
 ) -> JsonDict:
     require_direct_write(ctx)
-    deleted = tickets_actions.delete_ticket(
+    await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
+    deleted = tickets_data.delete_ticket(
         conn,
         ticket_id,
         actor=ctx.actor,
         now=clk.now_unix(),
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {
         "ok": True,
@@ -820,7 +838,11 @@ async def patch_ticket(
 
 @router.post("/tickets/{ticket_id}/propose")
 async def propose_current_field(
-    ticket_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
 ) -> JsonDict:
     body = ProposeWithRecapBody(
         body=body_str(raw, "body"),
@@ -840,14 +862,24 @@ async def propose_current_field(
 
 @router.post("/tickets/{ticket_id}/propose/{field}")
 async def propose_field(
-    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+    ticket_id: str,
+    field: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
 ) -> JsonDict:
     body = ProposeBody(body=body_str(raw, "body"))
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     ticket = tickets_data.file_proposal(
-        conn, ticket_id, field=field, body=body["body"], actor=ctx.actor, now=now
+        conn,
+        ticket_id,
+        field=field,
+        body=body["body"],
+        actor=ctx.actor,
+        now=now,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -860,7 +892,6 @@ async def accept_field(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
@@ -869,7 +900,7 @@ async def accept_field(
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
     at_cap = _parse_scope_at_cap(body["at_cap"])
-    ticket = tickets_actions.accept_proposal(
+    ticket = tickets_data.accept_proposal(
         conn,
         ticket_id,
         field=field,
@@ -878,7 +909,6 @@ async def accept_field(
         edited_body=body["edited_body"],
         next_ceiling=next_ceiling,
         at_cap=at_cap,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -890,20 +920,114 @@ async def return_ticket_for_revision(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    employee_runner: EmployeeRunner,
+    conversations: Conversations,
+    worker_context: WorkerContext,
 ) -> JsonDict:
     body = RevisionMessageBody(message=body_str(raw, "message"))
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_actions.return_ticket_for_revision(
+    ticket = await tickets_actions.return_ticket_for_revision(
+        conversations,
+        worker_context,
         conn,
         ticket_id,
         message=body["message"],
         actor=ctx.actor,
         now=now,
-        employee_revision_runner=employee_runner,
     )
     return tickets_views.ticket_json(ticket, now)
+
+
+@router.get("/chief/conversation")
+async def read_chief_conversation(conn: DbConn) -> JsonDict:
+    """Which conversation the Chief is currently talking in, or none."""
+    return {
+        "conversation_id": conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
+    }
+
+
+@router.post("/chief/conversation")
+async def start_chief_conversation(
+    conn: DbConn, ctx: Ctx, conversations: Conversations
+) -> JsonDict:
+    """Start the Chief's conversation. The same door a Ticket has, on the same writers.
+
+    What it starts as comes from the Chief's own managed settings, exactly as a Ticket's
+    comes from its worker type and its last choice. A Chief that already has a
+    conversation keeps it, for the reason a Ticket does: starting again would leave a
+    live conversation nothing could reach.
+    """
+    require_direct_write(ctx)
+    conversation_id = conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
+    if conversation_id is None:
+        conversation_id = await conversation_start.start_agent_conversation(
+            conversations, conn, CHIEF_SETTINGS_KEY, conversation_start.agent_resolve(conn)
+        )
+    return {"conversation_id": conversation_id}
+
+
+@router.post("/chief/conversation/reset")
+async def reset_chief_conversation(
+    conn: DbConn, ctx: Ctx, conversations: Conversations
+) -> JsonDict:
+    """Cut the Chief loose from its conversation. This is what New does."""
+    require_direct_write(ctx)
+    await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
+    return {"conversation_id": None}
+
+
+@router.post("/tickets/{ticket_id}/conversation")
+async def start_ticket_conversation(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    """Start this Ticket's conversation, so a person can talk to it before a step runs.
+
+    The readiness loop starts one when it has a step to send. This is the other door: a
+    Ticket nobody has run yet, opened by its owner, who types into it. Both doors reach
+    the same writer, so a conversation started by hand is the conversation the loop will
+    find and use.
+
+    A Ticket that already has one keeps it. Starting again would leave the conversation it
+    is pointing at running with nothing able to reach it.
+    """
+    require_direct_write(ctx)
+    now = clk.now_unix()
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    if ticket.conversation_id is None:
+        await conversation_start.start_ticket_conversation(
+            conversations,
+            conn,
+            ticket,
+            conversation_start.worker_resolve(conn, ticket),
+            now=now,
+        )
+        ticket = tickets_data.read_ticket(conn, ticket_id)
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/conversation/reset")
+async def reset_ticket_conversation(
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    """Cut this Ticket loose from its conversation. This is what New does.
+
+    The old conversation is killed rather than interrupted — its running turn stops and
+    everything it was holding is discarded — and the Ticket stops pointing at it. Nothing
+    is started here: the Ticket now has no conversation, which is the state the start door
+    above already knows how to answer.
+    """
+    require_direct_write(ctx)
+    now = clk.now_unix()
+    await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
+    return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
 
 
 @router.put("/tickets/{ticket_id}/notes/{field}")
@@ -945,21 +1069,19 @@ async def put_value(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     require_direct_write(ctx)
     _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    ticket = tickets_actions.edit_field_value(
+    ticket = tickets_data.edit_field_value(
         conn,
         ticket_id,
         field=field,
         new_body=body["body"],
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -971,7 +1093,6 @@ async def scope_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
     require_direct_write(ctx)
@@ -996,14 +1117,13 @@ async def scope_ticket(
         raise PlannerError(
             ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
         ) from None
-    ticket = tickets_actions.change_scope(
+    ticket = tickets_data.change_scope(
         conn,
         ticket_id,
         ceiling=ceiling_raw,
         at_cap=at_cap,
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1015,7 +1135,6 @@ async def set_stage(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     body = StageBody(to_stage=body_str(raw, "to_stage"))
     require_direct_write(ctx)
@@ -1026,13 +1145,12 @@ async def set_stage(
     if to_stage != worker_type_definition.dropped_stage.id:
         worker_type_definition.stage_index(to_stage)
     now = clk.now_unix()
-    ticket = tickets_actions.set_stage(
+    ticket = tickets_data.set_stage(
         conn,
         ticket_id,
         new_stage=to_stage,
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1043,16 +1161,14 @@ async def drop_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_actions.drop_ticket(
+    ticket = tickets_data.drop_ticket(
         conn,
         ticket_id,
         actor=ctx.actor,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1063,15 +1179,13 @@ async def take_over_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_actions.take_over_ticket(
+    ticket = tickets_data.take_over_ticket(
         conn,
         ticket_id,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1082,15 +1196,13 @@ async def release_ticket(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     now = clk.now_unix()
-    ticket = tickets_actions.release_ticket(
+    ticket = tickets_data.release_ticket(
         conn,
         ticket_id,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1101,12 +1213,10 @@ async def request_user_help(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     now = clk.now_unix()
-    ticket = tickets_actions.request_user_help(
+    ticket = tickets_data.request_user_help(
         conn, ticket_id, actor=ctx.actor, now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1119,7 +1229,6 @@ async def put_stage_ownership(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) != {"ownership_mode"}:
@@ -1135,21 +1244,14 @@ async def put_stage_ownership(
         else None
     )
     now = clk.now_unix()
-    ticket = tickets_actions.set_stage_ownership(
+    ticket = tickets_data.set_stage_ownership(
         conn,
         ticket_id,
         stage=stage,
         ownership_mode=ownership_mode,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return tickets_views.ticket_json(ticket, now)
-
-
-@router.get("/tickets/{ticket_id}/events")
-async def ticket_events(ticket_id: str, conn: DbConn, cfg: Cfg) -> JsonDict:
-    tickets_data.read_ticket(conn, ticket_id)
-    return {"events": tickets_views.list_events_for_entity(conn, ticket_id, cfg.events_read_limit)}
 
 
 @router.get("/tickets/{ticket_id}/copy-text", response_class=PlainTextResponse)
@@ -1163,7 +1265,6 @@ async def add_link(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
 ) -> JsonDict:
     require_direct_write(ctx)
     body = LinkBody(
@@ -1173,13 +1274,12 @@ async def add_link(
     )
     kind = parse_enum(LinkKind, body["kind"], "kind")
     now = clk.now_unix()
-    link_actions.add_link(
+    tickets_actions.add_link(
         conn,
         body["from_id"],
         body["to_id"],
         kind,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
 
@@ -1189,7 +1289,6 @@ async def remove_link(
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWakeDependency,
     from_id: str,
     to_id: str,
     kind: str,
@@ -1197,21 +1296,72 @@ async def remove_link(
     require_direct_write(ctx)
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
-    link_actions.remove_link(
+    tickets_actions.remove_link(
         conn,
         from_id,
         to_id,
         kind_enum,
         now=now,
-        automatic_employee_step_eligibility_wake=automatic_employee_step_eligibility_wake,
     )
     return {"ok": True}
 
 
+async def add_conversation_row_signals(
+    board: JsonDict,
+    conversation_system: ConversationSystem,
+    conversation_record: ConversationStore,
+) -> JsonDict:
+    """Add the three conversation-owned row signals to every card on the board.
+
+    ``agent_working`` is whether the Ticket's conversation has a turn running right now,
+    and ``needs_me`` is whether that turn is waiting on a permission ask only the owner
+    can answer. ``latest_turn_ended_sequence`` is where that conversation last had a turn
+    end — the row's half of the reply mark, which the browser compares against how far
+    the reader has got. None of the three is a tickets-domain fact and all are awaited,
+    so ``board_view`` cannot answer them and they are added here instead. A Ticket with
+    no conversation has no conversation to ask about: the first two read false and the
+    third reads 0, which is before every real position.
+
+    The record is asked once for the whole board rather than once per row: it is one
+    question about a list, and a list is what the board is.
+
+    This reads and writes nothing but the payload it was handed — no transaction, no
+    connection of its own.
+    """
+    cards = [card for column in board["columns"] for card in column["cards"]]
+    latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
+        [card["conversation_id"] for card in cards if card["conversation_id"] is not None]
+    )
+    for card in cards:
+        conversation_id = card["conversation_id"]
+        card["agent_working"] = (
+            await conversation_system.is_running(conversation_id)
+            if conversation_id is not None
+            else False
+        )
+        card["needs_me"] = (
+            await conversation_system.has_pending_permission_ask(conversation_id)
+            if conversation_id is not None
+            else False
+        )
+        card["latest_turn_ended_sequence"] = (
+            latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
+        )
+    return board
+
+
 @router.get("/board")
-async def board(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+async def board(
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
     day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
-    return tickets_views.board_view(conn, day_id=day_id)
+    return await add_conversation_row_signals(
+        tickets_views.board_view(conn, day_id=day_id), conversations, conversation_record
+    )
 
 
 @router.get("/review")

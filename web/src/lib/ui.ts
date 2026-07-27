@@ -7,11 +7,13 @@ export type FieldStageVisualState =
   | "completed"
   | "current-running"
   | "current-waiting"
-  | "current-paired-work"
+  | "current-paired"
   | "current-awaiting-approval"
   | "errored"
   | "upcoming"
-  | "reply-seen";
+  | "reply-seen"
+  // A worker waiting on a permission ask only the user can answer: the pure white dot.
+  | "needs-me";
 
 export function stageLabel(value: string): string {
   return String(value).replace(/_/g, " ");
@@ -44,27 +46,15 @@ export type TicketStageVisualInput = {
 export function markerLabel(value: string): string {
   const labels: Record<string, string> = {
     "pending-proposal": "proposal pending",
-    "agent-running-step": "running step",
     "blockers-cleared": "blockers cleared",
-    errored: "errored",
-    frozen: "frozen",
-    "paired-work": "paired work",
-    "user-takeover": "user takeover"
+    frozen: "frozen"
   };
   return labels[value] || value;
 }
 
+// The ticket status names are the labels: underscores become spaces.
 export function ticketStatusText(value: string): string {
-  const labels: Record<string, string> = {
-    empty: "empty",
-    agent_running_step: "running step",
-    awaiting_approval: "awaiting approval",
-    proposal_discussion: "in discussion",
-    paired_work: "paired work",
-    user_takeover: "user takeover",
-    errored: "errored"
-  };
-  return labels[value] || value.replace(/_/g, " ");
+  return value.replace(/_/g, " ");
 }
 
 export function formatUnix(seconds: unknown): string {

@@ -11,11 +11,10 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from sqlite3 import Connection
+from sqlite3 import Connection, Row
 from types import SimpleNamespace
 
 import pytest
-from tests.support.probe import PROBE_EMPLOYEE_BACKEND_CATALOG
 
 from planner.core.contracts import ErrorCode, Priority
 from planner.core.db import connect, create_schema
@@ -31,11 +30,10 @@ from planner.seed.logic.workspace import match_item_title, parse_workspace
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
-    ConfiguredEmployeeRuntimeDefinitions,
-    build_employee_runtime_definitions,
-    install_employee_runtime_definitions_for_test,
-    restore_employee_runtime_definitions_for_test,
+    ConfiguredWorkerRuntimeDefinitions,
+    build_worker_runtime_definitions,
+    install_worker_runtime_definitions_for_test,
+    restore_worker_runtime_definitions_for_test,
 )
 from planner.worker_types.contracts import FieldDefinition, StageDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -59,7 +57,7 @@ def _count(conn: Connection, table: str) -> int:
     return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
-def _rows_by(conn: Connection, sql: str, key: str) -> dict[str, object]:
+def _rows_by(conn: Connection, sql: str, key: str) -> dict[str, Row]:
     return {row[key]: row for row in conn.execute(sql).fetchall()}
 
 
@@ -127,7 +125,6 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "tickets") == 4
     assert _count(tmp_db, "ideas") == 3
     assert _count(tmp_db, "links") == 0
-    assert _count(tmp_db, "events") == 17
     imported_projects = _rows_by(tmp_db, "SELECT id, name FROM projects", "id")
     assert imported_projects["project_vylo"]["name"] == "Vylo"
     assert imported_projects["project_tribe"]["name"] == "Tribe"
@@ -189,7 +186,7 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     tickets = _rows_by(
         tmp_db,
         "SELECT tickets.id, tickets.alias, tickets.stage, tickets.priority, "
-        "tickets.worker_type, tickets.employee_session_id, tickets.sprint_item_id, "
+        "tickets.worker_type, tickets.conversation_id, tickets.sprint_item_id, "
         "tickets.sprint_id, "
         "tickets.project_id, projects.name AS project, tickets.recap, tickets.ceiling, "
         "tickets.at_cap, tickets.deadline, tickets.fields "
@@ -207,16 +204,18 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
         assert row["recap"] == ""
         assert row["deadline"] is None
 
-    # (6) the historical Chat ID is preserved byte-for-byte as the Employee session id.
-    assert (
-        tickets["ticket-20260611-export-format"]["employee_session_id"] == "20260611_090000_abc123"
-    )
+    # (6) A historical Chat ID from the planning documents names nothing. The column holds
+    # the id of a conversation this system owns, and a Ticket carrying a made-up one could
+    # never be given a real conversation — the door that starts one only opens on a Ticket
+    # naming none. So the field is read and dropped, and every seeded Ticket arrives with
+    # no conversation.
     for alias in (
+        "ticket-20260611-export-format",
         "ticket-20260611-onboarding-survey",
         "ticket-20260611-release-branch",
         "ticket-20260611-import-pipeline",
     ):
-        assert tickets[alias]["employee_session_id"] is None
+        assert tickets[alias]["conversation_id"] is None
 
     # (7) fields JSON.
     onboarding = json.loads(tickets["ticket-20260611-onboarding-survey"]["fields"])
@@ -347,7 +346,6 @@ def test_a19_seed_fixture_import_counts_mappings_idempotency_and_skip_list(
     assert _count(tmp_db, "tickets") == 4
     assert _count(tmp_db, "ideas") == 3
     assert _count(tmp_db, "links") == 0
-    assert _count(tmp_db, "events") == 17
 
 
 def test_legacy_project_materialization_rolls_back_with_failed_import(
@@ -363,7 +361,7 @@ def test_legacy_project_materialization_rolls_back_with_failed_import(
         seed_from_source(tmp_db, FIXTURE, worker_type="coding", now=_FIXED_NOW)
 
     assert tmp_db.execute("SELECT 1 FROM projects WHERE id = 'project_learning'").fetchone() is None
-    for table in ("sprints", "sprint_items", "tickets", "ideas", "events"):
+    for table in ("sprints", "sprint_items", "tickets", "ideas"):
         assert _count(tmp_db, table) == 0
 
 
@@ -518,14 +516,13 @@ def test_seed_backend_default_override_and_unknown_roll_back(
         CODING_WORKER_TYPE_DEFINITION,
         worker_profile=replace(
             CODING_WORKER_TYPE_DEFINITION.worker_profile,
-            default_employee_backend="probe-backend",
+            default_backend="claude",
         ),
     )
-    definitions = build_employee_runtime_definitions(
-        PROBE_EMPLOYEE_BACKEND_CATALOG,
+    definitions = build_worker_runtime_definitions(
         worker_type_definitions=(probe_default_coding,),
     )
-    previous = install_employee_runtime_definitions_for_test(definitions)
+    previous = install_worker_runtime_definitions_for_test(definitions)
     connections: list[Connection] = []
     try:
         for name in ("default", "override", "rejected"):
@@ -553,32 +550,26 @@ def test_seed_backend_default_override_and_unknown_roll_back(
         assert {
             str(row["employee_backend"])
             for row in default_conn.execute("SELECT employee_backend FROM tickets")
-        } == {"probe-backend"}
+        } == {"claude"}
         assert {
             str(row["employee_backend"])
             for row in override_conn.execute("SELECT employee_backend FROM tickets")
         } == {"hermes"}
-        assert {
-            json.loads(str(row["payload"]))["employee_backend"]
-            for row in default_conn.execute(
-                "SELECT payload FROM events WHERE kind = 'ticket_created'"
-            )
-        } == {"probe-backend"}
         assert raised.value.code is ErrorCode.validation
         assert tuple(
             rejected_conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
-        ) == (0, 0, 0, 0, 0)
+            for table in ("sprints", "sprint_items", "tickets", "ideas")
+        ) == (0, 0, 0, 0)
     finally:
         for conn in connections:
             conn.close()
-        restore_employee_runtime_definitions_for_test(previous)
+        restore_worker_runtime_definitions_for_test(previous)
 
 
 def test_unknown_seed_worker_type_fails_before_any_import_write(tmp_db: Connection) -> None:
     before = {
         table: _count(tmp_db, table)
-        for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
+        for table in ("sprints", "sprint_items", "tickets", "ideas")
     }
     with pytest.raises(PlannerError) as raised:
         seed_from_source(tmp_db, FIXTURE, worker_type="ghost", now=_FIXED_NOW)
@@ -586,7 +577,7 @@ def test_unknown_seed_worker_type_fails_before_any_import_write(tmp_db: Connecti
     assert raised.value.detail == {"worker_type": "ghost"}
     assert {
         table: _count(tmp_db, table)
-        for table in ("sprints", "sprint_items", "tickets", "ideas", "events")
+        for table in ("sprints", "sprint_items", "tickets", "ideas")
     } == before
 
 
@@ -616,18 +607,14 @@ def test_seed_fields_follow_the_explicit_registered_definition(tmp_db: Connectio
         (definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
-    previous_definitions = install_employee_runtime_definitions_for_test(
-        ConfiguredEmployeeRuntimeDefinitions(
-            PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
-            registry,
-        )
+    previous_definitions = install_worker_runtime_definitions_for_test(
+        ConfiguredWorkerRuntimeDefinitions(registry)
     )
     try:
         seed_from_source(tmp_db, FIXTURE, worker_type="seed_probe", now=_FIXED_NOW)
     finally:
-        restore_employee_runtime_definitions_for_test(previous_definitions)
+        restore_worker_runtime_definitions_for_test(previous_definitions)
 
     rows = {
         row["alias"]: row
@@ -668,13 +655,9 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
         (incompatible_definition,),
         known_skills=frozenset({"panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
     )
-    previous_definitions = install_employee_runtime_definitions_for_test(
-        ConfiguredEmployeeRuntimeDefinitions(
-            PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog,
-            registry,
-        )
+    previous_definitions = install_worker_runtime_definitions_for_test(
+        ConfiguredWorkerRuntimeDefinitions(registry)
     )
     try:
         with pytest.raises(PlannerError) as raised:
@@ -685,10 +668,10 @@ def test_incompatible_explicit_worker_type_rolls_back_the_whole_import(
                 now=_FIXED_NOW,
             )
     finally:
-        restore_employee_runtime_definitions_for_test(previous_definitions)
+        restore_worker_runtime_definitions_for_test(previous_definitions)
     assert raised.value.code is ErrorCode.validation
     assert raised.value.message == "stage outside the linear order"
-    for table in ("sprints", "sprint_items", "tickets", "ideas", "events"):
+    for table in ("sprints", "sprint_items", "tickets", "ideas"):
         assert _count(tmp_db, table) == 0
 
 

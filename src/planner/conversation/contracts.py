@@ -1,335 +1,458 @@
-"""Frozen Panels-owned values for ACP-backed employee conversations."""
+"""The contract between Panels' conversation system and the rest of Panels.
+
+This module is the whole seam. The rest of Panels can start a conversation, send text
+into it, interrupt its running turn, kill its activity outright, and ask whether it is
+running. Nothing else crosses the boundary.
+
+The conversation id is the identity everywhere. It is owned by the caller and it is the
+only name this contract knows a conversation by. The ACP session id of the backend
+process is an internal, rebindable attribute of the conversation system and appears
+nowhere here.
+
+The transcript read (fetching the events after a position, plus a live tail, and the
+shape of an event record) and the concrete database schema are deferred to the real
+build. They are deliberately absent from this module rather than sketched.
+"""
 
 from __future__ import annotations
 
-import json
-import os
-import unicodedata
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Final, Protocol
 
-from acp.schema import (
-    PromptRequest,
-    RequestPermissionRequest,
-    RequestPermissionResponse,
-    TerminalOutputResponse,
-)
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
-CHIEF_OF_STAFF_ENTITY_ID = "agent_panels_chief_of_staff"
+from planner.conversation.message_content import MessageContent
+from planner.core.contracts import ErrorCode, PlannerError
 
 
-def _to_camel_case(field_name: str) -> str:
-    head, *tail = field_name.split("_")
-    return head + "".join(part.capitalize() for part in tail)
+class ConversationBackendKey(StrEnum):
+    """The production catalog of agent backends a conversation can run on.
+
+    The catalog is a closed set rather than an open string because this contract states
+    a per-backend capability as a fact: hermes can take text into a turn that is already
+    running, codex and claude cannot. A fact stated about backends needs a closed set of
+    backends to be stated about.
+    """
+
+    hermes = "hermes"
+    codex = "codex"
+    claude = "claude"
 
 
-def _require_non_empty_text(value: str, *, field_name: str) -> str:
-    if not value or value != value.strip():
-        raise ValueError(f"{field_name} must be non-empty and trimmed")
-    if any(unicodedata.category(character) == "Cc" for character in value):
-        raise ValueError(f"{field_name} must not contain control characters")
-    return value
+def require_conversation_backend_key(value: object) -> ConversationBackendKey:
+    """Turn a string that claims to name a backend into the key it names, or refuse it.
 
-
-def _require_display_safe_text(value: str, *, field_name: str) -> str:
-    return _require_non_empty_text(value, field_name=field_name)
-
-
-class _ConversationModel(BaseModel):
-    model_config = ConfigDict(
-        alias_generator=_to_camel_case,
-        extra="forbid",
-        frozen=True,
-        populate_by_name=True,
+    Backend keys reach Panels as untrusted text — a request body, a seed argument, a
+    settings file somebody edited, a row written before a rename. This is the one door
+    that text comes through, so that a name nothing can run is refused where it is read
+    rather than discovered when a conversation fails to start.
+    """
+    if isinstance(value, str):
+        try:
+            return ConversationBackendKey(value)
+        except ValueError:
+            pass
+    raise PlannerError(
+        ErrorCode.validation,
+        "unknown agent backend",
+        {
+            "backend_key": value if isinstance(value, str) else None,
+            "backend_keys": [str(key) for key in ConversationBackendKey],
+        },
     )
 
 
-ConversationEntityKind = Literal["ticket", "agent"]
-ConversationActivityState = Literal[
-    "connecting",
-    "loading",
-    "idle",
-    "thinking",
-    "working",
-    "compacting",
-    "waiting_for_permission",
-    "interrupted",
-    "failed",
-]
-TurnDeliveryChoice = Literal["normal", "steer", "send_now", "queue"]
-TurnDeliveryReceiptState = Literal["accepted", "queued", "started", "interrupted", "rejected"]
-ContextCompactionState = Literal["compacting", "compacted", "failed"]
-ContextCompactionTrigger = Literal["explicit", "automatic"]
-ConversationPermissionLifecycle = Literal["pending", "answered", "cancelled"]
-ConversationTerminalLifecycle = Literal["active", "released"]
-ProgrammaticPromptSource = Literal["worker", "role"]
+class ConversationAccess(StrEnum):
+    """The access posture the agent runs under inside its workspace folder.
+
+    ``full`` is the floor default and today the only posture. The backend-specific mode
+    ids that implement full access belong to the conversation system's backend adapters
+    and do not appear here. When a second posture is ruled it is added to this enum, and
+    the ``access`` field already on the start request is what carries it.
+    """
+
+    full = "full"
 
 
-class ConversationEmployee(_ConversationModel):
-    employee_id: str
-    entity_kind: ConversationEntityKind
-    entity_id: str
-    workspace_roots: tuple[Path, ...]
-    backend_key: str
-    employee_launch_model: str | None = None
-    employee_launch_reasoning_effort: str | None = None
+# The three floor defaults. They exist so that an absent field still resolves to a
+# concrete value — one system's defaults, shared by every implementation of this
+# contract — not as an invitation to omit fields. Callers are expected to pass explicit
+# values.
+FLOOR_DEFAULT_BACKEND_KEY: Final = ConversationBackendKey.codex
+FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "Coding"
+FLOOR_DEFAULT_ACCESS: Final = ConversationAccess.full
 
-    @field_validator("employee_id", "entity_id", "backend_key")
-    @classmethod
-    def _validate_identifiers(cls, value: str, info: object) -> str:
-        field_name = getattr(info, "field_name", "identifier")
-        return _require_non_empty_text(value, field_name=field_name)
-
-    @field_validator("employee_launch_model", "employee_launch_reasoning_effort")
-    @classmethod
-    def _validate_optional_launch_identifier(
-        cls, value: str | None, info: object
-    ) -> str | None:
-        if value is None:
-            return None
-        field_name = getattr(info, "field_name", "launch identifier")
-        return _require_non_empty_text(value, field_name=field_name)
-
-    @field_validator("workspace_roots")
-    @classmethod
-    def _validate_workspace_roots(cls, roots: tuple[Path, ...]) -> tuple[Path, ...]:
-        if not roots:
-            raise ValueError("workspace_roots must not be empty")
-        normalized_roots: set[str] = set()
-        for root in roots:
-            if not root.is_absolute():
-                raise ValueError("workspace_roots must contain only absolute paths")
-            normalized = os.path.normpath(os.fspath(root))
-            if normalized in normalized_roots:
-                raise ValueError("workspace_roots must not contain duplicate roots")
-            normalized_roots.add(normalized)
-        return roots
+BACKEND_KEYS_SUPPORTING_STEER: Final[frozenset[ConversationBackendKey]] = frozenset(
+    {ConversationBackendKey.hermes}
+)
 
 
-class ConversationSessionBinding(_ConversationModel):
-    employee_id: str
-    acp_session_id: str
-    backend_key: str
-    binding_generation: Annotated[int, Field(gt=0)]
-    employee_launch_model: str | None = None
-    employee_launch_reasoning_effort: str | None = None
+def backend_supports_steer(backend_key: ConversationBackendKey) -> bool:
+    """Whether this backend can take text into a turn that is already running.
 
-    @field_validator("employee_id", "acp_session_id", "backend_key")
-    @classmethod
-    def _validate_identifiers(cls, value: str, info: object) -> str:
-        field_name = getattr(info, "field_name", "identifier")
-        return _require_non_empty_text(value, field_name=field_name)
-
-    @field_validator("employee_launch_model", "employee_launch_reasoning_effort")
-    @classmethod
-    def _validate_optional_launch_identifier(
-        cls, value: str | None, info: object
-    ) -> str | None:
-        if value is None:
-            return None
-        return _require_non_empty_text(
-            value, field_name=str(getattr(info, "field_name", "launch identifier"))
-        )
+    Steering support is a per-backend fact, not a runtime negotiation: hermes supports
+    it, codex and claude do not. A steer aimed at a backend that cannot steer is refused
+    with ``PromptDeliveryRefusalReason.backend_cannot_steer``.
+    """
+    return backend_key in BACKEND_KEYS_SUPPORTING_STEER
 
 
-class EmployeeConversation(_ConversationModel):
-    """Durable Panels conversation identity, whether or not ACP is bound yet."""
+@dataclass(frozen=True, slots=True)
+class AgentCommand:
+    """One command the agent says a person may type at it.
 
-    employee_id: str
-    backend_key: str
-    conversation_generation: Annotated[int, Field(gt=0)]
-    employee_launch_model: str | None = None
-    employee_launch_reasoning_effort: str | None = None
+    A command is the agent's own, not Panels'. The agent reports what it answers to,
+    Panels offers that list, and the chosen command goes in as ordinary text at the start
+    of a message — the agent parses its own name back out exactly as it would from
+    something typed by hand. Nothing here is interpreted on the way through.
 
-    @field_validator("employee_id", "backend_key")
-    @classmethod
-    def _validate_identifiers(cls, value: str, info: object) -> str:
-        return _require_non_empty_text(
-            value, field_name=str(getattr(info, "field_name", "identifier"))
-        )
+    ``name`` carries no leading slash: the slash is how a person writes a command, not
+    part of what it is called. ``description`` is what the backend said the command does,
+    which may be nothing. ``argument_hint`` is what to type after the name, and is absent
+    for a command that takes nothing — the backends that report one each call it something
+    different, and this is the one name Panels knows it by.
+    """
 
-
-class ConversationCompactionBoundaryProvenance(_ConversationModel):
-    boundary_id: str
-    trigger: ContextCompactionTrigger
-
-    @field_validator("boundary_id")
-    @classmethod
-    def _validate_boundary_id(cls, value: str) -> str:
-        return _require_non_empty_text(value, field_name="boundary_id")
+    name: str
+    description: str
+    argument_hint: str | None = None
 
 
-def parse_conversation_compaction_boundaries_json(
-    encoded: object,
-) -> tuple[ConversationCompactionBoundaryProvenance, ...]:
-    """Parse the one canonical durable compaction-provenance representation."""
+@dataclass(frozen=True, slots=True)
+class ConversationRoleMaterials:
+    """What the agent is told to be, and the identity its process runs under.
 
-    if not isinstance(encoded, str):
-        raise ValueError("compaction provenance must be JSON text")
-    try:
-        decoded = json.loads(encoded)
-    except json.JSONDecodeError as error:
-        raise ValueError("compaction provenance is malformed JSON") from error
-    if not isinstance(decoded, list):
-        raise ValueError("compaction provenance must be an ordered array")
-    boundaries: list[ConversationCompactionBoundaryProvenance] = []
-    boundary_ids: set[str] = set()
-    for item in decoded:
-        if not isinstance(item, dict) or set(item) != {"boundary_id", "trigger"}:
-            raise ValueError("compaction provenance items must be exact objects")
-        if not isinstance(item["boundary_id"], str) or not isinstance(
-            item["trigger"], str
-        ):
-            raise ValueError("compaction provenance fields must be strings")
-        try:
-            boundary = ConversationCompactionBoundaryProvenance.model_validate(item)
-        except ValueError as error:
-            raise ValueError("compaction provenance item is invalid") from error
-        if boundary.boundary_id in boundary_ids:
-            raise ValueError("compaction provenance boundary IDs must be unique")
-        boundary_ids.add(boundary.boundary_id)
-        boundaries.append(boundary)
-    return tuple(boundaries)
+    ``role_text`` is the role the agent is given. ``identity_environment_variables`` are
+    the name/value pairs its process runs with. The conversation system applies both
+    without understanding them: it does not read meaning out of the role text and it
+    does not interpret the variables.
+    """
+
+    role_text: str
+    identity_environment_variables: tuple[tuple[str, str], ...] = ()
 
 
-class ConversationActivity(_ConversationModel):
-    state: ConversationActivityState
-    detail: str
-    sequence: Annotated[int, Field(gt=0)]
+@dataclass(frozen=True, slots=True)
+class ConversationStartRequest:
+    """The concrete, already-resolved values a conversation is created from.
 
-    @field_validator("detail")
-    @classmethod
-    def _validate_detail(cls, value: str) -> str:
-        return _require_display_safe_text(value, field_name="detail")
+    ``conversation_id`` is caller-owned and is the identity of this conversation
+    everywhere afterwards. Every other field may be absent. An absent ``backend_key``,
+    ``workspace_folder`` or ``access`` takes its floor default (codex, ``~/Coding``,
+    full access), so a request carrying only a conversation id still produces a working
+    conversation. ``model``, ``reasoning_effort`` and ``role_materials`` have no floor
+    default: absent means the conversation is started without them, and the backend's
+    own defaults apply.
 
+    ``workspace_folder`` is the folder the agent runs in.
+    """
 
-class TurnDeliveryReceipt(_ConversationModel):
-    client_message_id: str
-    choice: TurnDeliveryChoice
-    state: TurnDeliveryReceiptState
-    queue_position: Annotated[int, Field(gt=0)] | None = None
-    reason: str | None = None
-
-    @field_validator("client_message_id")
-    @classmethod
-    def _validate_client_message_id(cls, value: str) -> str:
-        return _require_non_empty_text(value, field_name="client_message_id")
-
-    @field_validator("reason")
-    @classmethod
-    def _validate_reason(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return _require_display_safe_text(value, field_name="reason")
-
-    @model_validator(mode="after")
-    def _validate_state_fields(self) -> Self:
-        if (self.state == "queued") != (self.queue_position is not None):
-            raise ValueError("queue_position is present exactly when state is queued")
-        if self.state == "rejected" and self.reason is None:
-            raise ValueError("reason is required when state is rejected")
-        if self.reason is not None and self.state not in {"rejected", "interrupted"}:
-            raise ValueError("reason is allowed only for rejected or interrupted state")
-        return self
+    conversation_id: str
+    backend_key: ConversationBackendKey | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    role_materials: ConversationRoleMaterials | None = None
+    workspace_folder: Path | None = None
+    access: ConversationAccess | None = None
 
 
-class QueuedPrompt(_ConversationModel):
-    client_message_id: str
-    prompt: PromptRequest
-    enqueue_sequence: Annotated[int, Field(gt=0)]
-    enqueued_at: int
+@dataclass(frozen=True, slots=True)
+class ResolvedConversationStart:
+    """A start request with the floor defaults already applied.
 
-    @field_validator("client_message_id")
-    @classmethod
-    def _validate_client_message_id(cls, value: str) -> str:
-        return _require_non_empty_text(value, field_name="client_message_id")
+    This is what a conversation is actually started with. ``backend_key``,
+    ``workspace_folder`` and ``access`` are always concrete here because each has a
+    floor default. ``model``, ``reasoning_effort`` and ``role_materials`` stay optional
+    because none of them has one — there is nothing to fall back to, so absent stays
+    absent.
+    """
 
-
-class ProgrammaticPrompt(_ConversationModel):
-    prompt_id: str
-    prompt: PromptRequest
-    source: ProgrammaticPromptSource
-
-    @field_validator("prompt_id")
-    @classmethod
-    def _validate_prompt_id(cls, value: str) -> str:
-        return _require_non_empty_text(value, field_name="prompt_id")
+    conversation_id: str
+    backend_key: ConversationBackendKey
+    model: str | None
+    reasoning_effort: str | None
+    role_materials: ConversationRoleMaterials | None
+    workspace_folder: Path
+    access: ConversationAccess
 
 
-class ContextCompaction(_ConversationModel):
-    boundary_id: str
-    state: ContextCompactionState
-    trigger: ContextCompactionTrigger
-    reason: str | None = None
+class PromptDeliveryMode(StrEnum):
+    """How a sent message should meet the agent. One parameter, three values.
 
-    @field_validator("boundary_id")
-    @classmethod
-    def _validate_boundary_id(cls, value: str) -> str:
-        return _require_non_empty_text(value, field_name="boundary_id")
+    ``run_when_free`` is the default. If the agent is idle the message starts a turn
+    straight away. If the agent is busy the message is held, and it runs when the agent
+    frees up.
 
-    @field_validator("reason")
-    @classmethod
-    def _validate_optional_display_text(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return _require_display_safe_text(value, field_name="reason")
+    ``send_now`` makes this message the running turn. If the agent is idle it behaves
+    exactly like the default. If the agent is busy the incumbent turn is killed — its
+    interruption is recorded as an event — and this message runs next, ahead of anything
+    already held. If its own delivery then turns out to be impossible, the incumbent is
+    dead all the same and the agent is free, so the messages that were already held run
+    from that point.
 
-    @model_validator(mode="after")
-    def _validate_state_fields(self) -> Self:
-        if (self.state == "failed") != (self.reason is not None):
-            raise ValueError("reason is present exactly when state is failed")
-        return self
+    ``steer`` injects the text into the turn that is already running, without ending it.
+    Whether a backend can do this is a per-backend fact: hermes can, codex and claude
+    cannot. A steer is refused when no turn is running, or when the backend cannot
+    steer.
+    """
 
-
-class ConversationPermissionRequest(_ConversationModel):
-    request_id: str
-    employee_id: str
-    backend_key: str
-    request: RequestPermissionRequest
-    lifecycle: ConversationPermissionLifecycle
-    deadline_at: int
-    opened_sequence: Annotated[int, Field(gt=0)]
-
-    @field_validator("request_id", "employee_id", "backend_key")
-    @classmethod
-    def _validate_identifiers(cls, value: str, info: object) -> str:
-        field_name = getattr(info, "field_name", "identifier")
-        return _require_non_empty_text(value, field_name=field_name)
+    run_when_free = "run_when_free"
+    send_now = "send_now"
+    steer = "steer"
 
 
-class ConversationPermissionOutcome(_ConversationModel):
-    request_id: str
-    response: RequestPermissionResponse
-    cancellation_reason: str | None = None
-    settled_sequence: Annotated[int, Field(gt=0)]
+class PromptDeliveryRefusalReason(StrEnum):
+    """The genuine delivery impossibilities, and nothing else.
 
-    @field_validator("request_id")
-    @classmethod
-    def _validate_request_id(cls, value: str) -> str:
-        return _require_non_empty_text(value, field_name="request_id")
+    ``no_such_conversation`` names a conversation id that has never been started, so
+    there is nowhere for the text to go.
 
-    @field_validator("cancellation_reason")
-    @classmethod
-    def _validate_cancellation_reason(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        return _require_display_safe_text(value, field_name="cancellation_reason")
+    ``backend_did_not_start`` names a backend process that would not spawn, so there is
+    no live process to write to.
 
-    @model_validator(mode="after")
-    def _validate_outcome_fields(self) -> Self:
-        is_cancelled = self.response.outcome.outcome == "cancelled"
-        if is_cancelled != (self.cancellation_reason is not None):
-            raise ValueError("cancellation_reason is present exactly for a cancelled outcome")
-        return self
+    ``session_did_not_load`` names a backend process that is alive but whose session
+    would not load, so there is no valid bound session to write under.
+
+    ``write_to_backend_failed`` names a write to the backend's wire that did not
+    succeed, so the text did not reach it.
+
+    ``no_running_turn_to_steer_into`` names a steer with no running turn to inject into.
+
+    ``backend_cannot_steer`` names a steer aimed at a backend that cannot take text into
+    a running turn.
+
+    Busyness is not on this list and never will be: a busy agent is a message the system
+    can hold, and nothing the system can hold is refused.
+    """
+
+    no_such_conversation = "no_such_conversation"
+    backend_did_not_start = "backend_did_not_start"
+    session_did_not_load = "session_did_not_load"
+    write_to_backend_failed = "write_to_backend_failed"
+    no_running_turn_to_steer_into = "no_running_turn_to_steer_into"
+    backend_cannot_steer = "backend_cannot_steer"
 
 
-class ConversationTerminalState(_ConversationModel):
-    terminal_id: str
-    lifecycle: ConversationTerminalLifecycle
-    terminal_output: TerminalOutputResponse
+@dataclass(frozen=True, slots=True)
+class PromptDeliveryStarted:
+    """The prompt request was written to the wire of a live backend process, under a
+    valid bound session, before this call returned. The turn is now running.
 
-    @field_validator("terminal_id")
-    @classmethod
-    def _validate_terminal_id(cls, value: str) -> str:
-        return _require_non_empty_text(value, field_name="terminal_id")
+    It does not claim the backend accepted the prompt. ACP has no acceptance
+    acknowledgment: the response to a prompt request only arrives when the turn ends, so
+    acceptance is not knowable at the moment the call returns and is not claimed here.
+
+    It does not claim anything about how the turn goes. A turn's ending is an event, and
+    this class carries no field that could name one.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDeliveryQueued:
+    """The message is held by the conversation system and will run when the agent frees
+    up. ``queue_position`` is 1-based and counts held messages only.
+
+    This is explicitly a conversation-system fact. The message has not reached any
+    backend, and it is not claimed to have. The position is the message's place at the
+    moment it was held; no later repositioning is reported.
+
+    When a held message is eventually dequeued and delivered, that delivery has a fate
+    of its own. It is recorded as events rather than returned, because the caller that
+    sent it is long gone.
+    """
+
+    queue_position: int
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDeliveryInjected:
+    """The steered text actually entered the running turn's wire before this call
+    returned. The turn was not ended by it and is still running.
+
+    It does not claim the agent read or acted on the text; only that the text reached
+    the wire of the turn that is running.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class PromptDeliveryRefused:
+    """The delivery was impossible, for the named reason. This text reached no backend.
+
+    The claim is about this text and nothing else. A refused send-now has already killed
+    the incumbent turn, recorded that interruption, and let the held messages run — the
+    refusal says only that the send-now's own text never got anywhere.
+
+    A refusal is only ever a genuine impossibility. It never means the system chose not
+    to deliver, and it never means the agent was busy — a busy agent produces a held
+    message, not a refusal.
+
+    It does not claim anything about the conversation's future: a refused delivery says
+    nothing about whether a later delivery would succeed.
+    """
+
+    refusal_reason: PromptDeliveryRefusalReason
+
+
+# The fate of one delivery. Fate means it happened, never that it was attempted. Each
+# member claims exactly the layer it names and no more: started means written to a live
+# backend's wire, queued means held by the conversation system, injected means entered
+# the running turn's wire, refused means impossible. No member carries a turn outcome,
+# because a turn's ending is an event and never a return value.
+type PromptDeliveryFate = (
+    PromptDeliveryStarted | PromptDeliveryQueued | PromptDeliveryInjected | PromptDeliveryRefused
+)
+
+
+class ConversationAlreadyStarted(Exception):
+    """A start request named a conversation id that already exists.
+
+    The caller owns the id and creating a conversation is a real, once-only act.
+    Quietly ignoring a second start would silently discard the second request's role
+    materials and configuration, so it is an error instead.
+    """
+
+
+class ConversationSystem(Protocol):
+    """Everything the rest of Panels can do to a conversation.
+
+    Five operations — start one, send text into it, interrupt the running turn, kill
+    its activity outright, ask whether it is running — plus one more read: whether a
+    permission ask is waiting. There is no read
+    of a conversation's backend or model — those are values the caller passed in, not
+    questions this contract answers. The transcript read is deferred to the real build
+    and is deliberately absent.
+
+    Permissions are internal to the conversation system. They have no method here, only
+    rules. When an agent asks for permission the ask always shows and always waits:
+    there is no automatic answer of any kind, ever — not for any tool, not after any
+    amount of time, not for any caller. The ask and the answer are both recorded as
+    events. An answer lands only on an ask that is still pending on the turn that is
+    live now; answering an unknown ask, an already-answered ask, or an ask whose turn
+    has ended changes nothing. That bookkeeping is purely internal: deciding whether an
+    answer lands consults nothing outside the conversation system.
+
+    Every operation is async. Sending has to reach a child process over a wire before it
+    can report its fate, and interrupting and reading run through the same internal
+    locking, so all four are awaited.
+    """
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        """Create the conversation named by the request's conversation id.
+
+        The request carries concrete, already-resolved values: the caller-owned
+        conversation id, the backend key, the model and reasoning effort, the role
+        materials, the workspace folder the agent runs in, and the access posture.
+        Absent fields take their floor defaults, so a request carrying only a
+        conversation id still produces a working conversation.
+
+        Creating the conversation writes its record as step one. No path may create a
+        conversation without its record existing.
+
+        Nothing fancy is returned. When this returns, the conversation exists and is
+        addressable by its id.
+
+        Raises ``ConversationAlreadyStarted`` if that conversation id already exists.
+        """
+        ...
+
+    async def send(
+        self,
+        conversation_id: str,
+        content: MessageContent,
+        *,
+        sender_label: str,
+        mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+        model_change: str | None = None,
+        reasoning_effort_change: str | None = None,
+    ) -> PromptDeliveryFate:
+        """Send a message into a conversation. This is the only way anything gets to an agent.
+
+        ``content`` is the message: an ordered run of pieces, which for nearly every
+        message is one piece of written words — ``text_message_content("...")`` is how
+        that is said. A message with nothing in it is refused here rather than recorded
+        (``MessageContentEmpty``, which is a ``ValueError``), because an empty send would
+        put an empty prompt in front of an agent and tell nobody it had.
+
+        ``mode`` decides how the text meets the agent — run when free, send now, or
+        steer into the running turn — and defaults to run-when-free. See
+        ``PromptDeliveryMode`` for what each one does against an idle and a busy agent.
+
+        ``model_change`` and ``reasoning_effort_change`` let this message carry a
+        change: from this delivery on, the conversation runs on the named model or
+        reasoning effort. Absent means the conversation stays on what it is — there is
+        no other way to change either, so browsing a picker changes nothing and an
+        abandoned choice never touches the conversation. The change lands with the
+        delivery: a held message applies it when it runs, and a refused delivery
+        changes nothing. How a backend realizes it — a per-turn parameter, or
+        restarting the backend session under the same conversation id — is internal,
+        and the change is recorded as an event. A steer cannot carry a change, because
+        the turn it joins is already running; that is a caller error (``ValueError``),
+        not a delivery fate.
+
+        The return value is the fate of this delivery, and fate means it happened, never
+        that it was attempted. See ``PromptDeliveryFate``: started, queued, injected, or
+        refused. A refusal is only ever a genuine delivery impossibility — no such
+        conversation, the backend would not spawn, the session would not load, the write
+        failed. Busyness is never a refusal, and nothing the system can hold is refused.
+
+        A turn's ending is never a return value. Completion, failure and interruption
+        are all recorded as events; a failing turn also gets an error-log line of the
+        conversation system's own.
+
+        ``sender_label`` says who sent the text — the automatic loop or the owner, for
+        example. It is recorded on the prompt event and it is display-only: nothing else
+        consumes it and nothing branches on it.
+        """
+        ...
+
+    async def interrupt(self, conversation_id: str) -> None:
+        """Stop the running turn. It carries no text of its own.
+
+        It is its own operation because stopping and sending are different acts: the UI
+        stop button uses it directly, and send-now uses it internally to kill the
+        incumbent turn before its own message runs.
+
+        Stopping the turn frees the agent, so a message that was being held for it runs
+        from that point — interrupting sends nothing, but it is not the end of the
+        conversation's traffic. ``kill`` is the operation that ends the traffic.
+
+        The turn's interruption is recorded as an event. There is nothing to return. If
+        the conversation is idle, or the id names no conversation, nothing happens.
+        """
+        ...
+
+    async def kill(self, conversation_id: str) -> None:
+        """Kill this conversation's activity outright: stop the running turn AND discard
+        every held message. Nothing runs afterwards until someone sends again.
+
+        This is what pressing New uses — the new worker has nothing to do with the old
+        one other than killing it, and ``interrupt`` alone cannot do that, because
+        freeing the agent lets the held messages run. Kill silences both.
+
+        The conversation itself is not ended: its record and events remain, and it is
+        still addressable — a later send behaves exactly as it always does. The stopped
+        turn's interruption is recorded as an event, and so is the discard of each held
+        message, because text a caller handed over must never disappear without a trace.
+
+        There is nothing to return. If the conversation is idle with nothing held, or
+        the id names no conversation, nothing happens.
+        """
+        ...
+
+    async def is_running(self, conversation_id: str) -> bool:
+        """Whether a turn is running in this conversation right now.
+
+        A conversation that has not been started is not running. A turn that is
+        waiting on a permission ask is still running.
+        """
+        ...
+
+    async def has_pending_permission_ask(self, conversation_id: str) -> bool:
+        """Whether the running turn has a permission ask waiting for an answer right now.
+
+        This exists for the surfaces that tell the owner a conversation needs them.
+        Pending means raised on the turn that is live now and not yet answered: an
+        answered ask is no longer pending, and an ask dies with its turn, so an idle
+        conversation — or one that has never been started — has no pending ask.
+        """
+        ...

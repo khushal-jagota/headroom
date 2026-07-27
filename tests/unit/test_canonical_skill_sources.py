@@ -4,16 +4,20 @@ from pathlib import Path
 
 import pytest
 
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
 from planner.core.contracts import PlannerError
-from planner.skill_sources import ensure_managed_panels_skills, provision_native_backend_skills
+from planner.environments.hermes_home import provision_planner_home_skills
+from planner.skill_sources import (
+    ensure_managed_panels_skills,
+    panels_skill_root,
+    provision_native_backend_skills,
+)
 from planner.worker_settings import service
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
 @pytest.fixture
 def canonical_skills_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    source = service.panels_skill_root()
+    source = panels_skill_root()
     target = tmp_path / "canonical-skills"
     shutil.copytree(source, target)
     monkeypatch.setattr(service, "panels_skill_root", lambda: target)
@@ -105,10 +109,8 @@ def test_native_skills_root_symlink_merges_custom_entries_and_replaces_panels_co
 def test_chief_skill_uses_same_canonical_source(
     tmp_path: Path, canonical_skills_root: Path
 ) -> None:
-    registry = configured_worker_type_registry()
     saved = service.save_chief_skill(
         tmp_path,
-        registry,
         {"description": "chief canonical test", "body": "# chief\n"},
     )
     assert saved.skill.description == "chief canonical test"

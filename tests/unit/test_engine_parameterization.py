@@ -6,10 +6,9 @@ import json
 import pytest
 
 from planner.core.errors import PlannerError
-from planner.runtime import automatic_employee_step_eligibility
+from planner.runtime import worker_step_readiness
 from planner.tickets.contracts import AtCap, StageOwnershipMode, TicketFields
 from planner.tickets.logic import admission, external_work, fields_codec, machine, resolution
-from planner.worker_types.configuration import PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
 from planner.worker_types.contracts import (
     FieldDefinition,
     StageDefinition,
@@ -48,7 +47,6 @@ def test_foreign_definition_drives_machine_semantics() -> None:
         (SYNTHETIC_WORKER_TYPE_DEFINITION,),
         known_skills=frozenset({"synthetic-worker"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
     definition = SYNTHETIC_WORKER_TYPE_DEFINITION
     assert (
@@ -130,7 +128,7 @@ def test_stored_decode_is_registry_free_and_declared_validation_is_explicit() ->
         ),
         (external_work.decide_external_work, (object(), BETA, {})),
         (
-            automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step,
+            worker_step_readiness.is_ready_for_worker_step,
             (object(), object()),
         ),
     ],
@@ -157,7 +155,7 @@ def test_semantic_signatures_have_required_descriptive_parameter() -> None:
         resolution.decide_return_for_revision,
         resolution.decide_scope_change,
         external_work.decide_external_work,
-        automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step,
+        worker_step_readiness.is_ready_for_worker_step,
     )
     for function in functions:
         parameter = inspect.signature(function).parameters["worker_type_definition"]
@@ -165,8 +163,8 @@ def test_semantic_signatures_have_required_descriptive_parameter() -> None:
         assert parameter.default is inspect.Parameter.empty, function.__name__
 
 
-def test_complete_eligibility_requires_explicit_day_and_definition() -> None:
-    function = automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
+def test_readiness_requires_an_explicit_day_and_definition() -> None:
+    function = worker_step_readiness.is_ready_for_worker_step
     parameters = inspect.signature(function).parameters
     for name in ("planning_day_id", "worker_type_definition"):
         parameter = parameters[name]
@@ -175,13 +173,13 @@ def test_complete_eligibility_requires_explicit_day_and_definition() -> None:
 
     with pytest.raises(TypeError):
         function(  # type: ignore[call-arg]
-            object(),
-            object(),
+            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
+            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
             worker_type_definition=SYNTHETIC_WORKER_TYPE_DEFINITION,
         )
     with pytest.raises(TypeError):
         function(  # type: ignore[call-arg]
-            object(),
-            object(),
+            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
+            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
             planning_day_id="day_2099-01-01",
         )

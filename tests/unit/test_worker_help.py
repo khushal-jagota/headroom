@@ -8,24 +8,16 @@ import pytest
 
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.days import data as days_data
-from planner.runtime.automatic_employee_step_eligibility import (
-    is_eligible_for_automatic_employee_step,
-)
+from planner.runtime.worker_step_readiness import is_ready_for_worker_step
 from planner.tickets import data
-from planner.tickets.contracts import (
-    AtCap,
-    TicketStatus,
-    WorkspaceAgentReplyState,
-    WorkspaceSignalFacts,
-)
-from planner.tickets.logic.workspace_signals import workspace_signals
+from planner.tickets.contracts import AtCap, Ticket, TicketStatus
 from planner.tickets.views import review_view
 from planner.worker_types.configuration import configured_worker_type_registry
 
 DAY_ID = "day_2026-07-23"
 
 
-def _ticket(conn: Connection):
+def _ticket(conn: Connection) -> Ticket:
     ticket = data.create_ticket(
         conn,
         worker_type="coding",
@@ -46,10 +38,6 @@ def _ticket(conn: Connection):
     )
 
 
-def test_fresh_schema_is_marked_at_current_version(tmp_db: Connection) -> None:
-    assert int(tmp_db.execute("PRAGMA user_version").fetchone()[0]) == 37
-
-
 def test_worker_help_pauses_dispatch_and_requires_explicit_release(tmp_db: Connection) -> None:
     ticket = _ticket(tmp_db)
     days_data.add_day_ticket(tmp_db, DAY_ID, ticket.id, 3)
@@ -57,17 +45,12 @@ def test_worker_help_pauses_dispatch_and_requires_explicit_release(tmp_db: Conne
 
     requested = data.request_user_help(tmp_db, ticket.id, actor="agent", now=4)
     assert requested.ticket_status is TicketStatus.needs_user
-    assert not is_eligible_for_automatic_employee_step(
+    assert not is_ready_for_worker_step(
         tmp_db,
         requested,
         planning_day_id=DAY_ID,
         worker_type_definition=definition,
     )
-    help_signals = workspace_signals(
-        WorkspaceSignalFacts(ticket_status=TicketStatus.needs_user)
-    )
-    assert help_signals.agent_working is False
-    assert help_signals.agent_reply_state is WorkspaceAgentReplyState.none
     assert review_view(tmp_db, day_id=DAY_ID)["user_help_requests"] == [
         {"ticket_id": ticket.id, "title": "Worker help", "waiting_since": 4}
     ]

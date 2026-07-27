@@ -5,18 +5,21 @@ import json
 import shutil
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.conversation.hermes_backend_configuration import provision_planner_home_skills
+from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
-from planner.core.contracts import EventKind, PlannerError
+from planner.core.contracts import PlannerError
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
-from planner.skill_sources import ensure_managed_panels_skills
+from planner.environments.hermes_home import provision_planner_home_skills
+from planner.skill_sources import ensure_managed_panels_skills, panels_skill_root
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode
 from planner.worker_settings import api as worker_settings_api
@@ -24,10 +27,30 @@ from planner.worker_settings import service as worker_settings_service
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
+class _SignalCounter:
+    """Counts the change signals raised while it is subscribed."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def record(self) -> None:
+        self.count += 1
+
+
+@contextmanager
+def _counting_change_signals() -> Iterator[_SignalCounter]:
+    counter = _SignalCounter()
+    unsubscribe = change_signal.subscribe(counter.record)
+    try:
+        yield counter
+    finally:
+        unsubscribe()
+
+
 @pytest.fixture
 def canonical_skills_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Give skill-edit tests an isolated managed home seeded from package defaults."""
-    source = worker_settings_service.panels_skill_root()
+    source = panels_skill_root()
     target = tmp_path / "canonical-skills"
     shutil.copytree(source, target)
     monkeypatch.setattr(worker_settings_service, "panels_skill_root", lambda: target)
@@ -54,11 +77,11 @@ def _app(tmp_path: Path, *, raise_server_exceptions: bool = True) -> tuple[TestC
     return TestClient(app, raise_server_exceptions=raise_server_exceptions), db_path
 
 
-def test_workers_api_composes_registry_with_managed_settings_and_emits_event(
+def test_workers_api_composes_registry_with_managed_settings_and_signals_the_change(
     tmp_path: Path,
 ) -> None:
     client, db_path = _app(tmp_path)
-    with client:
+    with _counting_change_signals() as signals, client:
         index = client.get("/api/workers").json()
         assert [worker["worker_type"] for worker in index["workers"]] == list(
             configured_worker_type_registry().registered_worker_types()
@@ -86,26 +109,15 @@ def test_workers_api_composes_registry_with_managed_settings_and_emits_event(
         missing = client.get("/api/workers/not_a_worker")
         assert missing.status_code == 404
 
-    conn = connect(str(db_path))
-    try:
-        row = conn.execute(
-            "SELECT entity_id, kind, payload FROM events ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        assert row is not None
-        assert row["entity_id"] == "worker_coding"
-        assert row["kind"] == EventKind.worker_settings_changed.value
-        assert json.loads(row["payload"]) == {
-            "worker_type": "coding",
-            "changed": "stage_default_ownership",
-        }
-    finally:
-        conn.close()
+    # Worker settings live in files, not the database, so the one accepted write says so
+    # itself; the rejected terminal-stage write says nothing.
+    assert signals.count == 1
 
 
 def test_skills_home_api_lists_and_edits_any_packaged_skill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source = worker_settings_service.panels_skill_root()
+    source = panels_skill_root()
     target = tmp_path / "skills"
     shutil.copytree(source, target)
     monkeypatch.setattr(worker_settings_service, "panels_skill_root", lambda: target)
@@ -206,7 +218,7 @@ def test_api_skill_patch_updates_canonical_skill_without_touching_ticket_session
             worker_type="coding",
         )
         conn.execute(
-            "UPDATE tickets SET employee_session_id = 'session_keep_api' WHERE id = ?",
+            "UPDATE tickets SET conversation_id = 'session_keep_api' WHERE id = ?",
             (ticket.id,),
         )
     finally:
@@ -264,18 +276,9 @@ def test_api_skill_patch_updates_canonical_skill_without_touching_ticket_session
     conn = connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
+            "SELECT conversation_id FROM tickets WHERE id = ?", (ticket.id,)
         ).fetchone()
-        assert row["employee_session_id"] == "session_keep_api"
-        events = conn.execute(
-            "SELECT entity_id, kind, payload FROM events WHERE kind = ? ORDER BY id",
-            (EventKind.worker_settings_changed.value,),
-        ).fetchall()
-        assert [row["entity_id"] for row in events] == ["worker_coding", "worker_coding"]
-        assert [json.loads(row["payload"]) for row in events] == [
-            {"worker_type": "coding", "changed": "skill"},
-            {"worker_type": "coding", "changed": "skill"},
-        ]
+        assert row["conversation_id"] == "session_keep_api"
     finally:
         conn.close()
 
@@ -323,21 +326,8 @@ def test_skill_save_preserves_unknown_frontmatter_and_rejects_name_changes(
     assert 'name: "panels-worker-coding"' in written
     assert 'description: "Edited description"' in written
 
-    conn = connect(str(db_path))
-    try:
-        events = conn.execute(
-            "SELECT kind, payload FROM events WHERE entity_id = 'worker_coding' ORDER BY id"
-        ).fetchall()
-        assert [row["kind"] for row in events] == [EventKind.worker_settings_changed.value]
-        assert json.loads(events[0]["payload"]) == {
-            "worker_type": "coding",
-            "changed": "skill",
-        }
-    finally:
-        conn.close()
 
-
-def test_stage_default_event_failure_restores_canonical_settings_and_api_read(
+def test_stage_default_signal_failure_restores_canonical_settings_and_api_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client, db_path = _app(tmp_path, raise_server_exceptions=False)
@@ -348,11 +338,13 @@ def test_stage_default_event_failure_restores_canonical_settings_and_api_read(
     settings_path = root / "coding" / "settings.json"
     original_settings_bytes = settings_path.read_bytes()
 
-    def fail_event(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("forced event failure")
+    def fail_announcement(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("forced announcement failure")
 
-    monkeypatch.setattr(worker_settings_api, "append_event", fail_event)
-    with client:
+    monkeypatch.setattr(
+        worker_settings_api, "_announce_worker_settings_change", fail_announcement
+    )
+    with _counting_change_signals() as signals, client:
         response = client.put(
             "/api/workers/coding/stages/needs_success/default-ownership",
             json={"ownership_mode": "user"},
@@ -365,20 +357,10 @@ def test_stage_default_event_failure_restores_canonical_settings_and_api_read(
         detail["settings"]["stage_ownership_defaults"]["needs_success"]
         == original.stage_ownership_defaults["needs_success"].value
     )
-    conn = connect(str(db_path))
-    try:
-        assert (
-            conn.execute(
-                "SELECT COUNT(*) FROM events WHERE kind = ?",
-                (EventKind.worker_settings_changed.value,),
-            ).fetchone()[0]
-            == 0
-        )
-    finally:
-        conn.close()
+    assert signals.count == 0
 
 
-def test_skill_event_failure_restores_canonical_skill(
+def test_skill_signal_failure_restores_canonical_skill(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, canonical_skills_root: Path
 ) -> None:
     client, db_path = _app(tmp_path, raise_server_exceptions=False)
@@ -396,11 +378,13 @@ def test_skill_event_failure_restores_canonical_skill(
     skill_path = canonical_skills_root / "panels-worker-coding" / "SKILL.md"
     original_skill_bytes = skill_path.read_bytes()
 
-    def fail_event(*_args: object, **_kwargs: object) -> None:
-        raise RuntimeError("forced event failure")
+    def fail_announcement(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("forced announcement failure")
 
-    monkeypatch.setattr(worker_settings_api, "append_event", fail_event)
-    with client:
+    monkeypatch.setattr(
+        worker_settings_api, "_announce_worker_settings_change", fail_announcement
+    )
+    with _counting_change_signals() as signals, client:
         response = client.patch(
             "/api/workers/coding/skill",
             json={"description": "New runtime description"},
@@ -410,17 +394,7 @@ def test_skill_event_failure_restores_canonical_skill(
 
     assert skill_path.read_bytes() == original_skill_bytes
     assert detail["settings"]["specialist_skill"]["description"] == "Old runtime description"
-    conn = connect(str(db_path))
-    try:
-        assert (
-            conn.execute(
-                "SELECT COUNT(*) FROM events WHERE kind = ?",
-                (EventKind.worker_settings_changed.value,),
-            ).fetchone()[0]
-            == 0
-        )
-    finally:
-        conn.close()
+    assert signals.count == 0
 
 
 def test_skill_patch_preserves_concurrent_other_field_values(
@@ -483,7 +457,7 @@ def test_corrupt_current_files_restore_custom_launch_defaults_on_first_read(
     tmp_path: Path,
 ) -> None:
     registry = configured_worker_type_registry()
-    expected = worker_settings_service.update_employee_launch_defaults(
+    expected = worker_settings_service.update_worker_launch_defaults(
         tmp_path,
         registry,
         "coding",
@@ -764,7 +738,7 @@ def test_provisioning_links_canonical_specialist_skill_without_touching_sessions
         worker_type="coding",
     )
     conn.execute(
-        "UPDATE tickets SET employee_session_id = 'session_keep' WHERE id = ?",
+        "UPDATE tickets SET conversation_id = 'session_keep' WHERE id = ?",
         (ticket.id,),
     )
     conn.close()
@@ -799,8 +773,8 @@ def test_provisioning_links_canonical_specialist_skill_without_touching_sessions
     conn = connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT employee_session_id FROM tickets WHERE id = ?", (ticket.id,)
+            "SELECT conversation_id FROM tickets WHERE id = ?", (ticket.id,)
         ).fetchone()
-        assert row["employee_session_id"] == "session_keep"
+        assert row["conversation_id"] == "session_keep"
     finally:
         conn.close()

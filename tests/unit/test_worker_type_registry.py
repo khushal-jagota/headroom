@@ -8,16 +8,15 @@ from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
-from tests.support.probe import PROBE_EMPLOYEE_BACKEND_CATALOG, build_probe_registry
+from tests.support.probe import build_probe_registry
 
-from planner.conversation.backend_catalog import build_production_employee_backend_catalog
+from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import ErrorCode, PlannerError
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
+    PRODUCTION_WORKER_RUNTIME_DEFINITIONS,
     PRODUCTION_WORKER_TYPE_REGISTRY,
-    ConfiguredEmployeeRuntimeDefinitions,
 )
 from planner.worker_types.contracts import (
     FieldDefinition,
@@ -37,24 +36,19 @@ def registry(*definitions: WorkerTypeDefinition) -> WorkerTypeRegistry:
         definitions,
         known_skills=KNOWN_SKILLS,
         known_toolset_profiles=KNOWN_TOOLSETS,
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 
-def test_production_employee_backend_catalog_is_ordered_hermes_codex_claude() -> None:
-    runtime_definitions = PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS
-    assert runtime_definitions.employee_backend_catalog.registered_backend_keys() == (
+def test_the_agent_backends_are_a_closed_set_of_three() -> None:
+    runtime_definitions = PRODUCTION_WORKER_RUNTIME_DEFINITIONS
+    assert tuple(str(key) for key in ConversationBackendKey) == (
         "hermes",
         "codex",
         "claude",
     )
-    assert (
-        runtime_definitions.worker_type_registry.employee_backend_catalog
-        is runtime_definitions.employee_backend_catalog
-    )
     assert {
         runtime_definitions.worker_type_registry.require(worker_type)
-        .worker_profile.default_employee_backend
+        .worker_profile.default_backend
         for worker_type in runtime_definitions.worker_type_registry.registered_worker_types()
     } == {"codex"}
 
@@ -62,9 +56,9 @@ def test_production_employee_backend_catalog_is_ordered_hermes_codex_claude() ->
 def test_worker_profile_declares_complete_employee_defaults() -> None:
     for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types():
         profile = PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile
-        assert profile.default_employee_backend == "codex"
-        assert profile.default_employee_model == "gpt-5.6-sol"
-        assert profile.default_employee_reasoning_effort == "medium"
+        assert profile.default_backend == "codex"
+        assert profile.default_model == "gpt-5.6-sol"
+        assert profile.default_reasoning_effort == "medium"
 
 
 def assert_error(
@@ -134,9 +128,9 @@ def test_coding_definition_owns_complete_behavior() -> None:
         if not stage.is_terminal
     )
     assert definition.worker_profile.specialist_skill == "panels-worker-coding"
-    assert definition.worker_profile.default_employee_backend == "codex"
-    assert definition.worker_profile.default_employee_model == "gpt-5.6-sol"
-    assert definition.worker_profile.default_employee_reasoning_effort == "medium"
+    assert definition.worker_profile.default_backend == "codex"
+    assert definition.worker_profile.default_model == "gpt-5.6-sol"
+    assert definition.worker_profile.default_reasoning_effort == "medium"
     definition.validate_ticket_position("dropped", "done")
 
 
@@ -351,45 +345,33 @@ def test_duplicate_worker_type_is_rejected() -> None:
     }
 
 
-@pytest.mark.parametrize("default_employee_backend", ["", " ", "missing-backend"])
-def test_worker_profiles_require_non_empty_registered_default_employee_backend(
-    default_employee_backend: str,
+@pytest.mark.parametrize("default_backend", ["", " ", "missing-backend"])
+def test_worker_profiles_require_non_empty_registered_default_backend(
+    default_backend: str,
 ) -> None:
     definition = replace(
         CODING_WORKER_TYPE_DEFINITION,
         worker_profile=replace(
             CODING_WORKER_TYPE_DEFINITION.worker_profile,
-            default_employee_backend=default_employee_backend,
+            default_backend=default_backend,
         ),
     )
     with pytest.raises(PlannerError) as raised:
         registry(definition)
     assert raised.value.code is ErrorCode.validation
-    assert raised.value.detail["employee_backend"] == default_employee_backend
-    if default_employee_backend == "missing-backend":
-        assert raised.value.detail["employee_backends"] == ["hermes", "codex", "claude"]
+    assert raised.value.detail["backend_key"] == default_backend
+    assert raised.value.detail["backend_keys"] == ["hermes", "codex", "claude"]
 
 
-def test_probe_default_employee_backend_is_registered_after_production_catalog() -> None:
-    probe_registry = build_probe_registry()
-    assert PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys() == (
-        "hermes",
-        "codex",
-        "claude",
-        "probe-backend",
-    )
-    assert (
-        probe_registry.require("probe").worker_profile.default_employee_backend
-        == PROBE_EMPLOYEE_BACKEND_CATALOG.registered_backend_keys()[-1]
-    )
-
-
-def test_configured_runtime_pair_rejects_catalog_registry_authority_divergence() -> None:
-    with pytest.raises(ValueError, match="same authority"):
-        ConfiguredEmployeeRuntimeDefinitions(
-            build_production_employee_backend_catalog(),
-            PRODUCTION_WORKER_TYPE_REGISTRY,
-        )
+def test_the_probe_names_a_real_backend_of_its_own() -> None:
+    # The probe exists to prove a Worker type may run on a backend the shipped types do
+    # not, so its default is a real key and deliberately not the one they all name.
+    probe_default = build_probe_registry().require("probe").worker_profile.default_backend
+    assert ConversationBackendKey(probe_default) is ConversationBackendKey.claude
+    assert probe_default not in {
+        PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_backend
+        for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
+    }
 
 
 def test_manifests_are_complete_and_json_round_trip() -> None:
@@ -488,9 +470,9 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         ],
         "default_ceiling": "needs_kickoff",
         "worker_profile_id": "panels-worker-coding",
-        "default_employee_backend": "codex",
-        "default_employee_model": "gpt-5.6-sol",
-        "default_employee_reasoning_effort": "medium",
+        "default_backend": "codex",
+        "default_model": "gpt-5.6-sol",
+        "default_reasoning_effort": "medium",
     }
     assert json.loads(json.dumps(coding)) == coding
     assert (
@@ -585,7 +567,7 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
         "registry.py",
     }
     allowed_outbound = {
-        "planner.conversation.backend_catalog",
+        "planner.conversation.contracts",
         "planner.core.contracts",
         "planner.tickets.contracts",
     }
@@ -610,7 +592,7 @@ def test_semantic_modules_have_no_optional_definition_or_coding_fallback() -> No
         root / "src/planner/tickets/logic/admission.py",
         root / "src/planner/tickets/logic/resolution.py",
         root / "src/planner/tickets/logic/external_work.py",
-        root / "src/planner/runtime/automatic_employee_step_eligibility.py",
+        root / "src/planner/runtime/worker_step_readiness.py",
     )
     for path in paths:
         source = path.read_text()
@@ -630,6 +612,7 @@ def test_semantic_modules_have_no_optional_definition_or_coding_fallback() -> No
             ):
                 if argument.arg == "worker_type_definition":
                     assert default is None, (path, node.name)
+                    assert argument.annotation is not None, (path, node.name)
                     assert "None" not in ast.unparse(argument.annotation), (path, node.name)
                 if argument.arg == "definition":
                     assert default is None, (path, node.name)
@@ -654,7 +637,7 @@ def test_seed_is_definition_driven_without_worker_type_fallbacks() -> None:
     assert (
         importer_source.count("runtime_definitions.worker_type_registry.require(worker_type)") == 1
     )
-    assert "runtime_definitions.employee_backend_catalog.require_registered" in importer_source
+    assert "require_conversation_backend_key(" in importer_source
     assert 'require("coding")' not in importer_source
     assert "coding_worker_type_definition" not in importer_source
     complete_coding_fields = {

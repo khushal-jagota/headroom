@@ -35,7 +35,6 @@ from planner.tickets.contracts import (
 )
 from planner.tickets.logic import fields_codec
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
     PRODUCTION_WORKER_TYPE_REGISTRY,
 )
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
@@ -72,7 +71,6 @@ def test_registry_validates_new_worker() -> None:
         (NEW_WORKER_TYPE_DEFINITION,),
         known_skills=_KNOWN_SKILLS,
         known_toolset_profiles=_KNOWN_TOOLSET_PROFILES,
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 
@@ -186,9 +184,9 @@ NEW_WORKER_MANIFEST = {
     ],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-new-worker",
-    "default_employee_backend": "codex",
-    "default_employee_model": "gpt-5.6-sol",
-    "default_employee_reasoning_effort": "medium",
+    "default_backend": "codex",
+    "default_model": "gpt-5.6-sol",
+    "default_reasoning_effort": "medium",
 }
 
 
@@ -239,7 +237,11 @@ def test_new_worker_default_ceiling_and_first_worker_stage() -> None:
 
 def test_new_worker_declares_expected_default_ownership_modes() -> None:
     assert {
-        stage.id: stage.default_ownership_mode.value
+        stage.id: (
+            stage.default_ownership_mode.value
+            if stage.default_ownership_mode is not None
+            else None
+        )
         for stage in NEW_WORKER_TYPE_DEFINITION.stages
         if not stage.is_terminal
     } == {
@@ -259,13 +261,10 @@ def test_new_worker_declares_expected_default_ownership_modes() -> None:
 
 
 def _worker_session_exists(conn: Connection, tid: str) -> bool:
-    row = conn.execute("SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)).fetchone()
-    if row["employee_session_id"] is not None:
-        return True
-    turns = conn.execute(
-        "SELECT 1 FROM employee_step_runs WHERE ticket_id = ? LIMIT 1", (tid,)
-    ).fetchone()
-    return turns is not None
+    """Whether a worker was ever started on this Ticket. Naming a conversation is the
+    whole of it: a Ticket names one when its first step runs, and never before."""
+    row = conn.execute("SELECT conversation_id FROM tickets WHERE id = ?", (tid,)).fetchone()
+    return row["conversation_id"] is not None
 
 
 def test_new_worker_drives_to_done_via_real_writers(

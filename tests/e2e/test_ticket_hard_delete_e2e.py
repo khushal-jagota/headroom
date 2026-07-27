@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
@@ -14,7 +17,7 @@ PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
 TITLE = "Mistaken ticket delete browser proof"
 
 
-def _cli_process(server, *args: str) -> subprocess.CompletedProcess[str]:
+def _cli_process(server: ServerHandle, *args: str) -> subprocess.CompletedProcess[str]:
     env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
     env["PLAN_SERVER_URL"] = server.base
     return subprocess.run(
@@ -27,7 +30,9 @@ def _cli_process(server, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_ticket_delete_cli_requires_yes_and_deletes(server, cli) -> None:
+def test_ticket_delete_cli_requires_yes_and_deletes(
+    server: ServerHandle, cli: Callable[..., JsonObject]
+) -> None:
     ticket_id = cli(
         server,
         "ticket",
@@ -51,13 +56,17 @@ def test_ticket_delete_cli_requires_yes_and_deletes(server, cli) -> None:
     assert httpx.get(f"{server.base}/api/tickets/{ticket_id}").status_code == 404
 
 
-def _assert_no_delete_control(page) -> None:
+def _assert_no_delete_control(page: Page) -> None:
     assert page.get_by_role("button", name="Delete ticket", exact=True).count() == 0
     assert page.locator("[data-ticket-delete]").count() == 0
 
 
 def test_ticket_ui_has_no_delete_control(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -74,7 +83,6 @@ def test_ticket_ui_has_no_delete_control(
         server,
         f"#/ticket/{ticket_id}",
         f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     _assert_no_delete_control(page)
 

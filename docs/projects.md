@@ -28,10 +28,8 @@ Tickets with neither source appear under `No project`.
 ## Surfaces
 
 - `GET /api/projects` lists available projects.
-- `POST /api/projects {name, summary?}` creates a project and records a
-  `project_created` event.
-- `PATCH /api/projects/{project_id}` updates the project name or summary and records
-  a `project_updated` event.
+- `POST /api/projects {name, summary?}` creates a project.
+- `PATCH /api/projects/{project_id}` updates the project name or summary.
 - `panels project list`, `panels project create --name ... --summary ...`, and
   `panels project set <project_id> summary ...` expose the same catalog.
 - Frontend project selectors fetch the `projects` resource and use project IDs as
@@ -46,4 +44,4 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 
 ---
 
-_Last verified: 2026-07-21._
+_Last verified: 2026-07-25._

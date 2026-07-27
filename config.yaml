@@ -5,14 +5,11 @@
 db_path: data/planning.db          # SQLite database location (§13)
 port: 8767                         # server port; bind host is fixed at 127.0.0.1 (§2)
 boundary_hour: 5                   # planning-day boundary, local hour (R1)
-tick_seconds: 60                   # dispatcher tick interval (§7.1)
-dispatch_enabled: true             # automatic Employee-step discovery/dispatch startup switch (§7.1)
-ws_poll_ms: 300                    # server-side event-tail poll interval (§9)
-ws_heartbeat_ms: 15000             # quiet event-WS heartbeat cadence (§9)
-ui_debounce_ms: 250                # UI refetch debounce, served via /api/meta (§9)
-dispatcher_lock_path: data/dispatcher.lock   # advisory single-dispatcher lock (§7.1)
+tick_seconds: 60                   # worker-step readiness poll interval (§7.1)
+dispatch_enabled: true             # worker-step readiness loop startup switch (§7.1)
+sse_heartbeat_ms: 15000            # quiet change-stream heartbeat cadence
+dispatcher_lock_path: data/dispatcher.lock   # advisory lock: one readiness poller per machine (§7.1)
 logs_dir: data/logs                # per-run log files (§7.4)
 backup_dir: data/backups           # verified database snapshots
-events_read_limit: 500             # max events returned per WS tail batch (§9)
 db_busy_timeout_ms: 5000           # SQLite busy timeout on connect
 shutdown_grace_seconds: 30         # one monotonic budget for runtime/gateway shutdown

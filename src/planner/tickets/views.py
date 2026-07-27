@@ -14,11 +14,8 @@ from planner.tickets.contracts import (
     FieldSlot,
     Ticket,
     TicketStatus,
-    WorkspaceActivityState,
-    WorkspaceSignalFacts,
 )
 from planner.tickets.logic import fields_codec, machine
-from planner.tickets.logic.workspace_signals import workspace_signals
 from planner.worker_types.configuration import configured_worker_type_registry
 
 # §7.2 priority band: P0 first. The board reuses the same triple the dispatcher orders by.
@@ -81,21 +78,11 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
             if ticket.effective_stage_ownership_mode is not None
             else None
         ),
-        "employee_session_id": ticket.employee_session_id,
+        "conversation_id": ticket.conversation_id,
         "alias": ticket.alias,
         "fields": json.loads(fields_codec.fields_to_json(ticket.fields)),
         "created_at": ticket.created_at,
         "updated_at": ticket.updated_at,
-    }
-
-
-def event_json(row: sqlite3.Row) -> JsonDict:
-    return {
-        "id": int(row["id"]),
-        "entity_id": str(row["entity_id"]),
-        "kind": str(row["kind"]),
-        "payload": json.loads(str(row["payload"])),
-        "created_at": int(row["created_at"]),
     }
 
 
@@ -152,22 +139,13 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
             "effective_sprint_id": tickets_data.get_effective_sprint_id(conn, ticket_id),
             "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
-                conn, ticket
+                ticket
             ),
         }
     )
     if blocker_summary.blocked:
         detail["blocker_summary"] = blocker_summary_json(blocker_summary)
     return detail
-
-
-def list_events_for_entity(conn: sqlite3.Connection, entity_id: str, limit: int) -> list[JsonDict]:
-    rows = conn.execute(
-        "SELECT id, entity_id, kind, payload, created_at FROM events WHERE entity_id = ? "
-        "ORDER BY id ASC LIMIT ?",
-        (entity_id, limit),
-    ).fetchall()
-    return [event_json(r) for r in rows]
 
 
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
@@ -216,27 +194,35 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
 
 
 def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
-    # Workspace is the current planning day's roster. Ticket detail remains a
-    # separate resource, so narrowing this projection does not constrain direct
-    # Ticket routes or an already-open inspector.
+    """The current planning day's roster of Ticket cards, read straight from the database.
+
+    Ticket detail remains a separate resource, so narrowing this projection does not
+    constrain direct Ticket routes or an already-open inspector.
+
+    Each card carries ``conversation_id``: the Ticket's conversation link, which under
+    the new conversation system is the caller-owned conversation id stored in the
+    ``conversation_id`` column. It is what the board route asks the conversation
+    system about, and what the browser keys its reply watermark by.
+
+    None of the three row signals is a database fact of the tickets domain, so none is
+    answered here: whether the worker is running (``agent_working``), whether it is
+    waiting on a permission ask (``needs_me``), and where its conversation last had a
+    turn end (``latest_turn_ended_sequence``) all belong to the conversation system and
+    are added by the async board route, which can await it.
+    """
     rows = conn.execute(
         "SELECT tickets.id, tickets.title, tickets.stage, tickets.priority, tickets.deadline, "
         "tickets.project_id, ticket_projects.name AS project_name, tickets.sprint_item_id, "
         "sprint_items.project_id AS parent_project_id, "
         "parent_projects.name AS parent_project_name, tickets.fields, tickets.worker_type, "
         "tickets.employee_backend, "
+        "tickets.conversation_id, "
         "tickets.ticket_status, "
         "tickets.backend_error, "
-        "ticket_conversation_projections.latest_activity_state, "
-        "ticket_conversation_projections.has_completed_response_awaiting_user, "
-        "ticket_conversation_projections.has_completed_response, "
-        "ticket_conversation_projections.has_pending_permission, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
         "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects AS parent_projects ON parent_projects.id = sprint_items.project_id "
-        "LEFT JOIN ticket_conversation_projections "
-        "ON ticket_conversation_projections.ticket_id = tickets.id "
         "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
         "WHERE day_tickets.day_id = ? AND tickets.stage != 'dropped'",
         (day_id,),
@@ -302,24 +288,10 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "is_done": stage == worker_type_definition.completed_stage(),
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
             "blocked": str(row["id"]) in blocked_target_ids,
+            "conversation_id": (
+                str(row["conversation_id"]) if row["conversation_id"] is not None else None
+            ),
         }
-        signals = workspace_signals(
-            WorkspaceSignalFacts(
-                ticket_status=TicketStatus(str(row["ticket_status"])),
-                latest_activity_state=(
-                    WorkspaceActivityState(str(row["latest_activity_state"]))
-                    if row["latest_activity_state"] is not None
-                    else None
-                ),
-                has_completed_response_awaiting_user=bool(
-                    row["has_completed_response_awaiting_user"] or 0
-                ),
-                has_completed_response=bool(row["has_completed_response"] or 0),
-                has_pending_permission=bool(row["has_pending_permission"] or 0),
-            )
-        )
-        card["agent_working"] = signals.agent_working
-        card["agent_reply_state"] = signals.agent_reply_state.value
         sort_key = (
             _prio_rank(priority),
             0 if deadline is not None else 1,
@@ -354,11 +326,9 @@ def _ticket_decisions(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict
     for row in rows:
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])
-        if worker_type_definition.is_terminal(stage):
-            continue
-        if str(row["ticket_status"]) == TicketStatus.agent_running_step.value:
-            continue
-        if str(row["ticket_status"]) == TicketStatus.proposal_discussion.value:
+        # Review is a pure filter on the status: awaiting_approval is exactly "a
+        # proposal is parked for the user".
+        if str(row["ticket_status"]) != TicketStatus.awaiting_approval.value:
             continue
         field = worker_type_definition.gating_field(stage)
         if field is None:
@@ -390,7 +360,7 @@ def review_view(
     day_id: str,
 ) -> JsonDict:
     running_workers = conn.execute(
-        "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent_running_step'"
+        "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent'"
     ).fetchone()
     user_help_requests = [
         {
@@ -399,12 +369,9 @@ def review_view(
             "waiting_since": int(row["waiting_since"]),
         }
         for row in conn.execute(
-            "SELECT t.id, t.title, MAX(e.created_at) AS waiting_since FROM tickets t "
-            "JOIN events e ON e.entity_id = t.id "
-            "WHERE t.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) "
-            "AND t.ticket_status = 'needs_user' AND e.kind = 'ticket_status_changed' "
-            "AND json_extract(e.payload, '$.ticket_status') = 'needs_user' "
-            "GROUP BY t.id, t.title ORDER BY t.id",
+            "SELECT id, title, ticket_status_changed_at AS waiting_since FROM tickets "
+            "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) "
+            "AND ticket_status = 'needs_user' ORDER BY id",
             (day_id,),
         ).fetchall()
     ]

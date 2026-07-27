@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import queue
 import threading
@@ -8,16 +9,19 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
+from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.projects import data as projects_data
-from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
 from planner.sprints import data as sprints_data
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
@@ -45,7 +49,7 @@ def probe_runtime() -> Iterator[None]:
         uninstall_probe_registry()
 
 
-def _make_app(tmp_path: Path):
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -61,7 +65,14 @@ def _make_app(tmp_path: Path):
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    app = create_app(config, build_clock(config), conn_factory)
+    app = create_app(
+        config,
+        build_clock(config),
+        conn_factory,
+        # Reconciling asks the conversation system whether a turn is running, so this file
+        # needs one whose running turn it can start by hand and that spawns nothing.
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
     return app, db_path
 
 
@@ -111,13 +122,12 @@ def _external_body(state: str, *, note: str = "External report and reasoning") -
     return body
 
 
-def _events(db_path: Path, ticket_id: str) -> list[tuple[str, dict]]:
+def _ticket_row(db_path: Path, ticket_id: str) -> tuple[object, ...]:
     conn = connect(str(db_path))
     try:
-        rows = conn.execute(
-            "SELECT kind, payload FROM events WHERE entity_id = ? ORDER BY id", (ticket_id,)
-        ).fetchall()
-        return [(str(row["kind"]), json.loads(row["payload"])) for row in rows]
+        row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        assert row is not None
+        return tuple(row)
     finally:
         conn.close()
 
@@ -144,10 +154,7 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
             headers=_CHIEF,
         )
         conn = connect(str(db_path))
-        counts_before = tuple(
-            conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in ("tickets", "events")
-        )
+        tickets_before = conn.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
         conn.close()
         rejected = client.post(
             "/api/chief/tickets/from-external-work",
@@ -160,38 +167,18 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
         )
 
     assert defaulted.status_code == overridden.status_code == 200
-    assert defaulted.json()["employee_backend"] == "probe-backend"
+    assert defaulted.json()["employee_backend"] == "claude"
     assert overridden.json()["employee_backend"] == "hermes"
     assert rejected.status_code == 400
     check = connect(str(db_path))
     try:
-        assert (
-            tuple(
-                check.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-                for table in ("tickets", "events")
-            )
-            == counts_before
-        )
-        assert _events(db_path, defaulted.json()["id"])[0] == (
-            "ticket_created",
-            {
-                "stage": "needs_alpha",
-                "employee_backend": "probe-backend",
-                "employee_launch_model": "probe-model",
-                "employee_launch_reasoning_effort": "probe-high",
-            },
-        )
-        assert _events(db_path, overridden.json()["id"])[0] == (
-            "ticket_created",
-            {
-                "stage": "needs_alpha",
-                "employee_backend": "hermes",
-                "employee_launch_model": None,
-                "employee_launch_reasoning_effort": None,
-            },
-        )
+        assert check.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
     finally:
         check.close()
+    assert defaulted.json()["employee_launch_model"] == "probe-model"
+    assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
+    assert overridden.json()["employee_launch_model"] is None
+    assert overridden.json()["employee_launch_reasoning_effort"] is None
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Plan-Actor": "worker"}, {"X-Plan-Actor": "agent"}])
@@ -267,14 +254,6 @@ def test_reconcile_external_work_preserves_explicit_stop(tmp_path: Path) -> None
     ticket = response.json()
     assert ticket["ceiling"] == "needs_plan"
     assert ticket["at_cap"] == "stop"
-    scope_events = [
-        payload for kind, payload in _events(db_path, ticket_id) if kind == "scope_changed"
-    ]
-    assert scope_events[-1] == {
-        "ceiling": "needs_plan",
-        "at_cap": "stop",
-        "cause": "external_work",
-    }
 
 
 def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes(
@@ -282,7 +261,7 @@ def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ordinary_ticket(db_path)
-    before = _events(db_path, ticket_id)
+    before = _ticket_row(db_path, ticket_id)
     with TestClient(app) as client:
         for forbidden in ("proposal", "fields", "ceiling", "at_cap", "ticket_status", "wat"):
             response = client.post(
@@ -308,7 +287,7 @@ def test_external_work_rejects_unknown_keys_and_prefix_mismatches_without_writes
             headers=_CHIEF,
         )
     assert [missing.status_code, future.status_code, dropped.status_code] == [400, 400, 400]
-    assert _events(db_path, ticket_id) == before
+    assert _ticket_row(db_path, ticket_id) == before
 
 
 def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_path: Path) -> None:
@@ -353,7 +332,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
         )
     assert pending.status_code == 400
 
-    for status in ("agent_running_step", "awaiting_approval"):
+    for status in ("agent", "awaiting_approval"):
         ticket_id = _ordinary_ticket(db_path)
         conn = connect(str(db_path))
         try:
@@ -369,23 +348,42 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
             )
         assert response.status_code == 409
 
-    running_id = _ordinary_ticket(db_path)
+    # A live conversation is the conversation system's fact, so the route asks it before
+    # the writer runs: a Ticket whose worker is mid-turn is refused even at an admitted
+    # status like `paired`.
+    live_id = _ordinary_ticket(db_path)
     conn = connect(str(db_path))
     try:
-        SqliteEmployeeStepRepository().start(conn, running_id, now=1)
+        conn.execute(
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+            ("conv-live", live_id),
+        )
         conn.commit()
     finally:
         conn.close()
     with TestClient(app) as client:
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(conversation_id="conv-live")
+            )
+        )
+        asyncio.run(
+            app.state.conversation_system.send(
+                "conv-live",
+                text_message_content("working"),
+                sender_label="loop",
+            )
+        )
         running = client.post(
-            f"/api/chief/tickets/{running_id}/reconcile-from-external-work",
+            f"/api/chief/tickets/{live_id}/reconcile-from-external-work",
             json=_external_body("needs_success"),
             headers=_CHIEF,
         )
     assert running.status_code == 409
+    assert running.json()["error"]["code"] == "already_running"
 
 
-def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
+def test_reconcile_is_atomic_and_normalizes_an_errored_ticket(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -397,16 +395,8 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     finally:
         conn.close()
 
-    before = _events(db_path, ticket_id)
+    before = _ticket_row(db_path, ticket_id)
 
-    class EligibilityWakes:
-        count = 0
-
-        def wake(self) -> None:
-            self.count += 1
-
-    wakes = EligibilityWakes()
-    app.state.automatic_employee_step_eligibility_wake = wakes
     with TestClient(app) as client:
         invalid = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
@@ -419,7 +409,7 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
             headers=_CHIEF,
         )
         assert invalid.status_code == 400
-        assert _events(db_path, ticket_id) == before
+        assert _ticket_row(db_path, ticket_id) == before
         response = client.post(
             f"/api/chief/tickets/{ticket_id}/reconcile-from-external-work",
             json={
@@ -433,45 +423,16 @@ def test_reconcile_is_atomic_normalizes_errored_and_emits_exact_existing_events(
     assert ticket["ticket_status"] == "empty"
     assert ticket["ceiling"] == "needs_plan"
     assert ticket["at_cap"] == "propose"
-    assert wakes.count == 1
-    new_events = _events(db_path, ticket_id)[len(before) :]
-    assert [kind for kind, _ in new_events] == [
-        "field_value_edited",
-        "field_value_edited",
-        "field_value_edited",
-        "recap_updated",
-        "stage_changed",
-        "scope_changed",
-        "ticket_status_changed",
-    ]
-    assert [payload["field"] for kind, payload in new_events if kind == "field_value_edited"] == [
-        "kickoff",
-        "success",
-        "approach",
-    ]
-    assert new_events[4][1] == {
-        "from_stage": "needs_success",
-        "to_stage": "needs_plan",
-        "cause": "external_work",
-    }
-    assert new_events[5][1] == {
-        "ceiling": "needs_plan",
-        "at_cap": "propose",
-        "cause": "external_work",
-    }
+    assert ticket["stage"] == "needs_plan"
+    assert ticket["recap"] == "recap"
+    assert [
+        ticket["fields"][field]["value"] for field in ("kickoff", "success", "approach")
+    ] == ["new complete note", "Success settled", "Approach settled"]
 
 
-def test_create_external_work_emits_exact_existing_events_and_wakes(tmp_path: Path) -> None:
+def test_create_external_work_settles_every_provided_field(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
 
-    class EligibilityWakes:
-        count = 0
-
-        def wake(self) -> None:
-            self.count += 1
-
-    wakes = EligibilityWakes()
-    app.state.automatic_employee_step_eligibility_wake = wakes
     with TestClient(app) as client:
         response = client.post(
             "/api/chief/tickets/from-external-work",
@@ -484,36 +445,21 @@ def test_create_external_work_emits_exact_existing_events_and_wakes(tmp_path: Pa
             headers=_CHIEF,
         )
     assert response.status_code == 200, response.json()
-    assert wakes.count == 1
-    events = _events(db_path, response.json()["id"])
-    assert [kind for kind, _ in events] == [
-        "ticket_created",
-        "field_value_edited",
-        "field_value_edited",
-        "field_value_edited",
-        "field_value_edited",
-        "field_value_edited",
-        "recap_updated",
-        "stage_changed",
-        "scope_changed",
+    created = response.json()
+    assert created["stage"] == "done"
+    assert created["ceiling"] == "done"
+    assert created["at_cap"] == "propose"
+    assert created["recap"] == "done elsewhere"
+    assert [
+        created["fields"][field]["value"]
+        for field in ("success", "approach", "plan", "implementation", "closeout")
+    ] == [
+        "Success settled",
+        "Approach settled",
+        "Plan settled",
+        "Implementation settled",
+        "Closeout settled",
     ]
-    assert [payload["field"] for kind, payload in events if kind == "field_value_edited"] == [
-        "success",
-        "approach",
-        "plan",
-        "implementation",
-        "closeout",
-    ]
-    assert events[7][1] == {
-        "from_stage": "needs_success",
-        "to_stage": "done",
-        "cause": "external_work",
-    }
-    assert events[8][1] == {
-        "ceiling": "done",
-        "at_cap": "propose",
-        "cause": "external_work",
-    }
 
 
 def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> None:
@@ -525,7 +471,7 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
 
     lock_holder.execute("BEGIN IMMEDIATE")
     lock_holder.execute(
-        "UPDATE tickets SET ticket_status = 'agent_running_step' WHERE id = ?",
+        "UPDATE tickets SET ticket_status = 'agent' WHERE id = ?",
         (ticket_id,),
     )
 
@@ -571,7 +517,7 @@ def test_reconcile_safety_reads_happen_after_begin_immediate(tmp_path: Path) -> 
         ).fetchone()
         assert ticket["stage"] == "needs_success"
         assert json.loads(ticket["fields"])["kickoff"]["value"] == "Original report"
-        assert ticket["ticket_status"] == "agent_running_step"
+        assert ticket["ticket_status"] == "agent"
     finally:
         conn.close()
 
@@ -590,7 +536,7 @@ def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path)
         )
         assert ticket.ticket_status is TicketStatus.empty
         conn.execute(
-            "UPDATE tickets SET ticket_status = 'paired_work', employee_session_id = ? "
+            "UPDATE tickets SET ticket_status = 'paired', conversation_id = ? "
             "WHERE id = ?",
             ("paired-session", ticket_id),
         )
@@ -607,13 +553,13 @@ def test_reconcile_current_paired_stage_preserves_resting_status(tmp_path: Path)
         )
 
         assert reconciled.stage == "needs_success"
-        assert reconciled.ticket_status is TicketStatus.paired_work
-        assert reconciled.employee_session_id == "paired-session"
+        assert reconciled.ticket_status is TicketStatus.paired
+        assert reconciled.conversation_id == "paired-session"
     finally:
         conn.close()
 
 
-def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_path: Path) -> None:
+def test_external_create_and_reconcile_keep_the_parent_item_link(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     conn = connect(str(db_path))
     try:
@@ -624,7 +570,6 @@ def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_p
             project_id=project.id,
             clock=RealClock(),
         )
-        before = _events(db_path, item.id)
     finally:
         conn.close()
 
@@ -641,10 +586,7 @@ def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_p
         )
     assert created_response.status_code == 200, created_response.json()
     ticket_id = created_response.json()["id"]
-    after_create = _events(db_path, item.id)[len(before) :]
-    assert after_create == [
-        ("item_children_changed", {"ticket_id": ticket_id, "reason": "created"})
-    ]
+    assert created_response.json()["sprint_item_id"] == item.id
 
     conn = connect(str(db_path))
     try:
@@ -652,7 +594,6 @@ def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_p
         conn.commit()
     finally:
         conn.close()
-    before_reconcile = _events(db_path, item.id)
 
     with TestClient(app) as client:
         reconciled_response = client.post(
@@ -661,7 +602,6 @@ def test_parent_item_events_cover_external_create_state_and_status_changes(tmp_p
             headers=_CHIEF,
         )
     assert reconciled_response.status_code == 200, reconciled_response.json()
-    assert _events(db_path, item.id)[len(before_reconcile) :] == [
-        ("item_children_changed", {"ticket_id": ticket_id, "reason": "stage"}),
-        ("item_children_changed", {"ticket_id": ticket_id, "reason": "ticket_status"}),
-    ]
+    assert reconciled_response.json()["sprint_item_id"] == item.id
+    assert reconciled_response.json()["stage"] == "needs_approach"
+    assert reconciled_response.json()["ticket_status"] == "empty"

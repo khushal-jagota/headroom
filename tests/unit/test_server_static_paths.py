@@ -15,7 +15,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 
 
-def test_employee_workspace_root_prefers_existing_coding_directory(
+def test_worker_workspace_root_prefers_existing_coding_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository_root = tmp_path / "repository"
@@ -23,12 +23,12 @@ def test_employee_workspace_root_prefers_existing_coding_directory(
     preferred_root = tmp_path / "Coding"
     preferred_root.mkdir()
     monkeypatch.setattr(server, "_REPO_ROOT", repository_root)
-    monkeypatch.setattr(server, "_PREFERRED_EMPLOYEE_WORKSPACE_ROOT", preferred_root)
+    monkeypatch.setattr(server, "_PREFERRED_WORKER_WORKSPACE_ROOT", preferred_root)
 
-    assert server.resolve_employee_workspace_root() == preferred_root.resolve()
+    assert server.resolve_worker_workspace_root() == preferred_root.resolve()
 
 
-def test_employee_workspace_root_falls_back_without_creating_missing_preference(
+def test_worker_workspace_root_falls_back_without_creating_missing_preference(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository_root = tmp_path / "repository"
@@ -36,15 +36,15 @@ def test_employee_workspace_root_falls_back_without_creating_missing_preference(
     missing_preferred_root = tmp_path / "missing" / "Coding"
     monkeypatch.setattr(server, "_REPO_ROOT", repository_root)
     monkeypatch.setattr(
-        server, "_PREFERRED_EMPLOYEE_WORKSPACE_ROOT", missing_preferred_root
+        server, "_PREFERRED_WORKER_WORKSPACE_ROOT", missing_preferred_root
     )
 
-    assert server.resolve_employee_workspace_root() == repository_root.resolve()
+    assert server.resolve_worker_workspace_root() == repository_root.resolve()
     assert not missing_preferred_root.exists()
     assert not missing_preferred_root.parent.exists()
 
 
-def test_employee_workspace_root_falls_back_when_preference_is_not_a_directory(
+def test_worker_workspace_root_falls_back_when_preference_is_not_a_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository_root = tmp_path / "repository"
@@ -52,9 +52,9 @@ def test_employee_workspace_root_falls_back_when_preference_is_not_a_directory(
     preferred_file = tmp_path / "Coding"
     preferred_file.write_text("not a directory", encoding="utf-8")
     monkeypatch.setattr(server, "_REPO_ROOT", repository_root)
-    monkeypatch.setattr(server, "_PREFERRED_EMPLOYEE_WORKSPACE_ROOT", preferred_file)
+    monkeypatch.setattr(server, "_PREFERRED_WORKER_WORKSPACE_ROOT", preferred_file)
 
-    assert server.resolve_employee_workspace_root() == repository_root.resolve()
+    assert server.resolve_worker_workspace_root() == repository_root.resolve()
 
 
 def test_static_assets_are_served_when_cwd_has_no_assets(

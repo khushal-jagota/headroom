@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import asyncio
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -8,19 +8,22 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
+from planner.core import change_signal
 from planner.core import links as core_links
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.clock import build_clock
 from planner.core.config import Config, load_config
-from planner.core.contracts import EventKind, LinkKind
+from planner.core.contracts import LinkKind
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.days import data as days_data
-from planner.runtime import automatic_employee_step_eligibility
-from planner.runtime.employee_step_repository import SqliteEmployeeStepRepository
+from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap
+from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap, Ticket
 
 
 def _create(
@@ -30,7 +33,7 @@ def _create(
     title: str,
     *,
     sprint_item_id: str | None = None,
-):
+) -> Ticket:
     ticket = tickets_data.create_ticket(
         conn,
         worker_type="coding",
@@ -84,17 +87,6 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
     core_links.add_link(tmp_db, blocked_item.id, "si_delete_parent", LinkKind.blocks, now)
     core_links.add_link(tmp_db, target.id, "si_delete_parent", LinkKind.blocks, now)
 
-    repository = SqliteEmployeeStepRepository()
-    run = repository.start(tmp_db, target.id, now=now)
-    repository.settle(
-        tmp_db,
-        run.employee_step_id,
-        ticket_id=target.id,
-        status="complete",
-        error=None,
-        now=now,
-    )
-
     deleted = tickets_data.delete_ticket(tmp_db, target.id, actor="human", now=now)
 
     assert deleted.ticket_id == target.id
@@ -119,48 +111,15 @@ def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(
         ).fetchone()
         is None
     )
+    # Nothing anywhere still refers to the deleted Ticket.
     assert tmp_db.execute(
-        "SELECT 1 FROM employee_step_runs WHERE ticket_id = ?", (target.id,)
+        "SELECT 1 FROM day_tickets WHERE ticket_id = ?", (target.id,)
     ).fetchone() is None
-
-    target_events = tmp_db.execute(
-        "SELECT kind, payload, created_at FROM events WHERE entity_id = ? ORDER BY id",
-        (target.id,),
-    ).fetchall()
-    assert len(target_events) == 1
-    assert target_events[0]["kind"] == EventKind.ticket_deleted.value
-    assert json.loads(target_events[0]["payload"]) == {
-        "ticket_id": target.id,
-        "title": "Mistaken ticket",
-        "actor": "human",
-    }
-    assert target_events[0]["created_at"] == now
-
-    prior_reference_events = tmp_db.execute(
-        "SELECT kind, payload FROM events WHERE kind IN ('day_ticket_added', 'link_added')"
-    ).fetchall()
-    for event in prior_reference_events:
-        assert target.id not in json.loads(event["payload"]).values()
-
-    day_event = tmp_db.execute(
-        "SELECT payload FROM events WHERE entity_id = ? AND kind = 'day_ticket_removed' "
-        "ORDER BY id DESC LIMIT 1",
-        (day_id,),
-    ).fetchone()
-    assert json.loads(day_event["payload"]) == {"ticket_id": target.id}
-    item_event = tmp_db.execute(
-        "SELECT payload FROM events WHERE entity_id = 'si_delete_parent' "
-        "AND kind = 'item_children_changed' ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    assert json.loads(item_event["payload"]) == {"ticket_id": target.id, "reason": "deleted"}
-    for survivor_id in (before.id, after.id, "si_delete_parent"):
-        event = tmp_db.execute(
-            "SELECT payload FROM events WHERE entity_id = ? AND kind = 'link_removed' "
-            "ORDER BY id DESC LIMIT 1",
-            (survivor_id,),
-        ).fetchone()
-        assert event is not None
-        assert target.id in json.loads(event["payload"]).values()
+    assert tmp_db.execute(
+        "SELECT 1 FROM pending_worker_context WHERE worker_entity_id = ?", (target.id,)
+    ).fetchone() is None
+    assert tickets_data.read_ticket(tmp_db, before.id).ticket_status is not None
+    assert tickets_data.read_ticket(tmp_db, after.id).ticket_status is not None
 
 
 def test_delete_ticket_rejects_agent_and_each_active_worker_invariant(
@@ -175,26 +134,17 @@ def test_delete_ticket_rejects_agent_and_each_active_worker_invariant(
     controlled = _create(tmp_db, cfg, fake_clock, "Controlled running")
     planning_day_id = "day_2099-01-01"
     days_data.add_day_ticket(tmp_db, planning_day_id, controlled.id, now)
-    assert tickets_data.claim_automatic_employee_step(
+    assert tickets_data.claim_ticket_for_worker_step(
         tmp_db,
         controlled.id,
         planning_day_id_resolver=lambda: planning_day_id,
-        eligibility_check=(
-            automatic_employee_step_eligibility.is_eligible_for_automatic_employee_step
-        ),
+        readiness_check=worker_step_readiness.is_ready_for_worker_step,
         now=now,
     )
     with pytest.raises(PlannerError) as controlled_exc:
         tickets_data.delete_ticket(tmp_db, controlled.id, actor="human", now=now)
     assert controlled_exc.value.code is ErrorCode.already_running
     assert tickets_data.read_ticket(tmp_db, controlled.id).id == controlled.id
-
-    turn_target = _create(tmp_db, cfg, fake_clock, "Employee step running")
-    SqliteEmployeeStepRepository().start(tmp_db, turn_target.id, now=now)
-    with pytest.raises(PlannerError) as turn_exc:
-        tickets_data.delete_ticket(tmp_db, turn_target.id, actor="human", now=now)
-    assert turn_exc.value.code is ErrorCode.already_running
-    assert tickets_data.read_ticket(tmp_db, turn_target.id).id == turn_target.id
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -214,15 +164,58 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     def conn_factory() -> Connection:
         return connect(str(db_path))
 
-    return create_app(config, clock, conn_factory), db_path
+    return (
+        create_app(
+            config,
+            clock,
+            conn_factory,
+            # The delete route asks the conversation system whether a turn is running, so
+            # this file needs one whose running turn it can start and end by hand.
+            conversation_system_for_test=InMemoryConversationSystem(),
+        ),
+        db_path,
+    )
 
 
-class _EligibilityWakeSpy:
-    def __init__(self) -> None:
-        self.calls = 0
+def test_delete_route_refuses_a_ticket_whose_conversation_is_running(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    target = tickets_data.create_ticket(
+        conn,
+        worker_type="coding",
+        title="Live worker",
+        actor="human",
+        now=1,
+        title_max_chars=TITLE_MAX_CHARS,
+    )
+    conn.execute(
+        "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+        ("conv-live", target.id),
+    )
+    conn.commit()
+    conn.close()
 
-    def wake(self) -> None:
-        self.calls += 1
+    with TestClient(app) as client:
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(conversation_id="conv-live")
+            )
+        )
+        asyncio.run(
+            app.state.conversation_system.send(
+                "conv-live",
+                text_message_content("working"),
+                sender_label="loop",
+            )
+        )
+        blocked = client.delete(f"/api/tickets/{target.id}")
+        assert blocked.status_code == 409
+        assert blocked.json()["error"]["code"] == "already_running"
+
+        # The turn ends; the same Ticket deletes cleanly.
+        app.state.conversation_system.complete_running_turn("conv-live")
+        deleted = client.delete(f"/api/tickets/{target.id}")
+        assert deleted.status_code == 200, deleted.text
 
 
 def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path: Path) -> None:
@@ -239,9 +232,14 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
     days_data.add_day_ticket(conn, "day_2026-07-04", target.id, 1)
     conn.close()
 
+    signals = 0
+
+    def record() -> None:
+        nonlocal signals
+        signals += 1
+
+    unsubscribe = change_signal.subscribe(record)
     with TestClient(app) as client:
-        eligibility_wake_spy = _EligibilityWakeSpy()
-        app.state.automatic_employee_step_eligibility_wake = eligibility_wake_spy
         forbidden = client.delete(f"/api/tickets/{target.id}", headers={"X-Plan-Actor": "agent"})
         assert forbidden.status_code == 400
         assert forbidden.json()["error"]["code"] == "agent_forbidden"
@@ -258,4 +256,5 @@ def test_delete_ticket_api_is_human_only_and_returns_affected_resources(tmp_path
             "linked_entity_ids": [],
         }
         assert client.get(f"/api/tickets/{target.id}").status_code == 404
-        assert eligibility_wake_spy.calls == 1
+    unsubscribe()
+    assert signals == 1

@@ -34,8 +34,7 @@ from planner.seed.logic.kickoff import parse_kickoff, parse_review
 from planner.seed.logic.tracking import parse_tracking
 from planner.seed.logic.workspace import parse_workspace
 
-# Existing event rows stay append-only. The migration clears the planner records
-# and then emits fresh events for the imported current-sprint surface.
+# The migration clears the planner records and re-imports the current-sprint surface.
 RESET_TABLES = (
     "day_tickets",
     "links",
@@ -80,7 +79,6 @@ class AppliedSummary:
     days: int
     day_tickets: int
     links: int
-    events: int
 
 
 @dataclass
@@ -300,7 +298,7 @@ def apply_current_sprint(
                     days_data.set_day_field(conn, day.day_id, field_name, value, now)
             for key in day.ticket_keys:
                 ticket_id = ticket_ids[key]
-                days_data.add_day_ticket(conn, day.day_id, ticket_id, now, cause="seed")
+                days_data.add_day_ticket(conn, day.day_id, ticket_id, now)
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")
@@ -314,7 +312,6 @@ def apply_current_sprint(
         days=_count(conn, "days"),
         day_tickets=_count(conn, "day_tickets"),
         links=_count(conn, "links"),
-        events=_count(conn, "events"),
     )
 
 

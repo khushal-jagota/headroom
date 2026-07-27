@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from playwright.sync_api import Browser, Page
+from collections.abc import Callable
+from typing import Any
+
+from playwright.sync_api import Browser, BrowserContext, Page
+from tests.e2e.harness import ServerHandle
 
 WAIT_MS = 10_000
 
 SCROLL_SURFACES = {
     ".markdown pre": "x",
-    '.file-preview[data-file-preview-kind="markdown"]': "y",
+    ".file-preview-document-body": "y",
     ".chat-thread": "y",
     ".chat-menu": "y",
     ".chat-image-previews": "x",
@@ -48,13 +52,9 @@ def _mount_scrollbar_fixture(page: Page, base_url: str) -> None:
                 <pre class="probe-box"><code>{long_code_line}</code></pre>
               </div>
 
-              <article
-                class="file-preview probe-box"
-                data-file-preview
-                data-file-preview-kind="markdown"
-              >
+              <div class="file-preview-document-body probe-box">
                 <div class="tall-content">Markdown preview body</div>
-              </article>
+              </div>
 
               <section class="chat-thread">
                 <button type="button">Focusable chat row</button>
@@ -86,16 +86,19 @@ def _mount_scrollbar_fixture(page: Page, base_url: str) -> None:
           </body>
         </html>
         """,
-        wait_until="networkidle",
     )
+    # Not "networkidle": this page has already opened the live-change stream, which stays
+    # open for as long as the app runs, so the network never goes quiet and the wait can
+    # only time out. The wait that matters is the next one — the stylesheet having actually
+    # applied, which is the thing this test reads.
     page.wait_for_function(
         "() => getComputedStyle(document.querySelector('.chat-thread')).fontFamily !== ''",
         timeout=WAIT_MS,
     )
 
 
-def _scroll_state(page: Page, selector: str) -> dict:
-    return page.eval_on_selector(
+def _scroll_state(page: Page, selector: str) -> dict[str, Any]:
+    state: dict[str, Any] = page.eval_on_selector(
         selector,
         """el => {
             const style = getComputedStyle(el);
@@ -114,9 +117,10 @@ def _scroll_state(page: Page, selector: str) -> dict:
             };
         }""",
     )
+    return state
 
 
-def _assert_scrollable(state: dict, axis: str) -> None:
+def _assert_scrollable(state: dict[str, Any], axis: str) -> None:
     if axis in ("x", "both"):
         assert state["overflowX"] == "auto", state
         assert state["scrollWidth"] > state["clientWidth"], state
@@ -125,20 +129,21 @@ def _assert_scrollable(state: dict, axis: str) -> None:
         assert state["scrollHeight"] > state["clientHeight"], state
 
 
-def _is_transparent_scrollbar(state: dict) -> bool:
-    return (
+def _is_transparent_scrollbar(state: dict[str, Any]) -> bool:
+    is_transparent: bool = (
         state["scrollbarColor"] == "rgba(0, 0, 0, 0) rgba(0, 0, 0, 0)"
         and state["thumbBackground"] == "rgba(0, 0, 0, 0)"
     )
+    return is_transparent
 
 
-def _assert_native_forced_colors_scrollbar(selector: str, state: dict) -> None:
+def _assert_native_forced_colors_scrollbar(selector: str, state: dict[str, Any]) -> None:
     assert state["scrollbarColor"] == "auto", (selector, state)
     assert state["thumbBackground"] != "rgba(0, 0, 0, 0)", (selector, state)
 
 
 def test_scroll_containers_share_stable_fine_pointer_treatment(
-    server, context_factory
+    server: ServerHandle, context_factory: Callable[[], BrowserContext]
 ) -> None:
     page = context_factory().new_page()
     _mount_scrollbar_fixture(page, server.base)
@@ -175,7 +180,7 @@ def test_scroll_containers_share_stable_fine_pointer_treatment(
 
 
 def test_scroll_containers_keep_visible_baseline_in_touch_context(
-    browser: Browser, server
+    browser: Browser, server: ServerHandle
 ) -> None:
     context = browser.new_context(
         has_touch=True,
@@ -200,7 +205,7 @@ def test_scroll_containers_keep_visible_baseline_in_touch_context(
 
 
 def test_scroll_containers_keep_native_baseline_in_forced_colors_fine_pointer(
-    browser: Browser, server
+    browser: Browser, server: ServerHandle
 ) -> None:
     context = browser.new_context(forced_colors="active")
     try:

@@ -5,7 +5,7 @@ Each test gets a real ``panels serve`` subprocess on an OS-assigned port, backed
 fresh temp SQLite DB in ``PLAN_TEST_MODE``. Browser contexts come from
 pytest-playwright's session ``browser``; the ``open_page`` / ``cli`` / ``api`` helpers
 drive the surfaces. Every Playwright wait carries an explicit ``timeout``; the only sleep
-is the Automatic Employee-step discovery poll's 0.1s interval, which polls a condition
+is the worker-step readiness poll's 0.1s interval, which polls a condition
 inside a boot budget.
 """
 
@@ -15,31 +15,34 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import httpx
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page
+from tests.e2e.harness import (
+    BOOT_BUDGET_S,
+    FAKE_NOW,
+    PLAN_BIN,
+    REPO_ROOT,
+    WAIT_MS,
+    ApiHelper,
+    JsonObject,
+    ServerHandle,
+)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAN_BIN = Path(sys.executable).parent / "panels"
-FAKE_NOW = "2026-07-04T12:00:00"
-WAIT_MS = 10_000          # every Playwright wait
-BOOT_BUDGET_S = 15.0      # server readiness budget
-
-@dataclass(frozen=True)
-class ServerHandle:
-    base: str
-    proc: subprocess.Popen[bytes]
-    db_path: Path
-    log_path: Path
-    port: int
-    control_socket_path: Path
+__all__ = [
+    "BOOT_BUDGET_S",
+    "FAKE_NOW",
+    "PLAN_BIN",
+    "REPO_ROOT",
+    "WAIT_MS",
+    "ApiHelper",
+    "JsonObject",
+    "ServerHandle",
+]
 
 
 def _free_port() -> int:
@@ -98,9 +101,11 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
                 "PLAN_FAKE_NOW": fake_now if fake_now is not None else FAKE_NOW,
                 "PLAN_LOGS_DIR": str(srvdir / "logs"),
                 "PLAN_DISPATCHER_LOCK_PATH": str(srvdir / "dispatcher.lock"),
-                "PLAN_WS_POLL_MS": "50",
-                "PLAN_WS_HEARTBEAT_MS": "500",
-                "PLAN_UI_DEBOUNCE_MS": "50",
+                # A real server composes the real agents, and composing them puts Panels'
+                # role skills in the agent home. Without this that home is the developer's
+                # own ~/.hermes, and every server started here would re-point their real
+                # skills at a temporary directory that is deleted when the test ends.
+                "PLAN_HERMES_HOME": str(srvdir / "hermes-home"),
             }
         )
         if trusted_ingress_env is not None:
@@ -146,8 +151,6 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
             if resp is not None and resp.status_code == 200:
                 meta = resp.json()
                 assert meta["test_mode"] is True, meta
-                assert meta["ui_debounce_ms"] == 50, meta
-                assert meta["ws_heartbeat_ms"] == 500, meta
                 root = httpx.get(f"{base}/", timeout=1.0)
                 assert root.status_code == 200, root.status_code
                 assert "data-svelte-app" in root.text
@@ -201,38 +204,32 @@ def open_page() -> Callable[..., Page]:
         server: ServerHandle,
         route: str,
         ready_selector: str,
-        settled: bool,
     ) -> Page:
         page = ctx.new_page()
         page.goto(server.base + "/" + route)
         page.wait_for_selector(ready_selector, timeout=WAIT_MS)
-        # WS-open gate: never fire an observed mutation before the socket is live.
+        # Change-stream gate: never fire an observed change before the stream is live,
+        # or the browser has no way to hear about it. What the screen already shows is
+        # current by construction — the first read happens at page open — so there is
+        # nothing to let settle beyond this.
         page.wait_for_function(
-            "() => window.__plannerDebug && window.__plannerDebug.wsOpens >= 1",
+            "() => window.__plannerDebug && window.__plannerDebug.sseOpens >= 1",
             timeout=WAIT_MS,
         )
-        if settled:
-            # Events preceded page-open: let the since=0 catch-up replay's one flush
-            # re-render land, then re-anchor on the ready selector (screen replaced).
-            page.wait_for_function(
-                "() => window.__plannerDebug && window.__plannerDebug.flushes >= 1",
-                timeout=WAIT_MS,
-            )
-            page.wait_for_selector(ready_selector, timeout=WAIT_MS)
         return page
 
     return _open
 
 
 @pytest.fixture
-def cli() -> Callable[..., dict]:
+def cli() -> Callable[..., JsonObject]:
     def _cli(
         server: ServerHandle,
         *args: str,
         ticket_id: str | None = None,
         actor: str | None = None,
         stdin: str | None = None,
-    ) -> dict:
+    ) -> JsonObject:
         env = _scrubbed_env()
         env["PLAN_SERVER_URL"] = server.base
         if ticket_id is not None:
@@ -251,7 +248,7 @@ def cli() -> Callable[..., dict]:
         assert proc.returncode == 0, (
             f"plan {' '.join(args)} rc={proc.returncode}\nstderr: {proc.stderr}"
         )
-        data = json.loads(proc.stdout)
+        data: JsonObject = json.loads(proc.stdout)
         # Most pre-Kickoff browser scenarios need a worker-stage ticket. Settle the
         # new intake gate in the fixture unless the test supplied Kickoff content;
         # those explicit cases exercise the parked proposal itself.
@@ -270,31 +267,13 @@ def cli() -> Callable[..., dict]:
             assert approve.returncode == 0, (
                 f"automatic kickoff approval rc={approve.returncode}\nstderr: {approve.stderr}"
             )
-            return json.loads(approve.stdout)
+            approved: JsonObject = json.loads(approve.stdout)
+            return approved
         return data
 
     return _cli
 
 
 @pytest.fixture
-def api() -> SimpleNamespace:
-    def get(server: ServerHandle, path: str) -> dict:
-        resp = httpx.get(server.base + path, timeout=10.0)
-        assert resp.status_code < 300, f"GET {path} -> {resp.status_code}: {resp.text}"
-        return resp.json()
-
-    def direct_post(server: ServerHandle, path: str, json_body: dict) -> dict:
-        # No X-Plan-* headers: authctx classifies this request as unattributed,
-        # which direct-only /scope and /accept permit.
-        resp = httpx.post(server.base + path, json=json_body, timeout=10.0)
-        assert resp.status_code < 300, f"POST {path} -> {resp.status_code}: {resp.text}"
-        return resp.json()
-
-    def direct_patch(server: ServerHandle, path: str, json_body: dict) -> dict:
-        # A headerless PATCH is unattributed. The day brief writer is direct-only,
-        # so this is how a test seeds or edits a brief.
-        resp = httpx.patch(server.base + path, json=json_body, timeout=10.0)
-        assert resp.status_code < 300, f"PATCH {path} -> {resp.status_code}: {resp.text}"
-        return resp.json()
-
-    return SimpleNamespace(get=get, direct_post=direct_post, direct_patch=direct_patch)
+def api() -> ApiHelper:
+    return ApiHelper()

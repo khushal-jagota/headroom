@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import planner.worker_types as worker_types
-from planner.conversation.hermes_backend_configuration import PLANNER_SKILL_NAMES
+from planner.environments.hermes_home import PLANNER_SKILL_NAMES
 from planner.worker_types import configuration
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+from planner.worker_types.contracts import WorkerTypeManifest
 
-INITIATIVE_PLANNING_MANIFEST = {
+INITIATIVE_PLANNING_MANIFEST: WorkerTypeManifest = {
     "worker_type": "initiative_planning",
     "label": "Initiative Planning",
     "stages": [
@@ -95,9 +96,9 @@ INITIATIVE_PLANNING_MANIFEST = {
     ],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "panels-worker-initiative-planning",
-    "default_employee_backend": "codex",
-    "default_employee_model": "gpt-5.6-sol",
-    "default_employee_reasoning_effort": "medium",
+    "default_backend": "codex",
+    "default_model": "gpt-5.6-sol",
+    "default_reasoning_effort": "medium",
 }
 
 

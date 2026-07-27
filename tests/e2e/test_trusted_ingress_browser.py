@@ -4,10 +4,24 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from conftest import WAIT_MS, ServerHandle
 from playwright.sync_api import Browser
+from tests.e2e.harness import WAIT_MS, ServerHandle
 
 ALLOWED_LOGIN = "khushal@example.com"
+
+OPEN_SOCKET = """url => new Promise(resolve => {
+    let answered = false;
+    const finish = value => {
+        if (!answered) {
+            answered = true;
+            resolve(value);
+        }
+    };
+    const socket = new WebSocket(url);
+    socket.onopen = () => finish({opened: true, code: null});
+    socket.onclose = event => finish({opened: false, code: event.code});
+    setTimeout(() => finish({opened: false, code: -1}), 5000);
+})"""
 
 
 def _trusted_ingress_env(base: str) -> dict[str, str]:
@@ -30,8 +44,9 @@ def test_trusted_ingress_browser_websocket_origin_and_wrong_origin_rejection(
     try:
         page = allowed_context.new_page()
         page.goto(f"{server.base}/#/workspace")
+        # The allowed browser is admitted end to end: its live-update stream opens.
         page.wait_for_function(
-            "() => window.__plannerDebug && window.__plannerDebug.wsOpens >= 1",
+            "() => window.__plannerDebug && window.__plannerDebug.sseOpens >= 1",
             timeout=WAIT_MS,
         )
     finally:
@@ -42,26 +57,15 @@ def test_trusted_ingress_browser_websocket_origin_and_wrong_origin_rejection(
     try:
         attacker = attacker_context.new_page()
         attacker.goto(f"{attacker_server.base}/")
-        rejected_socket = server.base.replace("http://", "ws://") + "/api/events"
-        result = attacker.evaluate(
-            """url => new Promise(resolve => {
-                let settled = false;
-                const finish = value => {
-                    if (!settled) {
-                        settled = true;
-                        resolve(value);
-                    }
-                };
-                const socket = new WebSocket(url);
-                socket.onopen = () => finish({opened: true, code: null});
-                socket.onclose = event => finish({opened: false, code: event.code});
-                setTimeout(() => finish({opened: false, code: -1}), 5000);
-            })""",
-            rejected_socket,
-        )
+        # Panels serves no WebSocket of its own, and the guard that would refuse one from
+        # a foreign origin runs before anything looks at the path — so any path is the
+        # right path to try, and none of them opens.
+        rejected_socket = server.base.replace("http://", "ws://") + "/api/nothing-serves-this"
+        result = attacker.evaluate(OPEN_SOCKET, rejected_socket)
 
         # A server-side close before the WebSocket is accepted is exposed by Chromium as
-        # abnormal closure 1006. The direct ASGI test asserts the middleware's 1008 policy code.
+        # abnormal closure 1006. The direct ASGI test asserts the middleware's own 1008
+        # policy code.
         assert result == {"opened": False, "code": 1006}
     finally:
         attacker_context.close()

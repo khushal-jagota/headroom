@@ -14,6 +14,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
@@ -22,13 +23,12 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
     PRODUCTION_WORKER_TYPE_REGISTRY,
 )
 
 
 @pytest.fixture
-def app(tmp_path: Path):
+def app(tmp_path: Path) -> FastAPI:
     db_path = tmp_path / "manifest.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -53,11 +53,10 @@ def probe_installed() -> Iterator[None]:
         uninstall_probe_registry()
 
 
-def test_production_serves_all_shipped_worker_types(app) -> None:
+def test_production_serves_all_shipped_worker_types(app: FastAPI) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert served == {
-        "employee_backends": ["hermes", "codex", "claude"],
         "worker_types": [
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker"),
@@ -67,22 +66,21 @@ def test_production_serves_all_shipped_worker_types(app) -> None:
     }
 
 
-def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend_catalog(
-    app,
+def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
+    app: FastAPI,
     probe_installed: None,
 ) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
 
-    assert served["employee_backends"] == ["hermes", "codex", "claude", "probe-backend"]
-    assert [item["default_employee_backend"] for item in served["worker_types"]] == [
+    assert [item["default_backend"] for item in served["worker_types"]] == [
         "codex",
         "codex",
         "codex",
         "codex",
-        "probe-backend",
+        "claude",
     ]
-    assert [item["default_employee_model"] for item in served["worker_types"]] == [
+    assert [item["default_model"] for item in served["worker_types"]] == [
         "gpt-5.6-sol",
         "gpt-5.6-sol",
         "gpt-5.6-sol",
@@ -90,22 +88,20 @@ def test_worker_type_manifest_serves_exact_defaults_and_ordered_employee_backend
         "probe-model",
     ]
     assert [
-        item["default_employee_reasoning_effort"] for item in served["worker_types"]
+        item["default_reasoning_effort"] for item in served["worker_types"]
     ] == ["medium", "medium", "medium", "medium", "probe-high"]
-    assert (
-        PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog.registered_backend_keys()
-        == ("hermes", "codex", "claude")
-    )
 
 
-def test_coding_entry_json_roundtrips(app) -> None:
+def test_coding_entry_json_roundtrips(app: FastAPI) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert json.loads(json.dumps(served)) == served
     assert served["worker_types"][0]["worker_type"] == "coding"
 
 
-def test_installed_probe_appears_after_shipped_worker_types(app, probe_installed: None) -> None:
+def test_installed_probe_appears_after_shipped_worker_types(
+    app: FastAPI, probe_installed: None
+) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert [m["worker_type"] for m in served["worker_types"]] == [
@@ -115,5 +111,4 @@ def test_installed_probe_appears_after_shipped_worker_types(app, probe_installed
         "initiative_planning",
         "probe",
     ]
-    assert served["employee_backends"] == ["hermes", "codex", "claude", "probe-backend"]
     assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")

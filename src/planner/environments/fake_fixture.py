@@ -101,7 +101,7 @@ def build_fake_environment_database(db_path: Path, *, now: int) -> FakeFixtureRe
         )
         generated_ids.update(ticket.id for ticket in tickets)
         for ticket in tickets:
-            days_data.add_day_ticket(conn, day_id, ticket.id, now, cause="fake_fixture")
+            days_data.add_day_ticket(conn, day_id, ticket.id, now)
         managed_file_relative_paths = _write_managed_files(db_path, tickets[0].id)
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     finally:
@@ -241,7 +241,7 @@ def _create_tickets(
         sprint_id=sprint_id,
         worker_type="initiative_planning",
     )
-    tickets_data.mark_run_errored(
+    tickets_data.mark_ticket_errored(
         conn,
         exploration.id,
         error="Fictional non-production error for inspection.",

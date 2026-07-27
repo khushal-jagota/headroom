@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
+from sqlite3 import Connection
 
 import pytest
 from tests.support.probe import (
@@ -63,8 +63,8 @@ def test_stage_ownership_contract_manifest_and_pure_resolution() -> None:
         is StageOwnershipMode.paired
     )
     assert machine.resting_ticket_status(StageOwnershipMode.worker) is TicketStatus.empty
-    assert machine.resting_ticket_status(StageOwnershipMode.user) is TicketStatus.user_takeover
-    assert machine.resting_ticket_status(StageOwnershipMode.paired) is TicketStatus.paired_work
+    assert machine.resting_ticket_status(StageOwnershipMode.user) is TicketStatus.user
+    assert machine.resting_ticket_status(StageOwnershipMode.paired) is TicketStatus.paired
 
 
 def test_registry_rejects_missing_or_terminal_default_ownership() -> None:
@@ -87,7 +87,6 @@ def test_registry_rejects_missing_or_terminal_default_ownership() -> None:
             ),
             known_skills=frozenset({"probe-worker"}),
             known_toolset_profiles=frozenset({"default"}),
-            employee_backend_catalog=registry.employee_backend_catalog,
         )
     assert missing.value.code is ErrorCode.validation
     assert missing.value.message == "non-terminal stage must declare default ownership"
@@ -109,7 +108,6 @@ def test_registry_rejects_missing_or_terminal_default_ownership() -> None:
             ),
             known_skills=frozenset({"probe-worker"}),
             known_toolset_profiles=frozenset({"default"}),
-            employee_backend_catalog=registry.employee_backend_catalog,
         )
     assert terminal.value.code is ErrorCode.validation
     assert terminal.value.message == "terminal stage may not declare default ownership"
@@ -137,7 +135,7 @@ def test_stage_definition_constructor_requires_the_ownership_argument() -> None:
 
 
 def test_ownership_override_set_clear_takeover_release_derives_resting_status(
-    tmp_db,
+    tmp_db: Connection,
 ) -> None:
     ticket = data.create_ticket(
         tmp_db,
@@ -171,7 +169,7 @@ def test_ownership_override_set_clear_takeover_release_derives_resting_status(
     )
     assert ticket.stage_ownership_overrides == {"needs_success": StageOwnershipMode.user}
     assert ticket.effective_stage_ownership_mode is StageOwnershipMode.user
-    assert ticket.ticket_status is TicketStatus.user_takeover
+    assert ticket.ticket_status is TicketStatus.user
 
     ticket = data.set_stage_ownership(
         tmp_db,
@@ -190,11 +188,11 @@ def test_ownership_override_set_clear_takeover_release_derives_resting_status(
 
     ticket = data.take_over_ticket(tmp_db, ticket.id, now=6)
     assert ticket.stage_ownership_overrides == {"needs_success": StageOwnershipMode.user}
-    assert ticket.ticket_status is TicketStatus.user_takeover
+    assert ticket.ticket_status is TicketStatus.user
 
 
 def test_ticket_current_stage_default_is_captured_until_next_stage_entry(
-    tmp_db,
+    tmp_db: Connection,
 ) -> None:
     registry = configured_worker_type_registry()
     settings_parent = worker_settings_service.database_parent_from_connection(tmp_db)
@@ -263,7 +261,9 @@ def test_ticket_current_stage_default_is_captured_until_next_stage_entry(
     assert second.effective_stage_ownership_mode is StageOwnershipMode.user
 
 
-def test_future_stage_ownership_event_reports_that_stages_effective_mode(tmp_db) -> None:
+def test_future_stage_ownership_override_leaves_the_current_stage_alone(
+    tmp_db: Connection,
+) -> None:
     ticket = data.create_ticket(
         tmp_db,
         actor="human",
@@ -294,22 +294,11 @@ def test_future_stage_ownership_event_reports_that_stages_effective_mode(tmp_db)
     assert updated.stage == "needs_success"
     assert updated.effective_stage_ownership_mode is StageOwnershipMode.worker
     assert updated.ticket_status is TicketStatus.empty
-    row = tmp_db.execute(
-        "SELECT payload FROM events "
-        "WHERE entity_id = ? AND kind = 'stage_ownership_changed' ORDER BY id DESC LIMIT 1",
-        (ticket.id,),
-    ).fetchone()
-    assert row is not None
-    assert json.loads(row["payload"]) == {
-        "stage": "needs_plan",
-        "ownership_mode": "paired",
-        "previous_effective_ownership_mode": "worker",
-        "effective_ownership_mode": "paired",
-    }
+    assert updated.stage_ownership_overrides == {"needs_plan": StageOwnershipMode.paired}
 
 
 def test_current_stage_same_effective_explicit_override_persists_without_status_change(
-    tmp_db,
+    tmp_db: Connection,
 ) -> None:
     ticket = data.create_ticket(
         tmp_db,
@@ -346,18 +335,6 @@ def test_current_stage_same_effective_explicit_override_persists_without_status_
     }
     assert updated.effective_stage_ownership_mode is StageOwnershipMode.paired
     assert updated.ticket_status is TicketStatus.empty
-    row = tmp_db.execute(
-        "SELECT payload FROM events "
-        "WHERE entity_id = ? AND kind = 'stage_ownership_changed' ORDER BY id DESC LIMIT 1",
-        (ticket.id,),
-    ).fetchone()
-    assert row is not None
-    assert json.loads(row["payload"]) == {
-        "stage": "needs_understanding",
-        "ownership_mode": "paired",
-        "previous_effective_ownership_mode": "paired",
-        "effective_ownership_mode": "paired",
-    }
 
     again = data.set_stage_ownership(
         tmp_db,
@@ -367,18 +344,10 @@ def test_current_stage_same_effective_explicit_override_persists_without_status_
         now=4,
     )
     assert again == updated
-    assert (
-        tmp_db.execute(
-            "SELECT COUNT(*) FROM events "
-            "WHERE entity_id = ? AND kind = 'stage_ownership_changed'",
-            (ticket.id,),
-        ).fetchone()[0]
-        == 1
-    )
 
 
 def test_takeover_and_release_persist_explicit_user_override_when_default_is_user(
-    tmp_db,
+    tmp_db: Connection,
 ) -> None:
     install_probe_registry()
     try:
@@ -418,27 +387,5 @@ def test_takeover_and_release_persist_explicit_user_override_when_default_is_use
         assert released.ticket_status is TicketStatus.empty
 
         assert data.release_ticket(tmp_db, ticket.id, now=5) == released
-        payloads = [
-            json.loads(row["payload"])
-            for row in tmp_db.execute(
-                "SELECT payload FROM events "
-                "WHERE entity_id = ? AND kind = 'stage_ownership_changed' ORDER BY id",
-                (ticket.id,),
-            )
-        ]
-        assert payloads == [
-            {
-                "stage": NEEDS_ALPHA,
-                "ownership_mode": "user",
-                "previous_effective_ownership_mode": "user",
-                "effective_ownership_mode": "user",
-            },
-            {
-                "stage": NEEDS_ALPHA,
-                "ownership_mode": None,
-                "previous_effective_ownership_mode": "user",
-                "effective_ownership_mode": "user",
-            },
-        ]
     finally:
         uninstall_probe_registry()

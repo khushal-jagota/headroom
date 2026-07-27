@@ -12,6 +12,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.core.clock import RealClock, build_clock
@@ -27,7 +28,7 @@ from planner.tickets.data import accept_proposal, create_ticket
 _AGENT = {"X-Plan-Actor": "agent"}  # an agent context (X-Plan-Actor set)
 
 
-def _make_app(tmp_path: Path) -> tuple[object, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -129,10 +130,6 @@ def _ticket_edit_effects(db_path: Path, ticket_id: str) -> tuple[Any, ...]:
             (ticket_id,),
         ).fetchone()
         assert ticket is not None
-        events = conn.execute(
-            "SELECT kind, payload, created_at FROM events WHERE entity_id = ? ORDER BY id",
-            (ticket_id,),
-        ).fetchall()
         context = conn.execute(
             "SELECT context_key, text, revision FROM pending_worker_context "
             "WHERE worker_entity_id = ? ORDER BY context_key",
@@ -140,7 +137,6 @@ def _ticket_edit_effects(db_path: Path, ticket_id: str) -> tuple[Any, ...]:
         ).fetchall()
         return (
             tuple(ticket),
-            tuple(tuple(row) for row in events),
             tuple(tuple(row) for row in context),
         )
     finally:
@@ -259,7 +255,7 @@ def test_patch_ticket_worker_can_compound_priority_deadline_and_sprint_without_c
     assert response.json()["priority"] == "P1"
     assert response.json()["deadline"] == "2026-08-01"
     assert response.json()["sprint_id"] == sid
-    assert _ticket_edit_effects(db_path, tid)[2] == ()
+    assert _ticket_edit_effects(db_path, tid)[1] == ()
 
 
 def test_patch_ticket_unattributed_and_chief_keep_ordinary_edit_semantics(
@@ -285,11 +281,7 @@ def test_patch_ticket_unattributed_and_chief_keep_ordinary_edit_semantics(
     assert unattributed.json()["title"] == "Unattributed edit"
     assert chief.json()["title"] == "Chief ordinary edit"
     for ticket_id in (unattributed_id, chief_id):
-        _values, events, context = _ticket_edit_effects(db_path, ticket_id)
-        assert [kind for kind, _payload, _created_at in events[-2:]] == [
-            "ticket_updated",
-            "ticket_updated",
-        ]
+        _values, context = _ticket_edit_effects(db_path, ticket_id)
         assert context[-1][0] == "ticket_changed"
         assert context[-1][2] == 1
 

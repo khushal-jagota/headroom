@@ -44,10 +44,10 @@ def test_dynamic_port_retries_bind_conflict_and_retains_winning_listener() -> No
 
     listener, port = reserve_available_tcp_listener(
         bind_attempts=3,
-        socket_factory=lambda: next(sockets),  # type: ignore[arg-type]
+        socket_factory=lambda: next(sockets),  # type: ignore[arg-type, return-value]  # fake stands in for socket.socket
     )
 
-    assert listener is winner
+    assert listener is winner  # type: ignore[comparison-overlap]  # listener is the injected _FakeSocket at runtime
     assert port == 45123
     assert conflicted.closed is True
     assert winner.closed is False

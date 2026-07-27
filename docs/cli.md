@@ -47,7 +47,7 @@ generic Stage setter.
 - **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
   clear one Stage's ownership override. `default` clears the override so the Worker
   type's Stage default applies. Terminal and unknown Stages are rejected.
-- **`ticket copy / events`** — copy one ticket's plain-text packet or inspect its event log.
+- **`ticket copy`** — copy one ticket's plain-text packet.
 - **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
   populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
   backlog where a list supports it.
@@ -134,14 +134,15 @@ Earlier documentation listed verbs that belonged to the old dispatcher-and-claim
 machinery, or to old top-level homes. They no longer exist: **`run heartbeat` / `run
 close`**, **`queue pickup`**, **`plan seed`**, top-level **`propose` / `recap` /
 `note` / `item` / `idea` / `link` / `queue`**. A worker no longer holds a claim or a
-lease; the employee runtime runs one step at a time and writes status itself (see
-`employee-runtime.md`).
+lease; Panels starts one worker step at a time and writes the Ticket's status itself
+(see `worker-orchestration.md`).
 
 ## Handoffs
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — the proposals, recaps, and notes
   this tool files, and the scope the server enforces on them.
-- **The employee runtime** (`employee-runtime.md`) — the worker that drives this tool.
+- **Worker orchestration** (`worker-orchestration.md`) — how the worker that drives
+  this tool gets started.
 - **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
   ticket's specialist skill from.
 

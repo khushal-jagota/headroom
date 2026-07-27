@@ -29,54 +29,13 @@ class StageOwnershipMode(StrEnum):
 
 class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer transitions
     empty = "empty"
-    agent_running_step = "agent_running_step"
+    blocked = "blocked"  # empty's stand-in while a live blocker exists
+    agent = "agent"
+    paired = "paired"
     awaiting_approval = "awaiting_approval"
-    proposal_discussion = "proposal_discussion"
-    user_takeover = "user_takeover"
     needs_user = "needs_user"
-    paired_work = "paired_work"
+    user = "user"
     errored = "errored"
-
-
-class WorkspaceActivityState(StrEnum):
-    """ACP activity facts that may affect a Ticket's Workspace dot."""
-
-    connecting = "connecting"
-    loading = "loading"
-    idle = "idle"
-    thinking = "thinking"
-    working = "working"
-    compacting = "compacting"
-    waiting_for_permission = "waiting_for_permission"
-    interrupted = "interrupted"
-    failed = "failed"
-
-
-class WorkspaceAgentReplyState(StrEnum):
-    """Whether a Worker reply (or permission ask) is waiting, and whether it was seen."""
-
-    none = "none"
-    unseen = "unseen"
-    seen = "seen"
-
-
-@dataclass(frozen=True)
-class WorkspaceSignalFacts:
-    """Factual Ticket and ACP inputs for the two Workspace row signals."""
-
-    ticket_status: TicketStatus
-    latest_activity_state: WorkspaceActivityState | None = None
-    has_completed_response_awaiting_user: bool = False
-    has_completed_response: bool = False
-    has_pending_permission: bool = False
-
-
-@dataclass(frozen=True)
-class WorkspaceSignals:
-    """The two Workspace row signals: an agent working now, and a reply waiting."""
-
-    agent_working: bool
-    agent_reply_state: WorkspaceAgentReplyState
 
 
 @dataclass(frozen=True)
@@ -88,7 +47,7 @@ class Proposal:  # §4.2 proposal slot
 
 @dataclass
 class FieldSlot:  # one ordinary field object
-    value: str | None = None  # canonical; resolution engine is the only writer
+    value: str | None = None  # canonical; proposal resolver is the only writer
     proposal: Proposal | None = None
     user_note: str | None = None  # preserved user guidance for this field / step
 
@@ -100,7 +59,7 @@ class TicketFields:  # tickets.fields JSON column, generic over the type's field
     order.
 
     ``slots`` is exposed as a ``MappingProxyType`` so the only way to change a slot is
-    through ``fields_codec.with_slot`` (copy-on-write) → the resolution engine — the same
+    through ``fields_codec.with_slot`` (copy-on-write) → the proposal resolver — the same
     value-object boundary the old fixed struct enforced. The constructor accepts any
     ``Mapping`` and wraps a private copy, so a caller cannot retain a mutable handle to
     the backing dict. (FieldSlot's own field-level mutability is pre-existing and left
@@ -237,8 +196,8 @@ class Ticket:  # §3.3 — column names match exactly
     id: str
     title: str  # <= TITLE_MAX_CHARS (200), every write path
     worker_type: str  # immutable registry id selected at creation
-    employee_backend: str  # immutable after the first employee demand
-    # Historical first-session Kickoff request; null means backend-native default.
+    employee_backend: str  # last-chosen backend for this Ticket's worker
+    # Last-chosen model and reasoning effort; null means the backend's own default.
     employee_launch_model: str | None = field(default=None, kw_only=True)
     employee_launch_reasoning_effort: str | None = field(default=None, kw_only=True)
     stage: str  # directly stored Stage id
@@ -252,11 +211,15 @@ class Ticket:  # §3.3 — column names match exactly
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose (R2)
     ticket_status: TicketStatus  # durable state-of-control; transition functions write it
+    # When ticket_status last actually changed. Claiming a Ticket for a worker step
+    # captures it, and giving that claim back compares it, so a late release cannot erase
+    # a later transition that happens to have landed on the same status value.
+    ticket_status_changed_at: int
     backend_error: str | None  # concrete confirmed backend Worker failure, else NULL
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]
     default_stage_ownership_mode: StageOwnershipMode | None
     effective_stage_ownership_mode: StageOwnershipMode | None
-    employee_session_id: str | None  # durable Hermes identity for this Ticket's employee
+    conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields
     created_at: int
@@ -265,10 +228,11 @@ class Ticket:  # §3.3 — column names match exactly
 
 @dataclass(frozen=True, slots=True)
 class EmployeeLaunchConfiguration:
-    """The Ticket-owned, first-session launch request.
+    """What the Ticket's worker last ran on: backend, model, reasoning effort.
 
-    After the first binding these values remain historical Kickoff provenance; they
-    are not a mirror of the ACP session's current configuration.
+    Kept up to date as the Ticket's conversation changes, so a fresh conversation
+    starts from where the last one ended. The field names are the storage and wire
+    names of the three columns and are frozen with them.
     """
 
     employee_backend: str
@@ -278,21 +242,8 @@ class EmployeeLaunchConfiguration:
 
 @dataclass(frozen=True)
 class EmployeeSessionIdTransition:
-    expected_employee_session_id: str | None
-    candidate_employee_session_id: str
-
-
-@dataclass(frozen=True)
-class EmployeeSessionHistoryMessage:
-    role: str
-    text: str
-    created_at: int
-
-
-@dataclass(frozen=True)
-class EmployeeSessionHistory:
-    messages: tuple[EmployeeSessionHistoryMessage, ...]
-    employee_session_id: str | None
+    expected_conversation_id: str | None
+    candidate_conversation_id: str
 
 
 @dataclass(frozen=True)

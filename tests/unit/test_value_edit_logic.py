@@ -1,6 +1,6 @@
 """Pure-logic tests for resolution.decide_edit_value (the human edit of
 an already-passed settled field value) plus the decide_accept dropped-guard. Values
-stay written solely by the resolution engine; these pin the tightly-guarded human
+stay written solely by the proposal resolver; these pin the tightly-guarded human
 write path and its rejections. Supporting tests, no §18.3 anchor.
 """
 
@@ -12,7 +12,6 @@ import pytest
 
 from planner.core.contracts import EventKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import read_events_since
 from planner.tickets import data
 from planner.tickets.contracts import (
     NO_FURTHER,
@@ -26,6 +25,7 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec, resolution
+from planner.tickets.logic.decisions import Decision
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 
 if TYPE_CHECKING:
@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 
     from planner.core.clock import TestClock
     from planner.core.config import Config
-    from planner.core.contracts import EventRow
 
 
 def _fields(**slots: FieldSlot) -> TicketFields:
@@ -58,11 +57,12 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         ceiling=ceiling,
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
+        ticket_status_changed_at=0,
         backend_error=None,
         stage_ownership_overrides={},
         default_stage_ownership_mode=StageOwnershipMode.worker,
         effective_stage_ownership_mode=StageOwnershipMode.worker,
-        employee_session_id=None,
+        conversation_id=None,
         alias=None,
         fields=fields,
         created_at=0,
@@ -70,7 +70,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
     )
 
 
-def _decide_edit_value(ticket: Ticket, field: str, body: str, actor: str):
+def _decide_edit_value(ticket: Ticket, field: str, body: str, actor: str) -> Decision:
     return resolution.decide_edit_value(
         ticket,
         field,
@@ -80,11 +80,10 @@ def _decide_edit_value(ticket: Ticket, field: str, body: str, actor: str):
     )
 
 
-def _events(
-    conn: Connection, cfg: Config, ticket_id: str, kind: EventKind | None = None
-) -> list[EventRow]:
-    rows = read_events_since(conn, 0, cfg.events_read_limit)
-    return [e for e in rows if e.entity_id == ticket_id and (kind is None or e.kind == kind.value)]
+def _ticket_row(conn: Connection, ticket_id: str) -> tuple[object, ...]:
+    row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    assert row is not None
+    return tuple(row)
 
 
 def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
@@ -138,8 +137,7 @@ def test_edit_passed_field_succeeds(tmp_db: Connection, cfg: Config, fake_clock:
     assert edited_slot.value == "new success"
     assert edited_slot.user_note == "keep me"  # user note preserved
 
-    # End-to-end through the sole appender: value persists, Stage/ceiling untouched,
-    # one field_value_edited row logged.
+    # End-to-end through the sole writer: value persists, Stage/ceiling untouched.
     now = fake_clock.now_unix()
     t = _passed_ticket(tmp_db, cfg, fake_clock)
     t = data.edit_field_value(
@@ -149,9 +147,6 @@ def test_edit_passed_field_succeeds(tmp_db: Connection, cfg: Config, fake_clock:
     assert t.stage == "needs_plan"
     assert t.ceiling == "needs_plan"
     assert t.at_cap is AtCap.propose
-    logged = _events(tmp_db, cfg, t.id, EventKind.field_value_edited)
-    assert len(logged) == 1
-    assert logged[0].payload == {"field": "success", "body": "success EDITED"}
 
 
 def test_edit_unset_value_rejected() -> None:
@@ -254,7 +249,7 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     t = data.drop_ticket(tmp_db, t.id, actor="human", now=now)
     assert t.stage == "dropped"
 
-    count_before = len(_events(tmp_db, cfg, t.id))
+    snapshot_before = _ticket_row(tmp_db, t.id)
     with pytest.raises(PlannerError) as exc:
         data.accept_proposal(
             tmp_db,
@@ -270,7 +265,7 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     t = data.read_ticket(tmp_db, t.id)
     assert fields_codec.get_slot(t.fields, "plan").value is None  # the write never landed
     assert fields_codec.get_slot(t.fields, "plan").proposal is not None
-    assert len(_events(tmp_db, cfg, t.id)) == count_before
+    assert _ticket_row(tmp_db, t.id) == snapshot_before
 
 
 def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(
@@ -312,7 +307,7 @@ def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(
     )
     assert ticket.ticket_status is TicketStatus.empty
     tmp_db.execute(
-        "UPDATE tickets SET ticket_status = 'paired_work' WHERE id = ?",
+        "UPDATE tickets SET ticket_status = 'paired' WHERE id = ?",
         (ticket.id,),
     )
 
@@ -335,5 +330,5 @@ def test_accept_non_gating_proposal_keeps_opened_paired_stage_resting(
         now=now,
     )
     assert ticket.stage == "needs_approach"
-    assert ticket.ticket_status is TicketStatus.paired_work
+    assert ticket.ticket_status is TicketStatus.paired
     assert fields_codec.get_slot(ticket.fields, "plan").value == "plan draft"

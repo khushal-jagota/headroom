@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from planner.environments import materialize as environment_materialize
 from planner.environments.fake_fixture import (
     FAKE_FIXTURE_VERSION,
@@ -42,7 +44,7 @@ def test_fake_fixture_builds_current_schema_with_registered_worker_types(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] > 0
+        assert conn.execute("SELECT count(*) FROM alembic_version").fetchone()[0] == 1
         worker_types = {
             str(row["worker_type"])
             for row in conn.execute("SELECT DISTINCT worker_type FROM tickets")
@@ -110,9 +112,9 @@ def test_prepare_common_layout_materializes_only_runtime_state_directories(
 
 def test_live_prepare_records_contract_without_fake_fixture_or_persistent_state(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fail_fixture(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def fail_fixture(*args: object, **kwargs: object) -> None:
         raise AssertionError("live prepare must not build the fake fixture")
 
     monkeypatch.setattr(
@@ -171,7 +173,9 @@ def test_reset_rebuilds_fake_state_and_preserves_instance_identity(tmp_path: Pat
     assert reset.db_path.is_file()
 
 
-def test_failed_reset_keeps_prior_data_tree(tmp_path: Path, monkeypatch) -> None:
+def test_failed_reset_keeps_prior_data_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     repository_root = _repository_root()
     staging = prepare_environment_instance(
         kind="staging",
@@ -181,7 +185,7 @@ def test_failed_reset_keeps_prior_data_tree(tmp_path: Path, monkeypatch) -> None
     marker = staging.db_path.parent / "marker.txt"
     marker.write_text("old data", encoding="utf-8")
 
-    def fail_fixture(*args, **kwargs):  # type: ignore[no-untyped-def]
+    def fail_fixture(*args: object, **kwargs: object) -> None:
         raise RuntimeError("fixture failed")
 
     monkeypatch.setattr(

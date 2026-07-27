@@ -121,16 +121,17 @@ definitions, and the production registry built from them. The shipped tuple curr
 contains `coding`, `new_worker`, `exploration`, and `initiative_planning`; its order is
 also the manifest order.
 
-The same composition owns the ordered production Employee-backend catalog. Its exact
-keys are `hermes`, `codex`, and `claude`; Gemini is not registered. Every shipped Worker
-type currently starts with `hermes`, its native model, and no Reasoning choice. Those
-three starting values belong to the Worker-type definition rather than to a global
-fallback.
+Which agent backends exist is not this composition's business. It is the conversation
+system's closed set of three — `hermes`, `codex`, and `claude` — and a Worker type naming
+anything else is refused when the registry validates it. There is one door that turns a
+name into a backend, and every part of Panels that reads one goes through it. A Worker
+type's starting backend, model, and Reasoning choice belong to its own definition rather
+than to a global fallback.
 
-Tests build an explicit Employee-backend catalog and Worker-type registry as one exact
-configuration value. This can include the additional `probe` Worker type and fake backend
-definitions without changing production configuration. The registry retains the same
-catalog instance it was validated against, so the two authorities cannot drift.
+Tests build an explicit Worker-type registry as one exact configuration value. This can
+include the additional `probe` Worker type without changing production configuration. The
+probe names a real backend of its own, deliberately not the one the shipped types name,
+so that "a Worker type may run on a different agent" stays under test.
 
 No registry position means “default.” Order is composition and presentation order only.
 
@@ -152,8 +153,10 @@ There is no `/api/seed` route or `panels seed` command.
 
 ## The served manifest and frontend
 
-`GET /api/worker-types` lists the configured Employee backends in stable catalog order,
-then calls the Worker-type registry's `manifest` method for each definition. Every
+`GET /api/worker-types` calls the Worker-type registry's `manifest` method for each
+definition. It does not list the agent backends: what backends this machine has, which
+models each offers, and which reasoning efforts each of those takes are one answer, and
+it comes from `GET /api/conversation/backends`. Every
 Worker-type entry contains the label, Stages, gates, advance map, fields, ceiling range,
 default ceiling, specialist skill id, and default Employee backend, model, and reasoning
 effort. Every Stage also carries its default ownership mode; terminal Stages carry none.
@@ -204,9 +207,10 @@ Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/agents
 
 A Ticket captures the managed ownership default when it enters a Stage. Later global
 changes affect only future entries; the Ticket's explicit Stage override still wins.
-Settings writes use atomic replacement and one writer lock per Worker or Chief. A failed
-event write restores the canonical file, so every backend continues to see the prior
-revision.
+Settings writes use atomic replacement and one writer lock per Worker or Chief. These
+files live beside the database rather than in it, so the writer announces the change
+itself once the new file is in place; if that fails, the canonical file is put back and
+every backend continues to see the prior revision.
 
 Every editable skill name is read-only. Description and Markdown body are ordinary
 direct edits that save, fail, and retry independently. Successful skill edits refresh
@@ -217,26 +221,25 @@ Codex and Claude Code use the same managed home.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for `panels-worker`. Worker and
 Chief endpoints edit skill description and body or launch defaults; the shared
-`PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill.
-`worker_settings_changed` invalidates `workers`, the matching `worker:<id>`, or
-`skills-home` according to the changed role.
+`PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill. A saved change
+announces itself, and any Agents screen on display refetches what it is showing.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
-`src/planner/conversation/hermes_backend_configuration.py`, and
-`web/src/routes/AgentsRoute.svelte`.
+`src/planner/environments/hermes_home.py`, and `web/src/routes/AgentsRoute.svelte`.
 
-## The Ticket owns its Employee launch setup
+## The Ticket owns its launch setup
 
 Each Worker type supplies the Worker, Model, and Reasoning values used to start a new
 Ticket. Creation copies the trio once. From then on, the Ticket owns it; changing the
 Worker type's defaults later does not change existing Tickets, and switching a Ticket's
 Worker does not restore an earlier set of choices.
 
-The complete trio may change only while the Ticket is still at pristine Kickoff, has no
-Employee session, and has no durable conversation binding. One save replaces the whole
-setup. Changing Worker resets Model and Reasoning to that backend's native defaults.
-Changing Model retains an explicit Reasoning choice only when the new model still supports it.
-The first Employee demand or any move past Kickoff freezes the setup.
+The complete trio may be edited in the Kickoff controls only while the Ticket is still
+at pristine Kickoff and has no conversation yet. One save replaces the whole setup.
+Changing Worker resets Model and Reasoning to that backend's native defaults. Changing
+Model retains an explicit Reasoning choice only when the new model still supports it.
+Starting the Ticket's first conversation, or any move past Kickoff, removes those
+controls.
 
 Hermes offers Model but not Reasoning. Codex and Claude Code offer Model, and their
 Reasoning choices depend on the selected model. Leaving Model or Reasoning at its native
@@ -249,25 +252,22 @@ model. A catalog stays fresh for 24 hours across a server restart. The user can 
 keeps the last catalog in the database but reports the failure instead of presenting stale
 choices as a successful refresh.
 
-The stored model and reasoning are requests for the first session, not a live settings
-mirror. After the Ticket binds a session they remain only as the historical Kickoff
-request, while human conversation and Automatic Employee work use the same stored
-backend and durable ACP session.
+The stored backend, model and reasoning are the Ticket's last-chosen values. They start
+as the Worker type's defaults and are kept up to date with what its conversation
+actually runs on, so a fresh conversation starts from where the last one ended.
 
 Chief settings use the same managed authority for Backend, Model, and Reasoning. A new Chief
-conversation copies the then-current trio into its durable binding. An existing Chief session
-continues with the trio it launched with, including after a server restart.
+conversation is started on the then-current trio. An existing one continues on what it was
+started with, including after a server restart.
 
-Permission is not a launch setting and is never copied into a Ticket or conversation binding.
-Every new or loaded Worker or Chief session enforces the backend's full-access mode before use:
-Codex uses `agent-full-access`, Claude Code uses `bypassPermissions`, and Hermes uses YOLO plus
-`dont_ask`. Loading does not reapply Model or Reasoning. Hermes can still surface permission
-behavior its adapter does not suppress.
+Access is not a launch setting and is never copied onto a Ticket. Every conversation runs
+under full access inside its workspace folder; how each backend realises that belongs to its
+adapter and appears nowhere else.
 
-_Code paths:_ `src/planner/conversation/backend_catalog.py` owns the ordered backend
-catalog; `src/planner/worker_types/configuration.py` composes it with the Worker-type
+_Code paths:_ `src/planner/conversation/production_backends.py` composes the three real
+agents; `src/planner/worker_types/configuration.py` joins them to the Worker-type
 registry; `src/planner/tickets/data.py` stores and freezes the Ticket setup; and
-`web/src/components/EmployeeConfigurationSetup.svelte` renders the Kickoff controls.
+`web/src/components/WorkerConfigurationSetup.svelte` renders the Kickoff controls.
 
 ## How a worker finds its specialist
 
@@ -278,11 +278,10 @@ The worker runs `panels worker my-ticket`. That response includes the Ticket's s
 Worker type and the specialist skill named by its `WorkerTypeDefinition`. The worker loads
 that skill with `skill_view` and follows its Stage-specific guidance.
 
-Panels opens or resumes the Ticket's durable ACP conversation. The conversation binding
-owns the Employee-to-session relationship and records the Ticket's selected backend. The
-Ticket mirrors its session id, and one ACP session cannot belong to two Employees. Human
-and Automatic Employee prompts use that same backend and binding. Restart resumes it
-rather than reconstructing identity from terminal state.
+Panels starts the Ticket's conversation the first time it has something to send, and uses
+that same one afterwards. The Ticket names it in `tickets.conversation_id` and nothing else
+owns that name. A restart changes nothing: the conversation is the record, and the backend
+process is started again under it when there is a reason to.
 
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
@@ -294,9 +293,9 @@ Understanding, Stages, Thinking, Runtime Defaults, Drafting, Closeout, Done. Und
 and Runtime Defaults are paired. Runtime Defaults approves an explicit registered backend,
 advertised model, and supported reasoning effort before Drafting records them in the
 Worker profile. Understanding:
-Panels dispatches one automatic opening turn into the durable Employee session, human
-conversation continues that same session, and an Understanding proposal waits for approval
-before the Ticket advances to Stages.
+Panels sends one automatic opening turn into the Ticket's conversation, human
+conversation continues in that same conversation, and an Understanding proposal waits for
+approval before the Ticket advances to Stages.
 
 The repository exposes the same skill source at Codex's and Claude Code's native project
 skill locations, while startup links the listed skills into the planner Hermes home. The
@@ -308,7 +307,8 @@ the backend skill links.
 _Code paths:_ `src/planner/skills/panels-worker/SKILL.md`, the specialist skills under
 `src/planner/skills/`,
 `src/planner/tickets/api.py`, `src/planner/cli/main.py`, and
-`src/planner/conversation/hermes_backend_configuration.py`.
+`src/planner/environments/hermes_home.py` (linked in by `src/planner/core/server.py` at
+startup).
 
 ## Adding a Worker type
 
@@ -325,8 +325,8 @@ One new Worker type needs one definition and one production registration path:
    skills catalog and add the definition to `_PRODUCTION_WORKER_TYPE_DEFINITIONS`. Do not
    register it anywhere else.
 4. Add the skill directory name to `PLANNER_SKILL_NAMES` in
-   `src/planner/conversation/hermes_backend_configuration.py`, so startup provisions it
-   into the worker's Hermes home.
+   `src/planner/environments/hermes_home.py`, so startup provisions it into the
+   worker's Hermes home.
 5. Announce the Worker type at both agent front doors: add the specialist to
    `panels-worker` and describe the new type in `panels-chief-of-staff`.
 6. Restart Panels. Composition validates the complete registry and startup provisions the
@@ -348,11 +348,11 @@ prefix, and reconciliation support before changing state.
 
 - **Tickets and gates** (`tickets-and-gates.md`) explains scope, proposals, resolution,
   Stage ownership and per-Ticket overrides, scope, and approval.
-- **The employee runtime** (`employee-runtime.md`) explains how a worker owns one Ticket
-  step and reaches its specialist.
+- **Worker orchestration** (`worker-orchestration.md`) explains how a Ticket's next
+  worker step gets started and how the worker reaches its specialist.
 - **The frontend** (`frontend.md`) explains the screens driven by the served manifest.
 - **The command-line tool** (`cli.md`) explains the worker and Chief commands.
 
 ---
 
-_Last verified: 2026-07-21._
+_Last verified: 2026-07-26._

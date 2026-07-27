@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
   import { fetchText } from "../lib/api";
-  import {
-    mutateJsonWithResourceEffect,
-    resourceCatalogue
-  } from "../lib/resourceCatalogue";
-  import { PRIORITIES, fieldSlot, labelize } from "../lib/ui";
+  import { mutateJson } from "../lib/mutate";
+  import { queries } from "../lib/queryCatalogue";
+  import { PRIORITIES, fieldSlot, labelize, ticketStatusText } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -17,11 +16,13 @@
     StageOwnershipMode,
     TicketDetail
   } from "../lib/types";
-  import AcpConversation from "../components/AcpConversation.svelte";
+  import LiveConversation from "../components/conversation/LiveConversation.svelte";
+  import type { ConversationState } from "../lib/conversation/conversationState";
+  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
-  import EmployeeConfigurationSetup from "../components/EmployeeConfigurationSetup.svelte";
+  import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
@@ -32,16 +33,16 @@
   let { id }: { id: string } = $props();
   const stableId = untrack(() => id);
 
-  const ticket = resourceCatalogue.ticket(stableId);
-  const sprints = resourceCatalogue.sprintSummaries();
-  const projects = resourceCatalogue.projects();
-  const currentSprint = resourceCatalogue.currentSprint();
-  const manifest = resourceCatalogue.workerTypeManifests();
+  const ticket = createQuery(() => queries.ticket(stableId));
+  const sprints = createQuery(() => queries.sprintSummaries());
+  const projects = createQuery(() => queries.projects());
+  const currentSprint = createQuery(() => queries.currentSprint());
+  const manifest = createQuery(() => queries.workerTypeManifests());
 
-  // Derive the per-Worker-type lifecycle from the RESOURCE (ticket.data?.worker_type), not
+  // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
   // the markup-local {@const detail} which is only bound inside {#if ticket.data}
   // (Codex F2). Null while the manifest is still loading OR when the Worker type is absent
-  // from a loaded manifest; the markup tells those apart via manifest.loading /
+  // from a loaded manifest; the markup tells those apart via manifest.isFetching /
   // manifest.error + a type-present check (Codex F3).
   let lc = $derived(lifecycleFor(manifest.data, ticket.data?.worker_type));
   let manifestMissingWorkerType = $derived(
@@ -62,34 +63,104 @@
 
   let headerError = $state<unknown>(null);
   let copied = $state(false);
+  let conversationBackends = $state<readonly BackendSnapshot[]>([]);
+
+  /** How far open this page's conversation is.
+   *
+   * The state a conversation opens in belongs to the page that shows it, so this page
+   * names its own: a Ticket opens at rest — the composer, and above it one line of
+   * whatever happened last, against the bottom of the ticket. The person moves it from
+   * there and the conversation writes back here when they do.
+   */
+  let conversationState = $state<ConversationState>("rest");
+
+  /** A click on the ticket drops the conversation back one state.
+   *
+   * The conversation is the section under the ticket, not a mode it puts the page into,
+   * so touching the ticket is how you put it away. Read while the click is still on its
+   * way down and neither stopped nor prevented: whatever that click was going to do to
+   * the ticket still happens.
+   */
+  function dropConversationBackOneState(): void {
+    if (conversationState === "opened") conversationState = "peeked";
+    else if (conversationState === "peeked") conversationState = "rest";
+  }
+
+  /** A press in the space either side of the card puts it away, the same as the ticket does.
+   *
+   * The card is centred in its section, so the section is wider than the card and what is
+   * left is page, not conversation. Pressing page is how you put the conversation away, and
+   * where on the page it was is not the point.
+   */
+  function dropConversationOnAPressBesideTheCard(event: MouseEvent): void {
+    const pressed = event.target;
+    if (!(pressed instanceof Element)) return;
+    if (pressed.closest("[data-conversation-pane]") !== null) return;
+    dropConversationBackOneState();
+  }
+
   let projectOptions = $derived([
     { value: "", label: "(no project)" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
 
   onMount(() => {
-    void mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/acknowledge-completed-response`,
-      { method: "POST" },
-      { kind: "ticketChanged", ticketId: stableId }
-    ).catch((err) => {
-      headerError = err;
-    });
+    // What the conversation's model and effort pickers offer. Read once on arrival rather
+    // than through the query catalogue: it is a fact about the machine's agents, and
+    // nothing a person does to this Ticket changes it.
+    void readBackends()
+      .then((snapshots) => (conversationBackends = snapshots))
+      .catch(() => {
+        // The pickers fall back to showing the value already in force, which is the same
+        // thing they show before the catalog has arrived. Nothing here is worth a banner.
+      });
   });
 
+  /** Say that the person here has replied to this Ticket's worker.
+   *
+   * A Ticket parked on a proposal is waiting for its owner, and a reply is an answer of a
+   * kind: it moves to paired. The server owns which statuses move — this says only that a
+   * reply happened, and says it after the conversation took the message, because a reply
+   * that reached nothing is not a reply.
+   *
+   * This screen is the one place that knows both halves. The conversation system is told
+   * nothing about Tickets, and the send door it offers knows nothing about them either.
+   */
+  async function recordHumanReply(): Promise<void> {
+    try {
+      await mutateJson(`/api/tickets/${stableId}/human-reply`, { method: "POST" });
+    } catch (err) {
+      // The message itself got through. Failing to move the Ticket is worth saying and
+      // not worth taking the reply back for.
+      headerError = err;
+    }
+  }
+
+  /** Start this Ticket's conversation, so the first message has somewhere to go.
+   *
+   * The readiness loop starts one when it has a step to send; this is what happens when a
+   * person gets there first. The reply carries the Ticket, so the id comes back from the
+   * same write that made the link.
+   */
+  async function startTicketConversation(): Promise<string | null> {
+    const detail = await mutateJson<TicketDetail>(`/api/tickets/${stableId}/conversation`, {
+      method: "POST"
+    });
+    return detail.conversation_id;
+  }
+
+  /** New: the old conversation is killed and the Ticket stops pointing at it. The next
+   *  message starts a fresh one, through the same door as the first one ever did. */
+  async function resetTicketConversation(): Promise<void> {
+    await mutateJson(`/api/tickets/${stableId}/conversation/reset`, { method: "POST" });
+  }
+
   function patch(body: Record<string, unknown>): Promise<unknown> {
-    const effect = "title" in body
-      ? { kind: "ticketTitleChanged" as const, ticketId: stableId }
-      : { kind: "ticketChanged" as const, ticketId: stableId };
-    return mutateJsonWithResourceEffect(`/api/tickets/${stableId}`, { method: "PATCH", body }, effect);
+    return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/scope`,
-      { method: "POST", body },
-      { kind: "ticketChanged", ticketId: stableId }
-    );
+    return mutateJson(`/api/tickets/${stableId}/scope`, { method: "POST", body });
   }
 
   function currentStageOwnershipOverride(detail: TicketDetail): StageOwnershipMode | null {
@@ -113,45 +184,37 @@
   }
 
   function saveStageOwner(detail: TicketDetail, ownershipMode: string): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
+    return mutateJson(
       `/api/tickets/${stableId}/stage-ownership/${encodeURIComponent(detail.stage)}`,
-      { method: "PUT", body: { ownership_mode: ownershipMode || null } },
-      { kind: "ticketReviewStateChanged", ticketId: stableId }
+      { method: "PUT", body: { ownership_mode: ownershipMode || null } }
     );
   }
 
   function saveNote(field: string, note: string): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/notes/${field}`,
-      { method: "PUT", body: { user_note: note } },
-      { kind: "ticketChanged", ticketId: stableId }
-    );
+    return mutateJson(`/api/tickets/${stableId}/notes/${field}`, {
+      method: "PUT",
+      body: { user_note: note }
+    });
   }
 
   function saveValue(field: string, body: string): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/value/${field}`,
-      { method: "PUT", body: { body } },
-      { kind: "ticketChanged", ticketId: stableId }
-    );
+    return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
+      method: "PUT",
+      body: { body }
+    });
   }
 
   function saveEmployeeConfiguration(
     configuration: EmployeeConfigurationSnapshot
   ): Promise<TicketDetail> {
-    return mutateJsonWithResourceEffect<TicketDetail>(
-      `/api/tickets/${stableId}/employee-configuration`,
-      { method: "PUT", body: configuration },
-      { kind: "ticketChanged", ticketId: stableId }
-    );
+    return mutateJson<TicketDetail>(`/api/tickets/${stableId}/employee-configuration`, {
+      method: "PUT",
+      body: configuration
+    });
   }
 
   function acceptField(field: string, body: Record<string, unknown>): Promise<unknown> {
-    return mutateJsonWithResourceEffect(
-      `/api/tickets/${stableId}/accept/${field}`,
-      { method: "POST", body },
-      { kind: "ticketReviewStateChanged", ticketId: stableId }
-    );
+    return mutateJson(`/api/tickets/${stableId}/accept/${field}`, { method: "POST", body });
   }
 
   function writeClipboard(text: string): Promise<void> {
@@ -185,11 +248,7 @@
       ? "release"
       : "takeover";
     try {
-      await mutateJsonWithResourceEffect(
-        `/api/tickets/${stableId}/${action}`,
-        { method: "POST" },
-        { kind: "ticketReviewStateChanged", ticketId: stableId }
-      );
+      await mutateJson(`/api/tickets/${stableId}/${action}`, { method: "POST" });
     } catch (err) {
       headerError = err;
     }
@@ -203,27 +262,12 @@
 
   function markerFor(detail: TicketDetail): string[] {
     const markers: string[] = [];
-    if (detail.ticket_status === "agent_running_step") markers.push("agent-running-step");
+    if (detail.ticket_status === "agent") markers.push("agent");
     if (detail.ticket_status === "errored") markers.push("errored");
-    if (detail.ticket_status === "user_takeover") markers.push("user-takeover");
-    if (detail.ticket_status === "paired_work") markers.push("paired-work");
+    if (detail.ticket_status === "user") markers.push("user");
+    if (detail.ticket_status === "paired") markers.push("paired");
     if (detail.blocked) markers.push("blocked");
     return markers;
-  }
-
-  const STATUS_DISPLAY: Record<string, string> = {
-    empty: "empty",
-    agent_running_step: "running step",
-    awaiting_approval: "awaiting approval",
-    proposal_discussion: "in discussion",
-    paired_work: "paired work",
-    user_takeover: "user takeover",
-    needs_user: "needs user",
-    errored: "errored"
-  };
-
-  function statusDisplay(status: string): string {
-    return STATUS_DISPLAY[status] || status.replace(/_/g, " ");
   }
 
   function conversationEmployeeLabel(detail: TicketDetail): string {
@@ -261,23 +305,11 @@
       kind: "blocks"
     });
     try {
-      await mutateJsonWithResourceEffect(
-        `/api/links?${query.toString()}`,
-        { method: "DELETE" },
-        { kind: "ticketChanged", ticketId: stableId }
-      );
+      await mutateJson(`/api/links?${query.toString()}`, { method: "DELETE" });
     } catch (err) {
       headerError = err;
     }
   }
-
-  onDestroy(() => {
-    ticket.dispose();
-    sprints.dispose();
-    projects.dispose();
-    currentSprint.dispose();
-    manifest.dispose();
-  });
 </script>
 
 <section
@@ -286,7 +318,7 @@
   data-ticket-id={stableId}
   data-stage={ticket.data?.stage}
 >
-  <ResourceState error={ticket.error} loading={ticket.loading} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
+  <ResourceState error={ticket.error} loading={ticket.isFetching} hasData={Boolean(ticket.data)} loadingText="Loading ticket...">
     {#if ticket.data && (manifest.error || manifestMissingWorkerType)}
       <div class="ticket-page" data-ticket-manifest-error>
         <ErrorLine
@@ -296,7 +328,11 @@
     {:else if ticket.data}
       {@const detail = ticket.data}
       <div class="ticket-page">
-      <main class="ticket-doc">
+      <!-- The document hears a click only to put the conversation away, and it hears it
+           in the capture phase so nothing inside can have gone yet. There is no keyboard
+           twin here because Escape does the same thing from anywhere on the page, and it
+           belongs to the conversation rather than to the document above it. -->
+      <main class="ticket-doc" onclickcapture={dropConversationBackOneState}>
         <header class="ticket-head">
           <div class="ticket-title">
             <InlineEdit
@@ -309,11 +345,11 @@
             <span
               class="ticket-status-display"
               class:ticket-status-display--attention={
-                ["awaiting_approval", "proposal_discussion", "needs_user"].includes(detail.ticket_status || "empty")
+                ["awaiting_approval", "needs_user"].includes(detail.ticket_status || "empty")
               }
               data-ticket-status={detail.ticket_status || "empty"}
             >
-              <span class="ticket-status-dot"></span>{statusDisplay(detail.ticket_status || "empty")}
+              <span class="ticket-status-dot"></span>{ticketStatusText(detail.ticket_status || "empty")}
             </span>
             <EnumPill
               value={detail.priority}
@@ -422,11 +458,10 @@
                 multiline
                 placeholder="Short orientation for a cold reader..."
                 onSave={(raw) =>
-                  mutateJsonWithResourceEffect(
-                    `/api/tickets/${stableId}/recap`,
-                    { method: "PUT", body: { body: raw } },
-                    { kind: "ticketChanged", ticketId: stableId }
-                  )}
+                  mutateJson(`/api/tickets/${stableId}/recap`, {
+                    method: "PUT",
+                    body: { body: raw }
+                  })}
               />
             </Disclosure>
           </div>
@@ -457,9 +492,8 @@
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
-                <EmployeeConfigurationSetup
+                <WorkerConfigurationSetup
                   ticketId={stableId}
-                  employeeBackends={manifest.data?.employee_backends ?? []}
                   employeeBackend={detail.employee_backend}
                   employeeLaunchModel={detail.employee_launch_model}
                   employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
@@ -503,13 +537,24 @@
           </div>
         </div>
       </main>
-      <aside class="chat-rail" data-chat>
-        <AcpConversation
-          employeeId={stableId}
-          employeeLabel={conversationEmployeeLabel(detail)}
-          deferInitialAttach={detail.employee_configuration_editable}
-        />
-      </aside>
+      <div
+        class="ticket-conversation-layer"
+        data-conversation-layer-host
+        onclickcapture={dropConversationOnAPressBesideTheCard}
+      >
+        <div class="ticket-conversation-column">
+          <LiveConversation
+            bind:conversationState
+            conversationId={detail.conversation_id}
+            label={conversationEmployeeLabel(detail)}
+            backends={conversationBackends}
+            senderLabel="owner"
+            onStartConversation={startTicketConversation}
+            onNewConversation={resetTicketConversation}
+            onMessageAccepted={recordHumanReply}
+          />
+        </div>
+      </div>
     </div>
     {/if}
   </ResourceState>

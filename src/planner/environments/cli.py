@@ -10,7 +10,6 @@ from pathlib import Path
 
 import click
 
-from planner.conversation.hermes_backend_configuration import resolve_hermes_python
 from planner.core.config import Config, load_config
 from planner.environments.app import build_exported_app, validate_app_manifest
 from planner.environments.app_compatibility import prove_previous_app_compatibility
@@ -29,6 +28,7 @@ from planner.environments.deployment import (
     deploy_app,
     run_current_app_backup,
 )
+from planner.environments.hermes_home import resolve_hermes_python
 from planner.environments.logic.credentials import parse_environment_file
 from planner.environments.logic.launch_env import (
     build_environment_run_env,

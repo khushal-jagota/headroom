@@ -8,6 +8,7 @@ from sqlite3 import Connection
 from typing import get_type_hints
 
 from click.testing import CliRunner
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.cli.main import main
@@ -28,7 +29,7 @@ _EMPTY_FIELDS_DEFAULT = (
 )
 
 
-def _app(tmp_path: Path):
+def _app(tmp_path: Path) -> FastAPI:
     db_path = tmp_path / "worker-type-stage.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -82,89 +83,15 @@ def test_fresh_schema_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
     assert columns["fields"][4] is None
     assert "ticket_type" not in columns
     assert "state" not in columns
-    assert "employee_session_id" in columns
-    assert columns["employee_session_id"][3] == 0
-    assert columns["employee_session_id"][4] is None
+    assert "conversation_id" in columns
+    assert columns["conversation_id"][3] == 0
+    assert columns["conversation_id"][4] is None
     assert "chat_session_key" not in columns
     indexes = {row[1] for row in conn.execute("PRAGMA index_list(tickets)")}
     assert "idx_tickets_stage" in indexes
     assert "idx_tickets_worker_type_stage" in indexes
     assert "idx_tickets_state" not in indexes
     assert "idx_tickets_type_state" not in indexes
-
-
-def _create_almost_v20_ticket_table(
-    conn: Connection,
-    *,
-    recap_definition: str = "TEXT NOT NULL DEFAULT ''",
-    ceiling_definition: str = "TEXT NOT NULL",
-) -> None:
-    conn.execute("PRAGMA foreign_keys=OFF")
-    conn.executescript(
-        f"""
-        CREATE TABLE tickets (
-          id TEXT PRIMARY KEY,
-          title TEXT NOT NULL CHECK (length(title) <= 200),
-          worker_type TEXT NOT NULL,
-          employee_backend TEXT NOT NULL,
-          stage TEXT NOT NULL DEFAULT 'needs_kickoff',
-          priority TEXT NOT NULL DEFAULT 'P3' CHECK (priority IN ('P0','P1','P2','P3')),
-          deadline TEXT,
-          project_id TEXT REFERENCES projects(id),
-          sprint_item_id TEXT REFERENCES sprint_items(id),
-          sprint_id TEXT REFERENCES sprints(id),
-          recap {recap_definition},
-          ceiling {ceiling_definition},
-          at_cap TEXT NOT NULL DEFAULT 'propose' CHECK (at_cap IN ('stop','propose')),
-          ticket_status TEXT NOT NULL DEFAULT 'empty'
-            CHECK (ticket_status IN ('empty','agent_running_step','awaiting_approval',
-                                     'user_takeover','errored')),
-          implementer TEXT CHECK (implementer IN ('khushal','panels_worker',
-                                                  'hermes_codex','hermes_claude')),
-          employee_session_id TEXT,
-          alias TEXT,
-          fields TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        );
-        INSERT INTO tickets (
-          id, title, worker_type, employee_backend, stage, ceiling, fields, created_at, updated_at
-        ) VALUES (
-          't_incomplete', 'Incomplete', 'coding', 'hermes', 'needs_success', 'needs_success',
-          '{_EMPTY_FIELDS_DEFAULT}', 1, 1
-        );
-        """
-    )
-    conn.execute("PRAGMA foreign_keys=ON")
-
-
-def test_incomplete_target_constraints_are_rebuilt(tmp_path: Path) -> None:
-    conn = connect(str(tmp_path / "incomplete.db"))
-    _create_almost_v20_ticket_table(
-        conn, ceiling_definition="TEXT NOT NULL DEFAULT 'needs_success'"
-    )
-    create_schema(conn)
-    columns = {row[1]: row for row in conn.execute("PRAGMA table_info(tickets)")}
-    assert columns["ceiling"][4] is None
-    row = conn.execute(
-        "SELECT worker_type, stage, ceiling, fields FROM tickets WHERE id = 't_incomplete'"
-    ).fetchone()
-    assert row is not None
-    assert tuple(row[:3]) == ("coding", "needs_success", "needs_success")
-    assert '"kickoff"' in row["fields"]
-
-
-def test_incomplete_non_ceiling_constraint_is_rebuilt(tmp_path: Path) -> None:
-    conn = connect(str(tmp_path / "incomplete-recap.db"))
-    _create_almost_v20_ticket_table(conn, recap_definition="TEXT DEFAULT ''")
-    create_schema(conn)
-    columns = {row[1]: row for row in conn.execute("PRAGMA table_info(tickets)")}
-    assert columns["recap"][3] == 1
-    row = conn.execute(
-        "SELECT worker_type, stage, ceiling FROM tickets WHERE id = 't_incomplete'"
-    ).fetchone()
-    assert row is not None
-    assert tuple(row) == ("coding", "needs_success", "needs_success")
 
 
 def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:

@@ -25,6 +25,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
@@ -83,18 +84,10 @@ PROBE_MANIFEST = {
     "ceiling_range": ["needs_kickoff", "needs_alpha", "needs_beta", "done"],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
-    "default_employee_backend": "probe-backend",
-    "default_employee_model": "probe-model",
-    "default_employee_reasoning_effort": "probe-high",
+    "default_backend": "claude",
+    "default_model": "probe-model",
+    "default_reasoning_effort": "probe-high",
 }
-
-# The gating accept event order the engine emits for a direct gating accept with an
-# onward scope pair (observed once, then pinned): the accept, the linear advance, the
-# onward scope change, and the durable-control reset.
-_ACCEPT_EVENTS = ["proposal_accepted", "stage_changed", "scope_changed", "ticket_status_changed"]
-# A parked propose-with-recap: the filed proposal, the recap write, the awaiting reset.
-_PROPOSE_EVENTS = ["proposal_filed", "recap_updated", "ticket_status_changed"]
-
 
 @pytest.fixture
 def probe_installed() -> Iterator[None]:
@@ -106,7 +99,7 @@ def probe_installed() -> Iterator[None]:
 
 
 @pytest.fixture
-def app_db(tmp_path: Path):
+def app_db(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "gate.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -126,12 +119,8 @@ def app_db(tmp_path: Path):
     return app, db_path
 
 
-def _event_kinds(client: TestClient, tid: str) -> list[str]:
-    return [e["kind"] for e in client.get(f"/api/tickets/{tid}/events").json()["events"]]
-
-
 def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
-    app_db, probe_installed: None
+    app_db: tuple[FastAPI, Path], probe_installed: None
 ) -> None:
     app, db_path = app_db
     with TestClient(app) as client:
@@ -159,7 +148,6 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
 
         # 4-5. Accept the (create-time) kickoff proposal. Keep the ceiling AT the state
         # advanced into with at_cap=propose, so the next stage's proposal PARKS.
-        base = len(_event_kinds(client, tid))
         accept_kickoff = client.post(
             f"/api/tickets/{tid}/accept/kickoff",
             json={"next_ceiling": "needs_alpha", "at_cap": "propose"},
@@ -171,7 +159,6 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         assert k["at_cap"] == "propose"
         assert k["fields"]["kickoff"]["value"] == "kickoff body"
         assert k["fields"]["kickoff"]["proposal"] is None
-        assert _event_kinds(client, tid)[base:] == _ACCEPT_EVENTS
 
         # Drive alpha then beta: propose-with-recap parks on the registry-selected field,
         # then accept advances with the exact next ceiling.
@@ -182,7 +169,6 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
             # 2-3. Propose the current gating field with a non-empty recap; it PARKS on
             # exactly the field the registry gates for the current state.
             at_cap = "propose" if field == "alpha" else "stop"
-            base = len(_event_kinds(client, tid))
             proposed = client.post(
                 f"/api/tickets/{tid}/propose",
                 json={"body": f"{field} proposal", "recap": f"recap {field}"},
@@ -194,11 +180,8 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
             # The proposal parks: the ceiling is unchanged from before the propose,
             # and no other field carries a proposal.
             assert parked["ceiling"] == k["ceiling"]
-            assert _event_kinds(client, tid)[base:] == _PROPOSE_EVENTS
 
-            # 4-5. Accept: exact next state/ceiling, settled value, cleared proposal,
-            # and the exact event order.
-            base = len(_event_kinds(client, tid))
+            # 4-5. Accept: exact next state/ceiling, settled value, cleared proposal.
             accepted = client.post(
                 f"/api/tickets/{tid}/accept/{field}",
                 json={"next_ceiling": next_ceiling, "at_cap": at_cap},
@@ -209,7 +192,6 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
             assert a["at_cap"] == at_cap
             assert a["fields"][field]["value"] == f"{field} proposal"
             assert a["fields"][field]["proposal"] is None
-            assert _event_kinds(client, tid)[base:] == _ACCEPT_EVENTS
             k = a
 
         # 6. Landed at done, ceiling done.
@@ -219,22 +201,21 @@ def test_go_no_go_gate_probe_drives_to_done_through_the_real_api(
         assert final["fields"]["alpha"]["value"] == "alpha proposal"
         assert final["fields"]["beta"]["value"] == "beta proposal"
 
-    # 7. No worker session/turn was ever created — the whole drive is human/API-only.
+    # 7. No worker was ever started — the whole drive is human/API-only, so the Ticket
+    # never came to name a conversation.
     conn = connect(str(db_path))
     try:
         row = conn.execute(
-            "SELECT employee_session_id FROM tickets WHERE id = ?", (tid,)
+            "SELECT conversation_id FROM tickets WHERE id = ?", (tid,)
         ).fetchone()
-        assert row["employee_session_id"] is None
-        turns = conn.execute(
-            "SELECT count(*) AS n FROM employee_step_runs WHERE ticket_id = ?", (tid,)
-        ).fetchone()
-        assert turns["n"] == 0
+        assert row["conversation_id"] is None
     finally:
         conn.close()
 
 
-def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -> None:
+def test_gate_invalid_inputs_return_exact_codes(
+    app_db: tuple[FastAPI, Path], probe_installed: None
+) -> None:
     app, _db_path = app_db
     with TestClient(app) as client:
         made = client.post(
@@ -297,7 +278,9 @@ def test_gate_invalid_inputs_return_exact_codes(app_db, probe_installed: None) -
         }
 
 
-def test_gate_error_precedence_not_found_beats_invalid_field(app_db, probe_installed: None) -> None:
+def test_gate_error_precedence_not_found_beats_invalid_field(
+    app_db: tuple[FastAPI, Path], probe_installed: None
+) -> None:
     # Resolving the ticket's type before validating the field means a missing ticket
     # is reported as not_found — it beats an invalid-field error.
     app, _db_path = app_db
@@ -308,7 +291,9 @@ def test_gate_error_precedence_not_found_beats_invalid_field(app_db, probe_insta
         assert resp.json()["error"]["detail"] == {"ticket_id": "t_missing"}
 
 
-def test_gate_external_work_create_and_reconcile_both_types(app_db, probe_installed: None) -> None:
+def test_gate_external_work_create_and_reconcile_both_types(
+    app_db: tuple[FastAPI, Path], probe_installed: None
+) -> None:
     app, _db_path = app_db
     chief = {"X-Plan-Actor": "chief"}
     with TestClient(app) as client:

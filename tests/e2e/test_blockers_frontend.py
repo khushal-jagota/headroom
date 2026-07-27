@@ -3,30 +3,39 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
 import httpx
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 WAIT_MS = 10_000
 
 
-def _post_stage(server, ticket_id: str, stage: str) -> dict:
+def _post_stage(server: ServerHandle, ticket_id: str, stage: str) -> JsonObject:
     resp = httpx.post(
         f"{server.base}/api/tickets/{ticket_id}/stage",
         json={"to_stage": stage},
         timeout=10.0,
     )
     assert resp.status_code < 300, f"POST Stage -> {resp.status_code}: {resp.text}"
-    return resp.json()
+    body: JsonObject = resp.json()
+    return body
 
 
-def _get_ticket(server, ticket_id: str) -> dict:
+def _get_ticket(server: ServerHandle, ticket_id: str) -> JsonObject:
     resp = httpx.get(f"{server.base}/api/tickets/{ticket_id}", timeout=10.0)
     assert resp.status_code < 300, f"GET ticket -> {resp.status_code}: {resp.text}"
-    return resp.json()
+    body: JsonObject = resp.json()
+    return body
 
 
 def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     blocker = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "Prerequisite"
@@ -73,7 +82,7 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
             (later_dependent,),
         )
         conn.execute(
-            "UPDATE tickets SET stage = 'needs_approach', ticket_status = 'empty' WHERE id = ?",
+            "UPDATE tickets SET stage = 'needs_approach', ticket_status = 'blocked' WHERE id = ?",
             (shared_dependent,),
         )
     for ticket_id in (blocker, kickoff_dependent, later_dependent, shared_dependent):
@@ -84,27 +93,26 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         server,
         "#/workspace",
         f'[data-card][data-ticket-id="{later_dependent}"]',
-        settled=True,
     )
     blocked = '[data-bucket-section][data-bucket-key="blocked"]'
-    stopped = '[data-bucket-section][data-bucket-key="stopped"]'
-    kickoff = '[data-bucket-section][data-bucket-key="kickoff"]'
-    approval = '[data-bucket-section][data-bucket-key="needs_approval"]'
+    empty = '[data-bucket-section][data-bucket-key="empty"]'
+    approval = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
     active_card = f'[data-card][data-ticket-id="{blocker}"]'
     later_card = f'[data-card][data-ticket-id="{later_dependent}"]'
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
-    # Blocked collapses by default and claims only idle blocked tickets; a
-    # blocked ticket with a real status keeps its status bucket, and a blocked
-    # kickoff-stage parked proposal stays in Kickoff.
+    # Blocked is the resting status of a ticket held by a live blocker, and its
+    # group collapses by default. A ticket with a live blocker that carries any
+    # other status — a parked kickoff proposal, a later approval — groups by
+    # that status instead.
     assert page.locator(blocked).get_attribute("open") is None
-    assert page.locator(stopped).get_attribute("open") is not None
-    assert page.locator(f"{stopped} {active_card}").is_visible()
+    assert page.locator(empty).get_attribute("open") is not None
+    assert page.locator(f"{empty} {active_card}").is_visible()
     assert page.locator(approval).get_attribute("open") is not None
     assert page.locator(f"{approval} {later_card}").is_visible()
     assert page.locator(f"{blocked} {later_card}").count() == 0
-    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
+    assert page.locator(f"{approval} {kickoff_card}").count() == 1
     assert page.locator(f"{blocked} {kickoff_card}").count() == 0
     assert not page.locator(f"{blocked} {shared_card}").is_visible()
     page.locator(f"{blocked} > summary").click()
@@ -117,8 +125,10 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
     ) == "false"
     assert "Prerequisite" not in page.inner_text(f"{blocked} > .disclosure-body")
 
+    # Removing the last live blocker settles the ticket back to empty, so the
+    # card moves out of Blocked and the emptied group stops rendering.
     cli(server, "ticket", "unblock", shared_dependent, "--by", blocker)
-    page.wait_for_selector(f"{stopped} {shared_card}", timeout=WAIT_MS)
+    page.wait_for_selector(f"{empty} {shared_card}", timeout=WAIT_MS)
     assert page.locator(blocked).count() == 0
 
     _post_stage(server, blocker, "done")
@@ -127,13 +137,16 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         state="attached",
         timeout=WAIT_MS,
     )
-    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
+    assert page.locator(f"{approval} {kickoff_card}").count() == 1
     assert _get_ticket(server, later_dependent)["stage"] == "needs_plan"
     assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 
 
 def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     active_blocker = cli(
         server,
@@ -183,7 +196,7 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
     _post_stage(server, cleared_blocker, "done")
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{blocked_ticket}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{blocked_ticket}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{blocked_ticket}", ready)
 
     # At needs_kickoff the direct blockers render as chips inside the Kickoff
     # approval card's context row; the standalone section is suppressed.
@@ -254,7 +267,10 @@ def test_ticket_detail_shows_only_active_direct_blockers_and_removes_each_link(
 
 
 def test_kickoff_card_context_row_approves_and_standalone_blockers_return(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     blocker = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "Standing blocker"
@@ -273,7 +289,7 @@ def test_kickoff_card_context_row_approves_and_standalone_blockers_return(
         blocker,
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready)
 
     # Structure: worker pills and blocker chips inside the approval card, in one
     # context row directly above the Approve/ceiling action row.

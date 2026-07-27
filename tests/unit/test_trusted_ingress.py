@@ -5,9 +5,8 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
-import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -25,7 +24,7 @@ _VITE_CSS_ROUTE = "/_app/assets/" + next(
 )
 
 
-def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[object, Path]:
+def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning-test.db"
     db_path.parent.mkdir(parents=True)
     boot = connect(str(db_path))
@@ -66,6 +65,7 @@ def _ticket(db_path: Path) -> str:
 async def _websocket_messages(
     app: Any,
     headers: list[tuple[bytes, bytes]],
+    path: str = "/api/nothing-serves-this",
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
 
@@ -75,7 +75,7 @@ async def _websocket_messages(
     async def send(message: dict[str, Any]) -> None:
         messages.append(message)
 
-    await app({"type": "websocket", "headers": headers}, receive, send)
+    await app({"type": "websocket", "path": path, "headers": headers}, receive, send)
     return messages
 
 
@@ -218,27 +218,38 @@ def test_static_and_file_surfaces_pass_through_trusted_ingress(tmp_path: Path) -
     assert allowed_ticket_file.status_code == 200
 
 
-def test_events_websocket_trusted_ingress_and_origin_policy(tmp_path: Path) -> None:
+def test_websocket_trusted_ingress_and_origin_policy(tmp_path: Path) -> None:
+    # Panels serves no WebSocket of its own any more, so the guard is driven directly
+    # rather than through a route. The guard stays: it is what a WebSocket added later
+    # arrives behind, and a scope nobody serves is exactly the one nobody would remember
+    # to protect.
     app, _db_path = _make_app(tmp_path)
 
-    with TestClient(app) as client:
-        with client.websocket_connect("/api/events", headers=REMOTE) as websocket:
-            websocket.close()
-        with pytest.raises(WebSocketDisconnect) as wrong_login:
-            with client.websocket_connect("/api/events", headers=REMOTE_WRONG):
-                pass
-        with pytest.raises(WebSocketDisconnect) as wrong_origin:
-            with client.websocket_connect(
-                "/api/events",
-                headers={**REMOTE, "Origin": "https://evil.example"},
-            ):
-                pass
+    def first_message(headers: list[tuple[bytes, bytes]]) -> dict[str, Any]:
+        messages = asyncio.run(_websocket_messages(app, headers))
+        assert messages, "the guard said nothing at all"
+        return messages[0]
 
-    assert wrong_login.value.code == 1008
-    assert wrong_origin.value.code == 1008
+    allowed = first_message([(b"tailscale-user-login", ALLOWED_LOGIN.encode("latin1"))])
+    wrong_login = first_message([(b"tailscale-user-login", b"other@example.com")])
+    wrong_origin = first_message(
+        [
+            (b"tailscale-user-login", ALLOWED_LOGIN.encode("latin1")),
+            (b"origin", b"https://evil.example"),
+        ]
+    )
+
+    # A refused connection is closed by the guard itself, with its own reason.
+    assert wrong_login["type"] == "websocket.close"
+    assert wrong_login["code"] == 1008
+    assert wrong_origin["type"] == "websocket.close"
+    assert wrong_origin["code"] == 1008
+    # An admitted one is not: it goes past the guard and meets the router, which has no
+    # WebSocket to give it. Whatever that closure says, it is not the guard's refusal.
+    assert allowed.get("code") != 1008
 
 
-def test_events_websocket_rejects_duplicate_tailscale_login(tmp_path: Path) -> None:
+def test_websocket_rejects_duplicate_tailscale_login(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 
     messages = asyncio.run(
@@ -260,7 +271,7 @@ def test_events_websocket_rejects_duplicate_tailscale_login(tmp_path: Path) -> N
     ]
 
 
-def test_events_websocket_rejects_duplicate_origin(tmp_path: Path) -> None:
+def test_websocket_rejects_duplicate_origin(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 
     messages = asyncio.run(

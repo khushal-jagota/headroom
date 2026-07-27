@@ -12,6 +12,7 @@ ceiling sourcing through the same definition-backed paths."""
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -29,11 +30,10 @@ from planner.tickets.contracts import (
 )
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.configuration import (
-    PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS,
-    ConfiguredEmployeeRuntimeDefinitions,
+    ConfiguredWorkerRuntimeDefinitions,
     configured_worker_type_registry,
-    install_employee_runtime_definitions_for_test,
-    restore_employee_runtime_definitions_for_test,
+    install_worker_runtime_definitions_for_test,
+    restore_worker_runtime_definitions_for_test,
 )
 from planner.worker_types.contracts import WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
@@ -51,32 +51,28 @@ CODING_PROBE_WORKER_TYPE_DEFINITION: WorkerTypeDefinition = WorkerTypeDefinition
 )
 
 
-def _two_type_registry():
+def _two_type_registry() -> WorkerTypeRegistry:
     return WorkerTypeRegistry(
         (CODING_WORKER_TYPE_DEFINITION, CODING_PROBE_WORKER_TYPE_DEFINITION),
         # CODING_PROBE_WORKER_TYPE_DEFINITION inherits coding's profile (specialist_skill=
         # "panels-worker-coding"), so the catalog must carry it or R14 fails.
         known_skills=frozenset({"panels-worker", "panels-worker-coding"}),
         known_toolset_profiles=frozenset({"default"}),
-        employee_backend_catalog=(PRODUCTION_EMPLOYEE_RUNTIME_DEFINITIONS.employee_backend_catalog),
     )
 
 
 @pytest.fixture
-def two_type_registry():
+def two_type_registry() -> Iterator[None]:
     """Install a registry carrying coding + a coding-shaped second type for the
     persistence doors, then restore production composition after the test."""
     registry = _two_type_registry()
-    previous_definitions = install_employee_runtime_definitions_for_test(
-        ConfiguredEmployeeRuntimeDefinitions(
-            registry.employee_backend_catalog,
-            registry,
-        )
+    previous_definitions = install_worker_runtime_definitions_for_test(
+ConfiguredWorkerRuntimeDefinitions(registry)
     )
     try:
         yield
     finally:
-        restore_employee_runtime_definitions_for_test(previous_definitions)
+        restore_worker_runtime_definitions_for_test(previous_definitions)
 
 
 @pytest.fixture
@@ -256,12 +252,6 @@ def test_metadata_write_rejects_invalid_stored_tuple_before_durable_effect(
         )
         == before
     )
-    assert (
-        tmp_db.execute(
-            "SELECT COUNT(*) FROM events WHERE entity_id = 't_invalid_write'"
-        ).fetchone()[0]
-        == 0
-    )
 
 
 def test_metadata_write_rejects_missing_declared_field_before_durable_effect(
@@ -289,12 +279,6 @@ def test_metadata_write_rejects_missing_declared_field_before_durable_effect(
     assert (
         tmp_db.execute("SELECT title FROM tickets WHERE id = 't_missing_field_write'").fetchone()[0]
         == "T"
-    )
-    assert (
-        tmp_db.execute(
-            "SELECT COUNT(*) FROM events WHERE entity_id = 't_missing_field_write'"
-        ).fetchone()[0]
-        == 0
     )
 
 
@@ -385,7 +369,7 @@ def test_note_door_rejects_undeclared_field(tmp_db: Connection, fake_clock: Test
         tickets_data.set_field_user_note(
             tmp_db,
             ticket.id,
-            field="not_a_field",  # type: ignore[arg-type]
+            field="not_a_field",
             user_note="x",
             actor="human",
             now=now,
@@ -465,7 +449,7 @@ def test_second_type_reaches_coding_default_engine_paths(
     tmp_db: Connection, fake_clock: TestClock, two_type_registry: None
 ) -> None:
     # review-F6 demonstration: a coding-shaped non-coding row flows through the
-    # coding-DEFAULT resolution engine (decide_*) — it advances by coding semantics,
+    # coding-DEFAULT proposal resolver (decide_*) — it advances by coding semantics,
     # NOT a second definition threaded through resolution. This is exactly why no
     # second PRODUCTION definition may be registered until t_tt02b threads the
     # definition through resolution/external-work.

@@ -9,6 +9,7 @@ description = "Planning system v2 — database-backed personal planning server a
 requires-python = ">=3.12"
 dependencies = [
   "agent-client-protocol==0.11.0",
+  "alembic",
   "fastapi",
   "uvicorn",
   "click",
@@ -26,6 +27,12 @@ where = ["src"]
 [tool.setuptools.package-data]
 planner = [
   "py.typed",
+  # The migrations directory is not an importable package (Alembic loads it by path), so
+  # its files ship only because they are named here. Without them an installed Panels
+  # cannot build or upgrade a database.
+  "core/migrations/env.py",
+  "core/migrations/script.py.mako",
+  "core/migrations/versions/*.py",
   "skills/*/SKILL.md",
   "skills/*/agents/*.yaml",
   "skills/*/references/*.md",
@@ -41,13 +48,23 @@ exclude = [".worktrees"]
 select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.ruff.lint.per-file-ignores]
-# The schema DDL is a single SQL string; its column definitions run past 100 cols.
-"src/planner/core/db.py" = ["E501"]
+# Migrations hold SQL verbatim, and some column definitions run past 100 cols. Rewrapping
+# them would change text that is meant to stay exactly as it was applied.
+"src/planner/core/migrations/versions/*.py" = ["E501"]
 
 [tool.mypy]
 strict = true
-files = ["src"]
+# Tests are checked at the same strictness as production, and that is the point: a test's
+# fixture parameters are the objects under test, so leaving them unannotated would type
+# them ``Any`` and silently stop checking every call made through them. Moving a type is
+# then meant to list every call site it broke here, in one run, instead of one test run at
+# a time.
+files = ["src", "tests"]
 mypy_path = "src"
+# ``tests`` has no __init__.py — it is a PEP 420 namespace package rooted at the repo root
+# (see the pytest ``pythonpath`` setting below). Without this, mypy fails on package layout
+# before it checks anything.
+explicit_package_bases = true
 python_version = "3.12"
 
 [tool.pytest.ini_options]

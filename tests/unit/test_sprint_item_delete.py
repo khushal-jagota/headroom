@@ -1,15 +1,25 @@
+"""Deleting a Sprint Item.
+
+Permanent, direct-only, and refused while any Ticket still hangs off it. What the caller
+gets back is the footprint that just changed — the item, the sprints it sat in, and every
+entity that was linked to it — because those are the screens the removal is visible on.
+
+Nothing is written down about the removal itself. The commit announces itself, so there is
+no audit row to assert and none of these tests looks for one.
+"""
+
 from __future__ import annotations
 
-import json
 from sqlite3 import Connection
 
 import pytest
 
 from planner.core import links as core_links
 from planner.core.clock import TestClock as PlannerTestClock
-from planner.core.contracts import EventKind, LinkKind
+from planner.core.contracts import LinkKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints import data as sprints_data
+from planner.sprints.contracts import SprintItem
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
 
@@ -20,7 +30,7 @@ def _item(
     title: str,
     *,
     sprint_id: str | None = None,
-):
+) -> SprintItem:
     return sprints_data.create_item(
         conn,
         title=title,
@@ -31,7 +41,7 @@ def _item(
 
 
 @pytest.mark.parametrize("in_sprint", [False, True])
-def test_delete_item_removes_sprint_or_backlog_item_and_keeps_minimal_audit(
+def test_delete_item_removes_the_item_and_its_links_and_names_what_changed(
     tmp_db: Connection,
     fake_clock: PlannerTestClock,
     in_sprint: bool,
@@ -57,54 +67,25 @@ def test_delete_item_removes_sprint_or_backlog_item_and_keeps_minimal_audit(
     )
     core_links.add_link(tmp_db, blocker.id, item.id, LinkKind.blocks, now)
 
-    deleted = sprints_data.delete_item(
-        tmp_db,
-        item.id,
-        actor="human",
-        clock=fake_clock,
-    )
+    deleted = sprints_data.delete_item(tmp_db, item.id, actor="human")
 
     assert deleted.sprint_item_id == item.id
     assert deleted.title == "Redundant item"
     assert deleted.sprint_ids == ((sprint_id,) if sprint_id is not None else ())
     assert deleted.linked_entity_ids == (blocker.id,)
+
     with pytest.raises(PlannerError) as exc:
         sprints_data.read_item(tmp_db, item.id)
     assert exc.value.code is ErrorCode.not_found
-    assert tmp_db.execute(
-        "SELECT 1 FROM links WHERE from_id = ? OR to_id = ?", (item.id, item.id)
-    ).fetchone() is None
-
-    item_events = tmp_db.execute(
-        "SELECT kind, payload, created_at FROM events WHERE entity_id = ? ORDER BY id",
-        (item.id,),
-    ).fetchall()
-    assert len(item_events) == 1
-    assert item_events[0]["kind"] == EventKind.sprint_item_deleted.value
-    assert json.loads(item_events[0]["payload"]) == {
-        "sprint_item_id": item.id,
-        "title": "Redundant item",
-        "actor": "human",
-        "sprint_id": sprint_id,
-    }
-    assert item_events[0]["created_at"] == now
-    assert all(
-        item.id not in json.loads(row["payload"]).values()
-        for row in tmp_db.execute(
-            "SELECT payload FROM events WHERE kind = 'link_added'"
-        ).fetchall()
+    # The link went with it, so nothing left points at an item that is gone.
+    assert (
+        tmp_db.execute(
+            "SELECT 1 FROM links WHERE from_id = ? OR to_id = ?", (item.id, item.id)
+        ).fetchone()
+        is None
     )
-    survivor_event = tmp_db.execute(
-        "SELECT payload FROM events WHERE entity_id = ? AND kind = 'link_removed' "
-        "ORDER BY id DESC LIMIT 1",
-        (blocker.id,),
-    ).fetchone()
-    assert survivor_event is not None
-    assert json.loads(survivor_event["payload"]) == {
-        "from_id": blocker.id,
-        "to_id": item.id,
-        "kind": "blocks",
-    }
+    # And the thing on the other end of that link is untouched.
+    assert tickets_data.read_ticket(tmp_db, blocker.id).id == blocker.id
 
 
 def test_delete_item_refuses_ordered_child_tickets_without_changes(
@@ -125,20 +106,9 @@ def test_delete_item_refuses_ordered_child_tickets_without_changes(
                 sprint_item_id=item.id,
             ).id
         )
-    before_events = tuple(
-        tuple(row)
-        for row in tmp_db.execute(
-            "SELECT entity_id, kind, payload, created_at FROM events ORDER BY id"
-        ).fetchall()
-    )
 
     with pytest.raises(PlannerError) as exc:
-        sprints_data.delete_item(
-            tmp_db,
-            item.id,
-            actor="human",
-            clock=fake_clock,
-        )
+        sprints_data.delete_item(tmp_db, item.id, actor="human")
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.message == "sprint item has child tickets"
@@ -146,13 +116,10 @@ def test_delete_item_refuses_ordered_child_tickets_without_changes(
         "sprint_item_id": item.id,
         "ticket_ids": sorted(child_ids),
     }
+    # Refused means nothing moved: the item is still there and so is every child.
     assert sprints_data.read_item(tmp_db, item.id).item.id == item.id
-    assert tuple(
-        tuple(row)
-        for row in tmp_db.execute(
-            "SELECT entity_id, kind, payload, created_at FROM events ORDER BY id"
-        ).fetchall()
-    ) == before_events
+    for child_id in child_ids:
+        assert tickets_data.read_ticket(tmp_db, child_id).sprint_item_id == item.id
 
 
 def test_delete_item_rejects_agent_and_missing_item(
@@ -161,58 +128,11 @@ def test_delete_item_rejects_agent_and_missing_item(
 ) -> None:
     item = _item(tmp_db, fake_clock, "Direct only")
     with pytest.raises(PlannerError) as agent_exc:
-        sprints_data.delete_item(
-            tmp_db,
-            item.id,
-            actor="agent",
-            clock=fake_clock,
-        )
+        sprints_data.delete_item(tmp_db, item.id, actor="agent")
     assert agent_exc.value.code is ErrorCode.agent_forbidden
     assert sprints_data.read_item(tmp_db, item.id).item.id == item.id
 
     with pytest.raises(PlannerError) as missing_exc:
-        sprints_data.delete_item(
-            tmp_db,
-            "si_missing",
-            actor="human",
-            clock=fake_clock,
-        )
+        sprints_data.delete_item(tmp_db, "si_missing", actor="human")
     assert missing_exc.value.code is ErrorCode.not_found
     assert missing_exc.value.detail == {"id": "si_missing"}
-
-
-def test_delete_item_rolls_back_when_audit_append_fails(
-    tmp_db: Connection,
-    fake_clock: PlannerTestClock,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    item = _item(tmp_db, fake_clock, "Rollback item")
-    before_events = tuple(
-        tuple(row)
-        for row in tmp_db.execute(
-            "SELECT entity_id, kind, payload, created_at FROM events ORDER BY id"
-        ).fetchall()
-    )
-    original_append_event = sprints_data.append_event
-
-    def fail_deletion_audit(conn, entity_id, kind, payload, created_at):
-        if kind is EventKind.sprint_item_deleted:
-            raise RuntimeError("audit unavailable")
-        return original_append_event(conn, entity_id, kind, payload, created_at)
-
-    monkeypatch.setattr(sprints_data, "append_event", fail_deletion_audit)
-    with pytest.raises(RuntimeError, match="audit unavailable"):
-        sprints_data.delete_item(
-            tmp_db,
-            item.id,
-            actor="human",
-            clock=fake_clock,
-        )
-
-    assert sprints_data.read_item(tmp_db, item.id).item.id == item.id
-    assert tuple(
-        tuple(row)
-        for row in tmp_db.execute(
-            "SELECT entity_id, kind, payload, created_at FROM events ORDER BY id"
-        ).fetchall()
-    ) == before_events

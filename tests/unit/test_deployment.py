@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from planner.environments.app import digest_app_artifact, digest_app_source
+from planner.environments.app import AppManifest, digest_app_artifact, digest_app_source
 from planner.environments.deployment import (
     DeploymentError,
     DeploymentResult,
@@ -408,7 +408,7 @@ def test_staged_candidate_validation_failure_precedes_old_app_move(
         *,
         expected_sha: str | None = None,
         require_runtime: bool = True,
-    ):
+    ) -> AppManifest:
         if label == "staged candidate app":
             raise DeploymentError("staged candidate app is invalid: injected")
         return real_validate_app(
@@ -502,10 +502,10 @@ def test_fallback_cleanup_failure_retains_healthy_candidate_and_fallback(
     database = _database(current)
     real_rmtree = shutil.rmtree
 
-    def fail_fallback_cleanup(path: Path, *args: object, **kwargs: object) -> None:
+    def fail_fallback_cleanup(path: Path, ignore_errors: bool = False) -> None:
         if path.name.startswith(".app-fallback-"):
             raise OSError("fallback cleanup failed")
-        real_rmtree(path, *args, **kwargs)
+        real_rmtree(path, ignore_errors=ignore_errors)
 
     monkeypatch.setattr("planner.environments.deployment.shutil.rmtree", fail_fallback_cleanup)
     with pytest.raises(OSError, match="fallback cleanup failed"):

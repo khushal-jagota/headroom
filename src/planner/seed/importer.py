@@ -9,9 +9,8 @@ import sqlite3
 from pathlib import Path
 from typing import cast
 
-from planner.core.contracts import EventKind
+from planner.conversation.contracts import require_conversation_backend_key
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
 from planner.core.ids import ID_PREFIXES, new_id
 from planner.projects import data as projects_data
 from planner.projects.contracts import Project
@@ -34,7 +33,7 @@ from planner.seed.logic.workspace import parse_workspace
 from planner.tickets.contracts import FieldSlot, TicketFields
 from planner.tickets.logic import fields_codec
 from planner.worker_settings import service as worker_settings_service
-from planner.worker_types.configuration import configured_employee_runtime_definitions
+from planner.worker_types.configuration import configured_worker_runtime_definitions
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 
@@ -48,12 +47,12 @@ def seed_from_source(
 ) -> MigrationReport:
     """now is unix seconds from the caller's clock (the app clock in the server,
     a fixed instant in tests) — the importer never reads wall time itself (§13)."""
-    runtime_definitions = configured_employee_runtime_definitions()
+    runtime_definitions = configured_worker_runtime_definitions()
     worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
-    selected_employee_backend = runtime_definitions.employee_backend_catalog.require_registered(
+    selected_employee_backend = require_conversation_backend_key(
         employee_backend
         if employee_backend is not None
-        else worker_type_definition.worker_profile.default_employee_backend
+        else worker_type_definition.worker_profile.default_backend
     )
     root = Path(source_dir)
     if not root.exists():
@@ -184,18 +183,6 @@ def _import_sprint(
             now,
         ),
     )
-    append_event(
-        conn,
-        sprint_id,
-        EventKind.sprint_created,
-        {
-            "name": sprint.name,
-            "date_start": sprint.date_start,
-            "date_end": sprint.date_end,
-            "source": "seed",
-        },
-        now,
-    )
     report.sprints += 1
     return sprint_id
 
@@ -234,17 +221,6 @@ def _import_items(
                 now,
                 now,
             ),
-        )
-        append_event(
-            conn,
-            item_id,
-            EventKind.sprint_item_created,
-            {
-                "title": item.title,
-                "sprint_id": item_sprint_id,
-                "source": "seed",
-            },
-            now,
         )
         if item_is_deferred:
             report.deferred_items += 1
@@ -308,7 +284,7 @@ def _import_tickets(
             default_stage_ownership_mode = (
                 worker_settings_service.read_stage_default_ownership_for_ticket_entry(
                     database_parent,
-                    configured_employee_runtime_definitions().worker_type_registry,
+                    configured_worker_runtime_definitions().worker_type_registry,
                     ticket.worker_type,
                     ticket.stage,
                 )
@@ -318,7 +294,8 @@ def _import_tickets(
             "id, title, worker_type, employee_backend, stage, priority, deadline, "
             "project_id, sprint_item_id, "
             "sprint_id, recap, ceiling, at_cap, default_stage_ownership_mode, "
-            "employee_session_id, alias, fields, created_at, updated_at) "
+            "alias, fields, created_at, updated_at, "
+            "ticket_status_changed_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ticket_id,
@@ -339,25 +316,12 @@ def _import_tickets(
                     if default_stage_ownership_mode is not None
                     else None
                 ),
-                ticket.employee_session_id,
                 ticket.alias,
                 fields_codec.fields_to_json(fields),
                 now,
                 now,
+                now,
             ),
-        )
-        append_event(
-            conn,
-            ticket_id,
-            EventKind.ticket_created,
-            {
-                "title": ticket.title,
-                "stage": ticket.stage,
-                "alias": ticket.alias,
-                "source": "seed",
-                "employee_backend": employee_backend,
-            },
-            now,
         )
         report.tickets += 1
 
@@ -390,13 +354,6 @@ def _import_ideas(
                 now,
                 now,
             ),
-        )
-        append_event(
-            conn,
-            idea_id,
-            EventKind.idea_created,
-            {"title": idea.title, "source": "seed"},
-            now,
         )
         report.ideas += 1
 

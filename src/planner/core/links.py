@@ -1,6 +1,6 @@
 """Link create/remove over the `links` table plus the blocked-derivation (§3.6,
-SPEC lines 54–57). Core infrastructure over the DB (like events.py) — sqlite3 lives
-here, not in dispatch/logic. Config-free: `now` is always a parameter."""
+SPEC lines 54–57). Core infrastructure over the DB — sqlite3 lives here, not in
+dispatch/logic. Config-free: `now` is always a parameter."""
 
 from __future__ import annotations
 
@@ -12,11 +12,9 @@ from planner.core.contracts import (
     BlockedBySummaryRow,
     BlockerSummary,
     BlocksTargetSummaryRow,
-    EventKind,
     LinkKind,
 )
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
 
 # Endpoint prefix rules: (allowed from-prefixes, allowed to-prefixes).
 _ENDPOINT_RULES: Final[dict[LinkKind, tuple[frozenset[str] | None, frozenset[str] | None]]] = {
@@ -145,8 +143,6 @@ def add_link(
                 "link already exists or violates a link constraint",
                 detail,
             ) from exc
-        # 6. Event.
-        append_event(conn, from_id, EventKind.link_added, detail, now)
     except BaseException:
         if own_txn:
             conn.execute("ROLLBACK")
@@ -166,7 +162,6 @@ def remove_link(
     )
     if cursor.rowcount == 0:
         raise PlannerError(ErrorCode.not_found, "link not found", detail)
-    append_event(conn, from_id, EventKind.link_removed, detail, now)
 
 
 def blocked_target_ids(conn: sqlite3.Connection) -> set[str]:

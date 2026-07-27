@@ -15,6 +15,10 @@ _RETIRED_CONFIG_NAMES = (
     "max_runs",
     "failure_limit",
     "run_max_seconds",
+    "ws_poll_ms",
+    "ws_heartbeat_ms",
+    "ui_debounce_ms",
+    "events_read_limit",
 )
 
 
@@ -24,7 +28,7 @@ def test_config_defaults_expose_only_live_runtime_knobs() -> None:
     assert isinstance(cfg, Config)
     assert cfg.dispatch_enabled is True
     assert cfg.tick_seconds == 60
-    assert cfg.ws_heartbeat_ms == 15000
+    assert cfg.sse_heartbeat_ms == 15000
     assert cfg.trusted_ingress_provider is None
     assert cfg.trusted_ingress_allowed_login is None
     assert cfg.trusted_ingress_canonical_origin is None
@@ -131,17 +135,26 @@ def test_retired_environment_keys_are_ignored() -> None:
         assert not hasattr(cfg, name)
 
 
-def test_ws_heartbeat_ms_can_be_overridden_by_environment() -> None:
-    cfg = load_config(path=None, env={"PLAN_WS_HEARTBEAT_MS": "125"})
+def test_sse_heartbeat_ms_can_be_overridden_by_environment() -> None:
+    cfg = load_config(path=None, env={"PLAN_SSE_HEARTBEAT_MS": "125"})
 
-    assert cfg.ws_heartbeat_ms == 125
+    assert cfg.sse_heartbeat_ms == 125
 
 
-def test_checked_in_config_exposes_ws_heartbeat_cadence() -> None:
+@pytest.mark.parametrize("heartbeat", ["0", "-1"])
+def test_a_heartbeat_cadence_at_or_below_zero_refuses_to_load(heartbeat: str) -> None:
+    # A zero interval would spin the change stream instead of keeping it quiet.
+    with pytest.raises(PlannerError) as raised:
+        load_config(path=None, env={"PLAN_SSE_HEARTBEAT_MS": heartbeat})
+
+    assert "sse_heartbeat_ms must be greater than zero" in raised.value.message
+
+
+def test_checked_in_config_exposes_sse_heartbeat_cadence() -> None:
     path = Path(__file__).parents[2] / "config.yaml"
 
-    assert "ws_heartbeat_ms: 15000" in path.read_text()
-    assert load_config(path=str(path), env={}).ws_heartbeat_ms == 15000
+    assert "sse_heartbeat_ms: 15000" in path.read_text()
+    assert load_config(path=str(path), env={}).sse_heartbeat_ms == 15000
 
 
 def test_backup_directory_is_independently_configurable() -> None:

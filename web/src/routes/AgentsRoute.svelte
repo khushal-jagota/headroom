@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { onDestroy, untrack } from "svelte";
+  import { untrack } from "svelte";
+  import { createQuery } from "@tanstack/svelte-query";
   import ManagedLaunchDefaults from "../components/ManagedLaunchDefaults.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import RoleSkillEditor from "../components/RoleSkillEditor.svelte";
-  import { mutateJsonWithResourceEffect, resourceCatalogue } from "../lib/resourceCatalogue";
+  import { mutateJson } from "../lib/mutate";
+  import { queries } from "../lib/queryCatalogue";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
   import type {
@@ -22,16 +24,23 @@
   const stableRoleKind = untrack(() => roleKind);
   const stableRoleId = untrack(() => roleId || null);
 
-  const workers = stableRoleKind === "index" || stableRoleKind === "agent"
-    ? resourceCatalogue.workers()
-    : null;
-  const manifests = stableRoleKind === "index" ? resourceCatalogue.workerTypeManifests() : null;
-  const skillsHome = stableRoleKind === "index" || stableRoleKind === "skill"
-    ? resourceCatalogue.skillsHome()
-    : null;
-  const worker = stableRoleKind === "worker" && stableRoleId
-    ? resourceCatalogue.worker(stableRoleId)
-    : null;
+  // Each page of this screen reads only what it shows; the rest stay switched off.
+  const workers = createQuery(() => ({
+    ...queries.workers(),
+    enabled: stableRoleKind === "index" || stableRoleKind === "agent"
+  }));
+  const manifests = createQuery(() => ({
+    ...queries.workerTypeManifests(),
+    enabled: stableRoleKind === "index"
+  }));
+  const skillsHome = createQuery(() => ({
+    ...queries.skillsHome(),
+    enabled: stableRoleKind === "index" || stableRoleKind === "skill"
+  }));
+  const worker = createQuery(() => ({
+    ...queries.worker(stableRoleId ?? ""),
+    enabled: stableRoleKind === "worker" && stableRoleId !== null
+  }));
 
   const ownerOptions: Array<{ value: StageOwnershipMode; label: string }> = [
     { value: "worker", label: "worker" },
@@ -45,10 +54,10 @@
   let stageSaveErrors = $state<Record<string, unknown>>({});
 
   let indexedManifests = $derived(
-    new Map((manifests?.data?.worker_types || []).map((item) => [item.worker_type, item]))
+    new Map((manifests.data?.worker_types || []).map((item) => [item.worker_type, item]))
   );
   let sharedWorkerSkill = $derived(
-    skillsHome?.data?.skills.find((skill) => skill.name === "panels-worker")
+    skillsHome.data?.skills.find((skill) => skill.name === "panels-worker")
   );
 
   function stageCount(workerSummary: WorkerManagementSummary): number {
@@ -64,10 +73,9 @@
     field: "description" | "markdown_body",
     raw: string
   ): Promise<void> {
-    await mutateJsonWithResourceEffect<WorkerManagementSettings>(
+    await mutateJson<WorkerManagementSettings>(
       `/api/workers/${encodeURIComponent(settings.worker_type)}/skill`,
-      { method: "PATCH", body: { [field]: raw } },
-      { kind: "workerSettingsChanged", workerType: settings.worker_type }
+      { method: "PATCH", body: { [field]: raw } }
     );
   }
 
@@ -75,22 +83,20 @@
     field: "description" | "markdown_body",
     raw: string
   ): Promise<void> {
-    await mutateJsonWithResourceEffect<ChiefManagementSettings>(
-      "/api/workers/chief-of-staff/skill",
-      { method: "PATCH", body: { [field]: raw } },
-      { kind: "workerSettingsChanged", workerType: "chief_of_staff" }
-    );
+    await mutateJson<ChiefManagementSettings>("/api/workers/chief-of-staff/skill", {
+      method: "PATCH",
+      body: { [field]: raw }
+    });
   }
 
   async function saveSharedWorkerSkillField(
     field: "description" | "markdown_body",
     raw: string
   ): Promise<void> {
-    await mutateJsonWithResourceEffect<ManagedSkill>(
-      "/api/skills/panels-worker",
-      { method: "PATCH", body: { [field]: raw } },
-      { kind: "workerSettingsChanged", workerType: "skills_home" }
-    );
+    await mutateJson<ManagedSkill>("/api/skills/panels-worker", {
+      method: "PATCH",
+      body: { [field]: raw }
+    });
   }
 
   async function saveStageOwner(
@@ -102,10 +108,9 @@
     stageSaving = { ...stageSaving, [stage]: true };
     stageSaveErrors = { ...stageSaveErrors, [stage]: null };
     try {
-      await mutateJsonWithResourceEffect<WorkerManagementSettings>(
+      await mutateJson<WorkerManagementSettings>(
         `/api/workers/${encodeURIComponent(settings.worker_type)}/stages/${encodeURIComponent(stage)}/default-ownership`,
-        { method: "PUT", body: { ownership_mode: ownershipMode } },
-        { kind: "workerSettingsChanged", workerType: settings.worker_type }
+        { method: "PUT", body: { ownership_mode: ownershipMode } }
       );
     } catch (err) {
       stageSaveErrors = { ...stageSaveErrors, [stage]: err };
@@ -118,21 +123,19 @@
     settings: WorkerManagementSettings,
     next: EmployeeConfigurationSnapshot
   ): Promise<EmployeeConfigurationSnapshot> {
-    return mutateJsonWithResourceEffect<WorkerManagementSettings>(
+    return mutateJson<WorkerManagementSettings>(
       `/api/workers/${encodeURIComponent(settings.worker_type)}/launch-defaults`,
-      { method: "PUT", body: next },
-      { kind: "workerSettingsChanged", workerType: settings.worker_type }
+      { method: "PUT", body: next }
     ).then((saved) => saved.launch_defaults);
   }
 
   function saveChiefLaunchDefaults(
     next: EmployeeConfigurationSnapshot
   ): Promise<EmployeeConfigurationSnapshot> {
-    return mutateJsonWithResourceEffect<ChiefManagementSettings>(
-      "/api/workers/chief-of-staff/launch-defaults",
-      { method: "PUT", body: next },
-      { kind: "workerSettingsChanged", workerType: "chief_of_staff" }
-    ).then((saved) => saved.launch_defaults);
+    return mutateJson<ChiefManagementSettings>("/api/workers/chief-of-staff/launch-defaults", {
+      method: "PUT",
+      body: next
+    }).then((saved) => saved.launch_defaults);
   }
 
   function stageOwnerValue(settings: WorkerManagementSettings, stage: string): StageOwnershipMode {
@@ -158,7 +161,7 @@
   }
 
   $effect(() => {
-    const settings = worker?.data?.settings;
+    const settings = worker.data?.settings;
     if (!settings) return;
     const next = { ...selectedOwners };
     const nextServer = { ...lastServerOwners };
@@ -175,13 +178,6 @@
     if (selectedChanged && !sameOwners(selectedOwners, next)) selectedOwners = next;
     if (!sameOwners(lastServerOwners, nextServer)) lastServerOwners = nextServer;
   });
-
-  onDestroy(() => {
-    workers?.dispose();
-    manifests?.dispose();
-    skillsHome?.dispose();
-    worker?.dispose();
-  });
 </script>
 
 <section
@@ -197,12 +193,12 @@
         <p>Every configurable role. Agents run at the top level; Workers run one Ticket at a time.</p>
       </header>
       <ResourceState
-        error={workers?.error || manifests?.error || skillsHome?.error}
-        loading={workers?.loading || manifests?.loading || skillsHome?.loading}
-        hasData={Boolean(workers?.data && manifests?.data && skillsHome?.data)}
+        error={workers.error || manifests.error || skillsHome.error}
+        loading={workers.isFetching || manifests.isFetching || skillsHome.isFetching}
+        hasData={Boolean(workers.data && manifests.data && skillsHome.data)}
         loadingText="Loading agents..."
       >
-        {#if workers?.data}
+        {#if workers.data}
           <section class="agents-index-section" data-agents-section>
             <header class="agents-section-head">
               <h2>Agents</h2>
@@ -273,12 +269,12 @@
     <div class="agents-page agents-page--detail">
       <a class="agents-back" href="#/agents" data-agents-back>← Back to Agents</a>
       <ResourceState
-        error={workers?.error}
-        loading={workers?.loading}
-        hasData={Boolean(workers?.data)}
+        error={workers.error}
+        loading={workers.isFetching}
+        hasData={Boolean(workers.data)}
         loadingText="Loading agent..."
       >
-        {#if workers?.data}
+        {#if workers.data}
           {@const chief = workers.data.chief_of_staff}
           <article class="role-detail" data-agent-detail data-agent-id="chief_of_staff">
             <header class="agents-detail-head">
@@ -293,7 +289,6 @@
 
             <ManagedLaunchDefaults
               label={chief.label}
-              employeeBackends={workers.data.employee_backends}
               value={chief.launch_defaults}
               onSave={saveChiefLaunchDefaults}
             />
@@ -316,8 +311,8 @@
     <div class="agents-page agents-page--detail">
       <a class="agents-back" href="#/agents" data-agents-back>← Back to Agents</a>
       <ResourceState
-        error={skillsHome?.error}
-        loading={skillsHome?.loading}
+        error={skillsHome.error}
+        loading={skillsHome.isFetching}
         hasData={Boolean(sharedWorkerSkill)}
         loadingText="Loading Worker skill..."
       >
@@ -350,12 +345,12 @@
     <div class="agents-page agents-page--detail">
       <a class="agents-back" href="#/agents" data-agents-back>← Back to Agents</a>
       <ResourceState
-        error={worker?.error}
-        loading={worker?.loading}
-        hasData={Boolean(worker?.data)}
+        error={worker.error}
+        loading={worker.isFetching}
+        hasData={Boolean(worker.data)}
         loadingText="Loading worker..."
       >
-        {#if worker?.data}
+        {#if worker.data}
           {@const detail = worker.data}
           {@const manifest = detail.manifest}
           {@const editableSkill = displaySkillForEdit(detail.settings)}
@@ -371,7 +366,6 @@
 
             <ManagedLaunchDefaults
               label={manifest.label || labelize(detail.settings.worker_type)}
-              employeeBackends={detail.employee_backends}
               value={detail.settings.launch_defaults}
               onSave={(next) => saveWorkerLaunchDefaults(detail.settings, next)}
             />

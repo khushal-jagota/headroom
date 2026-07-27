@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
-  import {
-    mutateJsonWithResourceEffect,
-    resourceCatalogue
-  } from "../lib/resourceCatalogue";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { mutateJson } from "../lib/mutate";
+  import { queries } from "../lib/queryCatalogue";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -16,8 +14,8 @@
   import SectionHeading from "../components/SectionHeading.svelte";
   import SegmentedControl from "../components/SegmentedControl.svelte";
 
-  const ideas = resourceCatalogue.ideas();
-  const projects = resourceCatalogue.projects();
+  const ideas = createQuery(() => queries.ideas());
+  const projects = createQuery(() => queries.projects());
 
   let projectOptions = $derived([
     { value: null, label: "None" },
@@ -37,11 +35,7 @@
     if (detail.trim()) payload.body = detail;
     if (project) payload.project_id = project;
     try {
-      await mutateJsonWithResourceEffect(
-        "/api/ideas",
-        { method: "POST", body: payload },
-        { kind: "ideaCreated" }
-      );
+      await mutateJson("/api/ideas", { method: "POST", body: payload });
       title = "";
       detail = "";
       project = null;
@@ -58,11 +52,6 @@
       void capture();
     }
   }
-
-  onDestroy(() => {
-    ideas.dispose();
-    projects.dispose();
-  });
 </script>
 
 <section class="ideas-screen" data-screen="ideas">
@@ -105,7 +94,7 @@
         </div>
       </section>
       <div class="list" data-ideas>
-        <ResourceState error={ideas.error} loading={ideas.loading} hasData={Boolean(ideas.data)} loadingText="Loading ideas...">
+        <ResourceState error={ideas.error} loading={ideas.isFetching} hasData={Boolean(ideas.data)} loadingText="Loading ideas...">
         {#if !(ideas.data?.ideas || []).length}
           <div class="quiet-line">No ideas yet.</div>
         {:else}

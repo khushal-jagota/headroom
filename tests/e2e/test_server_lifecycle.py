@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
-from conftest import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
+from tests.e2e.harness import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
 
 
 def _direct_children(parent_pid: int) -> list[int]:
@@ -94,6 +94,10 @@ def _isolated_server_env(handle: ServerHandle, control_socket: Path) -> dict[str
             "PLAN_LOGS_DIR": str(handle.log_path.parent / "second-logs"),
             "PLAN_DISPATCHER_LOCK_PATH": str(handle.log_path.parent / "second-dispatcher.lock"),
             "PLAN_SERVER_CONTROL_SOCKET": str(control_socket),
+            # Never the developer's own agent home, the same as the harness. This one is
+            # refused before it composes anything, but that is the supervisor's doing
+            # rather than something this env should be relying on.
+            "PLAN_HERMES_HOME": str(handle.log_path.parent / "second-hermes-home"),
         }
     )
     return env
@@ -216,8 +220,7 @@ def test_restart_replaces_one_generation_and_preserves_supervisor(server: Server
     _wait_until(lambda: not _process_exists(application_pid), "old application remained alive")
     _wait_for_http(server.base)
     meta = httpx.get(f"{server.base}/api/meta").json()
-    assert meta["test_mode"] is True
-    assert meta["ui_debounce_ms"] == 50
+    assert meta == {"test_mode": True, "app_sha": None}
 
 
 def test_restart_acknowledgement_client_close_precedes_child_shutdown(

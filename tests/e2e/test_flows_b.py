@@ -9,7 +9,11 @@ sleeps."""
 
 from __future__ import annotations
 
-from playwright.sync_api import Page
+from collections.abc import Callable
+from typing import Any
+
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 WAIT_MS = 10_000
 
@@ -65,7 +69,7 @@ E32_LOOSE_TITLE = "E32 loose ticket"
 
 # Sprint Overview (rev6 redesign): the three headed inline-editable sections. Kickoff
 # renders its seeded fields; a Mid-sprint Review sub-field round-trips through the
-# shared inlineEdit → per-field PATCH → WS-flush re-render (the same path as Day/ticket).
+# shared inlineEdit → per-field PATCH → refetch re-render (the same path as Day/ticket).
 SO_SPRINT_NAME = "SO sprint"
 SO_START = "2026-07-01"  # range contains baseline planning date 2026-07-04
 SO_END = "2026-07-14"  # a 2-week span
@@ -74,11 +78,18 @@ SO_BET = "SO 100 on the waitlist, first cohort activated."
 SO_MID_STAND = "SO halfway in, the bet is tracking."
 
 
-def _set_now(api, server, iso):
+def _set_now(api: ApiHelper, server: ServerHandle, iso: str) -> JsonObject:
     return api.direct_post(server, "/api/test/set-now", {"now": iso})
 
 
-def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
+def _scope_and_advance(
+    server: ServerHandle,
+    api: ApiHelper,
+    cli: Callable[..., JsonObject],
+    tid: str,
+    ceiling: str,
+    bodies: dict[str, str],
+) -> JsonObject:
     # Unattributed direct scope; attributed worker agents are rejected.
     g = api.direct_post(
         server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "propose"}
@@ -102,23 +113,18 @@ def _scope_and_advance(server, api, cli, tid, ceiling, bodies):
     return d
 
 
-def _reload_settle(page: Page, ready_selector):
+def _reload_settle(page: Page, ready_selector: str) -> None:
     # open_page opens FRESH pages; after page.reload() the __plannerDebug counters
-    # reset and the since=0 catch-up replay fires one flush — re-apply full discipline.
+    # reset — re-apply the same gate the fixture applies.
     page.reload()
     page.wait_for_selector(ready_selector, timeout=WAIT_MS)
     page.wait_for_function(
-        "() => window.__plannerDebug && window.__plannerDebug.wsOpens >= 1",
+        "() => window.__plannerDebug && window.__plannerDebug.sseOpens >= 1",
         timeout=WAIT_MS,
     )
-    page.wait_for_function(
-        "() => window.__plannerDebug && window.__plannerDebug.flushes >= 1",
-        timeout=WAIT_MS,
-    )
-    page.wait_for_selector(ready_selector, timeout=WAIT_MS)
 
 
-def _snap_ticket(p: Page):
+def _snap_ticket(p: Page) -> dict[str, str | None]:
     return {
         "stage": p.get_attribute('section[data-screen="ticket"]', "data-stage"),
         "mode": p.get_attribute("[data-approval-block]", "data-mode"),
@@ -127,9 +133,9 @@ def _snap_ticket(p: Page):
     }
 
 
-def _snap_board(p: Page, mid):
+def _snap_board(p: Page, mid: str) -> dict[str, Any]:
     card = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
-    bucket = '[data-bucket-section][data-bucket-key="needs_approval"]'
+    bucket = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
         "bucket": p.inner_text(f"{bucket} > summary .board-workspace-bucket-label"),
@@ -141,13 +147,19 @@ def _snap_board(p: Page, mid):
     }
 
 
-def _snap_day(p: Page):
+def _snap_day(p: Page) -> dict[str, str]:
     # The Day overview renders each structured field in its own slot; the Brief Take
     # body is the state that must survive a reload unchanged.
     return {"take": p.inner_text("[data-day-take-body]")}
 
 
-def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, open_page, cli, api):
+def test_e28_day_overview_empty_until_rollover_agent(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     # The Day is the OVERVIEW, not a dashboard: the plan tree, today-ticket list,
     # review-count and chat are gone from it. With deterministic boundary removed,
     # crossing to the new planning date leaves the structured overview unauthored until
@@ -155,14 +167,20 @@ def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, op
     r = _set_now(api, server, NOW_0501)
     assert r["planning_date"] == DAY_CUR, r
 
-    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
     page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
     # The four fields render in their slots, but stay empty by default.
     assert page.text_content("[data-day-focus]") == ""
-    assert page.text_content("[data-day-take-body]").strip() == ""
-    assert page.text_content("[data-day-watch-body]").strip() == ""
-    assert page.text_content("[data-day-lands-body]").strip() == ""
+    take_text = page.text_content("[data-day-take-body]")
+    assert take_text is not None
+    assert take_text.strip() == ""
+    watch_text = page.text_content("[data-day-watch-body]")
+    assert watch_text is not None
+    assert watch_text.strip() == ""
+    lands_text = page.text_content("[data-day-lands-body]")
+    assert lands_text is not None
+    assert lands_text.strip() == ""
     d = api.get(server, "/api/day/today")
     assert d["id"] == f"day_{DAY_CUR}", d
     assert d["focus"] == d["brief_take"] == d["watchout"] == d["if_today_lands"] == ""
@@ -170,7 +188,9 @@ def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, op
     # inner_text: the date label is text-transform:uppercase, and inner_text would
     # return the rendered "JUL 5" while text_content keeps the raw DOM text. The
     # redesign speaks the short month form (Jul, not July).
-    assert "Jul 5" in page.text_content("[data-day-date]")
+    date_text = page.text_content("[data-day-date]")
+    assert date_text is not None
+    assert "Jul 5" in date_text
 
     # The dropped surfaces have NO Day home anymore (backend endpoints untouched).
     assert page.query_selector(".plan-tree") is None
@@ -180,7 +200,13 @@ def test_e28_day_overview_empty_until_rollover_agent(server, context_factory, op
     assert page.query_selector("[data-day-overview] [data-ticket-id]") is None
 
 
-def test_e29_day_overview_structured_and_edit(server, context_factory, open_page, cli, api):
+def test_e29_day_overview_structured_and_edit(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     # Seed the four overview fields on the current planning day (baseline 2026-07-04)
     # in one PATCH, then amend two of them in place — a scalar (focus) and a markdown
     # body (watchout) — each editing on its own, no whole-blob re-serialize.
@@ -195,17 +221,19 @@ def test_e29_day_overview_structured_and_edit(server, context_factory, open_page
         },
     )
 
-    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
     page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
 
     assert page.inner_text("[data-day-focus]") == E29_FOCUS
     assert page.inner_text("[data-day-take-body]") == E29_TAKE
     assert page.inner_text("[data-day-watch-body]") == E29_WATCH
     assert page.inner_text("[data-day-lands-body]") == E29_LANDS
-    assert "Jul 4" in page.text_content("[data-day-date]")  # raw DOM (label uppercases)
+    e29_date_text = page.text_content("[data-day-date]")  # raw DOM (label uppercases)
+    assert e29_date_text is not None
+    assert "Jul 4" in e29_date_text
 
     # InlineEdit remains one contenteditable surface and commits real edits on blur.
-    def edit_field(selector, text):
+    def edit_field(selector: str, text: str) -> None:
         f0 = page.evaluate("window.__plannerDebug.flushes")
         page.evaluate(
             "(a) => { const el = document.querySelector(a.sel);"
@@ -241,14 +269,19 @@ def test_e29_day_overview_structured_and_edit(server, context_factory, open_page
     assert d["if_today_lands"] == E29_LANDS, d
 
 
-def test_day_markdown_focus_noop_keeps_raw_source(server, context_factory, open_page, api):
+def test_day_markdown_focus_noop_keeps_raw_source(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    api: ApiHelper,
+) -> None:
     api.direct_patch(
         server,
         f"/api/day/{DAY_PREV}",
         {"watchout": DAY_NOOP_MARKDOWN},
     )
 
-    page = open_page(context_factory(), server, "#/day", "[data-day-overview]", settled=True)
+    page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
     page.wait_for_selector("[data-day-watch-body] h1", timeout=WAIT_MS)
 
     assert page.inner_text("[data-day-watch-body] h1") == "Day raw forms"
@@ -269,7 +302,13 @@ def test_day_markdown_focus_noop_keeps_raw_source(server, context_factory, open_
     assert d["watchout"] == DAY_NOOP_MARKDOWN, d
 
 
-def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api):
+def test_e30_review_approve_to_done(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     # A ticket advanced to needs_implementation through claimless CLI proposals (the
     # agent's normal path now — no dispatcher, no claim). Ceiling needs_implementation
     # means the implementation proposal PARKS pending; approving it via Review defaults
@@ -287,12 +326,12 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     )
 
     ready = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{mid}", ready, settled=True)
+    page = open_page(context_factory(), server, f"#/ticket/{mid}", ready)
     assert (
         page.get_attribute('section[data-screen="ticket"]', "data-stage")
         == "needs_implementation"
     )
-    assert page.query_selector('[data-marker="agent-running-step"]') is None
+    assert page.query_selector('[data-marker="agent"]') is None
 
     # Worker files implementation claimless; ceiling needs_implementation ⇒ it PARKS
     # pending (nothing auto-accepts past the ceiling).
@@ -318,7 +357,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
 
     # Review decision + approve via the Review card, ordinary field path.
     card = f'[data-review-card][data-ticket-id="{mid}"]'
-    rpage = open_page(context_factory(), server, "#/review", card, settled=True)
+    rpage = open_page(context_factory(), server, "#/review", card)
     assert rpage.get_attribute(card, "data-field") == "implementation"
     decisions = api.get(server, "/api/review")["ticket_decisions"]
     assert len(decisions) == 1, decisions
@@ -354,7 +393,7 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     assert r2["fields"]["closeout"]["proposal"]["body"] == E30_CLOSEOUT, r2
 
     card2 = f'[data-review-card][data-ticket-id="{mid}"]'
-    rpage2 = open_page(context_factory(), server, "#/review", card2, settled=True)
+    rpage2 = open_page(context_factory(), server, "#/review", card2)
     assert rpage2.get_attribute(card2, "data-field") == "closeout"
     assert rpage2.locator(f"{card2} [data-scope-ceiling]").input_value() == "done"
     rpage2.click(f"{card2} [data-accept]")
@@ -380,7 +419,13 @@ def test_e30_review_approve_to_done(server, context_factory, open_page, cli, api
     ], fields_order
 
 
-def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api):
+def test_e31_refresh_restores_state(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     mid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", E31_TITLE)["id"]
     _scope_and_advance(
         server,
@@ -426,7 +471,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     # Ticket surface.
     ready_t = f'section[data-screen="ticket"][data-ticket-id="{mid}"]'
     mid_t = '[data-approval-block][data-mode="gating-pending"]'
-    page_t = open_page(context_factory(), server, f"#/ticket/{mid}", ready_t, settled=True)
+    page_t = open_page(context_factory(), server, f"#/ticket/{mid}", ready_t)
     page_t.wait_for_selector(mid_t, timeout=WAIT_MS)
     before_t = _snap_ticket(page_t)
     _reload_settle(page_t, ready_t)
@@ -443,7 +488,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     # Board surface.
     ready_b = 'section[data-screen="workspace"]'
     mid_b = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
-    page_b = open_page(context_factory(), server, "#/workspace", ready_b, settled=True)
+    page_b = open_page(context_factory(), server, "#/workspace", ready_b)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     before_b = _snap_board(page_b, mid)
     _reload_settle(page_b, ready_b)
@@ -451,7 +496,7 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     after_b = _snap_board(page_b, mid)
     expected_b = {
         "title": E31_TITLE,
-        "bucket": "Needs approval",
+        "bucket": "Awaiting approval",
         "nested": 1,
         "marks": 1,
         "agent_working": "false",
@@ -460,9 +505,11 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
 
     # Day surface — the overview renders structured fields; a reload restores.
     ready_d = "[data-day-take-body]"
-    page_d = open_page(context_factory(), server, "#/day", ready_d, settled=True)
+    page_d = open_page(context_factory(), server, "#/day", ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
-    assert "Jul 5" in page_d.text_content("[data-day-date]")  # raw DOM (label uppercases)
+    e31_date_text = page_d.text_content("[data-day-date]")  # raw DOM (label uppercases)
+    assert e31_date_text is not None
+    assert "Jul 5" in e31_date_text
     before_d = _snap_day(page_d)
     _reload_settle(page_d, ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
@@ -471,7 +518,13 @@ def test_e31_refresh_restores_state(server, context_factory, open_page, cli, api
     assert before_d == after_d == expected_d, (before_d, after_d)
 
 
-def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cli, api):
+def test_e32_sprint_live_status_and_loose(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     s = api.direct_post(
         server,
         "/api/sprints",
@@ -507,8 +560,8 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     # the row itself as data-item-status. Assert the item is present exactly once and
     # carries the todo status, and that the loose ticket sits under the loose group.
     ready = f'[data-item-id="{iid}"][data-item-status="todo"]'
-    pa = open_page(context_factory(), server, "#/sprint", ready, settled=True)
-    pb = open_page(context_factory(), server, "#/sprint", ready, settled=True)
+    pa = open_page(context_factory(), server, "#/sprint", ready)
+    pb = open_page(context_factory(), server, "#/sprint", ready)
 
     for p in (pa, pb):
         p.wait_for_selector(ready, timeout=WAIT_MS)
@@ -566,7 +619,12 @@ def test_e32_sprint_live_status_and_loose(server, context_factory, open_page, cl
     assert child_row["ticket_status"] == "empty", child_row
 
 
-def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api):
+def test_sprint_overview_fields_and_edit(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    api: ApiHelper,
+) -> None:
     # A current sprint (its 2-week range contains the baseline planning date), seeded
     # with Kickoff content at create → the Overview opens kickoff-open (Kickoff open,
     # Mid-sprint + Sprint Review collapsed until they have content).
@@ -584,7 +642,7 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
 
     ready = '[data-phase="kickoff"]'
     # Legacy #/sprint/overview replace-redirects to the new documents page.
-    page = open_page(context_factory(), server, "#/sprint/overview", ready, settled=True)
+    page = open_page(context_factory(), server, "#/sprint/overview", ready)
 
     # The redirect landed on the documents page (tabs are gone): the hash is
     # #/sprint/documents and the page shows its unique "Sprint documents" heading.
@@ -606,7 +664,7 @@ def test_sprint_overview_fields_and_edit(server, context_factory, open_page, api
 
     # Inline-edit round-trip on the NEW Mid-sprint field: open its section, edit
     # the contenteditable surface, blur → PATCH /api/sprints/{id}
-    # {mid_where_we_stand} → the WS flush re-renders from the saved value.
+    # {mid_where_we_stand} → the refetch re-renders from the saved value.
     page.click('[data-phase="mid"] > summary')
     sel = '[data-field="mid_where_we_stand"] .fval .ed'
     f0 = page.evaluate("window.__plannerDebug.flushes")

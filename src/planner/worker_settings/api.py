@@ -2,40 +2,36 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
-from planner.conversation.hermes_backend_configuration import resolve_planner_home
+from planner.core import change_signal
 from planner.core.authctx import RequestContext, request_context, require_direct_write
-from planner.core.clock import Clock
 from planner.core.config import Config
-from planner.core.contracts import EventKind, JsonDict
+from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
-from planner.core.events import append_event
-from planner.tickets.api import body_str, db_conn, get_clock, get_config, parse_enum
+from planner.environments.hermes_home import resolve_planner_home
+from planner.tickets.api import body_str, get_config, parse_enum
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings import service
 from planner.worker_settings.contracts import (
     ManagedChiefSettings,
-    ManagedEmployeeLaunchDefaults,
     ManagedSkill,
+    ManagedWorkerLaunchDefaults,
     ManagedWorkerSettings,
     SkillsHome,
     SpecialistSkillPatch,
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
-from planner.worker_types.configuration import configured_employee_runtime_definitions
+from planner.worker_types.configuration import configured_worker_runtime_definitions
 
 router = APIRouter()
 
-DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
-Clk = Annotated[Clock, Depends(get_clock)]
 
 
 def _database_parent(config: Config) -> Path:
@@ -85,7 +81,7 @@ def _summary_json(summary: WorkerManagementSummary) -> JsonDict:
     }
 
 
-def _launch_defaults_json(defaults: ManagedEmployeeLaunchDefaults) -> JsonDict:
+def _launch_defaults_json(defaults: ManagedWorkerLaunchDefaults) -> JsonDict:
     return {
         "employee_backend": defaults.employee_backend,
         "employee_launch_model": defaults.employee_launch_model,
@@ -106,49 +102,24 @@ def _detail_json(detail: WorkerManagementDetail) -> JsonDict:
     return {
         "manifest": detail.manifest,
         "settings": _settings_json(detail.settings),
-        "employee_backends": list(
-            configured_employee_runtime_definitions().employee_backend_catalog.registered_backend_keys()
-        ),
     }
 
 
-def _append_worker_settings_changed(
-    conn: sqlite3.Connection, worker_type: str, *, changed: str, now: int
-) -> None:
-    append_event(
-        conn,
-        f"worker_{worker_type}",
-        EventKind.worker_settings_changed,
-        {"worker_type": worker_type, "changed": changed},
-        now,
-    )
-
-
-def _worker_settings_changed_callback(
-    conn: sqlite3.Connection, worker_type: str, *, changed: str, now: int
-) -> None:
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        _append_worker_settings_changed(conn, worker_type, changed=changed, now=now)
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
+# Worker settings live in files beside the database, not in it, so a saved setting
+# never passes the connection door that announces committed writes. This is the one
+# writer that has to say so itself.
+_announce_worker_settings_change = change_signal.emit
 
 
 @router.get("/workers")
 async def list_workers(config: Cfg) -> JsonDict:
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    definitions = configured_employee_runtime_definitions()
+    registry = configured_worker_runtime_definitions().worker_type_registry
     return {
         "workers": [
             _summary_json(summary)
             for summary in service.read_worker_management_index(_database_parent(config), registry)
         ],
-        "chief_of_staff": _chief_json(
-            service.read_chief_settings(_database_parent(config), registry)
-        ),
-        "employee_backends": list(definitions.employee_backend_catalog.registered_backend_keys()),
+        "chief_of_staff": _chief_json(service.read_chief_settings(_database_parent(config))),
     }
 
 
@@ -168,77 +139,59 @@ async def get_skill(skill_name: str, config: Cfg) -> JsonDict:
 
 @router.patch("/skills/{skill_name}")
 async def patch_skill(
-    skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
+    skill_name: str, raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "skill patch requires exactly one field", {})
-    now = clock.now_unix()
     skill = service.save_skill(
         _database_parent(config), skill_name, raw,
-        after_publish=lambda: _worker_settings_changed_callback(
-            conn, "skills_home", changed="skill", now=now
-        ),
+        after_publish=_announce_worker_settings_change,
     )
     return _skill_json(skill)
 
 
 @router.get("/workers/chief-of-staff/settings")
 async def get_chief_settings(config: Cfg) -> JsonDict:
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    return _chief_json(service.read_chief_settings(_database_parent(config), registry))
+    return _chief_json(service.read_chief_settings(_database_parent(config)))
 
 
 @router.put("/workers/chief-of-staff/launch-defaults")
 async def put_chief_launch_defaults(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
+    raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    now = clock.now_unix()
     settings = service.update_chief_launch_defaults(
         _database_parent(config),
-        registry,
         raw,
-        after_publish=lambda: _worker_settings_changed_callback(
-            conn, "chief_of_staff", changed="launch_defaults", now=now
-        ),
+        after_publish=_announce_worker_settings_change,
     )
     return _chief_json(settings)
 
 
 @router.put("/workers/chief-of-staff/skill")
 async def put_chief_skill(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
+    raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    now = clock.now_unix()
     settings = service.save_chief_skill(
         _database_parent(config),
-        registry,
         raw,
-        after_publish=lambda: _worker_settings_changed_callback(
-            conn, "chief_of_staff", changed="skill", now=now
-        ),
+        after_publish=_announce_worker_settings_change,
     )
     return _chief_json(settings)
 
 
 @router.patch("/workers/chief-of-staff/skill")
 async def patch_chief_skill(
-    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg, clock: Clk
+    raw: dict[str, Any], ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    now = clock.now_unix()
     settings = service.save_chief_skill(
-        _database_parent(config), registry, raw,
-        after_publish=lambda: _worker_settings_changed_callback(
-            conn, "chief_of_staff", changed="skill", now=now
-        ),
+        _database_parent(config), raw,
+        after_publish=_announce_worker_settings_change,
     )
     return _chief_json(settings)
 
@@ -247,29 +200,24 @@ async def patch_chief_skill(
 async def put_worker_launch_defaults(
     worker_type: str,
     raw: dict[str, Any],
-    conn: DbConn,
     ctx: Ctx,
     config: Cfg,
-    clock: Clk,
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    now = clock.now_unix()
-    settings = service.update_employee_launch_defaults(
+    registry = configured_worker_runtime_definitions().worker_type_registry
+    settings = service.update_worker_launch_defaults(
         _database_parent(config),
         registry,
         worker_type,
         raw,
-        after_publish=lambda: _worker_settings_changed_callback(
-            conn, worker_type, changed="launch_defaults", now=now
-        ),
+        after_publish=_announce_worker_settings_change,
     )
     return _settings_json(settings)
 
 
 @router.get("/workers/{worker_type}")
 async def get_worker(worker_type: str, config: Cfg) -> JsonDict:
-    registry = configured_employee_runtime_definitions().worker_type_registry
+    registry = configured_worker_runtime_definitions().worker_type_registry
     return _detail_json(
         service.read_worker_management_detail(_database_parent(config), registry, worker_type)
     )
@@ -280,10 +228,8 @@ async def put_stage_default_ownership(
     worker_type: str,
     stage: str,
     raw: dict[str, Any],
-    conn: DbConn,
     ctx: Ctx,
     config: Cfg,
-    clock: Clk,
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) != {"ownership_mode"}:
@@ -297,20 +243,14 @@ async def put_stage_default_ownership(
         body_str(raw, "ownership_mode"),
         "ownership_mode",
     )
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    now = clock.now_unix()
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_stage_default_ownership(
         _database_parent(config),
         registry,
         worker_type,
         stage,
         ownership_mode,
-        after_publish=lambda: _worker_settings_changed_callback(
-            conn,
-            worker_type,
-            changed="stage_default_ownership",
-            now=now,
-        ),
+        after_publish=_announce_worker_settings_change,
     )
     return _settings_json(settings)
 
@@ -319,25 +259,17 @@ async def put_stage_default_ownership(
 async def put_worker_skill(
     worker_type: str,
     raw: dict[str, Any],
-    conn: DbConn,
     ctx: Ctx,
     config: Cfg,
-    clock: Clk,
 ) -> JsonDict:
     require_direct_write(ctx)
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    now = clock.now_unix()
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.save_specialist_skill(
         _database_parent(config),
         registry,
         worker_type,
         raw,
-        after_publish=lambda: _worker_settings_changed_callback(
-            conn,
-            worker_type,
-            changed="skill",
-            now=now,
-        ),
+        after_publish=_announce_worker_settings_change,
         runtime_skills_root=_planner_home(config) / "skills",
     )
     return _settings_json(settings)
@@ -347,10 +279,8 @@ async def put_worker_skill(
 async def patch_worker_skill(
     worker_type: str,
     raw: dict[str, Any],
-    conn: DbConn,
     ctx: Ctx,
     config: Cfg,
-    clock: Clk,
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}):
@@ -364,19 +294,13 @@ async def patch_worker_skill(
         patch["description"] = body_str(raw, "description")
     else:
         patch["markdown_body"] = body_str(raw, "markdown_body")
-    registry = configured_employee_runtime_definitions().worker_type_registry
-    now = clock.now_unix()
+    registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.patch_specialist_skill(
         _database_parent(config),
         registry,
         worker_type,
         patch,
-        after_publish=lambda: _worker_settings_changed_callback(
-            conn,
-            worker_type,
-            changed="skill",
-            now=now,
-        ),
+        after_publish=_announce_worker_settings_change,
         runtime_skills_root=_planner_home(config) / "skills",
     )
     return _settings_json(settings)

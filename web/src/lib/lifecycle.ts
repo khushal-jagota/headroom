@@ -39,13 +39,12 @@ export type WorkerTypeManifest = {
   ceiling_range: string[];
   default_ceiling: string;
   worker_profile_id: string;
-  default_employee_backend: string;
-  default_employee_model: string | null;
-  default_employee_reasoning_effort: string | null;
+  default_backend: string;
+  default_model: string | null;
+  default_reasoning_effort: string | null;
 };
 
 export type WorkerTypesResponse = {
-  employee_backends: string[];
   worker_types: WorkerTypeManifest[];
 };
 
@@ -151,14 +150,10 @@ export function ticketStageVisualStateFor(
   if (fieldIsPassedFor(lc, fieldName, ticketStage)) return "completed";
 
   if (gatingFieldFor(lc, ticketStage) === fieldName) {
-    if (ticketStatus === "agent_running_step") return "current-running";
+    if (ticketStatus === "agent") return "current-running";
     if (ticketStatus === "errored") return "errored";
-    if (ticketStatus === "paired_work") return "current-paired-work";
-    if (
-      fieldHasProposal ||
-      ticketStatus === "awaiting_approval" ||
-      ticketStatus === "proposal_discussion"
-    ) {
+    if (ticketStatus === "paired") return "current-paired";
+    if (fieldHasProposal || ticketStatus === "awaiting_approval") {
       return "current-awaiting-approval";
     }
     return "current-waiting";

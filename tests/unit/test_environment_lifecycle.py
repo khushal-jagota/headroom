@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from planner.environments import materialize
-from planner.environments.contracts import EnvironmentValidationError
+from planner.environments.contracts import EnvironmentManifest, EnvironmentValidationError
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 
 
@@ -242,10 +244,12 @@ def test_staging_operations_never_read_the_live_manifest(
     live_manifest = live_root / "manifest.json"
     real_read_manifest = materialize._read_manifest
 
-    def guarded_read_manifest(path: Path, **kwargs: object) -> object:
+    def guarded_read_manifest(
+        path: Path, *, caller_environment_root: Path | None = None
+    ) -> EnvironmentManifest:
         if path == live_manifest:
             raise AssertionError("live manifest was opened")
-        return real_read_manifest(path, **kwargs)
+        return real_read_manifest(path, caller_environment_root=caller_environment_root)
 
     monkeypatch.setattr(materialize, "_read_manifest", guarded_read_manifest)
     materialize.inspect_environment_instance(
@@ -293,7 +297,16 @@ def _repository(tmp_path: Path, name: str) -> Path:
 
 
 def _environment_root(tmp_path: Path) -> Path:
-    return Path("/tmp") / f"pe-{tmp_path.parent.name}-{tmp_path.name}"
+    """A short, already-resolved root for a real environment estate.
+
+    Resolved because the code resolves an environment root before measuring the control
+    socket inside it against the AF_UNIX path limit, and ``/tmp`` is a symlink on macOS —
+    the eight characters that resolution adds are on their own enough to push the socket
+    over. Short for the same reason: the whole of that path has to fit in 103 bytes, so
+    the test's identity goes in as a digest rather than as its name.
+    """
+    digest = hashlib.sha1(str(tmp_path).encode("utf-8")).hexdigest()[:8]
+    return Path("/tmp").resolve() / f"pe-{os.getpid()}-{digest}"
 
 
 def _test_port(tmp_path: Path) -> int:

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from planner.core.db import connect, create_schema
 from planner.environments.app import AppManifest
 from planner.environments.app_compatibility import (
     AppCompatibilityError,
@@ -193,9 +194,14 @@ def test_previous_app_health_failure_rejects_compatibility_and_stops_probe(
 def test_real_previous_app_process_exit_rejects_compatibility(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
+    # A real Panels database, because this is the one test here that runs the candidate's
+    # upgrade for real rather than standing in for it. A bare table is a database at
+    # schema version 0, and this build refuses those by name instead of half-upgrading
+    # them, so the probe would stop at the upgrade and never reach the previous app —
+    # which is the whole of what this test is about.
     source_db = tmp_path / "planning.db"
-    with sqlite3.connect(source_db) as connection:
-        connection.execute("CREATE TABLE facts (value TEXT)")
+    with connect(str(source_db)) as connection:
+        create_schema(connection)
     candidate = tmp_path / "candidate"
     current = tmp_path / "current"
     candidate_python = candidate / ".venv" / "bin" / "python"

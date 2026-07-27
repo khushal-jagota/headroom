@@ -1,38 +1,50 @@
-"""Focused Workspace status-bucket and row-signal regressions."""
+"""Focused Workspace status-group and row-signal regressions."""
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+import threading
+from collections.abc import Callable
 
-from planner.tickets.conversation_projection import TicketConversationProjection
+import httpx
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+
+from planner.conversation.events import (
+    AgentMessageEventPayload,
+    ConversationEventPayload,
+    ConversationTurnEnding,
+    TurnEndedEventPayload,
+)
+from planner.conversation.message_content import text_message_content
+from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
 
-# The full canonical bucket order, top to bottom.
+# Workspace groups by the Ticket's own status, except a done Ticket, which groups
+# as done. This is the full display order, top to bottom.
 BUCKET_ORDER = [
     "errored",
-    "needs_you",
-    "kickoff",
-    "stopped",
-    "taken_over",
+    "needs_user",
+    "empty",
+    "user",
     "paired",
-    "agent_working",
-    "needs_approval",
-    "closing_out",
+    "agent",
+    "awaiting_approval",
     "blocked",
     "done",
 ]
 
+# The label is the humanized status name.
 BUCKET_LABELS = {
     "errored": "Errored",
-    "needs_you": "Needs you",
-    "kickoff": "Kickoff",
-    "stopped": "Stopped",
-    "taken_over": "Taken over",
+    "needs_user": "Needs user",
+    "empty": "Empty",
+    "user": "User",
     "paired": "Paired",
-    "agent_working": "Agent working",
-    "needs_approval": "Needs approval",
-    "closing_out": "Closing out",
+    "agent": "Agent",
+    "awaiting_approval": "Awaiting approval",
     "blocked": "Blocked",
     "done": "Done",
 }
@@ -42,17 +54,17 @@ def _bucket(key: str) -> str:
     return f'[data-bucket-section][data-bucket-key="{key}"]'
 
 
-def _pick_project(page, project_id: str) -> None:
+def _pick_project(page: Page, project_id: str) -> None:
     page.click("[data-project-filter]")
     page.click(f'[data-project-option="{project_id}"]')
 
 
-def _add_today(api, server, ticket_id: str) -> None:
+def _add_today(api: ApiHelper, server: ServerHandle, ticket_id: str) -> None:
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
 
 def _set_ticket_status(
-    server, ticket_id: str, status: str, *, backend_error: str | None = None
+    server: ServerHandle, ticket_id: str, status: str, *, backend_error: str | None = None
 ) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
@@ -61,7 +73,7 @@ def _set_ticket_status(
         )
 
 
-def _set_ticket_stage(server, ticket_id: str, stage: str) -> None:
+def _set_ticket_stage(server: ServerHandle, ticket_id: str, stage: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET stage = ? WHERE id = ?",
@@ -69,7 +81,7 @@ def _set_ticket_stage(server, ticket_id: str, stage: str) -> None:
         )
 
 
-def _set_ticket_updated_at(server, ticket_id: str, updated_at: int) -> None:
+def _set_ticket_updated_at(server: ServerHandle, ticket_id: str, updated_at: int) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET updated_at = ? WHERE id = ?",
@@ -77,8 +89,10 @@ def _set_ticket_updated_at(server, ticket_id: str, updated_at: int) -> None:
         )
 
 
-def _create_ticket(cli, server, title: str, *, worker_type: str = "coding") -> str:
-    return cli(
+def _create_ticket(
+    cli: Callable[..., JsonObject], server: ServerHandle, title: str, *, worker_type: str = "coding"
+) -> str:
+    ticket_id: str = cli(
         server,
         "ticket",
         "create",
@@ -89,10 +103,15 @@ def _create_ticket(cli, server, title: str, *, worker_type: str = "coding") -> s
         "--project-id",
         "project_vylo",
     )["id"]
+    return ticket_id
 
 
 def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     waiting = _create_ticket(cli, server, "Waiting ticket")
     running = _create_ticket(cli, server, "Running ticket")
@@ -101,7 +120,7 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     for ticket_id in (waiting, running, errored, completed):
         _add_today(api, server, ticket_id)
         _set_ticket_stage(server, ticket_id, "needs_success")
-    _set_ticket_status(server, running, "agent_running_step")
+    _set_ticket_status(server, running, "agent")
     _set_ticket_status(
         server, errored, "errored", backend_error="Provider process exited unexpectedly"
     )
@@ -112,8 +131,7 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
         context_factory(),
         server,
         "#/workspace",
-        _bucket("stopped"),
-        settled=True,
+        _bucket("empty"),
     )
 
     waiting_card = f'[data-card][data-ticket-id="{waiting}"]'
@@ -121,20 +139,20 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     errored_card = f'[data-card][data-ticket-id="{errored}"]'
     completed_card = f'[data-card][data-ticket-id="{completed}"]'
 
-    # Only the populated buckets render, in canonical order; the old
+    # Only the populated status groups render, in display order; the old
     # Project -> Worker type -> Stage tree is gone.
     rendered = page.eval_on_selector_all(
         "[data-bucket-section]",
         "els => els.map(el => el.getAttribute('data-bucket-key'))",
     )
-    assert rendered == ["errored", "stopped", "agent_working", "done"]
+    assert rendered == ["errored", "empty", "agent", "done"]
     assert page.locator("[data-project-section]").count() == 0
     assert page.locator("[data-worker-section]").count() == 0
     assert page.locator("[data-stage-section]").count() == 0
 
-    # Each card sits in exactly one bucket.
-    assert page.locator(f'{_bucket("stopped")} {waiting_card}').count() == 1
-    assert page.locator(f'{_bucket("agent_working")} {running_card}').count() == 1
+    # Each card sits in exactly one group.
+    assert page.locator(f'{_bucket("empty")} {waiting_card}').count() == 1
+    assert page.locator(f'{_bucket("agent")} {running_card}').count() == 1
     assert page.locator(f'{_bucket("errored")} {errored_card}').count() == 1
     assert page.locator(f'{_bucket("done")} {completed_card}').count() == 1
 
@@ -149,7 +167,9 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
         (completed_card, "Completed ticket"),
     ):
         page.wait_for_selector(selector, timeout=WAIT_MS)
-        assert page.text_content(f"{selector} .list-row-title").strip() == title
+        row_title = page.text_content(f"{selector} .list-row-title")
+        assert row_title is not None
+        assert row_title.strip() == title
         assert page.locator(f"{selector} .board-workspace-row-byline").count() == 0
         assert page.locator(f"{selector} .board-workspace-row-metadata").count() == 0
 
@@ -163,19 +183,22 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     )
     assert waiting_mark.count() == 1
     assert waiting_mark.get_attribute("data-agent-working") == "false"
-    assert waiting_mark.get_attribute("data-reply-state") == "none"
+    assert waiting_mark.get_attribute("data-latest-turn-ended") == "0"
     assert waiting_mark.get_attribute("data-workspace-dot-state") is None
     assert waiting_mark.get_attribute("data-marker") is None
     assert waiting_mark.get_attribute("aria-label") == "Nothing waiting"
 
-    # A running step: the working signal wins the mark.
+    # A Ticket whose STATUS is agent is not a turn running now. The mark is about the
+    # conversation, and this Ticket has none, so it is quiet. Whether a turn is running is
+    # the conversation system's answer and needs a live agent to be true, so the board
+    # route asking it is proved in the unit suite rather than here.
     running_mark = page.locator(
-        f'{running_card} .board-workspace-stage-mark[data-stage-state="current-running"]'
+        f'{running_card} .board-workspace-stage-mark[data-stage-state="upcoming"]'
     )
     assert running_mark.count() == 1
-    assert running_mark.get_attribute("data-agent-working") == "true"
-    assert running_mark.get_attribute("data-reply-state") == "none"
-    assert running_mark.get_attribute("aria-label") == "Agent working"
+    assert running_mark.get_attribute("data-agent-working") == "false"
+    assert running_mark.get_attribute("data-latest-turn-ended") == "0"
+    assert running_mark.get_attribute("aria-label") == "Nothing waiting"
 
     # The errored condition lives on the bucket, not the row mark: the mark
     # carries only the two signals, and the Errored label carries the error red.
@@ -184,7 +207,7 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
     )
     assert errored_mark.count() == 1
     assert errored_mark.get_attribute("data-agent-working") == "false"
-    assert errored_mark.get_attribute("data-reply-state") == "none"
+    assert errored_mark.get_attribute("data-latest-turn-ended") == "0"
     assert errored_mark.get_attribute("aria-label") == "Nothing waiting"
     errored_label_color = page.eval_on_selector(
         f'{_bucket("errored")} .board-workspace-bucket-label',
@@ -200,7 +223,11 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
 
 
 def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_open(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     standalone = _create_ticket(cli, server, "Standalone Vylo ticket")
     no_project = cli(
@@ -253,7 +280,6 @@ def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_ope
         server,
         f"#/workspace/{no_project}",
         no_project_card,
-        settled=True,
     )
     # The filter is a mini-header trigger below Chief of Staff that opens a
     # dropdown menu — not a native select above it.
@@ -326,7 +352,11 @@ def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_ope
 
 
 def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = _create_ticket(cli, server, "Backend failure ticket")
     _add_today(api, server, ticket_id)
@@ -343,13 +373,14 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
         server,
         f"#/workspace/{ticket_id}",
         f'[data-card][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
     mark = f"{card} .board-workspace-stage-mark"
     reason = "[data-backend-error]"
     page.wait_for_selector(reason, timeout=WAIT_MS)
-    assert page.text_content(reason).strip() == "Provider process exited with status 17"
+    backend_error_text = page.text_content(reason)
+    assert backend_error_text is not None
+    assert backend_error_text.strip() == "Provider process exited with status 17"
     assert page.locator(f'{_bucket("errored")} {card}').count() == 1
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
     assert page.get_attribute(mark, "data-agent-working") == "false"
@@ -358,67 +389,111 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
     page.reload()
     page.wait_for_selector(mark, timeout=WAIT_MS)
     assert page.locator(reason).count() == 0
-    assert page.locator(f'{_bucket("stopped")} {card}').count() == 1
+    assert page.locator(f'{_bucket("empty")} {card}').count() == 1
     assert page.locator(_bucket("errored")).count() == 0
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
-    assert page.get_attribute(mark, "data-reply-state") == "none"
+    assert page.get_attribute(mark, "data-latest-turn-ended") == "0"
     with sqlite3.connect(server.db_path) as conn:
         assert conn.execute(
             "SELECT ticket_status, backend_error FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone() == ("empty", None)
 
 
-def test_workspace_signals_follow_projection_activity_reply_and_acknowledgement(
-    server, context_factory, open_page, cli, api
+def _start_conversation(server: ServerHandle, conversation_id: str) -> None:
+    created = httpx.post(
+        f"{server.base}/api/conversation/conversations",
+        json={"conversation_id": conversation_id, "backend_key": "codex"},
+        timeout=10.0,
+    )
+    assert created.status_code == 201, created.text
+
+
+def _append_rows(
+    server: ServerHandle, conversation_id: str, *payloads: ConversationEventPayload
 ) -> None:
-    ticket_id = _create_ticket(cli, server, "Projection Workspace ticket")
+    """Write rows into the record, exactly as the conversation system writes them.
+
+    The store's calls are awaited and this thread belongs to the browser driver, so the
+    writing happens on a thread of its own and this one waits for it.
+    """
+    store = ConversationStore(str(server.db_path))
+
+    async def write() -> None:
+        for payload in payloads:
+            await store.append_event(conversation_id, payload)
+
+    fell_over: list[BaseException] = []
+
+    def run_it() -> None:
+        try:
+            asyncio.run(write())
+        except BaseException as error:  # noqa: BLE001 - re-raised on the calling thread
+            fell_over.append(error)
+
+    writer = threading.Thread(target=run_it)
+    writer.start()
+    writer.join()
+    if fell_over:
+        raise fell_over[0]
+
+
+def _link_conversation(server: ServerHandle, ticket_id: str, conversation_id: str) -> None:
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+            (conversation_id, ticket_id),
+        )
+
+
+def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    conversation_id = "conv-workspace-reply"
+    ticket_id = _create_ticket(cli, server, "Reply mark Workspace ticket")
     _add_today(api, server, ticket_id)
     _set_ticket_stage(server, ticket_id, "needs_success")
     _set_ticket_status(server, ticket_id, "empty")
+    _start_conversation(server, conversation_id)
+    _link_conversation(server, ticket_id, conversation_id)
 
     page = open_page(
         context_factory(),
         server,
         "#/workspace",
         f'[data-card][data-ticket-id="{ticket_id}"]',
-        settled=True,
     )
     mark = f'[data-card][data-ticket-id="{ticket_id}"] .board-workspace-stage-mark'
+    # A conversation whose turns have never ended has nothing waiting for anybody.
+    assert page.get_attribute(mark, "data-latest-turn-ended") == "0"
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
-    assert page.get_attribute(mark, "data-agent-working") == "false"
-    assert page.get_attribute(mark, "data-reply-state") == "none"
     assert page.get_attribute(mark, "aria-label") == "Nothing waiting"
 
-    # A working activity state flips the working signal live.
-    projection = TicketConversationProjection(server.db_path, now=lambda: 2)
-    projection.record_activity(ticket_id, "thinking")
-    page.wait_for_function(
-        "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
-        "=== 'current-running'",
-        arg=mark,
-        timeout=WAIT_MS,
+    # A turn ending is a reply waiting. The rows are written from this process, so the
+    # server's own change signal never hears them and the screen is reloaded rather than
+    # pretending it would light up on its own.
+    _append_rows(
+        server,
+        conversation_id,
+        AgentMessageEventPayload(content=text_message_content("the first answer")),
+        TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
     )
-    assert page.get_attribute(mark, "data-agent-working") == "true"
-    assert page.get_attribute(mark, "aria-label") == "Agent working"
-
     page.reload()
     page.wait_for_selector(mark, timeout=WAIT_MS)
-    assert page.get_attribute(mark, "data-stage-state") == "current-running"
-    assert page.get_attribute(mark, "data-agent-working") == "true"
-
-    # The completed turn becomes an unseen reply.
-    projection.record_activity(ticket_id, "idle")
     page.wait_for_function(
         "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
         "=== 'current-awaiting-approval'",
         arg=mark,
         timeout=WAIT_MS,
     )
-    assert page.get_attribute(mark, "data-agent-working") == "false"
-    assert page.get_attribute(mark, "data-reply-state") == "unseen"
+    assert page.get_attribute(mark, "data-latest-turn-ended") == "2"
     assert page.get_attribute(mark, "aria-label") == "Unseen agent reply"
 
-    # Opening the ticket acknowledges the reply: seen, not gone.
+    # Opening the Ticket is reading it. Reading writes nothing the server announces, so
+    # the row goes quiet on this browser's own account, without waiting for a refetch.
     page.click(f'[data-card][data-ticket-id="{ticket_id}"]')
     page.wait_for_function(
         "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
@@ -426,58 +501,46 @@ def test_workspace_signals_follow_projection_activity_reply_and_acknowledgement(
         arg=mark,
         timeout=WAIT_MS,
     )
-    assert page.get_attribute(mark, "data-reply-state") == "seen"
     assert page.get_attribute(mark, "aria-label") == "Agent reply seen"
 
-    # A pending permission ask reads as an unseen reply again.
+    # A reply seen is a POSITION, not a flag: leave the Ticket, let a second turn end
+    # past where this browser read, and the row is waiting again.
     page.click("[data-chief-of-staff-button]")
-    projection.record_activity(ticket_id, "thinking")
-    projection.record_activity(ticket_id, "idle")
-    projection.record_permission(ticket_id, True)
+    _append_rows(
+        server,
+        conversation_id,
+        AgentMessageEventPayload(content=text_message_content("the second answer")),
+        TurnEndedEventPayload(ending=ConversationTurnEnding.completed),
+    )
+    page.reload()
+    page.wait_for_selector(mark, timeout=WAIT_MS)
     page.wait_for_function(
-        "selector => document.querySelector(selector)?.getAttribute('data-reply-state') "
-        "=== 'unseen'",
+        "selector => document.querySelector(selector)?.getAttribute('data-stage-state') "
+        "=== 'current-awaiting-approval'",
         arg=mark,
         timeout=WAIT_MS,
     )
-
-    # Opening the ticket screen acknowledges the completed response, but the
-    # pending permission keeps the reply unseen.
-    with page.expect_response(
-        lambda response: response.url.endswith(
-            f"/api/tickets/{ticket_id}/acknowledge-completed-response"
-        ),
-        timeout=WAIT_MS,
-    ) as acknowledgement_response:
-        page.goto(f"{server.base}/#/ticket/{ticket_id}")
-    assert acknowledgement_response.value.status == 200
-    page.wait_for_selector(f'[data-screen="ticket"][data-ticket-id="{ticket_id}"]', timeout=WAIT_MS)
-    acknowledged = projection.read(ticket_id)
-    assert acknowledged.has_completed_response_awaiting_user is False
-    assert acknowledged.has_completed_response is True
-    assert acknowledged.has_pending_permission is True
-
-    page.goto(f"{server.base}/#/workspace")
-    page.wait_for_selector(mark, timeout=WAIT_MS)
-    assert page.get_attribute(mark, "data-reply-state") == "unseen"
-    assert page.get_attribute(mark, "data-stage-state") == "current-awaiting-approval"
+    assert page.get_attribute(mark, "data-latest-turn-ended") == "4"
 
 
 def test_workspace_buckets_render_membership_in_canonical_order(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
-    errored = _create_ticket(cli, server, "Errored bucket ticket")
-    needs_you = _create_ticket(cli, server, "Needs you ticket")
+    errored = _create_ticket(cli, server, "Errored group ticket")
+    needs_user_ticket = _create_ticket(cli, server, "Needs user ticket")
     kickoff_idle = _create_ticket(cli, server, "Kickoff idle ticket")
     kickoff_awaiting = _create_ticket(cli, server, "Kickoff awaiting ticket")
-    stopped_older = _create_ticket(cli, server, "Stopped older ticket")
-    stopped_newer = _create_ticket(cli, server, "Stopped newer ticket")
-    taken_over = _create_ticket(cli, server, "Taken over ticket")
-    discussion = _create_ticket(cli, server, "Proposal discussion ticket")
-    paired = _create_ticket(cli, server, "Paired work ticket")
-    running = _create_ticket(cli, server, "Agent working ticket")
-    approval = _create_ticket(cli, server, "Needs approval ticket")
-    closing = _create_ticket(cli, server, "Closing out ticket")
+    empty_older = _create_ticket(cli, server, "Empty older ticket")
+    empty_newer = _create_ticket(cli, server, "Empty newer ticket")
+    user_owned = _create_ticket(cli, server, "User ticket")
+    paired = _create_ticket(cli, server, "Paired ticket")
+    running = _create_ticket(cli, server, "Agent ticket")
+    approval = _create_ticket(cli, server, "Awaiting approval ticket")
+    closing = _create_ticket(cli, server, "Closeout idle ticket")
     done = _create_ticket(cli, server, "Done ticket")
     blocked_idle = cli(
         server,
@@ -490,7 +553,7 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         "--project-id",
         "project_vylo",
         "--blocked-by",
-        stopped_older,
+        empty_older,
     )["id"]
     blocked_running = cli(
         server,
@@ -503,40 +566,40 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         "--project-id",
         "project_vylo",
         "--blocked-by",
-        stopped_older,
+        empty_older,
     )["id"]
 
     _set_ticket_status(server, errored, "errored", backend_error="boom")
-    _set_ticket_status(server, needs_you, "needs_user")
+    _set_ticket_status(server, needs_user_ticket, "needs_user")
     _set_ticket_stage(server, kickoff_idle, "needs_kickoff")
     _set_ticket_stage(server, kickoff_awaiting, "needs_kickoff")
     _set_ticket_status(server, kickoff_awaiting, "awaiting_approval")
-    for ticket_id in (stopped_older, stopped_newer):
+    for ticket_id in (empty_older, empty_newer):
         _set_ticket_stage(server, ticket_id, "needs_success")
-    _set_ticket_updated_at(server, stopped_older, 10)
-    _set_ticket_updated_at(server, stopped_newer, 30)
-    _set_ticket_status(server, taken_over, "user_takeover")
-    _set_ticket_status(server, discussion, "proposal_discussion")
-    _set_ticket_status(server, paired, "paired_work")
-    _set_ticket_status(server, running, "agent_running_step")
+    _set_ticket_updated_at(server, empty_older, 10)
+    _set_ticket_updated_at(server, kickoff_idle, 20)
+    _set_ticket_updated_at(server, empty_newer, 30)
+    _set_ticket_status(server, user_owned, "user")
+    _set_ticket_status(server, paired, "paired")
+    _set_ticket_status(server, running, "agent")
     _set_ticket_stage(server, approval, "needs_plan")
     _set_ticket_status(server, approval, "awaiting_approval")
     _set_ticket_stage(server, closing, "needs_closeout")
+    _set_ticket_updated_at(server, closing, 40)
     _set_ticket_stage(server, done, "done")
     _set_ticket_stage(server, blocked_idle, "needs_success")
     _set_ticket_stage(server, blocked_running, "needs_success")
-    _set_ticket_status(server, blocked_running, "agent_running_step")
+    _set_ticket_status(server, blocked_running, "agent")
 
     page = open_page(
         context_factory(),
         server,
         "#/workspace",
-        _bucket("stopped"),
-        settled=True,
+        _bucket("empty"),
     )
 
-    # All eleven buckets are populated, so all render, in canonical order with
-    # their canonical labels.
+    # All nine status groups are populated, so all render, in display order with
+    # the humanized status names as labels.
     rendered = page.eval_on_selector_all(
         "[data-bucket-section]",
         "els => els.map(el => el.getAttribute('data-bucket-key'))",
@@ -548,29 +611,32 @@ def test_workspace_buckets_render_membership_in_canonical_order(
     )
     assert labels == [BUCKET_LABELS[key] for key in BUCKET_ORDER]
 
-    # Blocked and Done are collapsed by default; every other bucket is open.
+    # Blocked and Done are collapsed by default; every other group is open.
     for key in BUCKET_ORDER:
         is_open = page.get_attribute(_bucket(key), "open") is not None
         assert is_open is (key not in ("blocked", "done")), key
 
-    # Membership: exactly one bucket per ticket.
+    # Membership: exactly one group per ticket, and the group is the status.
     memberships = {
         errored: "errored",
-        needs_you: "needs_you",
-        kickoff_idle: "kickoff",
-        # A kickoff-stage parked proposal belongs in Kickoff, not Needs approval.
-        kickoff_awaiting: "kickoff",
-        stopped_older: "stopped",
-        stopped_newer: "stopped",
-        taken_over: "taken_over",
-        discussion: "paired",
+        needs_user_ticket: "needs_user",
+        # Stage no longer subdivides a group: an idle Ticket resting at the
+        # Kickoff or the Closeout stage is just empty.
+        kickoff_idle: "empty",
+        closing: "empty",
+        empty_older: "empty",
+        empty_newer: "empty",
+        # ...and an awaiting-approval Ticket is one group whatever its stage.
+        kickoff_awaiting: "awaiting_approval",
+        approval: "awaiting_approval",
+        user_owned: "user",
         paired: "paired",
-        running: "agent_working",
-        approval: "needs_approval",
-        closing: "closing_out",
+        running: "agent",
+        # A Ticket resting with a live blocker carries the blocked status.
         blocked_idle: "blocked",
-        # Blocked claims only idle tickets: a real status wins.
-        blocked_running: "agent_working",
+        # The blocker link no longer groups anything on its own: this Ticket has
+        # the same live blocker and groups by its status.
+        blocked_running: "agent",
         done: "done",
     }
     for ticket_id, bucket_key in memberships.items():
@@ -583,19 +649,18 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         ).count()
         == 0
     )
-    assert (
-        page.locator(
-            f'{_bucket("needs_approval")} [data-card][data-ticket-id="{kickoff_awaiting}"]'
-        ).count()
-        == 0
-    )
 
-    # Rows within a bucket sort by activity, newest first, and carry no chips.
-    stopped_titles = page.eval_on_selector_all(
-        f'{_bucket("stopped")} [data-card] .list-row-title',
+    # Rows within a group sort by activity, newest first, and carry no chips.
+    empty_titles = page.eval_on_selector_all(
+        f'{_bucket("empty")} [data-card] .list-row-title',
         "els => els.map(el => el.textContent.trim())",
     )
-    assert stopped_titles == ["Stopped newer ticket", "Stopped older ticket"]
+    assert empty_titles == [
+        "Closeout idle ticket",
+        "Empty newer ticket",
+        "Kickoff idle ticket",
+        "Empty older ticket",
+    ]
     assert page.locator("[data-card] .chip").count() == 0
     row_child_counts = page.eval_on_selector_all(
         "[data-card]",
@@ -605,7 +670,11 @@ def test_workspace_buckets_render_membership_in_canonical_order(
 
 
 def test_workspace_bucket_disclosures_collapse_and_chevrons_reveal_on_intent(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = _create_ticket(cli, server, "Nested disclosure ticket")
     _add_today(api, server, ticket_id)
@@ -615,11 +684,10 @@ def test_workspace_bucket_disclosures_collapse_and_chevrons_reveal_on_intent(
         context_factory(),
         server,
         "#/workspace",
-        _bucket("stopped"),
-        settled=True,
+        _bucket("empty"),
     )
 
-    bucket = _bucket("stopped")
+    bucket = _bucket("empty")
     card = f'[data-card][data-ticket-id="{ticket_id}"]'
     assert page.locator(bucket).get_attribute("open") == ""
 

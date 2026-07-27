@@ -126,9 +126,15 @@ path.
 
 ## Handoffs
 
-- [Production deployment](deployment.md) describes exact-commit app replacement.
-- [Database backups](backups.md) describes verified live snapshots and restore.
-- [The command-line tool](cli.md) lists the environment commands.
+- **Production deployment** (`deployment.md`) — replacing the live app with an exact
+  commit.
+- **Database backups** (`backups.md`) — verified live snapshots and restore.
+- **The command-line tool** (`cli.md`) — the command tree that exposes environment
+  lifecycle verbs.
+- **Worker orchestration** (`worker-orchestration.md`) — the background loop the
+  foreground server started by `environment run` owns.
+- **Hermes gateway** (`systems.md`) — the external worker gateway whose homes stay
+  separate between live, staging, and Ticket worktrees.
 
 ---
 

@@ -32,13 +32,10 @@ class Config:
     tick_seconds: int
     dispatch_enabled: bool
     # other tunables named across SPEC
-    ws_poll_ms: int
-    ws_heartbeat_ms: int
-    ui_debounce_ms: int
+    sse_heartbeat_ms: int
     dispatcher_lock_path: str
     logs_dir: str
     backup_dir: str
-    events_read_limit: int
     db_busy_timeout_ms: int
     shutdown_grace_seconds: int
     # optional hosted trusted-ingress boundary
@@ -121,6 +118,18 @@ def _int_value(
     if env_var in env:
         value = env[env_var]
     return _parse_int(value, key)
+
+
+def _positive_int_value(
+    file_cfg: Mapping[str, object], env: Mapping[str, str], key: str, env_var: str, default: int
+) -> int:
+    """An interval or size that only means something above zero, refused below it."""
+    value = _int_value(file_cfg, env, key, env_var, default)
+    if value <= 0:
+        raise PlannerError(
+            ErrorCode.validation, f"{key} must be greater than zero: {value}"
+        )
+    return value
 
 
 def _bool_value(
@@ -235,17 +244,14 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         boundary_hour=_int_value(cfg, env, "boundary_hour", "PLAN_BOUNDARY_HOUR", 5),
         tick_seconds=_int_value(cfg, env, "tick_seconds", "PLAN_TICK_SECONDS", 60),
         dispatch_enabled=_bool_value(cfg, env, "dispatch_enabled", "PLAN_DISPATCH_ENABLED", True),
-        ws_poll_ms=_int_value(cfg, env, "ws_poll_ms", "PLAN_WS_POLL_MS", 300),
-        ws_heartbeat_ms=_int_value(
-            cfg, env, "ws_heartbeat_ms", "PLAN_WS_HEARTBEAT_MS", 15000
+        sse_heartbeat_ms=_positive_int_value(
+            cfg, env, "sse_heartbeat_ms", "PLAN_SSE_HEARTBEAT_MS", 15000
         ),
-        ui_debounce_ms=_int_value(cfg, env, "ui_debounce_ms", "PLAN_UI_DEBOUNCE_MS", 250),
         dispatcher_lock_path=_str_value(
             cfg, env, "dispatcher_lock_path", "PLAN_DISPATCHER_LOCK_PATH", "data/dispatcher.lock"
         ),
         logs_dir=_str_value(cfg, env, "logs_dir", "PLAN_LOGS_DIR", "data/logs"),
         backup_dir=_str_value(cfg, env, "backup_dir", "PLAN_BACKUP_DIR", "data/backups"),
-        events_read_limit=_int_value(cfg, env, "events_read_limit", "PLAN_EVENTS_READ_LIMIT", 500),
         db_busy_timeout_ms=_int_value(
             cfg, env, "db_busy_timeout_ms", "PLAN_DB_BUSY_TIMEOUT_MS", 5000
         ),

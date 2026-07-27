@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { fetchJson } from "./lib/api";
-  import { resourceCatalogue } from "./lib/resourceCatalogue";
-  import { connectionStatus, startEventStream, stopEventStream } from "./lib/ws";
+  import { createQuery } from "@tanstack/svelte-query";
+  import { queries } from "./lib/queryCatalogue";
+  import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import ChiefOfStaffRoute from "./routes/ChiefOfStaffRoute.svelte";
@@ -13,6 +13,8 @@
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
   import AgentsRoute from "./routes/AgentsRoute.svelte";
+  import DevConversationRoute from "./routes/DevConversationRoute.svelte";
+  import DevFilePreviewGalleryRoute from "./routes/DevFilePreviewGalleryRoute.svelte";
   import VpsStatusPopover from "./components/VpsStatusPopover.svelte";
 
   type Route = {
@@ -21,11 +23,10 @@
     key: string;
   };
 
-  const review = resourceCatalogue.review();
+  const review = createQuery(() => queries.review());
   const connectionLabels = {
     connected: "Connected",
-    reconnecting: "Reconnecting",
-    offline: "Offline"
+    reconnecting: "Reconnecting"
   };
   const navStatusClearancePx = 8;
 
@@ -89,6 +90,11 @@
         params.roleKind = "unknown";
       }
     }
+    // Standalone pages for looking at a system while it is being built or redesigned.
+    // Not in the nav, and nothing the app does links to them.
+    if (name === "dev" && segments[1]) {
+      params.sub = segments[1];
+    }
     if (name === "sprint" && segments[1]) {
       // Legacy sub-routes redirect to the new split: the old two-tab page became a
       // tracking page (#/sprint) and a documents page (#/sprint/documents).
@@ -120,6 +126,9 @@
       return !route.params.sub || route.params.sub === "documents";
     }
     if (route.name === "agents") return route.params.roleKind !== "unknown";
+    if (route.name === "dev") {
+      return route.params.sub === "conversation" || route.params.sub === "file-preview-gallery";
+    }
     return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
   }
 
@@ -170,21 +179,11 @@
     window.addEventListener("hashchange", onHash);
     window.addEventListener("resize", onResize);
     void alignActiveNavLinkAfterDomUpdate();
-    fetchJson<{ ui_debounce_ms: number; ws_heartbeat_ms: number }>("/api/meta")
-      .then((meta) => {
-        startEventStream({
-          debounceMs: meta.ui_debounce_ms,
-          heartbeatMs: meta.ws_heartbeat_ms
-        });
-      })
-      .catch(() => {
-        startEventStream({ debounceMs: 250 });
-      });
+    startChangeStream();
     return () => {
       window.removeEventListener("hashchange", onHash);
       window.removeEventListener("resize", onResize);
-      stopEventStream();
-      review.dispose();
+      stopChangeStream();
     };
   });
 </script>
@@ -255,6 +254,10 @@
             />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
+          {:else if route.name === "dev" && route.params.sub === "file-preview-gallery"}
+            <DevFilePreviewGalleryRoute />
+          {:else if route.name === "dev"}
+            <DevConversationRoute />
           {/if}
         </div>
       {/key}

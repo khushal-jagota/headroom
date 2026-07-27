@@ -149,5 +149,27 @@ def resting_ticket_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
     if ownership_mode is StageOwnershipMode.worker:
         return TicketStatus.empty
     if ownership_mode is StageOwnershipMode.user:
-        return TicketStatus.user_takeover
-    return TicketStatus.paired_work
+        return TicketStatus.user
+    return TicketStatus.paired
+
+
+def worker_step_departure_status(ownership_mode: StageOwnershipMode) -> TicketStatus:
+    """The status a Ticket occupies while its worker step is out.
+
+    This is not ``resting_ticket_status``: that answers where a Ticket comes to rest once
+    the step is over, and for a Worker-owned Stage the two are opposites — a Ticket rests
+    at ``empty`` and departs at ``agent``. A Paired-owned Stage departs at ``paired``,
+    which is also where it rests, because the discussion is the step.
+
+    A user-owned Stage never has a worker step to depart on: readiness rejects it before
+    a claim is attempted, so reaching here is a bug rather than a case to map.
+    """
+    if ownership_mode is StageOwnershipMode.worker:
+        return TicketStatus.agent
+    if ownership_mode is StageOwnershipMode.paired:
+        return TicketStatus.paired
+    raise PlannerError(
+        ErrorCode.validation,
+        "a user-owned stage has no worker step to depart on",
+        {"ownership_mode": ownership_mode.value},
+    )

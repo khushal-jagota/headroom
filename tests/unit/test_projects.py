@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from sqlite3 import Connection
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.core.clock import build_clock
@@ -14,7 +14,7 @@ from planner.core.server import create_app
 _AGENT = {"X-Plan-Actor": "agent"}
 
 
-def _make_app(tmp_path: Path) -> tuple[object, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -105,19 +105,14 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
 
     conn = connect(str(db_path))
     try:
-        event = conn.execute(
-            "SELECT entity_id, kind, payload FROM events WHERE entity_id = 'project_alpha_one'"
-            " ORDER BY id"
-        ).fetchall()
+        stored = conn.execute(
+            "SELECT name, summary FROM projects WHERE id = 'project_alpha_one'"
+        ).fetchone()
     finally:
         conn.close()
-    assert event
-    assert event[0]["kind"] == "project_created"
-    assert any(row["kind"] == "project_updated" for row in event)
-    update_payloads = [
-        json.loads(row["payload"]) for row in event if row["kind"] == "project_updated"
-    ]
-    assert {"fields": ["summary"]} in update_payloads
+    assert stored is not None
+    assert str(stored["name"]) == "Alpha Renamed"
+    assert str(stored["summary"]) == ""
 
 
 def test_project_id_and_legacy_project_compatibility(tmp_path: Path) -> None:

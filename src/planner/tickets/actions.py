@@ -2,28 +2,29 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Mapping
-from dataclasses import replace
 from datetime import datetime
+from typing import Final
 
-from planner.core.contracts import Priority
+from planner.conversation.contracts import ConversationSystem, PromptDeliveryRefused
+from planner.core import links as core_links
+from planner.core.contracts import LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
-from planner.runtime.automatic_employee_step_eligibility_wake import (
-    AutomaticEmployeeStepEligibilityWake,
-)
-from planner.runtime.contracts import EmployeeRevisionRunner
+from planner.runtime.conversation_start import send_to_ticket_conversation
+from planner.runtime.logic.worker_step_prompt import revision_guidance_prompt
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import (
-    AtCap,
-    NextCeiling,
-    StageOwnershipMode,
-    Ticket,
-    TicketDeletion,
-)
-from planner.tickets.logic import admission
+from planner.tickets.contracts import Ticket
+from planner.tickets.logic import admission, resolution
+from planner.worker_context.contracts import WorkerContextService
+from planner.worker_types.configuration import configured_worker_type_registry
+
+_log = logging.getLogger(__name__)
+
+OWNER_SENDER_LABEL: Final = "owner"
 
 
 def resolve_creation_placement(
@@ -58,7 +59,6 @@ def create_ticket(
     actor: str,
     now: int,
     title_max_chars: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     worker_type: str,
     employee_backend: str | None = None,
     kickoff_note: str = "",
@@ -83,7 +83,7 @@ def create_ticket(
             sprint_item_id=sprint_item_id,
             sprint_id_explicit=sprint_id_explicit,
         )
-    ticket = tickets_data.create_ticket(
+    return tickets_data.create_ticket(
         conn,
         title=title,
         actor=actor,
@@ -100,8 +100,6 @@ def create_ticket(
         employee_backend=employee_backend,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
 
 
 def create_ticket_from_external_work(
@@ -113,7 +111,6 @@ def create_ticket_from_external_work(
     actor: str,
     now: int,
     title_max_chars: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
     worker_type: str,
     employee_backend: str | None = None,
     kickoff_note: str | None = None,
@@ -139,7 +136,7 @@ def create_ticket_from_external_work(
             sprint_item_id=sprint_item_id,
             sprint_id_explicit=sprint_id_explicit,
         )
-    ticket = tickets_data.create_ticket_from_external_work(
+    return tickets_data.create_ticket_from_external_work(
         conn,
         title=title,
         kickoff_note=kickoff_note,
@@ -159,245 +156,113 @@ def create_ticket_from_external_work(
         employee_backend=employee_backend,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
 
 
-def reconcile_ticket_from_external_work(
+def add_link(
     conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    target_stage: str,
-    provided_values: Mapping[str, str],
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-    kickoff_note: str | None = None,
-    recap: str | None = None,
-) -> Ticket:
-    before = tickets_data.read_ticket(conn, ticket_id)
-    ticket = tickets_data.reconcile_ticket_from_external_work(
-        conn,
-        ticket_id,
-        kickoff_note=kickoff_note,
-        target_stage=target_stage,
-        provided_values=provided_values,
-        actor=actor,
-        now=now,
-        recap=recap,
-    )
-    if replace(before, updated_at=ticket.updated_at) != ticket:
-        automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def delete_ticket(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> TicketDeletion:
-    deleted = tickets_data.delete_ticket(conn, ticket_id, actor=actor, now=now)
-    automatic_employee_step_eligibility_wake.wake()
-    return deleted
-
-
-def accept_proposal(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-    edited_body: str | None = None,
-    next_ceiling: NextCeiling | None = None,
-    at_cap: AtCap | None = None,
-) -> Ticket:
-    ticket = tickets_data.accept_proposal(
-        conn,
-        ticket_id,
-        field=field,
-        actor=actor,
-        now=now,
-        edited_body=edited_body,
-        next_ceiling=next_ceiling,
-        at_cap=at_cap,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def edit_field_value(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    field: str,
-    new_body: str,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.edit_field_value(
-        conn,
-        ticket_id,
-        field=field,
-        new_body=new_body,
-        actor=actor,
-        now=now,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def change_scope(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    ceiling: str,
-    at_cap: AtCap,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.change_scope(
-        conn,
-        ticket_id,
-        ceiling=ceiling,
-        at_cap=at_cap,
-        actor=actor,
-        now=now,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def set_stage(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    new_stage: str,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.set_stage(
-        conn,
-        ticket_id,
-        new_stage=new_stage,
-        actor=actor,
-        now=now,
-    )
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def drop_ticket(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.drop_ticket(conn, ticket_id, actor=actor, now=now)
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def take_over_ticket(
-    conn: sqlite3.Connection,
-    ticket_id: str,
+    from_id: str,
+    to_id: str,
+    kind: LinkKind,
     *,
     now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    before = tickets_data.read_ticket(conn, ticket_id)
-    ticket = tickets_data.take_over_ticket(conn, ticket_id, now=now)
-    if replace(before, updated_at=ticket.updated_at) != ticket:
-        automatic_employee_step_eligibility_wake.wake()
-    return ticket
+) -> None:
+    """Create a link and settle the target's blocked stand-in in the same transaction."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        core_links.add_link(conn, from_id, to_id, kind, now)
+        if kind is LinkKind.blocks:
+            tickets_data.settle_blocked_standin_for_link_target(conn, to_id, now)
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
 
 
-def release_ticket(
+def remove_link(
     conn: sqlite3.Connection,
-    ticket_id: str,
+    from_id: str,
+    to_id: str,
+    kind: LinkKind,
     *,
     now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    before = tickets_data.read_ticket(conn, ticket_id)
-    ticket = tickets_data.release_ticket(conn, ticket_id, now=now)
-    if replace(before, updated_at=ticket.updated_at) != ticket:
-        automatic_employee_step_eligibility_wake.wake()
-    return ticket
+) -> None:
+    """Delete a link and settle the target's blocked stand-in in the same transaction."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        core_links.remove_link(conn, from_id, to_id, kind, now)
+        if kind is LinkKind.blocks:
+            tickets_data.settle_blocked_standin_for_link_target(conn, to_id, now)
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
 
 
-def request_user_help(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    actor: str,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    ticket = tickets_data.request_user_help(conn, ticket_id, actor=actor, now=now)
-    automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def set_stage_ownership(
-    conn: sqlite3.Connection,
-    ticket_id: str,
-    *,
-    stage: str,
-    ownership_mode: StageOwnershipMode | None,
-    now: int,
-    automatic_employee_step_eligibility_wake: AutomaticEmployeeStepEligibilityWake,
-) -> Ticket:
-    before = tickets_data.read_ticket(conn, ticket_id)
-    ticket = tickets_data.set_stage_ownership(
-        conn,
-        ticket_id,
-        stage=stage,
-        ownership_mode=ownership_mode,
-        now=now,
-    )
-    if replace(before, updated_at=ticket.updated_at) != ticket:
-        automatic_employee_step_eligibility_wake.wake()
-    return ticket
-
-
-def return_ticket_for_revision(
+async def return_ticket_for_revision(
+    conversation_system: ConversationSystem,
+    worker_context_service: WorkerContextService,
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
     message: str,
     actor: str,
     now: int,
-    employee_revision_runner: EmployeeRevisionRunner | None,
 ) -> Ticket:
-    """Accept a revision handoff before changing the canonical Ticket."""
+    """Send the owner's guidance to the worker, then hand the Ticket back to it.
+
+    The order is validate, send, and only then write, because the write is the one thing
+    that cannot be undone honestly: the decision deletes the pending proposal, so a revert
+    after a failed send would leave nothing to approve. Everything that can be checked
+    without changing anything is checked first, against a read of the Ticket.
+
+    A refused delivery changes nothing at all and is reported as the error it is. The one
+    residue is a send that succeeded and a write that then failed: the guidance is out and
+    the proposal is intact, so a retry may deliver the same guidance twice — visible,
+    harmless, and far better than losing the proposal.
+    """
     admission.validate_body(message, "revision guidance")
-    if employee_revision_runner is None:
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    # The decision is the whole check, run here on a read of the Ticket: wrong actor,
+    # wrong status, terminal stage, and no conversation to send into all fail here,
+    # before a word has been sent and before anything has been written.
+    resolution.decide_return_for_revision(
+        ticket,
+        actor,
+        worker_type_definition=configured_worker_type_registry().require(ticket.worker_type),
+    )
+    prepared = worker_context_service.prepare(
+        ticket_id,
+        revision_guidance_prompt(message.strip()),
+    )
+    fate = await send_to_ticket_conversation(
+        conversation_system,
+        conn,
+        ticket_id,
+        prepared.model_text,
+        sender_label=OWNER_SENDER_LABEL,
+        now=now,
+    )
+    if isinstance(fate, PromptDeliveryRefused):
         raise PlannerError(
             ErrorCode.gateway_offline,
-            "employee runner is unavailable",
-            {"ticket_id": ticket_id},
+            "revision guidance could not be delivered",
+            {"ticket_id": ticket_id, "refusal_reason": fate.refusal_reason.value},
         )
-    handoff = employee_revision_runner.reserve_revision(ticket_id, message.strip())
     try:
-        ticket = tickets_data.return_for_revision(
-            conn,
+        worker_context_service.acknowledge(ticket_id, prepared.receipts)
+    except Exception:
+        # The guidance is delivered; failing to tick the context off is reported and
+        # otherwise left alone, because nothing here can un-send it.
+        _log.exception(
+            "delivered worker context could not be acknowledged (ticket=%s)",
             ticket_id,
-            message=message,
-            actor=actor,
-            now=now,
         )
-    except BaseException:
-        handoff.cancel()
-        raise
-    handoff.release()
-    return ticket
+    return tickets_data.return_for_revision(
+        conn,
+        ticket_id,
+        message=message,
+        actor=actor,
+        now=now,
+    )

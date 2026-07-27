@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from sqlite3 import Connection
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.core.clock import build_clock
@@ -14,7 +15,7 @@ from planner.core.server import create_app
 from planner.tickets.data import create_ticket
 
 
-def _make_app(tmp_path: Path) -> tuple[object, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -50,21 +51,11 @@ def _ticket(db_path: Path) -> str:
         conn.close()
 
 
-def test_day_add_and_previously_missed_removal_wake_after_actual_change(
+def test_day_add_and_removal_are_idempotent_and_land_on_the_day(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
-
-    class RecordingEligibilityWake:
-        def __init__(self) -> None:
-            self.wakes = 0
-
-        def wake(self) -> None:
-            self.wakes += 1
-
-    eligibility_wake = RecordingEligibilityWake()
-    app.state.automatic_employee_step_eligibility_wake = eligibility_wake
 
     with TestClient(app) as client:
         response = client.post("/api/day/today/tickets", json={"ticket_id": ticket_id})
@@ -77,4 +68,6 @@ def test_day_add_and_previously_missed_removal_wake_after_actual_change(
     assert removed.status_code == 200, removed.json()
     assert absent.status_code == 200, absent.json()
     assert response.json()["tickets"][0]["id"] == ticket_id
-    assert eligibility_wake.wakes == 2
+    assert duplicate.json()["tickets"][0]["id"] == ticket_id
+    assert removed.json()["tickets"] == []
+    assert absent.json()["tickets"] == []

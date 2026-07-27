@@ -784,19 +784,6 @@ def ticket_copy(ticket_id: str | None, as_json: bool) -> None:
     http.emit({"text": text}, as_json, text)
 
 
-@ticket.command("events")
-@click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
-@json_option
-def ticket_events(ticket_id: str | None, as_json: bool) -> None:
-    tid = resolve_ticket_id(ticket_id, as_json)
-    data = http.send("GET", f"/api/tickets/{tid}/events", as_json=as_json, request_actor="ordinary")
-    http.emit(
-        data,
-        as_json,
-        _lines(data["events"], lambda e: f"{e['id']} {e['kind']} {e['created_at']}"),
-    )
-
-
 # --- sprint -------------------------------------------------------------------
 
 
