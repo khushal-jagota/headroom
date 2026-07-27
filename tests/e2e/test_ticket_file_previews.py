@@ -6,7 +6,19 @@ import base64
 import json
 import sqlite3
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+from playwright.sync_api import (
+    BrowserContext,
+    FrameLocator,
+    Locator,
+    Page,
+    Request,
+    Route,
+)
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 WAIT_MS = 10_000
 INTERACTIVE_HTML_FIXTURE = (
@@ -14,11 +26,11 @@ INTERACTIVE_HTML_FIXTURE = (
 )
 
 
-def _ticket_files_dir(server, ticket_id: str) -> Path:
+def _ticket_files_dir(server: ServerHandle, ticket_id: str) -> Path:
     return server.db_path.parent / "files" / "tickets" / ticket_id
 
 
-def _write_ticket_files(server, ticket_id: str) -> None:
+def _write_ticket_files(server: ServerHandle, ticket_id: str) -> None:
     root = _ticket_files_dir(server, ticket_id)
     (root / "notes").mkdir(parents=True)
     (root / "images").mkdir(parents=True)
@@ -48,7 +60,7 @@ def _write_ticket_files(server, ticket_id: str) -> None:
     (root / "archive.bin").write_bytes(b"download me")
 
 
-def _write_managed_html_reference_files(server, ticket_id: str) -> None:
+def _write_managed_html_reference_files(server: ServerHandle, ticket_id: str) -> None:
     root = _ticket_files_dir(server, ticket_id)
     assets = root / "previews" / "assets"
     assets.mkdir(parents=True)
@@ -102,7 +114,9 @@ def _links(ticket_id: str) -> str:
     return "\n".join(f"[{label}]({href})" for label, href in _expected_hrefs(ticket_id).items())
 
 
-def _set_fields(server, ticket_id: str, fields: dict, stage: str = "dropped") -> None:
+def _set_fields(
+    server: ServerHandle, ticket_id: str, fields: dict[str, Any], stage: str = "dropped"
+) -> None:
     if "kickoff" not in fields:
         fields = {
             "kickoff": {"value": "", "proposal": None, "user_note": None},
@@ -115,20 +129,20 @@ def _set_fields(server, ticket_id: str, fields: dict, stage: str = "dropped") ->
         )
 
 
-def _open_ticket_field(page, field: str) -> None:
+def _open_ticket_field(page: Page, field: str) -> None:
     section = page.locator(f'details[data-field="{field}"]').first
     section.evaluate("(node) => { node.open = true; }")
     page.locator(f'details[data-field="{field}"][open]').wait_for(state="attached", timeout=WAIT_MS)
 
 
-def _assert_painted(locator) -> None:
+def _assert_painted(locator: Locator) -> None:
     box = locator.bounding_box(timeout=WAIT_MS)
     assert box is not None
     assert box["width"] > 0
     assert box["height"] > 0
 
 
-def _exercise_interactive_workspace_rows(frame) -> None:
+def _exercise_interactive_workspace_rows(frame: FrameLocator) -> None:
     initial_row = frame.locator("#stacked [data-rail] .ticket-row").first
     initial_row.wait_for(state="visible", timeout=WAIT_MS)
     _assert_painted(initial_row)
@@ -143,7 +157,7 @@ def _exercise_interactive_workspace_rows(frame) -> None:
     _assert_painted(anchored_row)
 
 
-def _assert_managed_html_references_render(frame) -> None:
+def _assert_managed_html_references_render(frame: FrameLocator) -> None:
     frame.locator("#relative-styled").wait_for(state="visible", timeout=WAIT_MS)
     frame.locator("#root-styled").wait_for(state="visible", timeout=WAIT_MS)
     assert frame.locator("#relative-styled").evaluate(
@@ -176,7 +190,7 @@ def _assert_managed_html_references_render(frame) -> None:
         assert metrics["height"] > 0
 
 
-def _assert_full_page_markdown_document(page, heading: str) -> None:
+def _assert_full_page_markdown_document(page: Page, heading: str) -> None:
     page.wait_for_function(
         "heading => document.querySelector("
         "'[data-file-preview-route] [data-file-preview-markdown] h1'"
@@ -216,11 +230,13 @@ def _assert_full_page_markdown_document(page, heading: str) -> None:
     assert geometry["docHeight"] > 0
 
 
-def _wait_for_field_text(api, server, ticket_id: str, field: str, expected_fragment: str) -> str:
+def _wait_for_field_text(
+    api: ApiHelper, server: ServerHandle, ticket_id: str, field: str, expected_fragment: str
+) -> str:
     deadline = time.monotonic() + WAIT_MS / 1000
     while time.monotonic() < deadline:
         ticket = api.get(server, f"/api/tickets/{ticket_id}")
-        value = ticket["fields"][field]["value"]
+        value: str = ticket["fields"][field]["value"]
         if expected_fragment in value:
             return value
         time.sleep(0.1)
@@ -231,7 +247,10 @@ def _wait_for_field_text(api, server, ticket_id: str, field: str, expected_fragm
 
 
 def test_preview_hash_route_renders_markdown_and_sandboxes_html(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     ticket_id = cli(
         server,
@@ -397,7 +416,10 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
 
 
 def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     ticket_id = cli(
         server,
@@ -466,7 +488,10 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
 
 
 def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfaces(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     ticket_id = cli(
         server,
@@ -530,7 +555,10 @@ def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfa
 
 
 def test_markdown_file_preview_has_component_owned_max_height(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     ticket_id = cli(
         server,
@@ -592,7 +620,10 @@ def test_markdown_file_preview_has_component_owned_max_height(
 
 
 def test_read_only_ticket_surfaces_share_file_preview(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     ticket_id = cli(
         server,
@@ -697,7 +728,10 @@ def test_read_only_ticket_surfaces_share_file_preview(
         '[data-field="closeout"] [data-file-preview-kind="html"]', timeout=WAIT_MS
     )
 def test_normal_editable_ticket_field_renders_file_previews_at_rest(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     ticket_id = cli(
         server,
@@ -782,7 +816,11 @@ def test_normal_editable_ticket_field_renders_file_previews_at_rest(
 
 
 def test_editable_markdown_file_links_round_trip_as_raw_markdown(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -870,7 +908,11 @@ def test_editable_markdown_file_links_round_trip_as_raw_markdown(
 
 
 def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generated_dom(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -961,7 +1003,11 @@ def test_editable_markdown_preview_focus_noop_and_actions_do_not_persist_generat
 
 
 def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -1159,7 +1205,11 @@ def test_editable_markdown_atomic_preview_adjacent_edits_and_selected_deletion(
 
 
 def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -1278,7 +1328,10 @@ def test_editable_preview_deletion_unmounts_pending_fetch_and_clears_iframe(
 
 
 def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     ticket_id = cli(
         server,
@@ -1353,7 +1406,10 @@ def test_editing_that_moves_atomic_slot_keeps_preview_mounted(
 
 
 def test_editable_same_source_owner_update_preserves_pristine_preview_and_resets_dirty_dom(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     ticket_id = cli(
         server,
@@ -1421,7 +1477,11 @@ def test_editable_same_source_owner_update_preserves_pristine_preview_and_resets
 
 
 def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -1457,8 +1517,10 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
 
     attempts: list[str] = []
 
-    def fail_first_save(route) -> None:
-        attempts.append(route.request.post_data_json["body"])
+    def fail_first_save(route: Route) -> None:
+        post_data_json = route.request.post_data_json
+        assert post_data_json is not None
+        attempts.append(post_data_json["body"])
         if len(attempts) == 1:
             route.fulfill(
                 status=500,
@@ -1513,7 +1575,11 @@ def test_failed_markdown_save_retries_exact_pending_source_without_more_input(
 
 
 def test_loaded_preview_proposal_approves_without_edited_body(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -1548,11 +1614,13 @@ def test_loaded_preview_proposal_approves_without_edited_body(
         arg=f"{card} [data-file-preview-kind='html'] iframe",
         timeout=WAIT_MS,
     )
-    approval_payloads: list[dict] = []
+    approval_payloads: list[JsonObject] = []
 
-    def capture_accept(request) -> None:
+    def capture_accept(request: Request) -> None:
         if request.method == "POST" and f"/api/tickets/{ticket_id}/accept/success" in request.url:
-            approval_payloads.append(request.post_data_json)
+            post_data_json = request.post_data_json
+            assert post_data_json is not None
+            approval_payloads.append(post_data_json)
 
     page.on("request", capture_accept)
     page.wait_for_function(

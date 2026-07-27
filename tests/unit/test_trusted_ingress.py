@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.core.clock import build_clock
@@ -23,7 +24,7 @@ _VITE_CSS_ROUTE = "/_app/assets/" + next(
 )
 
 
-def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[object, Path]:
+def _make_app(tmp_path: Path, *, hosted: bool = True) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "data" / "planning-test.db"
     db_path.parent.mkdir(parents=True)
     boot = connect(str(db_path))

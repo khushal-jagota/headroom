@@ -5,6 +5,11 @@ These are intentionally unanchored so they do not affect the verify item scorer.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+
 WAIT_MS = 10_000
 
 
@@ -15,7 +20,11 @@ def _workspace_ticket(ticket_id: str) -> str:
     )
 
 
-def test_chief_of_staff_route_nav_and_acp_mount(server, context_factory, open_page) -> None:
+def test_chief_of_staff_route_nav_and_acp_mount(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
     page = open_page(
         context_factory(),
         server,
@@ -33,7 +42,11 @@ def test_chief_of_staff_route_nav_and_acp_mount(server, context_factory, open_pa
 
 
 def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     tid = cli(
         server,
@@ -81,7 +94,11 @@ def test_workspace_defaults_to_chief_chat_and_ticket_selection_restores(
 
 
 def test_workspace_ticket_route_restores_on_load_refresh_and_history(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     first_id = cli(
         server,
@@ -169,7 +186,11 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
     )
 
 
-def test_legacy_board_route_renders_workspace(server, context_factory, open_page) -> None:
+def test_legacy_board_route_renders_workspace(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
     page = open_page(
         context_factory(),
         server,

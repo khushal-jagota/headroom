@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from planner.environments import materialize
-from planner.environments.contracts import EnvironmentValidationError
+from planner.environments.contracts import EnvironmentManifest, EnvironmentValidationError
 from planner.server_lifecycle.control import resolve_server_lifecycle_lease_path
 from planner.server_lifecycle.supervisor import PortScopedServerLifecycleLease
 
@@ -256,7 +256,7 @@ def test_live_import_copy_failure_leaves_existing_state_unchanged(
     def fail_copytree(*_args: object, **_kwargs: object) -> None:
         raise OSError("injected copy failure")
 
-    monkeypatch.setattr(materialize.shutil, "copytree", fail_copytree)
+    monkeypatch.setattr(shutil, "copytree", fail_copytree)
     with pytest.raises(EnvironmentValidationError, match="injected copy failure"):
         materialize.import_live_environment_state(
             environment_root=root,
@@ -291,14 +291,16 @@ def test_live_import_pointer_failure_keeps_the_complete_previous_generation(
     old_generation = (prepared.instance_root / "current").resolve()
     source_db, source_files, source_hermes, source_user_home, source_logs = _live_sources(tmp_path)
     sqlite3.connect(source_db).close()
-    real_replace = materialize.os.replace
+    real_replace = os.replace
 
-    def fail_pointer_replace(source: object, destination: object) -> None:
+    def fail_pointer_replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
         if Path(destination) == prepared.instance_root / "current":
             raise OSError("injected pointer failure")
         real_replace(source, destination)
 
-    monkeypatch.setattr(materialize.os, "replace", fail_pointer_replace)
+    monkeypatch.setattr(os, "replace", fail_pointer_replace)
     with pytest.raises(EnvironmentValidationError, match="injected pointer failure"):
         materialize.import_live_environment_state(
             environment_root=root,
@@ -367,14 +369,16 @@ def test_live_import_cleanup_failure_after_pointer_commit_is_nonfatal(
         tmp_path
     )
     sqlite3.connect(source_db).close()
-    real_rmtree = materialize.shutil.rmtree
+    real_rmtree = shutil.rmtree
 
-    def fail_old_generation_cleanup(path: object, *args: object, **kwargs: object) -> None:
+    def fail_old_generation_cleanup(
+        path: str | os.PathLike[str], ignore_errors: bool = False
+    ) -> None:
         if Path(path) == old_generation:
             raise OSError("injected cleanup failure")
-        real_rmtree(path, *args, **kwargs)
+        real_rmtree(path, ignore_errors=ignore_errors)
 
-    monkeypatch.setattr(materialize.shutil, "rmtree", fail_old_generation_cleanup)
+    monkeypatch.setattr(shutil, "rmtree", fail_old_generation_cleanup)
     imported = materialize.import_live_environment_state(
         environment_root=root,
         source_db_path=source_db,
@@ -530,10 +534,12 @@ def test_staging_operations_never_read_the_live_manifest(
     live_manifest = root / "live" / "manifest.json"
     real_read_manifest = materialize._read_manifest
 
-    def guarded_read_manifest(path: Path, **kwargs: object) -> object:
+    def guarded_read_manifest(
+        path: Path, *, caller_environment_root: Path | None = None
+    ) -> EnvironmentManifest:
         if path == live_manifest:
             raise AssertionError("live manifest was opened")
-        return real_read_manifest(path, **kwargs)
+        return real_read_manifest(path, caller_environment_root=caller_environment_root)
 
     monkeypatch.setattr(materialize, "_read_manifest", guarded_read_manifest)
     materialize.inspect_environment_instance(

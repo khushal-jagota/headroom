@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, MutableMapping
 from pathlib import Path
 from time import monotonic
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -84,7 +85,7 @@ async def _collect_frames(
         await disconnected.wait()
         return {"type": "http.disconnect"}
 
-    async def send(message: dict[str, object]) -> None:
+    async def send(message: MutableMapping[str, Any]) -> None:
         if message["type"] == "http.response.start":
             started.update(message)
         elif message["type"] == "http.response.body":
@@ -208,7 +209,7 @@ def test_closing_the_open_streams_ends_them_without_waiting_for_their_clients(
             await never_disconnects.wait()
             return {"type": "http.disconnect"}
 
-        async def send(message: dict[str, object]) -> None:
+        async def send(message: MutableMapping[str, Any]) -> None:
             if message["type"] == "http.response.body":
                 body = message.get("body", b"")
                 assert isinstance(body, bytes)

@@ -237,7 +237,11 @@ def test_new_worker_default_ceiling_and_first_worker_stage() -> None:
 
 def test_new_worker_declares_expected_default_ownership_modes() -> None:
     assert {
-        stage.id: stage.default_ownership_mode.value
+        stage.id: (
+            stage.default_ownership_mode.value
+            if stage.default_ownership_mode is not None
+            else None
+        )
         for stage in NEW_WORKER_TYPE_DEFINITION.stages
         if not stage.is_terminal
     } == {

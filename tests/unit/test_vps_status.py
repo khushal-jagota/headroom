@@ -8,11 +8,12 @@ import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from planner.core.clock import build_clock
-from planner.core.config import load_config
+from planner.core.config import Config, load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 from planner.environments.backup import create_database_backup
@@ -20,6 +21,7 @@ from planner.environments.cli import EnvironmentCliDependencies, environment
 from planner.environments.vps_status import (
     VpsStatusDependencies,
     VpsStatusPolicy,
+    VpsStatusSnapshot,
     apply_cleanup_inventory,
     collect_cleanup_inventory,
     collect_vps_status,
@@ -32,7 +34,7 @@ class _StatVfs:
     f_bavail = 500_000
 
 
-def _config(tmp_path: Path):
+def _config(tmp_path: Path) -> Config:
     return load_config(
         path=None,
         env={
@@ -222,7 +224,9 @@ def test_cleanup_reproof_rejects_a_configured_root_replaced_by_a_symlink(tmp_pat
     assert result.review_needed == [str(log)]
 
 
-def test_unreadable_configured_logs_remain_review_needed(tmp_path: Path, monkeypatch) -> None:
+def test_unreadable_configured_logs_remain_review_needed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config = _config(tmp_path)
     Path(config.logs_dir).mkdir()
 
@@ -248,17 +252,22 @@ def test_process_probe_failures_remain_unavailable_in_the_api(tmp_path: Path) ->
         subprocess.TimeoutExpired(["ps"], timeout=1),
         subprocess.CalledProcessError(1, ["ps"]),
     ):
-        app = create_app(
-            config,
-            build_clock(config),
-            lambda: connect(config.db_path),
-            vps_status_collector=lambda _config, failure=failure: collect_vps_status(
+        def failing_vps_status_collector(
+            _config: Config, failure: BaseException = failure
+        ) -> VpsStatusSnapshot:
+            return collect_vps_status(
                 config,
                 dependencies=VpsStatusDependencies(
                     platform_name=lambda: "Darwin",
                     process_lines=lambda: (_ for _ in ()).throw(failure),
                 ),
-            ),
+            )
+
+        app = create_app(
+            config,
+            build_clock(config),
+            lambda: connect(config.db_path),
+            vps_status_collector=failing_vps_status_collector,
         )
         with TestClient(app) as client:
             response = client.get("/api/vps-status")
@@ -301,7 +310,7 @@ def test_direct_status_cli_and_read_only_api_serialize_the_same_snapshot(tmp_pat
         now=lambda: datetime(2026, 7, 24, tzinfo=UTC),
         platform_name=lambda: "Darwin",
         process_lines=lambda: [],
-        statvfs=lambda _path: _StatVfs(),  # type: ignore[arg-type]
+        statvfs=lambda _path: _StatVfs(),  # type: ignore[return-value, arg-type]  # fake stat_result stand-in
     )
     snapshot = collect_vps_status(
         config,

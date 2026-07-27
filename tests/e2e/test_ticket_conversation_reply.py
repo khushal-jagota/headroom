@@ -12,9 +12,11 @@ and reaches the real server, including the call that moves the Ticket.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
-from playwright.sync_api import Request
-from tests.e2e.conftest import WAIT_MS
+from playwright.sync_api import BrowserContext, Page, Request
+from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
 
 TICKET_SCREEN = '[data-screen="ticket"]'
@@ -25,9 +27,9 @@ PROPOSAL = "# Success criteria\n\nThe suite goes green.\n"
 REFUSED_TEXT = "did this reach anything"
 
 
-def _parked_on_a_proposal(server, cli) -> str:
+def _parked_on_a_proposal(server: ServerHandle, cli: Callable[..., JsonObject]) -> str:
     """A Ticket its worker has filed a proposal on, waiting for its owner to answer."""
-    ticket_id = cli(
+    ticket_id: str = cli(
         server,
         "ticket",
         "create",
@@ -51,7 +53,11 @@ def _parked_on_a_proposal(server, cli) -> str:
 
 
 def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = _parked_on_a_proposal(server, cli)
     assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"

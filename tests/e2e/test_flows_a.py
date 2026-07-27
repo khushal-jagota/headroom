@@ -11,8 +11,10 @@ minted session key, rendered markdown structure) — never weakened approximatio
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
-from playwright.sync_api import Page
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 WAIT_MS = 10_000
 
@@ -66,7 +68,7 @@ def _wait_present(page: Page, selector: str) -> None:
     )
 
 
-def _add_to_today(api, server, *ticket_ids: str) -> None:
+def _add_to_today(api: ApiHelper, server: ServerHandle, *ticket_ids: str) -> None:
     for ticket_id in ticket_ids:
         api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
@@ -80,7 +82,13 @@ def _wait_chat_text(page: Page, who: str, text: str) -> None:
     )
 
 
-def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api):
+def test_e22_cli_create_live_board(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     board = 'section[data-screen="workspace"]'
     ctx_a = context_factory()
     ctx_b = context_factory()
@@ -128,7 +136,13 @@ def test_e22_cli_create_live_board(server, context_factory, open_page, cli, api)
     )
 
 
-def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
+def test_e23_env_pinned_propose(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "T18 propose ticket"
     )["id"]
@@ -188,8 +202,12 @@ def test_e23_env_pinned_propose(server, context_factory, open_page, cli, api):
 
 
 def test_review_tracks_today_membership_without_reload(
-    server, context_factory, open_page, cli, api
-):
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(
         server,
         "ticket",
@@ -258,8 +276,12 @@ def test_review_tracks_today_membership_without_reload(
 
 
 def test_kickoff_accepts_from_review_without_worker_revision_control(
-    server, context_factory, open_page, cli, api
-):
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(
         server,
         "ticket",
@@ -300,7 +322,13 @@ def test_kickoff_accepts_from_review_without_worker_revision_control(
     assert detail["title"] == "Reviewed kickoff title"
 
 
-def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
+def test_e24_accept_in_review(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(
         server, "ticket", "create", "--worker-type", "coding", "--title", "T18 review ticket"
     )["id"]
@@ -355,8 +383,12 @@ def test_e24_accept_in_review(server, context_factory, open_page, cli, api):
 
 
 def test_markdown_approval_focus_noop_keeps_raw_source(
-    server, context_factory, open_page, cli, api
-):
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(
         server,
         "ticket",
@@ -416,8 +448,12 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
 
 
 def test_review_approval_renders_nested_mixed_gfm_lists(
-    server, context_factory, open_page, cli, api
-):
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(
         server,
         "ticket",
@@ -454,7 +490,13 @@ def test_review_approval_renders_nested_mixed_gfm_lists(
     )
 
 
-def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api):
+def test_e25_edit_accept_in_review(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "T18 edit ticket")[
         "id"
     ]
@@ -534,7 +576,13 @@ def test_e25_edit_accept_in_review(server, context_factory, open_page, cli, api)
     ) == ["kept structure", "serialized from DOM"]
 
 
-def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api):
+def test_review_keyboard_shortcuts(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     # The review chamber's global shortcuts (s skip, o open, cmd/ctrl+enter approve)
     # must never fire from inside an editable. Two Review decisions so a skip leaves a
     # card behind, and so cmd/ctrl+enter inside the editor is proven not to approve.
@@ -653,7 +701,13 @@ def test_review_keyboard_shortcuts(server, context_factory, open_page, cli, api)
 
 
 
-def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
+def test_e27_auto_accept_chain(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "T18 chain ticket")[
         "id"
     ]
@@ -726,8 +780,12 @@ def test_e27_auto_accept_chain(server, context_factory, open_page, cli, api):
 
 
 def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
-    server, context_factory, open_page, cli, api
-):
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(
         server,
         "ticket",
@@ -794,8 +852,11 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
 
 
 def test_settled_kickoff_field_renders_as_canonical_intake_block(
-    server, context_factory, open_page, cli
-):
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
     tid = cli(
         server,
         "ticket",
@@ -876,8 +937,12 @@ def test_settled_kickoff_field_renders_as_canonical_intake_block(
 
 
 def test_ticket_facts_have_owner_without_execution_route(
-    server, context_factory, open_page, cli, api
-):
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
     tid = cli(
         server,
         "ticket",

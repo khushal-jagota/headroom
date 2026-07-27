@@ -17,10 +17,13 @@ sprint overlap rejection (inclusive ranges).
 
 from __future__ import annotations
 
+from sqlite3 import Connection
+
 import pytest
 
 from planner.core import links as core_links
-from planner.core.contracts import LinkKind
+from planner.core.clock import TestClock
+from planner.core.contracts import BlockerSummary, LinkKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import (
@@ -40,7 +43,7 @@ _EMPTY_CODING_FIELDS = fields_to_json(TicketFields.empty(CODING_WORKER_TYPE_DEFI
 
 
 def _insert_ticket(
-    conn,
+    conn: Connection,
     ticket_id: str,
     stage: str,
     *,
@@ -59,7 +62,7 @@ def _insert_ticket(
     )
 
 
-def _set_ticket_state(conn, ticket_id: str, stage: str) -> None:
+def _set_ticket_state(conn: Connection, ticket_id: str, stage: str) -> None:
     # Same sanction as _insert_ticket: blocker ticket-states are test fixtures here,
     # not exercises of T04's writers.
     conn.execute("UPDATE tickets SET stage = ? WHERE id = ?", (stage, ticket_id))
@@ -68,7 +71,7 @@ def _set_ticket_state(conn, ticket_id: str, stage: str) -> None:
 # --- item 10: sprint-item permissions (single anchored test) ----------------------
 
 
-def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
+def test_a10_sprint_item_permissions(tmp_db: Connection, fake_clock: TestClock) -> None:
     empty = create_item(tmp_db, title="empty", project_id="project_vylo", clock=fake_clock)
     assert read_item(tmp_db, empty.id).status is ItemStatus.todo
 
@@ -133,7 +136,7 @@ def test_a10_sprint_item_permissions(tmp_db, fake_clock) -> None:
 # --- item 20: sprint overlap (single anchored test) -------------------------------
 
 
-def test_a20_sprint_overlap(tmp_db, fake_clock) -> None:
+def test_a20_sprint_overlap(tmp_db: Connection, fake_clock: TestClock) -> None:
     # Freeze + weekly_addenda are retired (rev6): every sprint text field is
     # always-editable and nothing latches, so the only rule left to assert is sprint
     # overlap rejection — interior overlap, inclusive boundary (candidate start ==
@@ -172,7 +175,9 @@ def test_x06_current_sprint_selection() -> None:
     assert current_sprint_id("2026-06-30", [a, d]) is None
 
 
-def test_x06_sprint_item_blocked_status_uses_active_blocker_summary(tmp_db, fake_clock) -> None:
+def test_x06_sprint_item_blocked_status_uses_active_blocker_summary(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
     directly_blocked = create_item(
         tmp_db, title="directly blocked", project_id="project_vylo", clock=fake_clock
     )
@@ -198,7 +203,7 @@ def test_x06_sprint_item_blocked_status_uses_active_blocker_summary(tmp_db, fake
 
 
 def test_x06_child_ticket_blocked_status_uses_canonical_blocker_summary(
-    tmp_db, fake_clock, monkeypatch: pytest.MonkeyPatch
+    tmp_db: Connection, fake_clock: TestClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     item = create_item(
         tmp_db, title="child summary item", project_id="project_vylo", clock=fake_clock
@@ -209,7 +214,7 @@ def test_x06_child_ticket_blocked_status_uses_canonical_blocker_summary(
     original_blocker_summary = core_links.blocker_summary
     summary_calls: list[str] = []
 
-    def tracked_blocker_summary(conn, entity_id: str):
+    def tracked_blocker_summary(conn: Connection, entity_id: str) -> BlockerSummary:
         summary_calls.append(entity_id)
         return original_blocker_summary(conn, entity_id)
 
@@ -220,7 +225,7 @@ def test_x06_child_ticket_blocked_status_uses_canonical_blocker_summary(
     assert "t_child" in summary_calls
 
 
-def test_x06_create_idea_writer_logs_event(tmp_db, fake_clock) -> None:
+def test_x06_create_idea_writer_logs_event(tmp_db: Connection, fake_clock: TestClock) -> None:
     now = fake_clock.now_unix()
     idea = create_idea(
         tmp_db,
@@ -236,7 +241,9 @@ def test_x06_create_idea_writer_logs_event(tmp_db, fake_clock) -> None:
     assert idea["project_name"] == "Vylo"
 
 
-def test_x06_set_sprint_dates_writer_updates_and_rejects_overlap(tmp_db, fake_clock) -> None:
+def test_x06_set_sprint_dates_writer_updates_and_rejects_overlap(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
     sprint = create_sprint(
         tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
     )

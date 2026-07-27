@@ -612,6 +612,7 @@ def test_semantic_modules_have_no_optional_definition_or_coding_fallback() -> No
             ):
                 if argument.arg == "worker_type_definition":
                     assert default is None, (path, node.name)
+                    assert argument.annotation is not None, (path, node.name)
                     assert "None" not in ast.unparse(argument.annotation), (path, node.name)
                 if argument.arg == "definition":
                     assert default is None, (path, node.name)

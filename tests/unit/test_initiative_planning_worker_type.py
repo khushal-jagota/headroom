@@ -6,8 +6,9 @@ import planner.worker_types as worker_types
 from planner.environments.hermes_home import PLANNER_SKILL_NAMES
 from planner.worker_types import configuration
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+from planner.worker_types.contracts import WorkerTypeManifest
 
-INITIATIVE_PLANNING_MANIFEST = {
+INITIATIVE_PLANNING_MANIFEST: WorkerTypeManifest = {
     "worker_type": "initiative_planning",
     "label": "Initiative Planning",
     "stages": [

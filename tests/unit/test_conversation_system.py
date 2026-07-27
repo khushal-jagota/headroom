@@ -49,7 +49,11 @@ from planner.conversation.events import (
     ConversationEventKind,
     ConversationTurnEnding,
     ModelThinkingFrame,
+    PermissionAnsweredEventPayload,
+    PermissionAskedEventPayload,
     PermissionAskOption,
+    PromptDeliveryRefusedEventPayload,
+    PromptDiscardedEventPayload,
     PromptEventPayload,
     TurnEndedEventPayload,
 )
@@ -389,11 +393,11 @@ class _Harness:
         await self.settle()
         return ask_id
 
-    async def agent_message(self, conversation_id: str, text: str) -> None:
+    async def agent_message(self, conversation_id: str, content: MessageContent) -> None:
         backend = self.backend(conversation_id)
         token = backend.live_turn_token
         assert token is not None and backend.sink is not None
-        await backend.sink.agent_message_completed(token, text)
+        await backend.sink.agent_message_completed(token, content)
         await self.settle()
 
     # --- reading the record ---
@@ -962,9 +966,12 @@ def test_a_dequeued_delivery_that_fails_is_recorded_and_the_drain_carries_on(
         await harness.complete_turn("c")
 
         refused = [
-            (message_content_text(event.payload.content), event.payload.refusal_reason)
-            for event in await harness.events("c")
-            if event.kind is ConversationEventKind.prompt_delivery_refused
+            (message_content_text(payload.content), payload.refusal_reason)
+            for payload in (
+                event.payload
+                for event in await harness.events("c")
+                if isinstance(event.payload, PromptDeliveryRefusedEventPayload)
+            )
         ]
         assert refused == [
             ("held-a", PromptDeliveryRefusalReason.write_to_backend_failed),
@@ -1350,13 +1357,13 @@ def test_an_ask_is_recorded_with_the_backends_own_options_and_waits(harness: _Ha
         await harness.settle()
 
         asked = [
-            event
+            event.payload
             for event in await harness.events("c")
-            if event.kind is ConversationEventKind.permission_asked
+            if isinstance(event.payload, PermissionAskedEventPayload)
         ]
         assert len(asked) == 1
-        assert asked[0].payload.ask_id == ask_id
-        assert [option.option_id for option in asked[0].payload.options] == ["allow-once", "deny"]
+        assert asked[0].ask_id == ask_id
+        assert [option.option_id for option in asked[0].options] == ["allow-once", "deny"]
         # Nothing ever answers an ask by itself.
         assert harness.backend("c").permission_answers == {}
         assert await harness.system.has_pending_permission_ask("c") is True
@@ -1377,7 +1384,7 @@ def test_an_answer_reaches_the_backend_and_is_recorded(harness: _Harness) -> Non
         answered = [
             event.payload
             for event in await harness.events("c")
-            if event.kind is ConversationEventKind.permission_answered
+            if isinstance(event.payload, PermissionAnsweredEventPayload)
         ]
         assert [(payload.ask_id, payload.option_id) for payload in answered] == [
             (ask_id, "allow-once")
@@ -1915,9 +1922,12 @@ def test_kill_stops_the_turn_and_throws_away_everything_that_was_waiting(
             ConversationEventKind.turn_ended,
         )
         discarded = [
-            (message_content_text(event.payload.content), event.payload.sender_label)
-            for event in await harness.events("c")
-            if event.kind is ConversationEventKind.prompt_discarded
+            (message_content_text(payload.content), payload.sender_label)
+            for payload in (
+                event.payload
+                for event in await harness.events("c")
+                if isinstance(event.payload, PromptDiscardedEventPayload)
+            )
         ]
         assert discarded == [("held one", "owner"), ("held two", "automatic-loop")]
         assert await harness.recorded_endings("c") == (ConversationTurnEnding.interrupted,)
@@ -2420,9 +2430,12 @@ def test_one_waiting_message_can_be_taken_back_and_the_rest_still_run(
             ConversationEventKind.prompt_discarded,
         )
         discarded = [
-            (message_content_text(event.payload.content), event.payload.sender_message_id)
-            for event in await harness.events("c")
-            if event.kind is ConversationEventKind.prompt_discarded
+            (message_content_text(payload.content), payload.sender_message_id)
+            for payload in (
+                event.payload
+                for event in await harness.events("c")
+                if isinstance(event.payload, PromptDiscardedEventPayload)
+            )
         ]
         assert discarded == [("first held", "message-one")]
 

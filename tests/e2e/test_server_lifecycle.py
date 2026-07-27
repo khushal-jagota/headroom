@@ -12,7 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
-from conftest import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
+from tests.e2e.harness import BOOT_BUDGET_S, PLAN_BIN, REPO_ROOT, ServerHandle
 
 
 def _direct_children(parent_pid: int) -> list[int]:

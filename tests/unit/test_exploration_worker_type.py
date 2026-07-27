@@ -5,8 +5,9 @@ from pathlib import Path
 import planner.worker_types as worker_types
 from planner.worker_types import configuration
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
+from planner.worker_types.contracts import WorkerTypeManifest
 
-EXPLORATION_MANIFEST = {
+EXPLORATION_MANIFEST: WorkerTypeManifest = {
     "worker_type": "exploration",
     "label": "Exploration",
     "stages": [

@@ -21,10 +21,12 @@ import asyncio
 import struct
 import threading
 import zlib
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 import httpx
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ServerHandle
 
 from planner.conversation.contracts import AgentCommand, PromptDeliveryMode
 from planner.conversation.events import (
@@ -157,7 +159,7 @@ WHERE_THE_THREAD_IS = """
 """
 
 
-def _create_conversation(server, conversation_id: str) -> None:
+def _create_conversation(server: ServerHandle, conversation_id: str) -> None:
     created = httpx.post(
         f"{server.base}/api/conversation/conversations",
         json={"conversation_id": conversation_id, "backend_key": "codex"},
@@ -213,7 +215,9 @@ def _on_its_own_thread(work: Coroutine[Any, Any, Any]) -> Any:
     return done[0]
 
 
-def _append_rows(server, conversation_id: str, *payloads: ConversationEventPayload) -> None:
+def _append_rows(
+    server: ServerHandle, conversation_id: str, *payloads: ConversationEventPayload
+) -> None:
     """Write rows into the record, exactly as the conversation system writes them.
 
     The store's calls are awaited, and this thread already belongs to the browser driver's
@@ -241,7 +245,7 @@ def _append_rows(server, conversation_id: str, *payloads: ConversationEventPaylo
 
 
 def _store_the_commands_the_agent_reported(
-    server, conversation_id: str, *commands: AgentCommand
+    server: ServerHandle, conversation_id: str, *commands: AgentCommand
 ) -> None:
     """Put the agent's own menu where the backend puts it when it reports one."""
     _on_its_own_thread(
@@ -251,7 +255,7 @@ def _store_the_commands_the_agent_reported(
     )
 
 
-def _let_the_browser_catch_up(page, rows_expected: int) -> None:
+def _let_the_browser_catch_up(page: Page, rows_expected: int) -> None:
     """Ask the page what it asks itself when it comes back to a tab.
 
     The live tail only carries rows the running server wrote itself, so rows written
@@ -328,7 +332,9 @@ def _a_conversation_worth_scrolling() -> tuple[ConversationEventPayload, ...]:
 
 
 def test_the_dev_route_renders_the_empty_state_and_backend_cards(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     page = open_page(
         context_factory(), server, "#/dev/conversation", "[data-conversation-route]"
@@ -343,7 +349,9 @@ def test_the_dev_route_renders_the_empty_state_and_backend_cards(
 
 
 def test_a_started_conversation_reloads_into_the_pane_surface(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     _create_conversation(server, "e2e-dev-pane")
 
@@ -358,7 +366,9 @@ def test_a_started_conversation_reloads_into_the_pane_surface(
 
 
 def test_a_sent_message_is_in_the_thread_before_the_server_answers(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """Sending is not a round trip anybody should have to watch.
 
@@ -378,6 +388,7 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
 
     drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
+    assert drawn is not None
     assert drawn.inner_text().strip() == "what is the plan"
     # The box is theirs again straight away, and it never stopped being typeable.
     assert page.input_value("[data-conversation-input]") == ""
@@ -405,7 +416,9 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
 
 
 def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """The first message is the one that starts the conversation on its way to a backend.
 
@@ -428,6 +441,7 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
 
     drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
+    assert drawn is not None
     assert drawn.inner_text().strip() == "the very first thing"
     assert page.query_selector("[data-conversation-outgoing-label]") is None, (
         "a message on its way says nothing about itself"
@@ -445,7 +459,9 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
 
 
 def test_a_send_that_gets_nowhere_gives_the_words_back(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     _create_conversation(server, "e2e-send-failed")
     context = context_factory()
@@ -486,7 +502,9 @@ def test_a_send_that_gets_nowhere_gives_the_words_back(
 
 
 def test_a_send_nobody_heard_the_end_of_is_not_offered_back_to_be_sent_again(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """No answer at all is not the same as being told no.
 
@@ -516,7 +534,9 @@ def test_a_send_nobody_heard_the_end_of_is_not_offered_back_to_be_sent_again(
 
 
 def test_a_reader_who_has_gone_elsewhere_is_left_where_they_are(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """A wheel is a person saying where they want to be. Nothing else here is."""
     conversation_id = "e2e-reader"
@@ -562,7 +582,9 @@ TURN_FOLD = "[data-conversation-turn-fold]"
 
 
 def test_a_screenful_disappearing_above_the_reader_leaves_them_where_they_are(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """The thread getting shorter under somebody — the one direction that can strand them.
 
@@ -617,7 +639,9 @@ def test_a_screenful_disappearing_above_the_reader_leaves_them_where_they_are(
 
 
 def test_something_above_the_reader_changing_height_leaves_them_where_they_are(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """A fold opening further up the thread is a screenful appearing above somebody.
 
@@ -669,7 +693,9 @@ def test_something_above_the_reader_changing_height_leaves_them_where_they_are(
 
 
 def test_the_thread_follows_the_answer_instead_of_the_bottom(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """Where the thread goes when you send, and what moves it afterwards."""
     conversation_id = "e2e-scroll"
@@ -772,7 +798,9 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
 
 
 def test_a_picture_in_the_record_is_drawn_and_really_loads(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """The whole path, in a browser, against the real server.
 
@@ -825,7 +853,9 @@ def test_a_picture_in_the_record_is_drawn_and_really_loads(
 
 
 def test_a_link_you_paste_reads_like_the_agent_s_links_do(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """Your own words go through the same renderer the agent's do.
 

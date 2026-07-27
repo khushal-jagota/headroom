@@ -11,7 +11,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from sqlite3 import Connection
+from sqlite3 import Connection, Row
 from types import SimpleNamespace
 
 import pytest
@@ -57,7 +57,7 @@ def _count(conn: Connection, table: str) -> int:
     return int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
 
 
-def _rows_by(conn: Connection, sql: str, key: str) -> dict[str, object]:
+def _rows_by(conn: Connection, sql: str, key: str) -> dict[str, Row]:
     return {row[key]: row for row in conn.execute(sql).fetchall()}
 
 

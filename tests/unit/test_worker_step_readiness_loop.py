@@ -36,9 +36,13 @@ from planner.runtime.worker_step_readiness_loop import (
     start_ready_worker_step,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import AtCap, StageOwnershipMode, TicketStatus
+from planner.tickets.contracts import AtCap, StageOwnershipMode, Ticket, TicketStatus
 from planner.worker_context import data as worker_context_data
-from planner.worker_context.contracts import WorkerContextService
+from planner.worker_context.contracts import (
+    PreparedWorkerPrompt,
+    WorkerContextReceipt,
+    WorkerContextService,
+)
 from planner.worker_context.service import SqliteWorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -130,7 +134,7 @@ class _World:
                 ).fetchall()
             ]
 
-    def ticket(self, ticket_id: str):
+    def ticket(self, ticket_id: str) -> Ticket:
         with self.connect() as conn:
             return tickets_data.read_ticket(conn, ticket_id)
 
@@ -409,10 +413,12 @@ class _AcknowledgementRefusingContext:
     def __init__(self, service: WorkerContextService) -> None:
         self._service = service
 
-    def prepare(self, worker_entity_id: str, prompt_text: str):
+    def prepare(self, worker_entity_id: str, prompt_text: str) -> PreparedWorkerPrompt:
         return self._service.prepare(worker_entity_id, prompt_text)
 
-    def acknowledge(self, worker_entity_id: str, receipts) -> None:
+    def acknowledge(
+        self, worker_entity_id: str, receipts: tuple[WorkerContextReceipt, ...]
+    ) -> None:
         raise RuntimeError("the context store is unreachable")
 
 

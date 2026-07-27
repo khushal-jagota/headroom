@@ -343,7 +343,7 @@ class ScriptedAcpAgent:
                 return {"ok": True}
             case "emit_plan":
                 await self._emit_plan(command)
-
+                return {"ok": True}
             case "emit_thought":
                 await self._emit_thought(str(command["text"]))
                 return {"ok": True}

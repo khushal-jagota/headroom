@@ -9,8 +9,10 @@ anything is on the screen once the stream is back, with no reload.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
-from playwright.sync_api import Page, Route
+from playwright.sync_api import BrowserContext, Page, Route
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 WAIT_MS = 10_000
 # The browser retries a dropped stream on its own schedule, so reconnection waits are
@@ -22,7 +24,7 @@ def _status(page: Page) -> str | None:
     return page.locator("[data-connection-status]").get_attribute("data-state")
 
 
-def _set_running_worker(server, ticket_id: str) -> None:
+def _set_running_worker(server: ServerHandle, ticket_id: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute("UPDATE tickets SET ticket_status = 'agent' WHERE id = ?", (ticket_id,))
 
@@ -46,7 +48,10 @@ def _assert_shell_signals_have_geometry(page: Page) -> None:
 
 
 def test_blocked_change_stream_says_reconnecting_and_catches_up_once_it_returns(
-    server, context_factory, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,

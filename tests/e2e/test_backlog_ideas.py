@@ -12,16 +12,24 @@ no bare sleeps.
 
 from __future__ import annotations
 
-from playwright.sync_api import Page
+from collections.abc import Callable
+
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ServerHandle
 
 WAIT_MS = 10_000
 
 
 def _texts(page: Page, selector: str) -> list[str]:
-    return page.eval_on_selector_all(selector, "els => els.map(e => e.textContent)")
+    texts: list[str] = page.eval_on_selector_all(selector, "els => els.map(e => e.textContent)")
+    return texts
 
 
-def test_backlog_create_lands_in_priority_group(server, context_factory, open_page):
+def test_backlog_create_lands_in_priority_group(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
     ctx = context_factory()
     # Empty backlog: the compose is the ready gate (rendered synchronously).
     page = open_page(
@@ -48,7 +56,11 @@ def test_backlog_create_lands_in_priority_group(server, context_factory, open_pa
     assert len(_texts(page, "[data-backlog-items] [data-item-id]")) == 1
 
 
-def test_ideas_capture_flat_and_disclosure(server, context_factory, open_page):
+def test_ideas_capture_flat_and_disclosure(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
     ctx = context_factory()
     page = open_page(ctx, server, "#/ideas", '[data-screen="ideas"] .capture')
 
@@ -57,7 +69,10 @@ def test_ideas_capture_flat_and_disclosure(server, context_factory, open_page):
     page.click('[data-create="idea"] [data-commit]')
     page.wait_for_selector('[data-ideas] div.list-row[data-idea-id]', timeout=WAIT_MS)
     flat = page.query_selector('[data-ideas] div.list-row[data-idea-id]')
-    assert "Dark mode only, skip the light theme" in flat.text_content()
+    assert flat is not None
+    flat_text = flat.text_content()
+    assert flat_text is not None
+    assert "Dark mode only, skip the light theme" in flat_text
     # Title-only means no chevron to expand: no <details> disclosure exists yet.
     assert page.query_selector('[data-ideas] details.disclosure--idea') is None
 
@@ -71,9 +86,18 @@ def test_ideas_capture_flat_and_disclosure(server, context_factory, open_page):
     page.wait_for_selector('[data-ideas] details.disclosure--idea[data-idea-id]', timeout=WAIT_MS)
 
     details = page.query_selector('[data-ideas] details.disclosure--idea[data-idea-id]')
-    assert "One-question onboarding" in details.query_selector(".it").text_content()
+    assert details is not None
+    idea_title = details.query_selector(".it")
+    assert idea_title is not None
+    idea_title_text = idea_title.text_content()
+    assert idea_title_text is not None
+    assert "One-question onboarding" in idea_title_text
     # The body is present in the DOM but the disclosure starts closed.
-    assert "Ask one thing that matters" in details.query_selector(".disclosure-body").text_content()
+    idea_body = details.query_selector(".disclosure-body")
+    assert idea_body is not None
+    idea_body_text = idea_body.text_content()
+    assert idea_body_text is not None
+    assert "Ask one thing that matters" in idea_body_text
     assert details.get_attribute("open") is None
 
     # Expanding the chevron opens the disclosure.

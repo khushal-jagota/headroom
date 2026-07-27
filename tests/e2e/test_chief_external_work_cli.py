@@ -5,11 +5,15 @@ import os
 import subprocess
 from pathlib import Path
 
+from tests.e2e.harness import ServerHandle
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
 
 
-def _run(server, *args: str, actor: str | None = "chief") -> subprocess.CompletedProcess[str]:
+def _run(
+    server: ServerHandle, *args: str, actor: str | None = "chief"
+) -> subprocess.CompletedProcess[str]:
     env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
     env["PLAN_SERVER_URL"] = server.base
     if actor is not None:
@@ -30,7 +34,9 @@ def _file(tmp_path: Path, name: str, text: str) -> str:
     return str(path)
 
 
-def test_chief_external_work_help_lists_stage_and_worker_type_options(server) -> None:
+def test_chief_external_work_help_lists_stage_and_worker_type_options(
+    server: ServerHandle,
+) -> None:
     # --stage is now a free-form option (validated server-side per Worker type), so --help no
     # longer enumerates coding.s Stages; both external-work commands still surface the
     # --stage option, and create surfaces the required --worker-type option.
@@ -46,7 +52,9 @@ def test_chief_external_work_help_lists_stage_and_worker_type_options(server) ->
     assert "--worker-type" in create_help.stdout
 
 
-def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) -> None:
+def test_chief_external_work_cli_create_and_reconcile(
+    server: ServerHandle, tmp_path: Path
+) -> None:
     note = _file(tmp_path, "note.md", "User report plus Chief reconciliation reasoning")
     recap = _file(tmp_path, "recap.md", "Imported work")
     success = _file(tmp_path, "success.md", "Success")
@@ -109,7 +117,9 @@ def test_chief_external_work_cli_create_and_reconcile(server, tmp_path: Path) ->
     assert reconciled_json["stage"] == "done"
 
 
-def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Path) -> None:
+def test_chief_external_work_cli_carries_new_worker_fields(
+    server: ServerHandle, tmp_path: Path
+) -> None:
     note = _file(tmp_path, "new-worker-note.md", "Design imported outside Panels")
     understanding = _file(tmp_path, "understanding.md", "Bounded worker-design understanding")
     stages = _file(tmp_path, "stages.md", "needs_thinking, needs_drafting")
@@ -172,7 +182,9 @@ def test_chief_external_work_cli_carries_new_worker_fields(server, tmp_path: Pat
     )
 
 
-def test_chief_field_file_rejects_ambiguity_before_read_or_request(server) -> None:
+def test_chief_field_file_rejects_ambiguity_before_read_or_request(
+    server: ServerHandle,
+) -> None:
     before = _run(server, "ticket", "list", "--json")
     assert before.returncode == 0, before.stderr
     before_ids = {ticket["id"] for ticket in json.loads(before.stdout)["tickets"]}
@@ -213,7 +225,7 @@ def test_chief_field_file_rejects_ambiguity_before_read_or_request(server) -> No
 
 
 def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
-    server, tmp_path: Path
+    server: ServerHandle, tmp_path: Path
 ) -> None:
     existing = _run(
         server,
@@ -315,7 +327,7 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
 
 
 def test_real_server_chief_external_work_terse_output_and_actor_rejection(
-    server, tmp_path: Path
+    server: ServerHandle, tmp_path: Path
 ) -> None:
     note = _file(tmp_path, "note.md", "Complete report and reconciliation reason")
     success = _file(tmp_path, "success.md", "Success")

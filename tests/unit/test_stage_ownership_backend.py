@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from sqlite3 import Connection
 
 import pytest
 from tests.support.probe import (
@@ -134,7 +135,7 @@ def test_stage_definition_constructor_requires_the_ownership_argument() -> None:
 
 
 def test_ownership_override_set_clear_takeover_release_derives_resting_status(
-    tmp_db,
+    tmp_db: Connection,
 ) -> None:
     ticket = data.create_ticket(
         tmp_db,
@@ -191,7 +192,7 @@ def test_ownership_override_set_clear_takeover_release_derives_resting_status(
 
 
 def test_ticket_current_stage_default_is_captured_until_next_stage_entry(
-    tmp_db,
+    tmp_db: Connection,
 ) -> None:
     registry = configured_worker_type_registry()
     settings_parent = worker_settings_service.database_parent_from_connection(tmp_db)
@@ -260,7 +261,9 @@ def test_ticket_current_stage_default_is_captured_until_next_stage_entry(
     assert second.effective_stage_ownership_mode is StageOwnershipMode.user
 
 
-def test_future_stage_ownership_override_leaves_the_current_stage_alone(tmp_db) -> None:
+def test_future_stage_ownership_override_leaves_the_current_stage_alone(
+    tmp_db: Connection,
+) -> None:
     ticket = data.create_ticket(
         tmp_db,
         actor="human",
@@ -295,7 +298,7 @@ def test_future_stage_ownership_override_leaves_the_current_stage_alone(tmp_db) 
 
 
 def test_current_stage_same_effective_explicit_override_persists_without_status_change(
-    tmp_db,
+    tmp_db: Connection,
 ) -> None:
     ticket = data.create_ticket(
         tmp_db,
@@ -344,7 +347,7 @@ def test_current_stage_same_effective_explicit_override_persists_without_status_
 
 
 def test_takeover_and_release_persist_explicit_user_override_when_default_is_user(
-    tmp_db,
+    tmp_db: Connection,
 ) -> None:
     install_probe_registry()
     try:

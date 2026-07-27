@@ -8,6 +8,7 @@ from sqlite3 import Connection
 from typing import get_type_hints
 
 from click.testing import CliRunner
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.cli.main import main
@@ -28,7 +29,7 @@ _EMPTY_FIELDS_DEFAULT = (
 )
 
 
-def _app(tmp_path: Path):
+def _app(tmp_path: Path) -> FastAPI:
     db_path = tmp_path / "worker-type-stage.db"
     boot = connect(str(db_path))
     create_schema(boot)

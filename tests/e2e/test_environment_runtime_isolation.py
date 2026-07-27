@@ -8,9 +8,10 @@ import signal
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 import httpx
-from conftest import BOOT_BUDGET_S, PLAN_BIN
+from tests.e2e.harness import BOOT_BUDGET_S, PLAN_BIN
 
 _STAGING_URL_RE = re.compile(r"staging (?P<url>http://127\.0\.0\.1:\d+)")
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -147,7 +148,7 @@ def _terminate(proc: subprocess.Popen[bytes]) -> None:
     proc.wait(timeout=10.0)
 
 
-def _command_json(repository: Path, command: str, *args: str) -> dict[str, object]:
+def _command_json(repository: Path, command: str, *args: str) -> dict[str, Any]:
     result = subprocess.run(
         [str(PLAN_BIN), "environment", command, *args],
         cwd=repository,
@@ -158,7 +159,8 @@ def _command_json(repository: Path, command: str, *args: str) -> dict[str, objec
         check=False,
     )
     assert result.returncode == 0, result.stderr + result.stdout
-    return json.loads(result.stdout)
+    data: dict[str, Any] = json.loads(result.stdout)
+    return data
 
 
 def _scrubbed_env() -> dict[str, str]:

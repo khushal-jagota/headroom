@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 from sqlite3 import Connection
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -46,7 +47,7 @@ def probe_registry() -> Iterator[WorkerTypeDefinition]:
         uninstall_probe_registry()
 
 
-def _review(conn: Connection) -> dict:
+def _review(conn: Connection) -> dict[str, Any]:
     return review_view(conn, day_id=TODAY_DAY_ID)
 
 

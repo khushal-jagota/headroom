@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from tests.e2e.conftest import WAIT_MS
+from collections.abc import Callable
+
+from playwright.sync_api import BrowserContext, Page, Route
+from tests.e2e.harness import WAIT_MS, ServerHandle
 
 
 def _payload(state: str) -> dict[str, object]:
@@ -28,7 +31,7 @@ def _payload(state: str) -> dict[str, object]:
     }
 
 
-def _wait_for_status_label(page, label: str) -> None:
+def _wait_for_status_label(page: Page, label: str) -> None:
     page.wait_for_function(
         "label => document.querySelector('[data-vps-status-content]')"
         "?.textContent?.includes(label)",
@@ -37,7 +40,9 @@ def _wait_for_status_label(page, label: str) -> None:
     )
 
 
-def test_header_status_popover_is_manual_and_renders_status_states(server, context_factory) -> None:
+def test_header_status_popover_is_manual_and_renders_status_states(
+    server: ServerHandle, context_factory: Callable[[], BrowserContext]
+) -> None:
     page = context_factory().new_page()
     requests: list[str] = []
     payloads = [
@@ -47,7 +52,7 @@ def test_header_status_popover_is_manual_and_renders_status_states(server, conte
         _payload("review_needed"),
     ]
 
-    def fulfill(route) -> None:
+    def fulfill(route: Route) -> None:
         requests.append(route.request.url)
         route.fulfill(json=payloads[min(len(requests) - 1, len(payloads) - 1)])
 

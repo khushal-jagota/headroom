@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlite3 import Connection
+
 import pytest
 
 from planner.core import links as core_links
@@ -18,7 +20,7 @@ from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 _EMPTY_CODING_FIELDS = fields_to_json(TicketFields.empty(CODING_WORKER_TYPE_DEFINITION.field_ids()))
 
 
-def _ticket(conn, ticket_id: str, stage: str = "needs_success") -> None:
+def _ticket(conn: Connection, ticket_id: str, stage: str = "needs_success") -> None:
     captured_default = None if stage in {"done", "dropped"} else "worker"
     conn.execute(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, stage, ceiling, "
@@ -28,7 +30,7 @@ def _ticket(conn, ticket_id: str, stage: str = "needs_success") -> None:
     )
 
 
-def _sprint_item(conn, item_id: str) -> None:
+def _sprint_item(conn: Connection, item_id: str) -> None:
     conn.execute(
         "INSERT INTO sprint_items (id, title, project_id, created_at, updated_at) "
         "VALUES (?, ?, 'project_vylo', 1, 1)",
@@ -36,7 +38,9 @@ def _sprint_item(conn, item_id: str) -> None:
     )
 
 
-def test_add_blocks_link_requires_real_ticket_source_and_real_target(tmp_db) -> None:
+def test_add_blocks_link_requires_real_ticket_source_and_real_target(
+    tmp_db: Connection,
+) -> None:
     _ticket(tmp_db, "t_source")
     _ticket(tmp_db, "t_target")
     _sprint_item(tmp_db, "si_target")
@@ -57,7 +61,9 @@ def test_add_blocks_link_requires_real_ticket_source_and_real_target(tmp_db) -> 
         assert exc.value.detail[missing_field] in {from_id, to_id}
 
 
-def test_add_blocks_endpoint_reads_happen_under_begin_immediate(tmp_db) -> None:
+def test_add_blocks_endpoint_reads_happen_under_begin_immediate(
+    tmp_db: Connection,
+) -> None:
     _ticket(tmp_db, "t_source")
     _ticket(tmp_db, "t_target")
     statements: list[str] = []
@@ -71,7 +77,7 @@ def test_add_blocks_endpoint_reads_happen_under_begin_immediate(tmp_db) -> None:
     assert any("INSERT INTO LINKS" in statement for statement in under_lock)
 
 
-def test_blocks_cycle_check_ignores_inactive_sources(tmp_db) -> None:
+def test_blocks_cycle_check_ignores_inactive_sources(tmp_db: Connection) -> None:
     _ticket(tmp_db, "t_done_source", stage="done")
     _ticket(tmp_db, "t_active_target")
 
@@ -87,7 +93,9 @@ def test_blocks_cycle_check_ignores_inactive_sources(tmp_db) -> None:
     ]
 
 
-def test_blocker_summary_resolves_active_and_cleared_ticket_and_item_rows(tmp_db) -> None:
+def test_blocker_summary_resolves_active_and_cleared_ticket_and_item_rows(
+    tmp_db: Connection,
+) -> None:
     _ticket(tmp_db, "t_blocked", stage="needs_success")
     _ticket(tmp_db, "t_active_blocker", stage="needs_plan")
     _ticket(tmp_db, "t_done_blocker", stage="done")
@@ -149,7 +157,9 @@ def test_blocker_summary_resolves_active_and_cleared_ticket_and_item_rows(tmp_db
     )
 
 
-def test_ticket_detail_and_copy_text_use_resolved_blocker_summary(tmp_db) -> None:
+def test_ticket_detail_and_copy_text_use_resolved_blocker_summary(
+    tmp_db: Connection,
+) -> None:
     _ticket(tmp_db, "t_blocked", stage="needs_success")
     _ticket(tmp_db, "t_active_blocker", stage="needs_plan")
     _ticket(tmp_db, "t_done_blocker", stage="done")

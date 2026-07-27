@@ -173,13 +173,13 @@ def test_readiness_requires_an_explicit_day_and_definition() -> None:
 
     with pytest.raises(TypeError):
         function(  # type: ignore[call-arg]
-            object(),
-            object(),
+            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
+            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
             worker_type_definition=SYNTHETIC_WORKER_TYPE_DEFINITION,
         )
     with pytest.raises(TypeError):
         function(  # type: ignore[call-arg]
-            object(),
-            object(),
+            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
+            object(),  # type: ignore[arg-type]  # deliberately wrong: proves keyword-only enforcement
             planning_day_id="day_2099-01-01",
         )

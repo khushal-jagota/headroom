@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import threading
+from collections.abc import Callable
 
 import httpx
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 from planner.conversation.events import (
     AgentMessageEventPayload,
@@ -51,12 +54,12 @@ def _bucket(key: str) -> str:
     return f'[data-bucket-section][data-bucket-key="{key}"]'
 
 
-def _add_today(api, server, ticket_id: str) -> None:
+def _add_today(api: ApiHelper, server: ServerHandle, ticket_id: str) -> None:
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": ticket_id})
 
 
 def _set_ticket_status(
-    server, ticket_id: str, status: str, *, backend_error: str | None = None
+    server: ServerHandle, ticket_id: str, status: str, *, backend_error: str | None = None
 ) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
@@ -65,7 +68,7 @@ def _set_ticket_status(
         )
 
 
-def _set_ticket_stage(server, ticket_id: str, stage: str) -> None:
+def _set_ticket_stage(server: ServerHandle, ticket_id: str, stage: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET stage = ? WHERE id = ?",
@@ -73,7 +76,7 @@ def _set_ticket_stage(server, ticket_id: str, stage: str) -> None:
         )
 
 
-def _set_ticket_updated_at(server, ticket_id: str, updated_at: int) -> None:
+def _set_ticket_updated_at(server: ServerHandle, ticket_id: str, updated_at: int) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET updated_at = ? WHERE id = ?",
@@ -81,8 +84,10 @@ def _set_ticket_updated_at(server, ticket_id: str, updated_at: int) -> None:
         )
 
 
-def _create_ticket(cli, server, title: str, *, worker_type: str = "coding") -> str:
-    return cli(
+def _create_ticket(
+    cli: Callable[..., JsonObject], server: ServerHandle, title: str, *, worker_type: str = "coding"
+) -> str:
+    ticket_id: str = cli(
         server,
         "ticket",
         "create",
@@ -93,10 +98,15 @@ def _create_ticket(cli, server, title: str, *, worker_type: str = "coding") -> s
         "--project-id",
         "project_vylo",
     )["id"]
+    return ticket_id
 
 
 def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     waiting = _create_ticket(cli, server, "Waiting ticket")
     running = _create_ticket(cli, server, "Running ticket")
@@ -152,7 +162,9 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
         (completed_card, "Completed ticket"),
     ):
         page.wait_for_selector(selector, timeout=WAIT_MS)
-        assert page.text_content(f"{selector} .list-row-title").strip() == title
+        row_title = page.text_content(f"{selector} .list-row-title")
+        assert row_title is not None
+        assert row_title.strip() == title
         assert page.locator(f"{selector} .board-workspace-row-byline").count() == 0
         assert page.locator(f"{selector} .board-workspace-row-metadata").count() == 0
 
@@ -206,7 +218,11 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
 
 
 def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_open(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     standalone = _create_ticket(cli, server, "Standalone Vylo ticket")
     no_project = cli(
@@ -305,7 +321,11 @@ def test_workspace_project_filter_uses_effective_project_and_keeps_inspector_ope
 
 
 def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = _create_ticket(cli, server, "Backend failure ticket")
     _add_today(api, server, ticket_id)
@@ -327,7 +347,9 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
     mark = f"{card} .board-workspace-stage-mark"
     reason = "[data-backend-error]"
     page.wait_for_selector(reason, timeout=WAIT_MS)
-    assert page.text_content(reason).strip() == "Provider process exited with status 17"
+    backend_error_text = page.text_content(reason)
+    assert backend_error_text is not None
+    assert backend_error_text.strip() == "Provider process exited with status 17"
     assert page.locator(f'{_bucket("errored")} {card}').count() == 1
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
     assert page.get_attribute(mark, "data-agent-working") == "false"
@@ -346,7 +368,7 @@ def test_backend_error_reason_and_workspace_treatment_clear_with_canonical_fact(
         ).fetchone() == ("empty", None)
 
 
-def _start_conversation(server, conversation_id: str) -> None:
+def _start_conversation(server: ServerHandle, conversation_id: str) -> None:
     created = httpx.post(
         f"{server.base}/api/conversation/conversations",
         json={"conversation_id": conversation_id, "backend_key": "codex"},
@@ -355,7 +377,9 @@ def _start_conversation(server, conversation_id: str) -> None:
     assert created.status_code == 201, created.text
 
 
-def _append_rows(server, conversation_id: str, *payloads: ConversationEventPayload) -> None:
+def _append_rows(
+    server: ServerHandle, conversation_id: str, *payloads: ConversationEventPayload
+) -> None:
     """Write rows into the record, exactly as the conversation system writes them.
 
     The store's calls are awaited and this thread belongs to the browser driver, so the
@@ -382,7 +406,7 @@ def _append_rows(server, conversation_id: str, *payloads: ConversationEventPaylo
         raise fell_over[0]
 
 
-def _link_conversation(server, ticket_id: str, conversation_id: str) -> None:
+def _link_conversation(server: ServerHandle, ticket_id: str, conversation_id: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute(
             "UPDATE tickets SET conversation_id = ? WHERE id = ?",
@@ -391,7 +415,11 @@ def _link_conversation(server, ticket_id: str, conversation_id: str) -> None:
 
 
 def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     conversation_id = "conv-workspace-reply"
     ticket_id = _create_ticket(cli, server, "Reply mark Workspace ticket")
@@ -465,7 +493,11 @@ def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
 
 
 def test_workspace_buckets_render_membership_in_canonical_order(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     errored = _create_ticket(cli, server, "Errored group ticket")
     needs_user_ticket = _create_ticket(cli, server, "Needs user ticket")
@@ -607,7 +639,11 @@ def test_workspace_buckets_render_membership_in_canonical_order(
 
 
 def test_workspace_bucket_disclosures_collapse_and_chevrons_reveal_on_intent(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = _create_ticket(cli, server, "Nested disclosure ticket")
     _add_today(api, server, ticket_id)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from playwright.sync_api import Browser, Page
+from tests.e2e.harness import ServerHandle
 
 WAIT_MS = 10_000
 EXPECTED_BRAND_TOKENS = {
@@ -56,7 +57,7 @@ def _mount_brand_fixture(page: Page, base_url: str) -> None:
 
 
 def _custom_properties(page: Page, names: list[str]) -> dict[str, str]:
-    return page.evaluate(
+    properties: dict[str, str] = page.evaluate(
         """names => {
             const style = getComputedStyle(document.documentElement);
             return Object.fromEntries(names.map(name => [
@@ -66,10 +67,11 @@ def _custom_properties(page: Page, names: list[str]) -> dict[str, str]:
         }""",
         names,
     )
+    return properties
 
 
 def _colors(page: Page, selector: str) -> dict[str, str]:
-    return page.eval_on_selector(
+    colors: dict[str, str] = page.eval_on_selector(
         selector,
         """element => {
             const style = getComputedStyle(element);
@@ -82,11 +84,12 @@ def _colors(page: Page, selector: str) -> dict[str, str]:
             };
         }""",
     )
+    return colors
 
 
 @pytest.mark.parametrize("mobile", [False, True], ids=["desktop", "mobile"])
 def test_soft_steel_brand_tokens_reach_representative_states(
-    browser: Browser, server, mobile: bool
+    browser: Browser, server: ServerHandle, mobile: bool
 ) -> None:
     context = browser.new_context(
         has_touch=mobile,

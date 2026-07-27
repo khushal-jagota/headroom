@@ -14,6 +14,7 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
@@ -27,7 +28,7 @@ from planner.worker_types.configuration import (
 
 
 @pytest.fixture
-def app(tmp_path: Path):
+def app(tmp_path: Path) -> FastAPI:
     db_path = tmp_path / "manifest.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -52,7 +53,7 @@ def probe_installed() -> Iterator[None]:
         uninstall_probe_registry()
 
 
-def test_production_serves_all_shipped_worker_types(app) -> None:
+def test_production_serves_all_shipped_worker_types(app: FastAPI) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert served == {
@@ -66,7 +67,7 @@ def test_production_serves_all_shipped_worker_types(app) -> None:
 
 
 def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
-    app,
+    app: FastAPI,
     probe_installed: None,
 ) -> None:
     with TestClient(app) as client:
@@ -91,14 +92,16 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
     ] == ["medium", "medium", "medium", "medium", "probe-high"]
 
 
-def test_coding_entry_json_roundtrips(app) -> None:
+def test_coding_entry_json_roundtrips(app: FastAPI) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert json.loads(json.dumps(served)) == served
     assert served["worker_types"][0]["worker_type"] == "coding"
 
 
-def test_installed_probe_appears_after_shipped_worker_types(app, probe_installed: None) -> None:
+def test_installed_probe_appears_after_shipped_worker_types(
+    app: FastAPI, probe_installed: None
+) -> None:
     with TestClient(app) as client:
         served = client.get("/api/worker-types").json()
     assert [m["worker_type"] for m in served["worker_types"]] == [

@@ -13,8 +13,10 @@ DOM, never on a sleep.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 
-from playwright.sync_api import Page
+from playwright.sync_api import BrowserContext, Page
+from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 WAIT_MS = 10_000
 
@@ -54,7 +56,7 @@ FOCUS_AT_END = """() => {
 }"""
 
 
-def _set_recap(server, ticket_id: str, recap: str) -> None:
+def _set_recap(server: ServerHandle, ticket_id: str, recap: str) -> None:
     with sqlite3.connect(server.db_path) as conn:
         conn.execute("UPDATE tickets SET recap = ? WHERE id = ?", (recap, ticket_id))
 
@@ -81,7 +83,11 @@ def _assert_same_document(page: Page) -> None:
 
 
 def test_a_change_reaches_the_open_board_without_a_reload(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,
@@ -121,7 +127,11 @@ def test_a_change_reaches_the_open_board_without_a_reload(
 
 
 def test_composing_survives_a_change_to_the_same_ticket(
-    server, context_factory, open_page, cli, api
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
 ) -> None:
     ticket_id = cli(
         server,

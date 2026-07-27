@@ -25,6 +25,7 @@ from planner.tickets.contracts import (
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec, resolution
+from planner.tickets.logic.decisions import Decision
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
     )
 
 
-def _decide_edit_value(ticket: Ticket, field: str, body: str, actor: str):
+def _decide_edit_value(ticket: Ticket, field: str, body: str, actor: str) -> Decision:
     return resolution.decide_edit_value(
         ticket,
         field,

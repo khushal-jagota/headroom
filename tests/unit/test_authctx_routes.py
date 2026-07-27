@@ -12,6 +12,7 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from planner.core.clock import RealClock, build_clock
@@ -25,7 +26,7 @@ from planner.tickets.data import accept_proposal, create_ticket
 _AGENT = {"X-Plan-Actor": "agent"}  # an agent context (X-Plan-Actor set)
 
 
-def _make_app(tmp_path: Path) -> tuple[object, Path]:
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)

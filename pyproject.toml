@@ -54,8 +54,17 @@ select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.mypy]
 strict = true
-files = ["src"]
+# Tests are checked at the same strictness as production, and that is the point: a test's
+# fixture parameters are the objects under test, so leaving them unannotated would type
+# them ``Any`` and silently stop checking every call made through them. Moving a type is
+# then meant to list every call site it broke here, in one run, instead of one test run at
+# a time.
+files = ["src", "tests"]
 mypy_path = "src"
+# ``tests`` has no __init__.py — it is a PEP 420 namespace package rooted at the repo root
+# (see the pytest ``pythonpath`` setting below). Without this, mypy fails on package layout
+# before it checks anything.
+explicit_package_bases = true
 python_version = "3.12"
 
 [tool.pytest.ini_options]

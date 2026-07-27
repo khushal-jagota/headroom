@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from playwright.sync_api import Browser, Page
+from tests.e2e.harness import ApiHelper, ServerHandle
 
 WAIT_MS = 10_000
 
@@ -38,7 +39,7 @@ def _open_route(
 def _width_geometry(
     page: Page, host_selector: str, pane_selector: str, thread_selector: str
 ) -> dict[str, Any]:
-    return page.evaluate(
+    geometry: dict[str, Any] = page.evaluate(
         """([hostSelector, paneSelector, threadSelector]) => {
           const tolerance = 1;
           const host = document.querySelector(hostSelector);
@@ -71,6 +72,7 @@ def _width_geometry(
         }""",
         [host_selector, pane_selector, thread_selector],
     )
+    return geometry
 
 
 def _assert_bounded(
@@ -131,8 +133,8 @@ def _assert_layer_lies_along_the_bottom_of_the_ticket_screen(
 
 def test_the_ticket_conversation_is_a_layer_measured_against_the_ticket_screen(
     browser: Browser,
-    server: Any,
-    api: Any,
+    server: ServerHandle,
+    api: ApiHelper,
 ) -> None:
     ticket = api.direct_post(
         server,

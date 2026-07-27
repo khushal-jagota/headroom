@@ -14,7 +14,7 @@ import asyncio
 import base64
 import json
 import sqlite3
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Callable, Coroutine, Iterator, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -431,7 +431,7 @@ class _EventStreamDrive:
             await asyncio.Event().wait()
             raise AssertionError("unreachable")
 
-        async def send(message: dict[str, Any]) -> None:
+        async def send(message: MutableMapping[str, Any]) -> None:
             if message["type"] == "http.response.body":
                 await self._chunks.put(bytes(message.get("body", b"")))
 

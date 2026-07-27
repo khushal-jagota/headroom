@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
@@ -15,7 +16,7 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 
 
-def _make_app(tmp_path: Path):
+def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "worker-my-ticket.db"
     with connect(str(db_path)) as conn:
         create_schema(conn)

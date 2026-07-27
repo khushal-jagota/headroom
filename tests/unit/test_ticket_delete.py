@@ -23,7 +23,7 @@ from planner.core.server import create_app
 from planner.days import data as days_data
 from planner.runtime import worker_step_readiness
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap
+from planner.tickets.contracts import NO_FURTHER, TITLE_MAX_CHARS, AtCap, Ticket
 
 
 def _create(
@@ -33,7 +33,7 @@ def _create(
     title: str,
     *,
     sprint_item_id: str | None = None,
-):
+) -> Ticket:
     ticket = tickets_data.create_ticket(
         conn,
         worker_type="coding",
