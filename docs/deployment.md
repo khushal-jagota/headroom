@@ -100,4 +100,4 @@ Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
 
 ---
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-07-27._
