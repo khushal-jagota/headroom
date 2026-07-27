@@ -104,10 +104,11 @@ One screen per part of the system:
   The layout collapses cleanly on mobile. Legacy `#/workers` and
   `#/workers/<worker-type>` addresses redirect to their Agents-page equivalents.
 
-The shell itself carries two separate live signals. Worker presence is the small
-spinner and "N working" readout from the global running-worker count. Server
-connection health is the compact Connected / Reconnecting readout beside it, which
-says whether the change stream below is open.
+The shell carries one combined status control and, on desktop, worker presence.
+The status control says Connected or Reconnecting from the change stream and opens
+the manually refreshed VPS health details. Worker presence is the small spinner and
+"N working" readout from the global running-worker count; it is hidden at mobile
+widths so navigation links and connection status keep the available space.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -142,10 +143,11 @@ share.
   A conversation's rows, what it is running on, and what it is waiting for are the
   record's own account rather than cached REST resources.
 
-  The change stream is also the browser's connection-health owner. The shell starts at
-  Reconnecting and says Connected while the stream is open. When the stream drops, the
-  browser retries on its own and the shell says Reconnecting until it is back. Because
-  anything that changed during the gap went unheard, opening the stream refetches
+  The change stream is also the browser's connection-health owner. The shell's VPS
+  status trigger starts at Reconnecting and says Connected while the stream is open.
+  When the stream drops, the browser retries on its own and the trigger says
+  Reconnecting until it is back. Because anything that changed during the gap went
+  unheard, opening the stream refetches
   what is on screen — that, plus the same refetch when the window is focused again, is
   the whole recovery story. The server sends an occasional invisible keep-alive line
   down a quiet stream, which changes nothing on screen.
