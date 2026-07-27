@@ -116,6 +116,25 @@ def test_github_deployment_proves_and_builds_the_requested_exact_sha() -> None:
     assert "download-artifact" not in workflow
 
 
+def test_github_deployment_provisions_agent_skills_after_app_deploy() -> None:
+    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
+    provision_command = (
+        '"$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills'
+    )
+
+    assert provision_command in workflow
+    assert "current/app/bin/panels-launcher\" environment provision-skills" not in workflow
+    assert '--database-parent "$HOME/Deployments/Panels/current/data"' in workflow
+    assert '--hermes-home "$HOME/.hermes"' in workflow
+    assert '--codex-home "$HOME/.codex"' in workflow
+    assert '--claude-home "$HOME/.claude"' in workflow
+    assert (
+        workflow.index("environment app-deploy")
+        < workflow.index(provision_command)
+        < workflow.index("Remove runner-temporary deployment state")
+    )
+
+
 def test_deploy_workflow_and_user_runner_share_one_real_runner_contract() -> None:
     workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
     unit = (ASSET_ROOT / "panels-deployment-runner.service").read_text(encoding="utf-8")

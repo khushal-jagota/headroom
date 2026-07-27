@@ -3790,11 +3790,13 @@ select {
 
 /* The read's own generous tail, and under it the room the conversation layer stands in at
  * rest, so scrolling to the end of the ticket ends at the end of the ticket. */
+/* The body sits in the same measure and the same inset as the header above it. Its end is
+ * a plain gap: the conversation is the section after this one rather than a layer over it,
+ * so there is nothing here to hold clear of. */
 .ticket-col {
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
-  padding: var(--space-6) var(--space-7)
-    calc(var(--space-7) * 3 + var(--ticket-conversation-rest-height));
+  padding: var(--space-6) var(--space-7);
 }
 
 /* --- Ticket serif voice (t_ui02) ----------------------------------------- */

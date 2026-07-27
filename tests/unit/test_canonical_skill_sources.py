@@ -7,6 +7,7 @@ import pytest
 from planner.core.contracts import PlannerError
 from planner.environments.hermes_home import provision_planner_home_skills
 from planner.skill_sources import (
+    RETIRED_PANELS_SKILL_NAMES,
     ensure_managed_panels_skills,
     panels_skill_root,
     provision_native_backend_skills,
@@ -66,6 +67,50 @@ def test_seed_prefers_legacy_live_edit_and_never_clobbers_managed_file(tmp_path:
     assert 'description: "managed edit"' in managed.read_text(encoding="utf-8")
 
 
+def test_fresh_managed_skills_never_seed_retired_packaged_skill(tmp_path: Path) -> None:
+    packaged = tmp_path / "packaged"
+    retired = packaged / "panels-ticket-management"
+    retired.mkdir(parents=True)
+    (retired / "SKILL.md").write_text("retired", encoding="utf-8")
+    active = packaged / "panels"
+    active.mkdir()
+    (active / "SKILL.md").write_text("active", encoding="utf-8")
+
+    root = ensure_managed_panels_skills(
+        tmp_path / "data", packaged_skill_root=packaged
+    )
+
+    assert RETIRED_PANELS_SKILL_NAMES == frozenset({"panels-ticket-management"})
+    assert not (root / "panels-ticket-management").exists()
+    assert (root / "panels" / "SKILL.md").read_text(encoding="utf-8") == "active"
+
+
+@pytest.mark.parametrize("retired_path_kind", ("file", "directory", "symlink"))
+def test_managed_skills_remove_retired_path_and_preserve_other_entries(
+    tmp_path: Path, retired_path_kind: str
+) -> None:
+    managed = tmp_path / "skills"
+    managed.mkdir()
+    custom = managed / "custom"
+    custom.mkdir()
+    (custom / "SKILL.md").write_text("custom", encoding="utf-8")
+    retired = managed / "panels-ticket-management"
+    if retired_path_kind == "file":
+        retired.write_text("retired", encoding="utf-8")
+    elif retired_path_kind == "directory":
+        retired.mkdir()
+        (retired / "SKILL.md").write_text("retired", encoding="utf-8")
+    else:
+        retired.symlink_to(tmp_path / "missing-retired-target")
+
+    ensure_managed_panels_skills(tmp_path)
+    ensure_managed_panels_skills(tmp_path)
+
+    assert not retired.exists()
+    assert not retired.is_symlink()
+    assert (custom / "SKILL.md").read_text(encoding="utf-8") == "custom"
+
+
 def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_collision(
     tmp_path: Path,
 ) -> None:
@@ -75,10 +120,13 @@ def test_native_skills_directory_preserves_custom_entries_and_replaces_panels_co
     (native_skills / "custom" / "SKILL.md").write_text("custom", encoding="utf-8")
     (native_skills / "panels-worker-coding").mkdir()
     (native_skills / "panels-worker-coding" / "SKILL.md").write_text("stale", encoding="utf-8")
+    (native_skills / "panels-ticket-management").write_text("retired", encoding="utf-8")
 
+    provision_native_backend_skills(tmp_path / "provider", tmp_path)
     provision_native_backend_skills(tmp_path / "provider", tmp_path)
 
     assert (native_skills / "custom" / "SKILL.md").read_text(encoding="utf-8") == "custom"
+    assert not (native_skills / "panels-ticket-management").exists()
     assert (native_skills / "panels-worker-coding").resolve() == (
         managed / "panels-worker-coding"
     ).resolve()
@@ -93,6 +141,10 @@ def test_native_skills_root_symlink_merges_custom_entries_and_replaces_panels_co
     (legacy / "custom" / "SKILL.md").write_text("custom", encoding="utf-8")
     (legacy / "panels-worker-coding").mkdir()
     (legacy / "panels-worker-coding" / "SKILL.md").write_text("stale", encoding="utf-8")
+    (legacy / "panels-ticket-management").mkdir()
+    (legacy / "panels-ticket-management" / "SKILL.md").write_text(
+        "retired", encoding="utf-8"
+    )
     native_home = tmp_path / "provider"
     native_home.mkdir()
     (native_home / "skills").symlink_to(legacy, target_is_directory=True)
@@ -101,6 +153,7 @@ def test_native_skills_root_symlink_merges_custom_entries_and_replaces_panels_co
 
     assert not (native_home / "skills").is_symlink()
     assert (native_home / "skills" / "custom").resolve() == (legacy / "custom").resolve()
+    assert not (native_home / "skills" / "panels-ticket-management").exists()
     assert (native_home / "skills" / "panels-worker-coding").resolve() == (
         managed / "panels-worker-coding"
     ).resolve()
