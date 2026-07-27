@@ -74,32 +74,12 @@
    */
   let conversationState = $state<ConversationState>("rest");
 
-  /** How much room the document has to leave at its bottom, read off the layer itself.
-   *
-   * The layer at rest is not one fixed height. The composer grows: a tray of messages
-   * waiting for the agent, an error line, and above all a permission ask, which is the
-   * whole argument for putting the conversation here — with it closed, a request that
-   * needs the person is already on screen. A number written down beside the layer would
-   * be right until the first of those happened, so the room follows the real thing.
-   *
-   * Only rest is worth following. Peeked and Opened are over the document rather than
-   * beside the end of it, so what is remembered is the last height rest actually came to.
-   */
-  let conversationLayerHeightPixels = $state(0);
-  let conversationRestHeightPixels = $state(0);
-  $effect(() => {
-    if (conversationState !== "rest") return;
-    if (conversationLayerHeightPixels > 0) {
-      conversationRestHeightPixels = conversationLayerHeightPixels;
-    }
-  });
-
   /** A click on the ticket drops the conversation back one state.
    *
-   * The conversation is a LAYER over this page, not a mode it puts the page into, so
-   * touching the page is how you put it away. Read while the click is still on its way
-   * down and neither stopped nor prevented: whatever that click was going to do to the
-   * ticket still happens.
+   * The conversation is the section under the ticket, not a mode it puts the page into,
+   * so touching the ticket is how you put it away. Read while the click is still on its
+   * way down and neither stopped nor prevented: whatever that click was going to do to
+   * the ticket still happens.
    */
   function dropConversationBackOneState(): void {
     if (conversationState === "opened") conversationState = "peeked";
@@ -347,18 +327,11 @@
       </div>
     {:else if ticket.data}
       {@const detail = ticket.data}
-      <!-- Before the layer has been measured — the first frame, and the manifest-error
-           page above, which has no layer at all — the stylesheet's own value stands. -->
-      <div
-        class="ticket-page"
-        style:--ticket-conversation-rest-height={conversationRestHeightPixels > 0
-          ? `${conversationRestHeightPixels}px`
-          : undefined}
-      >
+      <div class="ticket-page">
       <!-- The document hears a click only to put the conversation away, and it hears it
            in the capture phase so nothing inside can have gone yet. There is no keyboard
            twin here because Escape does the same thing from anywhere on the page, and it
-           belongs to the conversation rather than to the document it sits over. -->
+           belongs to the conversation rather than to the document above it. -->
       <main class="ticket-doc" onclickcapture={dropConversationBackOneState}>
         <header class="ticket-head">
           <div class="ticket-title">
@@ -567,7 +540,6 @@
       <div
         class="ticket-conversation-layer"
         data-conversation-layer-host
-        bind:offsetHeight={conversationLayerHeightPixels}
         onclickcapture={dropConversationOnAPressBesideTheCard}
       >
         <div class="ticket-conversation-column">

@@ -3479,8 +3479,10 @@ select {
   height: 100%;
 }
 
-/* The ticket screen is what the conversation layer is measured and placed against —
- * see .ticket-conversation-layer for why it is this element and not the viewport. */
+/* The ticket screen is what the page inside it — and so the conversation's share of that
+ * page — is measured against; see .ticket-conversation-layer for why it is this element
+ * and not the viewport. It is also the frame the conversation's own popovers are placed
+ * in, which is what the positioning is for. */
 .ticket-screen {
   height: 100%;
   position: relative;
@@ -3510,22 +3512,22 @@ select {
   overflow-y: auto;
 }
 
-/* --- The conversation, a layer at the bottom of the ticket ----------------- */
-/* The conversation is not a column beside the document any more. It is a layer against
- * the bottom of the TICKET SCREEN — that element and not the viewport, because the whole
- * of this route also renders inside the Workspace's right pane, where a viewport-fixed
- * layer would span the window while the ticket occupies part of it. Making the ticket
- * screen the positioning context gets the full page and the pane right at once, and it
- * is what decides that Opened covers the page beneath it and not the nav.
+/* --- The conversation, the section under the ticket ------------------------ */
+/* The conversation is not a column beside the document and not a layer over it. It is the
+ * second and last section of the ticket page, and the two of them divide that page's
+ * height between them. Everything follows from that: nothing is reserved, nothing can be
+ * covered, and growing the conversation is only the ticket taking the smaller share.
  *
- * A layer and never a mode: it is only ever as tall as its state, there is no scrim, and
- * the document above it stays readable, scrollable and clickable. Clicking the document
- * drops it back a state — TicketRoute owns that gesture.
+ * Its share is a share of the TICKET PAGE and never of the window, because the whole of
+ * this route also renders inside the Workspace's right pane, where the two are nothing
+ * like the same rectangle. Sizing against the page gets the full screen and the pane right
+ * at once, and it is what decides that Opened is as tall as the page and not the nav.
  *
- * The state is drawn on the pane inside, so each height is asked for through :has. All
- * three read off the ticket screen, so a ticket in the Workspace pane and a ticket on its
- * own page get the same proportions: rest is its own content, peeked takes a bit over
- * half from the bottom, opened takes the whole of it. */
+ * A section and never a mode: the ticket above stays readable, scrollable and clickable at
+ * every height. Clicking the ticket drops it back a state — TicketRoute owns that gesture.
+ *
+ * The state is drawn on the pane inside, so each height is asked for through :has: rest is
+ * its own content, peeked takes a bit over half the page, opened takes all of it. */
 .ticket-conversation-layer {
   /* The section under the ticket. At rest it is as tall as it needs to be; the two states
    * above give it a share of the page and the ticket keeps the rest. Its own ladder — the
