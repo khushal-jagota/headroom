@@ -359,7 +359,7 @@ def test_e30_review_approve_to_done(
     card = f'[data-review-card][data-ticket-id="{mid}"]'
     rpage = open_page(context_factory(), server, "#/review", card)
     assert rpage.get_attribute(card, "data-field") == "implementation"
-    decisions = api.get(server, "/api/review")["ticket_decisions"]
+    decisions = api.get(server, "/api/review")["items"]
     assert len(decisions) == 1, decisions
     assert decisions[0]["ticket_id"] == mid, decisions
     assert decisions[0]["field"] == "implementation", decisions

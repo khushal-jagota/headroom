@@ -168,22 +168,25 @@ export type CurrentSprintResponse = {
   loose_tickets: AnyRecord[];
 };
 
-export type ReviewTicketDecision = {
+export type ReviewProposalItem = {
+  review_item_type: "proposal";
   ticket_id: string;
   field: string;
   title: string;
   waiting_since: number;
 };
 
-export type ReviewUserHelpRequest = {
+export type ReviewNeedsUserItem = {
+  review_item_type: "needs_user";
   ticket_id: string;
   title: string;
   waiting_since: number;
 };
 
+export type ReviewItem = ReviewProposalItem | ReviewNeedsUserItem;
+
 export type ReviewResponse = {
-  ticket_decisions: ReviewTicketDecision[];
-  user_help_requests: ReviewUserHelpRequest[];
+  items: ReviewItem[];
   running_worker_count: number;
 };
 
