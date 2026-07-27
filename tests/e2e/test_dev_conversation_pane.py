@@ -769,6 +769,17 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
         AgentMessageEventPayload(content=text_message_content("a short answer")),
     )
     _let_the_browser_catch_up(page, 18)
+    # The row and the reserved-space adjustment are two separate reactive turns. Wait for
+    # the layout consequence the next assertion reads, not only for the row to exist.
+    page.wait_for_function(
+        """(before) => {
+            const room = document.querySelector('[data-conversation-reserved-space]');
+            return room !== null
+              && Math.round(room.getBoundingClientRect().height) < before;
+        }""",
+        arg=took_over["roomKept"],
+        timeout=WAIT_MS,
+    )
     fitted = page.evaluate(WHERE_THE_THREAD_IS)
     assert fitted["scrollTop"] == took_over["scrollTop"], fitted
     assert 0 < fitted["roomKept"] < took_over["roomKept"], (took_over, fitted)
