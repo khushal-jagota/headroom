@@ -23,8 +23,13 @@ answer is changed on the way past and nothing else is.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import httpx
+from playwright.sync_api import BrowserContext, Page
 from tests.e2e.conftest import WAIT_MS
+from tests.e2e.harness import JsonObject, ServerHandle
 from tests.e2e.test_dev_conversation_pane import (
     _a_conversation_worth_scrolling,
     _append_rows,
@@ -34,6 +39,7 @@ from tests.e2e.test_dev_conversation_pane import (
 from planner.conversation.contracts import PromptDeliveryMode
 from planner.conversation.events import (
     AgentMessageEventPayload,
+    ConversationEventPayload,
     PermissionAskedEventPayload,
     PermissionAskOption,
     PlanEntry,
@@ -210,7 +216,9 @@ WHERE_THE_TICKET_IS_SCROLLED_TO = """
 """
 
 
-def _a_ticket_with_a_conversation(server, cli, title: str) -> tuple[str, str]:
+def _a_ticket_with_a_conversation(
+    server: ServerHandle, cli: Callable[..., JsonObject], title: str
+) -> tuple[str, str]:
     """A Ticket with a conversation of its own, so the layer has something in it."""
     ticket_id = cli(server, "ticket", "create", "--worker-type", "coding", "--title", title)["id"]
     started = httpx.post(f"{server.base}/api/tickets/{ticket_id}/conversation", timeout=10.0)
@@ -220,7 +228,9 @@ def _a_ticket_with_a_conversation(server, cli, title: str) -> tuple[str, str]:
     return ticket_id, conversation_id
 
 
-def _a_settled_conversation_worth_reading(last_thing: str) -> tuple:
+def _a_settled_conversation_worth_reading(
+    last_thing: str,
+) -> tuple[ConversationEventPayload, ...]:
     """Eight turns, long enough to scroll, ending in something with a first line."""
     return (
         *_a_conversation_worth_scrolling(),
@@ -228,7 +238,13 @@ def _a_settled_conversation_worth_reading(last_thing: str) -> tuple:
     )
 
 
-def _the_ticket_page(server, context, open_page, ticket_id: str, rows: int):
+def _the_ticket_page(
+    server: ServerHandle,
+    context: BrowserContext,
+    open_page: Callable[..., Page],
+    ticket_id: str,
+    rows: int,
+) -> Page:
     """The ticket page, with its conversation loaded and at the state the page opens in."""
     page = open_page(
         context,
@@ -248,42 +264,44 @@ def _the_ticket_page(server, context, open_page, ticket_id: str, rows: int):
     return page
 
 
-def _click_the_composers_input(page) -> None:
+def _click_the_composers_input(page: Page) -> None:
     """Clicking the box you speak into opens the conversation a little."""
     page.click(INPUT, timeout=WAIT_MS)
     page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
 
 
-def _take_it_full(page) -> None:
+def _take_it_full(page: Page) -> None:
     page.click(EXPAND, timeout=WAIT_MS)
     page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
 
 
-def _bring_it_back(page) -> None:
+def _bring_it_back(page: Page) -> None:
     page.click(COLLAPSE, timeout=WAIT_MS)
     page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
 
 
-def _click_the_ticket_behind(page, lands_on: str) -> None:
+def _click_the_ticket_behind(page: Page, lands_on: str) -> None:
     """A click on the ticket itself, which drops the conversation one state back."""
     page.click(THE_TICKET_BEHIND, timeout=WAIT_MS)
     page.wait_for_selector(f'{PANE}[data-conversation-state="{lands_on}"]', timeout=WAIT_MS)
 
 
-def _the_draft_is_still_there(page, where: str, text: str, caret: int) -> dict:
+def _the_draft_is_still_there(
+    page: Page, where: str, text: str, caret: int
+) -> dict[str, Any]:
     """What a change of height must not touch: the words, the cursor, and the box itself."""
-    draft = page.evaluate(THE_DRAFT_IN_THE_BOX)
+    draft: dict[str, Any] = page.evaluate(THE_DRAFT_IN_THE_BOX)
     assert draft["stillAttached"] is True, (where, "the box was re-made", draft)
     assert draft["text"] == text, (where, draft)
     assert draft["caret"] == [caret, caret], (where, draft)
     return draft
 
 
-def _rows_on_the_page(page) -> int:
+def _rows_on_the_page(page: Page) -> int:
     return int(page.evaluate("() => document.querySelectorAll('[data-conversation-row]').length"))
 
 
-def _a_turn_getting_going() -> tuple:
+def _a_turn_getting_going() -> tuple[ConversationEventPayload, ...]:
     """A turn starting, with a plan and two tool calls — the newest of them last."""
     return (
         PromptEventPayload(
@@ -314,7 +332,10 @@ def _a_turn_getting_going() -> tuple:
 
 
 def test_the_three_states_are_what_the_ticket_page_shows(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     """Each state, and the person's own way into it.
 
@@ -391,7 +412,10 @@ def test_the_three_states_are_what_the_ticket_page_shows(
 
 
 def test_the_ticket_behind_is_still_readable_and_a_click_on_it_drops_a_state(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     """Peeked is a layer, not a mode.
 
@@ -446,7 +470,10 @@ def test_the_ticket_behind_is_still_readable_and_a_click_on_it_drops_a_state(
 
 
 def test_the_reader_stays_on_the_line_they_were_reading_through_every_transition(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     """The failure this design is most likely to produce, and the one you would notice.
 
@@ -499,7 +526,10 @@ def test_the_reader_stays_on_the_line_they_were_reading_through_every_transition
 
 
 def test_the_draft_survives_every_transition(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     """Half a sentence, and the cursor in the middle of it.
 
@@ -569,7 +599,10 @@ def test_the_draft_survives_every_transition(
 
 
 def test_a_turn_starting_does_not_move_the_state_and_the_bar_says_what_is_happening(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     """Nothing changes state on its own, and at rest the bar is what says anything at all.
 
@@ -608,7 +641,10 @@ def test_a_turn_starting_does_not_move_the_state_and_the_bar_says_what_is_happen
 
 
 def test_a_permission_ask_does_not_move_the_state_and_the_bar_is_what_says_it_arrived(
-    server, context_factory, open_page, cli
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
 ) -> None:
     """The ask arrives while the person has it peeked, and it leaves it peeked.
 

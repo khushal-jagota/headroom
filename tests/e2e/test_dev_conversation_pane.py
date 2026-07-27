@@ -895,7 +895,9 @@ def test_a_link_you_paste_reads_like_the_agent_s_links_do(
 
 
 def test_the_commands_an_agent_reports_reach_the_menu_when_its_turn_stops(
-    server, context_factory, open_page
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
 ) -> None:
     """An agent reports its commands moments after its session starts.
 

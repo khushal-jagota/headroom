@@ -94,7 +94,7 @@ def _assert_bounded(
 def _placement(page: Page, screen_selector: str) -> dict[str, Any]:
     """Where the layer sits, beside the ticket screen it is supposed to be placed against
     and beside the window it must not be placed against."""
-    return page.evaluate(
+    placement: dict[str, Any] = page.evaluate(
         """([screenSelector, layerSelector]) => {
           const screen = document.querySelector(screenSelector);
           const layer = screen.querySelector(layerSelector);
@@ -117,6 +117,7 @@ def _placement(page: Page, screen_selector: str) -> dict[str, Any]:
         }""",
         [screen_selector, CONVERSATION_LAYER],
     )
+    return placement
 
 
 def _assert_layer_lies_along_the_bottom_of_the_ticket_screen(
