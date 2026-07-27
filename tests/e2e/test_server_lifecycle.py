@@ -216,7 +216,7 @@ def test_restart_replaces_one_generation_and_preserves_supervisor(server: Server
     _wait_until(lambda: not _process_exists(application_pid), "old application remained alive")
     _wait_for_http(server.base)
     meta = httpx.get(f"{server.base}/api/meta").json()
-    assert meta == {"test_mode": True, "release_sha": None}
+    assert meta == {"test_mode": True, "app_sha": None}
 
 
 def test_restart_acknowledgement_client_close_precedes_child_shutdown(

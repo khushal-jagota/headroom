@@ -27,10 +27,6 @@ from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.days.api import router as days_router
-from planner.environments.hermes_home import (
-    provision_planner_home_skills,
-    resolve_planner_home,
-)
 from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
@@ -119,15 +115,6 @@ def create_app(
         finally:
             audit_conn.close()
 
-        # Panels' own role skills are what an agent reads to learn what it is, and it can
-        # only read them from its home. Putting them there is startup's job: they are in
-        # place before any conversation asks for one, and a change to a packaged skill is
-        # picked up by a restart rather than by a redeploy.
-        provision_planner_home_skills(
-            resolve_planner_home(),
-            configured_database_parent=Path(config.db_path).parent,
-        )
-
         # The conversation system, built before anything that sends into one. It composes
         # the three real agents on this machine, and spawns none of them until a
         # conversation has something to send. Everything that starts or steers a worker
@@ -142,6 +129,7 @@ def create_app(
                 # conversation, so a conversation resumed after a restart reaches the
                 # server that resumed it.
                 panels_server_url=f"http://{HOST}:{config.port}",
+                data_directory=Path(config.db_path).parent,
             ),
         )
         app.state.conversation = conversation

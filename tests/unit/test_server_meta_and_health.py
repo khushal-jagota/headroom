@@ -1,4 +1,4 @@
-"""What the server says about itself: /api/meta and the release-SHA readiness gate."""
+"""What the server says about itself: /api/meta and the app-SHA readiness gate."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 
-RELEASE_SHA = "0123456789abcdef0123456789abcdef01234567"
+APP_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _make_app(tmp_path: Path, **extra_environment: str) -> FastAPI:
@@ -39,39 +39,39 @@ def test_meta_carries_only_the_two_facts_the_browser_needs(tmp_path: Path) -> No
         response = client.get("/api/meta")
 
     assert response.status_code == 200
-    assert response.json() == {"test_mode": True, "release_sha": None}
+    assert response.json() == {"test_mode": True, "app_sha": None}
 
 
-def test_meta_reports_the_configured_release_sha(tmp_path: Path) -> None:
-    app = _make_app(tmp_path, PLAN_RELEASE_SHA=RELEASE_SHA)
+def test_meta_reports_the_configured_app_sha(tmp_path: Path) -> None:
+    app = _make_app(tmp_path, PLAN_APP_SHA=APP_SHA)
 
     with TestClient(app) as client:
         response = client.get("/api/meta")
 
-    assert response.json() == {"test_mode": True, "release_sha": RELEASE_SHA}
+    assert response.json() == {"test_mode": True, "app_sha": APP_SHA}
 
 
-def test_health_is_ready_only_for_a_caller_that_names_the_running_release(
+def test_health_is_ready_only_for_a_caller_that_names_the_running_app(
     tmp_path: Path,
 ) -> None:
-    app = _make_app(tmp_path, PLAN_RELEASE_SHA=RELEASE_SHA)
+    app = _make_app(tmp_path, PLAN_APP_SHA=APP_SHA)
 
     with TestClient(app) as client:
-        matching = client.get("/api/health", params={"expected_sha": RELEASE_SHA})
+        matching = client.get("/api/health", params={"expected_sha": APP_SHA})
         unnamed = client.get("/api/health")
         wrong = client.get("/api/health", params={"expected_sha": "f" * 40})
 
     assert matching.status_code == 200
-    assert matching.json() == {"ready": True, "release_sha": RELEASE_SHA}
+    assert matching.json() == {"ready": True, "app_sha": APP_SHA}
     assert unnamed.status_code == 503
     assert wrong.status_code == 503
 
 
-def test_health_without_a_release_sha_is_ready_only_in_test_mode(tmp_path: Path) -> None:
+def test_health_without_an_app_sha_is_ready_only_in_test_mode(tmp_path: Path) -> None:
     app = _make_app(tmp_path)
 
     with TestClient(app) as client:
         response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {"ready": True, "release_sha": None}
+    assert response.json() == {"ready": True, "app_sha": None}

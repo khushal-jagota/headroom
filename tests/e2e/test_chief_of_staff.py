@@ -111,12 +111,13 @@ def test_mobile_workspace_selections_open_standalone_pages(
     )["id"]
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": tid})
 
+    # Nothing to let settle: the ticket was put on today's board before the page opened, so
+    # the first read already has it. A replay to wait for belonged to the event log.
     page = open_page(
         context_factory(),
         server,
         "#/workspace",
         f'[data-card][data-ticket-id="{tid}"]',
-        settled=True,
     )
     page.set_viewport_size({"width": 390, "height": 844})
 
@@ -134,7 +135,7 @@ def test_mobile_workspace_selections_open_standalone_pages(
     page.click("[data-chief-of-staff-button]")
     page.wait_for_url(f"{server.base}/#/chief", timeout=WAIT_MS)
     page.wait_for_selector(
-        'section[data-screen="chief"] [data-chat-input]',
+        'section[data-screen="chief"] [data-conversation-input]',
         timeout=WAIT_MS,
     )
     assert page.locator('section[data-screen="workspace"]').count() == 0

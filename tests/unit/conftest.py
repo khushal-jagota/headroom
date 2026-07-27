@@ -93,7 +93,7 @@ def _no_real_backend_children(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(
         "planner.core.server.production_backend_child_factories",
-        lambda: {
+        lambda **_composed_against_this_machine: {
             key: _refuse_to_make_a_real_backend_child(key) for key in ConversationBackendKey
         },
     )
