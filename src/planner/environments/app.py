@@ -79,7 +79,15 @@ def validate_app_manifest(
         HEX_DIGEST_PATTERN, artifact_digest
     ) is None:
         raise AppValidationError("app manifest has an invalid artifact digest")
-    if artifact_digest != digest_app_artifact(app_root):
+    artifact_matches = artifact_digest == digest_app_artifact(app_root)
+    if not artifact_matches:
+        # Legacy v1 manifests included build-time caches. Ignore only caches
+        # created after that manifest so existing deployments remain verifiable.
+        artifact_matches = artifact_digest == _digest_tree(
+            app_root,
+            include_python_cache_before_ns=manifest_path.stat().st_mtime_ns,
+        )
+    if not artifact_matches:
         raise AppValidationError("app artifact digest does not match its manifest")
     _validate_app_tree(app_root)
     if require_runtime:
@@ -95,12 +103,27 @@ def digest_app_artifact(app_root: Path) -> str:
     return _digest_tree(app_root)
 
 
-def _digest_tree(app_root: Path) -> str:
+def _digest_tree(
+    app_root: Path, *, include_python_cache_before_ns: int | None = None
+) -> str:
     digest = hashlib.sha256()
     root = app_root.resolve()
     for path in sorted(root.rglob("*")):
         if path == root / "manifest.json":
             continue
+        relative_path = path.relative_to(root)
+        is_python_cache = "__pycache__" in relative_path.parts or path.suffix in {
+            ".pyc",
+            ".pyo",
+        }
+        if is_python_cache:
+            if include_python_cache_before_ns is None:
+                continue
+            try:
+                if path.lstat().st_mtime_ns > include_python_cache_before_ns:
+                    continue
+            except FileNotFoundError:
+                continue
         if path.is_symlink():
             target = path.resolve()
             if root not in target.parents:
