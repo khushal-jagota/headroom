@@ -153,8 +153,8 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
             json={
                 "title": "External override",
                 **base,
-                "employee_backend": "hermes",
-                "employee_launch_model": "hermes-model",
+                "employee_backend": "claude",
+                "employee_launch_model": "claude-model",
             },
             headers=_CHIEF,
         )
@@ -172,8 +172,8 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
         )
 
     assert defaulted.status_code == overridden.status_code == 200
-    assert defaulted.json()["employee_backend"] == "claude"
-    assert overridden.json()["employee_backend"] == "hermes"
+    assert defaulted.json()["employee_backend"] == "hermes"
+    assert overridden.json()["employee_backend"] == "claude"
     assert rejected.status_code == 400
     check = connect(str(db_path))
     try:
@@ -184,7 +184,7 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
     assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
     # The override brought the model it runs on with it; the effort belonged to the model
     # it replaced, so it did not come along.
-    assert overridden.json()["employee_launch_model"] == "hermes-model"
+    assert overridden.json()["employee_launch_model"] == "claude-model"
     assert overridden.json()["employee_launch_reasoning_effort"] is None
 
 

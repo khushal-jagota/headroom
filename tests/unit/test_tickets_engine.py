@@ -208,8 +208,8 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
         now=fake_clock.now_unix(),
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="probe",
-        employee_backend="hermes",
-        employee_launch_model="hermes-model",
+        employee_backend="claude",
+        employee_launch_model="claude-model",
     )
     tickets_before = tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
     with pytest.raises(PlannerError) as raised:
@@ -233,13 +233,13 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
             now=fake_clock.now_unix(),
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="probe",
-            employee_backend="hermes",
+            employee_backend="claude",
         )
 
-    assert defaulted.employee_backend == "claude"
+    assert defaulted.employee_backend == "hermes"
     assert defaulted.employee_launch_model == "probe-model"
-    assert overridden.employee_backend == "hermes"
-    assert overridden.employee_launch_model == "hermes-model"
+    assert overridden.employee_backend == "claude"
+    assert overridden.employee_launch_model == "claude-model"
     assert raised.value.code is ErrorCode.validation
     assert unnamed.value.code is ErrorCode.validation
     assert tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before

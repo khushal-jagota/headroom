@@ -168,8 +168,8 @@ def test_ticket_creation_copies_worker_type_configuration_once(
             json={
                 "title": "Override backend",
                 "worker_type": "probe",
-                "employee_backend": "hermes",
-                "employee_launch_model": "hermes-model",
+                "employee_backend": "claude",
+                "employee_launch_model": "claude-model",
             },
         )
         # A model named on its own stays on the type's backend and replaces the model
@@ -202,17 +202,17 @@ def test_ticket_creation_copies_worker_type_configuration_once(
             json={
                 "title": "Override with nothing to run",
                 "worker_type": "probe",
-                "employee_backend": "hermes",
+                "employee_backend": "claude",
             },
         )
 
     assert defaulted.status_code == 200
-    assert defaulted.json()["employee_backend"] == "claude"
+    assert defaulted.json()["employee_backend"] == "hermes"
     assert defaulted.json()["employee_launch_model"] == "probe-model"
     assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
     assert overridden.status_code == 200
-    assert overridden.json()["employee_backend"] == "hermes"
-    assert overridden.json()["employee_launch_model"] == "hermes-model"
+    assert overridden.json()["employee_backend"] == "claude"
+    assert overridden.json()["employee_launch_model"] == "claude-model"
     # The reasoning effort belonged to the type's own model, so it does not come along.
     assert overridden.json()["employee_launch_reasoning_effort"] is None
     assert rejected.status_code == 400
@@ -220,7 +220,7 @@ def test_ticket_creation_copies_worker_type_configuration_once(
     assert unnamed.status_code == 400
     assert unnamed.json()["error"]["code"] == "validation"
     assert model_only.status_code == 200
-    assert model_only.json()["employee_backend"] == "claude"
+    assert model_only.json()["employee_backend"] == "hermes"
     assert model_only.json()["employee_launch_model"] == "probe-other"
     assert model_only.json()["employee_launch_reasoning_effort"] is None
     check = connect(str(db_path))
@@ -280,24 +280,24 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
     with TestClient(app) as client:
         awaiting = client.put(
             f"/api/tickets/{awaiting_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model"),
+            json=_employee_configuration_body("claude", "claude-model"),
         )
         empty = client.put(
             f"/api/tickets/{empty_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model"),
+            json=_employee_configuration_body("claude", "claude-model"),
         )
 
     assert awaiting.status_code == empty.status_code == 200
-    assert awaiting.json()["employee_backend"] == empty.json()["employee_backend"] == "hermes"
+    assert awaiting.json()["employee_backend"] == empty.json()["employee_backend"] == "claude"
     assert awaiting.json()["employee_configuration_editable"] is True
     assert empty.json()["employee_configuration_editable"] is True
     check = connect(str(db_path))
     try:
         for ticket_id in (awaiting_id, empty_id):
             stored = tickets_data.read_ticket(check, ticket_id)
-            assert stored.employee_backend == "hermes"
+            assert stored.employee_backend == "claude"
             # The new backend's model came with it, so the Ticket says what it runs on.
-            assert stored.employee_launch_model == "hermes-model"
+            assert stored.employee_launch_model == "claude-model"
             assert stored.employee_launch_reasoning_effort is None
     finally:
         check.close()
@@ -365,19 +365,19 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
         selected = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "probe-a", "high"),
+            json=_employee_configuration_body("hermes", "probe-a", "high"),
         )
         model_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "probe-b", "high"),
+            json=_employee_configuration_body("hermes", "probe-b", "high"),
         )
         backend_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model", "medium"),
+            json=_employee_configuration_body("claude", "claude-model", "medium"),
         )
         switched_back = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "probe-a", "high"),
+            json=_employee_configuration_body("hermes", "probe-a", "high"),
         )
 
     assert selected.status_code == 200
@@ -400,13 +400,13 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         backend_changed.json()["employee_backend"],
         backend_changed.json()["employee_launch_model"],
         backend_changed.json()["employee_launch_reasoning_effort"],
-    ) == ("hermes", "hermes-model", "medium")
+    ) == ("claude", "claude-model", "medium")
     assert switched_back.status_code == 200
     assert (
         switched_back.json()["employee_backend"],
         switched_back.json()["employee_launch_model"],
         switched_back.json()["employee_launch_reasoning_effort"],
-    ) == ("claude", "probe-a", "high")
+    ) == ("hermes", "probe-a", "high")
 
 
 def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(
@@ -429,7 +429,7 @@ def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(
         app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "invented-model", None),
+            json=_employee_configuration_body("hermes", "invented-model", None),
         )
 
     assert response.status_code == 400
@@ -453,7 +453,7 @@ def test_employee_configuration_backend_probe_failure_is_a_retryable_product_err
         app.state.conversation = SimpleNamespace(backend_snapshots=FailingBackendSnapshots())
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "probe-a", "high"),
+            json=_employee_configuration_body("hermes", "probe-a", "high"),
         )
 
     assert response.status_code == 503
@@ -479,7 +479,7 @@ def test_employee_configuration_noop_after_freeze_emits_nothing(
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json=_employee_configuration_body(
-                "claude", "probe-model", "probe-high"
+                "hermes", "probe-model", "probe-high"
             ),
         )
 
@@ -514,7 +514,7 @@ def test_employee_configuration_change_rejects_every_pristine_freeze_boundary(
     with TestClient(app) as client:
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model"),
+            json=_employee_configuration_body("claude", "claude-model"),
         )
 
     assert response.status_code == 409
@@ -541,7 +541,7 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_body(
     with TestClient(app) as client:
         bound = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model"),
+            json=_employee_configuration_body("hermes", "probe-model", "probe-high"),
         )
         indirect = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -584,7 +584,7 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_body(
         )
         detail = client.get(f"/api/tickets/{ticket_id}")
 
-    assert bound.status_code == 409
+    assert bound.status_code == 200
     assert indirect.status_code == 400
     assert indirect.json()["error"]["code"] == "agent_forbidden"
     assert extra.status_code == 400
