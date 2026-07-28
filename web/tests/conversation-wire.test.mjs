@@ -101,7 +101,10 @@ const {
   outgoingMessageNote,
   outgoingMessagesTheRecordHasNot,
   recallOutgoingMessages,
+  releaseOutgoingMessageImages,
   rememberOutgoingMessages,
+  reserveOutgoingMessageImages,
+  resetOutgoingImageReservationsForTest,
   senderMessageIdsInTheRecord
 } = await import(join(directory, "outgoing.mjs"));
 const {
@@ -926,8 +929,21 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   const kept = new Map();
   globalThis.window = {
     sessionStorage: {
+      get length() {
+        return kept.size;
+      },
+      key: (index) => Array.from(kept.keys())[index] ?? null,
       getItem: (key) => (kept.has(key) ? kept.get(key) : null),
-      setItem: (key, value) => kept.set(key, String(value)),
+      setItem: (key, value) => {
+        const next = new Map(kept);
+        next.set(key, String(value));
+        const storedCharacters = Array.from(next.entries()).reduce(
+          (total, [storedKey, storedValue]) => total + storedKey.length + storedValue.length,
+          0
+        );
+        if (storedCharacters > 5_000_000) throw new Error("sessionStorage quota exceeded");
+        kept.set(key, String(value));
+      },
       removeItem: (key) => kept.delete(key)
     }
   };
@@ -984,6 +1000,45 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
     boundaryOutgoing.content,
     "an image at the accepted envelope survives outgoing recall byte-for-byte"
   );
+
+  kept.clear();
+  resetOutgoingImageReservationsForTest();
+  const twoMiBRawAsBase64 = "A".repeat(4 * Math.ceil((2 * 1024 * 1024) / 3));
+  const firstConcurrent = mintOutgoingMessage({
+    content: [{ piece: "image", data: twoMiBRawAsBase64, media_type: "image/png" }],
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
+  const secondConcurrent = mintOutgoingMessage({
+    content: [{ piece: "image", data: twoMiBRawAsBase64, media_type: "image/png" }],
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
+  assert.equal(reserveOutgoingMessageImages(firstConcurrent), true);
+  rememberOutgoingMessages("first-conversation", [firstConcurrent]);
+
+  // A full page reload loses module memory. The next reservation rebuilds it from every
+  // conversation's remembered key in this tab, so another pane cannot evade the budget.
+  resetOutgoingImageReservationsForTest();
+  assert.equal(reserveOutgoingMessageImages(secondConcurrent), false);
+  assert.equal(
+    kept.has("panels.conversation.outgoing.second-conversation"),
+    false,
+    "the concurrent send never reaches the quota-enforcing storage"
+  );
+
+  // Canonical catch-up removes the first optimistic copy and its reservation. The exact
+  // same second send can then be retried and recalled under another conversation key.
+  rememberOutgoingMessages("first-conversation", []);
+  assert.equal(reserveOutgoingMessageImages(secondConcurrent), true);
+  rememberOutgoingMessages("second-conversation", [secondConcurrent]);
+  resetOutgoingImageReservationsForTest();
+  assert.deepEqual(
+    recallOutgoingMessages("second-conversation")[0].content,
+    secondConcurrent.content
+  );
+  rememberOutgoingMessages("second-conversation", []);
+  releaseOutgoingMessageImages(secondConcurrent.messageId);
   assert.deepEqual(recallOutgoingMessages("c2"), [], "one conversation's are not another's");
 
   kept.set(
@@ -1010,6 +1065,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
 
   rememberOutgoingMessages("c1", []);
   assert.deepEqual(recallOutgoingMessages("c1"), [], "and holding nothing keeps nothing");
+  resetOutgoingImageReservationsForTest();
   delete globalThis.window;
 }
 

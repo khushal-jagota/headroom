@@ -31,7 +31,10 @@
     mintOutgoingMessage,
     outgoingMessagesTheRecordHasNot,
     recallOutgoingMessages,
+    releaseOutgoingMessageImages,
     rememberOutgoingMessages,
+    reserveOutgoingMessageImages,
+    reserveRecalledOutgoingMessages,
     type OutgoingMessage,
     type OutgoingMessageKnownFate
   } from "../../lib/conversation/outgoing";
@@ -207,7 +210,7 @@
     view = null;
     feed = emptyConversationFeed();
     // Whatever this tab was still holding for this conversation when it was last here.
-    sentMessages = recallOutgoingMessages(id);
+    sentMessages = reserveRecalledOutgoingMessages(recallOutgoingMessages(id));
     await openConversation(id);
   }
 
@@ -307,6 +310,10 @@
       senderLabel,
       mode
     });
+    if (!reserveOutgoingMessageImages(message)) {
+      errorNote = "Wait for an outstanding image message to reach the conversation.";
+      return false;
+    }
     holdOnTo([...sentMessages, message]);
     try {
       // The conversation this message is for is one the record has answered for. Holding
@@ -362,6 +369,12 @@
   }
 
   function holdOnTo(messages: readonly OutgoingMessage[]): void {
+    const stillHeld = new Set(messages.map((message) => message.messageId));
+    for (const message of sentMessages) {
+      if (!stillHeld.has(message.messageId)) {
+        releaseOutgoingMessageImages(message.messageId);
+      }
+    }
     sentMessages = messages;
     if (openedId !== null) rememberOutgoingMessages(openedId, messages);
   }

@@ -67,7 +67,36 @@ def test_png_inflation_is_bounded_and_must_match_the_ihdr_scanlines() -> None:
     assert sniff_image_format(_png(1, 1, b"\x00" * 4)) is None
     assert sniff_image_format(_png(1, 1, b"\x05" + b"\x00" * 4)) is None
     assert sniff_image_format(_png(1, 1, b"\x00" * 5)) == "png"
-    assert sniff_image_format(_png(1, 1, b"\x00" * 5, interlace=1)) is None
+
+
+def _adam7_rgba8(width: int, height: int) -> tuple[bytes, list[int]]:
+    raw = bytearray()
+    filter_offsets: list[int] = []
+    for start_x, start_y, step_x, step_y in (
+        (0, 0, 8, 8),
+        (4, 0, 8, 8),
+        (0, 4, 4, 8),
+        (2, 0, 4, 4),
+        (0, 2, 2, 4),
+        (1, 0, 2, 2),
+        (0, 1, 1, 2),
+    ):
+        pass_width = 0 if width <= start_x else (width - start_x + step_x - 1) // step_x
+        pass_height = 0 if height <= start_y else (height - start_y + step_y - 1) // step_y
+        for _ in range(pass_height):
+            filter_offsets.append(len(raw))
+            raw.extend(b"\x00" * (1 + pass_width * 4))
+    return bytes(raw), filter_offsets
+
+
+def test_a_normal_adam7_png_has_all_seven_bounded_scanline_runs() -> None:
+    raw, filter_offsets = _adam7_rgba8(8, 8)
+    assert len(filter_offsets) > 7
+    assert sniff_image_format(_png(8, 8, raw, interlace=1)) == "png"
+    assert sniff_image_format(_png(8, 8, raw[:-1], interlace=1)) is None
+    bad_filter = bytearray(raw)
+    bad_filter[filter_offsets[3]] = 5
+    assert sniff_image_format(_png(8, 8, bytes(bad_filter), interlace=1)) is None
 
 
 def _jpeg(width: int, height: int) -> bytes:

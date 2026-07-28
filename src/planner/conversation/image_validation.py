@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 import zlib
+from bisect import bisect_left
 from typing import Protocol, cast
 
 # Three raw MiB becomes four MiB in base64. That is a conservative common envelope for
@@ -60,7 +61,7 @@ def _valid_png(payload: bytes) -> bool:
     saw_header = False
     decompressor: _PngDecompressor | None = None
     expected_decompressed_bytes: int | None = None
-    png_scanline_bytes: int | None = None
+    png_filter_offsets: tuple[int, ...] | None = None
     decompressed_bytes = 0
     saw_image_data = False
     while offset + 12 <= len(payload):
@@ -86,15 +87,17 @@ def _valid_png(payload: bytes) -> bool:
                 or bit_depth not in _PNG_BIT_DEPTHS_BY_COLOR_TYPE.get(color_type, ())
                 or compression != 0
                 or filtering != 0
-                # Adam7 has seven differently-sized scanline runs. Rejecting it keeps the
-                # exact decompressed-size proof simple and intentional.
-                or interlace != 0
+                or interlace not in (0, 1)
             ):
                 return False
             channels = _PNG_CHANNELS_BY_COLOR_TYPE[color_type]
-            scanline_bytes = (width * channels * bit_depth + 7) // 8
-            png_scanline_bytes = 1 + scanline_bytes
-            expected_decompressed_bytes = height * (1 + scanline_bytes)
+            expected_decompressed_bytes, png_filter_offsets = _png_decompressed_layout(
+                width,
+                height,
+                channels=channels,
+                bit_depth=bit_depth,
+                interlaced=interlace == 1,
+            )
             decompressor = cast(_PngDecompressor, zlib.decompressobj())
             saw_header = True
         elif kind == b"IHDR":
@@ -103,7 +106,7 @@ def _valid_png(payload: bytes) -> bool:
             if (
                 decompressor is None
                 or expected_decompressed_bytes is None
-                or png_scanline_bytes is None
+                or png_filter_offsets is None
             ):
                 return False
             decompressed_bytes = _consume_png_image_data(
@@ -111,7 +114,7 @@ def _valid_png(payload: bytes) -> bool:
                 data,
                 decompressed_bytes=decompressed_bytes,
                 expected_decompressed_bytes=expected_decompressed_bytes,
-                scanline_bytes=png_scanline_bytes,
+                filter_offsets=png_filter_offsets,
             )
             if decompressed_bytes < 0:
                 return False
@@ -141,7 +144,7 @@ def _consume_png_image_data(
     *,
     decompressed_bytes: int,
     expected_decompressed_bytes: int,
-    scanline_bytes: int,
+    filter_offsets: tuple[int, ...],
 ) -> int:
     """Inflate one IDAT chunk in bounded pieces and validate every scanline filter."""
     pending = compressed
@@ -152,8 +155,13 @@ def _consume_png_image_data(
             inflated = decompressor.decompress(pending, output_limit)
         except zlib.error:
             return -1
-        for index, value in enumerate(inflated):
-            if (decompressed_bytes + index) % scanline_bytes == 0 and value > 4:
+        first_filter = bisect_left(filter_offsets, decompressed_bytes)
+        output_end = decompressed_bytes + len(inflated)
+        for filter_index in range(first_filter, len(filter_offsets)):
+            filter_offset = filter_offsets[filter_index]
+            if filter_offset >= output_end:
+                break
+            if inflated[filter_offset - decompressed_bytes] > 4:
                 return -1
         decompressed_bytes += len(inflated)
         if decompressed_bytes > expected_decompressed_bytes or decompressor.unused_data:
@@ -165,6 +173,42 @@ def _consume_png_image_data(
             return -1
         pending = unconsumed
     return decompressed_bytes
+
+
+def _png_decompressed_layout(
+    width: int,
+    height: int,
+    *,
+    channels: int,
+    bit_depth: int,
+    interlaced: bool,
+) -> tuple[int, tuple[int, ...]]:
+    """The exact inflated byte count and filter positions for plain or Adam7 scanlines."""
+    passes = (
+        (
+            (0, 0, 8, 8),
+            (4, 0, 8, 8),
+            (0, 4, 4, 8),
+            (2, 0, 4, 4),
+            (0, 2, 2, 4),
+            (1, 0, 2, 2),
+            (0, 1, 1, 2),
+        )
+        if interlaced
+        else ((0, 0, 1, 1),)
+    )
+    offset = 0
+    filter_offsets: list[int] = []
+    for start_x, start_y, step_x, step_y in passes:
+        pass_width = 0 if width <= start_x else (width - start_x + step_x - 1) // step_x
+        pass_height = 0 if height <= start_y else (height - start_y + step_y - 1) // step_y
+        if pass_width == 0 or pass_height == 0:
+            continue
+        scanline_bytes = 1 + (pass_width * channels * bit_depth + 7) // 8
+        for _ in range(pass_height):
+            filter_offsets.append(offset)
+            offset += scanline_bytes
+    return offset, tuple(filter_offsets)
 
 
 def _valid_jpeg(payload: bytes) -> bool:
