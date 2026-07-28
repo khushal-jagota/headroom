@@ -140,6 +140,50 @@ def test_app_deploy_wires_full_snapshot_restore(tmp_path: Path, monkeypatch: Any
     assert restores == [(snapshot, tmp_path / "planning.db", True)]
 
 
+def test_provision_skills_reconciles_all_production_agent_homes_idempotently(
+    tmp_path: Path,
+) -> None:
+    database_parent = tmp_path / "current" / "data"
+    database_parent.mkdir(parents=True)
+    homes = {
+        "hermes": tmp_path / ".hermes",
+        "codex": tmp_path / ".codex",
+        "claude": tmp_path / ".claude",
+    }
+    for home in homes.values():
+        skills = home / "skills"
+        custom = skills / "custom"
+        custom.mkdir(parents=True)
+        (custom / "SKILL.md").write_text("custom", encoding="utf-8")
+        retired = skills / "panels-ticket-management"
+        retired.symlink_to(tmp_path / "retired-source", target_is_directory=True)
+
+    arguments = [
+        "provision-skills",
+        "--database-parent",
+        str(database_parent),
+        "--hermes-home",
+        str(homes["hermes"]),
+        "--codex-home",
+        str(homes["codex"]),
+        "--claude-home",
+        str(homes["claude"]),
+    ]
+    runner = CliRunner()
+    first = runner.invoke(environment, arguments)
+    second = runner.invoke(environment, arguments)
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    for home in homes.values():
+        skills = home / "skills"
+        retired = skills / "panels-ticket-management"
+        assert not retired.exists()
+        assert not retired.is_symlink()
+        assert (skills / "custom" / "SKILL.md").read_text(encoding="utf-8") == "custom"
+        assert (skills / "panels").is_symlink()
+
+
 def _invoke_app_deploy(
     tmp_path: Path,
     monkeypatch: Any,

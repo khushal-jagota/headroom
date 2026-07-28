@@ -242,9 +242,12 @@ ones after it, never an earlier one, so you can't hand back ground the ticket ha
 already covered. One shared source of the allowed stages feeds both the header row
 and the approval screen, so the two can never disagree.
 
-Review shows exactly the tickets whose status is `awaiting_approval` — nothing more
-decides membership. So a ticket leaves Review the moment its status changes, whichever
-way that happens.
+Review's single, oldest-first walk shows today's tickets whose status is
+`awaiting_approval` or `needs_user` — nothing else decides membership. A parked
+proposal keeps its approval and revision controls. A Worker help request uses the same
+Ticket title, Skip, and Open Ticket structure without proposal controls; the answer
+belongs in the Ticket conversation. Either kind leaves Review the moment its status
+changes, whichever way that happens.
 
 Replying to the worker is one of those ways. A ticket parked on a proposal is waiting
 for you, and typing an answer into its conversation is an answer of a kind — the
@@ -316,4 +319,5 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-07-25 (the eight Ticket statuses, the commit itself as the change signal, and revision sent before the Ticket is handed back)._
+_Last verified: 2026-07-27 (the eight Ticket statuses, the unified Review walk, the
+commit itself as the change signal, and revision sent before the Ticket is handed back)._

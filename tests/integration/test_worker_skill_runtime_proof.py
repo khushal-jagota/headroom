@@ -1,4 +1,4 @@
-"""Proof that a Worker actually reads the guidance Panels installed for it.
+"""Process integration proving a Worker reads the guidance Panels installed for it.
 
 Two things have to be true for a Worker to know its job, and neither is provable from a
 database row. The role Panels gives the conversation has to arrive as text in the agent's

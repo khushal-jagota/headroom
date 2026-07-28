@@ -96,6 +96,7 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
     )
     blocked = '[data-bucket-section][data-bucket-key="blocked"]'
     empty = '[data-bucket-section][data-bucket-key="empty"]'
+    kickoff = '[data-bucket-section][data-bucket-key="waiting_for_kickoff"]'
     approval = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
     active_card = f'[data-card][data-ticket-id="{blocker}"]'
     later_card = f'[data-card][data-ticket-id="{later_dependent}"]'
@@ -103,16 +104,18 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
     # Blocked is the resting status of a ticket held by a live blocker, and its
-    # group collapses by default. A ticket with a live blocker that carries any
-    # other status — a parked kickoff proposal, a later approval — groups by
-    # that status instead.
+    # group collapses by default. The blocker itself does not choose the group:
+    # Kickoff approvals use their own group, while approval at a later gated
+    # field remains under the generic approval status.
     assert page.locator(blocked).get_attribute("open") is None
     assert page.locator(empty).get_attribute("open") is not None
     assert page.locator(f"{empty} {active_card}").is_visible()
     assert page.locator(approval).get_attribute("open") is not None
     assert page.locator(f"{approval} {later_card}").is_visible()
     assert page.locator(f"{blocked} {later_card}").count() == 0
-    assert page.locator(f"{approval} {kickoff_card}").count() == 1
+    assert page.locator(kickoff).get_attribute("open") is not None
+    assert page.locator(f"{kickoff} {kickoff_card}").is_visible()
+    assert page.locator(f"{approval} {kickoff_card}").count() == 0
     assert page.locator(f"{blocked} {kickoff_card}").count() == 0
     assert not page.locator(f"{blocked} {shared_card}").is_visible()
     page.locator(f"{blocked} > summary").click()
@@ -137,7 +140,8 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
         state="attached",
         timeout=WAIT_MS,
     )
-    assert page.locator(f"{approval} {kickoff_card}").count() == 1
+    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
+    assert page.locator(f"{approval} {later_card}").count() == 1
     assert _get_ticket(server, later_dependent)["stage"] == "needs_plan"
     assert _get_ticket(server, shared_dependent)["stage"] == "needs_approach"
 

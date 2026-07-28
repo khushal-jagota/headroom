@@ -21,6 +21,15 @@ class Violation(NamedTuple):
     pattern: str
 
 
+def parse_verify_mode(argv: list[str]) -> str:
+    """Resolve the explicit verification tier without weakening the full default."""
+    if not argv:
+        return "full"
+    if len(argv) == 1 and argv[0] in {"full", "fast", "integration", "e2e"}:
+        return argv[0]
+    raise ValueError("usage: ./verify [full|fast|integration|e2e]")
+
+
 # --- skip-scan -------------------------------------------------------------
 
 # Substring patterns forbidden anywhere in a test line (SPEC 18.2). Note that
@@ -176,5 +185,3 @@ def check_css_syntax(text: str) -> list[str]:
     if depth > 0:
         errors.append(f"{depth} unclosed '{{'")
     return errors
-
-

@@ -15,7 +15,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
-from planner.skill_sources import ensure_managed_panels_skills
+from planner.skill_sources import (
+    RETIRED_PANELS_SKILL_NAMES,
+    ensure_managed_panels_skills,
+    remove_retired_panels_skills,
+)
 
 DEFAULT_HERMES_PYTHON: Final = "~/.hermes/hermes-agent/venv/bin/python"
 DEFAULT_PLANNER_HOME: Final = "~/.hermes"
@@ -77,7 +81,10 @@ def provision_planner_home_skills(
     ).resolve()
     target_root = Path(home).expanduser() / "skills"
     target_root.mkdir(parents=True, exist_ok=True)
+    remove_retired_panels_skills(target_root)
     for skill_name in skill_names:
+        if skill_name in RETIRED_PANELS_SKILL_NAMES:
+            continue
         source = source_root / skill_name
         if not source.is_dir():
             raise FileNotFoundError(f"planner skill not found: {source}")

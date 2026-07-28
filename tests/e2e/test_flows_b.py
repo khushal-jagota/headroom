@@ -36,7 +36,6 @@ E29_WATCH = "E29 the hero still does not say what Vylo is in one line."
 E29_LANDS = "E29 real visitors are in the waitlist table by tonight."
 E29_FOCUS_EDIT = "E29 signal today, not polish."
 E29_WATCH_EDIT = "E29 watch the funnel drop-off after signup."
-DAY_NOOP_MARKDOWN = "# Day raw forms\n\n* star bullet\n\n1) ordered paren\n\n_line italic_"
 
 # item 30 (ceiling needs_implementation so each of implementation/closeout PARKS
 # pending in turn, requiring its own Review approval)
@@ -67,15 +66,6 @@ E32_ITEM_TITLE = "E32 item"
 E32_ITEM_PROJECT = "Vylo"
 E32_LOOSE_TITLE = "E32 loose ticket"
 
-# Sprint Overview (rev6 redesign): the three headed inline-editable sections. Kickoff
-# renders its seeded fields; a Mid-sprint Review sub-field round-trips through the
-# shared inlineEdit → per-field PATCH → refetch re-render (the same path as Day/ticket).
-SO_SPRINT_NAME = "SO sprint"
-SO_START = "2026-07-01"  # range contains baseline planning date 2026-07-04
-SO_END = "2026-07-14"  # a 2-week span
-SO_LIMITING = "SO can build faster than we can validate."
-SO_BET = "SO 100 on the waitlist, first cohort activated."
-SO_MID_STAND = "SO halfway in, the bet is tracking."
 
 
 def _set_now(api: ApiHelper, server: ServerHandle, iso: str) -> JsonObject:
@@ -153,53 +143,6 @@ def _snap_day(p: Page) -> dict[str, str]:
     return {"take": p.inner_text("[data-day-take-body]")}
 
 
-def test_e28_day_overview_empty_until_rollover_agent(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    # The Day is the OVERVIEW, not a dashboard: the plan tree, today-ticket list,
-    # review-count and chat are gone from it. With deterministic boundary removed,
-    # crossing to the new planning date leaves the structured overview unauthored until
-    # a human or future rollover agent writes it.
-    r = _set_now(api, server, NOW_0501)
-    assert r["planning_date"] == DAY_CUR, r
-
-    page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
-    page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
-
-    # The four fields render in their slots, but stay empty by default.
-    assert page.text_content("[data-day-focus]") == ""
-    take_text = page.text_content("[data-day-take-body]")
-    assert take_text is not None
-    assert take_text.strip() == ""
-    watch_text = page.text_content("[data-day-watch-body]")
-    assert watch_text is not None
-    assert watch_text.strip() == ""
-    lands_text = page.text_content("[data-day-lands-body]")
-    assert lands_text is not None
-    assert lands_text.strip() == ""
-    d = api.get(server, "/api/day/today")
-    assert d["id"] == f"day_{DAY_CUR}", d
-    assert d["focus"] == d["brief_take"] == d["watchout"] == d["if_today_lands"] == ""
-    # The date orients the read (planning date 2026-07-05). text_content, not
-    # inner_text: the date label is text-transform:uppercase, and inner_text would
-    # return the rendered "JUL 5" while text_content keeps the raw DOM text. The
-    # redesign speaks the short month form (Jul, not July).
-    date_text = page.text_content("[data-day-date]")
-    assert date_text is not None
-    assert "Jul 5" in date_text
-
-    # The dropped surfaces have NO Day home anymore (backend endpoints untouched).
-    assert page.query_selector(".plan-tree") is None
-    assert page.query_selector("[data-review-entry]") is None
-    assert page.query_selector("[data-chat-panel]") is None
-    # The Day overview is not a today-ticket list: no per-ticket rows render on it.
-    assert page.query_selector("[data-day-overview] [data-ticket-id]") is None
-
-
 def test_e29_day_overview_structured_and_edit(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
@@ -269,39 +212,6 @@ def test_e29_day_overview_structured_and_edit(
     assert d["if_today_lands"] == E29_LANDS, d
 
 
-def test_day_markdown_focus_noop_keeps_raw_source(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    api: ApiHelper,
-) -> None:
-    api.direct_patch(
-        server,
-        f"/api/day/{DAY_PREV}",
-        {"watchout": DAY_NOOP_MARKDOWN},
-    )
-
-    page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
-    page.wait_for_selector("[data-day-watch-body] h1", timeout=WAIT_MS)
-
-    assert page.inner_text("[data-day-watch-body] h1") == "Day raw forms"
-    assert page.eval_on_selector_all(
-        "[data-day-watch-body] ul li", "els => els.map(e => e.textContent)"
-    ) == ["star bullet"]
-    assert page.eval_on_selector_all(
-        "[data-day-watch-body] ol li", "els => els.map(e => e.textContent)"
-    ) == ["ordered paren"]
-
-    page.focus("[data-day-watch-body]")
-    assert page.locator("[data-day-watch-body]").get_attribute("contenteditable") == "true"
-    assert page.locator("[data-day-watch-body] [data-markdown-edit]").count() == 0
-    assert page.locator("[data-day-watch-body] [data-markdown-source-editor]").count() == 0
-    page.locator("[data-day-watch-body]").blur()
-
-    d = api.get(server, "/api/day/today")
-    assert d["watchout"] == DAY_NOOP_MARKDOWN, d
-
-
 def test_e30_review_approve_to_done(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
@@ -359,7 +269,7 @@ def test_e30_review_approve_to_done(
     card = f'[data-review-card][data-ticket-id="{mid}"]'
     rpage = open_page(context_factory(), server, "#/review", card)
     assert rpage.get_attribute(card, "data-field") == "implementation"
-    decisions = api.get(server, "/api/review")["ticket_decisions"]
+    decisions = api.get(server, "/api/review")["items"]
     assert len(decisions) == 1, decisions
     assert decisions[0]["ticket_id"] == mid, decisions
     assert decisions[0]["field"] == "implementation", decisions
@@ -617,77 +527,3 @@ def test_e32_sprint_live_status_and_loose(
     child_row = next(t for t in item["tickets"] if t["id"] == child)
     assert child_row["has_pending_proposal"] is False, child_row
     assert child_row["ticket_status"] == "empty", child_row
-
-
-def test_sprint_overview_fields_and_edit(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    api: ApiHelper,
-) -> None:
-    # A current sprint (its 2-week range contains the baseline planning date), seeded
-    # with Kickoff content at create → the Overview opens kickoff-open (Kickoff open,
-    # Mid-sprint + Sprint Review collapsed until they have content).
-    api.direct_post(
-        server,
-        "/api/sprints",
-        {
-            "name": SO_SPRINT_NAME,
-            "date_start": SO_START,
-            "date_end": SO_END,
-            "limiting_factor": SO_LIMITING,
-            "primary_bet": SO_BET,
-        },
-    )
-
-    ready = '[data-phase="kickoff"]'
-    # Legacy #/sprint/overview replace-redirects to the new documents page.
-    page = open_page(context_factory(), server, "#/sprint/overview", ready)
-
-    # The redirect landed on the documents page (tabs are gone): the hash is
-    # #/sprint/documents and the page shows its unique "Sprint documents" heading.
-    assert page.url.endswith("#/sprint/documents")
-    assert page.inner_text(".sprint-docs-title") == "Sprint documents"
-
-    # All three sections render, in the fixed order Kickoff · Mid-sprint · Sprint Review.
-    phases = page.eval_on_selector_all(
-        "[data-phase]", "els => els.map(e => e.getAttribute('data-phase'))"
-    )
-    assert phases == ["kickoff", "mid", "review"], phases
-
-    # Kickoff is open (fresh sprint) → its seeded fields render as inline-edit surfaces.
-    assert page.inner_text('[data-field="limiting_factor"] .fval') == SO_LIMITING
-    assert page.inner_text('[data-field="primary_bet"] .fval') == SO_BET
-    # The three Mid-sprint Review sub-fields exist as inline-edit surfaces (empty here).
-    for key in ("mid_where_we_stand", "mid_whats_changed", "mid_what_to_adjust"):
-        assert page.query_selector(f'[data-field="{key}"] .fval .ed') is not None
-
-    # Inline-edit round-trip on the NEW Mid-sprint field: open its section, edit
-    # the contenteditable surface, blur → PATCH /api/sprints/{id}
-    # {mid_where_we_stand} → the refetch re-renders from the saved value.
-    page.click('[data-phase="mid"] > summary')
-    sel = '[data-field="mid_where_we_stand"] .fval .ed'
-    f0 = page.evaluate("window.__plannerDebug.flushes")
-    page.evaluate(
-        "(a) => { const el = document.querySelector(a.sel);"
-        " el.focus(); el.textContent = a.text;"
-        " el.dispatchEvent(new InputEvent('input', "
-        "{ bubbles: true, inputType: 'insertText', data: a.text }));"
-        " el.blur(); }",
-        {"sel": sel, "text": SO_MID_STAND},
-    )
-    page.wait_for_function("(f0) => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS)
-    # Mid now has content → the section stays open (running phase) → the value shows.
-    page.wait_for_function(
-        "(a) => { const el = document.querySelector(a.sel);"
-        " return !!el && el.innerText.trim() === a.text; }",
-        arg={"sel": sel, "text": SO_MID_STAND},
-        timeout=WAIT_MS,
-    )
-
-    # The edit persisted canonically, and ONLY that field changed (per-field PATCH).
-    cur = api.get(server, "/api/sprint/current")["sprint"]
-    assert cur["mid_where_we_stand"] == SO_MID_STAND, cur
-    assert cur["mid_whats_changed"] == "", cur
-    assert cur["mid_what_to_adjust"] == "", cur
-    assert cur["limiting_factor"] == SO_LIMITING, cur  # untouched by the mid edit

@@ -11,6 +11,7 @@ from planner.core import links as core_links
 from planner.core.contracts import BlockerSummary, JsonDict
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
+    AtCap,
     FieldSlot,
     Ticket,
     TicketStatus,
@@ -218,6 +219,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         "tickets.employee_backend, "
         "tickets.conversation_id, "
         "tickets.ticket_status, "
+        "tickets.ceiling, tickets.at_cap, "
         "tickets.backend_error, "
         "tickets.created_at, tickets.updated_at FROM tickets "
         "LEFT JOIN projects AS ticket_projects ON ticket_projects.id = tickets.project_id "
@@ -260,6 +262,15 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
         is_parented = row["sprint_item_id"] is not None
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
+        ticket_status = str(row["ticket_status"])
+        stopped_at_current_stage = (
+            str(row["at_cap"]) == AtCap.stop.value
+            and machine.at_or_beyond_ceiling(
+                stage,
+                str(row["ceiling"]),
+                worker_type_definition=worker_type_definition,
+            )
+        )
         card: JsonDict = {
             "id": str(row["id"]),
             "title": str(row["title"]),
@@ -275,7 +286,7 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
                 fields,
                 worker_type_definition=worker_type_definition,
             ),
-            "ticket_status": str(row["ticket_status"]),
+            "ticket_status": ticket_status,
             "backend_error": (
                 str(row["backend_error"]) if row["backend_error"] is not None else None
             ),
@@ -290,6 +301,11 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "blocked": str(row["id"]) in blocked_target_ids,
             "conversation_id": (
                 str(row["conversation_id"]) if row["conversation_id"] is not None else None
+            ),
+            "waiting_to_closeout": (
+                gating_field_id == "closeout"
+                and ticket_status == TicketStatus.empty.value
+                and not stopped_at_current_stage
             ),
         }
         sort_key = (
@@ -315,21 +331,33 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
 # --- Review --------------------------------------------------------------------
 
 
-def _ticket_decisions(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
+def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
     rows = conn.execute(
-        "SELECT id, title, stage, worker_type, ticket_status, fields FROM tickets "
+        "SELECT id, title, stage, worker_type, ticket_status, ticket_status_changed_at, "
+        "fields FROM tickets "
         "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) ORDER BY id",
         (day_id,),
     ).fetchall()
     registry = configured_worker_type_registry()
-    decisions: list[JsonDict] = []
+    items: list[JsonDict] = []
     for row in rows:
+        ticket_status = str(row["ticket_status"])
+        if ticket_status == TicketStatus.needs_user.value:
+            items.append(
+                {
+                    "review_item_type": TicketStatus.needs_user.value,
+                    "ticket_id": str(row["id"]),
+                    "title": str(row["title"]),
+                    "waiting_since": int(row["ticket_status_changed_at"]),
+                }
+            )
+            continue
+        # Review is a pure filter on the control statuses that mean the user has
+        # something to handle: a parked proposal or an explicit Worker help request.
+        if ticket_status != TicketStatus.awaiting_approval.value:
+            continue
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])
-        # Review is a pure filter on the status: awaiting_approval is exactly "a
-        # proposal is parked for the user".
-        if str(row["ticket_status"]) != TicketStatus.awaiting_approval.value:
-            continue
         field = worker_type_definition.gating_field(stage)
         if field is None:
             continue
@@ -342,16 +370,17 @@ def _ticket_decisions(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict
         proposal = slot.get("proposal")
         if not isinstance(proposal, dict):
             continue
-        decisions.append(
+        items.append(
             {
+                "review_item_type": "proposal",
                 "ticket_id": str(row["id"]),
                 "field": field,
                 "title": str(row["title"]),
                 "waiting_since": proposal["created_at"],
             }
         )
-    decisions.sort(key=lambda decision: (decision["waiting_since"], decision["ticket_id"]))
-    return decisions
+    items.sort(key=lambda item: (item["waiting_since"], item["ticket_id"]))
+    return items
 
 
 def review_view(
@@ -362,21 +391,7 @@ def review_view(
     running_workers = conn.execute(
         "SELECT COUNT(*) AS count FROM tickets WHERE ticket_status = 'agent'"
     ).fetchone()
-    user_help_requests = [
-        {
-            "ticket_id": str(row["id"]),
-            "title": str(row["title"]),
-            "waiting_since": int(row["waiting_since"]),
-        }
-        for row in conn.execute(
-            "SELECT id, title, ticket_status_changed_at AS waiting_since FROM tickets "
-            "WHERE id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?) "
-            "AND ticket_status = 'needs_user' ORDER BY id",
-            (day_id,),
-        ).fetchall()
-    ]
     return {
-        "ticket_decisions": _ticket_decisions(conn, day_id=day_id),
-        "user_help_requests": user_help_requests,
+        "items": _review_items(conn, day_id=day_id),
         "running_worker_count": int(running_workers["count"] if running_workers is not None else 0),
     }

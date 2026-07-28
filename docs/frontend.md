@@ -12,12 +12,14 @@ One screen per part of the system:
 
 - **Day** — the day overview: focus, brief take, watchout, and what makes the day
   land. Read top to bottom in the serif voice, flat, with no boxes.
-- **Review** — the human chamber for parked Ticket proposals and Worker help requests: one centred decision with Skip and
-  Open-ticket top-right, a labelled recap, the ask surface, and a send-back row.
-  Keyboard shortcuts drive it (skip, open, approve) when the cursor is not in a text
-  field, and each decision fades in as it arrives. The approve button physically
-  refuses to work until "how far may the worker go next" has been answered, both
-  halves.
+- **Review** — the human chamber for parked Ticket proposals and Worker help requests:
+  one oldest-first walk with a centred item, its Ticket title, and Skip and Open Ticket
+  top-right. Proposal items add their labelled recap, ask, approval, and send-back
+  controls; needs-user items direct the human to the Ticket conversation without those
+  proposal controls. Keyboard shortcuts drive the actions that apply to the current
+  item when the cursor is not in a text field, and each item fades in as it arrives. A
+  proposal's approve button physically refuses to work until "how far may the worker
+  go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. One project selector narrows the roster by each ticket's effective project,
@@ -26,15 +28,17 @@ One screen per part of the system:
   menu of the projects. A ticket parented by a sprint item uses
   that item's project; a standalone ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
-  tickets into collapsible boxed **status groups** — one group per ticket status, in a
-  fixed order that puts what needs the user first: Errored, Needs user, Empty, User,
-  Paired, Agent, Awaiting approval, Blocked, Done. A group with no tickets is not
-  rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group,
-  and the rule is that plain: a done ticket goes to Done, every other ticket goes to
-  its own status. The heading is the status name itself, so the screen holds no second
-  vocabulary that could drift from the statuses, and a status it has never seen still
-  gets its own group at the end rather than being dropped. Rows carry only the ticket
-  title and one mark, sorted by recent activity.
+  tickets into collapsible boxed groups in a fixed order that puts what needs the user
+  first: Errored, Needs user, Waiting to Closeout, User, Paired, Agent, Waiting for
+  Kickoff, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
+  rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group.
+  A done ticket goes to Done. A ticket resting at Closeout with an `empty` status goes
+  to Waiting to Closeout when its current Closeout step is still runnable; Stop at its
+  current Closeout ceiling keeps it under Empty, while Stop at a later ceiling does
+  not. An approval at the Kickoff gated field goes to Waiting for Kickoff; approval at
+  every later field stays under Awaiting approval. Every other ticket goes to its own
+  status. Unknown statuses still get their own group at the end rather than being
+  dropped. Rows carry only the ticket title and one mark, sorted by recent activity.
 
   The mark carries three signals in one order of precedence, and each is one
   system's own fact rather than a blend of several. A **pure white dot** means the
@@ -68,8 +72,11 @@ One screen per part of the system:
   view open. At 960px or less, selecting a ticket opens its standalone
   `#/ticket/<ticket-id>` page, and selecting Chief of Staff opens the standalone
   `#/chief` page.
-- **Ticket** — the whole story of one piece of work: a serif title, a single facts
-  line (status, priority, its **Worker type** pill, due, project, sprint, take-over/copy), the
+- **Ticket** — the whole story of one piece of work: exceptional priority above a
+  serif title, Copy beside that title, an operating line (status, current Stage owner,
+  and take-over/release), then a quieter planning line (ordinary priority, due, project,
+  and sprint). Empty scheduling values are add affordances rather than blank facts, and
+  Worker type is not repeated in the header. The
   exact backend Worker failure reason directly below that line when one exists, the
   leash written as one sentence, the recap, then the spine of stages — which stages that
   spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
@@ -88,26 +95,27 @@ One screen per part of the system:
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
 - **Agents** — the browser navigation and page at `#/agents`. The page has exactly two
-  stacked sections: **Agents**, then **Workers**. Agents contains **Chief of Staff** and
-  the shared **Worker skill** (`panels-worker`). Chief of Staff opens at
-  `#/agents/chief-of-staff`; it has launch defaults and its canonical editable skill,
-  but no Ticket Stage table. Worker skill opens at `#/agents/worker-skill`; its name is
-  read-only and its description and Markdown body edit the canonical shared role skill.
-  It is presented as an Agent-like configurable role, but it has no independent launch,
-  model, or Stage controls.
+  quiet sections: **Agents**, then **Workers**. Every destination is one generous
+  whole-row link with its human-readable name, the current managed skill description,
+  and a restrained arrow. The index does not show launch settings, skill names,
+  structural ids, Stage counts, or configuration labels. The same one-column order is
+  used on mobile.
 
-  Workers remains a compact list of configured Worker types. A Worker opens at
-  `#/agents/workers/<worker-type>` with the same launch defaults, Stage ownership
-  controls, and specialist skill editor as before. Worker and skill identities and
-  lifecycle structure stay read-only. Each editable value saves independently; a failed
-  save keeps the attempted value and a useful error so it can be corrected or retried.
-  The layout collapses cleanly on mobile. Legacy `#/workers` and
-  `#/workers/<worker-type>` addresses redirect to their Agents-page equivalents.
+  Agents contains **Chief of Staff** and the shared **Worker skill**. Chief of Staff
+  opens at `#/agents/chief-of-staff`; Worker skill opens at
+  `#/agents/worker-skill`. Workers contains each configured Worker type, which opens at
+  `#/agents/workers/<worker-type>`. Those detail screens still provide the applicable
+  launch defaults, Stage ownership controls, and skill editors. Worker and skill
+  identities and lifecycle structure stay read-only. Each editable value saves
+  independently; a failed save keeps the attempted value and a useful error so it can
+  be corrected or retried. Legacy `#/workers` and `#/workers/<worker-type>` addresses
+  redirect to their Agents-page equivalents.
 
-The shell itself carries two separate live signals. Worker presence is the small
-spinner and "N working" readout from the global running-worker count. Server
-connection health is the compact Connected / Reconnecting readout beside it, which
-says whether the change stream below is open.
+The shell carries one combined status control and, on desktop, worker presence.
+The status control says Connected or Reconnecting from the change stream and opens
+the manually refreshed VPS health details. Worker presence is the small spinner and
+"N working" readout from the global running-worker count; it is hidden at mobile
+widths so navigation links and connection status keep the available space.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -142,10 +150,11 @@ share.
   A conversation's rows, what it is running on, and what it is waiting for are the
   record's own account rather than cached REST resources.
 
-  The change stream is also the browser's connection-health owner. The shell starts at
-  Reconnecting and says Connected while the stream is open. When the stream drops, the
-  browser retries on its own and the shell says Reconnecting until it is back. Because
-  anything that changed during the gap went unheard, opening the stream refetches
+  The change stream is also the browser's connection-health owner. The shell's VPS
+  status trigger starts at Reconnecting and says Connected while the stream is open.
+  When the stream drops, the browser retries on its own and the trigger says
+  Reconnecting until it is back. Because anything that changed during the gap went
+  unheard, opening the stream refetches
   what is on screen — that, plus the same refetch when the window is focused again, is
   the whole recovery story. The server sends an occasional invisible keep-alive line
   down a quiet stream, which changes nothing on screen.

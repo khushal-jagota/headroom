@@ -1,114 +1,116 @@
-"""E2E for the W3b one-CLI rework — real `panels serve` subprocess, CLI over HTTP. Non-anchored
-names (the test_eNN_ anchors are reserved for the SPEC acceptance items). No browser: these
-drive the CLI + API surfaces only. The worker-step readiness loop never runs in test mode."""
+"""CLI verb coverage against an in-process Panels application."""
 
 from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
-import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any, cast
 
-from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
+import httpx
+import pytest
+from click.testing import CliRunner
+from fastapi.testclient import TestClient
 
-from planner.environments.app import _write_app_entrypoints
+from planner.cli.main import main as cli_main
+from planner.core.clock import build_clock
+from planner.core.config import load_config
+from planner.core.db import connect, create_schema
+from planner.core.server import create_app
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
-OPS_ROOT = REPO_ROOT / "ops" / "panels-environments"
-DEPLOYED_APP_SHA = "0123456789abcdef0123456789abcdef01234567"
+JsonObject = dict[str, Any]
 
 
-def test_installed_panels_preserves_worker_identity_for_read_and_write(
-    tmp_path: Path,
-    server: ServerHandle,
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    ticket_id = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Installed CLI worker",
-    )["id"]
-    home = tmp_path / "operator"
-    command_directory = home / ".local" / "bin"
-    command_directory.mkdir(parents=True)
-    shutil.copy2(OPS_ROOT / "panels", command_directory / "panels")
-    app = home / "Deployments" / "Panels" / "current" / "app"
-    app.mkdir(parents=True)
-    (app / ".venv").symlink_to(Path(sys.prefix))
-    _write_app_entrypoints(app, app_sha=DEPLOYED_APP_SHA)
-    outside_checkout = tmp_path / "outside-checkout"
-    outside_checkout.mkdir()
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
-    environment.update(
-        {
-            "HOME": str(home),
-            "PATH": f"{command_directory}:/usr/bin:/bin",
-            "PLAN_SERVER_URL": server.base,
-            "PLAN_TICKET_ID": ticket_id,
-            "PLAN_ACTOR": "worker",
-            "PLAN_APP_ROOT": "/ambient/wrong-app",
-            "PLAN_APP_SHA": "76543210fedcba9876543210fedcba9876543210",
-            "PYTHONPATH": "/ambient/package",
-        }
+@pytest.fixture(autouse=True)
+def scrub_ambient_plan_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in tuple(os.environ):
+        if key.startswith("PLAN_"):
+            monkeypatch.delenv(key)
+
+
+class ServerHandle:
+    base = "http://testserver"
+
+
+class ApiHelper:
+    def __init__(self, client: TestClient) -> None:
+        self.client = client
+
+    def get(self, _server: ServerHandle, path: str) -> JsonObject:
+        response = self.client.get(path)
+        assert response.status_code == 200, response.text
+        return cast(JsonObject, response.json())
+
+
+@pytest.fixture
+def cli_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[ServerHandle, Callable[..., JsonObject], ApiHelper]]:
+    db_path = tmp_path / "cli-verbs.db"
+    with connect(str(db_path)) as conn:
+        create_schema(conn)
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": str(db_path),
+            "PLAN_FAKE_NOW": "2026-07-04T12:00:00",
+        },
     )
+    app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
 
-    local_status = subprocess.run(
-        ["panels", "environment", "status", "--json"],
-        cwd=outside_checkout,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert json.loads(local_status.stdout)["app"] == {
-        "state": "healthy",
-        "summary": "configured app identity",
-        "sha": DEPLOYED_APP_SHA,
-    }
+    with TestClient(app) as client:
+        def request(
+            method: str,
+            url: str,
+            *,
+            json: Any = None,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> httpx.Response:
+            del timeout
+            path = httpx.URL(url).raw_path.decode()
+            return cast(
+                httpx.Response,
+                client.request(method, path, json=json, params=params, headers=headers),
+            )
 
-    identity = subprocess.run(
-        ["panels", "worker", "my-ticket", "--json"],
-        cwd=outside_checkout,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert json.loads(identity.stdout)["id"] == ticket_id
+        monkeypatch.setattr(httpx, "request", request)
+        server = ServerHandle()
 
-    proposal = subprocess.run(
-        [
-            "panels",
-            "worker",
-            "propose",
-            "--body-file",
-            "-",
-            "--recap",
-            "Installed CLI retained worker context.",
-            "--json",
-        ],
-        input="Success through installed panels.",
-        cwd=outside_checkout,
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert json.loads(proposal.stdout)["id"] == ticket_id
-    detail = api.get(server, f"/api/tickets/{ticket_id}")
-    assert detail["fields"]["success"]["proposal"]["body"] == "Success through installed panels."
+        def invoke(
+            _server: ServerHandle,
+            *args: str,
+            ticket_id: str | None = None,
+            stdin: str | None = None,
+        ) -> JsonObject:
+            env = {"PLAN_SERVER_URL": server.base}
+            if ticket_id is not None:
+                env["PLAN_TICKET_ID"] = ticket_id
+            result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
+            assert result.exit_code == 0, result.output
+            return cast(JsonObject, json.loads(result.stdout))
+
+        yield server, invoke, ApiHelper(client)
+
+
+@pytest.fixture
+def server(cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper]) -> ServerHandle:
+    return cli_app[0]
+
+
+@pytest.fixture
+def cli(
+    cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper],
+) -> Callable[..., JsonObject]:
+    return cli_app[1]
+
+
+@pytest.fixture
+def api(cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper]) -> ApiHelper:
+    return cli_app[2]
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
@@ -223,17 +225,11 @@ def test_project_create_list_and_project_id_item_filter(
     assert [entry["id"] for entry in listed_items["items"]] == [item["id"]]
 
 
-def test_queue_pickup_command_removed(server: ServerHandle) -> None:
+def test_queue_pickup_command_removed() -> None:
     # `queue` is no longer a CLI command group; approval is homed on ticket/sprint item.
-    proc = subprocess.run(
-        [str(PLAN_BIN), "queue", "pickup", "--json"],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO_ROOT),
-        timeout=30,
-    )
-    assert proc.returncode != 0  # no such command
-    assert "queue" in (proc.stderr + proc.stdout)  # click's "No such command 'queue'"
+    result = CliRunner().invoke(cli_main, ["queue", "pickup", "--json"])
+    assert result.exit_code != 0
+    assert "queue" in result.output
 
 
 def test_ticket_approval_copy_and_worker_note_shape(

@@ -5,9 +5,12 @@ from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
+from click.testing import CliRunner
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.cli import http as cli_http
+from planner.cli.main import main as cli_main
 from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
@@ -52,6 +55,35 @@ def _create(
         next_ceiling=NO_FURTHER,
         at_cap=AtCap.propose,
     )
+
+
+def test_ticket_delete_cli_requires_yes_and_forwards_confirmed_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    def send(method: str, path: str, **kwargs: object) -> dict[str, object]:
+        calls.append((method, path, kwargs))
+        return {"ok": True, "ticket_id": "t_delete"}
+
+    monkeypatch.setattr(cli_http, "send", send)
+    runner = CliRunner()
+    refused = runner.invoke(cli_main, ["ticket", "delete", "t_delete", "--json"])
+    assert refused.exit_code == 1
+    assert "permanent deletion requires --yes" in refused.stderr
+    assert calls == []
+
+    deleted = runner.invoke(
+        cli_main, ["ticket", "delete", "t_delete", "--yes", "--json"]
+    )
+    assert deleted.exit_code == 0, deleted.output
+    assert calls == [
+        (
+            "DELETE",
+            "/api/tickets/t_delete",
+            {"as_json": True, "request_actor": "ordinary"},
+        )
+    ]
 
 
 def test_delete_ticket_removes_full_footprint_and_keeps_one_minimal_audit(

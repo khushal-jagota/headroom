@@ -256,8 +256,9 @@ def test_review_exposes_kickoff_as_ordinary_ticket_decision(
 
     kickoff_slot = fields_codec.get_slot(t.fields, "kickoff")
     assert kickoff_slot.proposal is not None
-    assert review["ticket_decisions"] == [
+    assert review["items"] == [
         {
+            "review_item_type": "proposal",
             "ticket_id": t.id,
             "field": "kickoff",
             "title": t.title,

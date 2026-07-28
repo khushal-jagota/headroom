@@ -175,8 +175,13 @@ def test_review_serves_the_backfilled_time_as_the_wait(
 ) -> None:
     review = tickets_views.review_view(upgraded, day_id="day_2026-07-04")
 
-    assert review["user_help_requests"] == [
-        {"ticket_id": "t_needs_user", "title": "Ticket t_needs_user", "waiting_since": 3_000}
+    assert review["items"] == [
+        {
+            "review_item_type": "needs_user",
+            "ticket_id": "t_needs_user",
+            "title": "Ticket t_needs_user",
+            "waiting_since": 3_000,
+        }
     ]
 
 

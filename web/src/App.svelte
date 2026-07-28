@@ -24,10 +24,6 @@
   };
 
   const review = createQuery(() => queries.review());
-  const connectionLabels = {
-    connected: "Connected",
-    reconnecting: "Reconnecting"
-  };
   const navStatusClearancePx = 8;
 
   let route = $state<Route>(parseRoute());
@@ -194,8 +190,8 @@
       <a class:active={currentNav("day")} class="nav-link" data-screen="day" href="#/day">Day</a>
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
         Review
-        {#if ((review.data?.ticket_decisions || []).length + (review.data?.user_help_requests || []).length) > 0}
-          <span class="nav-badge">{(review.data?.ticket_decisions || []).length + (review.data?.user_help_requests || []).length}</span>
+        {#if (review.data?.items || []).length > 0}
+          <span class="nav-badge">{(review.data?.items || []).length}</span>
         {:else}
           <span class="nav-badge hidden"></span>
         {/if}
@@ -207,23 +203,13 @@
       <a class:active={currentNav("agents")} class="nav-link" data-screen="agents" href="#/agents">Agents</a>
     </nav>
     <div class="shell-statuses">
-      <VpsStatusPopover />
       {#if (review.data?.running_worker_count || 0) > 0}
         <span class="shell-presence" data-shell-presence>
           <span class="shell-presence-spin" aria-hidden="true"></span>
           {review.data?.running_worker_count} working
         </span>
       {/if}
-      <span
-        class="shell-connection"
-        data-connection-status
-        data-state={$connectionStatus}
-        role="status"
-        aria-live="polite"
-      >
-        <span class="shell-connection-mark" aria-hidden="true"></span>
-        <span class="shell-connection-label">{connectionLabels[$connectionStatus]}</span>
-      </span>
+      <VpsStatusPopover connectionState={$connectionStatus} />
     </div>
   </header>
 

@@ -188,9 +188,13 @@ the product and does not replace a managed edit. Hermes contains symlinks to the
 managed home, never copied overlays.
 
 The browser navigation and settings page is **Agents** at `#/agents`. It has exactly two
-stacked sections:
+quiet, whitespace-separated sections. Every destination is a whole-row link showing
+only its human-readable name, its current managed skill description, and a restrained
+arrow. The index does not show structural ids, skill names, launch settings, Stage
+counts, or configuration labels, and it keeps the same one-column order on narrow
+screens.
 
-- **Agents** contains Chief of Staff and the shared `panels-worker` role skill. Chief
+- **Agents** contains Chief of Staff and the shared Worker role skill. Chief
   opens at `#/agents/chief-of-staff` with Backend, Model, and Reasoning launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
   skill opens at `#/agents/worker-skill`. It is shown as an Agent-like configurable
@@ -198,7 +202,8 @@ stacked sections:
   runtime. Its name is read-only; its description and Markdown body edit the canonical
   skill through the shared skills home. It has no independent launch, model, reasoning,
   or Stage controls.
-- **Workers** lists the configured Worker types. A Worker opens at
+- **Workers** links the configured Worker types. Each supporting line comes from that
+  Worker's managed specialist skill. A Worker opens at
   `#/agents/workers/<worker-type>` with its launch defaults, Stage ownership table, and
   specialist skill editor. Worker identity and lifecycle structure stay read-only.
 
@@ -217,10 +222,11 @@ direct edits that save, fail, and retry independently. Successful skill edits re
 the configured planner Hermes home without changing existing Employee session ids.
 Codex and Claude Code use the same managed home.
 
-`GET /api/workers` serves the Agents-page index data, including Chief settings.
+`GET /api/workers` serves the Agents-page destinations and Chief settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
-`GET /api/skills` serves the shared skills home used for `panels-worker`. Worker and
-Chief endpoints edit skill description and body or launch defaults; the shared
+`GET /api/skills` serves the shared skills home used for the Worker role and specialist
+descriptions on the index. Worker and Chief endpoints edit skill description and body
+or launch defaults; the shared
 `PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill. A saved change
 announces itself, and any Agents screen on display refetches what it is showing.
 

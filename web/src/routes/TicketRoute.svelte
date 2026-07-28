@@ -25,7 +25,6 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
   import Button from "../components/Button.svelte";
-  import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import EnumPill from "../components/EnumPill.svelte";
@@ -111,7 +110,7 @@
   }
 
   let projectOptions = $derived([
-    { value: "", label: "(no project)" },
+    { value: "", label: "+ project" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
 
@@ -271,14 +270,33 @@
     return sprints.data?.sprints?.find((sprint) => sprint.id === sprintId)?.name || sprintId;
   }
 
-  function markerFor(detail: TicketDetail): string[] {
-    const markers: string[] = [];
-    if (detail.ticket_status === "agent") markers.push("agent");
-    if (detail.ticket_status === "errored") markers.push("errored");
-    if (detail.ticket_status === "user") markers.push("user");
-    if (detail.ticket_status === "paired") markers.push("paired");
-    if (detail.blocked) markers.push("blocked");
-    return markers;
+  function priorityNeedsEmphasis(priority: string): boolean {
+    return priority === "P0" || priority === "P1";
+  }
+
+  function ticketPriorityAlertText(priority: string): string {
+    return priority === "P0" ? "P0 · critical" : "P1 · urgent";
+  }
+
+  function displayedTicketStatus(detail: TicketDetail): string {
+    if (detail.stage === "done") return "done";
+    if (detail.blocked || detail.ticket_status === "blocked") return "blocked";
+    const labels: Record<string, string> = {
+      empty: "ready",
+      agent: "agent working",
+      user: "user working",
+      paired: "paired",
+      awaiting_approval: "awaiting approval",
+      needs_user: "needs user",
+      errored: "errored"
+    };
+    return labels[detail.ticket_status || "empty"] || ticketStatusText(detail.ticket_status || "empty");
+  }
+
+  function displayedTicketStatusKey(detail: TicketDetail): string {
+    if (detail.stage === "done") return "done";
+    if (detail.blocked) return "blocked";
+    return detail.ticket_status || "empty";
   }
 
   function conversationEmployeeLabel(detail: TicketDetail): string {
@@ -345,31 +363,51 @@
            belongs to the conversation rather than to the document above it. -->
       <main class="ticket-doc" onclickcapture={dropConversationBackOneState}>
         <header class="ticket-head">
-          <div class="ticket-title">
-            <InlineEdit
-              value={detail.title}
-              placeholder="Untitled"
-              onSave={(raw) => patch({ title: raw })}
-            />
+          {#if priorityNeedsEmphasis(detail.priority)}
+            <span class="ticket-priority-alert" data-priority-alert={detail.priority}>
+              {ticketPriorityAlertText(detail.priority)}
+              <select
+                aria-label="Ticket priority"
+                value={detail.priority}
+                onchange={(event) => {
+                  if (event.currentTarget.value !== detail.priority) {
+                    void patch({ priority: event.currentTarget.value });
+                  }
+                }}
+              >
+                {#each PRIORITIES as priority}
+                  <option value={priority}>{priority}</option>
+                {/each}
+              </select>
+            </span>
+          {/if}
+          <div class="ticket-title-row">
+            <div class="ticket-title">
+              <InlineEdit
+                value={detail.title}
+                placeholder="Untitled"
+                onSave={(raw) => patch({ title: raw })}
+              />
+            </div>
+            <button class="ticket-act ticket-copy" data-copy="" onclick={() => void copyTicket()}>
+              {copied ? "Copied" : "Copy"}
+            </button>
           </div>
-          <div class="ticket-facts">
+          <div class="ticket-operating">
             <span
               class="ticket-status-display"
               class:ticket-status-display--attention={
                 ["awaiting_approval", "needs_user"].includes(detail.ticket_status || "empty")
               }
-              data-ticket-status={detail.ticket_status || "empty"}
+              class:ticket-status-display--error={
+                displayedTicketStatusKey(detail) === "blocked" ||
+                  displayedTicketStatusKey(detail) === "errored"
+              }
+              class:ticket-status-display--done={displayedTicketStatusKey(detail) === "done"}
+              data-ticket-status={displayedTicketStatusKey(detail)}
             >
-              <span class="ticket-status-dot"></span>{ticketStatusText(detail.ticket_status || "empty")}
+              <span class="ticket-status-dot"></span>{displayedTicketStatus(detail)}
             </span>
-            <EnumPill
-              value={detail.priority}
-              options={PRIORITIES.map((priority) => ({ value: priority, label: priority }))}
-              onChange={(priority) => {
-                if (priority !== detail.priority) void patch({ priority });
-              }}
-            />
-
             {#if canEditCurrentStageOwner(detail)}
               <span
                 data-stage-owner
@@ -389,48 +427,62 @@
                 />
               </span>
             {/if}
-            <Pill keyLabel="worker type" data-worker-type={detail.worker_type}>
-              {lc?.workerTypeLabel ?? labelize(detail.worker_type)}
-            </Pill>
-            <Pill keyLabel="due">
-              {detail.deadline || ""}
+            {#if detail.stage !== "needs_kickoff" && canEditCurrentStageOwner(detail)}
+              <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
+                {hasExplicitCurrentStageUserOverride(detail) || isWaitingForUser(detail) ? "Release" : "Take over"}
+              </button>
+            {/if}
+          </div>
+          <div class="ticket-planning">
+            {#if !priorityNeedsEmphasis(detail.priority)}
+              <span data-priority-control>
+                <EnumPill
+                  value={detail.priority}
+                  options={PRIORITIES.map((priority) => ({ value: priority, label: priority }))}
+                  onChange={(priority) => {
+                    if (priority !== detail.priority) void patch({ priority });
+                  }}
+                />
+              </span>
+            {/if}
+            <Pill
+              keyLabel={detail.deadline ? "due" : ""}
+              class={!detail.deadline ? "ticket-planning-add" : ""}
+              data-deadline-control
+            >
+              {detail.deadline || "+ due"}
               <input
                 class="ticket-deadline-input"
                 type="date"
+                aria-label={detail.deadline ? "Ticket due date" : "Add ticket due date"}
                 data-deadline
                 value={detail.deadline || ""}
                 onchange={(event) => void patch({ deadline: event.currentTarget.value || null })}
               />
             </Pill>
             {#if detail.sprint_item_id === null || detail.sprint_item_id === undefined}
-              <EnumPill
-                value={detail.project_id || ""}
-                options={projectOptions}
-                onChange={(project_id) => void patch({ project_id: project_id || null })}
-              />
+              <span data-project-control>
+                <EnumPill
+                  value={detail.project_id || ""}
+                  options={projectOptions}
+                  onChange={(project_id) => void patch({ project_id: project_id || null })}
+                />
+              </span>
             {/if}
             {#if detail.sprint_item_id !== null && detail.sprint_item_id !== undefined}
-              <Pill keyLabel="sprint">{sprintLabel(detail.effective_sprint_id)}</Pill>
+              <Pill keyLabel="sprint" data-sprint-control>
+                {sprintLabel(detail.effective_sprint_id)}
+              </Pill>
             {:else}
-              <EnumPill
-                keyLabel="sprint"
-                value={detail.sprint_id || ""}
-                options={[{ value: "", label: "(no sprint)" }, ...(sprints.data?.sprints || []).map((sprint) => ({ value: sprint.id, label: sprintLabel(sprint.id) }))]}
-                onChange={(sprint_id) => void patch({ sprint_id: sprint_id || null })}
-              />
+              <span class:ticket-planning-add={!detail.sprint_id} data-sprint-control>
+                <EnumPill
+                  keyLabel={detail.sprint_id ? "sprint" : ""}
+                  value={detail.sprint_id || ""}
+                  options={[{ value: "", label: "+ sprint" }, ...(sprints.data?.sprints || []).map((sprint) => ({ value: sprint.id, label: sprintLabel(sprint.id) }))]}
+                  onChange={(sprint_id) => void patch({ sprint_id: sprint_id || null })}
+                />
+              </span>
             {/if}
-            {#each markerFor(detail) as marker}
-              <span data-marker={marker}><Chip variant={marker} value={marker} /></span>
-            {/each}
-            <span class="ticket-facts-gap"></span>
-            {#if detail.stage !== "needs_kickoff" && canEditCurrentStageOwner(detail)}
-              <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
-                {hasExplicitCurrentStageUserOverride(detail) || isWaitingForUser(detail) ? "Release" : "Take over"}
-              </button>
-            {/if}
-            <button class="ticket-act" data-copy="" onclick={() => void copyTicket()}>
-              {copied ? "Copied" : "Copy"}
-            </button>
           </div>
           {#if detail.backend_error}
             <div class="ticket-backend-error" data-backend-error role="alert">

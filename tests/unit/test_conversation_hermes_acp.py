@@ -379,6 +379,14 @@ def test_a_tool_call_getting_on_with_it_is_shown_and_not_kept(tmp_path: Path) ->
                     },
                 )
                 shown = await _next_frame(watching)
+                # The durable started row and the ephemeral progress frame are
+                # published by different async paths. Their arrival order is not
+                # contractual; consume the started row when it wins the race.
+                if not isinstance(shown, ToolCallProgressFrame):
+                    assert getattr(shown, "kind", None) == (
+                        ConversationEventKind.tool_call_started
+                    )
+                    shown = await _next_frame(watching)
 
             assert isinstance(shown, ToolCallProgressFrame)
             assert shown.tool_call_id == "t-9"

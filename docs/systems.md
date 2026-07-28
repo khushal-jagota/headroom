@@ -95,12 +95,13 @@ stage), and `errored` (a confirmed backend Worker failure).
 nothing running lands there instead of `empty` while a live blocker remains, and only
 `empty` Tickets are ever started automatically.
 
-The Review screen is the human gate, and it holds exactly the Tickets whose status is
-`awaiting_approval`. Approval settles the proposal and records the next scope in one
-decision. Returning for revision clears the parked proposal and sends the guidance as
-the real next message into the Ticket's conversation. Replying to a parked proposal in
-chat instead moves the Ticket to `paired` and out of Review; the proposal itself stays
-filed.
+The Review screen is the human gate. Its single oldest-first walk holds today's Tickets
+whose status is `awaiting_approval` or `needs_user`. Approval settles a proposal and
+records the next scope in one decision. Returning for revision clears the parked
+proposal and sends the guidance as the real next message into the Ticket's conversation.
+A needs-user item opens the Ticket conversation where the Worker asked for help; it has
+no proposal controls. Replying to a parked proposal in chat instead moves the Ticket to
+`paired` and out of Review; the proposal itself stays filed.
 
 _Code paths:_ `src/planner/tickets/`, `src/planner/worker_types/`, and the proposal
 resolver in `src/planner/tickets/logic/resolution.py`.
@@ -266,5 +267,6 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 
 ---
 
-_Last verified: 2026-07-27 (the eight Ticket statuses, one contentless change signal
-per commit, and worker orchestration rebuilt on the conversation contract)._
+_Last verified: 2026-07-27 (the eight Ticket statuses, the unified Review walk, one
+contentless change signal per commit, and worker orchestration rebuilt on the
+conversation contract)._
