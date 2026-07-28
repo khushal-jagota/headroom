@@ -63,7 +63,7 @@ def create_ticket(
     worker_type: str,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
-    kickoff_note: str = "",
+    kickoff_note: str | None = "",
     project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,

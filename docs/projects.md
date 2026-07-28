@@ -1,8 +1,14 @@
 # Projects
 
-Projects are a small catalog, not a fixed enum. Each project has a stable ID and a
-display name. The live default rows are `project_vylo`, `project_tribe`, and
-`project_other`, but new rows can be added without changing code.
+Projects are a small catalog, not a fixed enum. Each project has a stable ID, a
+display name, and a priority. Priority is either P0–P3 or unassessed. Unassessed is
+stored and returned as `null`; it is never interpreted as P3. The live default rows
+are `project_vylo`, `project_tribe`, and `project_other`, but new rows can be added
+without changing code.
+
+Existing and built-in Projects may be unassessed. Creating a new Project through the
+ordinary API or CLI requires an explicit P0–P3. There is no reassessment surface yet;
+that belongs with a future Project page rather than the current name-and-summary editor.
 
 `Learning` remains recognized when importing the legacy markdown format. If an
 import names it and the project is missing, the importer creates it as part of the
@@ -30,9 +36,10 @@ with neither source appear under `No project`.
 ## Surfaces
 
 - `GET /api/projects` lists available projects.
-- `POST /api/projects {name, summary?}` creates a project.
+- `POST /api/projects {name, priority, summary?}` creates an assessed project.
 - `PATCH /api/projects/{project_id}` updates the project name or summary.
-- `panels project list`, `panels project create --name ... --summary ...`, and
+- `panels project list`,
+  `panels project create --name ... --priority P0|P1|P2|P3 --summary ...`, and
   `panels project set <project_id> summary ...` expose the same catalog.
 - Frontend project selectors fetch the `projects` resource and use project IDs as
   values with project names as labels.

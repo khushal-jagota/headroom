@@ -32,12 +32,11 @@ PLANNER_SKILL_NAMES: Final = (
     "panels-worker-initiative-planning",
     "panels-worker-product-design",
     "panels-worker-planning-day",
+    "panels-worker-planning-midday-check",
     "panels-worker-planning-sprint",
     "probe-worker",
     "panels-chief-of-staff",
     "panels-update-chief-of-staff",
-    "panels-sprint-planning",
-    "panels-rollover",
 )
 
 ENV_HERMES_PYTHON: Final = "PLAN_HERMES_PYTHON"

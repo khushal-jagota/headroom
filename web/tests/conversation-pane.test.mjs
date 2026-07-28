@@ -107,14 +107,11 @@ assert.match(sources["ConversationTranscript.svelte"], /MessagePieces/);
 assert.match(sources["ConversationComposer.svelte"], /chat-seg/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
-// The pane that came before this one is gone, and nothing may reach for it. The step
-// glyphs are the one thing that came across, and they moved here rather than being left
-// behind in a package nobody else uses.
+// The pane that came before this one is gone, and nothing may reach for it.
 for (const [fileName, source] of Object.entries(sources)) {
   assert.doesNotMatch(source, /lib\/acp\/|components\/acp\//, fileName);
 }
 assert.doesNotMatch(routeSource, /lib\/acp\/|components\/acp\//);
-assert.match(sources["ToolCallRow.svelte"], /lib\/conversation\/stepIcons/);
 
 // The dev route exists, is reachable by hash, and is in no navigation.
 assert.match(appSource, /DevConversationRoute/);
@@ -605,6 +602,16 @@ try {
   });
   assert.match(withSummary, /data-conversation-tool-summary/);
   assert.match(withSummary, /ls -la \/tmp/, "a one-line detail is the summary itself");
+
+  for (const [status, accessibleMark] of [
+    ["running", "Running"],
+    ["completed", "Completed"],
+    ["failed", "Failed"]
+  ]) {
+    const marked = drawn(WorkGroup, { entries: [toolRow(1, status)] });
+    assert.match(marked, new RegExp(`data-conversation-tool-status="${status}"`));
+    assert.match(marked, new RegExp(`aria-label="${accessibleMark}"`));
+  }
 
   // A claude row: the backend titles it with the tool's name and hands over the call's
   // arguments as one JSON object, which is why this row used to read "Bash" and nothing

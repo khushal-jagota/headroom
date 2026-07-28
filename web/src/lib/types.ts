@@ -40,6 +40,8 @@ export type SprintsResponse = {
   sprints: SprintSummary[];
 };
 
+export type Priority = "P0" | "P1" | "P2" | "P3";
+
 export type SprintItemKind = "normal" | "other";
 
 export type SprintItemSummary = AnyRecord & {
@@ -59,6 +61,7 @@ export type ProjectSummary = {
   id: string;
   name: string;
   summary: string;
+  priority: Priority | null;
   created_at: number;
   updated_at: number;
 };

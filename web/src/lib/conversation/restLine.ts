@@ -19,14 +19,14 @@ import {
   liveAskFrom,
   planProgressSentence,
   promptLabelFor,
-  threadItems,
-  toolCallLine,
   turnEndingSentence,
   workingSentence,
   PROMPT_DISCARDED_SENTENCE,
   TURN_STOPPED_SENTENCE
 } from "./transcript";
-import type { ThreadItem, ToolCallRow, TranscriptRow } from "./transcript";
+import type { ToolCallRow, TranscriptRow } from "./transcript";
+import { threadItems, type ThreadItem } from "./threadLayout";
+import { presentToolCall } from "./toolCallPresentation";
 import { messageContentText } from "./wire";
 
 export type RestLine = {
@@ -182,8 +182,12 @@ function senderOf(senderLabel: string, ownSenderLabel: string): string {
 /** A tool call as the one string this line has room for — the same two halves the row in
  *  the transcript is drawn from, joined the way the pane joins a fact to its reason. */
 function toolCallSentence(row: ToolCallRow): string {
-  const line = toolCallLine(row);
-  return oneLine(line.summary === null ? line.title : `${line.title} · ${line.summary}`);
+  const presentation = presentToolCall(row);
+  return oneLine(
+    presentation.summary === null
+      ? presentation.title
+      : `${presentation.title} · ${presentation.summary}`
+  );
 }
 
 function newestTurn(items: readonly ThreadItem[]): Extract<ThreadItem, { kind: "turn" }> | null {

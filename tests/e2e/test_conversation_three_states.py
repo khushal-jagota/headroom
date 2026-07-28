@@ -87,6 +87,9 @@ WHERE_THE_LAYER_IS = """
   const rows = Array.from(document.querySelectorAll('[data-conversation-row]'));
   return {
     state: pane === null ? null : (pane.dataset.conversationState ?? null),
+    // The surface the pane is painted in, resolved to a colour. Rest and peeked wear the
+    // ink blue, and opening is a change of size, not colour, so opened wears it too.
+    paneBackground: pane === null ? null : getComputedStyle(pane).backgroundColor,
     paneInsideTheHost: host !== null && pane !== null && host.contains(pane),
     paneHeight: pane === null ? 0 : Math.round(pane.getBoundingClientRect().height),
     ticketHeight: screen === null ? 0 : Math.round(screen.getBoundingClientRect().height),
@@ -362,6 +365,10 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert opened["collapse"] is True, "a control back"
     assert opened["expand"] is False
     assert opened["paneHeight"] > peeked["paneHeight"], (peeked, opened)
+    # Opening is a change of size, not colour: the full-height surface is the same ink blue
+    # the card wore at rest and peeked, not the lighter base surface it used to switch to.
+    assert at_rest["paneBackground"] == peeked["paneBackground"], (at_rest, peeked)
+    assert opened["paneBackground"] == at_rest["paneBackground"], (at_rest, opened)
     # Loose on purpose, and it must stay loose. Whether opened covers the nav or only the
     # page beneath it is one of the three questions the kickoff left open until it can be
     # seen; a tolerance tight enough to tell those two apart would answer it here instead.

@@ -110,6 +110,7 @@ def test_production_registry_carries_complete_initiative_planning_manifest() -> 
         "initiative_planning",
         "product_design",
         "planning-day",
+        "planning-midday-check",
         "planning-sprint",
     )
     assert (
@@ -169,7 +170,7 @@ def test_live_worker_type_docs_include_initiative_planning() -> None:
     root = Path(__file__).resolve().parents[2]
     docs = (root / "docs/worker-types.md").read_text(encoding="utf-8")
 
-    assert "Seven Worker types ship today:" in docs
+    assert "Eight Worker types ship today:" in docs
     assert "- **`initiative_planning`**" in docs
     assert "`src/planner/worker_types/initiative_planning.py`" in docs
     assert "- `panels-worker-initiative-planning` guides `initiative_planning` Tickets." in docs

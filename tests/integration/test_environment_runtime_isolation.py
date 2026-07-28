@@ -48,7 +48,7 @@ def test_staging_runs_on_demand_with_dynamic_port_and_persistent_state(
         _wait_for_health(first, first_url, log_path)
         created = httpx.post(
             f"{first_url}/api/projects",
-            json={"name": "Retained staging activity"},
+            json={"name": "Retained staging activity", "priority": "P2"},
             timeout=5.0,
         )
         assert created.status_code < 300, created.text

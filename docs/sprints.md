@@ -31,6 +31,14 @@ permanent by a button is a ticket's Approve. The old freeze machinery and the ol
 weekly-addenda notes still exist underneath, switched off and out of the way, so the
 change can be undone if it's ever wanted.
 
+At 17:00 local time on the current sprint's final day, the internal schedule creates a
+`planning-sprint` Ticket in the Panels project's current-sprint fallback. Its
+specialist Worker reviews the current sprint first, plans the next sprint with the
+user, and writes only the approved result at Closeout. A matching pre-laid Ticket
+suppresses the scheduled duplicate. If the run is missed, recovery is ordinary
+`panels ticket create --worker-type planning-sprint`; there is no separate
+sprint-planning workflow and no backfill.
+
 ## Tracking — the items
 
 Tracking is the sprint's items and, under each, the tickets that carry it, with a

@@ -263,7 +263,13 @@ def _settle_occurrence(
                 worker_type=schedule.template.worker_type,
                 employee_backend=schedule.template.employee_backend,
                 employee_launch_model=schedule.template.employee_launch_model,
-                kickoff_note=schedule.template.kickoff_note,
+                # An absent scheduled context leaves the worker-owned Kickoff ready
+                # to start. Ordinary Ticket creation still treats "" as a proposal.
+                kickoff_note=(
+                    schedule.template.kickoff_note
+                    if schedule.template.kickoff_note != ""
+                    else None
+                ),
                 project_id=schedule.template.project_id,
                 priority=schedule.template.priority,
                 deadline=schedule.template.deadline,

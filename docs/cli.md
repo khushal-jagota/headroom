@@ -34,11 +34,16 @@ generic Stage setter.
   returns the ticket list explicitly. `day set midday-reconciliation` writes the
   day’s separate mid-day check.
 - **`project list / create`** — inspect and add projects. Project availability is
-  data-backed, not enum-backed.
+  data-backed, not enum-backed. `project create` requires
+  `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
+  have not yet been assessed.
 - **`schedule create / list / show / set`** — manage generic internal schedules that
   create and place an ordinary Ticket at an exact local time. A schedule uses either
   `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
-  creation context as `ticket create`, and can be enabled or disabled. By default each
+  placement context as `ticket create`, and can be enabled or disabled. With no kickoff
+  context, the created Ticket has no pending proposal, so readiness can start its
+  Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
+  and waits for approval. By default each
   occurrence resolves the current sprint's Project fallback item; `--sprint-item`
   selects an exact item and `--backlog` keeps occurrences out of a sprint. Use
   `schedule set … placement --value current-sprint|backlog` to switch the reusable
@@ -150,10 +155,10 @@ have both headers removed. Missing, unknown, or mismatched worker claims fail cl
 
 Earlier documentation listed verbs that belonged to the old dispatcher-and-claim
 machinery, or to old top-level homes. They no longer exist: **`run heartbeat` / `run
-close`**, **`queue pickup`**, **`plan seed`**, top-level **`propose` / `recap` /
-`note` / `item` / `idea` / `link` / `queue`**. A worker no longer holds a claim or a
-lease; Panels starts one worker step at a time and writes the Ticket's status itself
-(see `worker-orchestration.md`).
+close`**, **`queue pickup`**, and top-level **`propose` / `recap` / `note` / `item` /
+`idea` / `link` / `queue`**. A worker no longer holds a claim or a lease; Panels starts
+one worker step at a time and writes the Ticket's status itself (see
+`worker-orchestration.md`).
 
 ## Handoffs
 
@@ -163,13 +168,6 @@ lease; Panels starts one worker step at a time and writes the Ticket's status it
   this tool gets started.
 - **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
   ticket's specialist skill from.
-
-## Deferred
-
-- **No general importer verb.** The old `plan seed` command and one-time
-  `python -m planner.seed` cutover are gone. Chief external-work intake reconciles a
-  reported outcome; it does not ingest old planner documents. Trigger: a decision to
-  support document import again.
 
 ---
 

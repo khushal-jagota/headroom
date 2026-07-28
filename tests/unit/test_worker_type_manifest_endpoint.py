@@ -64,6 +64,7 @@ def test_production_serves_all_shipped_worker_types(app: FastAPI) -> None:
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("initiative_planning"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("product_design"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-day"),
+            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-midday-check"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-sprint"),
         ],
     }
@@ -83,6 +84,7 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
         "codex",
         "claude",
         "claude",
+        "codex",
         "claude",
         "hermes",
     ]
@@ -93,6 +95,7 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
         "gpt-5.6-sol",
         "opus[1m]",
         "opus[1m]",
+        "gpt-5.6-terra",
         "opus[1m]",
         "probe-model",
     ]
@@ -104,6 +107,7 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
         "medium",
         "medium",
         "high",
+        "medium",
         "medium",
         "medium",
         "probe-high",
@@ -129,6 +133,7 @@ def test_installed_probe_appears_after_shipped_worker_types(
         "initiative_planning",
         "product_design",
         "planning-day",
+        "planning-midday-check",
         "planning-sprint",
         "probe",
     ]

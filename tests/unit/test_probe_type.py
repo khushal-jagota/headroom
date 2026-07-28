@@ -54,6 +54,7 @@ def test_probe_registry_is_explicit_and_ordered() -> None:
         "initiative_planning",
         "product_design",
         "planning-day",
+        "planning-midday-check",
         "planning-sprint",
         "probe",
     )

@@ -3706,7 +3706,9 @@ select {
 /* Opened stops being a card: the whole of the page's height, this column's width, no
  * outline and no corners. The line above the well can stay — it belongs to the well. */
 [data-conversation-pane][data-conversation-state="opened"] {
-  background: var(--surface-base);
+  /* The surface stays the ink blue it wears at rest and peeked; opening it changes its
+   * shape, not its colour. */
+  background: var(--accent-ink);
 }
 
 /* Header and body share one centered readable measure (~768px). The header has no

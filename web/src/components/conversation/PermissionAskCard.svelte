@@ -15,7 +15,7 @@
     askQuestionChoices,
     askShape
   } from "../../lib/conversation/composer";
-  import { readableDetail } from "../../lib/conversation/transcript";
+  import { readableConversationDetail } from "../../lib/conversation/conversationDetail";
   import type { PermissionAskOption } from "../../lib/conversation/wire";
 
   let {
@@ -37,7 +37,7 @@
 
   let shape = $derived(askShape(ask));
   let choices = $derived(askQuestionChoices(ask));
-  let detail = $derived(readableDetail(ask.detail));
+  let detail = $derived(readableConversationDetail(ask.detail));
   let eyebrow = $derived(shape === "question" ? "question" : "pending approval");
   let rawOpen = $state(false);
 

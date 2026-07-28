@@ -69,11 +69,29 @@
   /** How far open this page's conversation is.
    *
    * The state a conversation opens in belongs to the page that shows it, so this page
-   * names its own: a Ticket opens at rest — the composer, and above it one line of
-   * whatever happened last, against the bottom of the ticket. The person moves it from
-   * there and the conversation writes back here when they do.
+   * names its own. A Ticket opens at rest — the composer, and above it one line of
+   * whatever happened last, against the bottom of the ticket — unless it is paired, which
+   * opens full (seeded below). The person moves it from there and the conversation writes
+   * back here when they do.
    */
   let conversationState = $state<ConversationState>("rest");
+
+  /** A paired Ticket opens straight into the full conversation.
+   *
+   * Paired is work the person is doing with the worker right now, so arriving on one puts
+   * the conversation full rather than making them open it. This is the page's opening
+   * state, not a rule the page keeps enforcing: it is seeded once, the first time this
+   * visit's status is known, and after that the person's own expand and collapse are the
+   * only things that move it — a paired conversation they put away stays away until they
+   * next land on the Ticket, when a fresh visit seeds it full again.
+   */
+  let seededOpenStateFromStatus = false;
+  $effect(() => {
+    const status = ticket.data?.ticket_status;
+    if (status === undefined || seededOpenStateFromStatus) return;
+    seededOpenStateFromStatus = true;
+    if (status === "paired") conversationState = "opened";
+  });
 
   /** A click on the ticket drops the conversation back one state.
    *

@@ -611,10 +611,16 @@ def project_list(as_json: bool) -> None:
 
 @project_group.command("create")
 @click.option("--name", required=True, help="Project display name.")
+@click.option(
+    "--priority",
+    type=click.Choice(_PRIORITIES),
+    required=True,
+    help="Assessed Project priority.",
+)
 @click.option("--summary", default=None, help="Optional project summary text.")
 @json_option
-def project_create(name: str, summary: str | None, as_json: bool) -> None:
-    body: dict[str, Any] = {"name": name}
+def project_create(name: str, priority: str, summary: str | None, as_json: bool) -> None:
+    body: dict[str, Any] = {"name": name, "priority": priority}
     if summary is not None:
         body["summary"] = summary
     data = http.send(
