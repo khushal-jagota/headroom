@@ -7,17 +7,21 @@ from typing import Any
 from fastapi import APIRouter
 
 from planner.core.authctx import require_direct_write
-from planner.core.contracts import JsonDict
+from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects import data as projects_data
 from planner.projects.contracts import CreateProjectBody, UpdateProjectBody
-from planner.tickets.api import Clk, Ctx, DbConn, body_str
+from planner.tickets.api import Clk, Ctx, DbConn, body_str, parse_enum
 
 router = APIRouter()
 
 
 def _marshal_create_project(raw: JsonDict) -> CreateProjectBody:
-    return CreateProjectBody(name=body_str(raw, "name"), summary=body_str(raw, "summary"))
+    return CreateProjectBody(
+        name=body_str(raw, "name"),
+        summary=body_str(raw, "summary"),
+        priority=parse_enum(Priority, body_str(raw, "priority"), "priority"),
+    )
 
 
 def _marshal_update_project(raw: JsonDict) -> UpdateProjectBody:
@@ -41,7 +45,11 @@ async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) 
     require_direct_write(ctx)
     body = _marshal_create_project(raw)
     project = projects_data.create_project(
-        conn, name=body["name"], summary=body["summary"], now=clk.now_unix()
+        conn,
+        name=body["name"],
+        summary=body["summary"],
+        priority=body["priority"],
+        now=clk.now_unix(),
     )
     return projects_data.project_json(project)
 

@@ -1175,7 +1175,11 @@ def test_parentage_project_and_sprint_writes_signal_like_every_other_commit(
     with TestClient(app) as client:
         project = client.post(
             "/api/projects",
-            json={"name": "No automatic work project", "summary": "Created for the signal"},
+            json={
+                "name": "No automatic work project",
+                "priority": "P2",
+                "summary": "Created for the signal",
+            },
         )
         assert project.status_code == 200, project.text
         project_id = project.json()["id"]

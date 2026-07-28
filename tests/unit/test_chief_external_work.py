@@ -18,6 +18,7 @@ from planner.conversation.in_memory_conversation_system import InMemoryConversat
 from planner.conversation.message_content import text_message_content
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
+from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
@@ -570,7 +571,9 @@ def test_external_create_and_reconcile_keep_the_parent_item_link(tmp_path: Path)
     app, db_path = _make_app(tmp_path)
     conn = connect(str(db_path))
     try:
-        project = projects_data.create_project(conn, name="External project", now=1)
+        project = projects_data.create_project(
+            conn, name="External project", priority=Priority.P2, now=1
+        )
         item = sprints_data.create_item(
             conn,
             title="External item",
