@@ -7,12 +7,15 @@ import {
 import {
   foldedWorkSentence,
   hiddenWorkSentence,
-  threadItems,
   transcriptRows,
   turnFoldLabel,
   workedSentence,
   VISIBLE_RUNNING_WORK_ENTRIES
 } from "../src/lib/conversation/transcript";
+import {
+  threadItems,
+  type ThreadItem
+} from "../src/lib/conversation/threadLayout";
 import { messageContentText, type ConversationEvent } from "../src/lib/conversation/wire";
 import {
   agentMessageEvent,
@@ -23,7 +26,6 @@ import {
   turnEndedEvent
 } from "./support/conversationEvents";
 
-type ThreadItem = ReturnType<typeof threadItems>[number];
 type TurnItem = Extract<ThreadItem, { kind: "turn" }>;
 type RowItem = Extract<ThreadItem, { kind: "row" }>;
 type WorkGroup = Extract<ThreadItem, { kind: "work_group" }>;

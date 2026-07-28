@@ -9,12 +9,15 @@ import {
   formatDuration,
   millisecondsUntilNextSecond,
   stoppedSentence,
-  threadItems,
   transcriptRows,
   turnFoldLabel,
   workedSentence,
   workingSentence
 } from "../src/lib/conversation/transcript";
+import {
+  threadItems,
+  type ThreadItem
+} from "../src/lib/conversation/threadLayout";
 import type { ConversationEvent } from "../src/lib/conversation/wire";
 import {
   promptEvent,
@@ -22,7 +25,7 @@ import {
 } from "./support/conversationEvents";
 
 type TurnItem = Extract<
-  ReturnType<typeof threadItems>[number],
+  ThreadItem,
   { kind: "turn" }
 >;
 

@@ -3334,7 +3334,7 @@ select {
 
 .disclosure--stage > .disclosure-summary {
   gap: var(--space-3);
-  padding: var(--space-3) 0;
+  padding: var(--space-3) var(--space-2);
   color: var(--text-muted);
   transition: color var(--motion-fast) var(--motion-ease);
 }
@@ -3411,22 +3411,59 @@ select {
 
 .disclosure--stage .disclosure-stage-name {
   flex: 1;
-  font-size: var(--type-xs);
-  font-weight: 600;
-  text-transform: uppercase;
+  font-size: var(--type-sm);
+  text-transform: capitalize;
   color: var(--text-faint);
 }
 
-.disclosure--stage[open] > .disclosure-summary .disclosure-stage-name {
-  color: var(--text-default);
+.disclosure--stage[data-stage-state^="current-"] > .disclosure-summary .disclosure-stage-name,
+.disclosure--stage[data-stage-state="errored"] > .disclosure-summary .disclosure-stage-name,
+.disclosure--stage[data-stage-state="needs-me"] > .disclosure-summary .disclosure-stage-name {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.disclosure--stage[data-stage-state="completed"] > .disclosure-summary .disclosure-stage-name {
+  color: var(--text-faintest);
 }
 
 .disclosure--stage .disclosure-chev::before {
   font-size: var(--type-sm);
 }
 
+.ticket-stage-run {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.ticket-stage-run--attention {
+  color: var(--accent-bright);
+}
+
+.ticket-stage-run-action {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-xs);
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.ticket-stage-run-action:hover {
+  color: var(--text-default);
+}
+
 .disclosure--stage > .disclosure-body {
-  padding: 0 0 var(--space-4);
+  padding: 0 var(--space-2) var(--space-4);
   font-size: var(--type-md);
   line-height: 1.6;
   color: var(--text-default);
@@ -3680,42 +3717,88 @@ select {
 .ticket-head {
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
-  padding: var(--space-6) var(--space-7) 0;
+  padding: var(--space-5) var(--space-5) 0;
 }
 
-/* Exceptional priority interrupts the scan once, above the title. It is still the live
- * priority picker; the transparent select keeps the eyebrow quiet until it is used. */
-.ticket-priority-alert {
-  position: relative;
-  display: inline-flex;
-  margin-bottom: var(--space-2);
-  color: var(--accent-error);
+/* Identity is a tracked eyebrow, not a row of pills. Each fact keeps its native
+ * control over the visible face, so the compact read remains editable in place. */
+.ticket-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--type-xs);
-  font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
-  cursor: pointer;
+  color: var(--text-faint);
 }
 
-.ticket-priority-alert select {
+.ticket-identity-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ticket-identity-fact {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-bottom: 1px;
+  border-bottom: var(--border-hairline) dashed transparent;
+  cursor: pointer;
+  transition:
+    color var(--motion-fast) var(--motion-ease),
+    border-color var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-identity-fact:hover {
+  color: var(--text-strong);
+  border-bottom-color: var(--text-faintest);
+}
+
+.ticket-identity-fact:focus-within {
+  color: var(--text-strong);
+  border-bottom-color: var(--accent-bright);
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+.ticket-identity-priority {
+  color: var(--text-default);
+  font-weight: 700;
+}
+
+.ticket-identity-priority--urgent {
+  color: var(--accent-error);
+}
+
+.ticket-identity-key,
+.ticket-identity-add,
+.ticket-identity-separator {
+  color: var(--text-faintest);
+}
+
+.ticket-identity-separator {
+  opacity: 0.5;
+}
+
+.ticket-identity-fact select,
+.ticket-identity-input {
   position: absolute;
   inset: 0;
   width: 100%;
+  height: 100%;
   opacity: 0;
+  border: 0;
   cursor: pointer;
 }
 
-/* Title and its utility are one row. Copy belongs to the thing it copies rather than to
- * the Ticket's facts. */
 .ticket-title-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
+  margin: var(--space-3) 0;
 }
 
 .ticket-title {
-  flex: 1;
-  min-width: 0;
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
@@ -3724,83 +3807,14 @@ select {
   color: var(--text-strong);
 }
 
-/* Operating state is the first line under the title. Status, ownership, and the action
- * that changes ownership stay together when the line wraps. */
+/* The leash and quiet actions share one operating line. The action group moves as a
+ * unit when the sentence needs the full width. */
 .ticket-operating {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-4);
-  font-size: var(--type-xs);
-}
-
-/* Planning facts are useful and editable, but quieter than the operating state above.
- * Empty scheduling values are add affordances, never blank pills. */
-.ticket-planning {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  font-size: var(--type-xs);
-}
-
-.ticket-planning .pill {
-  background: transparent;
-  color: var(--text-faint);
-}
-
-.ticket-planning .pill:hover {
-  color: var(--text-strong);
-  background: var(--surface-overlay);
-}
-
-.ticket-planning-add .pill,
-.pill.ticket-planning-add {
-  color: var(--text-faintest);
-}
-
-/* Status display — dot + plain-language state, with semantic colour only when attention,
- * failure, or completion deserves it. */
-.ticket-status-display {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.ticket-status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-pill);
-  background: var(--text-faint);
-  flex: none;
-}
-
-.ticket-status-display--attention {
-  color: var(--accent-bright);
-}
-
-.ticket-status-display--attention .ticket-status-dot {
-  background: var(--accent-bright);
-}
-
-.ticket-status-display--error {
-  color: var(--accent-error);
-}
-
-.ticket-status-display--error .ticket-status-dot {
-  background: var(--accent-error);
-}
-
-.ticket-status-display--done {
-  color: var(--accent-done);
-}
-
-.ticket-status-display--done .ticket-status-dot {
-  background: var(--accent-done);
+  gap: var(--space-3);
+  font-size: var(--type-sm);
 }
 
 .ticket-backend-error {
@@ -3827,18 +3841,16 @@ select {
   color: var(--text-default);
 }
 
-.ticket-copy {
-  flex: none;
-  margin-top: var(--space-1);
+.ticket-operating-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+  margin-left: auto;
 }
 
 @media (max-width: 720px) {
-  .ticket-head {
-    padding-inline: var(--space-5);
-  }
-
-  .ticket-title-row {
-    gap: var(--space-3);
+  .ticket-head,
+  .ticket-col {
+    padding-inline: var(--space-4);
   }
 }
 
@@ -3849,7 +3861,6 @@ select {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  margin-top: var(--space-3);
   font-size: var(--type-sm);
   color: var(--text-faintest);
 }
@@ -3866,18 +3877,18 @@ select {
 .ticket-col {
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
-  padding: var(--space-6) var(--space-7);
+  padding: var(--space-4) var(--space-5) var(--space-6);
 }
 
 /* --- Ticket serif voice (t_ui02) ----------------------------------------- */
 /* The system speaks in serif where content speaks: recap, stage field values,
  * proposals, notes, and chat bodies. Scoped to the ticket screen so the shared
  * disclosure/approval primitives stay sans on the other screens. */
-[data-screen="ticket"] [data-recap] .disclosure-body,
+[data-screen="ticket"] [data-recap],
 [data-screen="ticket"] .disclosure--stage > .disclosure-body {
   font-family: var(--font-serif);
   font-size: var(--type-serif-md);
-  line-height: 1.68;
+  line-height: 1.6;
 }
 
 /* Per-stage Notes body stays a touch smaller (serif-sm) and quiet. */
@@ -3888,52 +3899,68 @@ select {
 }
 
 .ticket-blockers {
-  padding: var(--space-4) 0;
-  border-top: var(--border-hairline) solid var(--border-color);
-  border-bottom: var(--border-hairline) solid var(--border-color);
-}
-
-.ticket-blocker-group {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
 
 .ticket-blocker-heading {
   font-size: var(--type-xs);
-  font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
 }
 
-.ticket-blocker-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-1) 0;
-  color: inherit;
-  text-decoration: none;
-}
-
-.ticket-blocker-title {
-  flex: 1;
+.ticket-blocker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  color: var(--text-default);
-  overflow-wrap: anywhere;
-  transition: color var(--motion-fast) var(--motion-ease);
+  max-width: 100%;
+  padding: 2px 5px 2px var(--space-2);
+  background: var(--surface-overlay);
+  border-radius: var(--radius-sm);
 }
 
 .ticket-blocker-link {
-  display: flex;
-  flex: 1;
   min-width: 0;
-  color: inherit;
+  color: var(--accent-error);
   text-decoration: none;
+  overflow-wrap: anywhere;
 }
 
-.ticket-blocker-row:hover .ticket-blocker-title {
-  color: var(--text-strong);
+.ticket-blocker-link:hover {
+  text-decoration: underline;
+}
+
+.ticket-blocker-remove {
+  flex: none;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.ticket-blocker-remove:hover {
+  color: var(--accent-error);
+}
+
+.ticket-recap-inner {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+}
+
+.ticket-recap-inner .markdown > :last-child {
+  margin-bottom: 0;
 }
 
 /* The blank spacer where the user-note row would carry a stage mark — it keeps the
@@ -3962,18 +3989,6 @@ select {
   .board-workspace-right {
     display: none;
   }
-}
-
-/* Due pill — a transparent native date input overlays the pill face (which shows a
- * bare "due" placeholder when empty), so a click lands on the picker. */
-.ticket-deadline-input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  border: 0;
-  cursor: pointer;
 }
 
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */
