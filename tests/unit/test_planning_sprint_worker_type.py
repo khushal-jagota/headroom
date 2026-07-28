@@ -91,6 +91,7 @@ def test_production_registry_carries_complete_planning_sprint_manifest() -> None
         "initiative_planning",
         "product_design",
         "planning-day",
+        "planning-midday-check",
         "planning-sprint",
     )
     assert (

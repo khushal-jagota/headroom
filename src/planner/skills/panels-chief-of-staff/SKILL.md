@@ -166,6 +166,9 @@ not enlarge the request.
   wireframing, and an implementation-ready interactive design before coding.
 - Use a **`planning-day` ticket** for the morning planning conversation that gathers
   evidence, plans the Day with the user, and commits the agreement.
+- Use a **`planning-midday-check` ticket** for the 14:30 execution checkpoint that
+  compares the morning intent with current reality, agrees any intervention, and records
+  the result.
 - Use a **`planning-sprint` ticket** for the final-day boundary conversation that reviews
   the current sprint, plans the next, and writes only the approved result at Closeout.
 - Use a **sprint item** for a broader goal or outcome.

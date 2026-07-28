@@ -9,7 +9,7 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Seven Worker types ship today:
+Eight Worker types ship today:
 
 - **`coding`** handles product and repository work.
 - **`new_worker`** designs and lands a new kind of worker.
@@ -20,6 +20,8 @@ Seven Worker types ship today:
   artifacts before handing implementation to a coding Ticket.
 - **`planning-day`** gathers the evidence for a morning planning conversation, plans the
   Day with the user, and commits the agreement.
+- **`planning-midday-check`** compares the morning intent with current execution at
+  14:30, agrees any useful intervention, carries it out, and records the result.
 - **`planning-sprint`** reviews the current sprint and plans the next at the final-day
   boundary, with canonical writes deferred until Closeout.
 
@@ -57,7 +59,9 @@ consequential cross-Ticket choices are settled with the user; its other non-term
 Stages default to worker ownership. `product_design` uses paired ownership for Wireframe
 and Design, while its Direction and handoff are worker-owned. `planning-day` uses paired
 ownership for Planning, where the Worker and user settle the Day together; Gather and
-Closeout are worker-owned. `planning-sprint` keeps its four non-terminal Stages
+Closeout are worker-owned. `planning-midday-check` keeps its Stages worker-owned, but
+Action deliberately pauses through user-help before any approved intervention is
+performed in Closeout. `planning-sprint` also keeps its four non-terminal Stages
 worker-owned, but Review and Next Sprint deliberately pause through user-help until the
 user explicitly releases the conversation. Every Worker type chooses deliberately for
 each Stage; it does not inherit that choice from registry order or another definition.
@@ -72,8 +76,9 @@ types and behavior. `src/planner/worker_types/coding.py`,
 `src/planner/worker_types/exploration.py`,
 `src/planner/worker_types/initiative_planning.py`,
 `src/planner/worker_types/product_design.py`,
-`src/planner/worker_types/planning_day.py`, and
-`src/planner/worker_types/planning_sprint.py` contain the seven shipped definitions.
+`src/planner/worker_types/planning_day.py`,
+`src/planner/worker_types/planning_midday_check.py`, and
+`src/planner/worker_types/planning_sprint.py` contain the eight shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -133,8 +138,8 @@ Application composition lives in `src/planner/worker_types/configuration.py`. It
 catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
 definitions, and the production registry built from them. The shipped tuple currently
 contains `coding`, `new_worker`, `exploration`, `initiative_planning`,
-`product_design`, `planning-day`, and `planning-sprint`; its order is also the manifest
-order.
+`product_design`, `planning-day`, `planning-midday-check`, and `planning-sprint`; its
+order is also the manifest order.
 
 Which agent backends exist is not this composition's business. It is the conversation
 system's closed set of three — `hermes`, `codex`, and `claude` — and a Worker type naming
@@ -165,8 +170,8 @@ clients do not reconstruct the rule.
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `new_worker`,
 `exploration`, `initiative_planning`, `product_design`, `planning-day`, and
-`planning-sprint` Tickets therefore show their own Stage spines without frontend type
-tables.
+`planning-midday-check`, and `planning-sprint` Tickets therefore show their own Stage
+spines without frontend type tables.
 
 During pristine Kickoff, the Kickoff section shows the Ticket's launch setup beside its
 approval flow: Worker, Model, and Reasoning when that Worker and model support it. The
@@ -310,6 +315,7 @@ process is started again under it when there is a reason to.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
 - `panels-worker-product-design` guides `product_design` Tickets.
 - `panels-worker-planning-day` guides `planning-day` Tickets.
+- `panels-worker-planning-midday-check` guides `planning-midday-check` Tickets.
 - `panels-worker-planning-sprint` guides `planning-sprint` Tickets.
 
 For `new_worker`, the visible lifecycle after universal Kickoff is
