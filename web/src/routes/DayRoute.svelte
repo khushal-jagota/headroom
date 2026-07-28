@@ -9,18 +9,19 @@
 
   const day = createQuery(() => queries.todayDay());
 
-  type DayBodyField = "brief_take" | "watchout" | "if_today_lands";
-  type DayBodyAttr = "day-take-body" | "day-watch-body" | "day-lands-body";
+  type DayBodyField = "brief_take" | "watchout" | "if_today_lands" | "midday_reconciliation";
+  type DayBodyAttr = "day-take-body" | "day-watch-body" | "day-lands-body" | "day-midday-body";
 
   const sections: {
     field: DayBodyField;
-    key: "take" | "watch" | "lands";
+    key: "take" | "watch" | "lands" | "midday";
     label: string;
     dataAttr: DayBodyAttr;
   }[] = [
     { field: "brief_take", key: "take", label: "Brief take", dataAttr: "day-take-body" },
     { field: "watchout", key: "watch", label: "Watchout", dataAttr: "day-watch-body" },
-    { field: "if_today_lands", key: "lands", label: "If today lands", dataAttr: "day-lands-body" }
+    { field: "if_today_lands", key: "lands", label: "If today lands", dataAttr: "day-lands-body" },
+    { field: "midday_reconciliation", key: "midday", label: "Midday reconciliation", dataAttr: "day-midday-body" }
   ];
 
   function dateSegment(): string {
@@ -65,7 +66,7 @@
           onSave={(raw) => saveField("focus", raw)}
         />
         {#each sections as section}
-          <section class={section.key === "take" ? "take" : `block ${section.key}`} data-day-take={section.key === "take" ? "" : undefined} data-day-watch={section.key === "watch" ? "" : undefined} data-day-lands={section.key === "lands" ? "" : undefined}>
+          <section class={section.key === "take" ? "take" : `block ${section.key}`} data-day-take={section.key === "take" ? "" : undefined} data-day-watch={section.key === "watch" ? "" : undefined} data-day-lands={section.key === "lands" ? "" : undefined} data-day-midday={section.key === "midday" ? "" : undefined}>
             <div class="label">{section.label}</div>
             <div class="body"><InlineEdit
               dataAttr={section.dataAttr}

@@ -34,8 +34,10 @@ E29_FOCUS = "E29 ship the waitlist funnel to real traffic."
 E29_TAKE = "E29 yesterday closed at sixty-two percent completion."
 E29_WATCH = "E29 the hero still does not say what Vylo is in one line."
 E29_LANDS = "E29 real visitors are in the waitlist table by tonight."
+E29_MIDDAY = "E29 signups are live; the remaining risk is activation."
 E29_FOCUS_EDIT = "E29 signal today, not polish."
 E29_WATCH_EDIT = "E29 watch the funnel drop-off after signup."
+E29_MIDDAY_EDIT = "E29 activation is holding; keep the afternoon bet."
 
 # item 30 (ceiling needs_implementation so each of implementation/closeout PARKS
 # pending in turn, requiring its own Review approval)
@@ -161,6 +163,7 @@ def test_e29_day_overview_structured_and_edit(
             "brief_take": E29_TAKE,
             "watchout": E29_WATCH,
             "if_today_lands": E29_LANDS,
+            "midday_reconciliation": E29_MIDDAY,
         },
     )
 
@@ -171,6 +174,7 @@ def test_e29_day_overview_structured_and_edit(
     assert page.inner_text("[data-day-take-body]") == E29_TAKE
     assert page.inner_text("[data-day-watch-body]") == E29_WATCH
     assert page.inner_text("[data-day-lands-body]") == E29_LANDS
+    assert page.inner_text("[data-day-midday-body]") == E29_MIDDAY
     e29_date_text = page.text_content("[data-day-date]")  # raw DOM (label uppercases)
     assert e29_date_text is not None
     assert "Jul 4" in e29_date_text
@@ -198,18 +202,30 @@ def test_e29_day_overview_structured_and_edit(
 
     edit_field("[data-day-focus]", E29_FOCUS_EDIT)  # scalar
     edit_field("[data-day-watch-body]", E29_WATCH_EDIT)  # markdown body
+    edit_field("[data-day-midday-body]", E29_MIDDAY_EDIT)
 
     # Both edits landed; the fields nobody touched are unchanged (no re-serialize).
     assert page.inner_text("[data-day-focus]") == E29_FOCUS_EDIT
     assert page.inner_text("[data-day-watch-body]") == E29_WATCH_EDIT
     assert page.inner_text("[data-day-take-body]") == E29_TAKE
     assert page.inner_text("[data-day-lands-body]") == E29_LANDS
+    assert page.inner_text("[data-day-midday-body]") == E29_MIDDAY_EDIT
 
     d = api.get(server, "/api/day/today")
     assert d["focus"] == E29_FOCUS_EDIT, d
     assert d["watchout"] == E29_WATCH_EDIT, d
     assert d["brief_take"] == E29_TAKE, d
     assert d["if_today_lands"] == E29_LANDS, d
+    assert d["midday_reconciliation"] == E29_MIDDAY_EDIT, d
+
+    # The same headed surface has the standard editable empty state.
+    api.direct_patch(server, f"/api/day/{DAY_PREV}", {"midday_reconciliation": ""})
+    page.wait_for_function(
+        "() => document.querySelector('[data-day-midday-body]')?.getAttribute('data-empty')"
+        " === 'true'",
+        timeout=WAIT_MS,
+    )
+    assert page.get_attribute("[data-day-midday-body]", "data-ph") == "(none)"
 
 
 def test_e30_review_approve_to_done(

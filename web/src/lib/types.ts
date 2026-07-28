@@ -203,6 +203,7 @@ export type DayResponse = {
   brief_take?: string | null;
   watchout?: string | null;
   if_today_lands?: string | null;
+  midday_reconciliation?: string | null;
 };
 
 export type BacklogResponse = {

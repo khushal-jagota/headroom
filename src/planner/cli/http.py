@@ -35,11 +35,16 @@ RequestActor = Literal["ordinary", "worker", "chief"]
 
 def _headers(request_actor: RequestActor) -> dict[str, str]:
     ambient = os.environ.get("PLAN_ACTOR", "").strip()
+    ticket_id = os.environ.get("PLAN_TICKET_ID", "").strip()
     if request_actor == "worker":
-        return {"X-Plan-Actor": ambient or "agent"}
-    if ambient:
-        return {"X-Plan-Actor": ambient}
-    return {}
+        headers = {"X-Plan-Actor": ambient or "agent"}
+    elif ambient:
+        headers = {"X-Plan-Actor": ambient}
+    else:
+        headers = {}
+    if ambient == "worker" and ticket_id:
+        headers["X-Plan-Ticket-ID"] = ticket_id
+    return headers
 
 
 def send(

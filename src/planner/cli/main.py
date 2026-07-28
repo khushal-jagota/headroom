@@ -32,6 +32,7 @@ _DAY_FIELDS = {
     "brief-take": "brief_take",
     "watchout": "watchout",
     "if-today-lands": "if_today_lands",
+    "midday-reconciliation": "midday_reconciliation",
     "notes": "notes",
 }
 
@@ -244,6 +245,7 @@ def _format_day(data: dict[str, Any]) -> str:
         f"brief-take: {data['brief_take'] or ''}",
         f"watchout: {data['watchout'] or ''}",
         f"if-today-lands: {data['if_today_lands'] or ''}",
+        f"midday-reconciliation: {data['midday_reconciliation'] or ''}",
         "tickets:",
         _format_tickets(data["tickets"]),
     ]
