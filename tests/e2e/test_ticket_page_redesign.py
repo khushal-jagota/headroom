@@ -24,7 +24,7 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
             "date_end": "2026-08-23",
         },
     )
-    cli(server, "project", "create", "--name", "Panels")
+    cli(server, "project", "create", "--name", "Panels", "--priority", "P2")
     item_id = cli(
         server,
         "sprint",
