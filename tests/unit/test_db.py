@@ -39,7 +39,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "sprint_item_only_placement"
+HEAD_REVISION = "project_priority"
 
 # The new Other-item uniqueness index is the one additional current schema object.
 CURRENT_SCHEMA_OBJECT_COUNT = 24
@@ -947,17 +947,25 @@ def test_create_schema_has_projects_project_ids_and_default_rows(
     create_schema(conn)
 
     assert {
-        row["id"]: (row["name"], row["summary"])
-        for row in conn.execute("SELECT id, name, summary FROM projects ORDER BY id")
+        row["id"]: (row["name"], row["summary"], row["priority"])
+        for row in conn.execute(
+            "SELECT id, name, summary, priority FROM projects ORDER BY id"
+        )
     } == {
-        "project_other": ("Other", ""),
-        "project_tribe": ("Tribe", ""),
-        "project_vylo": ("Vylo", ""),
+        "project_other": ("Other", "", None),
+        "project_tribe": ("Tribe", "", None),
+        "project_vylo": ("Vylo", "", None),
     }
     project_columns = {
-        str(row["name"]) for row in conn.execute("PRAGMA table_info(projects)")
+        str(row["name"]): row for row in conn.execute("PRAGMA table_info(projects)")
     }
     assert "summary" in project_columns
+    priority_column = project_columns["priority"]
+    assert (
+        str(priority_column["type"]),
+        int(priority_column["notnull"]),
+        priority_column["dflt_value"],
+    ) == ("TEXT", 0, None)
     for table in ("sprint_items", "tickets", "ideas"):
         columns = {
             str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")

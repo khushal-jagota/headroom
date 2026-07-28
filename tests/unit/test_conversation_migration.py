@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "sprint_item_only_placement"
+HEAD_REVISION = "project_priority"
 
 
 def _table_columns(

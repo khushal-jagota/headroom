@@ -216,7 +216,9 @@ def test_board_route_resolves_the_5am_planning_day(
 def test_board_view_groups_parented_ticket_by_parent_item_project(
     tmp_db: Connection, fake_clock: TestClock
 ) -> None:
-    standalone_project = create_project(tmp_db, name="Client Work", now=0)
+    standalone_project = create_project(
+        tmp_db, name="Client Work", priority=Priority.P2, now=0
+    )
     item = create_item(
         tmp_db,
         title="Parent item",

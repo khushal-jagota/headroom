@@ -415,12 +415,29 @@ def test_ticket_list_day_filter(
 def test_project_create_list_and_project_id_item_filter(
     server: ServerHandle, cli: Callable[..., JsonObject]
 ) -> None:
-    project = cli(server, "project", "create", "--name", "Alpha One")
+    missing_priority = CliRunner().invoke(
+        cli_main, ["project", "create", "--name", "Missing Priority", "--json"]
+    )
+    assert missing_priority.exit_code == 2
+    assert "Missing option '--priority'" in missing_priority.output
+
+    project = cli(
+        server,
+        "project",
+        "create",
+        "--name",
+        "Alpha One",
+        "--priority",
+        "P1",
+    )
     assert project["id"] == "project_alpha_one"
     assert project["name"] == "Alpha One"
+    assert project["priority"] == "P1"
 
     listed_projects = cli(server, "project", "list")
-    assert project["id"] in {entry["id"] for entry in listed_projects["projects"]}
+    listed_by_id = {entry["id"]: entry for entry in listed_projects["projects"]}
+    assert listed_by_id[project["id"]]["priority"] == "P1"
+    assert listed_by_id["project_other"]["priority"] is None
 
     item = cli(
         server,

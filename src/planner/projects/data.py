@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from planner.core.contracts import JsonDict
+from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects.contracts import Project
 
@@ -37,6 +37,7 @@ def _row_to_project(row: sqlite3.Row) -> Project:
         id=str(row["id"]),
         name=str(row["name"]),
         summary=str(row["summary"]),
+        priority=Priority(str(row["priority"])) if row["priority"] is not None else None,
         created_at=int(row["created_at"]),
         updated_at=int(row["updated_at"]),
     )
@@ -47,6 +48,7 @@ def project_json(project: Project) -> JsonDict:
         "id": project.id,
         "name": project.name,
         "summary": project.summary,
+        "priority": project.priority.value if project.priority is not None else None,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
     }
@@ -69,14 +71,16 @@ def seed_default_projects(conn: sqlite3.Connection) -> None:
 
 def list_projects(conn: sqlite3.Connection) -> list[Project]:
     rows = conn.execute(
-        "SELECT id, name, summary, created_at, updated_at FROM projects ORDER BY lower(name), id"
+        "SELECT id, name, summary, priority, created_at, updated_at "
+        "FROM projects ORDER BY lower(name), id"
     ).fetchall()
     return [_row_to_project(row) for row in rows]
 
 
 def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, summary, created_at, updated_at FROM projects WHERE id = ?",
+        "SELECT id, name, summary, priority, created_at, updated_at "
+        "FROM projects WHERE id = ?",
         (project_id,),
     ).fetchone()
     if row is None:
@@ -86,7 +90,7 @@ def read_project(conn: sqlite3.Connection, project_id: str) -> Project:
 
 def read_project_by_name(conn: sqlite3.Connection, name: str) -> Project:
     row = conn.execute(
-        "SELECT id, name, summary, created_at, updated_at "
+        "SELECT id, name, summary, priority, created_at, updated_at "
         "FROM projects WHERE name = ? COLLATE NOCASE",
         (name.strip(),),
     ).fetchone()
@@ -116,7 +120,14 @@ def resolve_project(
     return project
 
 
-def create_project(conn: sqlite3.Connection, *, name: str, summary: str = "", now: int) -> Project:
+def create_project(
+    conn: sqlite3.Connection,
+    *,
+    name: str,
+    priority: Priority,
+    summary: str = "",
+    now: int,
+) -> Project:
     clean_name = name.strip()
     clean_summary = summary.strip()
     if not clean_name:
@@ -141,9 +152,9 @@ def create_project(conn: sqlite3.Connection, *, name: str, summary: str = "", no
             project_id = f"{base_id}_{suffix}"
             suffix += 1
         conn.execute(
-            "INSERT INTO projects (id, name, summary, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (project_id, clean_name, clean_summary, now, now),
+            "INSERT INTO projects (id, name, summary, priority, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (project_id, clean_name, clean_summary, priority.value, now, now),
         )
     return read_project(conn, project_id)
 

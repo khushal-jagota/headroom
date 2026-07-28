@@ -34,7 +34,9 @@ generic Stage setter.
   returns the ticket list explicitly. `day set midday-reconciliation` writes the
   day’s separate mid-day check.
 - **`project list / create`** — inspect and add projects. Project availability is
-  data-backed, not enum-backed.
+  data-backed, not enum-backed. `project create` requires
+  `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
+  have not yet been assessed.
 - **`schedule create / list / show / set`** — manage generic internal schedules that
   create and place an ordinary Ticket at an exact local time. A schedule uses either
   `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and

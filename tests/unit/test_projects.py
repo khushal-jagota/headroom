@@ -45,14 +45,35 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
             "project_vylo": "Vylo",
         }
         assert all(project["summary"] == "" for project in listed.json()["projects"])
+        assert all(project["priority"] is None for project in listed.json()["projects"])
+
+        missing_priority = client.post("/api/projects", json={"name": "Missing Priority"})
+        assert missing_priority.status_code == 400
+        assert missing_priority.json()["error"]["code"] == "validation"
+
+        invalid_priority = client.post(
+            "/api/projects", json={"name": "Invalid Priority", "priority": "urgent"}
+        )
+        assert invalid_priority.status_code == 400
+        assert invalid_priority.json()["error"] == {
+            "code": "validation",
+            "message": "invalid priority",
+            "detail": {"priority": "urgent"},
+        }
 
         created = client.post(
-            "/api/projects", json={"name": "Alpha One", "summary": "  Repo: /srv/alpha  "}
+            "/api/projects",
+            json={
+                "name": "Alpha One",
+                "priority": "P1",
+                "summary": "  Repo: /srv/alpha  ",
+            },
         )
         assert created.status_code == 200, created.json()
         assert created.json()["id"] == "project_alpha_one"
         assert created.json()["name"] == "Alpha One"
         assert created.json()["summary"] == "Repo: /srv/alpha"
+        assert created.json()["priority"] == "P1"
 
         updated = client.patch(
             f"/api/projects/{created.json()['id']}", json={"summary": "  Lives in ~/alpha  "}
@@ -70,7 +91,9 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
         assert renamed.status_code == 200, renamed.json()
         assert renamed.json()["name"] == "Alpha Renamed"
 
-        duplicate = client.post("/api/projects", json={"name": "alpha one"})
+        duplicate = client.post(
+            "/api/projects", json={"name": "alpha one", "priority": "P2"}
+        )
         assert duplicate.status_code == 200
         duplicate_rename = client.patch(
             f"/api/projects/{renamed.json()['id']}", json={"name": "alpha one"}
@@ -86,7 +109,9 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
         assert empty_patch.status_code == 400
         assert empty_patch.json()["error"]["code"] == "validation"
 
-        duplicate_create = client.post("/api/projects", json={"name": "alpha one"})
+        duplicate_create = client.post(
+            "/api/projects", json={"name": "alpha one", "priority": "P3"}
+        )
         assert duplicate_create.status_code == 400
         assert duplicate_create.json()["error"]["code"] == "validation"
 
@@ -99,26 +124,33 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
         duplicate = duplicate_create
         assert duplicate.json()["error"]["code"] == "validation"
 
-        agent = client.post("/api/projects", json={"name": "Agent Project"}, headers=_AGENT)
+        agent = client.post(
+            "/api/projects",
+            json={"name": "Agent Project", "priority": "P0"},
+            headers=_AGENT,
+        )
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
 
     conn = connect(str(db_path))
     try:
         stored = conn.execute(
-            "SELECT name, summary FROM projects WHERE id = 'project_alpha_one'"
+            "SELECT name, summary, priority FROM projects WHERE id = 'project_alpha_one'"
         ).fetchone()
     finally:
         conn.close()
     assert stored is not None
     assert str(stored["name"]) == "Alpha Renamed"
     assert str(stored["summary"]) == ""
+    assert str(stored["priority"]) == "P1"
 
 
 def test_project_id_and_legacy_project_compatibility(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
     with TestClient(app) as client:
-        project = client.post("/api/projects", json={"name": "Alpha One"}).json()
+        project = client.post(
+            "/api/projects", json={"name": "Alpha One", "priority": "P2"}
+        ).json()
 
         ticket_by_id = client.post(
             "/api/tickets",
