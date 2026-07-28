@@ -52,19 +52,69 @@ def _send(
     text: str,
     *,
     conversation_id: str | None = None,
+    sender_message_id: str | None = None,
+    sent_at_unix_milliseconds: int | None = None,
     headers: dict[str, str] | None = None,
 ) -> Response:
     """Say something to the Chief, the way its panel does."""
+    body: dict[str, object] = {
+        "conversation_id": conversation_id,
+        "content": [{"piece": "text", "text": text}],
+        "sender_label": "owner",
+    }
+    if sender_message_id is not None:
+        body["sender_message_id"] = sender_message_id
+    if sent_at_unix_milliseconds is not None:
+        body["sent_at_unix_milliseconds"] = sent_at_unix_milliseconds
     posted: Response = client.post(
         "/api/chief/conversation/send",
-        json={
-            "conversation_id": conversation_id,
-            "content": [{"piece": "text", "text": text}],
-            "sender_label": "owner",
-        },
+        json=body,
         headers=headers or {},
     )
     return posted
+
+
+def test_the_senders_own_facts_about_a_message_reach_the_conversation(
+    tmp_path: Path,
+) -> None:
+    """The name a browser minted, and the instant it sent, arrive with the message.
+
+    The Ticket door's test, asked of the Chief's, and for the same reason: the panel stops
+    drawing its own copy of a message when the record hands it back under the name it
+    minted, and this door is the only thing between the two.
+
+    Both deliveries are asserted, because the message that makes a conversation and the
+    message that joins one already there travel by different paths.
+    """
+    app, _db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        conversations = app.state.conversation_system
+        made = _send(
+            client,
+            "the first thing",
+            sender_message_id="minted-first",
+            sent_at_unix_milliseconds=1_700_000_000_123,
+        ).json()["conversation_id"]
+        # The turn the first message started, out of the way: a second message sent while
+        # the agent is busy is held rather than delivered, which is a different question.
+        conversations.complete_running_turn(made)
+        _send(
+            client,
+            "the second thing",
+            conversation_id=made,
+            sender_message_id="minted-second",
+            sent_at_unix_milliseconds=1_700_000_000_456,
+        )
+
+    assert [
+        (observation.text, observation.sender_message_id, observation.sent_at_unix_milliseconds)
+        for observation in conversations.observations(made)
+        if observation.kind is InMemoryConversationObservationKind.prompt_delivered
+    ] == [
+        ("the first thing", "minted-first", 1_700_000_000_123),
+        ("the second thing", "minted-second", 1_700_000_000_456),
+    ]
 
 
 def test_the_chief_has_no_conversation_until_one_is_started(tmp_path: Path) -> None:

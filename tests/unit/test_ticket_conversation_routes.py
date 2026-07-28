@@ -76,6 +76,8 @@ def _send(
     *,
     conversation_id: str | None = None,
     model: str | None = None,
+    sender_message_id: str | None = None,
+    sent_at_unix_milliseconds: int | None = None,
     headers: dict[str, str] | None = None,
 ) -> Response:
     """Say something to this Ticket's worker, the way the panel does."""
@@ -86,6 +88,10 @@ def _send(
     }
     if model is not None:
         body["model"] = model
+    if sender_message_id is not None:
+        body["sender_message_id"] = sender_message_id
+    if sent_at_unix_milliseconds is not None:
+        body["sent_at_unix_milliseconds"] = sent_at_unix_milliseconds
     posted: Response = client.post(
         f"/api/tickets/{ticket_id}/conversation/send", json=body, headers=headers or {}
     )
@@ -136,6 +142,74 @@ def test_a_second_message_goes_into_the_conversation_the_first_one_made(
         again = _send(client, ticket_id, "again", conversation_id=first["conversation_id"])
 
     assert again.json()["conversation_id"] == first["conversation_id"]
+
+
+def test_the_senders_own_facts_about_a_message_reach_the_conversation(
+    tmp_path: Path,
+) -> None:
+    """The name a browser minted, and the instant it sent, arrive with the message.
+
+    A browser draws a message the moment Enter is pressed and stops drawing it when the
+    record hands it back — which it can only recognise by the name it minted. This door is
+    the only thing standing between the two, so what it does with those values is the whole
+    of whether that ever works.
+
+    Both deliveries are asserted. The message that makes a conversation and the message
+    that joins one already there travel by different paths, and a door that carries the
+    name down one of them says nothing about the other.
+    """
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+
+    with TestClient(app) as client:
+        conversations = app.state.conversation_system
+        made = _send(
+            client,
+            ticket_id,
+            "the first thing",
+            sender_message_id="minted-first",
+            sent_at_unix_milliseconds=1_700_000_000_123,
+        ).json()["conversation_id"]
+        # The turn the first message started, out of the way: a second message sent while
+        # the agent is busy is held rather than delivered, which is a different question.
+        conversations.complete_running_turn(made)
+        _send(
+            client,
+            ticket_id,
+            "the second thing",
+            conversation_id=made,
+            sender_message_id="minted-second",
+            sent_at_unix_milliseconds=1_700_000_000_456,
+        )
+
+    assert [
+        (observation.text, observation.sender_message_id, observation.sent_at_unix_milliseconds)
+        for observation in conversations.observations(made)
+        if observation.kind is InMemoryConversationObservationKind.prompt_delivered
+    ] == [
+        ("the first thing", "minted-first", 1_700_000_000_123),
+        ("the second thing", "minted-second", 1_700_000_000_456),
+    ]
+
+
+def test_a_message_from_a_sender_that_minted_nothing_is_sent_as_it_always_was(
+    tmp_path: Path,
+) -> None:
+    """The readiness loop mints neither, and a message without them is an ordinary one."""
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+
+    with TestClient(app) as client:
+        made = _send(client, ticket_id, "no name on this").json()["conversation_id"]
+
+    delivered = [
+        observation
+        for observation in app.state.conversation_system.observations(made)
+        if observation.kind is InMemoryConversationObservationKind.prompt_delivered
+    ]
+    assert [observation.text for observation in delivered] == ["no name on this"]
+    assert delivered[0].sender_message_id is None
+    assert delivered[0].sent_at_unix_milliseconds is None
 
 
 def test_a_message_naming_a_conversation_the_ticket_is_not_in_is_turned_away(
