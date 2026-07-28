@@ -8,16 +8,17 @@ has a deliberate quirk — it flips at **5am, not midnight** — so a late night
 belongs to the day it felt like.
 
 ```
-   5am                  11:30                         14:30
-   boundary             planning-day Ticket          midday-check Ticket
-   ────────             ───────────────────          ───────────────────
-   Day becomes current  gather current evidence      compare intent to reality
-                              │                            │
-                              ▼                            ▼
-                         plan with you                agree any intervention
-                              │                            │
-                              ▼                            ▼
-                         commit the Day               record reconciliation
+   5am   05:05                                      14:30
+   boundary + planning-day Ticket                   midday-check Ticket
+   ────────   ───────────────────                   ───────────────────
+   Day becomes current                              compare intent to reality
+              gather current evidence                    │
+                         │                               ▼
+                         ▼                          agree any intervention
+                    plan with you                         │
+                         │                               ▼
+                         ▼                          record reconciliation
+                    commit the Day
 ```
 
 ## How a day flows
@@ -29,9 +30,10 @@ reconciliation renders the same `(none)` edit state as the other Markdown sectio
 Crossing the 5am boundary creates the new day record. It does not copy forward a plan or
 start a separate rollover workflow.
 
-At 11:30 local time, the internal schedule creates a `planning-day` Ticket for the
-current planning day. Its specialist Worker gathers current evidence, plans the four
-morning fields with the user, and writes the agreed Day only at Closeout. At 14:30, a
+At 05:05 local time, just after the 5am planning-day boundary, the internal schedule
+creates a `planning-day` Ticket for the current planning day. Its specialist Worker
+gathers current evidence, plans the four morning fields with the user, and writes the
+agreed Day only at Closeout. At 14:30, a
 `planning-midday-check` Ticket compares that intent with current execution, agrees any
 useful intervention, carries it out, and records the reconciliation. Scheduling places
 each Ticket in the Panels project's fallback item in the then-current sprint; repeat or
