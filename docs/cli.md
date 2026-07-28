@@ -150,10 +150,10 @@ have both headers removed. Missing, unknown, or mismatched worker claims fail cl
 
 Earlier documentation listed verbs that belonged to the old dispatcher-and-claim
 machinery, or to old top-level homes. They no longer exist: **`run heartbeat` / `run
-close`**, **`queue pickup`**, **`plan seed`**, top-level **`propose` / `recap` /
-`note` / `item` / `idea` / `link` / `queue`**. A worker no longer holds a claim or a
-lease; Panels starts one worker step at a time and writes the Ticket's status itself
-(see `worker-orchestration.md`).
+close`**, **`queue pickup`**, and top-level **`propose` / `recap` / `note` / `item` /
+`idea` / `link` / `queue`**. A worker no longer holds a claim or a lease; Panels starts
+one worker step at a time and writes the Ticket's status itself (see
+`worker-orchestration.md`).
 
 ## Handoffs
 
@@ -163,13 +163,6 @@ lease; Panels starts one worker step at a time and writes the Ticket's status it
   this tool gets started.
 - **Worker types** (`worker-types.md`) — the registry `worker my-ticket` reads the
   ticket's specialist skill from.
-
-## Deferred
-
-- **No general importer verb.** The old `plan seed` command and one-time
-  `python -m planner.seed` cutover are gone. Chief external-work intake reconciles a
-  reported outcome; it does not ingest old planner documents. Trigger: a decision to
-  support document import again.
 
 ---
 
