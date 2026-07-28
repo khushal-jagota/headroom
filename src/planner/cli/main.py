@@ -3,6 +3,7 @@
 The command tree mirrors the product model:
 
 * day: plan and inspect a planning day
+* schedule: configure exact-time creation of ordinary Tickets
 * ticket: create, inspect, organize, and approve tickets
 * sprint: create, inspect, edit, and populate sprints and sprint items
 * worker: worker-only writes such as proposals, recaps, and notes
@@ -76,6 +77,24 @@ _PROJECT_FIELDS = {
     "name": "name",
     "summary": "summary",
 }
+
+_SCHEDULE_FIELDS = {
+    "enabled": "enabled",
+    "cadence": "cadence",
+    "time": "local_time",
+    "title": "title",
+    "worker-type": "worker_type",
+    "kickoff-note": "kickoff_note",
+    "priority": "priority",
+    "deadline": "deadline",
+    "project-id": "project_id",
+    "sprint": "sprint_id",
+    "sprint-item": "sprint_item_id",
+    "employee-backend": "employee_backend",
+    "employee-launch-model": "employee_launch_model",
+}
+
+_SCHEDULE_CADENCES = ("every-planning-day", "current-sprint-final-day")
 
 
 def _read_source(spec: str, as_json: bool) -> str:
@@ -324,6 +343,198 @@ def restart() -> None:
     except (ServerRestartConnectionError, ServerRestartProtocolError) as exc:
         raise click.ClickException(str(exc)) from exc
     click.echo("Panels restart accepted.")
+
+
+# --- schedule -----------------------------------------------------------------
+
+
+@main.group("schedule")
+def schedule_group() -> None:
+    """Configure exact-time creation of ordinary Tickets."""
+
+
+@schedule_group.command("create")
+@click.option("--title", required=True, help="Title for each created Ticket.")
+@click.option("--worker-type", "worker_type", required=True, help="Registered Worker type id.")
+@click.option("--time", "local_time", required=True, help="Exact local time in HH:MM form.")
+@click.option(
+    "--cadence",
+    type=click.Choice(_SCHEDULE_CADENCES),
+    default="every-planning-day",
+    show_default=True,
+)
+@click.option("--enabled/--disabled", default=True, help="Whether the schedule may run.")
+@click.option("--priority", type=click.Choice(_PRIORITIES), default=None)
+@click.option("--deadline", default=None, help="Ticket deadline in YYYY-MM-DD form.")
+@click.option("--project", default=None, help="Project name.")
+@click.option("--project-id", default=None, help="Project id.")
+@click.option("--sprint", default=None, help="Sprint id, current, or none.")
+@click.option("--sprint-item", "sprint_item", default=None, help="Parent sprint item id.")
+@click.option("--employee-backend", default=None, help="Registered employee backend override.")
+@click.option("--employee-launch-model", default=None, help="Model for an overriding backend.")
+@click.option(
+    "--blocked-by",
+    "blocked_by_ticket_ids",
+    multiple=True,
+    help="Existing blocking Ticket id (repeatable).",
+)
+@click.option("--kickoff-note", default=None, help="Proposed kickoff context.")
+@click.option("--kickoff-note-file", default=None, help="Read kickoff context from this file.")
+@json_option
+def schedule_create(
+    title: str,
+    worker_type: str,
+    local_time: str,
+    cadence: str,
+    enabled: bool,
+    priority: str | None,
+    deadline: str | None,
+    project: str | None,
+    project_id: str | None,
+    sprint: str | None,
+    sprint_item: str | None,
+    employee_backend: str | None,
+    employee_launch_model: str | None,
+    blocked_by_ticket_ids: tuple[str, ...],
+    kickoff_note: str | None,
+    kickoff_note_file: str | None,
+    as_json: bool,
+) -> None:
+    if kickoff_note is not None and kickoff_note_file is not None:
+        http.fail_validation("kickoff note accepts only one note option", as_json)
+    body: dict[str, Any] = {
+        "title": title,
+        "worker_type": worker_type,
+        "local_time": local_time,
+        "cadence": cadence.replace("-", "_"),
+        "enabled": enabled,
+    }
+    if kickoff_note_file is not None:
+        body["kickoff_note"] = _read_source(kickoff_note_file, as_json)
+    elif kickoff_note is not None:
+        body["kickoff_note"] = kickoff_note
+    if priority is not None:
+        body["priority"] = priority
+    if deadline is not None:
+        body["deadline"] = deadline
+    add_project_selectors(
+        body, project=project, project_id=project_id, required=False, as_json=as_json
+    )
+    if sprint is not None:
+        body["sprint_id"] = sprint_value_for_write(sprint, as_json)
+    if sprint_item is not None:
+        body["sprint_item_id"] = sprint_item
+    if employee_backend is not None:
+        body["employee_backend"] = employee_backend
+    if employee_launch_model is not None:
+        body["employee_launch_model"] = employee_launch_model
+    if blocked_by_ticket_ids:
+        body["blocked_by_ticket_ids"] = list(blocked_by_ticket_ids)
+    result = http.send(
+        "POST",
+        "/api/schedules",
+        as_json=as_json,
+        json_body=body,
+        request_actor="ordinary",
+    )
+    http.emit(
+        result,
+        as_json,
+        f"{result['id']} {result['local_time']} {result['cadence']} {result['worker_type']}",
+    )
+
+
+@schedule_group.command("list")
+@json_option
+def schedule_list(as_json: bool) -> None:
+    result = http.send("GET", "/api/schedules", as_json=as_json, request_actor="ordinary")
+    http.emit(
+        result,
+        as_json,
+        _lines(
+            result["schedules"],
+            lambda item: (
+                f"{item['id']} {'enabled' if item['enabled'] else 'disabled'} "
+                f"{item['local_time']} {item['cadence']} {item['worker_type']} {item['title']}"
+            ),
+        ),
+    )
+
+
+@schedule_group.command("show")
+@click.argument("schedule_id")
+@json_option
+def schedule_show(schedule_id: str, as_json: bool) -> None:
+    result = http.send(
+        "GET", f"/api/schedules/{schedule_id}", as_json=as_json, request_actor="ordinary"
+    )
+    occurrences = result.get("occurrences", [])
+    latest = "never run"
+    if occurrences:
+        latest_item = occurrences[0]
+        latest = f"{latest_item['outcome']} {latest_item['occurrence_key']}"
+    text = (
+        f"{result['id']} {'enabled' if result['enabled'] else 'disabled'} "
+        f"{result['local_time']} {result['cadence']} {result['worker_type']} "
+        f"{result['title']} · {latest}"
+    )
+    http.emit(result, as_json, text)
+
+
+@schedule_group.command("set")
+@click.argument("schedule_id")
+@click.argument("field", type=click.Choice(sorted(_SCHEDULE_FIELDS)))
+@click.option("--value", default=None, help="Set the field to this value.")
+@click.option("--body-file", default=None, help="Read field text from this file, or -.")
+@click.option("--clear", is_flag=True, default=False, help="Clear a nullable field.")
+@json_option
+def schedule_set(
+    schedule_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    clear: bool,
+    as_json: bool,
+) -> None:
+    api_field = _SCHEDULE_FIELDS[field]
+    new_value = read_value_or_file(value, body_file, clear, as_json, field)
+    if field in {
+        "cadence",
+        "time",
+        "title",
+        "worker-type",
+        "kickoff-note",
+        "priority",
+        "enabled",
+    } and new_value is None:
+        http.fail_validation(f"{field} cannot be cleared", as_json)
+    if field == "enabled":
+        lowered = str(new_value).lower()
+        if lowered not in {"true", "false"}:
+            http.fail_validation("enabled must be true or false", as_json)
+        body_value: object = lowered == "true"
+    elif field == "cadence":
+        if new_value not in _SCHEDULE_CADENCES:
+            http.fail_validation(
+                f"cadence must be one of: {', '.join(_SCHEDULE_CADENCES)}", as_json
+            )
+        body_value = new_value.replace("-", "_")
+    elif field == "priority":
+        if new_value not in _PRIORITIES:
+            http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
+        body_value = new_value
+    elif field == "sprint" and new_value is not None:
+        body_value = sprint_value_for_write(new_value, as_json)
+    else:
+        body_value = new_value
+    result = http.send(
+        "PATCH",
+        f"/api/schedules/{schedule_id}",
+        as_json=as_json,
+        json_body={api_field: body_value},
+        request_actor="ordinary",
+    )
+    http.emit(result, as_json, f"{result['id']} {field} set")
 
 
 # --- project ------------------------------------------------------------------

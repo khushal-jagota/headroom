@@ -58,6 +58,7 @@ def test_dispatch_disabled_owns_no_loop_and_takes_no_lock(
     handle = _start(config, fake_clock)
     try:
         assert handle.worker_step_readiness_loop is None
+        assert handle.scheduled_ticket_loop is None
         assert change_signal.subscriber_count() == subscribers_before
     finally:
         asyncio.run(handle.stop())
@@ -79,6 +80,7 @@ def test_polling_lock_loser_owns_no_loop_and_does_not_release_a_foreign_lock(
     handle = _start(config, fake_clock)
     try:
         assert handle.worker_step_readiness_loop is None
+        assert handle.scheduled_ticket_loop is None
         assert change_signal.subscriber_count() == subscribers_before
     finally:
         asyncio.run(handle.stop())
@@ -111,15 +113,35 @@ def test_lock_winner_composes_the_loop_and_wakes_it_from_the_change_signal(
 
     constructed: list[RecordingReadinessLoop] = []
 
+    class RecordingScheduledLoop:
+        def __init__(self, _db_path: str, _clock: Clock, **kwargs: object) -> None:
+            self.kwargs = kwargs
+            self.started: list[int] = []
+            self.stops: list[float | None] = []
+            constructed_schedules.append(self)
+
+        def start(self, interval: int) -> None:
+            self.started.append(interval)
+
+        def stop(self, *, deadline: float | None = None) -> None:
+            self.stops.append(deadline)
+
+    constructed_schedules: list[RecordingScheduledLoop] = []
+
     monkeypatch.setattr(loops, "ensure_machine_lock", lambda _path: True)
     monkeypatch.setattr(loops, "release_machine_lock", released.append)
     monkeypatch.setattr(loops, "WorkerStepReadinessLoop", RecordingReadinessLoop)
+    monkeypatch.setattr(loops, "ScheduledTicketLoop", RecordingScheduledLoop)
     handle = _start(config, fake_clock)
     try:
         loop = cast(RecordingReadinessLoop, handle.worker_step_readiness_loop)
+        schedule_loop = cast(RecordingScheduledLoop, handle.scheduled_ticket_loop)
         assert loop is constructed[0]
+        assert schedule_loop is constructed_schedules[0]
         assert loop.started == [config.tick_seconds]
+        assert schedule_loop.started == [config.tick_seconds]
         assert loop.kwargs["boundary_hour"] == config.boundary_hour
+        assert schedule_loop.kwargs["boundary_hour"] == config.boundary_hour
         change_signal.emit()
         assert loop.wakes == 1
     finally:
@@ -129,6 +151,7 @@ def test_lock_winner_composes_the_loop_and_wakes_it_from_the_change_signal(
     assert loop.wakes == 1
     # The loop drains under the same deadline, and only then is the lock given back.
     assert loop.stops == [123.0]
+    assert schedule_loop.stops == [123.0]
     assert released == [config.dispatcher_lock_path]
 
 
@@ -155,14 +178,27 @@ def test_a_loop_that_fails_to_start_releases_the_lock_and_leaves_nothing_listeni
             del deadline
             stopped.append("loop")
 
+    class RecordingScheduledLoop:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            return None
+
+        def start(self, _interval: int) -> None:
+            stopped.append("schedule-started")
+
+        def stop(self, *, deadline: float | None = None) -> None:
+            del deadline
+            stopped.append("schedule-stopped")
+
     monkeypatch.setattr(loops, "ensure_machine_lock", lambda _path: True)
     monkeypatch.setattr(loops, "release_machine_lock", released.append)
     monkeypatch.setattr(loops, "WorkerStepReadinessLoop", BrokenLoop)
+    monkeypatch.setattr(loops, "ScheduledTicketLoop", RecordingScheduledLoop)
     subscribers_before = change_signal.subscriber_count()
     handle = _start(config, fake_clock)
     try:
         assert handle.worker_step_readiness_loop is None
-        assert stopped == ["loop"]
+        assert handle.scheduled_ticket_loop is None
+        assert stopped == ["schedule-started", "loop", "schedule-stopped"]
         assert released == [config.dispatcher_lock_path]
         assert change_signal.subscriber_count() == subscribers_before
     finally:

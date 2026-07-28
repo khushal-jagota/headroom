@@ -30,6 +30,7 @@ from planner.days.api import router as days_router
 from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
 from planner.files.api import router as files_router
 from planner.projects.api import router as projects_router
+from planner.scheduled_tickets.api import router as scheduled_tickets_router
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
 from planner.worker_context.service import SqliteWorkerContextService
@@ -187,6 +188,7 @@ def create_app(
         projects_router,
         sprints_router,
         days_router,
+        scheduled_tickets_router,
         worker_settings_router,
     ):
         app.include_router(domain_router, prefix="/api")

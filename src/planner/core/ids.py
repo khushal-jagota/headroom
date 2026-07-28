@@ -11,6 +11,7 @@ ID_PREFIXES: Final[dict[str, str]] = {
     "sprint": "sp",
     "sprint_item": "si",
     "ticket": "t",
+    "schedule": "schedule",
     "idea": "idea",
     "run": "run",
 }

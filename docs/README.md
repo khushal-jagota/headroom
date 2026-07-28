@@ -84,10 +84,11 @@ can never take a decision that belongs to the human.
 
 - **Recovery from a failed run** — an errored ticket is stuck (see
   `worker-orchestration.md`).
-- **An in-server rollover scheduler** — the agent-owned rollover skill is provisioned,
-  while thin morning and afternoon prompts remain external (see `days.md`).
+- **Rollover cutover to internal scheduling** — Panels now has generic internal scheduled
+  Ticket creation, but the planning schedules are not live and the agent-owned rollover
+  path still uses external prompts (see `days.md`).
 
 ---
 
-_Last verified: 2026-07-25 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-28 · Covers the system landscape; each doc carries its own
 code paths._

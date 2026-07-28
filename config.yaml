@@ -5,8 +5,8 @@
 db_path: data/planning.db          # SQLite database location (§13)
 port: 8767                         # server port; bind host is fixed at 127.0.0.1 (§2)
 boundary_hour: 5                   # planning-day boundary, local hour (R1)
-tick_seconds: 60                   # worker-step readiness poll interval (§7.1)
-dispatch_enabled: true             # worker-step readiness loop startup switch (§7.1)
+tick_seconds: 60                   # background schedule/readiness poll interval
+dispatch_enabled: true             # single-owner schedule and readiness loop startup switch
 sse_heartbeat_ms: 15000            # quiet change-stream heartbeat cadence
 dispatcher_lock_path: data/dispatcher.lock   # advisory lock: one readiness poller per machine (§7.1)
 logs_dir: data/logs                # per-run log files (§7.4)

@@ -68,6 +68,17 @@ class _WorkerStepReadinessCheck(Protocol):
 
 @contextmanager
 def _txn(conn: sqlite3.Connection) -> Iterator[None]:
+    if conn.in_transaction:
+        conn.execute("SAVEPOINT ticket_write")
+        try:
+            yield
+        except BaseException:
+            conn.execute("ROLLBACK TO ticket_write")
+            conn.execute("RELEASE ticket_write")
+            raise
+        else:
+            conn.execute("RELEASE ticket_write")
+        return
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield
@@ -76,6 +87,96 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
         raise
     else:
         conn.execute("COMMIT")
+
+
+def _validate_ticket_creation_placement(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str | None,
+    sprint_id: str | None,
+    sprint_item_id: str | None,
+    blocked_by_ticket_ids: list[str] | None,
+) -> None:
+    if sprint_item_id is not None:
+        if (
+            conn.execute("SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)).fetchone()
+            is None
+        ):
+            raise PlannerError(
+                ErrorCode.not_found, "sprint item not found", {"sprint_item_id": sprint_item_id}
+            )
+        if sprint_id is not None:
+            raise PlannerError(
+                ErrorCode.sprint_derived,
+                "sprint_id is derived from the parent item",
+                {"sprint_item_id": sprint_item_id},
+            )
+        if project_id is not None:
+            raise PlannerError(ErrorCode.validation, "project is derived when parented")
+    elif sprint_id is not None:
+        exists = conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone()
+        if exists is None:
+            raise PlannerError(
+                ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id}
+            )
+    if project_id is not None:
+        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
+            )
+    for blocker_ticket_id in blocked_by_ticket_ids or []:
+        if (
+            conn.execute("SELECT 1 FROM tickets WHERE id = ?", (blocker_ticket_id,)).fetchone()
+            is None
+        ):
+            raise PlannerError(
+                ErrorCode.link_invalid,
+                "from_id must be an existing ticket",
+                {"from_id": blocker_ticket_id},
+            )
+
+
+def validate_ticket_creation_context(
+    conn: sqlite3.Connection,
+    *,
+    title: str,
+    title_max_chars: int,
+    worker_type: str,
+    employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
+    project_id: str | None = None,
+    deadline: str | None = None,
+    sprint_id: str | None = None,
+    sprint_item_id: str | None = None,
+    blocked_by_ticket_ids: list[str] | None = None,
+    worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
+) -> None:
+    """Validate a future ordinary Ticket without creating one."""
+    admission.validate_title(title, title_max_chars)
+    admission.validate_deadline(deadline)
+    runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
+    runtime_definitions.worker_type_registry.require(worker_type)
+    launch_defaults = read_worker_launch_defaults_for_ticket_creation(
+        conn, runtime_definitions.worker_type_registry, worker_type
+    )
+    employee_configuration.launch_configuration_for_a_new_ticket(
+        default_backend=launch_defaults.employee_backend,
+        default_model=launch_defaults.employee_launch_model,
+        default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
+        employee_backend=require_conversation_backend_key(
+            employee_backend
+            if employee_backend is not None
+            else launch_defaults.employee_backend
+        ),
+        employee_launch_model=employee_launch_model,
+    )
+    _validate_ticket_creation_placement(
+        conn,
+        project_id=project_id,
+        sprint_id=sprint_id,
+        sprint_item_id=sprint_item_id,
+        blocked_by_ticket_ids=blocked_by_ticket_ids,
+    )
 
 
 def _stage_ownership_overrides_from_json(raw: object) -> dict[str, StageOwnershipMode]:
@@ -700,30 +801,13 @@ def create_ticket(
     )
     fields_json = fields_codec.fields_to_json(initial_fields)
     with _txn(conn):
-        if sprint_item_id is not None:
-            if (
-                conn.execute(
-                    "SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)
-                ).fetchone()
-                is None
-            ):
-                raise PlannerError(
-                    ErrorCode.not_found, "sprint item not found", {"sprint_item_id": sprint_item_id}
-                )
-            if sprint_id is not None:
-                raise PlannerError(
-                    ErrorCode.sprint_derived,
-                    "sprint_id is derived from the parent item",
-                    {"sprint_item_id": sprint_item_id},
-                )
-            if project_id is not None:
-                raise PlannerError(ErrorCode.validation, "project is derived when parented")
-        elif sprint_id is not None:
-            exists = conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone()
-            if exists is None:
-                raise PlannerError(
-                    ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id}
-                )
+        _validate_ticket_creation_placement(
+            conn,
+            project_id=project_id,
+            sprint_id=sprint_id,
+            sprint_item_id=sprint_item_id,
+            blocked_by_ticket_ids=blocked_by_ticket_ids,
+        )
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
