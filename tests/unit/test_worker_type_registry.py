@@ -69,6 +69,7 @@ def test_worker_profiles_declare_complete_employee_defaults() -> None:
         "exploration": ("codex", "gpt-5.6-sol", "medium"),
         "initiative_planning": ("codex", "gpt-5.6-sol", "medium"),
         "product_design": ("claude", "opus[1m]", "high"),
+        "planning-day": ("claude", "opus[1m]", "medium"),
     }
 
 
@@ -397,6 +398,7 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         "exploration",
         "initiative_planning",
         "product_design",
+        "planning-day",
     )
     coding = PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
     assert coding == {
@@ -581,6 +583,7 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
         "exploration.py",
         "initiative_planning.py",
         "new_worker.py",
+        "planning_day.py",
         "product_design.py",
         "registry.py",
     }

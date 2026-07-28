@@ -20,11 +20,13 @@ Tickets have a Worker type that sets their stages and worker. Worker types inclu
 `exploration` (a worker for exploring something undefined and making it clearer),
 `initiative_planning` (working out the shared top-level how for a confirmed direction
 before creating its downstream Tickets), and `product_design` (designing holistic product
-flows and implementation-ready interactive artifacts). New Worker types are added here as
-they ship.
+flows and implementation-ready interactive artifacts), and `planning-day` (planning the
+morning's Day with the user). New Worker types are added here as they ship.
 
-Ticket workers shape a Ticket through **Kickoff → Success → Approach → Plan →
-Implementation → Closeout → Done**, filling one canonical field at each step.
+Each Worker type defines its own ordered lifecycle and one canonical field for each
+non-terminal Stage. For example, coding uses **Kickoff → Success → Approach → Plan →
+Implementation → Closeout → Done**, while `planning-day` uses **Kickoff → Gather →
+Planning → Closeout → Done**.
 
 ## Communication
 
@@ -37,7 +39,8 @@ for exactly what they are, avoid speculative machinery, and preserve direct user
 
 A ticket can own durable work products such as HTML, images, Markdown documents, and other files. These live in Panels-managed ticket storage — by default under `data/files/tickets/<ticket-id>/...` — and appear in ticket Markdown through ordinary links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
 
-Artifacts complement the ticket record. Kickoff, success, approach, plan, implementation, closeout, recaps, and notes remain concise canonical Markdown, with links to richer work when it helps.
+Artifacts complement the ticket record. The Worker type's gated fields, recap, and notes
+remain concise canonical Markdown, with links to richer work when it helps.
 
 ## Rollover
 
