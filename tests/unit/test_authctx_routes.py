@@ -377,6 +377,16 @@ def test_planning_sprint_worker_can_shape_item_and_sprint_but_not_delete(
             },
             headers=headers,
         )
+        created_item = client.post(
+            "/api/items",
+            json={
+                "title": "New planned outcome",
+                "priority": "P1",
+                "project_id": "project_vylo",
+                "sprint_id": sid,
+            },
+            headers=headers,
+        )
         populated = client.post(
             f"/api/items/{iid}/tickets",
             json={"ticket_id": child},
@@ -394,6 +404,9 @@ def test_planning_sprint_worker_can_shape_item_and_sprint_but_not_delete(
     assert sprint.json()["primary_bet"] == "One clear bet"
     assert sprint.json()["date_end"] == "2026-07-15"
     assert created_sprint.status_code == 200, created_sprint.json()
+    assert created_item.status_code == 200, created_item.json()
+    assert created_item.json()["title"] == "New planned outcome"
+    assert created_item.json()["sprint_id"] == sid
     assert populated.status_code == 200, populated.json()
     assert wrong.json()["error"]["code"] == "agent_forbidden"
     assert deleted.json()["error"]["code"] == "agent_forbidden"
