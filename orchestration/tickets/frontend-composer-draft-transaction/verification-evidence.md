@@ -134,3 +134,30 @@ composer extraction remains required.
 
 The canonical `./verify` was not run. The frontend architecture program reserves one run
 for its settled final tree.
+
+## Closeout merge
+
+Before publication, `origin/staging` advanced from `8c13d666` to `d1a79b17` with the
+Ticket-page redesign. Its production source did not overlap the composer, but both
+branches had rebuilt `web/dist`. Current `origin/staging` was merged, the generated
+bundle conflict was resolved by one build from the combined source, and the combined
+tree emitted:
+
+```text
+✓ 554 modules transformed.
+dist/assets/index-C8ABQvyo.css   26.08 kB │ gzip:   4.20 kB
+dist/assets/index--u397DQq.js   485.01 kB │ gzip: 152.74 kB
+✓ built in 1.25s
+```
+
+The combined tree then passed:
+
+```text
+npm --prefix web run check
+svelte-check found 0 errors and 0 warnings
+
+.venv/bin/pytest -q \
+  tests/e2e/test_dev_conversation_pane.py \
+  tests/e2e/test_conversation_three_states.py
+100% passed
+```

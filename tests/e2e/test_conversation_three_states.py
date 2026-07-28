@@ -51,7 +51,7 @@ REST_WAITING = "[data-conversation-rest-waiting]"
 THREAD = "[data-conversation-thread]"
 # A piece of the ticket itself: on the page, above where the layer sits, and nothing
 # happens when it is clicked except what the layer does about it.
-THE_TICKET_BEHIND = '[data-screen="ticket"] [data-ticket-status]'
+THE_TICKET_BEHIND = '[data-screen="ticket"] [data-ticket-identity]'
 THE_TICKETS_OWN_SCROLLER = '[data-screen="ticket"] .ticket-doc'
 
 # How many rows the seeded conversation puts on the page before anything else is added.

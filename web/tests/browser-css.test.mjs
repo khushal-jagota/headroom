@@ -106,9 +106,7 @@ def assert_brand(browser, mobile):
         page = context.new_page()
         mount(page, """
           <span class="nav-badge">2</span>
-          <span class="ticket-status-display ticket-status-display--attention">
-            <span class="ticket-status-dot"></span>awaiting approval
-          </span>
+          <span class="ticket-stage-run ticket-stage-run--attention">awaiting approval</span>
           <span class="chip chip--pending-proposal">pending proposal</span>
           <div class="approval-proposal-shell">
             <button class="button button--primary" type="button">Approve</button>
@@ -143,7 +141,7 @@ def assert_brand(browser, mobile):
         approve.focus()
         assert colors(page, ".button--primary")["outlineColor"] == "rgb(154, 173, 210)"
         assert colors(page, ".markdown a")["color"] == "rgb(154, 173, 210)"
-        assert colors(page, ".ticket-status-display--attention")["color"] == "rgb(154, 173, 210)"
+        assert colors(page, ".ticket-stage-run--attention")["color"] == "rgb(154, 173, 210)"
         pending = colors(page, ".chip--pending-proposal")
         assert pending["backgroundColor"] == "rgb(34, 42, 56)"
         assert pending["color"] == "rgb(220, 230, 248)"
