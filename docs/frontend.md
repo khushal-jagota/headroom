@@ -72,18 +72,25 @@ One screen per part of the system:
   view open. At 960px or less, selecting a ticket opens its standalone
   `#/ticket/<ticket-id>` page, and selecting Chief of Staff opens the standalone
   `#/chief` page.
-- **Ticket** — the whole story of one piece of work: exceptional priority above a
-  serif title, Copy beside that title, an operating line (status, current Stage owner,
-  and take-over/release), then a quieter planning line (ordinary priority, due, project,
-  and sprint). Empty scheduling values are add affordances rather than blank facts, and
-  Worker type is not repeated in the header. The
-  exact backend Worker failure reason directly below that line when one exists, the
-  leash written as one sentence, the recap, then the spine of stages — which stages that
-  spine shows is the Ticket's Worker type's, derived from the served manifest (see below and
-  `worker-types.md`); the kickoff user note sits first in that spine, collapsed. The one raised ask surface, live status markers, the
-  worker conversation in serif along the bottom (see below), and a copy button that produces
-  a plain-text block for pasting anywhere. During pristine Kickoff, the facts line also shows a restrained
-  **Worker** pill whose choices come only from the backends this machine actually has —
+- **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
+  priority, sprint, due date, and project above a serif title on its own row. Project
+  appears when there is no Sprint Item; empty scheduling values are add affordances
+  rather than blank facts. The operating line writes the leash as one readable sentence
+  beside quiet **Take over** or **Release** and **Copy** actions. Direct blockers get
+  their own **Blocked by** line in the masthead, and the exact backend Worker failure
+  reason remains visible when one exists. The inline-editable recap is always open on a
+  recessed surface, without another label.
+
+  The stages and their workflow remain the Ticket's Worker type's, derived from the
+  served manifest (see below and `worker-types.md`); the kickoff user note sits first in
+  that spine, collapsed. The current Stage mark speaks without a second status pill.
+  Its summary adds words only where the mark would otherwise be ambiguous:
+  **you're on it** for user-owned or taken-over work, with **Release**, and
+  **awaiting approval** for a proposal. Running, completed, and upcoming marks need no
+  extra label. Stage bodies, editing and approval behavior, and the worker conversation
+  in serif along the bottom remain in place. **Copy** still produces a plain-text block
+  for pasting anywhere. During pristine Kickoff, the approval context also shows a restrained
+  **Worker** picker whose choices come only from the backends this machine actually has —
   the same answer the conversation composer's model and effort pickers read. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the

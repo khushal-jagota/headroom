@@ -4,7 +4,7 @@
   import { fetchText } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import { PRIORITIES, fieldSlot, labelize, ticketStatusText } from "../lib/ui";
+  import { PRIORITIES, fieldSlot, labelize } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -24,13 +24,10 @@
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
-  import Button from "../components/Button.svelte";
-  import Disclosure from "../components/Disclosure.svelte";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
   import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
-  import Pill from "../components/Pill.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
 
@@ -64,13 +61,6 @@
     )
   );
   const emptyTicketFieldText = "Not written yet.";
-
-  const stageOwnerOptions = [
-    { value: "", label: "default" },
-    { value: "worker", label: "worker" },
-    { value: "user", label: "user" },
-    { value: "paired", label: "paired" }
-  ];
 
   let headerError = $state<unknown>(null);
   let copied = $state(false);
@@ -211,10 +201,6 @@
     return detail.stage_ownership_overrides?.[detail.stage] ?? null;
   }
 
-  function currentStageOwnerControlValue(detail: TicketDetail): "" | StageOwnershipMode {
-    return currentStageOwnershipOverride(detail) ?? "";
-  }
-
   function hasExplicitCurrentStageUserOverride(detail: TicketDetail): boolean {
     return currentStageOwnershipOverride(detail) === "user";
   }
@@ -223,14 +209,18 @@
     return detail.ticket_status === "needs_user";
   }
 
-  function canEditCurrentStageOwner(detail: TicketDetail): boolean {
-    return detail.default_stage_ownership_mode !== null && detail.effective_stage_ownership_mode !== null;
+  function userOwnsCurrentStage(detail: TicketDetail): boolean {
+    return (
+      detail.effective_stage_ownership_mode === "user" ||
+      hasExplicitCurrentStageUserOverride(detail) ||
+      isWaitingForUser(detail)
+    );
   }
 
-  function saveStageOwner(detail: TicketDetail, ownershipMode: string): Promise<unknown> {
+  function saveStageOwner(detail: TicketDetail, ownershipMode: StageOwnershipMode): Promise<unknown> {
     return mutateJson(
       `/api/tickets/${stableId}/stage-ownership/${encodeURIComponent(detail.stage)}`,
-      { method: "PUT", body: { ownership_mode: ownershipMode || null } }
+      { method: "PUT", body: { ownership_mode: ownershipMode } }
     );
   }
 
@@ -288,49 +278,48 @@
   }
 
   async function takeover(detail: TicketDetail): Promise<void> {
-    const action = hasExplicitCurrentStageUserOverride(detail) || isWaitingForUser(detail)
-      ? "release"
-      : "takeover";
     try {
-      await mutateJson(`/api/tickets/${stableId}/${action}`, { method: "POST" });
+      if (
+        userOwnsCurrentStage(detail) &&
+        !hasExplicitCurrentStageUserOverride(detail) &&
+        !isWaitingForUser(detail)
+      ) {
+        await saveStageOwner(detail, "worker");
+      } else {
+        const action = userOwnsCurrentStage(detail) ? "release" : "takeover";
+        await mutateJson(`/api/tickets/${stableId}/${action}`, { method: "POST" });
+      }
     } catch (err) {
       headerError = err;
     }
   }
 
   function sprintLabel(sprintId: string | null | undefined): string {
-    if (!sprintId) return "no sprint";
+    if (!sprintId) return "";
     if (sprintId === currentSprint.data?.sprint?.id) return "current";
     return sprints.data?.sprints?.find((sprint) => sprint.id === sprintId)?.name || sprintId;
+  }
+
+  function formatDeadline(deadline: string | null | undefined): string {
+    if (!deadline) return "";
+    const [year, month, day] = deadline.split("-").map(Number);
+    if (!year || !month || !day) return deadline;
+    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
+      new Date(year, month - 1, day)
+    );
   }
 
   function priorityNeedsEmphasis(priority: string): boolean {
     return priority === "P0" || priority === "P1";
   }
 
-  function ticketPriorityAlertText(priority: string): string {
-    return priority === "P0" ? "P0 · critical" : "P1 · urgent";
-  }
-
-  function displayedTicketStatus(detail: TicketDetail): string {
-    if (detail.stage === "done") return "done";
-    if (detail.blocked || detail.ticket_status === "blocked") return "blocked";
-    const labels: Record<string, string> = {
-      empty: "ready",
-      agent: "agent working",
-      user: "user working",
-      paired: "paired",
-      awaiting_approval: "awaiting approval",
-      needs_user: "needs user",
-      errored: "errored"
-    };
-    return labels[detail.ticket_status || "empty"] || ticketStatusText(detail.ticket_status || "empty");
-  }
-
-  function displayedTicketStatusKey(detail: TicketDetail): string {
-    if (detail.stage === "done") return "done";
-    if (detail.blocked) return "blocked";
-    return detail.ticket_status || "empty";
+  function currentStageRunLabel(detail: TicketDetail): string | null {
+    if (detail.blocked || detail.ticket_status === "blocked") return null;
+    if (detail.ticket_status === "awaiting_approval") return "awaiting approval";
+    if (userOwnsCurrentStage(detail)) {
+      return "you're on it";
+    }
+    return null;
   }
 
   function conversationEmployeeLabel(detail: TicketDetail): string {
@@ -338,26 +327,13 @@
     return /worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`;
   }
 
-  function hasBlockerRows(detail: TicketDetail): boolean {
-    const summary = detail.blocker_summary;
-    return Boolean(summary?.blocked_by.length);
-  }
-
-  // The Kickoff approval card carries a context row (Worker configuration and
-  // direct blockers) while kickoff is the gating approval. The blocker entries
-  // then live in the card, and only then is the standalone section suppressed —
-  // both sites share kickoffCardShowsBlockers, so blockers always render in
-  // exactly one place.
+  // The Kickoff approval card still carries Worker configuration while that
+  // choice is editable. Direct blockers belong to the Ticket itself, so they
+  // always stay in the masthead instead of moving into a stage card.
   let kickoffCardShowsContextRow = $derived(
     gatingFieldFor(lc, ticket.data?.stage ?? "") === "kickoff" &&
       Boolean(ticket.data?.fields.kickoff.proposal) &&
-      Boolean(
-        ticket.data?.employee_configuration_editable ||
-          ticket.data?.blocker_summary?.blocked_by.length
-      )
-  );
-  let kickoffCardShowsBlockers = $derived(
-    kickoffCardShowsContextRow && Boolean(ticket.data?.blocker_summary?.blocked_by.length)
+      Boolean(ticket.data?.employee_configuration_editable)
   );
 
   async function removeBlocker(blockerTicketId: string): Promise<void> {
@@ -397,9 +373,14 @@
            belongs to the conversation rather than to the document above it. -->
       <main class="ticket-doc" onclickcapture={dropConversationBackOneState}>
         <header class="ticket-head">
-          {#if priorityNeedsEmphasis(detail.priority)}
-            <span class="ticket-priority-alert" data-priority-alert={detail.priority}>
-              {ticketPriorityAlertText(detail.priority)}
+          <div class="ticket-identity" data-ticket-identity>
+            <span
+              class="ticket-identity-fact ticket-identity-priority"
+              class:ticket-identity-priority--urgent={priorityNeedsEmphasis(detail.priority)}
+              data-priority-control
+              data-priority-alert={priorityNeedsEmphasis(detail.priority) ? detail.priority : undefined}
+            >
+              {detail.priority}
               <select
                 aria-label="Ticket priority"
                 value={detail.priority}
@@ -414,7 +395,85 @@
                 {/each}
               </select>
             </span>
-          {/if}
+            <span class="ticket-identity-group">
+              <span class="ticket-identity-separator" aria-hidden="true">·</span>
+              <span
+                class="ticket-identity-fact"
+                class:ticket-identity-add={!detail.sprint_item_id}
+                data-sprint-item-control
+              >
+                {#if detail.sprint_item_id}
+                  <span class="ticket-identity-key">sprint</span>
+                  {sprintLabel(detail.effective_sprint_id)}
+                {:else}
+                  + add
+                {/if}
+                <select
+                  aria-label={detail.sprint_item_id ? "Ticket sprint placement" : "Add ticket sprint placement"}
+                  value={detail.sprint_item_id || ""}
+                  onchange={(event) => {
+                    const sprintItemId = event.currentTarget.value;
+                    if (sprintItemId !== (detail.sprint_item_id || "")) {
+                      void saveSprintItemPlacement(detail, sprintItemId);
+                    }
+                  }}
+                >
+                  {#each sprintItemOptions as option}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              </span>
+            </span>
+            <span class="ticket-identity-group">
+              <span class="ticket-identity-separator" aria-hidden="true">·</span>
+              <span
+                class="ticket-identity-fact"
+                class:ticket-identity-add={!detail.deadline}
+                data-deadline-control
+              >
+                {#if detail.deadline}
+                  <span class="ticket-identity-key">due</span>
+                  {formatDeadline(detail.deadline)}
+                {:else}
+                  + add
+                {/if}
+                <input
+                  class="ticket-identity-input"
+                  type="date"
+                  aria-label={detail.deadline ? "Ticket due date" : "Add ticket due date"}
+                  data-deadline
+                  value={detail.deadline || ""}
+                  onchange={(event) => void patch({ deadline: event.currentTarget.value || null })}
+                />
+              </span>
+            </span>
+            {#if detail.sprint_item_id === null || detail.sprint_item_id === undefined}
+              <span class="ticket-identity-group">
+                <span class="ticket-identity-separator" aria-hidden="true">·</span>
+                <span
+                  class="ticket-identity-fact"
+                  class:ticket-identity-add={!detail.project_id}
+                  data-project-control
+                >
+                  {#if detail.project_id}
+                    <span class="ticket-identity-key">project</span>
+                    {detail.project}
+                  {:else}
+                    + add
+                  {/if}
+                  <select
+                    aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
+                    value={detail.project_id || ""}
+                    onchange={(event) => void patch({ project_id: event.currentTarget.value || null })}
+                  >
+                    {#each projectOptions as option}
+                      <option value={option.value}>{option.label}</option>
+                    {/each}
+                  </select>
+                </span>
+              </span>
+            {/if}
+          </div>
           <div class="ticket-title-row">
             <div class="ticket-title">
               <InlineEdit
@@ -423,122 +482,59 @@
                 onSave={(raw) => patch({ title: raw })}
               />
             </div>
-            <button class="ticket-act ticket-copy" data-copy="" onclick={() => void copyTicket()}>
-              {copied ? "Copied" : "Copy"}
-            </button>
           </div>
           <div class="ticket-operating">
-            <span
-              class="ticket-status-display"
-              class:ticket-status-display--attention={
-                ["awaiting_approval", "needs_user"].includes(detail.ticket_status || "empty")
-              }
-              class:ticket-status-display--error={
-                displayedTicketStatusKey(detail) === "blocked" ||
-                  displayedTicketStatusKey(detail) === "errored"
-              }
-              class:ticket-status-display--done={displayedTicketStatusKey(detail) === "done"}
-              data-ticket-status={displayedTicketStatusKey(detail)}
-            >
-              <span class="ticket-status-dot"></span>{displayedTicketStatus(detail)}
-            </span>
-            {#if canEditCurrentStageOwner(detail)}
-              <span
-                data-stage-owner
-                data-owner-mode={currentStageOwnerControlValue(detail) || "default"}
-                data-default-owner={detail.default_stage_ownership_mode || ""}
-                data-effective-owner={detail.effective_stage_ownership_mode || ""}
-              >
-                <EnumPill
-                  keyLabel="owner"
-                  value={currentStageOwnerControlValue(detail)}
-                  options={stageOwnerOptions}
-                  onChange={(ownershipMode) => {
-                    if (ownershipMode !== currentStageOwnerControlValue(detail)) {
-                      void saveStageOwner(detail, ownershipMode);
-                    }
-                  }}
-                />
-              </span>
+            {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
+              <div class="ticket-leash">
+                approved until
+                <span class="ticket-leash-sel" data-scope-ceiling>
+                  <EnumPill
+                    value={detail.ceiling}
+                    options={ceilingOptionsFor(lc, detail.stage)}
+                    onChange={(ceiling) => void saveScope({ ceiling, at_cap: detail.at_cap })}
+                  />
+                </span>
+                then
+                <span class="ticket-leash-sel" data-scope-atcap>
+                  <EnumPill
+                    value={detail.at_cap}
+                    options={[{ value: "stop", label: "stop" }, { value: "propose", label: "Continue" }]}
+                    onChange={(at_cap) => void saveScope({ ceiling: detail.ceiling, at_cap })}
+                  />
+                </span>
+              </div>
             {/if}
-            {#if detail.stage !== "needs_kickoff" && canEditCurrentStageOwner(detail)}
-              <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
-                {hasExplicitCurrentStageUserOverride(detail) || isWaitingForUser(detail) ? "Release" : "Take over"}
+            <span class="ticket-operating-actions">
+              {#if detail.stage !== "needs_kickoff" && detail.stage !== "done"}
+                <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
+                  {userOwnsCurrentStage(detail) ? "Release" : "Take over"}
+                </button>
+              {/if}
+              <button class="ticket-act ticket-copy" data-copy="" onclick={() => void copyTicket()}>
+                {copied ? "Copied" : "Copy"}
               </button>
-            {/if}
-          </div>
-          <div class="ticket-planning">
-            {#if !priorityNeedsEmphasis(detail.priority)}
-              <span data-priority-control>
-                <EnumPill
-                  value={detail.priority}
-                  options={PRIORITIES.map((priority) => ({ value: priority, label: priority }))}
-                  onChange={(priority) => {
-                    if (priority !== detail.priority) void patch({ priority });
-                  }}
-                />
-              </span>
-            {/if}
-            <Pill
-              keyLabel={detail.deadline ? "due" : ""}
-              class={!detail.deadline ? "ticket-planning-add" : ""}
-              data-deadline-control
-            >
-              {detail.deadline || "+ due"}
-              <input
-                class="ticket-deadline-input"
-                type="date"
-                aria-label={detail.deadline ? "Ticket due date" : "Add ticket due date"}
-                data-deadline
-                value={detail.deadline || ""}
-                onchange={(event) => void patch({ deadline: event.currentTarget.value || null })}
-              />
-            </Pill>
-            {#if detail.sprint_item_id === null || detail.sprint_item_id === undefined}
-              <span data-project-control>
-                <EnumPill
-                  value={detail.project_id || ""}
-                  options={projectOptions}
-                  onChange={(project_id) => void patch({ project_id: project_id || null })}
-                />
-              </span>
-            {/if}
-            <span class:ticket-planning-add={!detail.sprint_item_id} data-sprint-item-control>
-              <EnumPill
-                keyLabel="placement"
-                value={detail.sprint_item_id || ""}
-                options={sprintItemOptions}
-                onChange={(sprintItemId) => {
-                  if (sprintItemId !== (detail.sprint_item_id || "")) {
-                    void saveSprintItemPlacement(detail, sprintItemId);
-                  }
-                }}
-              />
             </span>
           </div>
+          {#if detail.blocker_summary?.blocked_by.length}
+            <div class="ticket-blockers" data-blocker-summary>
+              <span class="ticket-blocker-heading">Blocked by</span>
+              {#each detail.blocker_summary.blocked_by as blocker}
+                <span class="ticket-blocker-chip" data-blocker-chip={blocker.ticket_id}>
+                  <a class="ticket-blocker-link" href={blocker.href}>{blocker.title}</a>
+                  <button
+                    type="button"
+                    class="ticket-blocker-remove"
+                    data-remove-blocker={blocker.ticket_id}
+                    aria-label={`Remove blocker ${blocker.title}`}
+                    onclick={() => void removeBlocker(blocker.ticket_id)}
+                  >×</button>
+                </span>
+              {/each}
+            </div>
+          {/if}
           {#if detail.backend_error}
             <div class="ticket-backend-error" data-backend-error role="alert">
               {detail.backend_error}
-            </div>
-          {/if}
-          {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
-            <div class="ticket-leash">
-              approved until
-              <span class="ticket-leash-sel" data-scope-ceiling>
-                <EnumPill
-                  value={detail.ceiling}
-                  options={ceilingOptionsFor(lc, detail.stage)}
-                  onChange={(ceiling) => void saveScope({ ceiling, at_cap: detail.at_cap })}
-                />
-              </span>
-              then
-              <span class="ticket-leash-sel" data-scope-atcap>
-                <EnumPill
-                  value={detail.at_cap}
-                  options={[{ value: "stop", label: "stop" }, { value: "propose", label: "Continue" }]}
-                  onChange={(at_cap) => void saveScope({ ceiling: detail.ceiling, at_cap })}
-                />
-              </span>
             </div>
           {/if}
           {#if headerError}<ErrorLine error={headerError} />{/if}
@@ -546,7 +542,7 @@
 
         <div class="ticket-col">
           <div class="ticket-recap" data-recap>
-            <Disclosure title="Recap" variant="support" defaultOpen={true} data-content-section="recap">
+            <div class="ticket-recap-inner" data-content-section="recap">
               <InlineEdit
                 value={detail.recap}
                 markdown
@@ -558,31 +554,8 @@
                     body: { body: raw }
                   })}
               />
-            </Disclosure>
+            </div>
           </div>
-
-          {#if hasBlockerRows(detail) && !kickoffCardShowsBlockers}
-            {@const blockerSummary = detail.blocker_summary}
-            <section class="ticket-blockers" data-blocker-summary>
-              <div class="ticket-blocker-group" data-blocker-group="blocked-by">
-                <div class="ticket-blocker-heading">Blocked by</div>
-                {#each blockerSummary?.blocked_by || [] as blocker}
-                  <div class="ticket-blocker-row">
-                    <a class="ticket-blocker-link" href={blocker.href}>
-                      <span class="ticket-blocker-title">{blocker.title}</span>
-                    </a>
-                    <button
-                      type="button"
-                      class="ticket-act"
-                      data-remove-blocker={blocker.ticket_id}
-                      aria-label={`Remove blocker ${blocker.title}`}
-                      onclick={() => void removeBlocker(blocker.ticket_id)}
-                    >Remove</button>
-                  </div>
-                {/each}
-              </div>
-            </section>
-          {/if}
 
           <div class="fields">
             {#snippet kickoffContextRow()}
@@ -594,20 +567,6 @@
                   employeeLaunchReasoningEffort={detail.employee_launch_reasoning_effort}
                   onSave={saveEmployeeConfiguration}
                 />
-              {/if}
-              {#if kickoffCardShowsBlockers}
-                {#each detail.blocker_summary?.blocked_by || [] as blocker}
-                  <span class="pill pill--blocker" data-blocker-chip={blocker.ticket_id}>
-                    <span class="pill-key">blocked by</span>
-                    <a href={blocker.href}>{blocker.title}</a>
-                    <Button
-                      variant="quiet"
-                      data-remove-blocker={blocker.ticket_id}
-                      aria-label={`Remove blocker ${blocker.title}`}
-                      onclick={() => void removeBlocker(blocker.ticket_id)}
-                    >Remove</Button>
-                  </span>
-                {/each}
               {/if}
             {/snippet}
             {#each lc?.fieldIds ?? [] as name}
@@ -621,6 +580,11 @@
                 ticketStage={detail.stage}
                 ceiling={detail.ceiling}
                 emptyText={emptyTicketFieldText}
+                runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
+                runLabelAttention={stageState === "current-awaiting-approval"}
+                onRelease={currentStageRunLabel(detail) === "you're on it"
+                  ? () => takeover(detail)
+                  : undefined}
                 contextRow={name === "kickoff" && kickoffCardShowsContextRow
                   ? kickoffContextRow
                   : undefined}
