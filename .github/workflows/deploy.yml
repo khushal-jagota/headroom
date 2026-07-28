@@ -56,6 +56,13 @@ jobs:
             --health-url "http://127.0.0.1:8767/api/health" \
             --service-manager systemctl \
             --service-name panels-live.service
+      - name: Provision production agent skills
+        run: |
+          "$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills \
+            --database-parent "$HOME/Deployments/Panels/current/data" \
+            --hermes-home "$HOME/.hermes" \
+            --codex-home "$HOME/.codex" \
+            --claude-home "$HOME/.claude"
       - name: Remove runner-temporary deployment state
         if: always()
         run: |

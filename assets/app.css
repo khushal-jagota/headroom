@@ -274,12 +274,20 @@ textarea {
   width: var(--space-2);
   height: var(--space-2);
   border-radius: var(--radius-pill);
-  background: var(--text-faintest);
+  background: var(--accent-done);
 }
 
-.vps-status-trigger[data-state="healthy"] .vps-status-mark { background: var(--accent-done); }
-.vps-status-trigger[data-state="warning"] .vps-status-mark { background: var(--accent-bright); }
-.vps-status-trigger[data-state="critical"] .vps-status-mark { background: var(--accent-error); }
+.vps-status-trigger[data-state="reconnecting"] {
+  color: var(--text-faint);
+}
+
+.vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
+  background: transparent;
+  border: var(--border-hairline) solid var(--text-faintest);
+  border-top-color: var(--text-muted);
+  box-sizing: border-box;
+  animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
+}
 
 .vps-status-popover {
   position: absolute;
@@ -330,38 +338,9 @@ textarea {
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
 
-.shell-connection {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  white-space: nowrap;
-}
-
-.shell-connection-mark {
-  flex: none;
-  width: var(--space-2);
-  height: var(--space-2);
-  border-radius: var(--radius-pill);
-  background: var(--accent-done);
-}
-
-.shell-connection[data-state="reconnecting"] {
-  color: var(--text-faint);
-}
-
-.shell-connection[data-state="reconnecting"] .shell-connection-mark {
-  background: transparent;
-  border: var(--border-hairline) solid var(--text-faintest);
-  border-top-color: var(--text-muted);
-  box-sizing: border-box;
-  animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
-  .shell-connection[data-state="reconnecting"] .shell-connection-mark {
+  .vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
     animation: none;
   }
 }
@@ -384,7 +363,7 @@ textarea {
   }
 
   .shell-presence {
-    flex: none;
+    display: none;
   }
 }
 
@@ -452,21 +431,15 @@ textarea {
   font-size: var(--type-sm);
 }
 
-.agents-section-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin: var(--space-6) 0 var(--space-3);
-  padding-bottom: var(--space-2);
-  border-bottom: var(--border-hairline) solid var(--border-color);
+.agents-section-title {
+  margin: 0;
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
 }
 
-.agents-index-section:first-of-type .agents-section-head {
-  margin-top: 0;
-}
-
-.agents-section-head h2,
 .worker-skill-head h2 {
   margin: 0;
   color: var(--text-strong);
@@ -474,103 +447,70 @@ textarea {
   line-height: 1.2;
 }
 
-.agents-section-head > span {
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
+.agents-index-section + .agents-index-section {
+  margin-top: var(--space-7);
 }
 
-.agent-card {
+.agents-destination-list {
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--surface-raised);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-md);
+  margin-top: var(--space-2);
 }
 
-.agent-card-list {
+.agents-destination {
+  min-width: 0;
+  min-height: var(--space-7);
   display: grid;
-  gap: var(--space-3);
-}
-
-.agent-card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.agent-card-head h3 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--type-md);
-}
-
-.agent-card-head > span {
-  color: var(--accent-bright);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-}
-
-.agent-card > p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: var(--type-sm);
-}
-
-.agent-card-foot {
-  display: flex;
-  flex-wrap: wrap;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  color: inherit;
+  text-decoration: none;
 }
 
-.agent-chip {
-  padding: 2px var(--space-2);
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-pill);
+.agents-destination + .agents-destination {
+  margin-top: var(--space-1);
 }
 
-.agent-chip b {
+.agents-destination-copy {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.agents-destination-name {
   color: var(--text-default);
+  font-size: var(--type-md);
   font-weight: 600;
 }
 
-.agent-configure-link {
-  margin-left: auto;
-  color: var(--accent-bright);
+.agents-destination-description {
+  color: var(--text-faint);
   font-size: var(--type-sm);
-  text-decoration: none;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
 }
 
-.workers-list {
-  display: grid;
-  border-top: var(--border-hairline) solid var(--border-color);
+.agents-destination-arrow {
+  color: var(--text-faintest);
+  transition: color var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
 }
 
-.workers-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: var(--space-4);
-  padding: var(--space-3) 0;
-  color: inherit;
-  text-decoration: none;
-  border-bottom: var(--border-hairline) solid var(--border-color);
+.agents-destination:hover .agents-destination-name,
+.agents-destination:hover .agents-destination-arrow {
+  color: var(--accent-bright);
 }
 
-.workers-row:hover .workers-row-title {
-  color: var(--text-strong);
+.agents-destination:hover .agents-destination-arrow {
+  transform: translateX(2px);
 }
 
-.workers-row-main,
+.agents-destination:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
 .worker-detail-facts {
   min-width: 0;
   display: flex;
@@ -579,32 +519,12 @@ textarea {
   gap: var(--space-2);
 }
 
-.workers-row-title {
-  color: var(--text-default);
-  font-weight: 600;
-}
-
-.workers-row-id,
-.workers-row-meta,
-.workers-row-count,
 .worker-detail-facts,
 .worker-stage-id,
 .worker-row-error {
   color: var(--text-faint);
   font-family: var(--font-mono);
   font-size: var(--type-xs);
-}
-
-.workers-row-meta {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workers-row-count {
-  color: var(--text-muted);
-  white-space: nowrap;
 }
 
 .worker-launch-defaults {
@@ -825,24 +745,13 @@ textarea {
   }
 
   .agents-page-head,
-  .agents-section-head,
-  .agent-card,
+  .agents-index-section,
   .agents-detail-head,
   .agents-back,
   .worker-skill,
   .worker-launch-defaults {
     padding-left: var(--space-3);
     padding-right: var(--space-3);
-  }
-
-  .workers-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-2);
-    padding: var(--space-3);
-  }
-
-  .workers-row-meta {
-    grid-column: 1 / -1;
   }
 
   .agents-detail-head {
@@ -2470,6 +2379,10 @@ select {
   margin-bottom: var(--space-2);
 }
 
+.review-needs-user-label {
+  color: var(--accent-bright);
+}
+
 .review-context-recap {
   font-family: var(--font-serif);
   font-size: var(--type-serif-md);
@@ -3715,31 +3628,86 @@ select {
   padding: var(--space-6) var(--space-7) 0;
 }
 
-/* The title speaks — serif display size, the system's own voice. */
+/* Exceptional priority interrupts the scan once, above the title. It is still the live
+ * priority picker; the transparent select keeps the eyebrow quiet until it is used. */
+.ticket-priority-alert {
+  position: relative;
+  display: inline-flex;
+  margin-bottom: var(--space-2);
+  color: var(--accent-error);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.ticket-priority-alert select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Title and its utility are one row. Copy belongs to the thing it copies rather than to
+ * the Ticket's facts. */
+.ticket-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+
 .ticket-title {
+  flex: 1;
+  min-width: 0;
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
-  margin-bottom: var(--space-3);
 }
 
-/* The facts line: status display, the enum pills, then quiet text actions pushed
- * right by a flexible gap. One line, wraps if it must. */
-.ticket-facts {
+/* Operating state is the first line under the title. Status, ownership, and the action
+ * that changes ownership stay together when the line wraps. */
+.ticket-operating {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
-  padding-top: var(--space-3);
+  margin-top: var(--space-4);
   font-size: var(--type-xs);
 }
 
-/* Status display — a dot + the status word, quiet by default; brand accent only when the
- * status means "needs you" (awaiting approval). Running conveys itself through the
- * existing marker chips, not this label. */
+/* Planning facts are useful and editable, but quieter than the operating state above.
+ * Empty scheduling values are add affordances, never blank pills. */
+.ticket-planning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--type-xs);
+}
+
+.ticket-planning .pill {
+  background: transparent;
+  color: var(--text-faint);
+}
+
+.ticket-planning .pill:hover {
+  color: var(--text-strong);
+  background: var(--surface-overlay);
+}
+
+.ticket-planning-add .pill,
+.pill.ticket-planning-add {
+  color: var(--text-faintest);
+}
+
+/* Status display — dot + plain-language state, with semantic colour only when attention,
+ * failure, or completion deserves it. */
 .ticket-status-display {
   display: inline-flex;
   align-items: center;
@@ -3764,6 +3732,22 @@ select {
   background: var(--accent-bright);
 }
 
+.ticket-status-display--error {
+  color: var(--accent-error);
+}
+
+.ticket-status-display--error .ticket-status-dot {
+  background: var(--accent-error);
+}
+
+.ticket-status-display--done {
+  color: var(--accent-done);
+}
+
+.ticket-status-display--done .ticket-status-dot {
+  background: var(--accent-done);
+}
+
 .ticket-backend-error {
   margin-top: var(--space-3);
   color: var(--accent-error);
@@ -3772,12 +3756,7 @@ select {
   white-space: pre-wrap;
 }
 
-/* A flexible gap shoves the text actions to the right end of the facts line. */
-.ticket-facts-gap {
-  flex: 1;
-}
-
-/* Take over / Copy — quiet text actions, not pills. */
+/* Take over / Release and Copy are quiet text actions, not facts or pills. */
 .ticket-act {
   background: none;
   border: 0;
@@ -3791,6 +3770,21 @@ select {
 
 .ticket-act:hover {
   color: var(--text-default);
+}
+
+.ticket-copy {
+  flex: none;
+  margin-top: var(--space-1);
+}
+
+@media (max-width: 720px) {
+  .ticket-head {
+    padding-inline: var(--space-5);
+  }
+
+  .ticket-title-row {
+    gap: var(--space-3);
+  }
 }
 
 /* The leash as one sentence: "approved until [stage] then [stop/propose]", the

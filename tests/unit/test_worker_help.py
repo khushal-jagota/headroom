@@ -51,13 +51,18 @@ def test_worker_help_pauses_dispatch_and_requires_explicit_release(tmp_db: Conne
         planning_day_id=DAY_ID,
         worker_type_definition=definition,
     )
-    assert review_view(tmp_db, day_id=DAY_ID)["user_help_requests"] == [
-        {"ticket_id": ticket.id, "title": "Worker help", "waiting_since": 4}
+    assert review_view(tmp_db, day_id=DAY_ID)["items"] == [
+        {
+            "review_item_type": "needs_user",
+            "ticket_id": ticket.id,
+            "title": "Worker help",
+            "waiting_since": 4,
+        }
     ]
 
     still_waiting = data.release_ticket(tmp_db, ticket.id, now=5)
     assert still_waiting.ticket_status is TicketStatus.empty
-    assert review_view(tmp_db, day_id=DAY_ID)["user_help_requests"] == []
+    assert review_view(tmp_db, day_id=DAY_ID)["items"] == []
 
 
 @pytest.mark.parametrize("actor", ["unattributed", "chief", "human"])

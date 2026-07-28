@@ -184,10 +184,20 @@
     return { state: "reply-seen", ariaLabel: "Agent reply seen" };
   }
 
-  // Every ticket sits in exactly one group: its own ticket status, except a done
-  // ticket, which groups as done.
+  // Every ticket sits in exactly one group: Done wins, a resting Closeout ticket
+  // that the server says is runnable gets its server-projected semantic exception,
+  // and Kickoff approvals use the existing gating field to split from later
+  // approvals. Every other ticket uses its own status.
   function groupKeyFor(card: Record<string, any>): string {
-    return card.is_done ? "done" : String(card.ticket_status);
+    if (card.is_done) return "done";
+    if (card.waiting_to_closeout) return "waiting_to_closeout";
+    if (
+      card.ticket_status === "awaiting_approval" &&
+      card.gating_field === "kickoff"
+    ) {
+      return "waiting_for_kickoff";
+    }
+    return String(card.ticket_status);
   }
 
   // Presentation only: the top-to-bottom order of the status groups. A group with
@@ -196,16 +206,22 @@
   const GROUP_ORDER: readonly string[] = [
     "errored",
     "needs_user",
-    "empty",
+    "waiting_to_closeout",
     "user",
     "paired",
     "agent",
+    "waiting_for_kickoff",
     "awaiting_approval",
+    "empty",
     "blocked",
     "done"
   ];
 
   const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set(["blocked", "done"]);
+  const GROUP_LABELS: Readonly<Record<string, string>> = {
+    waiting_to_closeout: "Waiting to Closeout",
+    waiting_for_kickoff: "Waiting for Kickoff"
+  };
 
   type GroupSection = {
     key: string;
@@ -230,7 +246,7 @@
     );
     return orderedKeys.map((key) => ({
       key,
-      label: labelize(key),
+      label: GROUP_LABELS[key] ?? labelize(key),
       defaultCollapsed: DEFAULT_COLLAPSED_GROUPS.has(key),
       cards: (byGroup.get(key) ?? []).sort((left, right) => {
         const activityDelta =

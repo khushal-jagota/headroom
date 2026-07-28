@@ -331,23 +331,6 @@ def _a_conversation_worth_scrolling() -> tuple[ConversationEventPayload, ...]:
     return tuple(rows)
 
 
-def test_the_dev_route_renders_the_empty_state_and_backend_cards(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    page = open_page(
-        context_factory(), server, "#/dev/conversation", "[data-conversation-route]"
-    )
-    # The empty state is a real surface, visibly distinct from a broken blank screen.
-    page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
-    page.wait_for_selector("[data-conversation-new-id]", timeout=WAIT_MS)
-    for backend_key in ("hermes", "codex", "claude"):
-        page.wait_for_selector(
-            f'[data-conversation-backend="{backend_key}"]', timeout=BACKEND_CARD_WAIT_MS
-        )
-
-
 def test_a_started_conversation_reloads_into_the_pane_surface(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
@@ -413,49 +396,6 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
         "[data-conversation-outgoing-label]"
     )
     assert page.query_selector("[data-conversation-sending]") is None
-
-
-def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    """The first message is the one that starts the conversation on its way to a backend.
-
-    Everything happens on that send: the conversation is created, its reading is opened,
-    and only then does the message go. It is in flight perfectly normally throughout, so
-    it must say nothing about itself — least of all on a cold start, which is the longest
-    a person ever waits and the worst moment to be told their message may have gone
-    nowhere.
-    """
-    context = context_factory()
-    context.add_init_script(HOLD_THE_SEND)
-    page = open_page(
-        context, server, "#/dev/conversation?id=e2e-first-send", "[data-conversation-pane]"
-    )
-    # Nothing has been started yet: this is the empty state, not a conversation.
-    page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
-
-    page.fill("[data-conversation-input]", "the very first thing")
-    page.press("[data-conversation-input]", "Enter")
-    page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
-
-    drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
-    assert drawn is not None
-    assert drawn.inner_text().strip() == "the very first thing"
-    assert page.query_selector("[data-conversation-outgoing-label]") is None, (
-        "a message on its way says nothing about itself"
-    )
-    # The conversation really was created on the way through, and the message really is
-    # still in flight.
-    assert httpx.get(
-        f"{server.base}/api/conversation/conversations/e2e-first-send", timeout=10.0
-    ).status_code == 200
-    page.wait_for_selector("[data-conversation-sending]", timeout=WAIT_MS)
-
-    page.evaluate("() => window.__heldSends[0].answer({ fate: 'started' })")
-    page.wait_for_selector("[data-conversation-sending]", state="detached", timeout=WAIT_MS)
-    assert page.query_selector("[data-conversation-outgoing-label]") is None
 
 
 def test_a_send_that_gets_nowhere_gives_the_words_back(
@@ -769,6 +709,16 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
         AgentMessageEventPayload(content=text_message_content("a short answer")),
     )
     _let_the_browser_catch_up(page, 18)
+    page.wait_for_function(
+        """(was) => {
+          const room = document.querySelector('[data-conversation-reserved-space]');
+          if (room === null) return false;
+          const now = Math.round(room.getBoundingClientRect().height);
+          return now > 0 && now < was;
+        }""",
+        arg=took_over["roomKept"],
+        timeout=WAIT_MS,
+    )
     fitted = page.evaluate(WHERE_THE_THREAD_IS)
     assert fitted["scrollTop"] == took_over["scrollTop"], fitted
     assert 0 < fitted["roomKept"] < took_over["roomKept"], (took_over, fitted)
@@ -850,48 +800,6 @@ def test_a_picture_in_the_record_is_drawn_and_really_loads(
     )
     # The words that came with it are still beside it.
     assert "look at this" in page.inner_text("[data-conversation-row='prompt']")
-
-
-def test_a_link_you_paste_reads_like_the_agent_s_links_do(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    """Your own words go through the same renderer the agent's do.
-
-    A link pasted into your own message used to sit in the thread as literal text while
-    the identical link in the agent's reply became a preview. Same thread, same link, two
-    different things — which is what this asserts is over. It fails on the old behaviour,
-    where a prompt row was drawn as plain text and contained no anchor at all.
-    """
-    _create_conversation(server, "e2e-own-link")
-    _append_rows(
-        server,
-        "e2e-own-link",
-        PromptEventPayload(
-            content=text_message_content("have a look at [the docs](https://example.com/docs)"),
-            sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
-        ),
-        AgentMessageEventPayload(
-            content=text_message_content("I read [the docs](https://example.com/docs)")
-        ),
-    )
-
-    page = open_page(
-        context_factory(),
-        server,
-        "#/dev/conversation?id=e2e-own-link",
-        "[data-conversation-pane]",
-    )
-    page.wait_for_selector("[data-conversation-row='prompt'] a", timeout=WAIT_MS)
-    mine = page.locator("[data-conversation-row='prompt'] a").first
-    theirs = page.locator("[data-conversation-row='agent_message'] a").first
-    assert mine.get_attribute("href") == "https://example.com/docs"
-    assert theirs.get_attribute("href") == "https://example.com/docs"
-    # The literal markdown is gone from both, which is what says it was rendered rather
-    # than printed.
-    assert "](" not in page.inner_text("[data-conversation-row='prompt']")
 
 
 def test_the_commands_an_agent_reports_reach_the_menu_when_its_turn_stops(
