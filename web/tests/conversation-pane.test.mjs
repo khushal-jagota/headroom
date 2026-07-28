@@ -52,8 +52,9 @@ const inventory = (await readdir(componentDirectory))
   .sort();
 assert.deepEqual(inventory, expectedInventory);
 
+const sourceFiles = [...inventory, "viewport/ConversationViewport.svelte"];
 const sources = {};
-for (const fileName of inventory) {
+for (const fileName of sourceFiles) {
   const source = await readFile(new URL(fileName, componentDirectory), "utf8");
   sources[fileName] = source;
   assert.deepEqual(
