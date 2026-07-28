@@ -25,7 +25,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 PREVIOUS_REVISION = "ticket_status_reshape"
 # The database is brought all the way up, so it comes to rest at the current head rather
 # than at the revision this module is about.
-HEAD_REVISION = "conversation_available_commands"
+HEAD_REVISION = "no_conversation_before_a_message"
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {

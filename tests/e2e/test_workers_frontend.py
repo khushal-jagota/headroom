@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -116,6 +117,32 @@ def _assert_no_horizontal_overflow(page: Page) -> None:
         "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
     )
     assert overflow <= 0
+
+
+def test_agents_index_renders_when_the_workers_read_answers_last(
+    server: ServerHandle, context_factory: Callable[[], BrowserContext]
+) -> None:
+    """The Agents index waits on two reads, and the order they answer in is a race.
+
+    Held here so the read the screen looks at first is the last one to answer. A screen is
+    only told about the parts of a read it has already looked at, so a gate that stops at
+    the first unfinished read never looks at the other one, is never told when it answers,
+    and stays on its loading line for good.
+    """
+    page = context_factory().new_page()
+    # No change stream: its connect handler refetches everything, which would wake a
+    # screen that had stopped listening and hide the failure this test is for.
+    page.route("**/api/changes", lambda route: route.abort())
+
+    def answer_after_the_others(route: Route) -> None:
+        time.sleep(0.5)
+        route.continue_()
+
+    page.route("**/api/workers", answer_after_the_others)
+    page.goto(server.base + "/#/agents")
+    page.wait_for_selector(
+        '[data-screen="agents"] [data-workers-list] [data-worker-destination]', timeout=WAIT_MS
+    )
 
 
 def test_chief_detail_edits_skill_independently_and_retries_failure(

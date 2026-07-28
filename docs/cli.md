@@ -36,14 +36,20 @@ generic Stage setter.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
   tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
   `--kickoff-note-file` intake body for the Kickoff field. `--employee-backend` overrides
-  the Worker type's registered default. `ticket set <id> employee-backend <key>` changes
-  that choice only during pristine Kickoff, before a session or binding exists.
+  the Worker type's registered default, and when it names a different backend
+  `--employee-launch-model` has to say which model that backend runs the new Ticket's
+  worker on — the Worker type's own model belongs to the Worker type's own backend.
   `ticket list --stage`
   compares the stored Stage directly. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
-  `employee-backend`, or `project` / `project-id`). Sprint placement is a sprint command,
+  or `project` / `project-id`). Sprint placement is a sprint command,
   not a ticket setter.
   `ticket delete` is a permanent direct operation
   and requires `--yes`.
+- **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
+  — set what this Ticket's worker launches on. All three go together, because a model id
+  belongs to the backend that named it; leave `--reasoning-effort` out for a model that
+  takes none. It changes that choice only during pristine Kickoff, before a conversation
+  exists.
 - **`ticket ownership <id> --stage <stage> --mode worker|user|paired|default`** — set or
   clear one Stage's ownership override. `default` clears the override so the Worker
   type's Stage default applies. Terminal and unknown Stages are rejected.
@@ -71,7 +77,8 @@ generic Stage setter.
   reconciliation reasoning, and the
   exact settled field prefix for the target `--stage`. Creation also requires
   `--worker-type`; `--employee-backend` may override that type's registered default for the
-  new Ticket. Reconciliation refuses pending or active Ticket work; both
+  new Ticket, and a different backend needs `--employee-launch-model` with it.
+  Reconciliation refuses pending or active Ticket work; both
   operations move the ceiling to the imported Stage, preserve an explicit Stop
   (otherwise Continue remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.

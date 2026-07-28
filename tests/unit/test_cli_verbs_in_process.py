@@ -113,9 +113,15 @@ def api(cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper]) -> A
     return cli_app[2]
 
 
-def test_ticket_cli_forwards_employee_backend_create_and_set(
+def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
     server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
 ) -> None:
+    """The backend and the model travel together, at both doors the CLI has.
+
+    A model id belongs to the backend that named it, so neither door can carry one of them
+    on its own: creation takes the model with the backend it overrides to, and changing a
+    Ticket's choice afterwards is a command that names the whole configuration.
+    """
     created = cli(
         server,
         "ticket",
@@ -124,23 +130,29 @@ def test_ticket_cli_forwards_employee_backend_create_and_set(
         "coding",
         "--employee-backend",
         "hermes",
+        "--employee-launch-model",
+        "hermes-model",
         "--title",
         "CLI backend selection",
         "--kickoff-note",
         "Keep Kickoff pristine",
     )
     assert created["employee_backend"] == "hermes"
+    assert created["employee_launch_model"] == "hermes-model"
     updated = cli(
         server,
         "ticket",
-        "set",
+        "employee-configuration",
         created["id"],
-        "employee-backend",
-        "--value",
-        "hermes",
+        "--backend",
+        "codex",
+        "--model",
+        "a-codex-model",
     )
-    assert updated["employee_backend"] == "hermes"
-    assert api.get(server, f"/api/tickets/{created['id']}")["employee_backend"] == "hermes"
+    assert updated["employee_backend"] == "codex"
+    stored = api.get(server, f"/api/tickets/{created['id']}")
+    assert stored["employee_backend"] == "codex"
+    assert stored["employee_launch_model"] == "a-codex-model"
 
 
 def test_ticket_create_sprint_item_parents_it(

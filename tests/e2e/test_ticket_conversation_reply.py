@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import httpx
 from playwright.sync_api import BrowserContext, Page, Request
 from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
@@ -61,10 +60,8 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
 ) -> None:
     ticket_id = _parked_on_a_proposal(server, cli)
     assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
-    # Give the Ticket something to talk in, so the first message has somewhere to go.
-    started = httpx.post(f"{server.base}/api/tickets/{ticket_id}/conversation", timeout=10.0)
-    assert started.status_code == 200, started.text
-    assert started.json()["conversation_id"] is not None
+    # Nothing is seeded: a Ticket nobody has spoken to has no conversation, and the first
+    # message is what makes one.
 
     context = context_factory()
     context.add_init_script(HOLD_THE_SEND)
@@ -90,9 +87,11 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     page.fill(COMPOSER, REFUSED_TEXT, timeout=WAIT_MS)
     page.click(SEND, timeout=WAIT_MS)
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
+    # The owner's door answers with the fate and the conversation it happened in. This
+    # message was to make one and did not land, so there is no conversation to name.
     page.evaluate(
         "() => window.__heldSends[0].answer("
-        "{ fate: 'refused', refusal_reason: 'backend_did_not_start' })"
+        "{ conversation_id: null, fate: 'refused', refusal_reason: 'backend_did_not_start' })"
     )
     page.wait_for_function(
         "([selector, text]) => document.querySelector(selector).value === text",
@@ -114,7 +113,10 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     ):
         page.click(SEND, timeout=WAIT_MS)
         page.wait_for_function("() => window.__heldSends.length === 2", timeout=WAIT_MS)
-        page.evaluate("() => window.__heldSends[1].answer({ fate: 'queued', queue_position: 1 })")
+        page.evaluate(
+            "() => window.__heldSends[1].answer("
+            "{ conversation_id: 'conv_made_by_the_message', fate: 'queued', queue_position: 1 })"
+        )
 
     assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "paired"
     # One reply, from the send that got somewhere. The refused send is in front of it in

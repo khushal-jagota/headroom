@@ -49,6 +49,8 @@ class _HoldingConversationSystem(InMemoryConversationSystem):
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
         self.sending.set()
         try:
@@ -64,6 +66,8 @@ class _HoldingConversationSystem(InMemoryConversationSystem):
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
 
 
@@ -114,7 +118,7 @@ def test_stopping_waits_out_a_worker_step_that_is_still_being_sent(tmp_path: Pat
     conversations = _HoldingConversationSystem()
     asyncio.run(
         conversations.start_conversation(
-            ConversationStartRequest(conversation_id="conv-shutdown")
+            ConversationStartRequest(conversation_id="conv-shutdown", model="a-model")
         )
     )
     loop, thread = _run_event_loop_in_a_thread()
@@ -169,7 +173,7 @@ def test_stopping_abandons_a_worker_step_that_outlives_the_deadline(tmp_path: Pa
     conversations = _HoldingConversationSystem()
     asyncio.run(
         conversations.start_conversation(
-            ConversationStartRequest(conversation_id="conv-shutdown")
+            ConversationStartRequest(conversation_id="conv-shutdown", model="a-model")
         )
     )
     loop, thread = _run_event_loop_in_a_thread()

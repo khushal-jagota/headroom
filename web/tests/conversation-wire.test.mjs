@@ -600,31 +600,81 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
     mode: "run_when_free",
     sentAtUnixMilliseconds: 1_700_000_000_123
   });
+  // The body says which conversation the message is for and what it runs under. To one
+  // that exists those values are a change; to a sender that has none they are what the
+  // conversation is made on, which is why they are one field rather than two vocabularies.
   assert.deepEqual(
-    sendBodyFor({ message: drawn, current, picked: { model: "sonnet", reasoningEffort: null } }),
+    sendBodyFor({
+      message: drawn,
+      current,
+      picked: { model: "sonnet", reasoningEffort: null },
+      conversationId: "conv_1"
+    }),
     {
+      conversation_id: "conv_1",
       content: [{ piece: "text", text: "go" }],
       sender_label: "owner",
       mode: "run_when_free",
       sender_message_id: drawn.messageId,
       sent_at_unix_milliseconds: 1_700_000_000_123,
-      model_change: "sonnet"
+      model: "sonnet"
     }
   );
   assert.deepEqual(
     sendBodyFor({
       message: { ...drawn, mode: "send_now" },
       current,
-      picked: { model: null, reasoningEffort: null }
+      picked: { model: null, reasoningEffort: null },
+      conversationId: null
     }),
     {
+      conversation_id: null,
       content: [{ piece: "text", text: "go" }],
       sender_label: "owner",
       mode: "send_now",
       sender_message_id: drawn.messageId,
       sent_at_unix_milliseconds: 1_700_000_000_123
     },
-    "a message with nothing picked carries no change field at all"
+    "a message with nothing picked says nothing about what it runs under"
+  );
+  // The backend follows a different rule from the two values above it, because it is not
+  // a change: a message that has no conversation to go to is the one that creates it, and
+  // it names what to create it on.
+  assert.deepEqual(
+    sendBodyFor({
+      message: drawn,
+      current: { model: null, reasoningEffort: null },
+      picked: { model: null, reasoningEffort: null, backendKey: "claude" },
+      conversationId: null
+    }),
+    {
+      conversation_id: null,
+      content: [{ piece: "text", text: "go" }],
+      sender_label: "owner",
+      mode: "run_when_free",
+      sender_message_id: drawn.messageId,
+      sent_at_unix_milliseconds: 1_700_000_000_123,
+      backend_key: "claude"
+    },
+    "the message that creates a conversation says which backend to create it on"
+  );
+  assert.deepEqual(
+    sendBodyFor({
+      message: drawn,
+      current,
+      picked: { model: "sonnet", reasoningEffort: null, backendKey: "claude" },
+      conversationId: "conv_1"
+    }),
+    {
+      conversation_id: "conv_1",
+      content: [{ piece: "text", text: "go" }],
+      sender_label: "owner",
+      mode: "run_when_free",
+      sender_message_id: drawn.messageId,
+      sent_at_unix_milliseconds: 1_700_000_000_123,
+      model: "sonnet"
+    },
+    "a conversation that exists cannot be moved, so nothing on the way in names a backend"
   );
 }
 

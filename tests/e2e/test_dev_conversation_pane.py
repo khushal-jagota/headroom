@@ -160,9 +160,19 @@ WHERE_THE_THREAD_IS = """
 
 
 def _create_conversation(server: ServerHandle, conversation_id: str) -> None:
+    """A conversation for the pane to open, made the way the browser makes one.
+
+    The model is named because every start names one, and it is a name rather than a real
+    model on purpose: nothing here spawns a backend, so what these conversations run on is
+    never asked of a machine. The pane is what is under test.
+    """
     created = httpx.post(
         f"{server.base}/api/conversation/conversations",
-        json={"conversation_id": conversation_id, "backend_key": "codex"},
+        json={
+            "conversation_id": conversation_id,
+            "model": "e2e-model",
+            "backend_key": "codex",
+        },
         timeout=10.0,
     )
     assert created.status_code == 201, created.text
@@ -396,6 +406,56 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
         "[data-conversation-outgoing-label]"
     )
     assert page.query_selector("[data-conversation-sending]") is None
+
+
+def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
+    """The first message is the one that starts the conversation on its way to a backend.
+
+    Everything happens on that send: the conversation is created, its reading is opened,
+    and only then does the message go. It is in flight perfectly normally throughout, so
+    it must say nothing about itself — least of all on a cold start, which is the longest
+    a person ever waits and the worst moment to be told their message may have gone
+    nowhere.
+    """
+    context = context_factory()
+    context.add_init_script(HOLD_THE_SEND)
+    page = open_page(
+        context, server, "#/dev/conversation?id=e2e-first-send", "[data-conversation-pane]"
+    )
+    # Nothing has been started yet: this is the empty state, not a conversation.
+    page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
+    # And a conversation is created on a model somebody can name, so the first message can
+    # only make one once this page has read what the backend it is on runs. That read is a
+    # real probe of a real CLI, so it is waited for the way the backend cards are.
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-new-model]').value !== ''",
+        timeout=BACKEND_CARD_WAIT_MS,
+    )
+
+    page.fill("[data-conversation-input]", "the very first thing")
+    page.press("[data-conversation-input]", "Enter")
+    page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
+
+    drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
+    assert drawn is not None
+    assert drawn.inner_text().strip() == "the very first thing"
+    assert page.query_selector("[data-conversation-outgoing-label]") is None, (
+        "a message on its way says nothing about itself"
+    )
+    # The conversation really was created on the way through, and the message really is
+    # still in flight.
+    assert httpx.get(
+        f"{server.base}/api/conversation/conversations/e2e-first-send", timeout=10.0
+    ).status_code == 200
+    page.wait_for_selector("[data-conversation-sending]", timeout=WAIT_MS)
+
+    page.evaluate("() => window.__heldSends[0].answer({ fate: 'started' })")
+    page.wait_for_selector("[data-conversation-sending]", state="detached", timeout=WAIT_MS)
+    assert page.query_selector("[data-conversation-outgoing-label]") is None
 
 
 def test_a_send_that_gets_nowhere_gives_the_words_back(

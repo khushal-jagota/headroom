@@ -139,22 +139,27 @@
     }
   }
 
+  // Changing the worker changes the model with it: the one showing was picked out of the
+  // old backend's catalog and means nothing to this one, and a Ticket saved with no model
+  // launches its worker on whatever the backend picked for itself. What replaces it is
+  // what this machine says the new backend runs. One that reported no model has none to
+  // give, and then the save names none and the server refuses it in the open.
   function selectWorker(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
     const nextBackend = target.value;
     target.value = selectedBackend;
     if (nextBackend === selectedBackend || saving) return;
+    const itsOwn = backends.find((candidate) => candidate.backend_key === nextBackend);
     void persist({
       employee_backend: nextBackend,
-      employee_launch_model: null,
+      employee_launch_model: itsOwn?.default_model_id ?? null,
       employee_launch_reasoning_effort: null
     });
   }
 
   function selectModel(event: Event): void {
     const target = event.currentTarget as HTMLSelectElement;
-    // Choosing the native value stores null ("not pinned"); anything else pins.
-    const nextModel = target.value === (snapshot?.default_model_id ?? "") ? null : target.value || null;
+    const nextModel = target.value;
     target.value = selectedModel ?? snapshot?.default_model_id ?? "";
     if (nextModel === selectedModel || saving) return;
     void persist({
@@ -172,7 +177,10 @@
     if (nextReasoning === selectedReasoning || saving) return;
     void persist({
       employee_backend: selectedBackend,
-      employee_launch_model: selectedModel,
+      // The complete configuration goes out, so the model goes with the effort — the one
+      // this control is already showing, which for a Ticket old enough to name none is
+      // what its backend runs. Sending the value on the face is what names it.
+      employee_launch_model: selectedModel ?? snapshot?.default_model_id ?? null,
       employee_launch_reasoning_effort: nextReasoning
     });
   }

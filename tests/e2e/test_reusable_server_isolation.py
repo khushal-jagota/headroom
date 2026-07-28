@@ -105,7 +105,14 @@ def test_03_conversation_runtime_is_contaminated(server: ServerHandle) -> None:
     _conversation_process_id = server.proc.pid
     created = httpx.post(
         server.base + "/api/conversation/conversations",
-        json={"conversation_id": _CONVERSATION_ID, "backend_key": "codex"},
+        json={
+            "conversation_id": _CONVERSATION_ID,
+            "backend_key": "codex",
+            # Every conversation is started on a named model. A name is enough here:
+            # what this file is about is whether the runtime is carried between tests,
+            # and nothing in it ever spawns a backend.
+            "model": "e2e-model",
+        },
         timeout=10.0,
     )
     assert created.status_code == 201, created.text
@@ -124,7 +131,14 @@ def test_04_conversation_state_gets_a_fresh_process(server: ServerHandle) -> Non
     # The old id is not hiding in the replacement process's in-memory runtime either.
     created_again = httpx.post(
         server.base + "/api/conversation/conversations",
-        json={"conversation_id": _CONVERSATION_ID, "backend_key": "codex"},
+        json={
+            "conversation_id": _CONVERSATION_ID,
+            "backend_key": "codex",
+            # Every conversation is started on a named model. A name is enough here:
+            # what this file is about is whether the runtime is carried between tests,
+            # and nothing in it ever spawns a backend.
+            "model": "e2e-model",
+        },
         timeout=10.0,
     )
     assert created_again.status_code == 201, created_again.text

@@ -359,7 +359,7 @@ def test_board_card_carries_where_its_conversation_last_had_a_turn_end(
                 ResolvedConversationStart(
                     conversation_id=conversation_id,
                     backend_key=ConversationBackendKey.codex,
-                    model=None,
+                    model="a-model",
                     reasoning_effort=None,
                     role_materials=None,
                     workspace_folder=Path("/tmp"),
@@ -459,7 +459,7 @@ def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
     async def start_turns() -> None:
         for conversation_id in ("conv-running", "conv-asking", "conv-answered"):
             await conversations.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id)
+                ConversationStartRequest(conversation_id=conversation_id, model="a-model")
             )
             await conversations.send(
                 conversation_id,
@@ -509,7 +509,7 @@ def test_board_route_stops_working_when_the_conversation_turn_ends(
 
     async def start_turn() -> None:
         await conversations.start_conversation(
-            ConversationStartRequest(conversation_id="conv-finishing")
+            ConversationStartRequest(conversation_id="conv-finishing", model="a-model")
         )
         await conversations.send(
             "conv-finishing",

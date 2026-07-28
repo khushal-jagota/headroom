@@ -17,12 +17,15 @@
   import {
     killConversation,
     readBackends,
+    sendPrompt,
     startConversation,
     updateBackend,
     ConversationWireError,
     type BackendSnapshot,
     type BackendUpdateResult,
-    type ConversationBackendKey
+    type ConversationBackendKey,
+    type DeliveredMessage,
+    type OwnerSendBody
   } from "../lib/conversation/wire";
 
   const SENDER_LABEL = "owner";
@@ -32,13 +35,14 @@
   /** What is on screen. It follows the id above; New is what parts them, until the next
    *  first message starts one under the new name. */
   let liveConversationId = $state<string | null>(null);
-  let runningBackendKey = $state<ConversationBackendKey>("codex");
+  let runningBackendKey = $state<ConversationBackendKey | null>(null);
   let backends = $state<BackendSnapshot[]>([]);
   let updatingBackend = $state<ConversationBackendKey | null>(null);
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
   let errorNote = $state<string | null>(null);
 
-  // What a conversation that has not been started yet would be started as.
+  // What a conversation that has not been started yet would be started as. This page is
+  // its own owner: the form is the whole of the answer, so it is what the pane is told.
   let newBackendKey = $state<ConversationBackendKey>("codex");
   let newModel = $state<string | null>(null);
   let newReasoningEffort = $state<string | null>(null);
@@ -66,21 +70,53 @@
     return error instanceof Error ? error.message : String(error);
   }
 
-  /** The first message starts it, as whatever the form was left showing. */
-  async function startTheConversation(): Promise<string | null> {
-    await startConversation({
-      conversation_id: conversationId,
-      backend_key: newBackendKey,
-      model: newModel,
-      reasoning_effort: newReasoningEffort,
-      // Left out when untouched, so the server's own default folder applies.
-      ...(newWorkspaceFolder === DEFAULT_WORKSPACE_FOLDER
-        ? {}
-        : { workspace_folder: newWorkspaceFolder })
+  /** What this machine says a backend runs when nobody names a model. Null is a backend
+   *  that reported no catalogue, and then there is nothing here that could name one. */
+  function modelTheBackendRuns(key: ConversationBackendKey): string | null {
+    return backends.find((snapshot) => snapshot.backend_key === key)?.default_model_id ?? null;
+  }
+
+  /** The first message starts it, as whatever the form and the composer were left showing.
+   *
+   * This screen is the one place a conversation is made on purpose rather than by talking,
+   * because making one on named values is what it is for. It still makes it with the
+   * message: what the composer says the message runs under is what the conversation is
+   * created on, so the message that creates it never has to change it.
+   */
+  async function sendToTheConversation(body: OwnerSendBody): Promise<DeliveredMessage> {
+    const { conversation_id: sendingInto, backend_key, model, reasoning_effort, ...message } =
+      body;
+    // Named means a conversation that answered for itself. The address holds a name from
+    // the moment this page is opened, and a name is not a conversation.
+    if (sendingInto === null) {
+      const startingOn = (backend_key as ConversationBackendKey | undefined) ?? newBackendKey;
+      await startConversation({
+        conversation_id: conversationId,
+        backend_key: startingOn,
+        // A start names its model. Where nobody picked one, the model is the one this
+        // machine says that backend runs — reading the catalogue and sending the id is
+        // naming a model, while leaving the field out is letting the tool pick one nobody
+        // can see. A backend that reported no catalogue leaves nothing to name: the start
+        // goes out saying so, the server answers 422, and the composer already treats that
+        // as this text having got nowhere and hands the words back.
+        model: model ?? modelTheBackendRuns(startingOn),
+        reasoning_effort: reasoning_effort ?? newReasoningEffort,
+        // Left out when untouched, so the server's own default folder applies.
+        ...(newWorkspaceFolder === DEFAULT_WORKSPACE_FOLDER
+          ? {}
+          : { workspace_folder: newWorkspaceFolder })
+      });
+      writeIdToAddress(conversationId);
+      liveConversationId = conversationId;
+      const started = await sendPrompt(conversationId, message);
+      return { ...started, conversation_id: conversationId };
+    }
+    const fate = await sendPrompt(sendingInto, {
+      ...message,
+      ...(model === undefined ? {} : { model_change: model }),
+      ...(reasoning_effort === undefined ? {} : { reasoning_effort_change: reasoning_effort })
     });
-    writeIdToAddress(conversationId);
-    liveConversationId = conversationId;
-    return conversationId;
+    return { ...fate, conversation_id: sendingInto };
   }
 
   /** New kills the old one first: freeing the agent would let its held messages run,
@@ -125,12 +161,16 @@
   <div class="c2-route-pane">
     <LiveConversation
       conversationId={liveConversationId}
-      label={`${runningBackendKey} · ${liveConversationId ?? conversationId}`}
+      label={`${runningBackendKey ?? newBackendKey} · ${liveConversationId ?? conversationId}`}
       {backends}
       senderLabel={SENDER_LABEL}
-      fallbackBackendKey={newBackendKey}
+      startValues={{
+        backend_key: newBackendKey,
+        model: newModel ?? modelTheBackendRuns(newBackendKey),
+        reasoning_effort: newReasoningEffort
+      }}
       bind:runningBackendKey
-      onStartConversation={startTheConversation}
+      sendMessage={sendToTheConversation}
       onNewConversation={newConversation}
     >
       {#snippet emptyState()}

@@ -301,11 +301,14 @@ with sync_playwright() as playwright:
     ) == ["hermes", "codex", "claude"]
 
     # Changing worker is a save, and it asks the machine nothing: one read covers all three.
+    # The new backend's own model comes with it, out of the answer already in hand — a
+    # model id belongs to the backend that named it, and a Ticket saved naming none would
+    # launch its worker on whatever the backend picked for itself.
     worker.select_option("codex")
     page.wait_for_function("window.__saveCalls().length === 1")
     assert page.evaluate("window.__saveCalls()[0]") == {
         "employee_backend": "codex",
-        "employee_launch_model": None,
+        "employee_launch_model": "codex-native",
         "employee_launch_reasoning_effort": None,
     }
     assert page.evaluate("window.__requests().length") == 2
@@ -347,20 +350,35 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.__saveCalls().length === 4")
     page.locator("[data-employee-configuration-reasoning-control]").wait_for(state="detached")
 
-    # Choosing the option equal to the native value stores null ("not pinned").
+    # The option that happens to be the one this backend runs is a model like any other,
+    # and choosing it stores its name. There is no longer a choice that means "whichever
+    # one the backend feels like", so nothing here turns a name back into nothing.
     model_select.select_option("codex-native")
     page.wait_for_function("window.__saveCalls().length === 5")
     assert page.evaluate("window.__saveCalls()[4]") == {
         "employee_backend": "codex",
-        "employee_launch_model": None,
+        "employee_launch_model": "codex-native",
         "employee_launch_reasoning_effort": "high",
     }
     reasoning.wait_for()
-    assert setup.get_attribute("data-employee-configuration-model") == ""
+    assert setup.get_attribute("data-employee-configuration-model") == "codex-native"
     assert model_select.input_value() == "codex-native"
     control_text = page.locator("[data-employee-configuration-model-control]").inner_text()
     assert "Codex native" in control_text
     assert "default" not in page.locator("[data-employee-configuration-setup]").inner_text()
+
+    # A backend this machine reported no model for has none to bring. The save goes out
+    # naming none, which the server refuses — that is the honest end of it, and it is not
+    # papered over here by choosing something nobody could see.
+    worker.select_option("claude")
+    page.wait_for_function("window.__saveCalls().length === 6")
+    assert page.evaluate("window.__saveCalls()[5]") == {
+        "employee_backend": "claude",
+        "employee_launch_model": None,
+        "employee_launch_reasoning_effort": None,
+    }
+    worker.select_option("codex")
+    page.wait_for_function("window.__saveCalls().length === 7")
 
     page.locator("[data-employee-configuration-refresh]").click()
     page.wait_for_function("window.__requests().length === 3")
@@ -373,8 +391,8 @@ with sync_playwright() as playwright:
     assert page.locator("text=codex-deep").count() == 0
     assert page.locator("text=high").count() == 0
 
-    # ManagedLaunchDefaults follows the same rules: the machine's options only, the
-    # native value as the resting point, native selection stored as null.
+    # ManagedLaunchDefaults follows the same rules: the machine's options only, the value
+    # the backend runs as the resting point, and every selection stored under its name.
     page.evaluate("window.__showLaunchDefaults()")
     page.locator("[data-launch-defaults]").wait_for()
     page.wait_for_function("window.__requests().length === 4")
@@ -411,16 +429,27 @@ with sync_playwright() as playwright:
     assert page.evaluate("window.__requests().length") == 4
     assert defaults_model.input_value() == "codex-deep"
 
+    # And back: the option this backend happens to run is a name like any other here too.
     defaults_model.select_option("codex-native")
     page.wait_for_function("window.__launchDefaultsSaveCalls().length === 2")
     assert page.evaluate("window.__launchDefaultsSaveCalls()[1]") == {
         "employee_backend": "codex",
-        "employee_launch_model": None,
+        "employee_launch_model": "codex-native",
         "employee_launch_reasoning_effort": None,
     }
     # Re-selecting the native reasoning while not pinned saves nothing.
     defaults_reasoning.select_option("low")
     assert page.evaluate("window.__launchDefaultsSaveCalls().length") == 2
+
+    # Changing the backend here works the way it does on a Ticket: the new backend's own
+    # model comes with it, so these workers launch on something somebody can point at.
+    page.locator('select[aria-label="Coding backend"]').select_option("hermes")
+    page.wait_for_function("window.__launchDefaultsSaveCalls().length === 3")
+    assert page.evaluate("window.__launchDefaultsSaveCalls()[2]") == {
+        "employee_backend": "hermes",
+        "employee_launch_model": "hermes-native",
+        "employee_launch_reasoning_effort": None,
+    }
 
     # No native value and nothing pinned: the control shows nothing.
     page.evaluate(

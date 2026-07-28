@@ -318,6 +318,49 @@ export type SendPromptBody = {
   reasoning_effort_change?: string;
 } & SenderMintedPromptFields;
 
+/** A message to an owner — a Ticket's worker, or the Chief — rather than to a conversation.
+ *
+ * `conversation_id` is which conversation this is for, and absent says the sender has none:
+ * this message is what brings one into being. The three values say what it runs under, and
+ * to a conversation that does not exist yet they are what to create it on.
+ */
+export type OwnerSendBody = {
+  conversation_id: string | null;
+  backend_key?: string;
+  model?: string;
+  reasoning_effort?: string;
+  content: SentMessagePiece[];
+  sender_label: string;
+  mode: PromptDeliveryMode;
+} & SenderMintedPromptFields;
+
+/** What a conversation started for an owner right now would run on.
+ *
+ * The owner's own door answers it — a Ticket's worker from its Worker type and whatever
+ * that Ticket last ran on, the Chief from its managed settings — and it is answered by the
+ * same resolve that will create the conversation, so what a panel shows before anybody
+ * types is what typing gets. The three fields are the conversation view's own, because
+ * they are the same three values read one moment earlier.
+ *
+ * A null effort is a model that takes none. A null model is different: nothing the server
+ * answers with has one, because a start has to name a model and these are the values a
+ * start would use. It is left expressible for the one owner that is not the server — the
+ * dev page, which answers out of its own form and has nothing to name when the backend it
+ * is on reported no catalogue. A start on that is refused rather than guessed at.
+ */
+export type ConversationStartValues = {
+  backend_key: ConversationBackendKey;
+  model: string | null;
+  reasoning_effort: string | null;
+};
+
+/** What happened to a message, and which conversation it happened in.
+ *
+ * The id is null when a message that was to make a conversation did not land: there is no
+ * conversation then, so there is nothing to open and nothing to hold on to.
+ */
+export type DeliveredMessage = PromptDeliveryFate & { conversation_id: string | null };
+
 /** A request the server answered with a refusal of the request itself.
  *
  * The conversation routes raise FastAPI's own errors, so what comes back is a `detail`

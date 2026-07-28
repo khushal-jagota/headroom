@@ -62,9 +62,19 @@ def _create_ticket(
 
 
 def _start_conversation(server: ServerHandle, conversation_id: str) -> None:
+    """Make a conversation for the board to draw a mark against.
+
+    Every conversation is started on a named model, so this names one. It is a name rather
+    than a real model because nothing here ever spawns a backend: what this file is about
+    is the reply mark, and the conversation is the thing the mark hangs on.
+    """
     created = httpx.post(
         f"{server.base}/api/conversation/conversations",
-        json={"conversation_id": conversation_id, "backend_key": "codex"},
+        json={
+            "conversation_id": conversation_id,
+            "backend_key": "codex",
+            "model": "e2e-model",
+        },
         timeout=10.0,
     )
     assert created.status_code == 201, created.text

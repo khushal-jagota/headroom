@@ -209,6 +209,7 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
         title_max_chars=TITLE_MAX_CHARS,
         worker_type="probe",
         employee_backend="hermes",
+        employee_launch_model="hermes-model",
     )
     tickets_before = tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
     with pytest.raises(PlannerError) as raised:
@@ -220,11 +221,27 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
             title_max_chars=TITLE_MAX_CHARS,
             worker_type="probe",
             employee_backend="missing-backend",
+            employee_launch_model="whatever-it-runs",
+        )
+    # An override that names no model for the backend it names leaves the Ticket with
+    # nothing to run on, so it is refused the same way an unknown backend is.
+    with pytest.raises(PlannerError) as unnamed:
+        actions.create_ticket(
+            tmp_db,
+            title="Probe unnamed",
+            actor="human",
+            now=fake_clock.now_unix(),
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type="probe",
+            employee_backend="hermes",
         )
 
     assert defaulted.employee_backend == "claude"
+    assert defaulted.employee_launch_model == "probe-model"
     assert overridden.employee_backend == "hermes"
+    assert overridden.employee_launch_model == "hermes-model"
     assert raised.value.code is ErrorCode.validation
+    assert unnamed.value.code is ErrorCode.validation
     assert tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
 
 

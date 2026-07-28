@@ -24,6 +24,7 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS, StageOwnershipMode
 from planner.worker_settings import api as worker_settings_api
 from planner.worker_settings import service as worker_settings_service
+from planner.worker_settings.contracts import ManagedWorkerLaunchDefaults
 from planner.worker_types.configuration import configured_worker_type_registry
 
 
@@ -198,6 +199,83 @@ def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
         ) == ("claude", "claude-sonnet", "high")
     finally:
         conn.close()
+
+
+def test_launch_defaults_naming_no_model_are_refused(tmp_path: Path) -> None:
+    client, _db_path = _app(tmp_path, raise_server_exceptions=False)
+    with client:
+        for path in (
+            "/api/workers/coding/launch-defaults",
+            "/api/workers/chief-of-staff/launch-defaults",
+        ):
+            refused = client.put(
+                path,
+                json={
+                    "employee_backend": "claude",
+                    "employee_launch_model": None,
+                    "employee_launch_reasoning_effort": "high",
+                },
+            )
+            assert refused.status_code == 400
+
+
+def test_stored_launch_defaults_naming_no_model_are_repaired_to_the_shipped_ones(
+    tmp_path: Path,
+) -> None:
+    registry = configured_worker_type_registry()
+    worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    settings_path = root / "coding" / "settings.json"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    payload["launch_defaults"] = {
+        "employee_backend": "claude",
+        "employee_launch_model": None,
+        "employee_launch_reasoning_effort": "high",
+    }
+    settings_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    repaired = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+
+    # The whole block goes back to what the Worker type ships with, backend included: the
+    # shipped model belongs to the shipped backend and means nothing to another one.
+    assert repaired.launch_defaults.employee_backend == "codex"
+    assert repaired.launch_defaults.employee_launch_model == "gpt-5.6-sol"
+    assert repaired.launch_defaults.employee_launch_reasoning_effort == "medium"
+    assert json.loads(settings_path.read_text(encoding="utf-8"))["launch_defaults"] == {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-5.6-sol",
+        "employee_launch_reasoning_effort": "medium",
+    }
+
+
+def test_stored_chief_launch_defaults_naming_no_model_are_repaired_to_the_shipped_ones(
+    tmp_path: Path,
+) -> None:
+    worker_settings_service.read_chief_settings(tmp_path)
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    settings_path = root / "chief_of_staff" / "settings.json"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    payload["launch_defaults"] = {
+        "employee_backend": "hermes",
+        "employee_launch_model": None,
+        "employee_launch_reasoning_effort": None,
+    }
+    settings_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    repaired = worker_settings_service.read_chief_settings(tmp_path)
+
+    assert repaired.launch_defaults == ManagedWorkerLaunchDefaults(
+        employee_backend=worker_settings_service.DEFAULT_CHIEF_BACKEND,
+        employee_launch_model=worker_settings_service.DEFAULT_CHIEF_MODEL,
+        employee_launch_reasoning_effort=worker_settings_service.DEFAULT_CHIEF_REASONING_EFFORT,
+    )
+    assert json.loads(settings_path.read_text(encoding="utf-8"))["launch_defaults"] == {
+        "employee_backend": worker_settings_service.DEFAULT_CHIEF_BACKEND,
+        "employee_launch_model": worker_settings_service.DEFAULT_CHIEF_MODEL,
+        "employee_launch_reasoning_effort": (
+            worker_settings_service.DEFAULT_CHIEF_REASONING_EFFORT
+        ),
+    }
 
 
 def test_api_skill_patch_updates_canonical_skill_without_touching_ticket_session(

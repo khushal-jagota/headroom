@@ -388,6 +388,7 @@ async def _start(
         "/api/conversation/conversations",
         json={
             "conversation_id": conversation_id,
+            "model": "a-model",
             "backend_key": backend_key,
             "workspace_folder": "/tmp/workspace",
             **rest,
@@ -608,6 +609,7 @@ def test_a_folder_written_the_way_a_person_writes_it_is_the_folder_they_meant(
                 "/api/conversation/conversations",
                 json={
                     "conversation_id": "typed",
+                    "model": "a-model",
                     "backend_key": "hermes",
                     "workspace_folder": "~/Coding",
                 },
@@ -1506,7 +1508,7 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
 
         created = client.post(
             "/api/conversation/conversations",
-            json={"conversation_id": "wired", "backend_key": "codex"},
+            json={"conversation_id": "wired", "model": "a-model", "backend_key": "codex"},
         )
         assert created.status_code == 201
         assert created.json()["backend_key"] == "codex"

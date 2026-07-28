@@ -20,10 +20,10 @@
  */
 
 import type {
+  OwnerSendBody,
   PermissionAskOption,
   PromptDeliveryFate,
-  PromptDeliveryMode,
-  SendPromptBody
+  PromptDeliveryMode
 } from "./wire";
 import { backendSupportsSteer, type ConversationBackendKey } from "./wire";
 import type { OutgoingMessage } from "./outgoing";
@@ -188,6 +188,10 @@ export function askPlaceholder(
 export type RunValues = {
   model: string | null;
   reasoningEffort: string | null;
+  /** Which backend a message that has to create a conversation would create it on. It is
+   *  only ever a create-time value — a conversation that exists cannot be moved to another
+   *  backend — so it is absent from the values a conversation is running under. */
+  backendKey?: ConversationBackendKey | null;
 };
 
 /** The change a send would carry, given what the conversation runs on and what was picked.
@@ -224,20 +228,50 @@ export function hasArmedChange(
  *
  * The message is built from the copy this browser already drew, so what goes out is what
  * is on screen: the same pieces, under the same id, stamped with the same instant.
+ *
+ * A message with no conversation to go to is the one that creates it, and the backend it
+ * names is what it is created on. That is not a change and never rides one: past the first
+ * message there is nothing to move a conversation to, so the field is simply not there.
  */
 export function sendBodyFor(input: {
   message: OutgoingMessage;
   current: RunValues;
   picked: RunValues;
-}): SendPromptBody {
+  conversationId: string | null;
+}): OwnerSendBody {
+  const createdOn =
+    input.conversationId === null ? (input.picked.backendKey ?? null) : null;
   return {
+    conversation_id: input.conversationId,
     content: input.message.content,
     sender_label: input.message.senderLabel,
     mode: input.message.mode,
     sender_message_id: input.message.messageId,
     sent_at_unix_milliseconds: input.message.sentAtUnixMilliseconds,
-    ...armedChangeFor(input.current, input.picked, input.message.mode)
+    ...(createdOn === null ? {} : { backend_key: createdOn }),
+    ...whatThisMessageRunsUnder(input.current, input.picked, input.message.mode)
   };
+}
+
+/** What a message says it runs under, as the owner doors take it.
+ *
+ * To a conversation that exists this is a change and only a differing value is one. To a
+ * sender that has no conversation there is nothing to differ from, so what is showing is
+ * what it runs under — and saying it here is what keeps the message that makes a
+ * conversation from also having to change it.
+ */
+export function whatThisMessageRunsUnder(
+  current: RunValues,
+  picked: RunValues,
+  mode: PromptDeliveryMode
+): { model?: string; reasoning_effort?: string } {
+  const armed = armedChangeFor(current, picked, mode);
+  const runsUnder: { model?: string; reasoning_effort?: string } = {};
+  if (armed.model_change !== undefined) runsUnder.model = armed.model_change;
+  if (armed.reasoning_effort_change !== undefined) {
+    runsUnder.reasoning_effort = armed.reasoning_effort_change;
+  }
+  return runsUnder;
 }
 
 /** The name a model value is shown under, from the backend card's own catalog.
@@ -268,15 +302,16 @@ export function modelDetail(
  *
  * "Default" is not a value and is never offered as one — it is a word for whichever
  * concrete value is already in force. So the face shows that concrete value: what the
- * conversation is actually running if the record says, otherwise what the backend runs
- * when nobody names one. A backend that names none leaves the face empty rather than
- * inventing a word, which is the honest end of it.
+ * conversation is actually running if the record says, otherwise what a conversation
+ * started here right now would run, which its owner resolves. Where nobody can say —
+ * an owner yet to answer, a backend that names no model of its own — the face is left
+ * empty rather than filled with an invented word, which is the honest end of it.
  */
 export function preselectedValue(
   currentValue: string | null,
-  backendDefault: string | null | undefined
+  whatItWouldStartOn: string | null | undefined
 ): string | null {
-  return currentValue ?? backendDefault ?? null;
+  return currentValue ?? whatItWouldStartOn ?? null;
 }
 
 /** The reasoning efforts on offer for the model actually in force.

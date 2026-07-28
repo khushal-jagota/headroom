@@ -230,7 +230,7 @@ def test_delete_route_refuses_a_ticket_whose_conversation_is_running(tmp_path: P
     with TestClient(app) as client:
         asyncio.run(
             app.state.conversation_system.start_conversation(
-                ConversationStartRequest(conversation_id="conv-live")
+                ConversationStartRequest(conversation_id="conv-live", model="a-model")
             )
         )
         asyncio.run(

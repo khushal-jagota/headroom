@@ -49,7 +49,11 @@ from planner.conversation.message_content import (
     MessageText,
     text_message_content,
 )
-from planner.conversation.storage import ConversationRecordMissing, ConversationStore
+from planner.conversation.storage import (
+    ConversationRecordMissing,
+    ConversationRecordNamesNoModel,
+    ConversationStore,
+)
 from planner.core.db import connect, create_schema
 
 A_PROMPT = PromptEventPayload(
@@ -112,7 +116,7 @@ def _resolved(
     conversation_id: str = "c",
     *,
     role_materials: ConversationRoleMaterials | None = None,
-    model: str | None = None,
+    model: str = "a-model",
 ) -> ResolvedConversationStart:
     return ResolvedConversationStart(
         conversation_id=conversation_id,
@@ -286,6 +290,33 @@ def test_creating_the_same_conversation_twice_is_refused(store: ConversationStor
 
 def test_an_unknown_conversation_reads_as_nothing(store: ConversationStore) -> None:
     assert asyncio.run(store.read_conversation("never-started")) is None
+
+
+def test_a_stored_conversation_that_names_no_model_is_refused(tmp_path: Path) -> None:
+    """A row from before every conversation named its model.
+
+    Nobody can say what it ran on — the backend chose and never wrote it down — so it is
+    refused rather than resumed on whatever that backend would choose today.
+    """
+    db_path = tmp_path / "conversations.db"
+    schema_connection = connect(str(db_path))
+    create_schema(schema_connection)
+    schema_connection.close()
+    store = ConversationStore(str(db_path))
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved(model="first-model"))
+        conn = connect(str(db_path))
+        try:
+            with conn:
+                conn.execute("UPDATE conversations SET model = NULL WHERE conversation_id = 'c'")
+        finally:
+            conn.close()
+
+        with pytest.raises(ConversationRecordNamesNoModel):
+            await store.read_conversation("c")
+
+    asyncio.run(exercise())
 
 
 def test_the_session_cursor_moves(store: ConversationStore) -> None:

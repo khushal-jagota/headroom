@@ -33,7 +33,7 @@ from planner.worker_settings.contracts import (
     WorkerManagementDetail,
     WorkerManagementSummary,
 )
-from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.contracts import WorkerProfile, WorkerTypeDefinition
 from planner.worker_types.registry import WorkerTypeRegistry
 
 SETTINGS_DIR_NAME: Final = "worker-settings"
@@ -283,6 +283,13 @@ def _validate_launch_defaults(
     *,
     fallback: ManagedWorkerLaunchDefaults | None = None,
 ) -> ManagedWorkerLaunchDefaults:
+    """Turn text that claims to be launch defaults into them, or refuse it.
+
+    This is the one door launch defaults come through — a settings screen's request body
+    and a settings file somebody edited both arrive here — so a saved setting that names
+    no model is refused where it is read rather than discovered when a worker starts on a
+    model nobody chose.
+    """
     if raw is None and fallback is not None:
         return fallback
     if not isinstance(raw, dict) or set(raw) != {
@@ -299,19 +306,77 @@ def _validate_launch_defaults(
     if not isinstance(backend, str):
         raise PlannerError(ErrorCode.validation, "employee backend must be a string", {})
     backend = require_conversation_backend_key(backend)
-    optional: list[str | None] = []
-    for key in ("employee_launch_model", "employee_launch_reasoning_effort"):
-        value = raw[key]
-        if value is not None and (
-            not isinstance(value, str) or not value or value != value.strip()
-        ):
-            raise PlannerError(ErrorCode.validation, f"{key} must be null or trimmed text", {})
-        optional.append(value)
+    model = raw["employee_launch_model"]
+    if not isinstance(model, str) or not model or model != model.strip():
+        raise PlannerError(
+            ErrorCode.validation,
+            "employee_launch_model must be trimmed text naming a model",
+            {"employee_backend": str(backend)},
+        )
+    reasoning_effort = raw["employee_launch_reasoning_effort"]
+    if reasoning_effort is not None and (
+        not isinstance(reasoning_effort, str)
+        or not reasoning_effort
+        or reasoning_effort != reasoning_effort.strip()
+    ):
+        raise PlannerError(
+            ErrorCode.validation,
+            "employee_launch_reasoning_effort must be null or trimmed text",
+            {},
+        )
     return ManagedWorkerLaunchDefaults(
         employee_backend=backend,
-        employee_launch_model=optional[0],
-        employee_launch_reasoning_effort=optional[1],
+        employee_launch_model=model,
+        employee_launch_reasoning_effort=reasoning_effort,
     )
+
+
+def _launch_defaults_that_name_a_model(
+    stored: object, shipped: ManagedWorkerLaunchDefaults
+) -> object:
+    """Stored launch defaults, replaced by the shipped ones when they name no model.
+
+    A settings file written while a model could be left out can hold a null one, and on
+    the owner's machine that file is the live setting. A null there used to mean "whatever
+    the backend runs by default", which is a value nobody chose and nothing here can see,
+    so it is not passed on. It is not refused either: that would leave the owner with a
+    Workers screen and a Ticket that stay broken until they hand-edit JSON beside the
+    database. What replaces it is the whole block the Worker type ships with, not the
+    model alone — the shipped model belongs to the shipped backend, and pairing it with a
+    backend somebody else chose would name a model that backend has never heard of. The
+    caller writes the repaired block back, so the setting the owner sees is the setting
+    that runs, and they can change it on the screen where they chose the old one.
+    """
+    if (
+        isinstance(stored, dict)
+        and "employee_launch_model" in stored
+        and stored["employee_launch_model"] is None
+    ):
+        return _launch_defaults_payload(shipped)
+    return stored
+
+
+def _settings_launch_defaults(
+    settings_path: Path, settings_payload: JsonDict, profile: WorkerProfile
+) -> ManagedWorkerLaunchDefaults:
+    """What this Worker type's settings file launches on, repaired on the way out.
+
+    A file with no launch defaults at all — one written before the block existed — takes
+    the shipped ones, and one that names no model is repaired the same way. Either way the
+    file is rewritten with what was resolved, so the next read finds it already answered.
+    """
+    shipped = ManagedWorkerLaunchDefaults(
+        profile.default_backend, profile.default_model, profile.default_reasoning_effort
+    )
+    stored = settings_payload.get("launch_defaults")
+    launch_defaults = _validate_launch_defaults(
+        _launch_defaults_that_name_a_model(stored, shipped), fallback=shipped
+    )
+    resolved_payload = _launch_defaults_payload(launch_defaults)
+    if stored != resolved_payload:
+        settings_payload["launch_defaults"] = resolved_payload
+        _atomic_replace_json(settings_path, settings_payload)
+    return launch_defaults
 
 
 def _ensure_bootstrapped(root: Path, definition: WorkerTypeDefinition) -> None:
@@ -577,18 +642,9 @@ def _read_settings_with_recovery(
             definition,
         )
         defaults = _validate_settings_payload(settings_payload, definition)
-        profile = definition.worker_profile
-        launch_defaults = _validate_launch_defaults(
-            settings_payload.get("launch_defaults"),
-            fallback=ManagedWorkerLaunchDefaults(
-                profile.default_backend,
-                profile.default_model,
-                profile.default_reasoning_effort,
-            ),
+        launch_defaults = _settings_launch_defaults(
+            settings_path, settings_payload, definition.worker_profile
         )
-        if "launch_defaults" not in settings_payload:
-            settings_payload["launch_defaults"] = _launch_defaults_payload(launch_defaults)
-            _atomic_replace_json(_settings_path(root, definition.worker_type), settings_payload)
         skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
         if not skill_path.is_file():
             raise FileNotFoundError(f"specialist skill source not found: {skill_path}")
@@ -604,18 +660,9 @@ def _read_settings_with_recovery(
             definition,
         )
         defaults = _validate_settings_payload(settings_payload, definition)
-        profile = definition.worker_profile
-        launch_defaults = _validate_launch_defaults(
-            settings_payload.get("launch_defaults"),
-            fallback=ManagedWorkerLaunchDefaults(
-                profile.default_backend,
-                profile.default_model,
-                profile.default_reasoning_effort,
-            ),
+        launch_defaults = _settings_launch_defaults(
+            settings_path, settings_payload, definition.worker_profile
         )
-        if "launch_defaults" not in settings_payload:
-            settings_payload["launch_defaults"] = _launch_defaults_payload(launch_defaults)
-            _atomic_replace_json(_settings_path(root, definition.worker_type), settings_payload)
         skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
         skill_text = skill_path.read_text(encoding="utf-8")
         skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
@@ -702,6 +749,12 @@ def _default_chief_launch_defaults() -> ManagedWorkerLaunchDefaults:
 def read_chief_settings(
     configured_database_parent: Path | str,
 ) -> ManagedChiefSettings:
+    """The Chief's managed settings, with a stored block that names no model repaired.
+
+    The repair is the Workers' one, for the Chief's shipped launch defaults: see
+    ``_launch_defaults_that_name_a_model`` for why a null is neither passed on nor
+    refused. The repaired block is written back, so the file stops holding the null.
+    """
     root = managed_worker_settings_root(configured_database_parent)
     path = _chief_settings_path(root)
     with _worker_settings_lock(root, CHIEF_SETTINGS_KEY):
@@ -717,13 +770,21 @@ def read_chief_settings(
         payload = _load_json_object(path)
         if payload.get("employee_id") != CHIEF_SETTINGS_KEY or payload.get("label") != CHIEF_LABEL:
             raise PlannerError(ErrorCode.validation, "managed Chief settings are invalid", {})
+        stored = payload.get("launch_defaults")
+        launch_defaults = _validate_launch_defaults(
+            _launch_defaults_that_name_a_model(stored, _default_chief_launch_defaults())
+        )
+        resolved_payload = _launch_defaults_payload(launch_defaults)
+        if stored != resolved_payload:
+            payload["launch_defaults"] = resolved_payload
+            _atomic_replace_json(path, payload)
         skill_path = _managed_skill_path(root.parent, CHIEF_SKILL_NAME)
         skill = _parse_skill(skill_path.read_text(encoding="utf-8"), CHIEF_SKILL_NAME)
         return ManagedChiefSettings(
             employee_id=CHIEF_SETTINGS_KEY,
             label=CHIEF_LABEL,
             skill=skill,
-            launch_defaults=_validate_launch_defaults(payload.get("launch_defaults")),
+            launch_defaults=launch_defaults,
         )
 
 

@@ -32,6 +32,12 @@
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
   --accent-surface: #222a38;
+  /* The accent as a surface wide enough to read a line of text on. --accent-surface is
+   * the fill of small marked things — a chip, a pill, the primary button — and is dark
+   * enough that it barely lifts off the page, which is what makes it right for them and
+   * wrong for a band. This one is lighter and more saturated, so an area of it reads as
+   * a coloured surface rather than as a tint. */
+  --accent-surface-bright: #294053;
   --accent-text: #dce6f8;
   --accent-ink: #111318;   /* dark text on the accent fill (e.g. Approve) */
   --accent-done: #7fa564;  /* the green done marks */

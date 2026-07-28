@@ -97,16 +97,24 @@
     }
   }
 
+  // A backend change brings the new backend's own model with it. The saved model belonged
+  // to the old one and means nothing here, and saving no model at all would launch these
+  // workers on whatever the backend picked for itself. A backend this machine reported no
+  // model for has none to bring: the save goes out naming none and the server says so,
+  // rather than this control quietly choosing something nobody can see.
   function selectBackend(event: Event): void {
     const backend = (event.currentTarget as HTMLSelectElement).value;
     if (backend === selected.employee_backend || saving) return;
-    void persist({ employee_backend: backend, employee_launch_model: null, employee_launch_reasoning_effort: null });
+    const itsOwn = backends.find((candidate) => candidate.backend_key === backend);
+    void persist({
+      employee_backend: backend,
+      employee_launch_model: itsOwn?.default_model_id ?? null,
+      employee_launch_reasoning_effort: null
+    });
   }
 
   function selectModel(event: Event): void {
-    const raw = (event.currentTarget as HTMLSelectElement).value;
-    // Choosing the native value stores null ("not pinned"); anything else pins.
-    const model = raw === (snapshot?.default_model_id ?? "") ? null : raw || null;
+    const model = (event.currentTarget as HTMLSelectElement).value;
     if (model === selected.employee_launch_model || saving) return;
     void persist({ ...selected, employee_launch_model: model });
   }

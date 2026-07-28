@@ -42,7 +42,6 @@ _TICKET_SET_FIELDS = {
     "deadline": "deadline",
     "project": "project",
     "project-id": "project_id",
-    "employee-backend": "employee_backend",
 }
 
 _SPRINT_FIELDS = {
@@ -482,6 +481,11 @@ def ticket() -> None:
 @click.option("--title", required=True, help="Ticket title.")
 @click.option("--worker-type", "worker_type", required=True, help="Worker type id (e.g. coding).")
 @click.option("--employee-backend", default=None, help="Registered employee backend override.")
+@click.option(
+    "--employee-launch-model",
+    default=None,
+    help="Model for an overriding backend; required when it is not the Worker type's own.",
+)
 @click.option("--priority", type=click.Choice(_PRIORITIES), default=None, help="Priority label.")
 @click.option("--deadline", default=None, help="Due date in YYYY-MM-DD form.")
 @click.option("--project", default=None, help="Project name.")
@@ -505,6 +509,7 @@ def ticket_create(
     title: str,
     worker_type: str,
     employee_backend: str | None,
+    employee_launch_model: str | None,
     priority: str | None,
     deadline: str | None,
     project: str | None,
@@ -519,6 +524,8 @@ def ticket_create(
     body: dict[str, Any] = {"title": title, "worker_type": worker_type}
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
+    if employee_launch_model is not None:
+        body["employee_launch_model"] = employee_launch_model
     if kickoff_note is not None and kickoff_note_file is not None:
         http.fail_validation("kickoff note accepts only one note option", as_json)
     if kickoff_note_file is not None:
@@ -620,7 +627,7 @@ def ticket_set(
 ) -> None:
     api_field = _TICKET_SET_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field in {"title", "priority", "employee-backend"} and new_value is None:
+    if field in {"title", "priority"} and new_value is None:
         http.fail_validation(f"{field} cannot be cleared", as_json)
     if field == "priority" and new_value not in _PRIORITIES:
         http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
@@ -634,18 +641,6 @@ def ticket_set(
             json_body={"body": new_value},
             request_actor="ordinary",
         )
-    elif field == "employee-backend":
-        data = http.send(
-            "PUT",
-            f"/api/tickets/{ticket_id}/employee-configuration",
-            as_json=as_json,
-            json_body={
-                "employee_backend": new_value,
-                "employee_launch_model": None,
-                "employee_launch_reasoning_effort": None,
-            },
-            request_actor="ordinary",
-        )
     else:
         data = http.send(
             "PATCH",
@@ -655,6 +650,46 @@ def ticket_set(
             request_actor="ordinary",
         )
     http.emit(data, as_json, f"{data['id']} {field} set")
+
+
+@ticket.command("employee-configuration")
+@click.argument("ticket_id")
+@click.option("--backend", required=True, help="Registered employee backend.")
+@click.option("--model", required=True, help="Model that backend runs this Ticket's worker on.")
+@click.option(
+    "--reasoning-effort",
+    default=None,
+    help="Reasoning effort for that model; leave it out for a model that takes none.",
+)
+@json_option
+def ticket_employee_configuration(
+    ticket_id: str,
+    backend: str,
+    model: str,
+    reasoning_effort: str | None,
+    as_json: bool,
+) -> None:
+    """Set what this Ticket's worker launches on: backend, model, reasoning effort.
+
+    All three go together because the door takes them together — a model id belongs to the
+    backend that named it, so there is no such thing as changing one of them on its own.
+    """
+    data = http.send(
+        "PUT",
+        f"/api/tickets/{ticket_id}/employee-configuration",
+        as_json=as_json,
+        json_body={
+            "employee_backend": backend,
+            "employee_launch_model": model,
+            "employee_launch_reasoning_effort": reasoning_effort,
+        },
+        request_actor="ordinary",
+    )
+    http.emit(
+        data,
+        as_json,
+        f"{data['id']} employee configuration set {backend} {model}",
+    )
 
 
 @ticket.command("ownership")
@@ -1131,6 +1166,7 @@ _EXTERNAL_WORK_CREATE_FIXED_KEYS = _EXTERNAL_WORK_RECONCILE_FIXED_KEYS | frozens
         "title",
         "worker_type",
         "employee_backend",
+        "employee_launch_model",
         "priority",
         "deadline",
         "project",
@@ -1259,6 +1295,11 @@ def chief_reconcile_ticket_from_external_work(
 @click.option("--title", required=True, help="Ticket title.")
 @click.option("--worker-type", "worker_type", required=True, help="Worker type id (e.g. coding).")
 @click.option("--employee-backend", default=None, help="Registered employee backend override.")
+@click.option(
+    "--employee-launch-model",
+    default=None,
+    help="Model for an overriding backend; required when it is not the Worker type's own.",
+)
 @click.option("--stage", required=True, help="Target worker stage (validated per type).")
 @click.option(
     "--kickoff-note-file", required=True, help="Complete resulting ticket note file, or -."
@@ -1294,6 +1335,7 @@ def chief_create_ticket_from_external_work(
     title: str,
     worker_type: str,
     employee_backend: str | None,
+    employee_launch_model: str | None,
     stage: str,
     kickoff_note_file: str,
     recap_file: str | None,
@@ -1329,6 +1371,8 @@ def chief_create_ticket_from_external_work(
     body["worker_type"] = worker_type
     if employee_backend is not None:
         body["employee_backend"] = employee_backend
+    if employee_launch_model is not None:
+        body["employee_launch_model"] = employee_launch_model
     if priority is not None:
         body["priority"] = priority
     if deadline is not None:

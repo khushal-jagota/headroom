@@ -18,7 +18,12 @@
   } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
-  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
+  import {
+    readBackends,
+    type BackendSnapshot,
+    type DeliveredMessage,
+    type OwnerSendBody
+  } from "../lib/conversation/wire";
   import Button from "../components/Button.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
@@ -33,6 +38,12 @@
   const stableId = untrack(() => id);
 
   const ticket = createQuery(() => queries.ticket(stableId));
+  // What a conversation for this Ticket's worker would start on, asked of the server
+  // because the server is what resolves it: the Worker type's launch defaults and
+  // whatever this Ticket last ran on, through the same code that will create it.
+  const conversationStartValues = createQuery(() =>
+    queries.ticketConversationStartValues(stableId)
+  );
   const sprints = createQuery(() => queries.sprintSummaries());
   const projects = createQuery(() => queries.projects());
   const currentSprint = createQuery(() => queries.currentSprint());
@@ -141,11 +152,11 @@
    * person gets there first. The reply carries the Ticket, so the id comes back from the
    * same write that made the link.
    */
-  async function startTicketConversation(): Promise<string | null> {
-    const detail = await mutateJson<TicketDetail>(`/api/tickets/${stableId}/conversation`, {
-      method: "POST"
+  async function sendToTicketWorker(body: OwnerSendBody): Promise<DeliveredMessage> {
+    return mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
+      method: "POST",
+      body
     });
-    return detail.conversation_id;
   }
 
   /** New: the old conversation is killed and the Ticket stops pointing at it. The next
@@ -600,8 +611,9 @@
             conversationId={detail.conversation_id}
             label={conversationEmployeeLabel(detail)}
             backends={conversationBackends}
+            startValues={conversationStartValues.data ?? null}
             senderLabel="owner"
-            onStartConversation={startTicketConversation}
+            sendMessage={sendToTicketWorker}
             onNewConversation={resetTicketConversation}
             onMessageAccepted={recordHumanReply}
           />

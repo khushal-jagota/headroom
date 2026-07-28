@@ -354,6 +354,11 @@ class SqliteProcessConversationSystem:
         again. Each discarded message is written down before the turn's ending, because
         text a caller handed over must never disappear without a trace.
 
+        The agent goes too. A killed conversation is one nobody is coming back to, and a
+        child left running is an agent working in somebody's folder that nothing will speak
+        to again — it would sit there until the idle sweep noticed. Whether a turn was
+        running makes no difference to that.
+
         The whole of it happens under the conversation's lock, including the cancel — the
         one place wire I/O is held under it, because being one act is the point. A queue
         that could take on a message between the turn dying and the queue emptying would
@@ -367,13 +372,17 @@ class SqliteProcessConversationSystem:
         try:
             await self._discard_held_prompts(state)
             running = state.running_turn
-            if running is None:
-                return
             try:
                 child = state.child
                 if child is not None:
-                    await self._cancel_child_turn(state, child)
-                await self._end_turn(state, running, ConversationTurnEnding.interrupted, None)
+                    if running is not None:
+                        await self._cancel_child_turn(state, child)
+                    if state.child is child:
+                        await self._discard_child(state, child)
+                if running is not None:
+                    await self._end_turn(
+                        state, running, ConversationTurnEnding.interrupted, None
+                    )
             finally:
                 self._settle_phase(state)
         finally:

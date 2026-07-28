@@ -150,7 +150,12 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
         )
         overridden = client.post(
             "/api/chief/tickets/from-external-work",
-            json={"title": "External override", **base, "employee_backend": "hermes"},
+            json={
+                "title": "External override",
+                **base,
+                "employee_backend": "hermes",
+                "employee_launch_model": "hermes-model",
+            },
             headers=_CHIEF,
         )
         conn = connect(str(db_path))
@@ -177,7 +182,9 @@ def test_external_create_backend_default_override_and_unknown_before_mutation(
         check.close()
     assert defaulted.json()["employee_launch_model"] == "probe-model"
     assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
-    assert overridden.json()["employee_launch_model"] is None
+    # The override brought the model it runs on with it; the effort belonged to the model
+    # it replaced, so it did not come along.
+    assert overridden.json()["employee_launch_model"] == "hermes-model"
     assert overridden.json()["employee_launch_reasoning_effort"] is None
 
 
@@ -364,7 +371,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
     with TestClient(app) as client:
         asyncio.run(
             app.state.conversation_system.start_conversation(
-                ConversationStartRequest(conversation_id="conv-live")
+                ConversationStartRequest(conversation_id="conv-live", model="a-model")
             )
         )
         asyncio.run(

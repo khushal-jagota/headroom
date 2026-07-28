@@ -6,6 +6,7 @@
   import RoleSkillEditor from "../components/RoleSkillEditor.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
+  import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
   import type {
@@ -52,14 +53,6 @@
     new Map((skillsHome.data?.skills || []).map((skill) => [skill.name, skill]))
   );
   let sharedWorkerSkill = $derived(indexedSkills.get("panels-worker"));
-  // These reads must stay eager. TanStack tracks each property as it is read, so
-  // short-circuiting across the two query proxies can leave a later query's
-  // completion unobserved and the combined loading state stuck on screen.
-  let indexError = $derived([workers.error, skillsHome.error].find((error) => Boolean(error)));
-  let indexLoading = $derived([workers.isFetching, skillsHome.isFetching].some(Boolean));
-  let indexHasData = $derived(
-    [workers.data, skillsHome.data].every((data) => data !== undefined)
-  );
 
   function displaySkillForEdit(settings: WorkerManagementSettings): ManagedSkill {
     return settings.candidate_specialist_skill || settings.specialist_skill;
@@ -185,9 +178,7 @@
         <h1>Agents</h1>
       </header>
       <ResourceState
-        error={indexError}
-        loading={indexLoading}
-        hasData={indexHasData}
+        {...resourceStateForQueries(workers, skillsHome)}
         loadingText="Loading agents..."
       >
         {#if workers.data}

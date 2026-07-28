@@ -242,15 +242,30 @@ Worker does not restore an earlier set of choices.
 
 The complete trio may be edited in the Kickoff controls only while the Ticket is still
 at pristine Kickoff and has no conversation yet. One save replaces the whole setup.
-Changing Worker resets Model and Reasoning to that backend's native defaults. Changing
-Model retains an explicit Reasoning choice only when the new model still supports it.
-Starting the Ticket's first conversation, or any move past Kickoff, removes those
-controls.
+Changing Worker names the new backend's own model in the same save, because a model name
+belongs to the backend that gave it and means nothing to another one; Reasoning is cleared,
+since it belonged to the model being replaced. Changing Model retains an explicit Reasoning
+choice only when the new model still supports it. Starting the Ticket's first conversation,
+or any move past Kickoff, removes those controls.
+
+A backend this machine reported no models for has no model to name, so a save that switches
+to it names none and is refused. That is the honest end of it: the alternative is a Ticket
+whose worker runs on something nobody chose.
 
 Hermes offers Model but not Reasoning. Codex and Claude Code offer Model, and their
-Reasoning choices depend on the selected model. Leaving Model or Reasoning at its native
-value means the backend chooses its own default. A missing or unavailable explicit value
-fails visibly instead of silently selecting something else.
+Reasoning choices depend on the selected model.
+
+Every conversation is started on a named model. Panels never lets a backend pick one for
+itself: that is a value nobody chose, nobody here can see, and the tool may change it from
+under us. A Ticket holding no model — one set up before this was so — has chosen nothing
+that can be run, so it starts on its Worker type's own backend and model instead of on a
+model picked for it. A saved launch setting that names no model is repaired the same way,
+to the whole set of values its Worker type or the Chief ships with, and the settings file
+is rewritten so the setting on the screen is the setting that runs.
+
+Leaving Reasoning at its native value means the backend chooses its own default, which is
+a real answer because some models take none. A missing or unavailable explicit value fails
+visibly instead of silently selecting something else.
 
 The Backend, Model, and Reasoning menus use a durable catalog for that backend and candidate
 model. A catalog stays fresh for 24 hours across a server restart. The user can choose
