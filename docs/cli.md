@@ -15,6 +15,7 @@ The command tree matches the system model:
 
 - `day ...` — plan and inspect a day.
 - `project ...` — list and create project catalog rows.
+- `schedule ...` — configure exact-time creation of ordinary Tickets.
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
 - `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
@@ -34,6 +35,13 @@ generic Stage setter.
   day’s separate mid-day check.
 - **`project list / create`** — inspect and add projects. Project availability is
   data-backed, not enum-backed.
+- **`schedule create / list / show / set`** — manage generic internal schedules that
+  create and place an ordinary Ticket at an exact local time. A schedule uses either
+  `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
+  creation context as `ticket create`, and can be enabled or disabled. `show` includes
+  its durable created, suppressed, or failed occurrence receipts. These commands
+  configure Ticket supply only; they do not contain planning behavior or start Workers
+  directly.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
   tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
   `--kickoff-note-file` intake body for the Kickoff field. `--employee-backend` overrides
@@ -176,4 +184,4 @@ lease; Panels starts one worker step at a time and writes the Ticket's status it
 
 ---
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-07-28._

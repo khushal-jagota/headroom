@@ -57,6 +57,22 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 `src/planner/core/change_signal.py`, and the claim and release writers in
 `src/planner/tickets/data.py`.
 
+## Scheduled Ticket handoff
+
+A sibling loop can supply an ordinary Ticket at an exact configured local time. It
+shares the readiness loop's server lifespan, periodic interval, and single-machine lock,
+but not its job: scheduling stops after an atomic Ticket creation and day placement.
+That commit emits the ordinary change signal, and readiness then asks its unchanged
+questions about today, gates, ownership, status, scope, and live conversation activity.
+There is no alternate start path from a schedule into a Worker.
+
+The schedule loop evaluates only the current local minute. It does not search elapsed
+minutes after downtime. Repeated polls and restarts see the same durable occurrence
+receipt; an existing Ticket of the configured Worker type on the target day suppresses
+creation before readiness is involved.
+
+_Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
+
 ## Sending the step
 
 The opening message is written first: a short instruction naming the Ticket, its Stage,
@@ -185,5 +201,6 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`, and
 
 ---
 
-_Last verified: 2026-07-26 (readiness check, one claim flip, no watch-and-settle; one
-conversation system, and a worker step sends into the same conversation a person does)._
+_Last verified: 2026-07-28 (scheduled Ticket supply hands off through the ordinary
+commit; readiness check, one claim flip, no watch-and-settle; one conversation system,
+and a worker step sends into the same conversation a person does)._

@@ -9,7 +9,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "day_midday_reconciliation"
-down_revision = "no_conversation_before_a_message"
+down_revision = "scheduled_ticket_creation"
 branch_labels = None
 depends_on = None
 

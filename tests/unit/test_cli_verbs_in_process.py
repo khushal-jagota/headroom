@@ -262,6 +262,44 @@ def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(
     assert stored["employee_launch_model"] == "a-codex-model"
 
 
+def test_schedule_cli_creates_lists_updates_and_shows_run_state(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> None:
+    created = cli(
+        server,
+        "schedule",
+        "create",
+        "--title",
+        "Morning planning",
+        "--worker-type",
+        "coding",
+        "--time",
+        "08:30",
+        "--kickoff-note",
+        "Gather first",
+    )
+    assert created["cadence"] == "every_planning_day"
+    assert created["enabled"] is True
+
+    listed = cli(server, "schedule", "list")
+    assert [item["id"] for item in listed["schedules"]] == [created["id"]]
+
+    updated = cli(
+        server,
+        "schedule",
+        "set",
+        created["id"],
+        "enabled",
+        "--value",
+        "false",
+    )
+    assert updated["enabled"] is False
+
+    shown = cli(server, "schedule", "show", created["id"])
+    assert shown["occurrences"] == []
+    assert api.get(server, f"/api/schedules/{created['id']}")["enabled"] is False
+
+
 def test_ticket_create_sprint_item_parents_it(
     server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
 ) -> None:

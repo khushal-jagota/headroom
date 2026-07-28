@@ -29,12 +29,9 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "day_midday_reconciliation"
 
-# How many schema objects a current database holds: the fifteen tables and nine indexes the
-# ladder left, less the event log and its index that ticket_status_changed_at dropped, plus
-# the two tables the conversation system brought and the one recording which conversation
-# an agent that is not a Ticket is currently talking in, less the five tables and one index
-# the conversation layer that came before it left behind.
-CURRENT_SCHEMA_OBJECT_COUNT = 19
+# How many schema objects a current database holds: the previous head's nineteen, plus
+# the schedule and occurrence tables and their two operational indexes.
+CURRENT_SCHEMA_OBJECT_COUNT = 23
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
