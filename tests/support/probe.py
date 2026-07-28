@@ -50,9 +50,8 @@ PROBE_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         default_model="probe-model",
         default_reasoning_effort="probe-high",
         toolset_profile="default",
-        # A real backend key, and deliberately not one any shipped Worker type names:
-        # the probe exists to prove a Worker type may run on a backend of its own.
-        default_backend="hermes",
+        # A real backend key distinct from the override exercised by the generic tests.
+        default_backend="claude",
     ),
     supports_prefix_reconciliation=True,
 )
