@@ -541,7 +541,7 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_body(
     with TestClient(app) as client:
         bound = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "probe-model", "probe-high"),
+            json=_employee_configuration_body("claude", "claude-model"),
         )
         indirect = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -584,7 +584,7 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_body(
         )
         detail = client.get(f"/api/tickets/{ticket_id}")
 
-    assert bound.status_code == 200
+    assert bound.status_code == 409
     assert indirect.status_code == 400
     assert indirect.json()["error"]["code"] == "agent_forbidden"
     assert extra.status_code == 400
