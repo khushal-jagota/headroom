@@ -33,6 +33,7 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime.conversation_start import (
     CONVERSATION_ID_PREFIX,
     agent_resolve,
+    new_conversation_id,
     reset_ticket_conversation,
     send_to_ticket_conversation,
     start_ticket_conversation,
@@ -98,6 +99,8 @@ class _LinkWatchingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,
@@ -106,6 +109,8 @@ class _LinkWatchingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
 
     async def interrupt(self, conversation_id: str) -> None:
@@ -121,6 +126,60 @@ class _LinkWatchingConversationSystem:
         return await self._system.has_pending_permission_ask(conversation_id)
 
 
+class _WhoseFirstWriteFails(_LinkWatchingConversationSystem):
+    """The fake, with every conversation it makes unable to take a write.
+
+    Armed as the conversation comes into being, because that is the only moment between a
+    first message making one and that message being written to it.
+    """
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        await self._system.start_conversation(request)
+        self._system.arm_backend_write_failure(request.conversation_id)
+
+
+async def _started(
+    system: object, conn: Connection, ticket: Ticket, values: ConversationStartValues, *, now: int
+) -> str:
+    """The conversation a Ticket is in after one is started for it."""
+    linked = await start_ticket_conversation(
+        system,  # type: ignore[arg-type]
+        conn,
+        ticket,
+        values,
+        conversation_id=new_conversation_id(),
+        now=now,
+    )
+    return linked.conversation_id
+
+
+async def _sent(
+    system: object,
+    conn: Connection,
+    ticket_id: str,
+    text: str,
+    *,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
+    sender_label: str = "loop",
+    now: int,
+) -> PromptDeliveryFate:
+    """A message into the conversation the Ticket is in, and what became of it."""
+    delivered = await send_to_ticket_conversation(
+        system,  # type: ignore[arg-type]
+        conn,
+        ticket_id,
+        text_message_content(text),
+        conversation_id=read_ticket(conn, ticket_id).conversation_id,
+        runs_under=ConversationStartOverrides(model=model, reasoning_effort=reasoning_effort),
+        sender_label=sender_label,
+        mode=mode,
+        now=now,
+    )
+    return delivered.fate
+
+
 def test_the_conversation_exists_before_the_ticket_points_at_it(
     tmp_db: Connection, ticket: Ticket
 ) -> None:
@@ -128,9 +187,7 @@ def test_the_conversation_exists_before_the_ticket_points_at_it(
         system = InMemoryConversationSystem()
         watcher = _LinkWatchingConversationSystem(system, tmp_db, ticket.id)
 
-        conversation_id = await start_ticket_conversation(
-            watcher, tmp_db, ticket, _values(ticket.id), now=10
-        )
+        conversation_id = await _started(watcher, tmp_db, ticket, _values(ticket.id), now=10)
 
         # The conversation already existed while the Ticket still pointed at nothing.
         assert watcher.link_when_the_conversation_existed is None
@@ -150,9 +207,7 @@ def test_starting_writes_the_link_and_the_last_chosen_configuration(
     async def exercise() -> None:
         system = InMemoryConversationSystem()
 
-        conversation_id = await start_ticket_conversation(
-            system, tmp_db, ticket, _values(ticket.id), now=10
-        )
+        conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
 
         assert conversation_id.startswith(CONVERSATION_ID_PREFIX)
         started = read_ticket(tmp_db, ticket.id)
@@ -208,9 +263,7 @@ def test_the_start_request_carries_every_resolved_value(
             async def has_pending_permission_ask(self, conversation_id: str) -> bool:
                 return await system.has_pending_permission_ask(conversation_id)
 
-        conversation_id = await start_ticket_conversation(
-            _Recording(), tmp_db, ticket, _values(ticket.id), now=10
-        )
+        conversation_id = await _started(_Recording(), tmp_db, ticket, _values(ticket.id), now=10)
 
         (request,) = seen
         assert request.conversation_id == conversation_id
@@ -228,17 +281,11 @@ def test_a_send_carrying_a_change_records_it_once_the_delivery_started(
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        await start_ticket_conversation(system, tmp_db, ticket, _values(ticket.id), now=10)
+        await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
 
-        fate = await send_to_ticket_conversation(
-            system,
-            tmp_db,
-            ticket.id,
-            "work the step",
-            sender_label="loop",
-            model_change="sonnet",
-            reasoning_effort_change="low",
-            now=20,
+        fate = await _sent(
+            system, tmp_db, ticket.id, "work the step", model="sonnet",
+            reasoning_effort="low", now=20,
         )
 
         assert isinstance(fate, PromptDeliveryStarted)
@@ -256,17 +303,9 @@ def test_a_change_to_the_model_alone_leaves_the_recorded_effort_where_it_was(
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        await start_ticket_conversation(system, tmp_db, ticket, _values(ticket.id), now=10)
+        await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
 
-        await send_to_ticket_conversation(
-            system,
-            tmp_db,
-            ticket.id,
-            "work the step",
-            sender_label="loop",
-            model_change="sonnet",
-            now=20,
-        )
+        await _sent(system, tmp_db, ticket.id, "work the step", model="sonnet", now=20)
 
         after = read_ticket(tmp_db, ticket.id)
         assert after.employee_launch_model == "sonnet"
@@ -280,11 +319,9 @@ def test_a_send_that_carries_no_change_leaves_the_recorded_configuration_alone(
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        await start_ticket_conversation(system, tmp_db, ticket, _values(ticket.id), now=10)
+        await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
 
-        await send_to_ticket_conversation(
-            system, tmp_db, ticket.id, "work the step", sender_label="loop", now=20
-        )
+        await _sent(system, tmp_db, ticket.id, "work the step", now=20)
 
         after = read_ticket(tmp_db, ticket.id)
         assert after.employee_launch_model == "opus"
@@ -299,21 +336,13 @@ def test_a_change_on_a_held_message_records_nothing_yet(
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        conversation_id = await start_ticket_conversation(
-            system, tmp_db, ticket, _values(ticket.id), now=10
-        )
+        conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
         # Put a turn on the agent, so the next run-when-free message is held.
         await system.send(conversation_id, text_message_content("incumbent"), sender_label="owner")
 
-        fate = await send_to_ticket_conversation(
-            system,
-            tmp_db,
-            ticket.id,
-            "work the step",
-            sender_label="loop",
-            mode=PromptDeliveryMode.run_when_free,
-            model_change="sonnet",
-            now=20,
+        fate = await _sent(
+            system, tmp_db, ticket.id, "work the step",
+            mode=PromptDeliveryMode.run_when_free, model="sonnet", now=20,
         )
 
         assert isinstance(fate, PromptDeliveryQueued)
@@ -329,20 +358,10 @@ def test_a_change_on_a_refused_delivery_records_nothing(
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        conversation_id = await start_ticket_conversation(
-            system, tmp_db, ticket, _values(ticket.id), now=10
-        )
+        conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
         system.arm_backend_write_failure(conversation_id)
 
-        fate = await send_to_ticket_conversation(
-            system,
-            tmp_db,
-            ticket.id,
-            "work the step",
-            sender_label="loop",
-            model_change="sonnet",
-            now=20,
-        )
+        fate = await _sent(system, tmp_db, ticket.id, "work the step", model="sonnet", now=20)
 
         assert isinstance(fate, PromptDeliveryRefused)
         assert fate.refusal_reason is PromptDeliveryRefusalReason.write_to_backend_failed
@@ -392,6 +411,8 @@ class _RelinkingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
         fate = await self._system.send(
             conversation_id,
@@ -400,6 +421,8 @@ class _RelinkingConversationSystem:
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
         self._relink()
         return fate
@@ -423,18 +446,10 @@ def test_a_change_is_not_recorded_on_a_ticket_that_moved_to_another_conversation
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        await start_ticket_conversation(system, tmp_db, ticket, _values(ticket.id), now=10)
+        await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
         relinking = _RelinkingConversationSystem(system, tmp_db, ticket.id, "conv_elsewhere")
 
-        fate = await send_to_ticket_conversation(
-            relinking,
-            tmp_db,
-            ticket.id,
-            "work the step",
-            sender_label="loop",
-            model_change="sonnet",
-            now=20,
-        )
+        fate = await _sent(relinking, tmp_db, ticket.id, "work the step", model="sonnet", now=20)
 
         # The delivery started, but by then the Ticket had been pointed at a different
         # conversation. Sonnet is true of the one that ran, not of the one it now names.
@@ -452,9 +467,7 @@ def test_resetting_does_not_unlink_a_conversation_it_did_not_kill(
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        killed = await start_ticket_conversation(
-            system, tmp_db, ticket, _values(ticket.id), now=10
-        )
+        killed = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
         await system.send(killed, text_message_content("running work"), sender_label="loop")
         relinking = _RelinkingConversationSystem(system, tmp_db, ticket.id, "conv_newer")
 
@@ -468,15 +481,96 @@ def test_resetting_does_not_unlink_a_conversation_it_did_not_kill(
     asyncio.run(exercise())
 
 
-def test_sending_into_a_ticket_that_has_no_conversation_is_an_error(
+def test_a_message_to_a_ticket_with_no_conversation_makes_one_and_goes_into_it(
     tmp_db: Connection, ticket: Ticket
 ) -> None:
+    """A Ticket nobody has spoken to has no conversation, and the message is what makes one.
+
+    On the values the message says it runs under, so the message that creates a
+    conversation never has to change it — which is what a backend taking its model at
+    startup would otherwise have to be restarted for.
+    """
+
     async def exercise() -> None:
         system = InMemoryConversationSystem()
 
+        delivered = await send_to_ticket_conversation(
+            system,
+            tmp_db,
+            ticket.id,
+            text_message_content("first words"),
+            conversation_id=None,
+            runs_under=ConversationStartOverrides(model="sonnet", reasoning_effort="low"),
+            sender_label="owner",
+            now=20,
+        )
+
+        assert isinstance(delivered.fate, PromptDeliveryStarted)
+        assert delivered.conversation_id is not None
+        after = read_ticket(tmp_db, ticket.id)
+        assert after.conversation_id == delivered.conversation_id
+        # Made on what the message said it runs under, rather than on stored defaults.
+        assert after.employee_launch_model == "sonnet"
+        assert after.employee_launch_reasoning_effort == "low"
+        # And nothing had to be changed, because it was made on what was asked for.
+        assert not [
+            observation
+            for observation in system.observations(delivered.conversation_id)
+            if observation.kind is InMemoryConversationObservationKind.model_changed
+        ]
+
+    asyncio.run(exercise())
+
+
+def test_a_first_message_that_is_refused_leaves_the_ticket_with_no_conversation(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    """Making a conversation and saying the first thing in it are one act, or neither.
+
+    A conversation the message never reached is one nobody can see and nobody can use, and
+    leaving it linked is what put a Ticket somewhere it could not send from at all.
+    """
+
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        refusing = _WhoseFirstWriteFails(system, tmp_db, ticket.id)
+
+        delivered = await send_to_ticket_conversation(
+            refusing,
+            tmp_db,
+            ticket.id,
+            text_message_content("first words"),
+            conversation_id=None,
+            sender_label="owner",
+            now=20,
+        )
+
+        assert isinstance(delivered.fate, PromptDeliveryRefused)
+        assert delivered.conversation_id is None
+        assert read_ticket(tmp_db, ticket.id).conversation_id is None
+
+    asyncio.run(exercise())
+
+
+def test_a_message_naming_a_conversation_the_ticket_is_not_in_is_refused(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    """A tab that missed a New must not go on talking to what New killed."""
+
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        left_behind = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
+        await reset_ticket_conversation(system, tmp_db, ticket.id, now=20)
+
         with pytest.raises(PlannerError) as raised:
             await send_to_ticket_conversation(
-                system, tmp_db, ticket.id, "work the step", sender_label="loop", now=20
+                system,
+                tmp_db,
+                ticket.id,
+                text_message_content("still typing"),
+                conversation_id=left_behind,
+                sender_label="owner",
+                now=30,
             )
 
         assert raised.value.code is ErrorCode.not_found
@@ -489,9 +583,7 @@ def test_resetting_stops_the_conversation_and_unlinks_it(
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        conversation_id = await start_ticket_conversation(
-            system, tmp_db, ticket, _values(ticket.id), now=10
-        )
+        conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
         await system.send(
             conversation_id,
             text_message_content("running work"),
@@ -518,9 +610,7 @@ def test_resetting_discards_a_message_the_conversation_was_holding(
 ) -> None:
     async def exercise() -> None:
         system = InMemoryConversationSystem()
-        conversation_id = await start_ticket_conversation(
-            system, tmp_db, ticket, _values(ticket.id), now=10
-        )
+        conversation_id = await _started(system, tmp_db, ticket, _values(ticket.id), now=10)
         await system.send(
             conversation_id,
             text_message_content("running work"),
@@ -591,7 +681,7 @@ def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_default
             workspace_folder=_WORKSPACE,
             access=ConversationAccess.full,
         )
-        await start_ticket_conversation(system, tmp_db, ticket, moved, now=10)
+        await _started(system, tmp_db, ticket, moved, now=10)
 
         values = worker_resolve(
             tmp_db, read_ticket(tmp_db, ticket.id), workspace_folder=_WORKSPACE

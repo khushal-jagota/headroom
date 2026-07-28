@@ -318,6 +318,29 @@ export type SendPromptBody = {
   reasoning_effort_change?: string;
 } & SenderMintedPromptFields;
 
+/** A message to an owner — a Ticket's worker, or the Chief — rather than to a conversation.
+ *
+ * `conversation_id` is which conversation this is for, and absent says the sender has none:
+ * this message is what brings one into being. The three values say what it runs under, and
+ * to a conversation that does not exist yet they are what to create it on.
+ */
+export type OwnerSendBody = {
+  conversation_id: string | null;
+  backend_key?: string;
+  model?: string;
+  reasoning_effort?: string;
+  content: SentMessagePiece[];
+  sender_label: string;
+  mode: PromptDeliveryMode;
+} & SenderMintedPromptFields;
+
+/** What happened to a message, and which conversation it happened in.
+ *
+ * The id is null when a message that was to make a conversation did not land: there is no
+ * conversation then, so there is nothing to open and nothing to hold on to.
+ */
+export type DeliveredMessage = PromptDeliveryFate & { conversation_id: string | null };
+
 /** A request the server answered with a refusal of the request itself.
  *
  * The conversation routes raise FastAPI's own errors, so what comes back is a `detail`

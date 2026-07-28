@@ -370,6 +370,8 @@ class _QueueingConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
         if not await self._system.is_running(self._conversation_id):
             await self._system.send(
@@ -595,6 +597,8 @@ class _HeldAtTheOccupancyCheck:
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
         return await self._system.send(
             conversation_id,

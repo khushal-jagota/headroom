@@ -12,19 +12,25 @@
   import LiveConversation from "./conversation/LiveConversation.svelte";
   import { fetchJson } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
-  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
+  import {
+    readBackends,
+    type BackendSnapshot,
+    type DeliveredMessage,
+    type OwnerSendBody
+  } from "../lib/conversation/wire";
 
   type ChiefConversation = { conversation_id: string | null };
 
   let conversationId = $state<string | null>(null);
   let backends = $state<readonly BackendSnapshot[]>([]);
 
-  async function startTheConversation(): Promise<string | null> {
-    const started = await mutateJson<ChiefConversation>("/api/chief/conversation", {
-      method: "POST"
+  async function sendToTheChief(body: OwnerSendBody): Promise<DeliveredMessage> {
+    const delivered = await mutateJson<DeliveredMessage>("/api/chief/conversation/send", {
+      method: "POST",
+      body
     });
-    conversationId = started.conversation_id;
-    return started.conversation_id;
+    if (delivered.conversation_id !== null) conversationId = delivered.conversation_id;
+    return delivered;
   }
 
   async function newConversation(): Promise<void> {
@@ -52,6 +58,6 @@
   label="Chief of Staff"
   {backends}
   senderLabel="owner"
-  onStartConversation={startTheConversation}
+  sendMessage={sendToTheChief}
   onNewConversation={newConversation}
 />

@@ -44,6 +44,7 @@
   import type {
     AgentCommand,
     BackendModel,
+    BackendSnapshot,
     ConversationBackendKey,
     PermissionAskOption,
     PromptDeliveryMode
@@ -64,6 +65,7 @@
     conversationId,
     label,
     backendKey = null,
+    conversationExists = false,
     workspaceFolder = null,
     rows = [],
     outgoingMessages = [],
@@ -72,6 +74,7 @@
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
+    backends = [],
     ownSenderLabel = null,
     livenessPulse = 0,
     effortOptions = [],
@@ -98,6 +101,9 @@
     conversationId: string;
     label: string;
     backendKey?: ConversationBackendKey | null;
+    /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
+     *  is not one existing, so only whoever has read the record can say. */
+    conversationExists?: boolean;
     workspaceFolder?: string | null;
     rows?: readonly TranscriptRow[];
     /** Messages this browser has sent that the record does not have yet, oldest first. */
@@ -112,6 +118,9 @@
     askNote?: string | null;
     current?: RunValues;
     models?: readonly BackendModel[];
+    /** Every backend this machine reported. The composer's rail chooses from them while
+     *  there is no conversation to be fixed to one. */
+    backends?: readonly BackendSnapshot[];
     /** The label this pane sends under, so your own messages are not labelled as yours. */
     ownSenderLabel?: string | null;
     livenessPulse?: number;
@@ -890,11 +899,13 @@
 
   <ConversationComposer
     {backendKey}
+    {conversationExists}
     {running}
     {ask}
     {askNote}
     {current}
     {models}
+    {backends}
     {effortOptions}
     {availableCommands}
     {defaultModelId}

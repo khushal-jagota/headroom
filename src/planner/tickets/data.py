@@ -464,7 +464,7 @@ def write_ticket_conversation_start(
     now: int,
 ) -> Ticket:
     """Point the Ticket at the conversation just started for it, and record what it
-    runs on.
+    runs on. Returns the Ticket as it now stands, which names whichever conversation won.
 
     ``conversation_id`` is the Ticket's conversation link. Under the new
     conversation system the value it holds is the caller-owned conversation id, not an
@@ -472,13 +472,19 @@ def write_ticket_conversation_start(
     one name. The three launch columns are the Ticket's last-chosen values — kept up to
     date with what the conversation actually runs on, so a fresh conversation starts
     from where the last one ended.
+
+    The link only lands on a Ticket that has none. A Ticket has one conversation, and two
+    callers can decide to make one at the same moment — the readiness loop with a step to
+    send and a person typing into the panel. Overwriting would leave the loser's
+    conversation live, linked to nothing, with an agent running in the same folder. The
+    caller reads the returned Ticket to see whether it was the one that landed.
     """
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
         conn.execute(
             "UPDATE tickets SET conversation_id = ?, employee_backend = ?, "
             "employee_launch_model = ?, employee_launch_reasoning_effort = ?, "
-            "updated_at = ? WHERE id = ?",
+            "updated_at = ? WHERE id = ? AND conversation_id IS NULL",
             (conversation_id, backend, model, reasoning_effort, now, ticket_id),
         )
         return _load_ticket_for_write(conn, ticket_id)

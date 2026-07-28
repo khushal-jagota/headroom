@@ -1,8 +1,9 @@
 """The revisions the conversation system's tables are made of.
 
-One gives it its two tables and one adds the commands a conversation's agent offers. A
-database that has never seen them is brought up from empty, which is how a fresh Panels
-install gets them and how every other database gets them the next time it is opened.
+One gives it its two tables, one adds the commands a conversation's agent offers, and one
+lets go of conversations nothing was ever said in. A database that has never seen them is
+brought up from empty, which is how a fresh Panels install gets them and how every other
+database gets them the next time it is opened.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "conversation_available_commands"
+HEAD_REVISION = "no_conversation_before_a_message"
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, int, int]]:
@@ -169,6 +170,16 @@ def test_the_retired_tables_go_and_the_ticket_keeps_its_link_under_its_real_name
     conn.execute(
         "INSERT INTO ticket_conversation_projections (ticket_id, updated_at) VALUES ('t_linked', 1)"
     )
+    # A conversation somebody actually spoke in, because that is what a linked Ticket has:
+    # a later revision lets go of links to conversations nothing was ever said in.
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
+        "created_at) VALUES ('conversation-abc', 'codex', '/tmp/workspace', 'full', 1)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('conversation-abc', 1, 'prompt', '{}', 1)"
+    )
     conn.commit()
 
     create_schema(conn)
@@ -238,3 +249,55 @@ def test_a_conversation_from_before_the_column_arrives_with_no_commands(
     read = asyncio.run(ConversationStore(str(path)).read_conversation("c"))
     assert read is not None
     assert read.available_commands == ()
+
+
+# --- conversations nothing was ever said in ----------------------------------------------
+
+
+def _conversation(conn: sqlite3.Connection, conversation_id: str, *, spoken_in: bool) -> None:
+    conn.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
+        "created_at, vendor_session_cursor) VALUES (?, 'claude', '/tmp/workspace', 'full', 1, ?)",
+        (conversation_id, f"session-for-{conversation_id}"),
+    )
+    if spoken_in:
+        conn.execute(
+            "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, "
+            "created_at) VALUES (?, 1, 'prompt', '{}', 1)",
+            (conversation_id,),
+        )
+
+
+def test_owners_let_go_of_conversations_nothing_was_ever_said_in(tmp_path: Path) -> None:
+    """The stuck ones are cut loose on the upgrade, and the working ones are untouched.
+
+    A conversation used to be made before there was anything to say, and the message that
+    followed could not reach it. Under the rule this revision serves, one nothing was said
+    in does not exist — so a Ticket or an agent pointing at one is pointing at nothing, and
+    is left where New leaves it.
+    """
+    path = tmp_path / "before-letting-go.db"
+    conn = _build_a_database_at(path, "conversation_available_commands")
+    _conversation(conn, "never-spoke", spoken_in=False)
+    _conversation(conn, "spoke", spoken_in=True)
+    _conversation(conn, "chief-never-spoke", spoken_in=False)
+    for ticket_id, conversation_id in (("t_stuck", "never-spoke"), ("t_working", "spoke")):
+        conn.execute(
+            "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, fields, "
+            "conversation_id, created_at, updated_at) VALUES (?, 'T', 'coding', 'claude', "
+            "'needs_kickoff', '{}', ?, 1, 1)",
+            (ticket_id, conversation_id),
+        )
+    conn.execute(
+        "INSERT INTO agents (agent_key, conversation_id) VALUES ('chief', 'chief-never-spoke')"
+    )
+    conn.commit()
+
+    create_schema(conn)
+
+    assert dict(conn.execute("SELECT id, conversation_id FROM tickets")) == {
+        "t_stuck": None,
+        "t_working": "spoke",
+    }
+    assert dict(conn.execute("SELECT agent_key, conversation_id FROM agents")) == {"chief": None}
+    conn.close()

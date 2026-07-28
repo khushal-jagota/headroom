@@ -18,7 +18,14 @@
   } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
-  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
+  import {
+    readBackends,
+    CONVERSATION_BACKEND_KEYS,
+    type BackendSnapshot,
+    type ConversationBackendKey,
+    type DeliveredMessage,
+    type OwnerSendBody
+  } from "../lib/conversation/wire";
   import Button from "../components/Button.svelte";
   import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
@@ -142,11 +149,11 @@
    * person gets there first. The reply carries the Ticket, so the id comes back from the
    * same write that made the link.
    */
-  async function startTicketConversation(): Promise<string | null> {
-    const detail = await mutateJson<TicketDetail>(`/api/tickets/${stableId}/conversation`, {
-      method: "POST"
+  async function sendToTicketWorker(body: OwnerSendBody): Promise<DeliveredMessage> {
+    return mutateJson<DeliveredMessage>(`/api/tickets/${stableId}/conversation/send`, {
+      method: "POST",
+      body
     });
-    return detail.conversation_id;
   }
 
   /** New: the old conversation is killed and the Ticket stops pointing at it. The next
@@ -273,6 +280,16 @@
   function conversationEmployeeLabel(detail: TicketDetail): string {
     const workerLabel = lc?.workerTypeLabel ?? labelize(detail.worker_type);
     return /worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`;
+  }
+
+  /** This Ticket's own backend, as the conversation contract's closed set has it.
+   *
+   * It is what a conversation started from this page would be created on, so it is what
+   * the composer shows before there is one. A stored value the set does not name is not a
+   * backend, and the pane keeps its own default rather than being handed a word.
+   */
+  function conversationBackendOf(detail: TicketDetail): ConversationBackendKey | undefined {
+    return CONVERSATION_BACKEND_KEYS.find((key) => key === detail.employee_backend);
   }
 
   function hasBlockerRows(detail: TicketDetail): boolean {
@@ -548,8 +565,9 @@
             conversationId={detail.conversation_id}
             label={conversationEmployeeLabel(detail)}
             backends={conversationBackends}
+            fallbackBackendKey={conversationBackendOf(detail)}
             senderLabel="owner"
-            onStartConversation={startTicketConversation}
+            sendMessage={sendToTicketWorker}
             onNewConversation={resetTicketConversation}
             onMessageAccepted={recordHumanReply}
           />

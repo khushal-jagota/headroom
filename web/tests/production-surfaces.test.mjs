@@ -47,14 +47,14 @@ for (const [name, source] of [
 // --- the Ticket screen -----------------------------------------------------------------
 
 // What the route hands the pane is the conversation the Ticket names, plus the two doors
-// a person can open and close one with. Nothing is attached on arrival: the conversation
-// system spawns nothing until a message is sent, which is what the old deferInitialAttach
-// existed to avoid while a Ticket's configuration was still editable. The absence is
-// asserted so the removal carries its reason forward instead of being quietly re-added.
+// a person has: saying something, and New. There is no door that makes a conversation —
+// the message is what makes one — so nothing is attached on arrival and nothing is
+// started on arrival either. Both absences are asserted so the removals carry their
+// reasons forward instead of being quietly re-added.
 assert.match(ticketRouteSource, /conversationId=\{detail\.conversation_id\}/);
-assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation`/);
+assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/send`/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/reset`/);
-assert.doesNotMatch(ticketRouteSource, /deferInitialAttach/);
+assert.doesNotMatch(ticketRouteSource, /deferInitialAttach|onStartConversation/);
 
 assert.match(ticketRouteSource, /<WorkerConfigurationSetup/);
 assert.match(ticketRouteSource, /contextRow=\{name === "kickoff" && kickoffCardShowsContextRow/);

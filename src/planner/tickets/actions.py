@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Final
 
 from planner.conversation.contracts import ConversationSystem, PromptDeliveryRefused
+from planner.conversation.message_content import text_message_content
 from planner.core import links as core_links
 from planner.core.contracts import LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -236,14 +237,19 @@ async def return_ticket_for_revision(
         ticket_id,
         revision_guidance_prompt(message.strip()),
     )
-    fate = await send_to_ticket_conversation(
-        conversation_system,
-        conn,
-        ticket_id,
-        prepared.model_text,
-        sender_label=OWNER_SENDER_LABEL,
-        now=now,
-    )
+    # Into the conversation the decision above proved is there: returning for revision is
+    # something said to a worker already at work, never the thing that first speaks to one.
+    fate = (
+        await send_to_ticket_conversation(
+            conversation_system,
+            conn,
+            ticket_id,
+            text_message_content(prepared.model_text),
+            conversation_id=ticket.conversation_id,
+            sender_label=OWNER_SENDER_LABEL,
+            now=now,
+        )
+    ).fate
     if isinstance(fate, PromptDeliveryRefused):
         raise PlannerError(
             ErrorCode.gateway_offline,

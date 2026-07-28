@@ -21,13 +21,14 @@
    */
   import { tick } from "svelte";
   import AgentCommandMenu from "./AgentCommandMenu.svelte";
+  import BackendRail from "./BackendRail.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
+  import RunValuePicker from "./RunValuePicker.svelte";
   import {
     askPlaceholder,
     deliveryOptionsFor,
     effortOptionsFor,
-    hasArmedChange,
     modelDetail,
     modelDisplayName,
     preselectedValue
@@ -36,6 +37,7 @@
   import type {
     AgentCommand,
     BackendModel,
+    BackendSnapshot,
     ConversationBackendKey,
     PermissionAskOption,
     PromptDeliveryMode
@@ -43,11 +45,13 @@
 
   let {
     backendKey = null,
+    conversationExists = false,
     running = false,
     ask = null,
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
+    backends = [],
     effortOptions = [],
     availableCommands = [],
     defaultModelId = null,
@@ -62,7 +66,12 @@
     onAnswer,
     onCancelTurn
   }: {
+    /** The backend this conversation runs on — or, before there is one, the backend a
+     *  message sent from here would create it on. */
     backendKey?: ConversationBackendKey | null;
+    /** Whether there is a conversation yet. It is what fixes the backend: one that exists
+     *  has a live process behind it and cannot be moved to another. */
+    conversationExists?: boolean;
     running?: boolean;
     ask?: {
       askId: string;
@@ -72,7 +81,12 @@
     } | null;
     askNote?: string | null;
     current?: RunValues;
+    /** What this conversation's own backend offers. */
     models?: readonly BackendModel[];
+    /** Every backend this machine reported, each with its own catalog. What the rail
+     *  chooses from before a conversation exists; empty is a caller that has not read
+     *  them, and then there is nothing to switch to. */
+    backends?: readonly BackendSnapshot[];
     effortOptions?: readonly string[];
     /** The commands this conversation's agent reports. An agent that reports none, and an
      *  agent that has not been asked yet, are both an empty list. */
@@ -96,6 +110,10 @@
   let mode = $state<PromptDeliveryMode>("run_when_free");
   let pickedModel = $state<string | null>(null);
   let pickedEffort = $state<string | null>(null);
+  /** The backend taken off the rail, which only a conversation that does not exist yet can
+   *  have: null is nobody having said, and then what it would be created on is whatever
+   *  the caller says is in force. */
+  let pickedBackend = $state<ConversationBackendKey | null>(null);
   let inputElement = $state<HTMLTextAreaElement | null>(null);
   // Counted rather than flagged: the box stays typeable through a send, so a second
   // message can be on its way before the first one has landed.
@@ -115,29 +133,62 @@
 
   let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
   let effectiveMode = $derived<PromptDeliveryMode>(running ? mode : "run_when_free");
-  let picked = $derived<RunValues>({ model: pickedModel, reasoningEffort: pickedEffort });
-  let armed = $derived(hasArmedChange(current, picked, effectiveMode));
   let takenOver = $derived(ask !== null);
   let inputDisabled = $derived(disabled || takenOver);
   let sendIsInFlight = $derived(sendsInFlight > 0 && !running);
   let livePlaceholder = $derived(takenOver ? askPlaceholder(ask) : placeholder);
+  // The backend the rail shows. A conversation that exists shows its own and nothing else,
+  // so a choice made before it existed cannot be left standing over it.
+  let shownBackend = $derived<ConversationBackendKey | null>(
+    conversationExists ? backendKey : (pickedBackend ?? backendKey)
+  );
+  // Whether the rail has been used to leave the backend the caller handed the catalog for.
+  let switchedBackend = $derived(!conversationExists && pickedBackend !== null);
+  let switchedTo = $derived(
+    backends.find((snapshot) => snapshot.backend_key === pickedBackend) ?? null
+  );
+  // What the pickers offer: the catalog of the backend now showing. Until the rail is used
+  // that is the one the caller handed, which is the conversation's own — so a caller with
+  // one backend and no list of them is served exactly as it always was. A backend switched
+  // to that this machine reported nothing for offers nothing, rather than the last one's.
+  let modelsOnOffer = $derived(
+    switchedBackend ? (switchedTo?.available_models ?? []) : models
+  );
+  let effortOptionsOnOffer = $derived(
+    switchedBackend ? (switchedTo?.reasoning_effort_options ?? []) : effortOptions
+  );
+  let defaultModelOnOffer = $derived(
+    switchedBackend ? (switchedTo?.default_model_id ?? null) : defaultModelId
+  );
+  let defaultEffortOnOffer = $derived(
+    switchedBackend ? (switchedTo?.default_reasoning_effort ?? null) : defaultReasoningEffort
+  );
+  let picked = $derived<RunValues>({
+    model: pickedModel,
+    reasoningEffort: pickedEffort,
+    // Only a message that has to create a conversation says what to create it on, and only
+    // when somebody took one off the rail. Showing a backend is not choosing it: what is
+    // showing before that is what this caller believes is in force, and a belief sent as
+    // an instruction would overrule the stored defaults it was guessing at.
+    backendKey: conversationExists ? null : pickedBackend
+  });
   // What each selector shows with nothing picked: the concrete value already in force.
   let shownModel = $derived(
-    pickedModel ?? preselectedValue(current.model, defaultModelId) ?? ""
+    pickedModel ?? preselectedValue(current.model, defaultModelOnOffer) ?? ""
   );
   let shownEffort = $derived(
-    pickedEffort ?? preselectedValue(current.reasoningEffort, defaultReasoningEffort) ?? ""
+    pickedEffort ?? preselectedValue(current.reasoningEffort, defaultEffortOnOffer) ?? ""
   );
   // A value the catalog does not list is still the value being run, so it is offered as
   // itself rather than silently dropped off the face of the selector.
   let modelOptions = $derived(
-    shownModel !== "" && !models.some((model) => model.model_id === shownModel)
-      ? [{ model_id: shownModel, display_name: null }, ...models]
-      : models
+    shownModel !== "" && !modelsOnOffer.some((model) => model.model_id === shownModel)
+      ? [{ model_id: shownModel, display_name: null }, ...modelsOnOffer]
+      : modelsOnOffer
   );
   // Effort belongs to the model that will actually run, not to the backend in general.
   let modelEffortOptions = $derived(
-    effortOptionsFor(models, shownModel === "" ? null : shownModel, effortOptions)
+    effortOptionsFor(modelsOnOffer, shownModel === "" ? null : shownModel, effortOptionsOnOffer)
   );
   let effortChoices = $derived(
     shownEffort !== "" && !modelEffortOptions.includes(shownEffort)
@@ -147,6 +198,18 @@
   // Nothing to show and nothing wide: an effort is still pickable, so the control shrinks
   // to the affordance that says so and nothing more.
   let effortIsBare = $derived(shownEffort === "");
+  // The catalog as the picker reads it: a name to pick by, and the quieter line under it.
+  let modelPickerChoices = $derived(
+    modelOptions.map((model) => ({
+      value: model.model_id,
+      name: model.display_name ?? model.model_id,
+      detail: modelSecondLine(model)
+    }))
+  );
+  // An effort is one word and is its own name. There is nothing quieter to say about it.
+  let effortPickerChoices = $derived(
+    effortChoices.map((effort) => ({ value: effort, name: effort, detail: null }))
+  );
 
   // --- the command being written -----------------------------------------------------------
   let commandUnderway = $derived(commandOnTheCursorsLine(text, cursorAt));
@@ -175,11 +238,12 @@
   });
 
   // What the chosen model really is, when the catalog says — an alias and the version it
-  // reaches. A native select has nowhere to put a second line, so it is the tooltip.
+  // reaches. Its row says it out loud; the pill is only as wide as the name, so on the
+  // pill it is the tooltip.
   let modelTitle = $derived.by(() => {
     const value = shownModel === "" ? null : shownModel;
-    const name = modelDisplayName(models, value) ?? "the backend's own model";
-    const detail = modelDetail(models, value);
+    const name = modelDisplayName(modelsOnOffer, value) ?? "the backend's own model";
+    const detail = modelDetail(modelsOnOffer, value);
     return detail === null ? name : `${name} — ${detail}`;
   });
 
@@ -187,8 +251,8 @@
   // that takes no effort — and a value the new catalog does not offer is not a pending
   // change any more, it is a value nothing would accept. It goes.
   $effect(() => {
-    if (pickedModel !== null && models.length > 0
-        && !models.some((model) => model.model_id === pickedModel)) {
+    if (pickedModel !== null && modelsOnOffer.length > 0
+        && !modelsOnOffer.some((model) => model.model_id === pickedModel)) {
       pickedModel = null;
     }
   });
@@ -198,6 +262,44 @@
       pickedEffort = null;
     }
   });
+
+  /** What a model's row says under its name.
+   *
+   * The catalog's own second line where it has one — claude says which concrete model an
+   * alias reaches — and otherwise the value itself, which is what a display name like
+   * "GPT-5.5 Codex" is standing in for. A model already shown under its own value has
+   * nothing left to say twice.
+   */
+  function modelSecondLine(model: BackendModel): string | null {
+    const said = model.detail ?? null;
+    if (said !== null && said !== "") return said;
+    const name = model.display_name;
+    return name === null || name === model.model_id ? null : model.model_id;
+  }
+
+  /** A value was taken, so the box takes the keyboard back.
+   *
+   * What a person does after picking a model is carry on writing, and the draft and the
+   * cursor are exactly where they left them — this only moves the keyboard.
+   */
+  function handTheBoxTheKeyboard(): void {
+    inputElement?.focus();
+  }
+
+  /** Take a backend off the rail: what the next message would create this conversation on.
+   *
+   * The model and effort go with it. They were picked out of the old backend's catalog and
+   * mean nothing to this one — a model id belongs to the backend that named it.
+   *
+   * The panel stays open and the keyboard stays in it, because switching is how a person
+   * gets to the list they came to read.
+   */
+  function takeTheBackend(key: ConversationBackendKey): void {
+    if (conversationExists || key === shownBackend) return;
+    pickedBackend = key;
+    pickedModel = null;
+    pickedEffort = null;
+  }
 
   async function send(): Promise<void> {
     const trimmed = text.trim();
@@ -444,50 +546,48 @@
             onclick={() => void startWritingACommand()}
           >/</button>
 
-          <select
-            class="c2-pick-select"
-            class:on={pickedModel !== null}
-            data-conversation-picker-model
-            aria-label="Model"
-            disabled={inputDisabled}
+          <!-- Which backend is a question about the conversation rather than about this
+               message, so it is drawn beside the models it decides rather than as a third
+               pill in the footer. -->
+          {#snippet backendRail()}
+            <BackendRail
+              showing={shownBackend}
+              locked={conversationExists}
+              onChoose={takeTheBackend}
+            />
+          {/snippet}
+
+          <RunValuePicker
+            label="Model"
+            choices={modelPickerChoices}
             value={shownModel}
+            searchable
+            disabled={inputDisabled}
             title={modelTitle}
-            onchange={(event) => (pickedModel = event.currentTarget.value || null)}
-          >
-            {#if shownModel === ""}
-              <option value=""></option>
-            {/if}
-            {#each modelOptions as model (model.model_id)}
-              <option value={model.model_id} title={model.detail ?? undefined}>
-                {model.display_name ?? model.model_id}
-              </option>
-            {/each}
-          </select>
+            attributes={{ "data-conversation-picker-model": "" }}
+            rail={shownBackend === null ? undefined : backendRail}
+            onChoose={(model) => {
+              pickedModel = model;
+              handTheBoxTheKeyboard();
+            }}
+          />
 
           {#if effortChoices.length > 0}
-            <select
-              class="c2-pick-select"
-              class:on={pickedEffort !== null}
-              class:is-bare={effortIsBare}
-              data-conversation-picker-effort
-              data-conversation-picker-effort-bare={effortIsBare ? "true" : undefined}
-              aria-label="Reasoning effort"
-              title="Reasoning effort"
-              disabled={inputDisabled}
+            <RunValuePicker
+              label="Reasoning effort"
+              choices={effortPickerChoices}
               value={shownEffort}
-              onchange={(event) => (pickedEffort = event.currentTarget.value || null)}
-            >
-              {#if effortIsBare}
-                <option value=""></option>
-              {/if}
-              {#each effortChoices as effort (effort)}
-                <option value={effort}>{effort}</option>
-              {/each}
-            </select>
-          {/if}
-
-          {#if armed}
-            <span class="c2-armed" data-conversation-picker-armed>next message</span>
+              disabled={inputDisabled}
+              title="Reasoning effort"
+              attributes={{
+                "data-conversation-picker-effort": "",
+                "data-conversation-picker-effort-bare": effortIsBare ? "true" : undefined
+              }}
+              onChoose={(effort) => {
+                pickedEffort = effort;
+                handTheBoxTheKeyboard();
+              }}
+            />
           {/if}
 
           {#if running}
@@ -545,36 +645,6 @@
     background: var(--surface-overlay);
     color: var(--accent-bright);
     opacity: 1;
-  }
-  .c2-pick-select {
-    min-width: 0;
-    max-width: calc(var(--space-page-tail) * 1.25);
-    background: transparent;
-    border: var(--border-hairline) solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    padding: var(--space-1);
-    text-overflow: ellipsis;
-  }
-  .c2-pick-select:hover { border-color: var(--border-color); color: var(--text-strong); }
-  .c2-pick-select.on { color: var(--accent-bright); border-color: var(--border-color); }
-  .c2-pick-select:disabled { cursor: default; opacity: 0.5; }
-  /* No value to show: the control keeps its capability and gives up its width, down to
-     the arrow that says there is something here to pick. */
-  .c2-pick-select.is-bare {
-    width: var(--space-5);
-    min-width: var(--space-5);
-    padding-inline: 0;
-    text-indent: var(--space-1);
-  }
-  .c2-armed {
-    color: var(--accent-bright);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
   }
   .c2-fate {
     color: var(--text-faint);

@@ -221,7 +221,15 @@ def _a_ticket_with_a_conversation(
 ) -> tuple[str, str]:
     """A Ticket with a conversation of its own, so the layer has something in it."""
     ticket_id = cli(server, "ticket", "create", "--worker-type", "coding", "--title", title)["id"]
-    started = httpx.post(f"{server.base}/api/tickets/{ticket_id}/conversation", timeout=10.0)
+    started = httpx.post(
+        f"{server.base}/api/tickets/{ticket_id}/conversation/send",
+        json={
+            "conversation_id": None,
+            "content": [{"piece": "text", "text": "hello"}],
+            "sender_label": "owner",
+        },
+        timeout=10.0,
+    )
     assert started.status_code == 200, started.text
     conversation_id = started.json()["conversation_id"]
     assert conversation_id is not None

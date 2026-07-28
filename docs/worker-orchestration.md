@@ -59,20 +59,26 @@ _Code paths:_ `src/planner/runtime/worker_step_readiness.py`,
 
 ## Sending the step
 
-With the claim held, Panels finds the Ticket's conversation, or starts one if it has
-none. Starting one resolves what it should run on from three layers in order — the
-Worker type's launch defaults, the Ticket's own last-chosen values, then anything the
-caller explicitly asked for — and the backend, model, and reasoning effort resolve as a
-unit, because a model name means nothing to a backend that has never heard of it. The
-conversation is created first and the Ticket pointed at it second, so a Ticket never
-names a conversation that does not exist.
-
-The opening message is written here: a short instruction naming the Ticket, its Stage,
+The opening message is written first: a short instruction naming the Ticket, its Stage,
 and the blank to fill, plus any worker context that was waiting to be delivered. The
 worker sees that context because it is in the actual message — never because Panels
-wrote a row somewhere.
+wrote a row somewhere. It is written before anything else so that a failure here cannot
+leave a conversation behind.
 
-Then it is sent, and the conversation system reports one of three fates:
+Then it is sent, through the one door there is. If the Ticket has a conversation the
+message goes into it. If it has none, the message is what brings one into being — and
+what it should run on is resolved from three layers in order: the Worker type's launch
+defaults, the Ticket's own last-chosen values, then anything the sender explicitly asked
+for. The backend, model, and reasoning effort resolve as a unit, because a model name
+means nothing to a backend that has never heard of it. The conversation is created first
+and the Ticket pointed at it second, so a Ticket never names a conversation that does not
+exist.
+
+Making a conversation and saying the first thing in it are one act. If the message does
+not land, the conversation goes with it and the Ticket is left with none — which is
+exactly what the next attempt wants to find.
+
+The conversation system reports one of three fates:
 
 - **Started** — it is running now.
 - **Queued** — the worker was busy, so the message is held and will run when it is

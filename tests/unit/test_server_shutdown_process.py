@@ -49,6 +49,8 @@ class _HoldingConversationSystem(InMemoryConversationSystem):
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
         self.sending.set()
         try:
@@ -64,6 +66,8 @@ class _HoldingConversationSystem(InMemoryConversationSystem):
             mode=mode,
             model_change=model_change,
             reasoning_effort_change=reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
 
 

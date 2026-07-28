@@ -17,12 +17,15 @@
   import {
     killConversation,
     readBackends,
+    sendPrompt,
     startConversation,
     updateBackend,
     ConversationWireError,
     type BackendSnapshot,
     type BackendUpdateResult,
-    type ConversationBackendKey
+    type ConversationBackendKey,
+    type DeliveredMessage,
+    type OwnerSendBody
   } from "../lib/conversation/wire";
 
   const SENDER_LABEL = "owner";
@@ -66,21 +69,40 @@
     return error instanceof Error ? error.message : String(error);
   }
 
-  /** The first message starts it, as whatever the form was left showing. */
-  async function startTheConversation(): Promise<string | null> {
-    await startConversation({
-      conversation_id: conversationId,
-      backend_key: newBackendKey,
-      model: newModel,
-      reasoning_effort: newReasoningEffort,
-      // Left out when untouched, so the server's own default folder applies.
-      ...(newWorkspaceFolder === DEFAULT_WORKSPACE_FOLDER
-        ? {}
-        : { workspace_folder: newWorkspaceFolder })
+  /** The first message starts it, as whatever the form and the composer were left showing.
+   *
+   * This screen is the one place a conversation is made on purpose rather than by talking,
+   * because making one on named values is what it is for. It still makes it with the
+   * message: what the composer says the message runs under is what the conversation is
+   * created on, so the message that creates it never has to change it.
+   */
+  async function sendToTheConversation(body: OwnerSendBody): Promise<DeliveredMessage> {
+    const { conversation_id: sendingInto, backend_key, model, reasoning_effort, ...message } =
+      body;
+    // Named means a conversation that answered for itself. The address holds a name from
+    // the moment this page is opened, and a name is not a conversation.
+    if (sendingInto === null) {
+      await startConversation({
+        conversation_id: conversationId,
+        backend_key: (backend_key as ConversationBackendKey | undefined) ?? newBackendKey,
+        model: model ?? newModel,
+        reasoning_effort: reasoning_effort ?? newReasoningEffort,
+        // Left out when untouched, so the server's own default folder applies.
+        ...(newWorkspaceFolder === DEFAULT_WORKSPACE_FOLDER
+          ? {}
+          : { workspace_folder: newWorkspaceFolder })
+      });
+      writeIdToAddress(conversationId);
+      liveConversationId = conversationId;
+      const started = await sendPrompt(conversationId, message);
+      return { ...started, conversation_id: conversationId };
+    }
+    const fate = await sendPrompt(sendingInto, {
+      ...message,
+      ...(model === undefined ? {} : { model_change: model }),
+      ...(reasoning_effort === undefined ? {} : { reasoning_effort_change: reasoning_effort })
     });
-    writeIdToAddress(conversationId);
-    liveConversationId = conversationId;
-    return conversationId;
+    return { ...fate, conversation_id: sendingInto };
   }
 
   /** New kills the old one first: freeing the agent would let its held messages run,
@@ -130,7 +152,7 @@
       senderLabel={SENDER_LABEL}
       fallbackBackendKey={newBackendKey}
       bind:runningBackendKey
-      onStartConversation={startTheConversation}
+      sendMessage={sendToTheConversation}
       onNewConversation={newConversation}
     >
       {#snippet emptyState()}

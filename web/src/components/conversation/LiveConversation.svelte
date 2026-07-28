@@ -10,9 +10,10 @@
    * hold and take everything after it. That is why nothing here is special-cased for a
    * reload, and why coming back to the tab is the same call as arriving.
    *
-   * A caller with no conversation yet passes null and an ``onStartConversation``. The first
-   * message is what starts one: it is not a state the person has to get themselves out of
-   * before they can type, so a Ticket nobody has run and a Ticket mid-turn are the same box.
+   * A caller with no conversation yet passes null. Nothing here starts one: the message is
+   * what brings a conversation into being, and ``sendMessage`` says which one it went into.
+   * So a Ticket nobody has run and a Ticket mid-turn are the same box, and there is no state
+   * a person has to get themselves out of before they can type.
    */
   import { onMount, untrack, type Snippet } from "svelte";
   import ConversationPane from "./ConversationPane.svelte";
@@ -43,11 +44,12 @@
     openConversationTail,
     readConversation,
     readEventsAfter,
-    sendPrompt,
     ConversationWireError,
     type BackendSnapshot,
     type ConversationBackendKey,
     type ConversationView,
+    type DeliveredMessage,
+    type OwnerSendBody,
     type PromptDeliveryMode
   } from "../../lib/conversation/wire";
 
@@ -61,7 +63,7 @@
     conversationState = $bindable(null),
     composerPlaceholder,
     emptyState,
-    onStartConversation,
+    sendMessage,
     onNewConversation,
     onMessageAccepted
   }: {
@@ -84,9 +86,9 @@
     conversationState?: ConversationState | null;
     composerPlaceholder?: string;
     emptyState?: Snippet;
-    /** Start one and say what it is called. Absent means this caller cannot start one, and
-     *  the composer says so rather than swallowing what was typed. */
-    onStartConversation?: () => Promise<string | null>;
+    /** Hand a message to whoever owns this conversation, and say what became of it. A
+     *  sender with no conversation is making one, and the answer names it. */
+    sendMessage: (body: OwnerSendBody) => Promise<DeliveredMessage>;
     onNewConversation?: () => Promise<void>;
     /** A message typed here reached the conversation — started, held, or steered into the
      *  running turn. Not called for a refusal, which reached nothing. What that means is
@@ -295,30 +297,22 @@
     });
     holdOnTo([...sentMessages, message]);
     try {
-      let id = openedId;
-      if (!started) {
-        if (onStartConversation === undefined) {
-          errorNote = "There is no conversation here to send into.";
-          stopDrawing(message.messageId);
-          return false;
-        }
-        id = await onStartConversation();
-        if (id === null) {
-          errorNote = "The conversation could not be started.";
-          stopDrawing(message.messageId);
-          return false;
-        }
-        // Pointed at it and opened, without recalling: what this browser is holding is the
-        // message being sent right now, which is newer than anything remembered.
-        openedId = id;
-        await openConversation(id);
+      // The conversation this message is for is one the record has answered for. Holding
+      // an id is not the same as one existing — a Ticket names its conversation before
+      // this pane has read it, and the dev page puts a name in the address before anything
+      // has been started under it — so an id nothing has answered for says none.
+      const delivered = await sendMessage(
+        sendBodyFor({ message, current, picked, conversationId: started ? openedId : null })
+      );
+      // The answer is the fate, with the conversation it happened in alongside it.
+      const fate = delivered;
+      if (delivered.conversation_id !== null && delivered.conversation_id !== openedId) {
+        // The message made a conversation. Pointed at it and opened, without recalling:
+        // what this browser is holding is the message being sent right now, which is newer
+        // than anything remembered.
+        openedId = delivered.conversation_id;
+        await openConversation(delivered.conversation_id);
       }
-      if (id === null) {
-        errorNote = "There is no conversation here to send into.";
-        stopDrawing(message.messageId);
-        return false;
-      }
-      const fate = await sendPrompt(id, sendBodyFor({ message, current, picked }));
       fateNote = fateSentence(fate);
       fateNoteIsRefusal = fate.fate === "refused";
       if (fate.fate === "refused") {
@@ -459,6 +453,8 @@
   conversationId={openedId ?? ""}
   {label}
   {backendKey}
+  conversationExists={started}
+  {backends}
   workspaceFolder={view?.workspace_folder ?? null}
   {rows}
   outgoingMessages={sentMessages}

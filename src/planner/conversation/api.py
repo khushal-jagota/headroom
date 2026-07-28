@@ -199,6 +199,34 @@ class SendBody(BaseModel):
     sent_at_unix_milliseconds: int | None = None
 
 
+class OwnerSendBody(BaseModel):
+    """A message to a Ticket's worker or to the Chief, as JSON.
+
+    The same message a ``SendBody`` carries, said to somebody who may not have a
+    conversation yet. It lives here because this module is where the shape a message
+    arrives in is decided, and there is one of those.
+
+    ``conversation_id`` is which conversation this message is for. Absent says the sender
+    has none — and this message is what brings one into being.
+
+    ``backend_key``, ``model`` and ``reasoning_effort`` are what the message says it runs
+    under, and an absent one is not a choice. To a conversation that does not exist yet
+    they are what to create it on; to one that does they are what to move it onto. A
+    backend is only ever the first, because a backend is not something a conversation can
+    be moved to.
+    """
+
+    conversation_id: str | None = None
+    backend_key: str | None = None
+    model: str | None = None
+    reasoning_effort: str | None = None
+    content: list[SentPiece]
+    sender_label: str
+    mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free
+    sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
+
+
 class PermissionAnswerBody(BaseModel):
     ask_id: str
     option_id: str
@@ -286,7 +314,7 @@ async def send_into_conversation(
         )
     except ValueError as invalid:
         raise HTTPException(status_code=422, detail=str(invalid)) from invalid
-    return _fate_json(fate)
+    return delivery_fate_json(fate)
 
 
 @router.get("/conversations/{conversation_id}/files/{stored_file_id}")
@@ -504,12 +532,23 @@ async def _pending_permission_ask(
 async def _kept_message_content(
     runtime: ConversationRuntime, conversation_id: str, sent: list[SentPiece]
 ) -> MessageContent:
+    return await conversation_message_content(
+        runtime.message_files, conversation_id, sent
+    )
+
+
+async def conversation_message_content(
+    message_files: ConversationMessageFiles, conversation_id: str, sent: list[SentPiece]
+) -> MessageContent:
     """The message as the record will hold it, with the bytes already kept.
 
     This is the one place the two shapes meet. What arrives carries bytes, because that is
     how a browser hands a picture over; what the record holds names the file those bytes
     were kept as, because a row is read a thousand times and bytes belong beside it. Only
     the arriving shape ever carries data, and it stops here.
+
+    It takes the files rather than the whole runtime because the owner-scoped send doors
+    live in another module and need exactly this and nothing else.
     """
     pieces: list[MessagePiece] = []
     for piece in sent:
@@ -517,7 +556,7 @@ async def _kept_message_content(
             case SentTextPiece():
                 pieces.append(MessageText(text=piece.text))
             case SentImagePiece():
-                kept = await runtime.message_files.keep(
+                kept = await message_files.keep(
                     conversation_id, _decoded(piece.data), media_type=piece.media_type
                 )
                 pieces.append(
@@ -554,7 +593,7 @@ def _event_json(event: StoredConversationEvent) -> dict[str, Any]:
     }
 
 
-def _fate_json(fate: object) -> dict[str, Any]:
+def delivery_fate_json(fate: object) -> dict[str, Any]:
     match fate:
         case PromptDeliveryStarted():
             return {"fate": "started"}

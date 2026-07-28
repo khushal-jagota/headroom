@@ -364,6 +364,8 @@ class ConversationSystem(Protocol):
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 

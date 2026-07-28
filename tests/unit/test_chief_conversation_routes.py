@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import Response
 
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationObservationKind,
@@ -46,6 +47,26 @@ def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
     return app, db_path
 
 
+def _send(
+    client: TestClient,
+    text: str,
+    *,
+    conversation_id: str | None = None,
+    headers: dict[str, str] | None = None,
+) -> Response:
+    """Say something to the Chief, the way its panel does."""
+    posted: Response = client.post(
+        "/api/chief/conversation/send",
+        json={
+            "conversation_id": conversation_id,
+            "content": [{"piece": "text", "text": text}],
+            "sender_label": "owner",
+        },
+        headers=headers or {},
+    )
+    return posted
+
+
 def test_the_chief_has_no_conversation_until_one_is_started(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 
@@ -54,7 +75,7 @@ def test_the_chief_has_no_conversation_until_one_is_started(tmp_path: Path) -> N
         assert before.status_code == 200, before.text
         assert before.json() == {"conversation_id": None}
 
-        started = client.post("/api/chief/conversation")
+        started = _send(client, "hello")
         assert started.status_code == 200, started.text
         conversation_id = started.json()["conversation_id"]
         assert conversation_id is not None
@@ -72,8 +93,8 @@ def test_a_chief_that_already_has_a_conversation_keeps_the_one_it_has(
     app, _db_path = _make_app(tmp_path)
 
     with TestClient(app) as client:
-        first = client.post("/api/chief/conversation").json()["conversation_id"]
-        again = client.post("/api/chief/conversation").json()["conversation_id"]
+        first = _send(client, "hello").json()["conversation_id"]
+        again = _send(client, "again", conversation_id=first).json()["conversation_id"]
 
     assert again == first
 
@@ -84,15 +105,8 @@ def test_resetting_silences_the_chief_and_the_next_start_is_a_fresh_one(
     app, _db_path = _make_app(tmp_path)
 
     with TestClient(app) as client:
-        conversation_id = client.post("/api/chief/conversation").json()["conversation_id"]
+        conversation_id = _send(client, "working").json()["conversation_id"]
         conversations = app.state.conversation_system
-        asyncio.run(
-            conversations.send(
-                conversation_id,
-                text_message_content("working"),
-                sender_label="owner",
-            )
-        )
         asyncio.run(
             conversations.send(
                 conversation_id,
@@ -115,9 +129,7 @@ def test_resetting_silences_the_chief_and_the_next_start_is_a_fresh_one(
         assert InMemoryConversationObservationKind.turn_ended in kinds
         assert InMemoryConversationObservationKind.prompt_discarded in kinds
 
-        assert client.post("/api/chief/conversation").json()["conversation_id"] != (
-            conversation_id
-        )
+        assert _send(client, "starting over").json()["conversation_id"] != conversation_id
 
 
 def test_the_agent_outlives_the_conversation_it_was_having(tmp_path: Path) -> None:
@@ -126,7 +138,7 @@ def test_the_agent_outlives_the_conversation_it_was_having(tmp_path: Path) -> No
     app, db_path = _make_app(tmp_path)
 
     with TestClient(app) as client:
-        client.post("/api/chief/conversation")
+        _send(client, "hello")
         client.post("/api/chief/conversation/reset")
 
     conn = connect(str(db_path))
@@ -156,7 +168,7 @@ def test_both_chief_doors_are_human_only(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 
     with TestClient(app) as client:
-        start = client.post("/api/chief/conversation", headers=_AGENT)
+        start = _send(client, "hello", headers=_AGENT)
         reset = client.post("/api/chief/conversation/reset", headers=_AGENT)
         after = client.get("/api/chief/conversation")
 
@@ -175,17 +187,10 @@ def test_the_chief_starts_on_its_own_managed_settings(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
 
     with TestClient(app) as client:
-        conversation_id = client.post("/api/chief/conversation").json()["conversation_id"]
+        # A backend session is established when something is first sent, and the first
+        # message is also what makes the conversation.
+        conversation_id = _send(client, "hello").json()["conversation_id"]
         conversations = app.state.conversation_system
-        # A backend session is established when something is first sent, so the account
-        # only exists once there is one.
-        asyncio.run(
-            conversations.send(
-                conversation_id,
-                text_message_content("hello"),
-                sender_label="owner",
-            )
-        )
 
     assert conversations.backend_model(conversation_id) == "gpt-5.6-sol"
     assert conversations.backend_reasoning_effort(conversation_id) == "medium"
