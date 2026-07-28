@@ -120,7 +120,7 @@
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
     border-block-end: var(--border-hairline) solid var(--border-color);
-    background: var(--accent-surface-bright);
+    background: var(--accent-ink);
     color: var(--accent-text);
     border-start-start-radius: var(--radius-lg);
     border-start-end-radius: var(--radius-lg);
