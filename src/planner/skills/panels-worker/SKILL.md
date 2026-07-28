@@ -19,6 +19,7 @@ Worker skills:
 - `panels-worker-new-worker` — new_worker tickets (designing another worker).
 - `panels-worker-exploration` — exploration tickets.
 - `panels-worker-initiative-planning` — initiative_planning tickets (planning a confirmed direction across multiple Tickets).
+- `panels-worker-product-design` — product_design tickets (designing holistic product flows and implementation-ready interactive artifacts).
 - `probe-worker` — the probe fixture Worker type (test genericity proof).
 
 ### Who owns the current Stage

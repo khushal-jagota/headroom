@@ -50,15 +50,26 @@ def test_the_agent_backends_are_a_closed_set_of_three() -> None:
         runtime_definitions.worker_type_registry.require(worker_type)
         .worker_profile.default_backend
         for worker_type in runtime_definitions.worker_type_registry.registered_worker_types()
-    } == {"codex"}
+    } == {"codex", "claude"}
 
 
-def test_worker_profile_declares_complete_employee_defaults() -> None:
-    for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types():
-        profile = PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile
-        assert profile.default_backend == "codex"
-        assert profile.default_model == "gpt-5.6-sol"
-        assert profile.default_reasoning_effort == "medium"
+def test_worker_profiles_declare_complete_employee_defaults() -> None:
+    assert {
+        worker_type: (
+            PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_backend,
+            PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_model,
+            PRODUCTION_WORKER_TYPE_REGISTRY.require(
+                worker_type
+            ).worker_profile.default_reasoning_effort,
+        )
+        for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
+    } == {
+        "coding": ("codex", "gpt-5.6-sol", "medium"),
+        "new_worker": ("codex", "gpt-5.6-sol", "medium"),
+        "exploration": ("codex", "gpt-5.6-sol", "medium"),
+        "initiative_planning": ("codex", "gpt-5.6-sol", "medium"),
+        "product_design": ("claude", "opus[1m]", "high"),
+    }
 
 
 def assert_error(
@@ -372,7 +383,7 @@ def test_the_probe_names_a_real_backend_of_its_own() -> None:
     # The probe exists to prove a Worker type may run on a backend the shipped types do
     # not, so its default is a real key and deliberately not the one they all name.
     probe_default = build_probe_registry().require("probe").worker_profile.default_backend
-    assert ConversationBackendKey(probe_default) is ConversationBackendKey.claude
+    assert ConversationBackendKey(probe_default) is ConversationBackendKey.hermes
     assert probe_default not in {
         PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_backend
         for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
@@ -385,6 +396,7 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         "new_worker",
         "exploration",
         "initiative_planning",
+        "product_design",
     )
     coding = PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
     assert coding == {
@@ -569,6 +581,7 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
         "exploration.py",
         "initiative_planning.py",
         "new_worker.py",
+        "product_design.py",
         "registry.py",
     }
     allowed_outbound = {

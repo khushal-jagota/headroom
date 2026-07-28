@@ -117,6 +117,7 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
             "new_worker",
             "exploration",
             "initiative_planning",
+            "product_design",
         ]
         assert client.get("/api/ticket-types").status_code == 404
 
