@@ -555,7 +555,9 @@
     color: var(--text-muted);
     cursor: pointer;
     font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    /* A focusable field: touch screens raise this to 16px so iOS Safari does not
+     * zoom the page into the select on focus. */
+    font-size: var(--type-input-compact);
     padding: var(--space-1);
     text-overflow: ellipsis;
   }

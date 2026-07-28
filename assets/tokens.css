@@ -88,6 +88,12 @@
   --type-md: 15px;
   --type-lg: 20px;
 
+  /* Focusable chat controls (the composer's textarea and pickers). Separate from
+   * the ladder because touch screens must raise them: iOS Safari zooms the whole
+   * page into any focused field smaller than 16px. */
+  --type-input: var(--type-sm);
+  --type-input-compact: var(--type-xs);
+
   /* Serif voice — the system speaks in Newsreader where content speaks; the
    * machine's sans controls stay --font-ui. Its own ladder (mockup px). */
   --font-serif: "Newsreader", Georgia, serif;
@@ -103,4 +109,13 @@
   --tracking-title: -0.008em;
   --tracking-label: 0.12em;
   --tracking-mono: 0.03em;
+}
+
+/* Touch screens get 16px chat inputs: anything smaller has iOS Safari zoom the
+ * page into the field on focus, and the zoomed page never comes back on its own. */
+@media (pointer: coarse) {
+  :root {
+    --type-input: 16px;
+    --type-input-compact: 16px;
+  }
 }
