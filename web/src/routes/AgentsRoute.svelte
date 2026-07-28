@@ -6,6 +6,7 @@
   import RoleSkillEditor from "../components/RoleSkillEditor.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
+  import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
   import type {
@@ -193,9 +194,7 @@
         <p>Every configurable role. Agents run at the top level; Workers run one Ticket at a time.</p>
       </header>
       <ResourceState
-        error={workers.error || manifests.error || skillsHome.error}
-        loading={workers.isFetching || manifests.isFetching || skillsHome.isFetching}
-        hasData={Boolean(workers.data && manifests.data && skillsHome.data)}
+        {...resourceStateForQueries(workers, manifests, skillsHome)}
         loadingText="Loading agents..."
       >
         {#if workers.data}

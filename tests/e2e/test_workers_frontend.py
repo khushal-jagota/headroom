@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -169,6 +170,33 @@ def test_agents_routes_navigation_and_mobile_controls(
     assert mobile_index.get_by_label("Chief of Staff backend").is_visible()
     assert mobile_index.locator(DESCRIPTION_EDIT).is_editable()
     assert mobile_index.locator(BODY_EDIT).is_editable()
+
+
+def test_agents_index_renders_when_the_workers_read_answers_last(
+    server: ServerHandle, context_factory: Callable[[], BrowserContext]
+) -> None:
+    """The Agents index waits on three reads, and the order they answer in is a race.
+
+    Held here so the read the screen looks at first is the last one to answer. A screen
+    is only told about the parts of a read it has already looked at, so a gate that stops
+    at the first unfinished read never looks at the other two, is never told when they
+    answer, and stays on its loading line for good.
+    """
+    page = context_factory().new_page()
+    # No change stream: its connect handler refetches everything, which would wake a
+    # screen that had stopped listening and hide the failure this test is for.
+    page.route("**/api/changes", lambda route: route.abort())
+
+    def answer_after_the_others(route: Route) -> None:
+        time.sleep(0.5)
+        route.continue_()
+
+    page.route("**/api/workers", answer_after_the_others)
+    page.goto(server.base + "/#/agents")
+    page.wait_for_selector(
+        '[data-screen="agents"] [data-workers-list] [data-worker-row]', timeout=WAIT_MS
+    )
+    assert page.locator('[data-screen="agents"] [data-agent-card]').count() == 2
 
 
 def test_agents_index_worker_detail_and_mobile_layout(
