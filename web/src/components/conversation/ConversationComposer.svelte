@@ -154,6 +154,10 @@
   let intakeError = $state<string | null>(null);
   let intakeTail: Promise<void> = Promise.resolve();
   let imageIntakesInFlight = $state(0);
+  /** Changes only when the person composes something new. A refusal may restore its
+   *  snapshot only while this is still the revision that was sent. */
+  let composeRevision = 0;
+  let destroyed = false;
 
   let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
   let effectiveMode = $derived<PromptDeliveryMode>(running ? mode : "run_when_free");
@@ -338,6 +342,7 @@
    */
   function takeTheBackend(key: ConversationBackendKey): void {
     if (conversationExists || key === shownBackend) return;
+    composeRevision += 1;
     pickedBackend = key;
     pickedModel = null;
     pickedEffort = null;
@@ -348,6 +353,7 @@
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0) || inputDisabled) return;
     const carried = picked;
+    const sentComposeRevision = composeRevision;
     // What goes back if it gets nowhere is what the person had picked, which is not
     // everything the message carried: a message that creates a conversation also carries
     // the value the picker was only showing, and showing is not picking.
@@ -370,7 +376,7 @@
     sendsInFlight += 1;
     try {
       const delivered = await onSend(content, effectiveMode, carried);
-      if (!delivered) await giveTheMessageBack(content, theirs);
+      if (!delivered) await giveTheMessageBack(content, theirs, sentComposeRevision);
     } finally {
       sendsInFlight -= 1;
     }
@@ -383,10 +389,12 @@
    */
   async function giveTheMessageBack(
     content: readonly SentMessagePiece[],
-    carried: RunValues
+    carried: RunValues,
+    sentComposeRevision: number
   ): Promise<void> {
     if (
-      text !== ""
+      composeRevision !== sentComposeRevision
+      || text !== ""
       || pendingImages.length > 0
       || pickedModel !== null
       || pickedEffort !== null
@@ -425,18 +433,30 @@
     imageIntakesInFlight += 1;
     try {
       const intake = await createPendingConversationImages(files, nextImageId);
+      if (destroyed) {
+        releasePendingImages(intake.accepted);
+        return;
+      }
       nextImageId = intake.nextId;
-      if (intake.accepted.length > 0) pendingImages = [...pendingImages, ...intake.accepted];
+      if (intake.accepted.length > 0) {
+        composeRevision += 1;
+        pendingImages = [...pendingImages, ...intake.accepted];
+      }
       intakeError = intake.rejected.length > 0 ? "Choose image files only." : null;
     } catch (error) {
-      intakeError = error instanceof Error ? error.message : "The image could not be read.";
+      if (!destroyed) {
+        intakeError = error instanceof Error ? error.message : "The image could not be read.";
+      }
     } finally {
-      imageIntakesInFlight -= 1;
-      if (imageInput) imageInput.value = "";
+      if (!destroyed) {
+        imageIntakesInFlight -= 1;
+        if (imageInput) imageInput.value = "";
+      }
     }
   }
 
   function removeImage(image: PendingConversationImage): void {
+    composeRevision += 1;
     pendingImages = pendingImages.filter((candidate) => candidate.id !== image.id);
     releasePendingImages([image]);
   }
@@ -523,6 +543,11 @@
     cursorAt = input.selectionStart ?? 0;
   }
 
+  function textChanged(): void {
+    composeRevision += 1;
+    readWhereTheCursorIs();
+  }
+
   /** Where the command being written on this line is, and how much of its name is typed.
    *
    * A command is a line that starts with a slash — the line the cursor is on, not the
@@ -578,6 +603,7 @@
     const underway = commandUnderway;
     if (underway === null) return;
     const written = `/${command.name} `;
+    composeRevision += 1;
     // The space the name is followed by is the one already there, where there is one,
     // rather than a second one after it.
     const rest = text.slice(underway.end);
@@ -601,6 +627,7 @@
    * is still theirs to type.
    */
   async function startWritingACommand(): Promise<void> {
+    composeRevision += 1;
     if (!text.startsWith("/")) text = `/${text}`;
     menuWasDismissed = false;
     await tick();
@@ -613,7 +640,10 @@
   }
 
   onMount(() => {
-    return () => releasePendingImages(pendingImages);
+    return () => {
+      destroyed = true;
+      releasePendingImages(pendingImages);
+    };
   });
 </script>
 
@@ -692,7 +722,7 @@
         bind:value={text}
         disabled={inputDisabled}
         onkeydown={onKeydown}
-        oninput={readWhereTheCursorIs}
+        oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
         onclick={readWhereTheCursorIs}
         onfocus={readWhereTheCursorIs}
@@ -770,6 +800,7 @@
             attributes={{ "data-conversation-picker-model": "" }}
             rail={shownBackend === null ? undefined : backendRail}
             onChoose={(model) => {
+              composeRevision += 1;
               pickedModel = model;
               handTheBoxTheKeyboard();
             }}
@@ -787,6 +818,7 @@
                 "data-conversation-picker-effort-bare": effortIsBare ? "true" : undefined
               }}
               onChoose={(effort) => {
+                composeRevision += 1;
                 pickedEffort = effort;
                 handTheBoxTheKeyboard();
               }}

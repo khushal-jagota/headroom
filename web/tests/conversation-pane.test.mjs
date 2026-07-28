@@ -1197,6 +1197,7 @@ try {
   let sendAccepted = true;
   let holdNextSend = false;
   let heldSend: ((accepted: boolean) => void) | null = null;
+  let showComposer = $state(true);
   (window as any).__sends = () => sends;
   (window as any).__answers = () => answers;
   (window as any).__setSendAccepted = (accepted: boolean) => {
@@ -1208,6 +1209,9 @@ try {
   (window as any).__finishSend = (accepted: boolean) => {
     heldSend?.(accepted);
     heldSend = null;
+  };
+  (window as any).__destroyComposer = () => {
+    showComposer = false;
   };
 
   // What the agent reported it can be asked to do. Settable from the test, because an
@@ -1384,23 +1388,25 @@ try {
   };
 </script>
 
-<ConversationComposer
-  backendKey="claude"
-  running={false}
-  current={{ model: null, reasoningEffort: null }}
-  startsOnModel="opus"
-  models={[
-    { model_id: "opus", display_name: "Opus", detail: "opus → claude-opus-5" },
-    { model_id: "sonnet", display_name: "Sonnet" },
-    { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] }
-  ]}
-  effortOptions={["low", "high"]}
-  {availableCommands}
-  {backends}
-  {conversationExists}
-  {disabled}
-  {onSend}
-/>
+{#if showComposer}
+  <ConversationComposer
+    backendKey="claude"
+    running={false}
+    current={{ model: null, reasoningEffort: null }}
+    startsOnModel="opus"
+    models={[
+      { model_id: "opus", display_name: "Opus", detail: "opus → claude-opus-5" },
+      { model_id: "sonnet", display_name: "Sonnet" },
+      { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] }
+    ]}
+    effortOptions={["low", "high"]}
+    {availableCommands}
+    {backends}
+    {conversationExists}
+    {disabled}
+    {onSend}
+  />
+{/if}
 
 <ConversationTranscript rows={settledRows} ownSenderLabel="owner" />
 
@@ -1819,6 +1825,22 @@ with sync_playwright() as playwright:
     assert the_box.input_value() == "newer draft"
     page.evaluate("window.__setSendAccepted(true)")
 
+    # A later message that has already been sent is newer composing too. An older delayed
+    # refusal cannot resurrect itself into the now-empty box.
+    the_box.fill("older delayed")
+    page.evaluate("window.__holdNextSend()")
+    page.locator("[data-conversation-send]").click()
+    page.wait_for_function("window.__sends().length === 9")
+    the_box.fill("newer and sent")
+    page.locator("[data-conversation-send]").click()
+    page.wait_for_function("window.__sends().length === 10")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value === ''"
+    )
+    page.evaluate("window.__finishSend(false)")
+    page.wait_for_timeout(20)
+    assert the_box.input_value() == ""
+
     # A composer nobody can type into is a picker nobody can open: it goes quiet where it
     # stands, and an open panel goes with it rather than hanging over a shut box.
     open_the_panel(model)
@@ -2127,6 +2149,27 @@ with sync_playwright() as playwright:
     assert "No commands here." in nothing_to_offer, nothing_to_offer
     assert "agent" not in nothing_to_offer.lower(), nothing_to_offer
     assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    # If navigation destroys the composer while a file is still being read, the batch
+    # releases the preview it creates on completion instead of assigning it to the dead
+    # component.
+    page.evaluate(
+        """() => {
+          const original = File.prototype.arrayBuffer;
+          File.prototype.arrayBuffer = function () {
+            return new Promise((resolve, reject) => {
+              window.__finishImageRead = () => original.call(this).then(resolve, reject);
+            });
+          };
+        }"""
+    )
+    page.locator("[data-conversation-image-input]").set_input_files(
+        {"name": "late.png", "mimeType": "image/png", "buffer": bytes([12])}
+    )
+    page.evaluate("window.__destroyComposer()")
+    page.evaluate("window.__finishImageRead()")
+    page.wait_for_function("window.__revokedImageUrls.length === 7")
+    assert page.locator("[data-conversation-composer]").count() == 0
 
     browser.close()
 
