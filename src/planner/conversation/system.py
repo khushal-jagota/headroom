@@ -97,6 +97,7 @@ from planner.conversation.message_content import (
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import (
     ConversationRecord,
+    ConversationRecordNamesNoModel,
     ConversationStore,
     StoredConversationEvent,
 )
@@ -876,8 +877,14 @@ class SqliteProcessConversationSystem:
 
                 carried_change: ModelChangedEventPayload | None = None
                 if model_change is not None or reasoning_effort_change is not None:
+                    running_on = state.record.model if model_change is None else model_change
+                    if running_on is None:
+                        # A change that does not name a model moves the one the record
+                        # holds, and this row holds none. The same rows cannot start a
+                        # child either, so this says what that says: nothing to run on.
+                        raise ConversationRecordNamesNoModel(state.record.conversation_id)
                     carried_change = ModelChangedEventPayload(
-                        model=state.record.model if model_change is None else model_change,
+                        model=running_on,
                         reasoning_effort=(
                             state.record.reasoning_effort
                             if reasoning_effort_change is None
