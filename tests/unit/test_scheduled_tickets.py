@@ -94,7 +94,7 @@ def _production_planning_schedules(
         (
             "Plan the day",
             "planning-day",
-            "11:30",
+            "05:05",
             ScheduleCadence.every_planning_day,
         ),
         (
@@ -106,7 +106,7 @@ def _production_planning_schedules(
         (
             "Review current sprint and plan the next",
             "planning-sprint",
-            "11:30",
+            "17:00",
             ScheduleCadence.current_sprint_final_day,
         ),
     )
@@ -186,7 +186,7 @@ def test_approved_production_planning_schedule_definitions_are_exact(
     } == {
         "planning-day": (
             "Plan the day",
-            "11:30",
+            "05:05",
             ScheduleCadence.every_planning_day,
         ),
         "planning-midday-check": (
@@ -196,7 +196,7 @@ def test_approved_production_planning_schedule_definitions_are_exact(
         ),
         "planning-sprint": (
             "Review current sprint and plan the next",
-            "11:30",
+            "17:00",
             ScheduleCadence.current_sprint_final_day,
         ),
     }
@@ -221,8 +221,9 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
 ) -> None:
     _insert_current_sprint(tmp_db)
     schedule_ids = _production_planning_schedules(tmp_db)
-    morning = _now("2026-07-28T11:30:00")
+    morning = _now("2026-07-28T05:05:00")
     midday = _now("2026-07-28T14:30:00")
+    sprint_end = _now("2026-07-28T17:00:00")
 
     morning_results = actions.run_current_slot(
         tmp_db,
@@ -242,11 +243,18 @@ def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
         now=int(midday.timestamp()),
         boundary_hour=5,
     )
+    sprint_results = actions.run_current_slot(
+        tmp_db,
+        planning_now=sprint_end,
+        now=int(sprint_end.timestamp()),
+        boundary_hour=5,
+    )
 
     assert repeated_morning == morning_results
-    assert len(morning_results) == 2
+    assert len(morning_results) == 1
     assert len(midday_results) == 1
-    results = morning_results + midday_results
+    assert len(sprint_results) == 1
+    results = morning_results + midday_results + sprint_results
     assert {result.schedule_id for result in results} == set(schedule_ids.values())
     assert {result.outcome for result in results} == {OccurrenceOutcome.created}
     assert {result.target_day_id for result in results} == {"day_2026-07-28"}
@@ -295,7 +303,7 @@ def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill
 ) -> None:
     _insert_current_sprint(tmp_db)
     schedule_ids = _production_planning_schedules(tmp_db)
-    morning = _now("2026-07-28T11:30:00")
+    morning = _now("2026-07-28T05:05:00")
     prelaid_ids: dict[str, str] = {}
     for worker_type in schedule_ids:
         ticket = tickets_actions.create_ticket(
@@ -311,7 +319,11 @@ def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill
         )
         prelaid_ids[worker_type] = ticket.id
 
-    for missed_slot in ("2026-07-28T11:31:00", "2026-07-28T14:31:00"):
+    for missed_slot in (
+        "2026-07-28T05:06:00",
+        "2026-07-28T14:31:00",
+        "2026-07-28T17:01:00",
+    ):
         missed = _now(missed_slot)
         assert (
             actions.run_current_slot(
@@ -340,6 +352,13 @@ def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill
         now=int(midday.timestamp()),
         boundary_hour=5,
     )
+    sprint_end = _now("2026-07-28T17:00:00")
+    sprint_results = actions.run_current_slot(
+        tmp_db,
+        planning_now=sprint_end,
+        now=int(sprint_end.timestamp()),
+        boundary_hour=5,
+    )
     repeated_midday = actions.run_current_slot(
         tmp_db,
         planning_now=midday.replace(second=30),
@@ -348,7 +367,7 @@ def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill
     )
 
     assert repeated_midday == midday_results
-    results = morning_results + midday_results
+    results = morning_results + midday_results + sprint_results
     assert len(results) == 3
     assert {result.outcome for result in results} == {OccurrenceOutcome.suppressed}
     for result in results:
@@ -363,7 +382,7 @@ def test_production_sprint_schedule_only_qualifies_on_current_sprint_final_day(
 ) -> None:
     _insert_current_sprint(tmp_db)
     schedule_ids = _production_planning_schedules(tmp_db)
-    before = _now("2026-07-27T11:30:00")
+    before = _now("2026-07-27T17:00:00")
 
     before_results = actions.run_current_slot(
         tmp_db,
@@ -372,18 +391,12 @@ def test_production_sprint_schedule_only_qualifies_on_current_sprint_final_day(
         boundary_hour=5,
     )
 
-    assert len(before_results) == 1
-    before_ticket_id = before_results[0].ticket_id
-    assert before_ticket_id is not None
-    assert (
-        tickets_data.read_ticket(tmp_db, before_ticket_id).worker_type
-        == "planning-day"
-    )
+    assert before_results == []
     assert data.list_occurrences(
         tmp_db, schedule_ids["planning-sprint"]
     ) == []
 
-    final = _now("2026-07-28T11:30:00")
+    final = _now("2026-07-28T17:00:00")
     final_results = actions.run_current_slot(
         tmp_db,
         planning_now=final,
@@ -394,7 +407,7 @@ def test_production_sprint_schedule_only_qualifies_on_current_sprint_final_day(
     assert {
         tickets_data.read_ticket(tmp_db, str(result.ticket_id)).worker_type
         for result in final_results
-    } == {"planning-day", "planning-sprint"}
+    } == {"planning-sprint"}
     assert len(data.list_occurrences(tmp_db, schedule_ids["planning-sprint"])) == 1
 
 
