@@ -247,8 +247,12 @@ Worker type and specialist skill, write notes and recaps, and file proposals. It
 general approval power.
 
 Human and service actions carry explicit actor and claim context. Direct-only
-operations reject worker claims. Worker writes remain proposals. The Chief's bounded
-operations do not create a second path around the proposal resolver.
+operations reject worker claims. The three planning Workers are the narrow exception:
+the server resolves the claimed Ticket's stored Worker type and admits only its matching
+`planning-day`, `planning-midday-check`, or `planning-sprint` operations. Missing,
+unknown, and mismatched claims fail closed. Existing direct and generic permissions do
+not change, and other Worker writes remain proposals. The Chief's bounded operations do
+not create a second path around the proposal resolver.
 
 Worker identity uses `PLAN_TICKET_ID` and the Ticket's worker-self endpoint. The agent a
 conversation runs on is told the exact Ticket identity and the address the server that
@@ -257,8 +261,11 @@ another one on another port. All three agents are told it, because a Ticket's wo
 be any of them, and it is read from the running server rather than remembered with the
 conversation — a conversation resumed after a restart reaches the server that resumed it.
 Duplicate session ownership fails instead of guessing which Ticket a worker belongs to.
+The CLI sends `PLAN_TICKET_ID` as `X-Plan-Ticket-ID` alongside `X-Plan-Actor`. These are
+truthful local process claims, not credentials or cryptographic authentication; the
+Ticket claim narrows worker authority and never turns another actor into a worker.
 
-_Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission rules.
+_Code paths:_ `src/planner/cli/`, `src/planner/core/authctx.py`, and domain admission rules.
 
 ## Boundaries That Matter
 

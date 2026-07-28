@@ -1,7 +1,9 @@
 # Days
 
 A day is one page per day: the small overview you use to orient the day. It has four
-editable fields — focus, brief take, watchout, and what makes the day land. The day
+morning fields — focus, brief take, watchout, and what makes the day land — followed
+by a separate **Midday reconciliation** field. The reconciliation records where things
+actually stand without replacing or rewriting the morning plan. The day
 has a deliberate quirk — it flips at **5am, not midnight** — so a late night still
 belongs to the day it felt like.
 
@@ -20,7 +22,9 @@ belongs to the day it felt like.
 
 The current Day page is an overview, not a dashboard. It does not show the plan tree,
 today's ticket list, the Review queue, or chat. Each field saves independently when
-you edit it, and a refresh restores the same values from the server. Crossing the
+you edit it, and a refresh restores the same values from the server. An empty midday
+reconciliation renders the same `(none)` edit state as the other Markdown sections.
+Crossing the
 5am boundary creates the new day record.
 
 The repo-owned `panels-rollover` role skill prepares the kickoff when the user starts

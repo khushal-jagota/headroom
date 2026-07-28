@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import require_direct_write
+from planner.core.authctx import require_direct_write, require_planning_write
 from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
@@ -55,6 +55,7 @@ def _day_view(conn: sqlite3.Connection, did: str, now: int) -> JsonDict:
         "brief_take": day.brief_take,
         "watchout": day.watchout,
         "if_today_lands": day.if_today_lands,
+        "midday_reconciliation": day.midday_reconciliation,
         "notes": day.notes,
         "created_at": day.created_at,
         "updated_at": day.updated_at,
@@ -75,9 +76,11 @@ async def get_day(date: str, conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
 async def patch_day(
     date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
 ) -> JsonDict:
-    require_direct_write(ctx)  # §8: overview fields + notes are direct-only
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
+    for field in raw:
+        if field not in days_data.DAY_TEXT_FIELDS:
+            raise PlannerError(ErrorCode.validation, "unknown day field", {"field": field})
     # Each overview field (and notes) edits on its own — no whole-blob re-serialize.
     edits: dict[str, str] = {}
     for field in days_data.DAY_TEXT_FIELDS:
@@ -86,8 +89,18 @@ async def patch_day(
             edits[field] = value
     if not edits:
         raise PlannerError(ErrorCode.validation, "no day fields to update", {})
-    for field, value in edits.items():
-        with txn(conn):
+    # Validate the complete request above, then keep every field in one write transaction.
+    with txn(conn):
+        fields = set(edits)
+        morning_fields = {"focus", "brief_take", "watchout", "if_today_lands"}
+        if fields <= morning_fields:
+            require_planning_write(conn, ctx, "planning-day")
+        elif fields == {"midday_reconciliation"}:
+            require_planning_write(conn, ctx, "planning-midday-check")
+        else:
+            # Notes and mixed-capability requests stay direct-only.
+            require_direct_write(ctx)
+        for field, value in edits.items():
             days_data.set_day_field(conn, did, field, value, now)
     return _day_view(conn, did, now)
 

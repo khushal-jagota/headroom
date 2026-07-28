@@ -1482,7 +1482,8 @@ button.list-row:hover .list-row-title {
   color: var(--accent-done);
 }
 
-[data-screen="day"] .lands .body {
+[data-screen="day"] .lands .body,
+[data-screen="day"] .midday .body {
   font-family: var(--font-serif);
   font-size: var(--type-serif-md);
   line-height: 1.66;

@@ -16,6 +16,7 @@ class Day:                         # §3.4 — overview = four structured day fi
     brief_take: str                # markdown
     watchout: str                  # markdown
     if_today_lands: str            # markdown
+    midday_reconciliation: str     # markdown; mid-day reality, not a replacement plan
     notes: str
     created_at: int
     updated_at: int
@@ -39,6 +40,7 @@ class DayPatchBody(TypedDict, total=False):       # PATCH /day/{date} — each f
     brief_take: str | None         # absent/null = leave unchanged
     watchout: str | None           # absent/null = leave unchanged
     if_today_lands: str | None     # absent/null = leave unchanged
+    midday_reconciliation: str | None
     notes: str | None              # absent/null = leave unchanged
 
 

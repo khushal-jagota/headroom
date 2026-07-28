@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import reject_agent_fields, require_direct_write
+from planner.core.authctx import reject_agent_fields, require_direct_write, require_planning_write
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date
@@ -80,9 +80,7 @@ def _marshal_item_deadline(raw: object) -> None:
     try:
         date.fromisoformat(raw)
     except ValueError as exc:
-        raise PlannerError(
-            ErrorCode.validation, "invalid deadline", {"deadline": raw}
-        ) from exc
+        raise PlannerError(ErrorCode.validation, "invalid deadline", {"deadline": raw}) from exc
 
 
 # --- item routes ---------------------------------------------------------------
@@ -95,8 +93,11 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
         conn, project_id=body["project_id"], project_name=body["project"], required=True
     )
     assert project is not None
-    priority = parse_enum(Priority, body["priority"], "priority") \
-        if body["priority"] is not None else Priority.P3
+    priority = (
+        parse_enum(Priority, body["priority"], "priority")
+        if body["priority"] is not None
+        else Priority.P3
+    )
     _marshal_item_deadline(body["deadline"])
     item = sprints_data.create_item(
         conn,
@@ -112,8 +113,13 @@ async def create_item(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDict:
 
 
 @router.get("/items")
-async def list_items(conn: DbConn, status: str | None = None, project: str | None = None,
-                     project_id: str | None = None, sprint_id: str | None = None) -> JsonDict:
+async def list_items(
+    conn: DbConn,
+    status: str | None = None,
+    project: str | None = None,
+    project_id: str | None = None,
+    sprint_id: str | None = None,
+) -> JsonDict:
     status_enum = parse_enum(ItemStatus, status, "status") if status is not None else None
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
@@ -147,29 +153,40 @@ async def delete_item(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
 
 
 @router.post("/items/{item_id}/tickets")
-async def add_item_ticket(item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx,
-                          clk: Clk) -> JsonDict:
-    require_direct_write(ctx)
+async def add_item_ticket(
+    item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     body = AddItemTicketBody(ticket_id=body_str(raw, "ticket_id"))
     tickets_data.assign_ticket_to_sprint_item(
-        conn, body["ticket_id"], sprint_item_id=item_id, actor=ctx.actor, now=clk.now_unix()
+        conn,
+        body["ticket_id"],
+        sprint_item_id=item_id,
+        actor=ctx.actor,
+        now=clk.now_unix(),
+        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
     )
     return sprints_views.item_detail(conn, item_id)
 
 
 @router.delete("/items/{item_id}/tickets/{ticket_id}")
-async def remove_item_ticket(item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx,
-                             clk: Clk) -> JsonDict:
-    require_direct_write(ctx)
+async def remove_item_ticket(
+    item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     tickets_data.remove_ticket_from_sprint_item(
-        conn, ticket_id, sprint_item_id=item_id, actor=ctx.actor, now=clk.now_unix()
+        conn,
+        ticket_id,
+        sprint_item_id=item_id,
+        actor=ctx.actor,
+        now=clk.now_unix(),
+        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
     )
     return sprints_views.item_detail(conn, item_id)
 
 
 @router.patch("/items/{item_id}")
-async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
-                     clk: Clk) -> JsonDict:
+async def patch_item(
+    item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     recognized = set(_ITEM_PLAIN_FIELDS) | {"project", "sprint_id"}
     for key in body:
         if key not in recognized:
@@ -177,8 +194,10 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
     if not body:
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
     # Sprint item status is derived from child tickets and blocking links; item patching is
-    # only for plain direct-editable fields and sprint placement.
-    reject_agent_fields(ctx, body, set(_ITEM_PLAIN_FIELDS) | {"project", "sprint_id"})
+    # only for plain fields and sprint placement.
+    if ctx.is_attributed and not ctx.is_chief and ctx.actor != "worker":
+        reject_agent_fields(ctx, body, recognized)
+    edits: dict[str, str | None] = {}
     for field in _ITEM_PLAIN_FIELDS:
         if field in body:
             if field == "project_id":
@@ -190,7 +209,7 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
                 value = body_str(body, field)
             else:
                 value = body[field]
-            sprints_data.update_item_field(conn, item_id, field, value, clock=clk)
+            edits[field] = value
     if "project" in body or "project_id" in body:
         project = projects_data.resolve_project(
             conn,
@@ -199,9 +218,16 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
             required=True,
         )
         assert project is not None
-        sprints_data.update_item_field(conn, item_id, "project_id", project.id, clock=clk)
-    if "sprint_id" in body:
-        sprints_data.assign_item_sprint(conn, item_id, body_opt_str(body, "sprint_id"), clock=clk)
+        edits["project_id"] = project.id
+    sprints_data.update_item(
+        conn,
+        item_id,
+        edits=edits,
+        set_sprint="sprint_id" in body,
+        sprint_id=body_opt_str(body, "sprint_id"),
+        clock=clk,
+        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+    )
     return sprints_views.item_detail(conn, item_id)
 
 
@@ -211,7 +237,6 @@ async def patch_item(item_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
 @router.post("/sprints")
 async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     body = _marshal_create_sprint(raw)
-    require_direct_write(ctx)
     for label, value in (("date_start", body["date_start"]), ("date_end", body["date_end"])):
         try:
             date.fromisoformat(value)
@@ -227,6 +252,7 @@ async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -
         supports=body["supports"],
         premortem=body["premortem"],
         clock=clk,
+        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
     )
     return sprints_views.sprint_json(sprint)
 
@@ -242,9 +268,9 @@ async def get_sprint(sprint_id: str, conn: DbConn) -> JsonDict:
 
 
 @router.patch("/sprints/{sprint_id}")
-async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx,
-                       clk: Clk) -> JsonDict:
-    require_direct_write(ctx)  # §8: agents get `sprint show` only — no sprint edit surface.
+async def patch_sprint(
+    sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     recognized = set(_SPRINT_TEXT_FIELDS) | {"date_start", "date_end"}
     for key in body:
         if key not in recognized:
@@ -260,16 +286,17 @@ async def patch_sprint(sprint_id: str, body: dict[str, Any], conn: DbConn, ctx: 
     setting_dates = "date_start" in body or "date_end" in body
     if not edits and not setting_dates:
         raise PlannerError(ErrorCode.validation, "no sprint fields to update", {})
-    for field, value in edits.items():
-        sprints_data.update_sprint_field(conn, sprint_id, field, value, clock=clk)
-    if setting_dates:
-        sprints_data.set_sprint_dates(
-            conn, sprint_id,
-            date_start=body_opt_str(body, "date_start"),
-            date_end=body_opt_str(body, "date_end"),
-            clock=clk,
-        )
-    return sprints_views.sprint_json(sprints_data.read_sprint(conn, sprint_id))
+    sprint = sprints_data.update_sprint(
+        conn,
+        sprint_id,
+        text_edits=edits,
+        set_dates=setting_dates,
+        date_start=body_opt_str(body, "date_start"),
+        date_end=body_opt_str(body, "date_end"),
+        clock=clk,
+        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+    )
+    return sprints_views.sprint_json(sprint)
 
 
 @router.get("/sprint/current")
