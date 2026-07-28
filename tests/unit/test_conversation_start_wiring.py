@@ -675,7 +675,7 @@ def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_default
         system = InMemoryConversationSystem()
         moved = ConversationStartValues(
             backend_key=ConversationBackendKey.hermes,
-            model=None,
+            model="hermes-model",
             reasoning_effort=None,
             role_materials=worker_conversation_role_materials(ticket.id),
             workspace_folder=_WORKSPACE,
@@ -688,10 +688,30 @@ def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_default
         )
 
         assert values.backend_key is ConversationBackendKey.hermes
-        assert values.model is None
+        assert values.model == "hermes-model"
         assert values.reasoning_effort is None
 
     asyncio.run(exercise())
+
+
+def test_worker_resolve_falls_to_the_worker_type_defaults_when_the_ticket_names_no_model(
+    tmp_db: Connection, ticket: Ticket
+) -> None:
+    # A row left from when a Ticket could name a backend and no model. It has not chosen
+    # anything runnable — its backend and another backend's model are not a pair — so the
+    # Worker type's own defaults answer whole, backend included.
+    with tmp_db:
+        tmp_db.execute(
+            "UPDATE tickets SET employee_backend = 'hermes', employee_launch_model = NULL, "
+            "employee_launch_reasoning_effort = NULL WHERE id = ?",
+            (ticket.id,),
+        )
+
+    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id), workspace_folder=_WORKSPACE)
+
+    assert values.backend_key is ConversationBackendKey.codex
+    assert values.model == "gpt-5.6-sol"
+    assert values.reasoning_effort == "medium"
 
 
 def test_worker_resolve_applies_an_override_over_what_it_read(
@@ -700,12 +720,14 @@ def test_worker_resolve_applies_an_override_over_what_it_read(
     values = worker_resolve(
         tmp_db,
         ticket,
-        ConversationStartOverrides(backend_key=ConversationBackendKey.hermes),
+        ConversationStartOverrides(
+            backend_key=ConversationBackendKey.hermes, model="hermes-model"
+        ),
         workspace_folder=_WORKSPACE,
     )
 
     assert values.backend_key is ConversationBackendKey.hermes
-    assert values.model is None
+    assert values.model == "hermes-model"
     assert values.reasoning_effort is None
 
 

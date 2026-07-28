@@ -118,7 +118,7 @@ def test_stopping_waits_out_a_worker_step_that_is_still_being_sent(tmp_path: Pat
     conversations = _HoldingConversationSystem()
     asyncio.run(
         conversations.start_conversation(
-            ConversationStartRequest(conversation_id="conv-shutdown")
+            ConversationStartRequest(conversation_id="conv-shutdown", model="a-model")
         )
     )
     loop, thread = _run_event_loop_in_a_thread()
@@ -173,7 +173,7 @@ def test_stopping_abandons_a_worker_step_that_outlives_the_deadline(tmp_path: Pa
     conversations = _HoldingConversationSystem()
     asyncio.run(
         conversations.start_conversation(
-            ConversationStartRequest(conversation_id="conv-shutdown")
+            ConversationStartRequest(conversation_id="conv-shutdown", model="a-model")
         )
     )
     loop, thread = _run_event_loop_in_a_thread()

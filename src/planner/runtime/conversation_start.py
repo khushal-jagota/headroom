@@ -90,6 +90,13 @@ def worker_resolve(
 
     It computes and nothing else: no conversation is created and no row is written, so
     asking twice costs nothing and changes nothing.
+
+    A Ticket whose model column is null is a Ticket that has not chosen what it runs on:
+    the column was left empty back when an empty one meant the backend's own model, and
+    that is a value nobody picked. Such a Ticket does not answer for the launch
+    configuration at all — its backend cannot be paired with a model chosen for another —
+    so the Worker type's launch defaults answer whole, and the first conversation writes
+    concrete values back onto the Ticket.
     """
     registry = worker_type_registry
     if registry is None:
@@ -104,10 +111,14 @@ def worker_resolve(
             model=launch_defaults.employee_launch_model,
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
         ),
-        ticket_last_chosen=ConversationStartConfiguration(
-            backend_key=ConversationBackendKey(ticket.employee_backend),
-            model=ticket.employee_launch_model,
-            reasoning_effort=ticket.employee_launch_reasoning_effort,
+        ticket_last_chosen=(
+            None
+            if ticket.employee_launch_model is None
+            else ConversationStartConfiguration(
+                backend_key=ConversationBackendKey(ticket.employee_backend),
+                model=ticket.employee_launch_model,
+                reasoning_effort=ticket.employee_launch_reasoning_effort,
+            )
         ),
         overrides=overrides,
         workspace_folder=(

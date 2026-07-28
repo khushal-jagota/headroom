@@ -160,9 +160,19 @@ WHERE_THE_THREAD_IS = """
 
 
 def _create_conversation(server: ServerHandle, conversation_id: str) -> None:
+    """A conversation for the pane to open, made the way the browser makes one.
+
+    The model is named because every start names one, and it is a name rather than a real
+    model on purpose: nothing here spawns a backend, so what these conversations run on is
+    never asked of a machine. The pane is what is under test.
+    """
     created = httpx.post(
         f"{server.base}/api/conversation/conversations",
-        json={"conversation_id": conversation_id, "backend_key": "codex"},
+        json={
+            "conversation_id": conversation_id,
+            "model": "e2e-model",
+            "backend_key": "codex",
+        },
         timeout=10.0,
     )
     assert created.status_code == 201, created.text
@@ -435,6 +445,13 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
     )
     # Nothing has been started yet: this is the empty state, not a conversation.
     page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
+    # And a conversation is created on a model somebody can name, so the first message can
+    # only make one once this page has read what the backend it is on runs. That read is a
+    # real probe of a real CLI, so it is waited for the way the backend cards are.
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-new-model]').value !== ''",
+        timeout=BACKEND_CARD_WAIT_MS,
+    )
 
     page.fill("[data-conversation-input]", "the very first thing")
     page.press("[data-conversation-input]", "Enter")

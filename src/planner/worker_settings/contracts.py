@@ -34,8 +34,16 @@ class SpecialistSkillPatch(TypedDict, total=False):
 
 @dataclass(frozen=True, slots=True)
 class ManagedWorkerLaunchDefaults:
+    """What this Worker or the Chief launches on, as the owner last saved it.
+
+    The backend and the model are both named, always: a saved setting that named no model
+    would launch on whatever the backend picked for itself, which is nobody's choice and
+    nothing the settings screen can show. The reasoning effort may be absent, because some
+    models take none.
+    """
+
     employee_backend: str
-    employee_launch_model: str | None
+    employee_launch_model: str
     employee_launch_reasoning_effort: str | None
 
 

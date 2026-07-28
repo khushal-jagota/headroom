@@ -29,6 +29,9 @@ from acp.schema import (
     InitializeResponse,
     NewSessionResponse,
     PromptResponse,
+    SessionConfigOptionSelect,
+    SessionConfigSelectOption,
+    SetSessionConfigOptionResponse,
     TextContentBlock,
 )
 
@@ -41,6 +44,12 @@ WORKTREE_GUIDANCE = "Always do your work on a worktree and a branch."
 WORKTREE_ACKNOWLEDGEMENT = "Acknowledged installed worktree and branch guidance."
 
 SESSION_ID = "worker-skill-proof-session"
+
+# Every conversation names the model it runs on, so this agent has to be able to be put on
+# one. It offers the model as an ordinary session config option, which is how the protocol
+# says a model is chosen now.
+MODEL_CONFIGURATION_OPTION_ID = "model"
+MODEL = "proof-model"
 
 
 def _diagnostic(message: str) -> None:
@@ -68,7 +77,23 @@ class WorkerSkillProofAgent:
 
     async def new_session(self, cwd: str, **kwargs: Any) -> NewSessionResponse:
         del cwd, kwargs
-        return NewSessionResponse(session_id=SESSION_ID)
+        return NewSessionResponse(session_id=SESSION_ID, config_options=[self._model_option()])
+
+    async def set_config_option(
+        self, config_id: str, session_id: str, value: Any, **kwargs: Any
+    ) -> SetSessionConfigOptionResponse:
+        del config_id, session_id, value, kwargs
+        return SetSessionConfigOptionResponse(config_options=[self._model_option()])
+
+    def _model_option(self) -> SessionConfigOptionSelect:
+        return SessionConfigOptionSelect(
+            type="select",
+            id=MODEL_CONFIGURATION_OPTION_ID,
+            name="Model",
+            category="model",
+            current_value=MODEL,
+            options=[SessionConfigSelectOption(value=MODEL, name=MODEL)],
+        )
 
     async def prompt(self, session_id: str, prompt: list[Any], **kwargs: Any) -> PromptResponse:
         del kwargs

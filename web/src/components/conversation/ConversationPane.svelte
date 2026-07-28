@@ -79,8 +79,8 @@
     livenessPulse = 0,
     effortOptions = [],
     availableCommands = [],
-    defaultModelId = null,
-    defaultReasoningEffort = null,
+    startsOnModel = null,
+    startsOnReasoningEffort = null,
     heldPromptCount = 0,
     fateNote = null,
     errorNote = null,
@@ -128,8 +128,10 @@
     /** The commands this conversation's agent reports, which the composer offers under a
      *  line being written as one. */
     availableCommands?: readonly AgentCommand[];
-    defaultModelId?: string | null;
-    defaultReasoningEffort?: string | null;
+    /** What a conversation started from here would run on, for the composer to show while
+     *  there is none. Its owner resolved them; nothing here reads them. */
+    startsOnModel?: string | null;
+    startsOnReasoningEffort?: string | null;
     heldPromptCount?: number;
     fateNote?: string | null;
     errorNote?: string | null;
@@ -908,8 +910,8 @@
     {backends}
     {effortOptions}
     {availableCommands}
-    {defaultModelId}
-    {defaultReasoningEffort}
+    {startsOnModel}
+    {startsOnReasoningEffort}
     {heldPromptCount}
     {fateNote}
     {errorNote}

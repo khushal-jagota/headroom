@@ -584,7 +584,7 @@ def write_employee_configuration(
     *,
     expected_employee_configuration: EmployeeLaunchConfiguration,
     employee_backend: str,
-    employee_launch_model: str | None,
+    employee_launch_model: str,
     employee_launch_reasoning_effort: str | None,
     advertised_models: frozenset[str] | None,
     reasoning_supported: bool | None,
@@ -660,6 +660,7 @@ def create_ticket(
     sprint_item_id: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
@@ -671,25 +672,16 @@ def create_ticket(
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
     )
-    selected_employee_backend = require_conversation_backend_key(
-        employee_backend
-        if employee_backend is not None
-        else launch_defaults.employee_backend
-    )
-    employee_backend_was_overridden = (
-        employee_backend is not None
-        and selected_employee_backend
-        != launch_defaults.employee_backend
-    )
-    selected_employee_launch_model = (
-        None
-        if employee_backend_was_overridden
-        else launch_defaults.employee_launch_model
-    )
-    selected_employee_launch_reasoning_effort = (
-        None
-        if employee_backend_was_overridden
-        else launch_defaults.employee_launch_reasoning_effort
+    launch_configuration = employee_configuration.launch_configuration_for_a_new_ticket(
+        default_backend=launch_defaults.employee_backend,
+        default_model=launch_defaults.employee_launch_model,
+        default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
+        employee_backend=require_conversation_backend_key(
+            employee_backend
+            if employee_backend is not None
+            else launch_defaults.employee_backend
+        ),
+        employee_launch_model=employee_launch_model,
     )
     initial_stage = worker_type_definition.default_ceiling()
     default_ceiling = worker_type_definition.default_ceiling()
@@ -747,9 +739,9 @@ def create_ticket(
                 ticket_id,
                 title,
                 worker_type,
-                selected_employee_backend,
-                selected_employee_launch_model,
-                selected_employee_launch_reasoning_effort,
+                launch_configuration.employee_backend,
+                launch_configuration.employee_launch_model,
+                launch_configuration.employee_launch_reasoning_effort,
                 initial_stage,
                 priority.value,
                 deadline,
@@ -796,6 +788,7 @@ def create_ticket_from_external_work(
     sprint_item_id: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     day_id: str | None = None,
@@ -812,25 +805,16 @@ def create_ticket_from_external_work(
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
     )
-    selected_employee_backend = require_conversation_backend_key(
-        employee_backend
-        if employee_backend is not None
-        else launch_defaults.employee_backend
-    )
-    employee_backend_was_overridden = (
-        employee_backend is not None
-        and selected_employee_backend
-        != launch_defaults.employee_backend
-    )
-    selected_employee_launch_model = (
-        None
-        if employee_backend_was_overridden
-        else launch_defaults.employee_launch_model
-    )
-    selected_employee_launch_reasoning_effort = (
-        None
-        if employee_backend_was_overridden
-        else launch_defaults.employee_launch_reasoning_effort
+    launch_configuration = employee_configuration.launch_configuration_for_a_new_ticket(
+        default_backend=launch_defaults.employee_backend,
+        default_model=launch_defaults.employee_launch_model,
+        default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
+        employee_backend=require_conversation_backend_key(
+            employee_backend
+            if employee_backend is not None
+            else launch_defaults.employee_backend
+        ),
+        employee_launch_model=employee_launch_model,
     )
     # External work is "already done elsewhere": seed at the type's FIRST WORKER stage
     # (needs_success / needs_understanding / needs_alpha), NOT the leading needs_kickoff — the
@@ -887,9 +871,9 @@ def create_ticket_from_external_work(
                 ticket_id,
                 title,
                 worker_type,
-                selected_employee_backend,
-                selected_employee_launch_model,
-                selected_employee_launch_reasoning_effort,
+                launch_configuration.employee_backend,
+                launch_configuration.employee_launch_model,
+                launch_configuration.employee_launch_reasoning_effort,
                 # Seed at the type's FIRST WORKER stage. The applied external-work
                 # decision then moves it to target_stage; the seed only needs to be a
                 # valid non-terminal worker stage so the pre-persist guard passes

@@ -452,7 +452,7 @@ async def _start(
     conversation_id: str = "c",
     *,
     backend_key: ConversationBackendKey = ConversationBackendKey.hermes,
-    model: str | None = None,
+    model: str = "a-model",
     reasoning_effort: str | None = None,
     role_materials: ConversationRoleMaterials | None = None,
 ) -> None:

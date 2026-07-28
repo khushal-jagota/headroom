@@ -47,6 +47,8 @@ const expectedEntries = [
   "sprintSummaries",
   "currentSprint",
   "ticket",
+  "ticketConversationStartValues",
+  "chiefConversationStartValues",
   "workerTypeManifests",
   "workers",
   "worker",
@@ -65,6 +67,16 @@ const catalogue = [
   [queries.sprintSummaries(), ["sprints"], "/api/sprints"],
   [queries.currentSprint(), ["sprint", "current"], "/api/sprint/current"],
   [queries.ticket("t_demo"), ["ticket", "t_demo"], "/api/tickets/t_demo"],
+  [
+    queries.ticketConversationStartValues("t_demo"),
+    ["ticket", "t_demo", "conversation-start-values"],
+    "/api/tickets/t_demo/conversation/start-values"
+  ],
+  [
+    queries.chiefConversationStartValues(),
+    ["chief", "conversation-start-values"],
+    "/api/chief/conversation/start-values"
+  ],
   [queries.workerTypeManifests(), ["worker-types"], "/api/worker-types"],
   [queries.workers(), ["workers"], "/api/workers"],
   [queries.worker("coding"), ["worker", "coding"], "/api/workers/coding"],

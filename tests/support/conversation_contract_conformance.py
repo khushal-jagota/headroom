@@ -222,7 +222,9 @@ def _start_request(
     conversation_id: str,
     backend_key: ConversationBackendKey = ConversationBackendKey.hermes,
 ) -> ConversationStartRequest:
-    return ConversationStartRequest(conversation_id=conversation_id, backend_key=backend_key)
+    return ConversationStartRequest(
+        conversation_id=conversation_id, model="a-model", backend_key=backend_key
+    )
 
 
 def _facts_of_kind(
@@ -293,11 +295,15 @@ class ConversationContractConformanceSuite:
 
         self._run(exercise)
 
-    def test_a_start_request_carrying_only_a_conversation_id_still_works(self) -> None:
+    def test_a_start_request_carrying_only_a_conversation_id_and_a_model_still_works(
+        self,
+    ) -> None:
         """Coverage 4."""
 
         async def exercise(subject: ConversationSystemUnderTest) -> None:
-            await subject.system.start_conversation(ConversationStartRequest(conversation_id="c"))
+            await subject.system.start_conversation(
+                ConversationStartRequest(conversation_id="c", model="a-model")
+            )
             fate = await subject.system.send(
                 "c",
                 text_message_content("first"),

@@ -127,6 +127,16 @@ delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
 
+Before there is a conversation the pickers still have to show something, and what
+they show is what starting one here right now would run on. That is the owner's own
+answer — a Ticket's worker from its Worker type and whatever that Ticket last ran
+on, the Chief from its managed settings — and the panel asks the server for it,
+which works it out with the same code that will create the conversation. So the
+backend and the model on screen before anybody types are the ones a first message
+gets. Showing them is not choosing them: a picker nobody touched still sends
+nothing, and the message that makes the conversation is created on those values
+because they are what the server resolves again when it arrives.
+
 Nobody waits for the network to see what they typed. The browser gives a message
 its own name and stamps the moment the person pressed send, draws it in the
 thread there and then, and empties the box — which stays typeable, with only the

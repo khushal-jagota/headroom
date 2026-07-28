@@ -52,6 +52,17 @@ class ConversationRecordMissing(RuntimeError):
     """
 
 
+class ConversationRecordNamesNoModel(RuntimeError):
+    """A conversation's row names no model, so it cannot say what to start again on.
+
+    Every conversation is created with a model named, so this is a row from before that
+    was so. It is refused rather than repaired: a record says what a conversation ran on,
+    and nobody knows what this one ran on — the backend chose it and never wrote it down.
+    Putting a model in its mouth now would make the record say something untrue, and
+    resuming without one would start a child on whatever the backend picks today.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationRecord:
     """A conversation as it is stored: what it was started with, and where it is now.
@@ -65,7 +76,7 @@ class ConversationRecord:
 
     conversation_id: str
     backend_key: ConversationBackendKey
-    model: str | None
+    model: str
     reasoning_effort: str | None
     workspace_folder: Path
     role_text: str | None
@@ -446,10 +457,12 @@ class ConversationStore:
 
 
 def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
+    if row["model"] is None:
+        raise ConversationRecordNamesNoModel(str(row["conversation_id"]))
     return ConversationRecord(
         conversation_id=str(row["conversation_id"]),
         backend_key=ConversationBackendKey(str(row["backend_key"])),
-        model=None if row["model"] is None else str(row["model"]),
+        model=str(row["model"]),
         reasoning_effort=(
             None if row["reasoning_effort"] is None else str(row["reasoning_effort"])
         ),

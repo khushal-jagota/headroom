@@ -336,7 +336,7 @@ class _RecordingSink:
 def _start_request(
     *,
     workspace_folder: Path,
-    model: str | None = None,
+    model: str = "a-model",
     reasoning_effort: str | None = None,
     role_materials: ConversationRoleMaterials | None = None,
 ) -> ResolvedConversationStart:

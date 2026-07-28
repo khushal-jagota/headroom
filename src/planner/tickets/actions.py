@@ -62,6 +62,7 @@ def create_ticket(
     title_max_chars: int,
     worker_type: str,
     employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
     kickoff_note: str = "",
     project_id: str | None = None,
     priority: Priority = Priority.P3,
@@ -99,6 +100,7 @@ def create_ticket(
         day_id=day_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
+        employee_launch_model=employee_launch_model,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 
@@ -114,6 +116,7 @@ def create_ticket_from_external_work(
     title_max_chars: int,
     worker_type: str,
     employee_backend: str | None = None,
+    employee_launch_model: str | None = None,
     kickoff_note: str | None = None,
     recap: str | None = None,
     project_id: str | None = None,
@@ -155,6 +158,7 @@ def create_ticket_from_external_work(
         day_id=day_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
+        employee_launch_model=employee_launch_model,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
 

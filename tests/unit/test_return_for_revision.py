@@ -93,7 +93,7 @@ def _start_conversation(app: FastAPI, conversation_id: str = _CONVERSATION_ID) -
 
     asyncio.run(
         app.state.conversation_system.start_conversation(
-            ConversationStartRequest(conversation_id=conversation_id)
+            ConversationStartRequest(conversation_id=conversation_id, model="a-model")
         )
     )
 

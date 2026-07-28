@@ -334,6 +334,26 @@ export type OwnerSendBody = {
   mode: PromptDeliveryMode;
 } & SenderMintedPromptFields;
 
+/** What a conversation started for an owner right now would run on.
+ *
+ * The owner's own door answers it — a Ticket's worker from its Worker type and whatever
+ * that Ticket last ran on, the Chief from its managed settings — and it is answered by the
+ * same resolve that will create the conversation, so what a panel shows before anybody
+ * types is what typing gets. The three fields are the conversation view's own, because
+ * they are the same three values read one moment earlier.
+ *
+ * A null effort is a model that takes none. A null model is different: nothing the server
+ * answers with has one, because a start has to name a model and these are the values a
+ * start would use. It is left expressible for the one owner that is not the server — the
+ * dev page, which answers out of its own form and has nothing to name when the backend it
+ * is on reported no catalogue. A start on that is refused rather than guessed at.
+ */
+export type ConversationStartValues = {
+  backend_key: ConversationBackendKey;
+  model: string | null;
+  reasoning_effort: string | null;
+};
+
 /** What happened to a message, and which conversation it happened in.
  *
  * The id is null when a message that was to make a conversation did not land: there is no

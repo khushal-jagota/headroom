@@ -26,8 +26,16 @@ class FieldDefinition:
 
 @dataclass(frozen=True, slots=True)
 class WorkerProfile:
+    """What a Worker type ships as: its skill, its toolset, and what it launches on.
+
+    ``default_backend`` and ``default_model`` are named together because neither means
+    anything without the other, and a Worker type that named no model would launch its
+    workers on whatever its backend picked for itself — a value nobody chose and nobody
+    can see. ``default_reasoning_effort`` may be absent: some models take none.
+    """
+
     specialist_skill: str
-    default_model: str | None
+    default_model: str
     default_reasoning_effort: str | None
     toolset_profile: str
     default_backend: str
@@ -178,5 +186,5 @@ class WorkerTypeManifest(TypedDict):
     default_ceiling: str
     worker_profile_id: str
     default_backend: str
-    default_model: str | None
+    default_model: str
     default_reasoning_effort: str | None

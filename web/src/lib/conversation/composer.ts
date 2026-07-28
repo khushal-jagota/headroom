@@ -302,15 +302,16 @@ export function modelDetail(
  *
  * "Default" is not a value and is never offered as one — it is a word for whichever
  * concrete value is already in force. So the face shows that concrete value: what the
- * conversation is actually running if the record says, otherwise what the backend runs
- * when nobody names one. A backend that names none leaves the face empty rather than
- * inventing a word, which is the honest end of it.
+ * conversation is actually running if the record says, otherwise what a conversation
+ * started here right now would run, which its owner resolves. Where nobody can say —
+ * an owner yet to answer, a backend that names no model of its own — the face is left
+ * empty rather than filled with an invented word, which is the honest end of it.
  */
 export function preselectedValue(
   currentValue: string | null,
-  backendDefault: string | null | undefined
+  whatItWouldStartOn: string | null | undefined
 ): string | null {
-  return currentValue ?? backendDefault ?? null;
+  return currentValue ?? whatItWouldStartOn ?? null;
 }
 
 /** The reasoning efforts on offer for the model actually in force.

@@ -210,6 +210,66 @@ def test_a_running_turn_is_stopped_by_the_reset(tmp_path: Path) -> None:
         assert InMemoryConversationObservationKind.prompt_discarded in kinds
 
 
+def _start_values(client: TestClient, ticket_id: str) -> dict[str, object]:
+    """Ask what a conversation for this Ticket's worker would run on, as the panel does."""
+    asked: Response = client.get(f"/api/tickets/{ticket_id}/conversation/start-values")
+    assert asked.status_code == 200, asked.text
+    answer: dict[str, object] = asked.json()
+    return answer
+
+
+def test_a_ticket_nobody_has_run_says_what_its_worker_type_launches_on(
+    tmp_path: Path,
+) -> None:
+    """The panel's question before there is anything to look at, and asking starts nothing."""
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+
+    with TestClient(app) as client:
+        assert _start_values(client, ticket_id) == {
+            "backend_key": "codex",
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "medium",
+        }
+        _start_values(client, ticket_id)
+
+    assert _conversation_id(db_path, ticket_id) is None
+
+
+def test_after_new_it_says_what_that_ticket_last_ran_on(tmp_path: Path) -> None:
+    """A Ticket's own last-chosen values outlive the conversation they were chosen in.
+
+    So the panel opens on what this Ticket ran on rather than on what its Worker type
+    ships with — which is the whole point of the Ticket having columns of its own.
+    """
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+
+    with TestClient(app) as client:
+        _send(client, ticket_id, "run it on this instead", model="gpt-5.6-codex")
+        client.post(f"/api/tickets/{ticket_id}/conversation/reset")
+
+        assert _start_values(client, ticket_id) == {
+            "backend_key": "codex",
+            "model": "gpt-5.6-codex",
+            "reasoning_effort": "medium",
+        }
+
+
+def test_the_first_message_runs_on_what_the_panel_was_shown(tmp_path: Path) -> None:
+    """The read and the create are the same resolve, so they cannot say different things."""
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+
+    with TestClient(app) as client:
+        shown = _start_values(client, ticket_id)
+        conversation_id = _send(client, ticket_id, "hello").json()["conversation_id"]
+        conversations = app.state.conversation_system
+
+    assert conversations.backend_model(conversation_id) == shown["model"]
+    assert conversations.backend_reasoning_effort(conversation_id) == shown["reasoning_effort"]
+
+
 def test_both_doors_are_human_only(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)

@@ -78,7 +78,7 @@ def assert_error(
     [
         StageDefinition("a", "A", "a", False, StageOwnershipMode.worker),
         FieldDefinition("a", "A"),
-        WorkerProfile("panels-worker", None, None, "default", "hermes"),
+        WorkerProfile("panels-worker", "a-model", None, "default", "hermes"),
         CODING_WORKER_TYPE_DEFINITION,
     ],
 )
@@ -302,6 +302,11 @@ def test_registry_validation_order_and_messages() -> None:
         replace(base, worker_profile=replace(base.worker_profile, toolset_profile="ghost")),
         "worker profile references an unknown toolset profile",
         {"worker_type": "coding", "toolset_profile": "ghost"},
+    )
+    assert_error(
+        replace(base, worker_profile=replace(base.worker_profile, default_model="   ")),
+        "default_model must be a non-empty string",
+        {"worker_type": "coding", "default_model": "   "},
     )
     assert_error(
         replace(base, supports_prefix_reconciliation=1),  # type: ignore[arg-type]

@@ -191,18 +191,20 @@ def _validate_definition(
         )
 
     require_conversation_backend_key(definition.worker_profile.default_backend)
-    for field_name, value in (
-        ("default_model", definition.worker_profile.default_model),
-        (
-            "default_reasoning_effort",
-            definition.worker_profile.default_reasoning_effort,
-        ),
+    default_model = definition.worker_profile.default_model
+    if not isinstance(default_model, str) or not default_model.strip():
+        raise fail(
+            "default_model must be a non-empty string",
+            {"worker_type": worker_type, "default_model": default_model},
+        )
+    default_reasoning_effort = definition.worker_profile.default_reasoning_effort
+    if default_reasoning_effort is not None and (
+        not isinstance(default_reasoning_effort, str) or not default_reasoning_effort.strip()
     ):
-        if value is not None and (not isinstance(value, str) or not value.strip()):
-            raise fail(
-                f"{field_name} must be null or a non-empty string",
-                {"worker_type": worker_type, field_name: value},
-            )
+        raise fail(
+            "default_reasoning_effort must be null or a non-empty string",
+            {"worker_type": worker_type, "default_reasoning_effort": default_reasoning_effort},
+        )
 
     if type(definition.supports_prefix_reconciliation) is not bool:
         raise fail(

@@ -51,7 +51,10 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
-from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
+from planner.runtime.logic.conversation_start_resolution import (
+    ConversationStartOverrides,
+    ConversationStartValues,
+)
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -288,6 +291,8 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
+    if "employee_launch_model" in raw:
+        body["employee_launch_model"] = body_str(raw, "employee_launch_model")
     return body
 
 
@@ -300,6 +305,7 @@ _EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
         "title",
         "worker_type",
         "employee_backend",
+        "employee_launch_model",
         "priority",
         "deadline",
         "project",
@@ -386,6 +392,8 @@ def _marshal_external_create(
         body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
+    if "employee_launch_model" in raw:
+        body["employee_launch_model"] = body_str(raw, "employee_launch_model")
     body["blocked_by_ticket_ids"] = body_str_list(raw, "blocked_by_ticket_ids")
     return body
 
@@ -485,6 +493,7 @@ async def create_ticket(
         sprint_item_id=body["sprint_item_id"],
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
@@ -533,6 +542,7 @@ async def create_ticket_from_external_work(
         sprint_item_id=body.get("sprint_item_id"),
         worker_type=worker_type,
         employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
         blocked_by_ticket_ids=body.get("blocked_by_ticket_ids", []),
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
@@ -742,7 +752,9 @@ async def put_ticket_employee_configuration(
         )
     body = EmployeeConfigurationBody(
         employee_backend=body_str(raw, "employee_backend"),
-        employee_launch_model=body_opt_str(raw, "employee_launch_model"),
+        # The model is read the way the backend is: a null is a body that did not say what
+        # this Ticket runs on, and there is nothing here that could answer for it.
+        employee_launch_model=body_str(raw, "employee_launch_model"),
         employee_launch_reasoning_effort=body_opt_str(
             raw, "employee_launch_reasoning_effort"
         ),
@@ -1002,12 +1014,40 @@ def _delivered_message_json(delivered: conversation_start.DeliveredMessage) -> J
     }
 
 
+def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict:
+    """What a start resolved to, as far as anybody looking at it can choose.
+
+    The backend, the model and the reasoning effort, under the names a started
+    conversation reports them under — so a panel reads the same three fields whether it is
+    asking what a conversation runs on or what one would. The rest of a resolved start is
+    nobody's choice: the role an agent is told to be, the folder it runs in and what it
+    may reach are the same however the person answers, so nothing shows them.
+    """
+    return {
+        "backend_key": values.backend_key.value,
+        "model": values.model,
+        "reasoning_effort": values.reasoning_effort,
+    }
+
+
 @router.get("/chief/conversation")
 async def read_chief_conversation(conn: DbConn) -> JsonDict:
     """Which conversation the Chief is currently talking in, or none."""
     return {
         "conversation_id": conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
     }
+
+
+@router.get("/chief/conversation/start-values")
+async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
+    """What a conversation started for the Chief right now would run on.
+
+    This is the question a panel with no conversation has to answer to show anything at
+    all, and it is answered by the same resolve the send door runs when a message brings
+    one into being — so what a person is shown before they type is what they get. It reads
+    the Chief's own managed settings and writes nothing, and asking twice costs nothing.
+    """
+    return _conversation_start_values_json(conversation_start.agent_resolve(conn))
 
 
 @router.post("/chief/conversation/send")
@@ -1057,6 +1097,19 @@ async def reset_chief_conversation(
     require_direct_write(ctx)
     await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
     return {"conversation_id": None}
+
+
+@router.get("/tickets/{ticket_id}/conversation/start-values")
+async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
+    """What a conversation started for this Ticket's worker right now would run on.
+
+    The Chief's question, asked of a Ticket: the same resolve the send door runs, so the
+    Worker type's launch defaults and whatever this Ticket last ran on answer here exactly
+    as they will answer when a message makes the conversation.
+    """
+    return _conversation_start_values_json(
+        conversation_start.worker_resolve(conn, tickets_data.read_ticket(conn, ticket_id))
+    )
 
 
 @router.post("/tickets/{ticket_id}/conversation/send")

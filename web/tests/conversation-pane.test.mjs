@@ -141,6 +141,16 @@ const binderSource = sources["LiveConversation.svelte"];
 assert.match(binderSource, /visibilitychange/);
 assert.match(binderSource, /stream\?\.connect\(\)/);
 
+// There are two answers to what backend is in force — the conversation's own, and what
+// starting one here would use — and the binder names neither itself. A backend written
+// into this file would be shown to somebody whose owner runs another one, which is the
+// whole of what the Chief's rail was doing when it said codex to everybody.
+assert.doesNotMatch(
+  binderSource,
+  /["'](?:hermes|codex|claude)["']/,
+  "the binder never invents a backend nobody has said"
+);
+
 // The pane never shows a turn running on the rows alone: it reconciles them with what
 // the system says about itself, and asks again every time it reconnects.
 assert.match(binderSource, /conversationLiveness/);
@@ -983,6 +993,58 @@ try {
   // On the row it is a line rather than a tooltip, which the browser pass reads.
   assert.match(claudePicker, /title="Opus 5 — opus → claude-opus-5"/);
 
+  // Before there is a conversation the pickers open on what starting one here would run —
+  // the owner's own answer, which the caller resolved — rather than on the backend's own.
+  const beforeThereIsOne = drawn(Composer, {
+    backendKey: "claude",
+    conversationExists: false,
+    running: false,
+    models: [
+      { model_id: "opus", display_name: "Opus 5" },
+      { model_id: "sonnet", display_name: "Sonnet 5" }
+    ],
+    effortOptions: ["low", "high"],
+    current: { model: null, reasoningEffort: null },
+    startsOnModel: "sonnet",
+    startsOnReasoningEffort: "high",
+    onSend: async () => true
+  });
+  assert.match(beforeThereIsOne, /aria-label="Model: Sonnet 5"/);
+  assert.match(beforeThereIsOne, /aria-label="Reasoning effort: high"/);
+
+  // And once there is one, the conversation's own values are still what it shows: what a
+  // start would have used has nothing to say about a conversation that is already running.
+  const onceThereIsOne = drawn(Composer, {
+    backendKey: "claude",
+    conversationExists: true,
+    running: false,
+    models: [
+      { model_id: "opus", display_name: "Opus 5" },
+      { model_id: "sonnet", display_name: "Sonnet 5" }
+    ],
+    effortOptions: ["low", "high"],
+    current: { model: "opus", reasoningEffort: "low" },
+    startsOnModel: "sonnet",
+    startsOnReasoningEffort: "high",
+    onSend: async () => true
+  });
+  assert.match(onceThereIsOne, /aria-label="Model: Opus 5"/);
+  assert.match(onceThereIsOne, /aria-label="Reasoning effort: low"/);
+
+  // Nobody has answered yet — the read has not come back, or there is no owner to ask.
+  // Then the pickers show nothing, rather than a value picked out of the air.
+  const beforeAnybodyAnswers = drawn(Composer, {
+    backendKey: "claude",
+    conversationExists: false,
+    running: false,
+    models: [{ model_id: "opus", display_name: "Opus 5" }],
+    effortOptions: ["low", "high"],
+    current: { model: null, reasoningEffort: null },
+    onSend: async () => true
+  });
+  assert.doesNotMatch(beforeAnybodyAnswers, /aria-label="Model: /);
+  assert.match(beforeAnybodyAnswers, /aria-label="Model"/);
+
   // The rail has two states and they are different things. Before a conversation exists it
   // is the choice, over the contract's own closed set rather than whatever this machine
   // reported. Once one exists it is a label that says why there is nothing to press.
@@ -1305,7 +1367,7 @@ try {
   backendKey="claude"
   running={false}
   current={{ model: null, reasoningEffort: null }}
-  defaultModelId="opus"
+  startsOnModel="opus"
   models={[
     { model_id: "opus", display_name: "Opus", detail: "opus → claude-opus-5" },
     { model_id: "sonnet", display_name: "Sonnet" },
@@ -1428,12 +1490,16 @@ with sync_playwright() as playwright:
     # Nothing is on screen until a picker is opened.
     assert page.locator("[data-conversation-picker-panel]").count() == 0
 
-    # Showing the backend's own value is not choosing it: untouched sends nothing.
+    # There is no conversation yet, so this message is the one that creates it — and a
+    # conversation is created on a model somebody can name. Nobody touched the picker, so
+    # the name is the one on its face: what the owner resolved this would start on.
     the_box.fill("go")
     page.locator("[data-conversation-send]").click()
     page.wait_for_function("window.__sends().length === 1")
     first = page.evaluate("window.__sends()[0]")
-    assert first["picked"]["model"] is None, first
+    assert first["picked"]["model"] == "opus", first
+    # The effort is not the model's equal: a model that takes none is a real answer, so an
+    # untouched effort control still says nothing.
     assert first["picked"]["reasoningEffort"] is None, first
     # Nor the backend it is showing: showing one is not choosing it, and a message that
     # names none is created on whatever the record already says this owner runs.
@@ -1573,14 +1639,16 @@ with sync_playwright() as playwright:
     the_panel_is_gone()
     assert face(model) == "GPT-5.5 Codex", face(model)
 
-    # And that is what the next message would create the conversation on. It names no
-    # model: nobody picked one out of this catalog, so it is created on the backend's own.
+    # And that is what the next message would create the conversation on. Nobody picked a
+    # model out of this catalog, so the name that goes with it is the one the face is
+    # showing — what that backend's card says it runs — because a start that names no
+    # model is a conversation running on something nobody chose.
     the_box.fill("start it on codex")
     page.locator("[data-conversation-send]").click()
     page.wait_for_function("window.__sends().length === 3")
     creating = page.evaluate("window.__sends()[2]")
     assert creating["picked"]["backendKey"] == "codex", creating
-    assert creating["picked"]["model"] is None, creating
+    assert creating["picked"]["model"] == "gpt-5.5-codex", creating
 
     # Once there is a conversation the backend is fixed. The rail says which and why, and
     # offers nothing — including the choice that was made before there was one.

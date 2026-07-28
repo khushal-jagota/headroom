@@ -47,6 +47,7 @@
     ConversationWireError,
     type BackendSnapshot,
     type ConversationBackendKey,
+    type ConversationStartValues,
     type ConversationView,
     type DeliveredMessage,
     type OwnerSendBody,
@@ -58,7 +59,7 @@
     label,
     backends = [],
     senderLabel = "owner",
-    fallbackBackendKey = "codex",
+    startValues = null,
     runningBackendKey = $bindable(),
     conversationState = $bindable(null),
     composerPlaceholder,
@@ -73,11 +74,16 @@
     backends?: readonly BackendSnapshot[];
     /** Who the messages sent from here are from. Recorded on the row, display-only. */
     senderLabel?: string;
-    /** Which backend's models the pickers offer before a conversation exists to ask. */
-    fallbackBackendKey?: ConversationBackendKey;
-    /** The backend this conversation is actually running on, read back out for a caller
-     *  that says so in its own words. Only the started conversation's record knows it. */
-    runningBackendKey?: ConversationBackendKey;
+    /** What a conversation started here right now would run on, as the owner that would
+     *  start it answers. It is what the rail and the pickers show while there is no
+     *  conversation, and it is only ever shown: a message still carries nothing but what
+     *  somebody picked. Null is nobody having answered yet — the caller has not asked, or
+     *  the read has not come back — and then there is nothing to show rather than a guess. */
+    startValues?: ConversationStartValues | null;
+    /** The backend in force, read back out for a caller that says so in its own words:
+     *  what this conversation is running on, or what one started here would be. Null
+     *  until one of those two can answer. */
+    runningBackendKey?: ConversationBackendKey | null;
     /** How far open the conversation is, for a page that wants it as a layer over itself;
      *  null for one that does not, which is the conversation filling its container as it
      *  always has. The page says what it opens in by initialising what it binds; the
@@ -139,7 +145,11 @@
     if (view !== null) writeReplyWatermark(view.conversation_id, view.latest_sequence);
   });
   let running = $derived(liveness.isRunning);
-  let backendKey = $derived<ConversationBackendKey>(view?.backend_key ?? fallbackBackendKey);
+  // The conversation's own backend, and before there is one what starting it would use.
+  // Those are the only two answers there are: a backend nobody has said is not shown.
+  let backendKey = $derived<ConversationBackendKey | null>(
+    view?.backend_key ?? startValues?.backend_key ?? null
+  );
   $effect(() => {
     runningBackendKey = backendKey;
   });
@@ -467,8 +477,8 @@
   models={backendSnapshot?.available_models ?? []}
   effortOptions={backendSnapshot?.reasoning_effort_options ?? []}
   availableCommands={view?.available_commands ?? []}
-  defaultModelId={backendSnapshot?.default_model_id ?? null}
-  defaultReasoningEffort={backendSnapshot?.default_reasoning_effort ?? null}
+  startsOnModel={startValues?.model ?? null}
+  startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   heldPromptCount={view?.held_prompt_count ?? 0}
   bind:conversationState
   {fateNote}

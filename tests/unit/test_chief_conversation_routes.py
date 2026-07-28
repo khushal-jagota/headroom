@@ -177,6 +177,80 @@ def test_both_chief_doors_are_human_only(tmp_path: Path) -> None:
     assert after.json() == {"conversation_id": None}
 
 
+def test_what_a_conversation_started_now_would_run_on_is_the_chiefs_own(
+    tmp_path: Path,
+) -> None:
+    """The panel's question before there is anything to look at.
+
+    It is answered from the Chief's managed settings, so a panel that has never been
+    talked to still shows the backend and model a first message would actually run on.
+    """
+    app, _db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        before_anything = client.get("/api/chief/conversation/start-values")
+        assert before_anything.status_code == 200, before_anything.text
+        assert before_anything.json() == {
+            "backend_key": "codex",
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "medium",
+        }
+
+        # Configured on the Agents screen, and the answer follows it — this is the whole
+        # of the gap: a rail saying codex to a Chief that has been moved to claude.
+        moved = client.put(
+            "/api/workers/chief-of-staff/launch-defaults",
+            json={
+                "employee_backend": "claude",
+                "employee_launch_model": "sonnet",
+                "employee_launch_reasoning_effort": None,
+            },
+        )
+        assert moved.status_code == 200, moved.text
+
+        assert client.get("/api/chief/conversation/start-values").json() == {
+            "backend_key": "claude",
+            "model": "sonnet",
+            "reasoning_effort": None,
+        }
+
+
+def test_asking_what_it_would_start_as_starts_nothing(tmp_path: Path) -> None:
+    """Reading the question is not answering it: no conversation is made by asking."""
+    app, _db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        client.get("/api/chief/conversation/start-values")
+        client.get("/api/chief/conversation/start-values")
+
+        assert client.get("/api/chief/conversation").json() == {"conversation_id": None}
+
+
+def test_the_first_message_runs_on_what_the_panel_was_shown(tmp_path: Path) -> None:
+    """The read and the create are the same resolve, so they cannot say different things.
+
+    Read from the backend side's account of what its session runs on, which is what the
+    conversation was actually started with rather than what it was asked for.
+    """
+    app, _db_path = _make_app(tmp_path)
+
+    with TestClient(app) as client:
+        client.put(
+            "/api/workers/chief-of-staff/launch-defaults",
+            json={
+                "employee_backend": "claude",
+                "employee_launch_model": "opus",
+                "employee_launch_reasoning_effort": "high",
+            },
+        )
+        shown = client.get("/api/chief/conversation/start-values").json()
+        conversation_id = _send(client, "hello").json()["conversation_id"]
+        conversations = app.state.conversation_system
+
+    assert conversations.backend_model(conversation_id) == shown["model"]
+    assert conversations.backend_reasoning_effort(conversation_id) == shown["reasoning_effort"]
+
+
 def test_the_chief_starts_on_its_own_managed_settings(tmp_path: Path) -> None:
     """Its model and effort are the Chief's own, not a Ticket's and not a floor default.
 

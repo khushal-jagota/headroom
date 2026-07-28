@@ -141,11 +141,12 @@ Runtime = Annotated[ConversationRuntime, Depends(_runtime)]
 
 
 class StartConversationBody(BaseModel):
-    """A start request as JSON. Everything but the id may be left out and take its floor."""
+    """A start request as JSON. The id and the model are asked for; the rest may be left
+    out and take its floor."""
 
     conversation_id: str
+    model: str
     backend_key: ConversationBackendKey | None = None
-    model: str | None = None
     reasoning_effort: str | None = None
     role_text: str | None = None
     identity_environment_variables: dict[str, str] | None = None

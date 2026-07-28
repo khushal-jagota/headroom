@@ -114,7 +114,7 @@ class _World:
     def start_conversation(self, conversation_id: str) -> None:
         asyncio.run(
             self.conversations.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id)
+                ConversationStartRequest(conversation_id=conversation_id, model="a-model")
             )
         )
 

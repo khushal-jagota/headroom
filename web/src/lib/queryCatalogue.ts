@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/svelte-query";
 import { fetchJson } from "./api";
+import type { ConversationStartValues } from "./conversation/wire";
 import type { WorkerTypesResponse } from "./lifecycle";
 import type {
   BacklogResponse,
@@ -41,6 +42,19 @@ export const queries = {
     jsonQuery<CurrentSprintResponse>(["sprint", "current"], "/api/sprint/current"),
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets/${encodeURIComponent(ticketId)}`),
+  // What a conversation started right now would run on, for each owner that starts one.
+  // It follows the change stream because the owner can change it: the Agents screen sets
+  // the Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
+  ticketConversationStartValues: (ticketId: string) =>
+    jsonQuery<ConversationStartValues>(
+      ["ticket", ticketId, "conversation-start-values"],
+      `/api/tickets/${encodeURIComponent(ticketId)}/conversation/start-values`
+    ),
+  chiefConversationStartValues: () =>
+    jsonQuery<ConversationStartValues>(
+      ["chief", "conversation-start-values"],
+      "/api/chief/conversation/start-values"
+    ),
   workerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
   workers: () => jsonQuery<WorkersResponse>(["workers"], "/api/workers"),
   worker: (workerType: string) =>

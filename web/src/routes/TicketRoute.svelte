@@ -20,9 +20,7 @@
   import type { ConversationState } from "../lib/conversation/conversationState";
   import {
     readBackends,
-    CONVERSATION_BACKEND_KEYS,
     type BackendSnapshot,
-    type ConversationBackendKey,
     type DeliveredMessage,
     type OwnerSendBody
   } from "../lib/conversation/wire";
@@ -41,6 +39,12 @@
   const stableId = untrack(() => id);
 
   const ticket = createQuery(() => queries.ticket(stableId));
+  // What a conversation for this Ticket's worker would start on, asked of the server
+  // because the server is what resolves it: the Worker type's launch defaults and
+  // whatever this Ticket last ran on, through the same code that will create it.
+  const conversationStartValues = createQuery(() =>
+    queries.ticketConversationStartValues(stableId)
+  );
   const sprints = createQuery(() => queries.sprintSummaries());
   const projects = createQuery(() => queries.projects());
   const currentSprint = createQuery(() => queries.currentSprint());
@@ -280,16 +284,6 @@
   function conversationEmployeeLabel(detail: TicketDetail): string {
     const workerLabel = lc?.workerTypeLabel ?? labelize(detail.worker_type);
     return /worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`;
-  }
-
-  /** This Ticket's own backend, as the conversation contract's closed set has it.
-   *
-   * It is what a conversation started from this page would be created on, so it is what
-   * the composer shows before there is one. A stored value the set does not name is not a
-   * backend, and the pane keeps its own default rather than being handed a word.
-   */
-  function conversationBackendOf(detail: TicketDetail): ConversationBackendKey | undefined {
-    return CONVERSATION_BACKEND_KEYS.find((key) => key === detail.employee_backend);
   }
 
   function hasBlockerRows(detail: TicketDetail): boolean {
@@ -565,7 +559,7 @@
             conversationId={detail.conversation_id}
             label={conversationEmployeeLabel(detail)}
             backends={conversationBackends}
-            fallbackBackendKey={conversationBackendOf(detail)}
+            startValues={conversationStartValues.data ?? null}
             senderLabel="owner"
             sendMessage={sendToTicketWorker}
             onNewConversation={resetTicketConversation}

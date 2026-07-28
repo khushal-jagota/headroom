@@ -73,8 +73,8 @@ def test_a_row_of_a_conversations_record_is_keyed_by_its_place_in_that_conversat
     ]
 
     upgraded.execute(
-        "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
-        "created_at) VALUES ('c', 'hermes', '/tmp/workspace', 'full', 1)"
+        "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+        "access, created_at) VALUES ('c', 'hermes', 'a-model', '/tmp/workspace', 'full', 1)"
     )
     upgraded.execute(
         "INSERT INTO conversation_events (conversation_id, sequence, kind, payload, created_at) "
@@ -229,8 +229,8 @@ def test_a_conversation_from_before_the_column_arrives_with_no_commands(
     path = tmp_path / "before-the-column.db"
     conn = _build_a_database_at(path, "one_conversation_system")
     conn.execute(
-        "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
-        "created_at) VALUES ('c', 'hermes', '/tmp/workspace', 'full', 1)"
+        "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+        "access, created_at) VALUES ('c', 'hermes', 'a-model', '/tmp/workspace', 'full', 1)"
     )
     conn.commit()
 

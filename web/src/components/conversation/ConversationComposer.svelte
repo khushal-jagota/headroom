@@ -54,8 +54,8 @@
     backends = [],
     effortOptions = [],
     availableCommands = [],
-    defaultModelId = null,
-    defaultReasoningEffort = null,
+    startsOnModel = null,
+    startsOnReasoningEffort = null,
     heldPromptCount = 0,
     fateNote = null,
     errorNote = null,
@@ -91,10 +91,14 @@
     /** The commands this conversation's agent reports. An agent that reports none, and an
      *  agent that has not been asked yet, are both an empty list. */
     availableCommands?: readonly AgentCommand[];
-    /** The concrete values this backend runs when nobody names one. They are what the
-     *  selectors show before anybody picks; they are never offered as an option. */
-    defaultModelId?: string | null;
-    defaultReasoningEffort?: string | null;
+    /** What a conversation started from here would run on, before there is one: the
+     *  owner's own values, resolved by the same code that will create it. They are what
+     *  the selectors show with nothing picked, and neither is ever offered as an option.
+     *  The model rides out with the message that creates the conversation, because a
+     *  conversation is created on a model somebody can name; the effort does not, because
+     *  a model that takes none is a real answer and an untouched control has not given one. */
+    startsOnModel?: string | null;
+    startsOnReasoningEffort?: string | null;
     heldPromptCount?: number;
     fateNote?: string | null;
     errorNote?: string | null;
@@ -157,14 +161,26 @@
   let effortOptionsOnOffer = $derived(
     switchedBackend ? (switchedTo?.reasoning_effort_options ?? []) : effortOptions
   );
-  let defaultModelOnOffer = $derived(
-    switchedBackend ? (switchedTo?.default_model_id ?? null) : defaultModelId
+  // What a conversation started from here would run on, kept true through a rail switch.
+  // Taking a backend off the rail is saying create it on that one, and a model belongs to
+  // the backend that named it — so nothing carries over and it would start on the new
+  // backend's own, which is what that backend's card says it runs when nobody names one.
+  let modelItWouldStartOn = $derived(
+    switchedBackend ? (switchedTo?.default_model_id ?? null) : startsOnModel
   );
-  let defaultEffortOnOffer = $derived(
-    switchedBackend ? (switchedTo?.default_reasoning_effort ?? null) : defaultReasoningEffort
+  let effortItWouldStartOn = $derived(
+    switchedBackend ? (switchedTo?.default_reasoning_effort ?? null) : startsOnReasoningEffort
   );
   let picked = $derived<RunValues>({
-    model: pickedModel,
+    // Into a conversation that exists, only a pick is anything: it is a change, and there
+    // is nothing to change when nobody touched the picker. A message that has to create
+    // one is the other way round — it has to say which model to create it on, and the
+    // answer is the one on the face of the picker, whether a person put it there or the
+    // owner's own values did. Nothing on the face means nothing to name, and the server
+    // says so rather than this quietly leaving the backend to pick for itself.
+    model: conversationExists ? pickedModel : (pickedModel ?? modelItWouldStartOn),
+    // The effort is not the model's equal here: a model that takes none is a real answer,
+    // so an untouched control has nothing to say and says nothing.
     reasoningEffort: pickedEffort,
     // Only a message that has to create a conversation says what to create it on, and only
     // when somebody took one off the rail. Showing a backend is not choosing it: what is
@@ -174,10 +190,10 @@
   });
   // What each selector shows with nothing picked: the concrete value already in force.
   let shownModel = $derived(
-    pickedModel ?? preselectedValue(current.model, defaultModelOnOffer) ?? ""
+    pickedModel ?? preselectedValue(current.model, modelItWouldStartOn) ?? ""
   );
   let shownEffort = $derived(
-    pickedEffort ?? preselectedValue(current.reasoningEffort, defaultEffortOnOffer) ?? ""
+    pickedEffort ?? preselectedValue(current.reasoningEffort, effortItWouldStartOn) ?? ""
   );
   // A value the catalog does not list is still the value being run, so it is offered as
   // itself rather than silently dropped off the face of the selector.
@@ -305,6 +321,10 @@
     const trimmed = text.trim();
     if (!trimmed || inputDisabled) return;
     const carried = picked;
+    // What goes back if it gets nowhere is what the person had picked, which is not
+    // everything the message carried: a message that creates a conversation also carries
+    // the value the picker was only showing, and showing is not picking.
+    const theirs: RunValues = { ...carried, model: pickedModel, reasoningEffort: pickedEffort };
     text = "";
     cursorAt = 0;
     // The change rode out with the message, so it is no longer pending: the selects
@@ -314,7 +334,7 @@
     sendsInFlight += 1;
     try {
       const delivered = await onSend(trimmed, effectiveMode, carried);
-      if (!delivered) await giveTheMessageBack(trimmed, carried);
+      if (!delivered) await giveTheMessageBack(trimmed, theirs);
     } finally {
       sendsInFlight -= 1;
     }
