@@ -164,6 +164,8 @@ not enlarge the request.
   downstream Tickets need shared cross-Ticket decisions and boundaries before creation.
 - Use a **`product_design` ticket** when a product flow needs holistic UX direction,
   wireframing, and an implementation-ready interactive design before coding.
+- Use a **`planning-day` ticket** for the morning planning conversation that gathers
+  evidence, plans the Day with the user, and commits the agreement.
 - Use a **sprint item** for a broader goal or outcome.
 - Use an **idea** for a loose thought that should not yet become committed work.
 - When the user asks to create a concrete ticket during active planning, normally add it to **today** after creation so it appears in Workspace and can be picked up by the execution flow.

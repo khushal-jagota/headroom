@@ -32,12 +32,12 @@ async function transpile(name) {
   return ts
     .transpileModule(source, { compilerOptions })
     .outputText.replace(
-      /from\s+["']\.\/(wire|feed|transcript|composer|outgoing)["']/g,
+      /from\s+["']\.\/(wire|feed|transcript|composer|outgoing|pendingImages)["']/g,
       'from "./$1.mjs"'
     );
 }
 
-for (const name of ["wire", "feed", "transcript", "composer", "outgoing"]) {
+for (const name of ["wire", "feed", "transcript", "composer", "outgoing", "pendingImages"]) {
   await writeFile(join(directory, `${name}.mjs`), await transpile(name), "utf8");
 }
 
@@ -102,9 +102,19 @@ const {
   outgoingMessageNote,
   outgoingMessagesTheRecordHasNot,
   recallOutgoingMessages,
+  releaseOutgoingMessageImages,
   rememberOutgoingMessages,
+  reserveOutgoingMessageImages,
+  resetOutgoingImageReservationsForTest,
   senderMessageIdsInTheRecord
 } = await import(join(directory, "outgoing.mjs"));
+const {
+  MAX_CONVERSATION_IMAGE_BYTES,
+  createPendingConversationImages,
+  pendingImagesAsPieces,
+  releasePendingImages,
+  restoredPendingImages
+} = await import(join(directory, "pendingImages.mjs"));
 
 function event(sequence, kind, payload) {
   return { conversation_id: "c1", sequence, kind, payload, created_at: 1_700_000_000 };
@@ -120,6 +130,157 @@ const TOOL_STARTED = (sequence, tool_call_id, title, tool_kind = "read") =>
 const TOOL_FINISHED = (sequence, tool_call_id, tool_call_status = "completed", detail = null) =>
   event(sequence, "tool_call_finished", { tool_call_id, tool_call_status, detail });
 const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries });
+
+// --- images waiting in the composer -----------------------------------------------------------
+
+{
+  const created = [];
+  const revoked = [];
+  const imageA = new File([new Uint8Array([1, 2, 3])], "a.png", { type: "image/png" });
+  const note = new File(["not a picture"], "note.txt", { type: "text/plain" });
+  const imageB = new File([new Uint8Array([4, 5])], "b.webp", { type: "image/webp" });
+  const intake = await createPendingConversationImages(
+    [imageA, note, imageB],
+    7,
+    0,
+    (file) => {
+      const url = `blob:${file.name}`;
+      created.push(url);
+      return url;
+    }
+  );
+  assert.deepEqual(
+    intake.accepted.map((image) => [image.id, image.fileName, image.previewUrl]),
+    [
+      [7, "a.png", "blob:a.png"],
+      [8, "b.webp", "blob:b.webp"]
+    ],
+    "accepted images keep the selection order"
+  );
+  assert.deepEqual(intake.rejected.map((file) => file.name), ["note.txt"]);
+  assert.equal(intake.nextId, 9);
+  assert.deepEqual(created, ["blob:a.png", "blob:b.webp"]);
+  assert.deepEqual(pendingImagesAsPieces(intake.accepted), [
+    { piece: "image", data: "AQID", media_type: "image/png", file_name: "a.png" },
+    { piece: "image", data: "BAU=", media_type: "image/webp", file_name: "b.webp" }
+  ]);
+
+  releasePendingImages([intake.accepted[0]], (url) => revoked.push(url));
+  assert.deepEqual(revoked, ["blob:a.png"]);
+  const restored = restoredPendingImages(pendingImagesAsPieces(intake.accepted), 20);
+  assert.deepEqual(restored.images.map((image) => image.id), [20, 21]);
+  assert.match(restored.images[0].previewUrl, /^data:image\/png;base64,AQID$/);
+  releasePendingImages(restored.images, (url) => revoked.push(url));
+  assert.deepEqual(revoked, ["blob:a.png"], "data previews own no browser resource to revoke");
+
+  await assert.rejects(
+    createPendingConversationImages(
+      [imageA, imageB],
+      30,
+      0,
+      (file) => {
+        if (file === imageB) throw new Error("no more preview resources");
+        return `blob:${file.name}:failed-batch`;
+      },
+      (url) => revoked.push(url)
+    ),
+    /no more preview resources/
+  );
+  assert.deepEqual(
+    revoked,
+    ["blob:a.png", "blob:a.png:failed-batch"],
+    "a partially-created preview batch releases what it already owns"
+  );
+
+  const svg = new File(["<svg/>"], "vector.svg", { type: "image/svg+xml" });
+  const heic = new File(["heic"], "photo.heic", { type: "image/heic" });
+  const oversize = new File(
+    [new Uint8Array(MAX_CONVERSATION_IMAGE_BYTES + 1)],
+    "huge.png",
+    { type: "image/png" }
+  );
+  let reads = 0;
+  for (const file of [svg, heic, oversize]) {
+    file.arrayBuffer = async () => {
+      reads += 1;
+      throw new Error("a rejected file must not be read");
+    };
+  }
+  const rejectedEarly = await createPendingConversationImages(
+    [svg, heic, oversize],
+    40,
+    0,
+    () => {
+      throw new Error("a rejected file must not get a preview");
+    }
+  );
+  assert.deepEqual(
+    rejectedEarly.rejected.map((file) => file.name),
+    ["vector.svg", "photo.heic", "huge.png"]
+  );
+  assert.deepEqual(rejectedEarly.accepted, []);
+  assert.equal(rejectedEarly.nextId, 40);
+  assert.equal(reads, 0, "unsupported and oversize files are rejected before reading bytes");
+
+  const exactBoundary = new File(
+    [new Uint8Array(MAX_CONVERSATION_IMAGE_BYTES)],
+    "boundary.png",
+    { type: "image/png" }
+  );
+  const atBoundary = await createPendingConversationImages(
+    [exactBoundary],
+    50,
+    0,
+    () => "blob:boundary"
+  );
+  assert.equal(atBoundary.accepted.length, 1, "the exact raw envelope remains usable");
+  assert.equal(atBoundary.accepted[0].byteCount, MAX_CONVERSATION_IMAGE_BYTES);
+  releasePendingImages(atBoundary.accepted, () => {});
+
+  const firstHalf = new File(
+    [new Uint8Array(MAX_CONVERSATION_IMAGE_BYTES / 2)],
+    "first-half.png",
+    { type: "image/png" }
+  );
+  const overTogether = new File(
+    [new Uint8Array(MAX_CONVERSATION_IMAGE_BYTES / 2 + 1)],
+    "over-together.png",
+    { type: "image/png" }
+  );
+  let aggregateRejectedReads = 0;
+  overTogether.arrayBuffer = async () => {
+    aggregateRejectedReads += 1;
+    throw new Error("aggregate-overflow image must not be read");
+  };
+  const aggregate = await createPendingConversationImages(
+    [firstHalf, overTogether],
+    60,
+    0,
+    () => "blob:aggregate"
+  );
+  assert.deepEqual(aggregate.accepted.map((image) => image.fileName), ["first-half.png"]);
+  assert.deepEqual(aggregate.rejected.map((file) => file.name), ["over-together.png"]);
+  assert.equal(aggregateRejectedReads, 0);
+  releasePendingImages(aggregate.accepted, () => {});
+
+  const wouldOverflowPending = new File([new Uint8Array([1, 2])], "later.png", {
+    type: "image/png"
+  });
+  let pendingOverflowReads = 0;
+  wouldOverflowPending.arrayBuffer = async () => {
+    pendingOverflowReads += 1;
+    return new ArrayBuffer(0);
+  };
+  const pendingOverflow = await createPendingConversationImages(
+    [wouldOverflowPending],
+    70,
+    MAX_CONVERSATION_IMAGE_BYTES - 1
+  );
+  assert.deepEqual(pendingOverflow.accepted, []);
+  assert.deepEqual(pendingOverflow.rejected, [wouldOverflowPending]);
+  assert.equal(pendingOverflow.nextId, 70);
+  assert.equal(pendingOverflowReads, 0, "pending images count toward the pre-read envelope");
+}
 
 // --- the record a reader holds ------------------------------------------------------------
 
@@ -769,15 +930,36 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   const kept = new Map();
   globalThis.window = {
     sessionStorage: {
+      get length() {
+        return kept.size;
+      },
+      key: (index) => Array.from(kept.keys())[index] ?? null,
       getItem: (key) => (kept.has(key) ? kept.get(key) : null),
-      setItem: (key, value) => kept.set(key, String(value)),
+      setItem: (key, value) => {
+        const next = new Map(kept);
+        next.set(key, String(value));
+        const storedCharacters = Array.from(next.entries()).reduce(
+          (total, [storedKey, storedValue]) => total + storedKey.length + storedValue.length,
+          0
+        );
+        if (storedCharacters > 5_000_000) throw new Error("sessionStorage quota exceeded");
+        kept.set(key, String(value));
+      },
       removeItem: (key) => kept.delete(key)
     }
   };
 
   const held = {
     ...mintOutgoingMessage({
-      content: [{ piece: "text", text: "held" }],
+      content: [
+        { piece: "text", text: "held" },
+        {
+          piece: "image",
+          data: "AQID",
+          media_type: "image/png",
+          file_name: "held.png"
+        }
+      ],
       senderLabel: "owner",
       mode: "run_when_free"
     }),
@@ -791,7 +973,11 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   rememberOutgoingMessages("c1", [held, stillGoing]);
 
   const recalled = recallOutgoingMessages("c1");
-  assert.deepEqual(recalled[0], held, "what the system is holding comes back as it was");
+  assert.deepEqual(
+    recalled[0],
+    held,
+    "what the system is holding, including image bytes, comes back as it was"
+  );
   assert.deepEqual(recalled[1].content, [{ piece: "text", text: "in flight" }]);
   assert.equal(
     recalled[1].knownFate,
@@ -819,6 +1005,62 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
     told,
     "nothing waiting to be told means the same list back, so a reconnect redraws nothing"
   );
+
+  const boundaryBase64 = "A".repeat(4 * Math.ceil(MAX_CONVERSATION_IMAGE_BYTES / 3));
+  const boundaryOutgoing = mintOutgoingMessage({
+    content: [{ piece: "image", data: boundaryBase64, media_type: "image/png" }],
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
+  rememberOutgoingMessages("boundary", [boundaryOutgoing]);
+  assert.ok(
+    kept.get("panels.conversation.outgoing.boundary").length < 5_000_000,
+    "the complete outgoing JSON fits beneath a conservative five-MB tab-storage ceiling"
+  );
+  assert.deepEqual(
+    recallOutgoingMessages("boundary")[0].content,
+    boundaryOutgoing.content,
+    "an image at the accepted envelope survives outgoing recall byte-for-byte"
+  );
+
+  kept.clear();
+  resetOutgoingImageReservationsForTest();
+  const twoMiBRawAsBase64 = "A".repeat(4 * Math.ceil((2 * 1024 * 1024) / 3));
+  const firstConcurrent = mintOutgoingMessage({
+    content: [{ piece: "image", data: twoMiBRawAsBase64, media_type: "image/png" }],
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
+  const secondConcurrent = mintOutgoingMessage({
+    content: [{ piece: "image", data: twoMiBRawAsBase64, media_type: "image/png" }],
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
+  assert.equal(reserveOutgoingMessageImages(firstConcurrent), true);
+  rememberOutgoingMessages("first-conversation", [firstConcurrent]);
+
+  // A full page reload loses module memory. The next reservation rebuilds it from every
+  // conversation's remembered key in this tab, so another pane cannot evade the budget.
+  resetOutgoingImageReservationsForTest();
+  assert.equal(reserveOutgoingMessageImages(secondConcurrent), false);
+  assert.equal(
+    kept.has("panels.conversation.outgoing.second-conversation"),
+    false,
+    "the concurrent send never reaches the quota-enforcing storage"
+  );
+
+  // Canonical catch-up removes the first optimistic copy and its reservation. The exact
+  // same second send can then be retried and recalled under another conversation key.
+  rememberOutgoingMessages("first-conversation", []);
+  assert.equal(reserveOutgoingMessageImages(secondConcurrent), true);
+  rememberOutgoingMessages("second-conversation", [secondConcurrent]);
+  resetOutgoingImageReservationsForTest();
+  assert.deepEqual(
+    recallOutgoingMessages("second-conversation")[0].content,
+    secondConcurrent.content
+  );
+  rememberOutgoingMessages("second-conversation", []);
+  releaseOutgoingMessageImages(secondConcurrent.messageId);
   assert.deepEqual(recallOutgoingMessages("c2"), [], "one conversation's are not another's");
 
   kept.set(
@@ -828,9 +1070,24 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.deepEqual(recallOutgoingMessages("c3"), [], "nothing that is not a message is drawn");
   kept.set("panels.conversation.outgoing.c4", "not json at all");
   assert.deepEqual(recallOutgoingMessages("c4"), []);
+  kept.set(
+    "panels.conversation.outgoing.c5",
+    JSON.stringify([
+      {
+        ...held,
+        content: [{ piece: "image", data: "AQID", media_type: "text/plain" }]
+      }
+    ])
+  );
+  assert.deepEqual(
+    recallOutgoingMessages("c5"),
+    [],
+    "untrusted tab storage cannot turn arbitrary data into a drawn image"
+  );
 
   rememberOutgoingMessages("c1", []);
   assert.deepEqual(recallOutgoingMessages("c1"), [], "and holding nothing keeps nothing");
+  resetOutgoingImageReservationsForTest();
   delete globalThis.window;
 }
 

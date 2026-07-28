@@ -12,13 +12,17 @@
    * than something to guess at here.
    */
   import MarkdownBlock from "../MarkdownBlock.svelte";
-  import { conversationFileHref, type MessagePiece } from "../../lib/conversation/wire";
+  import {
+    conversationFileHref,
+    type MessagePiece,
+    type SentMessagePiece
+  } from "../../lib/conversation/wire";
 
   let {
     content,
     conversationId
   }: {
-    content: readonly MessagePiece[];
+    content: readonly (MessagePiece | SentMessagePiece)[];
     /** Which conversation's files these pieces name. A file is fetched under the
      *  conversation that kept it, so a piece can never reach another one's. */
     conversationId: string;
@@ -32,7 +36,10 @@
     <img
       class="c2-piece-image"
       data-conversation-piece="image"
-      src={conversationFileHref(conversationId, piece.stored_file_id)}
+      data-conversation-piece-outgoing={"data" in piece ? "true" : undefined}
+      src={"data" in piece
+        ? `data:${piece.media_type};base64,${piece.data}`
+        : conversationFileHref(conversationId, piece.stored_file_id)}
       alt={piece.file_name ?? "an image in this message"}
     />
   {/if}

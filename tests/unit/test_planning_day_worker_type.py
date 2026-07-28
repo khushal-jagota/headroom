@@ -9,9 +9,9 @@ from planner.worker_types import configuration
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 from planner.worker_types.contracts import WorkerTypeManifest
 
-PRODUCT_DESIGN_MANIFEST: WorkerTypeManifest = {
-    "worker_type": "product_design",
-    "label": "Product Design",
+PLANNING_DAY_MANIFEST: WorkerTypeManifest = {
+    "worker_type": "planning-day",
+    "label": "Planning Day",
     "stages": [
         {
             "id": "needs_kickoff",
@@ -21,23 +21,16 @@ PRODUCT_DESIGN_MANIFEST: WorkerTypeManifest = {
             "default_ownership_mode": "worker",
         },
         {
-            "id": "needs_direction",
-            "label": "Direction",
-            "gating_field": "direction",
+            "id": "needs_gather",
+            "label": "Gather",
+            "gating_field": "gather",
             "is_terminal": False,
             "default_ownership_mode": "worker",
         },
         {
-            "id": "needs_wireframe",
-            "label": "Wireframe",
-            "gating_field": "wireframe",
-            "is_terminal": False,
-            "default_ownership_mode": "paired",
-        },
-        {
-            "id": "needs_design",
-            "label": "Design",
-            "gating_field": "design",
+            "id": "needs_planning",
+            "label": "Planning",
+            "gating_field": "planning",
             "is_terminal": False,
             "default_ownership_mode": "paired",
         },
@@ -64,36 +57,33 @@ PRODUCT_DESIGN_MANIFEST: WorkerTypeManifest = {
         "default_ownership_mode": None,
     },
     "advance": {
-        "needs_kickoff": "needs_direction",
-        "needs_direction": "needs_wireframe",
-        "needs_wireframe": "needs_design",
-        "needs_design": "needs_closeout",
+        "needs_kickoff": "needs_gather",
+        "needs_gather": "needs_planning",
+        "needs_planning": "needs_closeout",
         "needs_closeout": "done",
     },
     "fields": [
         {"id": "kickoff", "label": "Kickoff"},
-        {"id": "direction", "label": "Direction"},
-        {"id": "wireframe", "label": "Wireframe"},
-        {"id": "design", "label": "Design"},
+        {"id": "gather", "label": "Gather"},
+        {"id": "planning", "label": "Planning"},
         {"id": "closeout", "label": "Closeout"},
     ],
     "ceiling_range": [
         "needs_kickoff",
-        "needs_direction",
-        "needs_wireframe",
-        "needs_design",
+        "needs_gather",
+        "needs_planning",
         "needs_closeout",
         "done",
     ],
     "default_ceiling": "needs_kickoff",
-    "worker_profile_id": "panels-worker-product-design",
+    "worker_profile_id": "panels-worker-planning-day",
     "default_backend": "claude",
     "default_model": "opus[1m]",
-    "default_reasoning_effort": "high",
+    "default_reasoning_effort": "medium",
 }
 
 
-def test_production_registry_carries_complete_product_design_manifest() -> None:
+def test_production_registry_carries_complete_planning_day_manifest() -> None:
     assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
         "coding",
         "new_worker",
@@ -102,73 +92,74 @@ def test_production_registry_carries_complete_product_design_manifest() -> None:
         "product_design",
         "planning-day",
     )
-    assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("product_design") == PRODUCT_DESIGN_MANIFEST
+    assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-day") == PLANNING_DAY_MANIFEST
 
 
-def test_product_design_definition_carries_complete_execution_contract() -> None:
-    definition = PRODUCTION_WORKER_TYPE_REGISTRY.require("product_design")
+def test_planning_day_definition_carries_complete_execution_contract() -> None:
+    definition = PRODUCTION_WORKER_TYPE_REGISTRY.require("planning-day")
 
     assert definition.stage_ids() == tuple(
-        stage["id"] for stage in PRODUCT_DESIGN_MANIFEST["stages"]
+        stage["id"] for stage in PLANNING_DAY_MANIFEST["stages"]
     )
     assert definition.field_ids() == tuple(
-        field["id"] for field in PRODUCT_DESIGN_MANIFEST["fields"]
+        field["id"] for field in PLANNING_DAY_MANIFEST["fields"]
     )
     assert tuple(
         stage.default_ownership_mode.value if stage.default_ownership_mode else None
         for stage in definition.stages
-    ) == ("worker", "worker", "paired", "paired", "worker", None)
-    assert definition.worker_profile.specialist_skill == "panels-worker-product-design"
+    ) == ("worker", "worker", "paired", "worker", None)
+    assert definition.worker_profile.specialist_skill == "panels-worker-planning-day"
     assert definition.worker_profile.toolset_profile == "default"
     assert definition.supports_prefix_reconciliation is True
 
 
-def test_product_design_specialist_is_known_public_and_provisioned() -> None:
-    assert "panels-worker-product-design" in configuration._KNOWN_SKILLS
-    assert "panels-worker-product-design" in PLANNER_SKILL_NAMES
+def test_planning_day_specialist_is_known_public_and_provisioned() -> None:
+    assert "panels-worker-planning-day" in configuration._KNOWN_SKILLS
+    assert "panels-worker-planning-day" in PLANNER_SKILL_NAMES
     assert (
-        worker_types.PRODUCT_DESIGN_WORKER_TYPE_DEFINITION
-        is PRODUCTION_WORKER_TYPE_REGISTRY.require("product_design")
+        worker_types.PLANNING_DAY_WORKER_TYPE_DEFINITION
+        is PRODUCTION_WORKER_TYPE_REGISTRY.require("planning-day")
     )
 
 
-def test_product_design_managed_settings_bootstrap_uses_approved_runtime_defaults(
+def test_planning_day_managed_settings_bootstrap_uses_approved_runtime_defaults(
     tmp_path: Path,
 ) -> None:
     settings = read_worker_settings(
         tmp_path,
         PRODUCTION_WORKER_TYPE_REGISTRY,
-        "product_design",
+        "planning-day",
     )
 
     assert settings.launch_defaults.employee_backend == "claude"
     assert settings.launch_defaults.employee_launch_model == "opus[1m]"
-    assert settings.launch_defaults.employee_launch_reasoning_effort == "high"
+    assert settings.launch_defaults.employee_launch_reasoning_effort == "medium"
     assert settings.stage_ownership_defaults == {
         "needs_kickoff": "worker",
-        "needs_direction": "worker",
-        "needs_wireframe": "paired",
-        "needs_design": "paired",
+        "needs_gather": "worker",
+        "needs_planning": "paired",
         "needs_closeout": "worker",
     }
 
 
-def test_product_design_is_announced_at_both_agent_front_doors() -> None:
+def test_planning_day_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
     chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
         encoding="utf-8"
     )
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
 
-    assert "`panels-worker-product-design` — product_design tickets" in worker
-    assert "Use a **`product_design` ticket**" in chief
+    assert "`panels-worker-planning-day` — planning-day tickets" in worker
+    assert "Use a **`planning-day` ticket**" in chief
 
 
-def test_product_design_skill_preserves_the_approved_handoff_boundary() -> None:
+def test_planning_day_skill_preserves_the_approved_planning_judgments() -> None:
     root = Path(__file__).resolve().parents[2]
     skill = (
-        root / "src/planner/skills/panels-worker-product-design/SKILL.md"
+        root / "src/planner/skills/panels-worker-planning-day/SKILL.md"
     ).read_text(encoding="utf-8")
 
-    assert "adopt its established patterns, tokens, and" in skill
-    assert "coding owns implementation and all later feedback" in skill
+    assert "one evidence-backed best guess of today's focus" in skill
+    assert "without automatic carryover" in skill
+    assert "create or reshape agreed Tickets" in skill
+    assert "no backfill, guilt, streak, or rollover ceremony" in skill

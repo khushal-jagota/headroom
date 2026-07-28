@@ -33,13 +33,13 @@
    */
   import { tick, untrack, type Snippet } from "svelte";
   import ConversationComposer from "./ConversationComposer.svelte";
+  import MessagePieces from "./MessagePieces.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
   import ConversationTranscript from "./ConversationTranscript.svelte";
   import type { RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import { outgoingMessageNote, type OutgoingMessage } from "../../lib/conversation/outgoing";
   import { restLineFrom } from "../../lib/conversation/restLine";
-  import { messageContentText } from "../../lib/conversation/wire";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
     AgentCommand,
@@ -47,7 +47,8 @@
     BackendSnapshot,
     ConversationBackendKey,
     PermissionAskOption,
-    PromptDeliveryMode
+    PromptDeliveryMode,
+    SentMessagePiece
   } from "../../lib/conversation/wire";
 
   /** How far from the newest line still counts as being with it. */
@@ -143,7 +144,11 @@
      *  opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
     emptyState?: Snippet;
-    onSend: (text: string, mode: PromptDeliveryMode, picked: RunValues) => Promise<boolean>;
+    onSend: (
+      content: SentMessagePiece[],
+      mode: PromptDeliveryMode,
+      picked: RunValues
+    ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
     onCancelTurn?: () => void;
@@ -866,10 +871,10 @@
               {/if}
             </div>
           {/if}
-          <!-- A message on its way holds what it is about to send rather than what the
-               record will name, so its words are drawn from that, plainly. It becomes the
-               rendered row the moment the record has it. -->
-          {messageContentText(message.content)}
+          <!-- A message on its way holds the bytes it is about to send rather than a kept
+               file id. The same renderer understands both shapes, so the optimistic copy
+               and the record-backed row are visibly the same message. -->
+          <MessagePieces content={message.content} {conversationId} />
         </article>
       {/each}
       {#if reservedSpacePixels > 0}

@@ -270,7 +270,10 @@ hand-rolling the same shapes per screen. Each does one job:
   development pane all mount it.
 - **ConversationPane / ConversationTranscript / ConversationComposer** — what a
   conversation looks like: the rows, the one raised ask, the status line, and the
-  composer with its model, effort and skill choices.
+  composer with its model, effort and skill choices. The composer also owns pending
+  pictures from the picker, clipboard and drag-and-drop. It shows them in order,
+  removes them individually, and hands one ordered text-and-image content run to
+  `LiveConversation`; image-only messages use that same path.
 
   On the Ticket screen the conversation is a layer along the bottom of the page rather
   than a column beside it, and it has **three states**. At **rest** it is the composer and

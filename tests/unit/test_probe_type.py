@@ -53,6 +53,7 @@ def test_probe_registry_is_explicit_and_ordered() -> None:
         "exploration",
         "initiative_planning",
         "product_design",
+        "planning-day",
         "probe",
     )
     assert configured_worker_type_registry().require("probe") is PROBE_WORKER_TYPE_DEFINITION
