@@ -9,17 +9,17 @@
    *
    * Pressing Enter empties the box there and then and the box stays typeable, because the
    * message is already gone as far as the person is concerned — only the send control says
-   * anything is still happening. If the send turns out not to have gone anywhere, the text
-   * comes back exactly as it was written, with the cursor at the end; unless something else
-   * has been typed in the meantime, in which case that draft is what matters and the error
-   * under the box is the whole of the news.
+   * anything is still happening. If the send turns out not to have gone anywhere, its text,
+   * pictures and run choices come back exactly as they were, with the cursor at the end;
+   * unless something else has been composed in the meantime, in which case that draft is
+   * what matters and the error under the box is the whole of the news.
    *
    * Writing a command is writing a line that starts with a slash, and while the cursor is
    * still inside that first word the agent's own commands are offered under it. Choosing
    * one writes the words a person would have typed and nothing else: the message goes as
    * ordinary text, and the agent reads its own command name back out of it.
    */
-  import { tick } from "svelte";
+  import { onMount, tick } from "svelte";
   import AgentCommandMenu from "./AgentCommandMenu.svelte";
   import BackendRail from "./BackendRail.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -34,13 +34,22 @@
     preselectedValue
   } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
+  import {
+    createPendingConversationImages,
+    pendingConversationImageBytes,
+    pendingImagesAsPieces,
+    releasePendingImages,
+    restoredPendingImages,
+    type PendingConversationImage
+  } from "../../lib/conversation/pendingImages";
   import type {
     AgentCommand,
     BackendModel,
     BackendSnapshot,
     ConversationBackendKey,
     PermissionAskOption,
-    PromptDeliveryMode
+    PromptDeliveryMode,
+    SentMessagePiece
   } from "../../lib/conversation/wire";
 
   let {
@@ -104,7 +113,11 @@
     errorNote?: string | null;
     placeholder?: string;
     disabled?: boolean;
-    onSend: (text: string, mode: PromptDeliveryMode, picked: RunValues) => Promise<boolean>;
+    onSend: (
+      content: SentMessagePiece[],
+      mode: PromptDeliveryMode,
+      picked: RunValues
+    ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
     onCancelTurn?: () => void;
@@ -134,11 +147,23 @@
    *  so coming back to the command offers the menu again. */
   let menuWasDismissed = $state(false);
   let activeCommandIndex = $state(0);
+  let pendingImages = $state<PendingConversationImage[]>([]);
+  let imageInput = $state<HTMLInputElement | null>(null);
+  let nextImageId = 1;
+  let dragDepth = 0;
+  let draggingImages = $state(false);
+  let intakeError = $state<string | null>(null);
+  let intakeTail: Promise<void> = Promise.resolve();
+  let imageIntakesInFlight = $state(0);
+  /** Changes only when the person composes something new. A refusal may restore its
+   *  snapshot only while this is still the revision that was sent. */
+  let composeRevision = 0;
+  let destroyed = false;
 
   let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
   let effectiveMode = $derived<PromptDeliveryMode>(running ? mode : "run_when_free");
   let takenOver = $derived(ask !== null);
-  let inputDisabled = $derived(disabled || takenOver);
+  let inputDisabled = $derived(disabled || takenOver || imageIntakesInFlight > 0);
   let sendIsInFlight = $derived(sendsInFlight > 0 && !running);
   let livePlaceholder = $derived(takenOver ? askPlaceholder(ask) : placeholder);
   // The backend the rail shows. A conversation that exists shows its own and nothing else,
@@ -253,6 +278,12 @@
     activeCommandIndex = 0;
   });
 
+  $effect(() => {
+    if (!inputDisabled) return;
+    dragDepth = 0;
+    draggingImages = false;
+  });
+
   // What the chosen model really is, when the catalog says — an alias and the version it
   // reaches. Its row says it out loud; the pill is only as wide as the name, so on the
   // pill it is the tooltip.
@@ -312,29 +343,41 @@
    */
   function takeTheBackend(key: ConversationBackendKey): void {
     if (conversationExists || key === shownBackend) return;
+    composeRevision += 1;
     pickedBackend = key;
     pickedModel = null;
     pickedEffort = null;
   }
 
   async function send(): Promise<void> {
+    await intakeTail;
     const trimmed = text.trim();
-    if (!trimmed || inputDisabled) return;
+    if ((!trimmed && pendingImages.length === 0) || inputDisabled) return;
     const carried = picked;
+    const sentComposeRevision = composeRevision;
     // What goes back if it gets nowhere is what the person had picked, which is not
     // everything the message carried: a message that creates a conversation also carries
     // the value the picker was only showing, and showing is not picking.
     const theirs: RunValues = { ...carried, model: pickedModel, reasoningEffort: pickedEffort };
+    const sentImages = pendingImages;
+    const content: SentMessagePiece[] = [
+      ...(trimmed === "" ? [] : [{ piece: "text" as const, text: trimmed }]),
+      ...pendingImagesAsPieces(sentImages)
+    ];
     text = "";
     cursorAt = 0;
+    pendingImages = [];
+    releasePendingImages(sentImages);
+    if (imageInput) imageInput.value = "";
+    intakeError = null;
     // The change rode out with the message, so it is no longer pending: the selects
     // fall back to showing what the conversation now runs on.
     pickedModel = null;
     pickedEffort = null;
     sendsInFlight += 1;
     try {
-      const delivered = await onSend(trimmed, effectiveMode, carried);
-      if (!delivered) await giveTheMessageBack(trimmed, theirs);
+      const delivered = await onSend(content, effectiveMode, carried);
+      if (!delivered) await giveTheMessageBack(content, theirs, sentComposeRevision);
     } finally {
       sendsInFlight -= 1;
     }
@@ -342,12 +385,32 @@
 
   /** The message got nowhere, so the person is put back where they were.
    *
-   * Everything that was about to go comes back together — the text and the change it was
-   * carrying — because that is the state they were in when they pressed Enter.
+   * Everything that was about to go comes back together — the content and the change it
+   * was carrying — because that is the state they were in when they pressed Enter.
    */
-  async function giveTheMessageBack(sent: string, carried: RunValues): Promise<void> {
-    if (text !== "") return;
+  async function giveTheMessageBack(
+    content: readonly SentMessagePiece[],
+    carried: RunValues,
+    sentComposeRevision: number
+  ): Promise<void> {
+    if (
+      composeRevision !== sentComposeRevision
+      || text !== ""
+      || pendingImages.length > 0
+      || pickedModel !== null
+      || pickedEffort !== null
+      || imageIntakesInFlight > 0
+    ) return;
+    const sent = content
+      .filter((piece): piece is Extract<SentMessagePiece, { piece: "text" }> =>
+        piece.piece === "text"
+      )
+      .map((piece) => piece.text)
+      .join("");
+    const restored = restoredPendingImages(content, nextImageId);
     text = sent;
+    pendingImages = restored.images;
+    nextImageId = restored.nextId;
     pickedModel = carried.model;
     pickedEffort = carried.reasoningEffort;
     await tick();
@@ -356,6 +419,93 @@
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     cursorAt = input.value.length;
+  }
+
+  function intakeFiles(
+    files: Iterable<File> | ArrayLike<File> | null | undefined
+  ): Promise<void> {
+    if (disabled || takenOver) return Promise.resolve();
+    const chosen = Array.from(files ?? []);
+    intakeTail = intakeTail.then(() => intakeChosenFiles(chosen));
+    return intakeTail;
+  }
+
+  async function intakeChosenFiles(files: readonly File[]): Promise<void> {
+    imageIntakesInFlight += 1;
+    try {
+      const intake = await createPendingConversationImages(
+        files,
+        nextImageId,
+        pendingConversationImageBytes(pendingImages)
+      );
+      if (destroyed) {
+        releasePendingImages(intake.accepted);
+        return;
+      }
+      nextImageId = intake.nextId;
+      if (intake.accepted.length > 0) {
+        composeRevision += 1;
+        pendingImages = [...pendingImages, ...intake.accepted];
+      }
+      intakeError = intake.rejected.length > 0
+        ? "Choose PNG, JPEG, GIF or WebP images totaling up to 3 MiB."
+        : null;
+    } catch (error) {
+      if (!destroyed) {
+        intakeError = error instanceof Error ? error.message : "The image could not be read.";
+      }
+    } finally {
+      if (!destroyed) {
+        imageIntakesInFlight -= 1;
+        if (imageInput) imageInput.value = "";
+      }
+    }
+  }
+
+  function removeImage(image: PendingConversationImage): void {
+    composeRevision += 1;
+    pendingImages = pendingImages.filter((candidate) => candidate.id !== image.id);
+    releasePendingImages([image]);
+  }
+
+  function hasImageTransfer(event: DragEvent): boolean {
+    return Array.from(event.dataTransfer?.items ?? []).some((item) =>
+      item.type.toLowerCase().startsWith("image/")
+    );
+  }
+
+  function onDragEnter(event: DragEvent): void {
+    if (inputDisabled || !hasImageTransfer(event)) return;
+    event.preventDefault();
+    dragDepth += 1;
+    draggingImages = true;
+  }
+
+  function onDragOver(event: DragEvent): void {
+    if (inputDisabled || !hasImageTransfer(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    draggingImages = true;
+  }
+
+  function onDragLeave(): void {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) draggingImages = false;
+  }
+
+  function onDrop(event: DragEvent): void {
+    if (inputDisabled) return;
+    event.preventDefault();
+    dragDepth = 0;
+    draggingImages = false;
+    void intakeFiles(event.dataTransfer?.files);
+  }
+
+  function onPaste(event: ClipboardEvent): void {
+    const files = event.clipboardData?.files;
+    if (inputDisabled || !files || files.length === 0) return;
+    event.preventDefault();
+    void intakeFiles(files);
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -398,6 +548,11 @@
     if (input === null) return;
     theCursorIsInTheBox = true;
     cursorAt = input.selectionStart ?? 0;
+  }
+
+  function textChanged(): void {
+    composeRevision += 1;
+    readWhereTheCursorIs();
   }
 
   /** Where the command being written on this line is, and how much of its name is typed.
@@ -455,6 +610,7 @@
     const underway = commandUnderway;
     if (underway === null) return;
     const written = `/${command.name} `;
+    composeRevision += 1;
     // The space the name is followed by is the one already there, where there is one,
     // rather than a second one after it.
     const rest = text.slice(underway.end);
@@ -478,6 +634,7 @@
    * is still theirs to type.
    */
   async function startWritingACommand(): Promise<void> {
+    composeRevision += 1;
     if (!text.startsWith("/")) text = `/${text}`;
     menuWasDismissed = false;
     await tick();
@@ -488,6 +645,13 @@
     theCursorIsInTheBox = true;
     cursorAt = 1;
   }
+
+  onMount(() => {
+    return () => {
+      destroyed = true;
+      releasePendingImages(pendingImages);
+    };
+  });
 </script>
 
 <section class="c2-composer" data-conversation-composer>
@@ -503,11 +667,16 @@
 
     <div
       class="chat-box"
+      class:drag={draggingImages}
       class:has-ask={takenOver}
       data-conversation-box
       data-conversation-taken-over={takenOver ? "true" : undefined}
       role="group"
       aria-label="Conversation composer"
+      ondragenter={onDragEnter}
+      ondragover={onDragOver}
+      ondragleave={onDragLeave}
+      ondrop={onDrop}
     >
       {#if takenOver && ask}
         <PermissionAskCard
@@ -528,6 +697,29 @@
         />
       {/if}
 
+      {#if pendingImages.length > 0}
+        <div class="chat-image-previews" data-chat-image-previews aria-label="Pending images">
+          {#each pendingImages as image, index (image.id)}
+            <div
+              class="chat-image-preview"
+              data-chat-image-preview
+              data-chat-image-name={image.fileName}
+            >
+              <img src={image.previewUrl} alt="" />
+              <button
+                type="button"
+                class="chat-image-remove"
+                data-chat-image-remove
+                aria-label={`Remove image ${index + 1}: ${image.fileName || "pasted image"}`}
+                title="Remove image"
+                disabled={inputDisabled}
+                onclick={() => removeImage(image)}
+              >×</button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
       <textarea
         class="chat-ta"
         data-conversation-input
@@ -537,11 +729,12 @@
         bind:value={text}
         disabled={inputDisabled}
         onkeydown={onKeydown}
-        oninput={readWhereTheCursorIs}
+        oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
         onclick={readWhereTheCursorIs}
         onfocus={readWhereTheCursorIs}
         onblur={() => (theCursorIsInTheBox = false)}
+        onpaste={onPaste}
       ></textarea>
 
       <div class="chat-foot">
@@ -566,6 +759,33 @@
             onclick={() => void startWritingACommand()}
           >/</button>
 
+          <button
+            type="button"
+            class="chat-image"
+            class:on={pendingImages.length > 0}
+            data-conversation-image
+            data-conversation-image-count={pendingImages.length || undefined}
+            aria-label={pendingImages.length > 0 ? "Attach more images" : "Attach images"}
+            title={pendingImages.length > 0
+              ? `${pendingImages.length} image${pendingImages.length === 1 ? "" : "s"} selected`
+              : "Attach images"}
+            disabled={inputDisabled}
+            onclick={() => imageInput?.click()}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01" />
+            </svg>
+          </button>
+          <input
+            bind:this={imageInput}
+            class="chat-image-input"
+            data-conversation-image-input
+            type="file"
+            accept="image/*"
+            multiple
+            onchange={() => void intakeFiles(imageInput?.files)}
+          />
+
           <!-- Which backend is a question about the conversation rather than about this
                message, so it is drawn beside the models it decides rather than as a third
                pill in the footer. -->
@@ -587,6 +807,7 @@
             attributes={{ "data-conversation-picker-model": "" }}
             rail={shownBackend === null ? undefined : backendRail}
             onChoose={(model) => {
+              composeRevision += 1;
               pickedModel = model;
               handTheBoxTheKeyboard();
             }}
@@ -604,6 +825,7 @@
                 "data-conversation-picker-effort-bare": effortIsBare ? "true" : undefined
               }}
               onChoose={(effort) => {
+                composeRevision += 1;
                 pickedEffort = effort;
                 handTheBoxTheKeyboard();
               }}
@@ -627,13 +849,13 @@
 
           <button
             type="button"
-            class={`chat-send${running ? " stop" : text.trim() ? " on" : ""}`}
+            class={`chat-send${running ? " stop" : text.trim() || pendingImages.length ? " on" : ""}`}
             class:is-sending={sendIsInFlight}
             data-conversation-send={running ? undefined : true}
             data-conversation-stop={running ? true : undefined}
             data-conversation-sending={sendIsInFlight ? true : undefined}
             aria-busy={sendIsInFlight ? "true" : undefined}
-            disabled={running ? false : inputDisabled || !text.trim()}
+            disabled={running ? false : inputDisabled || (!text.trim() && pendingImages.length === 0)}
             title={running
               ? "Stop the turn — press Enter to send instead"
               : sendIsInFlight
@@ -644,11 +866,14 @@
           >{running ? "■" : "↑"}</button>
         {/if}
       </div>
+      <div class="chat-drop-label" data-conversation-drop-label aria-hidden="true">
+        Drop images to attach
+      </div>
     </div>
   </div>
 
-  {#if errorNote}
-    <div class="chat-receipt" role="alert" data-conversation-error>{errorNote}</div>
+  {#if intakeError || errorNote}
+    <div class="chat-receipt" role="alert" data-conversation-error>{intakeError ?? errorNote}</div>
   {:else if fateNote}
     <div class="c2-fate" data-conversation-fate>{fateNote}</div>
   {/if}

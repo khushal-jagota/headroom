@@ -12,11 +12,25 @@ and reaches the real server, including the call that moves the Ticket.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import socket
+import threading
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from pathlib import Path
 
-from playwright.sync_api import BrowserContext, Page, Request
-from tests.e2e.harness import WAIT_MS, ApiHelper, JsonObject, ServerHandle
-from tests.e2e.test_dev_conversation_pane import HOLD_THE_SEND
+import httpx
+import uvicorn
+from playwright.sync_api import BrowserContext, FilePayload, Page, Request
+from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
+from tests.e2e.test_dev_conversation_pane import _A_RED_PNG, HOLD_THE_SEND
+
+from planner.conversation.contracts import ConversationBackendKey
+from planner.core import server as server_module
+from planner.core.clock import build_clock
+from planner.core.config import load_config
+from planner.core.db import connect, create_schema
+from planner.tickets import data as tickets_data
 
 TICKET_SCREEN = '[data-screen="ticket"]'
 COMPOSER = f"{TICKET_SCREEN} [data-conversation-input]"
@@ -24,6 +38,110 @@ SEND = f"{TICKET_SCREEN} [data-conversation-send]"
 FATE = f"{TICKET_SCREEN} [data-conversation-fate]"
 PROPOSAL = "# Success criteria\n\nThe suite goes green.\n"
 REFUSED_TEXT = "did this reach anything"
+
+
+class _AcceptingBackendChild:
+    """The real conversation core's deterministic sink for this browser round trip."""
+
+    async def start(self, _resolved_start: object, *, vendor_session_cursor: str | None) -> None:
+        del vendor_session_cursor
+
+    async def write_prompt(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def steer(self, *_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def cancel_running_turn(self) -> None:
+        return None
+
+    async def answer_permission_ask(self, _ask_id: str, _option_id: str) -> None:
+        return None
+
+    async def stop(self) -> None:
+        return None
+
+
+def _accepting_backend_factory(**_services: object) -> _AcceptingBackendChild:
+    return _AcceptingBackendChild()
+
+
+@contextmanager
+def _browser_server_with_accepting_backend(tmp_path: Path) -> Iterator[tuple[str, str]]:
+    """A real HTTP/UI server whose backend sink is deterministic and in-process."""
+    db_path = tmp_path / "planning.db"
+    with connect(str(db_path)) as connection:
+        create_schema(connection)
+        ticket = tickets_data.create_ticket(
+            connection,
+            worker_type="coding",
+            title="Send the worker pictures",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+        )
+        connection.commit()
+
+    config = load_config(
+        path=None,
+        env={
+            "PLAN_TEST_MODE": "1",
+            "PLAN_DB_PATH": str(db_path),
+            "PLAN_LOGS_DIR": str(tmp_path / "logs"),
+            "PLAN_HERMES_HOME": str(tmp_path / "hermes-home"),
+            "PLAN_DISPATCH_ENABLED": "0",
+            "PLAN_SHUTDOWN_GRACE_SECONDS": "2",
+        },
+    )
+    original_web_dist = server_module._WEB_DIST
+    original_web_index = server_module._WEB_INDEX
+    original_assets = server_module._ASSETS_DIR
+    original_static = server_module._STATIC_DIR
+    backend_factories_attribute = "production_backend_child_factories"
+    original_backend_factories = getattr(server_module, backend_factories_attribute)
+    server_module._WEB_DIST = REPO_ROOT / "web" / "dist"
+    server_module._WEB_INDEX = server_module._WEB_DIST / "index.html"
+    server_module._ASSETS_DIR = REPO_ROOT / "assets"
+    server_module._STATIC_DIR = REPO_ROOT / "static"
+    setattr(
+        server_module,
+        backend_factories_attribute,
+        lambda **_machine: {
+            key: _accepting_backend_factory for key in ConversationBackendKey
+        },
+    )
+    app = server_module.create_app(
+        config,
+        build_clock(config),
+        lambda: connect(str(db_path)),
+    )
+    with socket.socket() as available:
+        available.bind(("127.0.0.1", 0))
+        port = int(available.getsockname()[1])
+    server = uvicorn.Server(
+        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert server.started
+    try:
+        yield f"http://127.0.0.1:{port}", ticket.id
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)
+        server_module._WEB_DIST = original_web_dist
+        server_module._WEB_INDEX = original_web_index
+        server_module._ASSETS_DIR = original_assets
+        server_module._STATIC_DIR = original_static
+        setattr(
+            server_module,
+            backend_factories_attribute,
+            original_backend_factories,
+        )
+        assert not thread.is_alive()
 
 
 def _parked_on_a_proposal(server: ServerHandle, cli: Callable[..., JsonObject]) -> str:
@@ -122,3 +240,76 @@ def test_a_reply_in_the_pane_pairs_the_ticket_and_a_refusal_leaves_it_parked(
     # One reply, from the send that got somewhere. The refused send is in front of it in
     # this page's own order, so a reply it had made would be counted here too.
     assert replies == [f"{server.base}/api/tickets/{ticket_id}/human-reply"]
+
+
+def test_ticket_images_cross_the_owner_api_become_managed_files_and_reload(
+    tmp_path: Path,
+    context_factory: Callable[[], BrowserContext],
+) -> None:
+    """The shared Ticket surface through the real owner door, record and file route."""
+    with _browser_server_with_accepting_backend(tmp_path) as (base, ticket_id):
+        context = context_factory()
+        page = context.new_page()
+        page.goto(f"{base}/#/ticket/{ticket_id}")
+        composer = f'{TICKET_SCREEN}[data-ticket-id="{ticket_id}"]'
+        page.wait_for_selector(
+            f"{composer} [data-conversation-input]:not([disabled])",
+            timeout=30_000,
+        )
+        image_files: list[FilePayload] = [
+            {"name": "first.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
+            {"name": "second.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
+        ]
+        page.set_input_files(
+            f"{composer} [data-conversation-image-input]",
+            image_files,
+        )
+        page.wait_for_function(
+            "() => document.querySelectorAll('[data-chat-image-preview]').length === 2"
+        )
+        page.fill(f"{composer} [data-conversation-input]", "look at both")
+        with page.expect_response(
+            lambda response: response.request.method == "POST"
+            and response.url.endswith(f"/api/tickets/{ticket_id}/conversation/send")
+            and response.status == 200,
+            timeout=WAIT_MS,
+        ) as sent:
+            page.click(f"{composer} [data-conversation-send]")
+        delivered = sent.value.json()
+        assert delivered["fate"] == "started"
+        conversation_id = delivered["conversation_id"]
+
+        events = httpx.get(
+            f"{base}/api/conversation/conversations/{conversation_id}/events",
+            params={"after": 0},
+            timeout=10,
+        )
+        assert events.status_code == 200, events.text
+        prompt = next(event for event in events.json()["events"] if event["kind"] == "prompt")
+        content = prompt["payload"]["content"]
+        assert [piece["piece"] for piece in content] == ["text", "image", "image"]
+        assert [piece.get("file_name") for piece in content[1:]] == [
+            "first.png",
+            "second.png",
+        ]
+        assert all("data" not in piece for piece in content[1:])
+        for piece in content[1:]:
+            kept = httpx.get(
+                f"{base}/api/conversation/conversations/{conversation_id}/files/"
+                f"{piece['stored_file_id']}",
+                timeout=10,
+            )
+            assert kept.status_code == 200
+            assert kept.content == _A_RED_PNG
+
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function(
+            "() => {"
+            "  const images = [...document.querySelectorAll("
+            "    '[data-conversation-row=\"prompt\"] [data-conversation-piece=\"image\"]')];"
+            "  return images.length === 2"
+            "    && images.every((image) => image.complete && image.naturalWidth === 8);"
+            "}",
+            timeout=WAIT_MS,
+        )
+        page.close()
