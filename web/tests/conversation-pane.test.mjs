@@ -1240,6 +1240,18 @@ try {
     disabled = next;
   };
 
+  // The rendered steer proof moves this same composer through one running Hermes turn.
+  // These are host facts only: production availability and catalog policy stay untouched.
+  let backendKey = $state<"hermes" | "codex" | "claude">("claude");
+  let running = $state(false);
+  (window as any).__setComposerRunState = (
+    nextBackendKey: "hermes" | "codex" | "claude",
+    nextRunning: boolean
+  ) => {
+    backendKey = nextBackendKey;
+    running = nextRunning;
+  };
+
   // Whether there is a conversation, which is the whole of what fixes the backend.
   let conversationExists = $state(false);
   (window as any).__setExists = (next: boolean) => {
@@ -1398,8 +1410,8 @@ try {
 
 {#if showComposer}
   <ConversationComposer
-    backendKey="claude"
-    running={false}
+    {backendKey}
+    {running}
     current={{ model: null, reasoningEffort: null }}
     startsOnModel="opus"
     models={[
@@ -2160,6 +2172,43 @@ with sync_playwright() as playwright:
     assert "No commands here." in nothing_to_offer, nothing_to_offer
     assert "agent" not in nothing_to_offer.lower(), nothing_to_offer
     assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    # A steer cannot consume a model or effort change: it joins a turn already running
+    # under its own values. The picks stay visible and ride the next ordinary send.
+    box.fill("")
+    page.wait_for_selector("[data-conversation-commands]", state="detached")
+    page.evaluate("window.__setExists(true)")
+    page.evaluate("window.__setComposerRunState('hermes', true)")
+    page.wait_for_selector('[data-conversation-delivery-mode="steer"]')
+    pick(model, "sonnet")
+    pick(effort, "low")
+    page.locator('[data-conversation-delivery-mode="steer"]').click()
+    send_count_before_steer = page.evaluate("window.__sends().length")
+    box.fill("join the running turn")
+    box.press("Enter")
+    page.wait_for_function(
+        f"window.__sends().length === {send_count_before_steer + 1}"
+    )
+    steered = page.evaluate("window.__sends().at(-1)")
+    assert steered["mode"] == "steer", steered
+    assert steered["picked"]["model"] == "sonnet", steered
+    assert steered["picked"]["reasoningEffort"] == "low", steered
+    assert face(model) == "Sonnet", face(model)
+    assert face(effort) == "low", face(effort)
+
+    page.evaluate("window.__setComposerRunState('hermes', false)")
+    page.wait_for_selector("[data-conversation-delivery]", state="detached")
+    box.fill("use those picks next")
+    box.press("Enter")
+    page.wait_for_function(
+        f"window.__sends().length === {send_count_before_steer + 2}"
+    )
+    ordinary = page.evaluate("window.__sends().at(-1)")
+    assert ordinary["mode"] == "run_when_free", ordinary
+    assert ordinary["picked"]["model"] == "sonnet", ordinary
+    assert ordinary["picked"]["reasoningEffort"] == "low", ordinary
+    assert face(model) == "Opus", face(model)
+    assert face(effort) == "", face(effort)
 
     # If navigation destroys the composer while a file is still being read, the batch
     # releases the preview it creates on completion instead of assigning it to the dead

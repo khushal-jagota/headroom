@@ -26,6 +26,12 @@
   import PermissionAskCard from "./PermissionAskCard.svelte";
   import RunValuePicker from "./RunValuePicker.svelte";
   import {
+    beginComposerSend,
+    restoreRefusedComposerSend,
+    type ComposerDraft,
+    type ComposerSendAttempt
+  } from "./composer/draftTransaction";
+  import {
     askPlaceholder,
     deliveryOptionsFor,
     effortOptionsFor,
@@ -37,9 +43,7 @@
   import {
     createPendingConversationImages,
     pendingConversationImageBytes,
-    pendingImagesAsPieces,
     releasePendingImages,
-    restoredPendingImages,
     type PendingConversationImage
   } from "../../lib/conversation/pendingImages";
   import type {
@@ -157,7 +161,7 @@
   let imageIntakesInFlight = $state(0);
   /** Changes only when the person composes something new. A refusal may restore its
    *  snapshot only while this is still the revision that was sent. */
-  let composeRevision = 0;
+  let compositionRevision = 0;
   let destroyed = false;
 
   let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
@@ -333,6 +337,33 @@
     inputElement?.focus();
   }
 
+  /** Record one change the person made to the draft.
+   *
+   * Every composable value comes through here exactly once. Applying a send or a refusal
+   * does not: both sides of that transaction preserve the revision they were given.
+   */
+  function recordDraftChange(): void {
+    compositionRevision += 1;
+  }
+
+  function currentComposerDraft(): ComposerDraft {
+    return {
+      text,
+      pendingImages,
+      pickedModel,
+      pickedReasoningEffort: pickedEffort,
+      compositionRevision
+    };
+  }
+
+  function applyComposerDraft(draft: ComposerDraft): void {
+    text = draft.text;
+    pendingImages = [...draft.pendingImages];
+    pickedModel = draft.pickedModel;
+    pickedEffort = draft.pickedReasoningEffort;
+    compositionRevision = draft.compositionRevision;
+  }
+
   /** Take a backend off the rail: what the next message would create this conversation on.
    *
    * The model and effort go with it. They were picked out of the old backend's catalog and
@@ -343,7 +374,7 @@
    */
   function takeTheBackend(key: ConversationBackendKey): void {
     if (conversationExists || key === shownBackend) return;
-    composeRevision += 1;
+    recordDraftChange();
     pickedBackend = key;
     pickedModel = null;
     pickedEffort = null;
@@ -353,31 +384,21 @@
     await intakeTail;
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0) || inputDisabled) return;
-    const carried = picked;
-    const sentComposeRevision = composeRevision;
-    // What goes back if it gets nowhere is what the person had picked, which is not
-    // everything the message carried: a message that creates a conversation also carries
-    // the value the picker was only showing, and showing is not picking.
-    const theirs: RunValues = { ...carried, model: pickedModel, reasoningEffort: pickedEffort };
-    const sentImages = pendingImages;
-    const content: SentMessagePiece[] = [
-      ...(trimmed === "" ? [] : [{ piece: "text" as const, text: trimmed }]),
-      ...pendingImagesAsPieces(sentImages)
-    ];
-    text = "";
+    const modeForAttempt = effectiveMode;
+    const attempt = beginComposerSend(currentComposerDraft(), picked, modeForAttempt);
+    applyComposerDraft(attempt.draftAfterSend);
     cursorAt = 0;
-    pendingImages = [];
-    releasePendingImages(sentImages);
+    releasePendingImages(attempt.draftBeforeSend.pendingImages);
     if (imageInput) imageInput.value = "";
     intakeError = null;
-    // The change rode out with the message, so it is no longer pending: the selects
-    // fall back to showing what the conversation now runs on.
-    pickedModel = null;
-    pickedEffort = null;
     sendsInFlight += 1;
     try {
-      const delivered = await onSend(content, effectiveMode, carried);
-      if (!delivered) await giveTheMessageBack(content, theirs, sentComposeRevision);
+      const delivered = await onSend(
+        [...attempt.content],
+        modeForAttempt,
+        attempt.carriedRunValues
+      );
+      if (!delivered) await restoreRefusedAttempt(attempt);
     } finally {
       sendsInFlight -= 1;
     }
@@ -388,34 +409,25 @@
    * Everything that was about to go comes back together — the content and the change it
    * was carrying — because that is the state they were in when they pressed Enter.
    */
-  async function giveTheMessageBack(
-    content: readonly SentMessagePiece[],
-    carried: RunValues,
-    sentComposeRevision: number
-  ): Promise<void> {
-    if (
-      composeRevision !== sentComposeRevision
-      || text !== ""
-      || pendingImages.length > 0
-      || pickedModel !== null
-      || pickedEffort !== null
-      || imageIntakesInFlight > 0
-    ) return;
-    const sent = content
-      .filter((piece): piece is Extract<SentMessagePiece, { piece: "text" }> =>
-        piece.piece === "text"
-      )
-      .map((piece) => piece.text)
-      .join("");
-    const restored = restoredPendingImages(content, nextImageId);
-    text = sent;
-    pendingImages = restored.images;
-    nextImageId = restored.nextId;
-    pickedModel = carried.model;
-    pickedEffort = carried.reasoningEffort;
+  async function restoreRefusedAttempt(attempt: ComposerSendAttempt): Promise<void> {
+    const restoration = restoreRefusedComposerSend(
+      currentComposerDraft(),
+      attempt,
+      nextImageId,
+      imageIntakesInFlight
+    );
+    if (!restoration.restored) return;
+    applyComposerDraft(restoration.draft);
+    nextImageId = restoration.nextImageId;
+    const restoredText = restoration.draft.text;
+    const restoredRevision = restoration.draft.compositionRevision;
     await tick();
     const input = inputElement;
-    if (input === null || text !== sent) return;
+    if (
+      input === null
+      || text !== restoredText
+      || compositionRevision !== restoredRevision
+    ) return;
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     cursorAt = input.value.length;
@@ -444,7 +456,7 @@
       }
       nextImageId = intake.nextId;
       if (intake.accepted.length > 0) {
-        composeRevision += 1;
+        recordDraftChange();
         pendingImages = [...pendingImages, ...intake.accepted];
       }
       intakeError = intake.rejected.length > 0
@@ -463,7 +475,7 @@
   }
 
   function removeImage(image: PendingConversationImage): void {
-    composeRevision += 1;
+    recordDraftChange();
     pendingImages = pendingImages.filter((candidate) => candidate.id !== image.id);
     releasePendingImages([image]);
   }
@@ -551,7 +563,7 @@
   }
 
   function textChanged(): void {
-    composeRevision += 1;
+    recordDraftChange();
     readWhereTheCursorIs();
   }
 
@@ -610,7 +622,7 @@
     const underway = commandUnderway;
     if (underway === null) return;
     const written = `/${command.name} `;
-    composeRevision += 1;
+    recordDraftChange();
     // The space the name is followed by is the one already there, where there is one,
     // rather than a second one after it.
     const rest = text.slice(underway.end);
@@ -634,7 +646,7 @@
    * is still theirs to type.
    */
   async function startWritingACommand(): Promise<void> {
-    composeRevision += 1;
+    recordDraftChange();
     if (!text.startsWith("/")) text = `/${text}`;
     menuWasDismissed = false;
     await tick();
@@ -807,7 +819,7 @@
             attributes={{ "data-conversation-picker-model": "" }}
             rail={shownBackend === null ? undefined : backendRail}
             onChoose={(model) => {
-              composeRevision += 1;
+              recordDraftChange();
               pickedModel = model;
               handTheBoxTheKeyboard();
             }}
@@ -825,7 +837,7 @@
                 "data-conversation-picker-effort-bare": effortIsBare ? "true" : undefined
               }}
               onChoose={(effort) => {
-                composeRevision += 1;
+                recordDraftChange();
                 pickedEffort = effort;
                 handTheBoxTheKeyboard();
               }}
