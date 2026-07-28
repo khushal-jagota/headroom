@@ -24,9 +24,9 @@ const compilerOptions = {
 
 const directory = await mkdtemp(join(tmpdir(), "planner-rest-line-"));
 
-async function transpile(name) {
+async function transpile(sourcePath) {
   const source = await readFile(
-    new URL(`../src/lib/conversation/${name}.ts`, import.meta.url),
+    new URL(`../src/lib/conversation/${sourcePath}`, import.meta.url),
     "utf8"
   );
   return ts
@@ -34,8 +34,32 @@ async function transpile(name) {
     .outputText.replace(/from\s+["']\.\/(wire|feed|transcript|restLine)["']/g, 'from "./$1.mjs"');
 }
 
-for (const name of ["wire", "feed", "transcript", "restLine"]) {
-  await writeFile(join(directory, `${name}.mjs`), await transpile(name), "utf8");
+const transpiledModules = [
+  ["wire.ts", "wire.mjs"],
+  ["feed.ts", "feed.mjs"],
+  ["transcript.ts", "transcript.mjs"],
+  ["conversationDetail.ts", "conversationDetail.mjs"],
+  ["toolCallPresentation/index.ts", "toolCallPresentation.mjs"],
+  ["restLine.ts", "restLine.mjs"]
+];
+
+for (const [sourcePath, outputName] of transpiledModules) {
+  let output = await transpile(sourcePath);
+  output = output
+    .replace(/from\s+["']\.\.\/transcript["']/g, 'from "./transcript.mjs"')
+    .replace(
+      /from\s+["']\.\.\/conversationDetail["']/g,
+      'from "./conversationDetail.mjs"'
+    )
+    .replace(
+      /from\s+["']\.\/toolCallPresentation["']/g,
+      'from "./toolCallPresentation.mjs"'
+    )
+    .replace(
+      /from\s+["']\.\/conversationDetail["']/g,
+      'from "./conversationDetail.mjs"'
+    );
+  await writeFile(join(directory, outputName), output, "utf8");
 }
 
 const { emptyConversationFeed, feedWithCommittedEvents } = await import(

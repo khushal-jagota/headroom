@@ -9,6 +9,7 @@ import {
 import {
   askDeadSentence,
   liveAskFrom,
+  promptLabelFor,
   refusalSentence,
   transcriptRows,
   turnEndingSentence,
@@ -40,6 +41,12 @@ function rowOfKind<Kind extends TranscriptRow["kind"]>(
 }
 
 describe("Conversation transcript", () => {
+  it("labels only prompts from somebody other than the reader", () => {
+    expect(promptLabelFor("owner", "owner")).toBeNull();
+    expect(promptLabelFor("automatic loop", "owner")).toBe("automatic loop");
+    expect(promptLabelFor("owner", null)).toBe("owner");
+  });
+
   it("reconciles a tool start and finish into one completed row", () => {
     const rows = rowsFrom([
       promptEvent(1, "do it"),
