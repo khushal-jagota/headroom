@@ -100,6 +100,9 @@ def test_production_registry_carries_complete_product_design_manifest() -> None:
         "exploration",
         "initiative_planning",
         "product_design",
+        "planning-day",
+        "planning-midday-check",
+        "planning-sprint",
     )
     assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("product_design") == PRODUCT_DESIGN_MANIFEST
 

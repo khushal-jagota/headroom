@@ -16,6 +16,7 @@ from planner.environments.cli import EnvironmentCliDependencies, environment
 from planner.environments.contracts import EnvironmentManifest, ResolvedEnvironmentInstance
 from planner.environments.deployment import DeploymentResult
 from planner.environments.logic.registry import resolve_environment_instance
+from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES
 
 
 class _Listener:
@@ -155,8 +156,11 @@ def test_provision_skills_reconciles_all_production_agent_homes_idempotently(
         custom = skills / "custom"
         custom.mkdir(parents=True)
         (custom / "SKILL.md").write_text("custom", encoding="utf-8")
-        retired = skills / "panels-ticket-management"
-        retired.symlink_to(tmp_path / "retired-source", target_is_directory=True)
+        for retired_skill_name in RETIRED_PANELS_SKILL_NAMES:
+            retired = skills / retired_skill_name
+            retired.symlink_to(
+                tmp_path / f"{retired_skill_name}-source", target_is_directory=True
+            )
 
     arguments = [
         "provision-skills",
@@ -177,9 +181,10 @@ def test_provision_skills_reconciles_all_production_agent_homes_idempotently(
     assert second.exit_code == 0, second.output
     for home in homes.values():
         skills = home / "skills"
-        retired = skills / "panels-ticket-management"
-        assert not retired.exists()
-        assert not retired.is_symlink()
+        for retired_skill_name in RETIRED_PANELS_SKILL_NAMES:
+            retired = skills / retired_skill_name
+            assert not retired.exists()
+            assert not retired.is_symlink()
         assert (skills / "custom" / "SKILL.md").read_text(encoding="utf-8") == "custom"
         assert (skills / "panels").is_symlink()
 

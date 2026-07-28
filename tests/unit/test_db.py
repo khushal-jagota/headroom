@@ -9,12 +9,24 @@ from typing import Any
 import pytest
 
 from planner.core import db as db_module
-from planner.core.db import BASELINE_REVISION, ChangeSignallingConnection, connect, create_schema
+from planner.core.db import (
+    BASELINE_REVISION,
+    ChangeSignallingConnection,
+    connect,
+    create_schema,
+)
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {
         field: {"value": None, "proposal": None, "user_note": None}
-        for field in ("kickoff", "success", "approach", "plan", "implementation", "closeout")
+        for field in (
+            "kickoff",
+            "success",
+            "approach",
+            "plan",
+            "implementation",
+            "closeout",
+        )
     },
     separators=(",", ":"),
 )
@@ -27,11 +39,10 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "day_midday_reconciliation"
+HEAD_REVISION = "project_priority"
 
-# How many schema objects a current database holds: the previous head's nineteen, plus
-# the schedule and occurrence tables and their two operational indexes.
-CURRENT_SCHEMA_OBJECT_COUNT = 23
+# The new Other-item uniqueness index is the one additional current schema object.
+CURRENT_SCHEMA_OBJECT_COUNT = 24
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -81,14 +92,18 @@ def _table_structure(conn: sqlite3.Connection, table: str) -> dict[str, object]:
 STATUS_CHANGED_AT_COLUMN = ("ticket_status_changed_at", "INTEGER", 1, "0", 0)
 
 
-def _table_structure_before_status_changed_at(structure: dict[str, object]) -> dict[str, object]:
+def _table_structure_before_status_changed_at(
+    structure: dict[str, object],
+) -> dict[str, object]:
     """The tickets structure with the one column this revision adds taken back off."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
     assert columns[-1] == STATUS_CHANGED_AT_COLUMN
     return {**structure, "columns": columns[:-1]}
 
 
-def _with_the_conversation_link_renamed(structure: dict[str, object]) -> dict[str, object]:
+def _with_the_conversation_link_renamed(
+    structure: dict[str, object],
+) -> dict[str, object]:
     """The tickets structure the ladder left, under the one name this build changed.
 
     A rename is a change of shape, so the adoption promise cannot be "identical". It is
@@ -100,6 +115,21 @@ def _with_the_conversation_link_renamed(structure: dict[str, object]) -> dict[st
         for name, *rest in structure["columns"]  # type: ignore[attr-defined]
     ]
     return {**structure, "columns": columns}
+
+
+def _without_direct_sprint_placement(structure: dict[str, object]) -> dict[str, object]:
+    """The adopted Ticket table after the item-only placement migration."""
+    columns = [
+        column
+        for column in structure["columns"]  # type: ignore[attr-defined]
+        if column[0] != "sprint_id"
+    ]
+    foreign_keys = [
+        foreign_key
+        for foreign_key in structure["foreign_keys"]  # type: ignore[attr-defined]
+        if foreign_key[1] != "sprint_id"
+    ]
+    return {**structure, "columns": columns, "foreign_keys": foreign_keys}
 
 
 def _revision(conn: sqlite3.Connection) -> str:
@@ -126,7 +156,14 @@ def _insert_ticket(
         "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, fields, "
         "alias, ticket_status, stage, created_at, updated_at) VALUES (?, ?, 'coding', 'hermes', "
         "'needs_success', ?, ?, ?, ?, 1, 1)",
-        (ticket_id, title, _EMPTY_CODING_FIELDS, f"alias-{ticket_id}", ticket_status, stage),
+        (
+            ticket_id,
+            title,
+            _EMPTY_CODING_FIELDS,
+            f"alias-{ticket_id}",
+            ticket_status,
+            stage,
+        ),
     )
 
 
@@ -170,7 +207,9 @@ def test_connect_applies_busy_timeout_to_initial_connect_and_pragma(
 # --- bringing a database up to the current schema ---------------------------------------
 
 
-def test_fresh_database_is_built_and_marked_at_the_current_revision(tmp_path: Path) -> None:
+def test_fresh_database_is_built_and_marked_at_the_current_revision(
+    tmp_path: Path,
+) -> None:
     conn = connect(str(tmp_path / "fresh.db"))
     create_schema(conn)
 
@@ -197,17 +236,21 @@ def test_reopening_a_current_database_changes_nothing(tmp_path: Path) -> None:
     create_schema(conn)
 
     assert (_schema_objects(conn), _revision(conn)) == before
-    assert conn.execute("SELECT title FROM tickets WHERE id = 't_survivor'").fetchone()[0] == (
-        "Still here"
-    )
+    assert conn.execute("SELECT title FROM tickets WHERE id = 't_survivor'").fetchone()[
+        0
+    ] == ("Still here")
     conn.close()
 
 
-def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_path: Path) -> None:
+def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "old.db"
     _build_pre_alembic_database(db_path)
     conn = connect(str(db_path))
-    _insert_ticket(conn, "t_old", "Written before Alembic", ticket_status="agent_running_step")
+    _insert_ticket(
+        conn, "t_old", "Written before Alembic", ticket_status="agent_running_step"
+    )
     conn.execute(
         "INSERT INTO employee_step_runs (employee_step_id, ticket_id, status, started_at, "
         "updated_at) VALUES ('step_old', 't_old', 'complete', 1, 1)"
@@ -223,10 +266,14 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_pa
     assert _revision(conn) == HEAD_REVISION
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _with_the_conversation_link_renamed(structure_before)
+    ) == _without_direct_sprint_placement(
+        _with_the_conversation_link_renamed(structure_before)
+    )
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     assert tuple(
-        conn.execute("SELECT title, ticket_status FROM tickets WHERE id = 't_old'").fetchone()
+        conn.execute(
+            "SELECT title, ticket_status FROM tickets WHERE id = 't_old'"
+        ).fetchone()
     ) == ("Written before Alembic", "agent")
     # The step run went with its table. Adoption keeps the rows of everything that
     # survives; a table the conversation layer left behind is not one of those.
@@ -234,7 +281,9 @@ def test_database_built_by_the_old_ladder_is_adopted_with_its_rows_intact(tmp_pa
     conn.close()
 
 
-def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path: Path) -> None:
+def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
+    tmp_path: Path,
+) -> None:
     """Statuses a database written before the reshape holds, brought onto the eight."""
     db_path = tmp_path / "pre-reshape.db"
     _build_pre_alembic_database(db_path)
@@ -263,10 +312,13 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path: 
         ("t_live_blocker", "t_paired"),
     ):
         conn.execute(
-            "INSERT INTO links (from_id, to_id, kind) VALUES (?, ?, 'blocks')", (from_id, to_id)
+            "INSERT INTO links (from_id, to_id, kind) VALUES (?, ?, 'blocks')",
+            (from_id, to_id),
         )
     # Two children hanging off tickets, so a rebuild that quietly emptied them is caught.
-    conn.execute("INSERT INTO days (id, created_at, updated_at) VALUES ('day_2026-07-04', 1, 1)")
+    conn.execute(
+        "INSERT INTO days (id, created_at, updated_at) VALUES ('day_2026-07-04', 1, 1)"
+    )
     conn.execute(
         "INSERT INTO day_tickets (day_id, ticket_id, position) "
         "VALUES ('day_2026-07-04', 't_agent', 0)"
@@ -277,7 +329,8 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path: 
 
     assert _revision(conn) == HEAD_REVISION
     assert {
-        str(row[0]): str(row[1]) for row in conn.execute("SELECT id, ticket_status FROM tickets")
+        str(row[0]): str(row[1])
+        for row in conn.execute("SELECT id, ticket_status FROM tickets")
     } == {
         "t_empty": "empty",
         "t_agent": "agent",
@@ -297,16 +350,21 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path: 
     # Two rebuilds dropped and recreated the table the children hang off. With foreign keys
     # enforced those drops would have emptied both of these and said nothing about it.
     assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 1
-    assert conn.execute(
-        "SELECT midday_reconciliation FROM days WHERE id = 'day_2026-07-04'"
-    ).fetchone()[0] == ""
+    assert (
+        conn.execute(
+            "SELECT midday_reconciliation FROM days WHERE id = 'day_2026-07-04'"
+        ).fetchone()[0]
+        == ""
+    )
     assert conn.execute("SELECT count(*) FROM links").fetchone()[0] == 4
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     # Columns, outgoing foreign keys and indexes, including the unique one on alias: a
     # rebuild recreates only what it was handed, and drops the rest without a trace.
     assert _table_structure_before_status_changed_at(
         _table_structure(conn, "tickets")
-    ) == _with_the_conversation_link_renamed(structure_before)
+    ) == _without_direct_sprint_placement(
+        _with_the_conversation_link_renamed(structure_before)
+    )
 
     tickets_sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'"
@@ -319,11 +377,15 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path: 
     for retired in RETIRED_TICKET_STATUSES:
         assert retired not in tickets_sql
     with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("UPDATE tickets SET ticket_status = 'paired_work' WHERE id = 't_paired'")
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'paired_work' WHERE id = 't_paired'"
+        )
     conn.close()
 
 
-def test_database_older_than_the_baseline_is_refused_by_its_version(tmp_path: Path) -> None:
+def test_database_older_than_the_baseline_is_refused_by_its_version(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "older.db"
     _build_pre_alembic_database(db_path, schema_version=34)
     conn = connect(str(db_path))
@@ -350,7 +412,9 @@ def test_database_marked_at_the_baseline_but_holding_another_schema_is_refused(
     conn.close()
 
 
-def test_database_missing_an_index_the_marker_promises_is_refused(tmp_path: Path) -> None:
+def test_database_missing_an_index_the_marker_promises_is_refused(
+    tmp_path: Path,
+) -> None:
     """The old ladder wrote its marker before creating indexes, so the two can disagree."""
     db_path = tmp_path / "no-alias-index.db"
     _build_pre_alembic_database(db_path)
@@ -407,7 +471,9 @@ def test_the_baseline_revision_still_builds_the_schema_it_was_frozen_at(
     built.close()
 
 
-def test_create_schema_refuses_a_connection_it_cannot_migrate_beside(tmp_path: Path) -> None:
+def test_create_schema_refuses_a_connection_it_cannot_migrate_beside(
+    tmp_path: Path,
+) -> None:
     """Migrations run on their own connection, so the caller's must not hold a lock."""
     conn = connect(str(tmp_path / "busy.db"))
     conn.execute("BEGIN IMMEDIATE")
@@ -487,9 +553,7 @@ depends_on = None
 # Rebuilding `tickets` the way the next package will: the table declared in full and
 # handed over as copy_from, because a rebuild that reflects the old table instead loses
 # every CHECK constraint on it.
-_REBUILD_TICKETS = (
-    _FIXTURE_REVISION_HEADER
-    + '''
+_REBUILD_TICKETS = _FIXTURE_REVISION_HEADER + """
 
 def tickets_table() -> Table:
     table = Table(
@@ -545,12 +609,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     pass
-'''
-)
+"""
 
-_FAILING_REVISION = (
-    _FIXTURE_REVISION_HEADER
-    + '''
+_FAILING_REVISION = _FIXTURE_REVISION_HEADER + """
 
 def upgrade() -> None:
     op.execute("CREATE TABLE half_built (value TEXT)")
@@ -559,12 +620,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     pass
-'''
-)
+"""
 
-_ORPHANING_REVISION = (
-    _FIXTURE_REVISION_HEADER
-    + '''
+_ORPHANING_REVISION = _FIXTURE_REVISION_HEADER + """
 
 def upgrade() -> None:
     op.execute("DELETE FROM tickets WHERE id = 't_parent'")
@@ -572,8 +630,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     pass
-'''
-)
+"""
 
 
 def _migration_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -608,7 +665,9 @@ def test_rebuilding_a_table_keeps_its_rows_children_checks_and_indexes(
     )
     structure_before = _table_structure(conn, "tickets")
 
-    (tree / "versions" / "second_revision.py").write_text(_REBUILD_TICKETS, encoding="utf-8")
+    (tree / "versions" / "second_revision.py").write_text(
+        _REBUILD_TICKETS, encoding="utf-8"
+    )
     create_schema(conn)
 
     assert _revision(conn) == "second"
@@ -620,15 +679,25 @@ def test_rebuilding_a_table_keeps_its_rows_children_checks_and_indexes(
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
     assert "at_cap IN ('stop','propose')" in tickets_sql
     with pytest.raises(sqlite3.IntegrityError):
-        conn.execute("UPDATE tickets SET ticket_status = 'retired' WHERE id = 't_parent'")
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'retired' WHERE id = 't_parent'"
+        )
 
     # Dropping and recreating the parent left its own row and its children behind, and the
     # rebuilt table kept every index and outgoing foreign key. Those two are asserted
     # directly: a dropped constraint leaves nothing dangling, so no integrity check for
     # the record can notice one going missing.
-    assert conn.execute("SELECT title FROM tickets WHERE id = 't_parent'").fetchone()[0] == "Parent"
+    assert (
+        conn.execute("SELECT title FROM tickets WHERE id = 't_parent'").fetchone()[0]
+        == "Parent"
+    )
     assert conn.execute("SELECT count(*) FROM employee_step_runs").fetchone()[0] == 1
-    assert conn.execute("SELECT count(*) FROM ticket_conversation_projections").fetchone()[0] == 1
+    assert (
+        conn.execute("SELECT count(*) FROM ticket_conversation_projections").fetchone()[
+            0
+        ]
+        == 1
+    )
     after = _table_structure(conn, "tickets")
     assert after["indexes"] == structure_before["indexes"]
     assert after["foreign_keys"] == structure_before["foreign_keys"]
@@ -645,12 +714,17 @@ def test_a_migration_that_fails_leaves_the_database_as_it_was(
     _insert_ticket(conn, "t_kept", "Kept")
     before = (_schema_objects(conn), _revision(conn))
 
-    (tree / "versions" / "second_revision.py").write_text(_FAILING_REVISION, encoding="utf-8")
+    (tree / "versions" / "second_revision.py").write_text(
+        _FAILING_REVISION, encoding="utf-8"
+    )
     with pytest.raises(RuntimeError, match="gave up halfway"):
         create_schema(conn)
 
     assert (_schema_objects(conn), _revision(conn)) == before
-    assert conn.execute("SELECT title FROM tickets WHERE id = 't_kept'").fetchone()[0] == "Kept"
+    assert (
+        conn.execute("SELECT title FROM tickets WHERE id = 't_kept'").fetchone()[0]
+        == "Kept"
+    )
     conn.close()
 
 
@@ -665,7 +739,9 @@ def test_adopting_a_database_is_undone_when_a_later_migration_fails(
     _insert_ticket(conn, "t_old", "Written before Alembic")
     before = _schema_objects(conn)
 
-    (tree / "versions" / "second_revision.py").write_text(_FAILING_REVISION, encoding="utf-8")
+    (tree / "versions" / "second_revision.py").write_text(
+        _FAILING_REVISION, encoding="utf-8"
+    )
     with pytest.raises(RuntimeError, match="gave up halfway"):
         create_schema(conn)
 
@@ -674,9 +750,9 @@ def test_adopting_a_database_is_undone_when_a_later_migration_fails(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alembic_version'"
     ).fetchone()
     assert _schema_objects(conn) == before
-    assert conn.execute("SELECT title FROM tickets WHERE id = 't_old'").fetchone()[0] == (
-        "Written before Alembic"
-    )
+    assert conn.execute("SELECT title FROM tickets WHERE id = 't_old'").fetchone()[
+        0
+    ] == ("Written before Alembic")
     conn.close()
 
 
@@ -693,12 +769,17 @@ def test_a_migration_that_leaves_a_dangling_reference_is_rolled_back(
         "updated_at) VALUES ('step_child', 't_parent', 'complete', 1, 1)"
     )
 
-    (tree / "versions" / "second_revision.py").write_text(_ORPHANING_REVISION, encoding="utf-8")
+    (tree / "versions" / "second_revision.py").write_text(
+        _ORPHANING_REVISION, encoding="utf-8"
+    )
     with pytest.raises(RuntimeError, match="foreign key violations"):
         create_schema(conn)
 
     assert _revision(conn) == BASELINE_REVISION
-    assert conn.execute("SELECT title FROM tickets WHERE id = 't_parent'").fetchone()[0] == "Parent"
+    assert (
+        conn.execute("SELECT title FROM tickets WHERE id = 't_parent'").fetchone()[0]
+        == "Parent"
+    )
     assert conn.execute("SELECT count(*) FROM employee_step_runs").fetchone()[0] == 1
     conn.close()
 
@@ -706,7 +787,9 @@ def test_a_migration_that_leaves_a_dangling_reference_is_rolled_back(
 # --- the schema the baseline describes ----------------------------------------------------
 
 
-def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(tmp_path: Path) -> None:
+def test_fresh_schema_drops_enumerating_stage_and_ceiling_checks(
+    tmp_path: Path,
+) -> None:
     # t_tt02 retired the two enumerating CHECKs (Stage, ceiling): lifecycle integrity
     # now lives in the registry validation doors, not the DB. The fresh schema no
     # longer rejects a raw out-of-order write at the DB level — the registry is the
@@ -747,13 +830,15 @@ def test_fresh_schema_has_no_ticket_execution_route(tmp_path: Path) -> None:
     columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(tickets)")}
     assert "execution_route" not in columns
     _insert_ticket(conn, "t_assignment", "A")
-    assert conn.execute("SELECT id FROM tickets WHERE id = 't_assignment'").fetchone()[0] == (
-        "t_assignment"
-    )
+    assert conn.execute("SELECT id FROM tickets WHERE id = 't_assignment'").fetchone()[
+        0
+    ] == ("t_assignment")
     conn.close()
 
 
-def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(tmp_path: Path) -> None:
+def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(
+    tmp_path: Path,
+) -> None:
     conn = connect(str(tmp_path / "fresh-blocks-links.db"))
     create_schema(conn)
 
@@ -778,7 +863,9 @@ def test_fresh_schema_links_are_blocks_only_without_belongs_to_index(tmp_path: P
 def test_fresh_ticket_and_chief_launch_snapshots_are_nullable(tmp_path: Path) -> None:
     conn = connect(str(tmp_path / "fresh-configuration.db"))
     create_schema(conn)
-    columns = {str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")}
+    columns = {
+        str(row["name"]): row for row in conn.execute("PRAGMA table_info(tickets)")
+    }
     assert columns["employee_backend"]["notnull"] == 1
     assert columns["employee_backend"]["dflt_value"] is None
     for name in ("employee_launch_model", "employee_launch_reasoning_effort"):
@@ -839,33 +926,50 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(
     assert "execution_route" not in tickets_sql
     assert "khushal" not in tickets_sql
 
-    index_names = {str(row["name"]) for row in conn.execute("PRAGMA index_list(tickets)")}
+    index_names = {
+        str(row["name"]) for row in conn.execute("PRAGMA index_list(tickets)")
+    }
     assert "idx_tickets_stage" in index_names
     assert "idx_tickets_worker_type_stage" in index_names
     composite_cols = [
-        str(row["name"]) for row in conn.execute("PRAGMA index_info(idx_tickets_worker_type_stage)")
+        str(row["name"])
+        for row in conn.execute("PRAGMA index_info(idx_tickets_worker_type_stage)")
     ]
     assert composite_cols == ["worker_type", "stage"]
     conn.close()
 
 
-def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path: Path) -> None:
+def test_create_schema_has_projects_project_ids_and_default_rows(
+    tmp_path: Path,
+) -> None:
     conn = connect(str(tmp_path / "fresh.db"))
 
     create_schema(conn)
 
     assert {
-        row["id"]: (row["name"], row["summary"])
-        for row in conn.execute("SELECT id, name, summary FROM projects ORDER BY id")
+        row["id"]: (row["name"], row["summary"], row["priority"])
+        for row in conn.execute(
+            "SELECT id, name, summary, priority FROM projects ORDER BY id"
+        )
     } == {
-        "project_other": ("Other", ""),
-        "project_tribe": ("Tribe", ""),
-        "project_vylo": ("Vylo", ""),
+        "project_other": ("Other", "", None),
+        "project_tribe": ("Tribe", "", None),
+        "project_vylo": ("Vylo", "", None),
     }
-    project_columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(projects)")}
+    project_columns = {
+        str(row["name"]): row for row in conn.execute("PRAGMA table_info(projects)")
+    }
     assert "summary" in project_columns
+    priority_column = project_columns["priority"]
+    assert (
+        str(priority_column["type"]),
+        int(priority_column["notnull"]),
+        priority_column["dflt_value"],
+    ) == ("TEXT", 0, None)
     for table in ("sprint_items", "tickets", "ideas"):
-        columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+        columns = {
+            str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")
+        }
         assert "project_id" in columns
         assert "project" not in columns
         if table == "sprint_items":
@@ -873,6 +977,7 @@ def test_create_schema_has_projects_project_ids_and_default_rows(tmp_path: Path)
             assert "blocked_by" not in columns
             assert "status_proposal" not in columns
     assert {
-        str(row["name"]) for row in conn.execute("PRAGMA table_info(pending_worker_context)")
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(pending_worker_context)")
     } == {"worker_entity_id", "context_key", "text", "revision"}
     conn.close()

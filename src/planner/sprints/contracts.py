@@ -16,6 +16,11 @@ class ItemStatus(StrEnum):
     done = "done"
 
 
+class SprintItemKind(StrEnum):
+    normal = "normal"
+    other = "other"
+
+
 ITEM_STATUS_ORDER: Final[tuple[ItemStatus, ...]] = (
     ItemStatus.todo,
     ItemStatus.in_progress,
@@ -26,28 +31,39 @@ ITEM_STATUS_ORDER: Final[tuple[ItemStatus, ...]] = (
 # Sprint text-field groups: the kickoff and review sub-fields. Freeze is retired,
 # so these no longer gate writes — they only enumerate the always-editable sprint
 # text fields (reused by _SPRINT_TEXT_FIELDS in data.py + api.py).
-KICKOFF_FIELDS: Final[tuple[str, ...]] = ("limiting_factor", "primary_bet", "supports", "premortem")
+KICKOFF_FIELDS: Final[tuple[str, ...]] = (
+    "limiting_factor",
+    "primary_bet",
+    "supports",
+    "premortem",
+)
 REVIEW_FIELDS: Final[tuple[str, ...]] = (
-    "outcomes", "solo_reflection", "joint_discussion", "updates_to_thinking", "carry_forward",
+    "outcomes",
+    "solo_reflection",
+    "joint_discussion",
+    "updates_to_thinking",
+    "carry_forward",
 )
 # Mid-sprint Review (rev6): three headed markdown sub-fields on the sprint, edited
 # per-field in place. Always-editable, like every sprint text field.
 MID_SPRINT_FIELDS: Final[tuple[str, ...]] = (
-    "mid_where_we_stand", "mid_whats_changed", "mid_what_to_adjust",
+    "mid_where_we_stand",
+    "mid_whats_changed",
+    "mid_what_to_adjust",
 )
 
 
 @dataclass
-class Sprint:                      # §3.1
+class Sprint:  # §3.1
     id: str
     name: str
-    date_start: str                # ISO, inclusive
-    date_end: str                  # ISO, inclusive
+    date_start: str  # ISO, inclusive
+    date_end: str  # ISO, inclusive
     limiting_factor: str
     primary_bet: str
     supports: str
     premortem: str
-    mid_where_we_stand: str = ""            # Mid-sprint Review sub-fields (rev6)
+    mid_where_we_stand: str = ""  # Mid-sprint Review sub-fields (rev6)
     mid_whats_changed: str = ""
     mid_what_to_adjust: str = ""
     outcomes: str = ""
@@ -60,7 +76,7 @@ class Sprint:                      # §3.1
 
 
 @dataclass
-class SprintItem:                  # §3.2
+class SprintItem:  # §3.2
     id: str
     title: str
     body: str
@@ -68,7 +84,8 @@ class SprintItem:                  # §3.2
     deadline: str | None
     project_id: str
     project_name: str
-    sprint_id: str | None          # NULL = backlog/deferred
+    sprint_id: str | None  # NULL = backlog/deferred
+    kind: SprintItemKind = SprintItemKind.normal
     created_at: int = 0
     updated_at: int = 0
 
@@ -90,39 +107,39 @@ class SprintItemDeletion:
 # keys carry the string form and are parsed against the contract enums in api.
 
 
-class CreateItemBody(TypedDict, total=False):     # POST /items
-    title: str                     # default ""
-    project: str | None            # legacy project name; route requires project or project_id
+class CreateItemBody(TypedDict, total=False):  # POST /items
+    title: str  # default ""
+    project: str | None  # legacy project name; route requires project or project_id
     project_id: str | None
-    body: str                      # default ""
-    priority: str | None           # Priority value; default P3
-    deadline: str | None           # ISO date
-    sprint_id: str | None          # null/absent = backlog
+    body: str  # default ""
+    priority: str | None  # Priority value; default P3
+    deadline: str | None  # ISO date
+    sprint_id: str | None  # null/absent = backlog
 
 
-class AddItemTicketBody(TypedDict, total=False):  # POST /items/{id}/tickets
+class MoveItemTicketBody(TypedDict, total=False):  # POST /items/{id}/tickets
     ticket_id: str
 
 
-class CreateSprintBody(TypedDict, total=False):   # POST /sprints
-    name: str                      # default ""
-    date_start: str                # ISO date; required (default "" is rejected)
-    date_end: str                  # ISO date; required (default "" is rejected)
-    limiting_factor: str           # default ""
-    primary_bet: str               # default ""
-    supports: str                  # default ""
-    premortem: str                 # default ""
+class CreateSprintBody(TypedDict, total=False):  # POST /sprints
+    name: str  # default ""
+    date_start: str  # ISO date; required (default "" is rejected)
+    date_end: str  # ISO date; required (default "" is rejected)
+    limiting_factor: str  # default ""
+    primary_bet: str  # default ""
+    supports: str  # default ""
+    premortem: str  # default ""
 
 
-class CreateIdeaBody(TypedDict, total=False):     # POST /ideas
-    title: str                     # route requires it non-empty
-    body: str                      # default ""
-    project: str | None            # legacy project name
+class CreateIdeaBody(TypedDict, total=False):  # POST /ideas
+    title: str  # route requires it non-empty
+    body: str  # default ""
+    project: str | None  # legacy project name
     project_id: str | None
 
 
 @dataclass
-class Idea:                        # §3.5
+class Idea:  # §3.5
     id: str
     title: str
     body: str

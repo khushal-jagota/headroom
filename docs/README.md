@@ -66,8 +66,8 @@ can never take a decision that belongs to the human.
 
 **The surfaces you plan on**
 
-- **Days** (`days.md`) — the daily page, the 5am boundary, and the review-first
-  rollover skill.
+- **Days** (`days.md`) — the daily page, the 5am boundary, and the scheduled
+  `planning-day` and `planning-midday-check` Workers.
 - **Sprints** (`sprints.md`) — the Overview (Kickoff / Mid-sprint / Review) and the
   Tracking list.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — the two catch surfaces.
@@ -84,9 +84,6 @@ can never take a decision that belongs to the human.
 
 - **Recovery from a failed run** — an errored ticket is stuck (see
   `worker-orchestration.md`).
-- **Rollover cutover to internal scheduling** — Panels now has generic internal scheduled
-  Ticket creation, but the planning schedules are not live and the agent-owned rollover
-  path still uses external prompts (see `days.md`).
 
 ---
 

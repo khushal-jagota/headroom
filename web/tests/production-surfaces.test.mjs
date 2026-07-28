@@ -15,6 +15,10 @@ const boardRouteSource = await readFile(
   new URL("../src/routes/BoardRoute.svelte", import.meta.url),
   "utf8",
 );
+const sprintRouteSource = await readFile(
+  new URL("../src/routes/SprintRoute.svelte", import.meta.url),
+  "utf8",
+);
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
 
 // --- the app itself ------------------------------------------------------------------
@@ -70,6 +74,16 @@ assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/human-reply/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
+assert.match(ticketRouteSource, /data-sprint-item-control/);
+assert.match(ticketRouteSource, /\/api\/items\/\$\{encodeURIComponent\(sprintItemId\)\}\/tickets/);
+assert.match(ticketRouteSource, /method: "DELETE"/);
+assert.doesNotMatch(ticketRouteSource, /detail\.sprint_id|body: \{ sprint_id/);
+
+// Sprint tracking has only Sprint Item groups. Machine-recognized Other items remain
+// visible as fallbacks instead of disappearing into the old loose-Ticket section.
+assert.match(sprintRouteSource, /data-item-kind=\{item\.kind\}/);
+assert.match(sprintRouteSource, /item\.kind === "other"/);
+assert.doesNotMatch(sprintRouteSource, /loose_tickets|Loose tickets|data-loose/);
 
 // --- the Workspace row mark -------------------------------------------------------------
 

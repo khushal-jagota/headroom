@@ -7,38 +7,26 @@
    * find the reply. Opened, the output is capped and scrolls in place, so no single row
    * can push the rest of the conversation off the screen.
    */
-  import { stepIconPaths } from "../../lib/conversation/stepIcons";
-  import {
-    lineShowsWholeDetail,
-    readableDetail,
-    toolCallLine,
-    toolGlyphKind
-  } from "../../lib/conversation/transcript";
+  import { presentToolCall } from "../../lib/conversation/toolCallPresentation";
   import type { ToolCallRow } from "../../lib/conversation/transcript";
 
   let { row }: { row: ToolCallRow } = $props();
 
   let open = $state(false);
 
-  let glyph = $derived(toolGlyphKind(row.toolKind));
-  let iconPaths = $derived(stepIconPaths(glyph as never));
-  // What happened, and which call it was. Both are read out of what the row already
-  // holds, so a conversation recorded before this existed reads the same way.
-  let line = $derived(toolCallLine(row));
-  let detail = $derived(readableDetail(row.progress ?? row.detail));
-  let expandable = $derived(detail !== null && !lineShowsWholeDetail(line, detail));
+  let presentation = $derived(presentToolCall(row));
   let regionId = $derived(`c2-tool-${row.toolCallId}`);
 </script>
 
 {#snippet body()}
   <span class="acp-step-icon" aria-hidden="true">
     <svg viewBox="0 0 24 24">
-      {#each iconPaths as path}<path d={path} />{/each}
+      {#each presentation.iconPaths as path}<path d={path} />{/each}
     </svg>
   </span>
-  <span class="acp-step-title">{line.title}</span>
-  {#if line.summary}
-    <span class="c2-tool-summary" data-conversation-tool-summary>{line.summary}</span>
+  <span class="acp-step-title">{presentation.title}</span>
+  {#if presentation.summary}
+    <span class="c2-tool-summary" data-conversation-tool-summary>{presentation.summary}</span>
   {/if}
   {#if row.status === "completed"}
     <span class="acp-step-mark acp-mark-ok" role="img" aria-label="Completed">✓</span>
@@ -49,7 +37,7 @@
   {/if}
 {/snippet}
 
-{#if expandable}
+{#if presentation.canExpand}
   <!-- The line and what it opens onto are one thing, not two. The wash sits out here so
        it covers both, and what opens sits inside the same shape rather than arriving as a
        second box below it. -->
@@ -66,7 +54,7 @@
     >{@render body()}</button>
     {#if open}
       <div id={regionId} class="c2-tool-body">
-        <pre class="c2-tool-output" data-conversation-tool-output>{detail}</pre>
+        <pre class="c2-tool-output" data-conversation-tool-output>{presentation.detail}</pre>
       </div>
     {/if}
   </div>

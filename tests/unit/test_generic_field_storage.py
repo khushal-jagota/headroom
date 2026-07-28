@@ -169,7 +169,9 @@ def test_coding_stored_fields_bytes_after_drive_are_golden(
 # =====================================================================
 
 
-def test_generic_storage_round_trip_and_copy_on_write(probe_registry: WorkerTypeDefinition) -> None:
+def test_generic_storage_round_trip_and_copy_on_write(
+    probe_registry: WorkerTypeDefinition,
+) -> None:
     f = TicketFields.empty(_PROBE_FIELD_IDS)
     f2 = fields_codec.with_slot(f, _FA, FieldSlot(value="A"))
 
@@ -213,12 +215,16 @@ def test_boundary_lifted_and_require_coding_field_gone(
     # STRICT-on-missing-declared preserved.
     missing = {k: v for k, v in payload.items() if k != _FB}
     with pytest.raises(PlannerError) as exc:
-        fields_codec.declared_fields_from_json(json.dumps(missing), probe_registry.field_ids())
+        fields_codec.declared_fields_from_json(
+            json.dumps(missing), probe_registry.field_ids()
+        )
     assert exc.value.code == ErrorCode.validation
 
     # LENIENT-on-extra preserved (a top-level "result" key is ignored).
     extra = {**payload, "result": "legacy"}
-    ok = fields_codec.declared_fields_from_json(json.dumps(extra), probe_registry.field_ids())
+    ok = fields_codec.declared_fields_from_json(
+        json.dumps(extra), probe_registry.field_ids()
+    )
     assert fields_codec.get_slot(ok, _FA).value == "a"
 
     # the coding-bound boundary function no longer exists.
@@ -306,7 +312,10 @@ def test_resolve_scope_distinguishes_unknown_from_too_early_coding_payloads() ->
         )
     assert too_early.value.code == ErrorCode.scope_invalid
     assert too_early.value.message == "next_ceiling must be at or beyond the new stage"
-    assert too_early.value.detail == {"next_ceiling": "needs_approach", "new_stage": "needs_plan"}
+    assert too_early.value.detail == {
+        "next_ceiling": "needs_approach",
+        "new_stage": "needs_plan",
+    }
 
 
 # =====================================================================
@@ -359,7 +368,9 @@ def test_probe_data_layer_drive_to_done(
     )
     assert t.stage == _A
     assert t.ceiling == _B
-    assert fields_codec.get_slot(t.fields, "kickoff").value == ""  # default kickoff note
+    assert (
+        fields_codec.get_slot(t.fields, "kickoff").value == ""
+    )  # default kickoff note
 
     # --- propose alpha: ceiling (_B) is BEYOND state (_A) -> AUTO-ACCEPTS + advances.
     t = tickets_data.file_proposal(
@@ -373,14 +384,22 @@ def test_probe_data_layer_drive_to_done(
     assert t.ticket_status == TicketStatus.empty
 
     # --- at needs_beta (ceiling _B ==): propose beta -> PARKS (value None, proposal set).
-    t = tickets_data.file_proposal(tmp_db, tid, field=_FB, body="beta v1", actor="agent", now=now)
+    t = tickets_data.file_proposal(
+        tmp_db, tid, field=_FB, body="beta v1", actor="agent", now=now
+    )
     beta = fields_codec.get_slot(t.fields, _FB)
-    assert beta.value is None and beta.proposal is not None and beta.proposal.body == "beta v1"
+    assert (
+        beta.value is None
+        and beta.proposal is not None
+        and beta.proposal.body == "beta v1"
+    )
     assert t.stage == _B
     assert t.ticket_status == TicketStatus.awaiting_approval
 
     # --- propose beta AGAIN -> SUPERSEDES the first.
-    t = tickets_data.file_proposal(tmp_db, tid, field=_FB, body="beta v2", actor="agent", now=now)
+    t = tickets_data.file_proposal(
+        tmp_db, tid, field=_FB, body="beta v2", actor="agent", now=now
+    )
     beta_v2 = fields_codec.get_slot(t.fields, _FB)
     assert beta_v2.proposal is not None and beta_v2.proposal.body == "beta v2"
 
@@ -444,13 +463,21 @@ def test_probe_return_for_revision_clears_parked_proposal(
     )
     assert t.stage == _A
     # park an alpha proposal, then attach a worker session (return needs an existing one).
-    tickets_data.file_proposal(tmp_db, tid, field=_FA, body="alpha draft", actor="agent", now=now)
-    tmp_db.execute("UPDATE tickets SET conversation_id = ? WHERE id = ?", ("probe-sess", tid))
+    tickets_data.file_proposal(
+        tmp_db, tid, field=_FA, body="alpha draft", actor="agent", now=now
+    )
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id = ? WHERE id = ?", ("probe-sess", tid)
+    )
     tmp_db.commit()
 
-    tickets_data.return_for_revision(tmp_db, tid, message="please revise", actor="human", now=now)
+    tickets_data.return_for_revision(
+        tmp_db, tid, message="please revise", actor="human", now=now
+    )
     reloaded = tickets_data.read_ticket(tmp_db, tid)
-    assert fields_codec.get_slot(reloaded.fields, _FA).proposal is None  # parked proposal cleared
+    assert (
+        fields_codec.get_slot(reloaded.fields, _FA).proposal is None
+    )  # parked proposal cleared
     assert reloaded.stage == _A
 
 
@@ -497,9 +524,16 @@ def test_probe_at_cap_stop_error_payload(
     )
     assert t.stage == _A and t.ceiling == _A and t.at_cap == AtCap.stop
     with pytest.raises(PlannerError) as exc:
-        tickets_data.file_proposal(tmp_db, tid, field=_FA, body="blocked", actor="agent", now=now)
+        tickets_data.file_proposal(
+            tmp_db, tid, field=_FA, body="blocked", actor="agent", now=now
+        )
     assert exc.value.code == ErrorCode.at_cap_stop
-    assert exc.value.detail == {"gating_field": _FA, "stage": _A, "ceiling": _A, "at_cap": "stop"}
+    assert exc.value.detail == {
+        "gating_field": _FA,
+        "stage": _A,
+        "ceiling": _A,
+        "at_cap": "stop",
+    }
 
 
 def test_probe_drive_to_dropped(
@@ -535,7 +569,9 @@ def test_probe_survives_create_and_reload(
     # _row_to_ticket must NOT raise (the str(row) fix; str("needs_alpha") would ValueError).
     ticket = tickets_data.read_ticket(tmp_db, tid)
     assert ticket.stage == "needs_kickoff"
-    assert ticket.ceiling == "needs_kickoff"  # leading default ceiling (still a bare str)
+    assert (
+        ticket.ceiling == "needs_kickoff"
+    )  # leading default ceiling (still a bare str)
     assert type(ticket.stage) is str
     assert type(ticket.ceiling) is str
 
@@ -567,7 +603,9 @@ def test_coding_bookend_comparisons_survive_str_flip(
         at_cap=AtCap.propose,
     )
     # a state jump reaches needs_approach; its bookend guards still fire on a str state.
-    t = tickets_data.set_stage(tmp_db, t.id, new_stage="needs_approach", actor="human", now=now)
+    t = tickets_data.set_stage(
+        tmp_db, t.id, new_stage="needs_approach", actor="human", now=now
+    )
     assert t.stage == "needs_approach"
     assert t.stage == "needs_approach"
 
@@ -596,7 +634,7 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             project_id=None,
             project_name=None,
             sprint_item_id=None,
-            sprint_id=None,
+            effective_sprint_id=None,
             recap="",
             ceiling="needs_alpha",
             at_cap=AtCap.propose,

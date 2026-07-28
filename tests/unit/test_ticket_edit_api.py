@@ -31,7 +31,9 @@ from planner.tickets.contracts import (
 from planner.worker_context import data as worker_context_data
 
 
-def _make_app(tmp_path: Path, *, trace: list[str] | None = None) -> tuple[FastAPI, Path]:
+def _make_app(
+    tmp_path: Path, *, trace: list[str] | None = None
+) -> tuple[FastAPI, Path]:
     db_path = tmp_path / "planning-test.db"
     boot = connect(str(db_path))
     create_schema(boot)
@@ -125,7 +127,7 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
                 ticket.priority.value,
                 ticket.deadline,
                 ticket.project_id,
-                ticket.sprint_id,
+                ticket.effective_sprint_id,
                 ticket.employee_backend,
                 ticket.employee_launch_model,
                 ticket.employee_launch_reasoning_effort,
@@ -168,8 +170,8 @@ def test_ticket_creation_copies_worker_type_configuration_once(
             json={
                 "title": "Override backend",
                 "worker_type": "probe",
-                "employee_backend": "hermes",
-                "employee_launch_model": "hermes-model",
+                "employee_backend": "claude",
+                "employee_launch_model": "claude-model",
             },
         )
         # A model named on its own stays on the type's backend and replaces the model
@@ -202,17 +204,17 @@ def test_ticket_creation_copies_worker_type_configuration_once(
             json={
                 "title": "Override with nothing to run",
                 "worker_type": "probe",
-                "employee_backend": "hermes",
+                "employee_backend": "claude",
             },
         )
 
     assert defaulted.status_code == 200
-    assert defaulted.json()["employee_backend"] == "claude"
+    assert defaulted.json()["employee_backend"] == "hermes"
     assert defaulted.json()["employee_launch_model"] == "probe-model"
     assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
     assert overridden.status_code == 200
-    assert overridden.json()["employee_backend"] == "hermes"
-    assert overridden.json()["employee_launch_model"] == "hermes-model"
+    assert overridden.json()["employee_backend"] == "claude"
+    assert overridden.json()["employee_launch_model"] == "claude-model"
     # The reasoning effort belonged to the type's own model, so it does not come along.
     assert overridden.json()["employee_launch_reasoning_effort"] is None
     assert rejected.status_code == 400
@@ -220,12 +222,15 @@ def test_ticket_creation_copies_worker_type_configuration_once(
     assert unnamed.status_code == 400
     assert unnamed.json()["error"]["code"] == "validation"
     assert model_only.status_code == 200
-    assert model_only.json()["employee_backend"] == "claude"
+    assert model_only.json()["employee_backend"] == "hermes"
     assert model_only.json()["employee_launch_model"] == "probe-other"
     assert model_only.json()["employee_launch_reasoning_effort"] is None
     check = connect(str(db_path))
     try:
-        assert check.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
+        assert (
+            check.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
+            == tickets_before
+        )
     finally:
         check.close()
 
@@ -245,25 +250,89 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
         defaulted = client.post(
             "/api/tickets", json={"title": "Default placement", "worker_type": "coding"}
         )
+        reused = client.post(
+            "/api/tickets", json={"title": "Same fallback", "worker_type": "coding"}
+        )
+        project_fallback = client.post(
+            "/api/tickets",
+            json={
+                "title": "Project fallback",
+                "worker_type": "coding",
+                "project_id": "project_vylo",
+            },
+        )
         explicit_backlog = client.post(
             "/api/tickets",
             json={
                 "title": "Explicit backlog",
                 "worker_type": "coding",
-                "sprint_id": None,
+                "sprint_item_id": None,
             },
         )
 
-    assert defaulted.status_code == explicit_backlog.status_code == 200
-    assert defaulted.json()["sprint_id"] == "sp_edit"
-    assert explicit_backlog.json()["sprint_id"] is None
+    assert (
+        defaulted.status_code
+        == reused.status_code
+        == project_fallback.status_code
+        == explicit_backlog.status_code
+        == 200
+    )
+    assert defaulted.json()["effective_sprint_id"] == "sp_edit"
+    assert defaulted.json()["sprint_item_id"] is not None
+    assert reused.json()["sprint_item_id"] == defaulted.json()["sprint_item_id"]
+    assert project_fallback.json()["project_id"] == "project_vylo"
+    assert project_fallback.json()["effective_sprint_id"] == "sp_edit"
+    assert explicit_backlog.json()["effective_sprint_id"] is None
+
+    conn = connect(str(db_path))
+    try:
+        fallback = conn.execute(
+            "SELECT kind, project_id FROM sprint_items WHERE id = ?",
+            (defaulted.json()["sprint_item_id"],),
+        ).fetchone()
+        assert fallback is not None
+        assert tuple(fallback) == ("other", "project_other")
+    finally:
+        conn.close()
     with TestClient(app) as client:
-        assert client.get(f"/api/tickets/{defaulted.json()['id']}").json()["day_ids"] == [
-            "day_2026-07-10"
-        ]
-        assert client.get(f"/api/tickets/{explicit_backlog.json()['id']}").json()["day_ids"] == [
-            "day_2026-07-10"
-        ]
+        assert client.get(f"/api/tickets/{defaulted.json()['id']}").json()[
+            "day_ids"
+        ] == ["day_2026-07-10"]
+        assert client.get(f"/api/tickets/{explicit_backlog.json()['id']}").json()[
+            "day_ids"
+        ] == ["day_2026-07-10"]
+
+
+def test_failed_creation_does_not_strand_a_fallback_item(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    conn = connect(str(db_path))
+    try:
+        _seed_sprint(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/tickets",
+            json={
+                "title": "Must not land",
+                "worker_type": "coding",
+                "blocked_by_ticket_ids": ["t_missing"],
+            },
+        )
+
+    assert response.status_code == 400
+    conn = connect(str(db_path))
+    try:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM sprint_items WHERE kind = 'other'"
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        conn.close()
 
 
 def test_employee_configuration_endpoint_allows_pristine_statuses(
@@ -280,24 +349,24 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
     with TestClient(app) as client:
         awaiting = client.put(
             f"/api/tickets/{awaiting_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model"),
+            json=_employee_configuration_body("claude", "claude-model"),
         )
         empty = client.put(
             f"/api/tickets/{empty_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model"),
+            json=_employee_configuration_body("claude", "claude-model"),
         )
 
     assert awaiting.status_code == empty.status_code == 200
-    assert awaiting.json()["employee_backend"] == empty.json()["employee_backend"] == "hermes"
+    assert awaiting.json()["employee_backend"] == empty.json()["employee_backend"] == "claude"
     assert awaiting.json()["employee_configuration_editable"] is True
     assert empty.json()["employee_configuration_editable"] is True
     check = connect(str(db_path))
     try:
         for ticket_id in (awaiting_id, empty_id):
             stored = tickets_data.read_ticket(check, ticket_id)
-            assert stored.employee_backend == "hermes"
+            assert stored.employee_backend == "claude"
             # The new backend's model came with it, so the Ticket says what it runs on.
-            assert stored.employee_launch_model == "hermes-model"
+            assert stored.employee_launch_model == "claude-model"
             assert stored.employee_launch_reasoning_effort is None
     finally:
         check.close()
@@ -345,12 +414,16 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
     probe_runtime: None,
 ) -> None:
     class BackendSnapshots:
-        async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
+        async def snapshot(
+            self, backend_key: str, *, refresh: bool = False
+        ) -> BackendSnapshot:
             del refresh
             return _backend_snapshot(
                 backend_key,
                 (
-                    BackendModel(model_id="probe-a", reasoning_effort_options=("low", "high")),
+                    BackendModel(
+                        model_id="probe-a", reasoning_effort_options=("low", "high")
+                    ),
                     BackendModel(model_id="probe-b", reasoning_effort_options=("low",)),
                 ),
                 ("low", "high"),
@@ -365,19 +438,19 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
         selected = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "probe-a", "high"),
+            json=_employee_configuration_body("hermes", "probe-a", "high"),
         )
         model_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "probe-b", "high"),
+            json=_employee_configuration_body("hermes", "probe-b", "high"),
         )
         backend_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model", "medium"),
+            json=_employee_configuration_body("claude", "claude-model", "medium"),
         )
         switched_back = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "probe-a", "high"),
+            json=_employee_configuration_body("hermes", "probe-a", "high"),
         )
 
     assert selected.status_code == 200
@@ -400,13 +473,13 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         backend_changed.json()["employee_backend"],
         backend_changed.json()["employee_launch_model"],
         backend_changed.json()["employee_launch_reasoning_effort"],
-    ) == ("hermes", "hermes-model", "medium")
+    ) == ("claude", "claude-model", "medium")
     assert switched_back.status_code == 200
     assert (
         switched_back.json()["employee_backend"],
         switched_back.json()["employee_launch_model"],
         switched_back.json()["employee_launch_reasoning_effort"],
-    ) == ("claude", "probe-a", "high")
+    ) == ("hermes", "probe-a", "high")
 
 
 def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(
@@ -414,7 +487,9 @@ def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(
     probe_runtime: None,
 ) -> None:
     class BackendSnapshots:
-        async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
+        async def snapshot(
+            self, backend_key: str, *, refresh: bool = False
+        ) -> BackendSnapshot:
             del refresh
             return _backend_snapshot(
                 backend_key,
@@ -429,7 +504,7 @@ def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(
         app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "invented-model", None),
+            json=_employee_configuration_body("hermes", "invented-model", None),
         )
 
     assert response.status_code == 400
@@ -442,7 +517,9 @@ def test_employee_configuration_backend_probe_failure_is_a_retryable_product_err
     probe_runtime: None,
 ) -> None:
     class FailingBackendSnapshots:
-        async def snapshot(self, backend_key: str, *, refresh: bool = False) -> BackendSnapshot:
+        async def snapshot(
+            self, backend_key: str, *, refresh: bool = False
+        ) -> BackendSnapshot:
             del backend_key, refresh
             raise RuntimeError("private adapter failure")
 
@@ -450,10 +527,12 @@ def test_employee_configuration_backend_probe_failure_is_a_retryable_product_err
     ticket_id = _create_pristine_ticket(db_path)
 
     with TestClient(app) as client:
-        app.state.conversation = SimpleNamespace(backend_snapshots=FailingBackendSnapshots())
+        app.state.conversation = SimpleNamespace(
+            backend_snapshots=FailingBackendSnapshots()
+        )
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude", "probe-a", "high"),
+            json=_employee_configuration_body("hermes", "probe-a", "high"),
         )
 
     assert response.status_code == 503
@@ -479,7 +558,7 @@ def test_employee_configuration_noop_after_freeze_emits_nothing(
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json=_employee_configuration_body(
-                "claude", "probe-model", "probe-high"
+                "hermes", "probe-model", "probe-high"
             ),
         )
 
@@ -514,7 +593,7 @@ def test_employee_configuration_change_rejects_every_pristine_freeze_boundary(
     with TestClient(app) as client:
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model"),
+            json=_employee_configuration_body("claude", "claude-model"),
         )
 
     assert response.status_code == 409
@@ -541,7 +620,7 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_body(
     with TestClient(app) as client:
         bound = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "hermes-model"),
+            json=_employee_configuration_body("claude", "claude-model"),
         )
         indirect = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -600,7 +679,9 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_body(
     assert _snapshot(db_path, ticket_id) == before
 
 
-def test_execution_route_is_absent_and_patch_rejects_it_as_unknown(tmp_path: Path) -> None:
+def test_execution_route_is_absent_and_patch_rejects_it_as_unknown(
+    tmp_path: Path,
+) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _create_ticket(db_path)
     before = _snapshot(db_path, ticket_id)
@@ -625,7 +706,7 @@ def test_execution_route_is_absent_and_patch_rejects_it_as_unknown(tmp_path: Pat
     assert _snapshot(db_path, ticket_id) == before
 
 
-def test_compound_patch_rolls_back_when_late_sprint_validation_fails(
+def test_compound_patch_rejects_removed_direct_sprint_field_atomically(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
@@ -638,11 +719,11 @@ def test_compound_patch_rolls_back_when_late_sprint_validation_fails(
             json={"title": "Must not land", "sprint_id": "sp_missing"},
         )
 
-    assert response.status_code == 404
+    assert response.status_code == 400
     assert response.json()["error"] == {
-        "code": "not_found",
-        "message": "sprint not found",
-        "detail": {"sprint_id": "sp_missing"},
+        "code": "validation",
+        "message": "unknown ticket field",
+        "detail": {"field": "sprint_id"},
     }
     assert _snapshot(db_path, ticket_id) == before
 
@@ -664,7 +745,6 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
         response = client.patch(
             f"/api/tickets/{ticket_id}",
             json={
-                "sprint_id": "sp_edit",
                 "project": "Vylo",
                 "deadline": "2026-08-01",
                 "priority": "P1",
@@ -677,7 +757,7 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
     assert response.json()["priority"] == "P1"
     assert response.json()["deadline"] == "2026-08-01"
     assert response.json()["project_id"] == "project_vylo"
-    assert response.json()["sprint_id"] == "sp_edit"
+    assert response.json()["effective_sprint_id"] is None
     assert before["values"] != _snapshot(db_path, ticket_id)["values"]
     assert _snapshot(db_path, ticket_id)["context"] == (
         (
@@ -687,7 +767,9 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
         ),
     )
     transaction_statements = [statement.strip() for statement in trace]
-    assert sum(statement == "BEGIN IMMEDIATE" for statement in transaction_statements) == 1
+    assert (
+        sum(statement == "BEGIN IMMEDIATE" for statement in transaction_statements) == 1
+    )
     ticket_updates = [
         statement
         for statement in transaction_statements
@@ -699,9 +781,6 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
     assert any(
         "SELECT 1 FROM PROJECTS WHERE ID" in statement.upper()
         for statement in statements_under_lock
-    )
-    assert any(
-        "SELECT 1 FROM SPRINTS WHERE ID" in statement.upper() for statement in statements_under_lock
     )
 
 
@@ -745,7 +824,6 @@ def test_patch_of_existing_non_null_values_is_a_true_noop(tmp_path: Path) -> Non
         priority=Priority.P1,
         deadline="2026-08-01",
         project_id="project_vylo",
-        sprint_id="sp_edit",
     )
     before = _snapshot(db_path, ticket_id)
 
@@ -758,7 +836,6 @@ def test_patch_of_existing_non_null_values_is_a_true_noop(tmp_path: Path) -> Non
                 "deadline": "2026-08-01",
                 "project": "vylo",
                 "project_id": "project_vylo",
-                "sprint_id": "sp_edit",
             },
         )
 
@@ -774,7 +851,7 @@ def test_patch_of_existing_null_values_is_a_true_noop(tmp_path: Path) -> None:
     with TestClient(app) as client:
         response = client.patch(
             f"/api/tickets/{ticket_id}",
-            json={"deadline": None, "project": None, "project_id": None, "sprint_id": None},
+            json={"deadline": None, "project": None, "project_id": None},
         )
 
     assert response.status_code == 200, response.json()
@@ -790,7 +867,9 @@ def test_project_selectors_keep_their_existing_success_contract(tmp_path: Path) 
         assert name.json()["project_id"] == "project_vylo"
 
         id_id = _create_ticket(db_path)
-        by_id = client.patch(f"/api/tickets/{id_id}", json={"project_id": "project_vylo"})
+        by_id = client.patch(
+            f"/api/tickets/{id_id}", json={"project_id": "project_vylo"}
+        )
         assert by_id.status_code == 200, by_id.json()
         assert by_id.json()["project"] == "Vylo"
 
@@ -827,7 +906,11 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
 
     cases: tuple[tuple[dict[str, Any], int, dict[str, Any], dict[str, str]], ...] = (
         (
-            {"title": "Must not land", "project": "Other", "project_id": "project_vylo"},
+            {
+                "title": "Must not land",
+                "project": "Other",
+                "project_id": "project_vylo",
+            },
             400,
             {
                 "code": "validation",
@@ -858,11 +941,11 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
         ),
         (
             {"title": "Must not land", "sprint_id": "sp_missing"},
-            404,
+            400,
             {
-                "code": "not_found",
-                "message": "sprint not found",
-                "detail": {"sprint_id": "sp_missing"},
+                "code": "validation",
+                "message": "unknown ticket field",
+                "detail": {"field": "sprint_id"},
             },
             {},
         ),
@@ -916,9 +999,9 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
             {"title": "Must not land", "sprint_id": "sp_edit"},
             400,
             {
-                "code": "sprint_derived",
-                "message": "sprint_id is derived from the parent item",
-                "detail": {"sprint_item_id": "si_edit"},
+                "code": "validation",
+                "message": "unknown ticket field",
+                "detail": {"field": "sprint_id"},
             },
             {"sprint_item_id": "si_edit"},
         ),
@@ -926,9 +1009,9 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
             {"sprint_id": None},
             400,
             {
-                "code": "sprint_derived",
-                "message": "sprint_id is derived from the parent item",
-                "detail": {"sprint_item_id": "si_edit"},
+                "code": "validation",
+                "message": "unknown ticket field",
+                "detail": {"field": "sprint_id"},
             },
             {"sprint_item_id": "si_edit"},
         ),
@@ -937,8 +1020,6 @@ def test_rejected_compound_edits_preserve_existing_errors_and_have_no_effect(
     with TestClient(app) as client:
         for body, status, error, create_values in cases:
             ticket_id = _create_ticket(db_path, **create_values)
-            if error["code"] == "sprint_derived":
-                error["detail"]["ticket_id"] = ticket_id
             before = _snapshot(db_path, ticket_id)
             response = client.patch(f"/api/tickets/{ticket_id}", json=body)
             assert response.status_code == status, (body, response.json())

@@ -61,6 +61,7 @@ def cli_app(
     app = create_app(config, build_clock(config), lambda: connect(str(db_path)))
 
     with TestClient(app) as client:
+
         def request(
             method: str,
             url: str,
@@ -92,7 +93,9 @@ def cli_app(
                 env["PLAN_TICKET_ID"] = ticket_id
             if actor is not None:
                 env["PLAN_ACTOR"] = actor
-            result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
+            result = CliRunner().invoke(
+                cli_main, [*args, "--json"], input=stdin, env=env
+            )
             assert result.exit_code == 0, result.output
             return cast(JsonObject, json.loads(result.stdout))
 
@@ -100,7 +103,9 @@ def cli_app(
 
 
 @pytest.fixture
-def server(cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper]) -> ServerHandle:
+def server(
+    cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper],
+) -> ServerHandle:
     return cli_app[0]
 
 
@@ -112,7 +117,9 @@ def cli(
 
 
 @pytest.fixture
-def api(cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper]) -> ApiHelper:
+def api(
+    cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper],
+) -> ApiHelper:
     return cli_app[2]
 
 
@@ -277,12 +284,30 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
         "08:30",
         "--kickoff-note",
         "Gather first",
+        "--project",
+        "Vylo",
     )
     assert created["cadence"] == "every_planning_day"
     assert created["enabled"] is True
+    assert created["placement_mode"] == "current_sprint"
 
     listed = cli(server, "schedule", "list")
     assert [item["id"] for item in listed["schedules"]] == [created["id"]]
+
+    backlog = cli(
+        server,
+        "schedule",
+        "create",
+        "--title",
+        "Backlog planning",
+        "--worker-type",
+        "coding",
+        "--time",
+        "09:00",
+        "--backlog",
+    )
+    assert backlog["placement_mode"] == "backlog"
+    assert backlog["sprint_item_id"] is None
 
     updated = cli(
         server,
@@ -294,6 +319,39 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
         "false",
     )
     assert updated["enabled"] is False
+    item_id = cli(
+        server,
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        "Scheduled target",
+        "--project",
+        "Vylo",
+    )["id"]
+    exact = cli(
+        server,
+        "schedule",
+        "set",
+        created["id"],
+        "sprint-item",
+        "--value",
+        item_id,
+    )
+    assert exact["placement_mode"] == "sprint_item"
+    assert exact["sprint_item_id"] == item_id
+    assert exact["project_id"] is None
+    updated = cli(
+        server,
+        "schedule",
+        "set",
+        created["id"],
+        "placement",
+        "--value",
+        "backlog",
+    )
+    assert updated["placement_mode"] == "backlog"
+    assert updated["project_id"] == "project_vylo"
 
     shown = cli(server, "schedule", "show", created["id"])
     assert shown["occurrences"] == []
@@ -304,7 +362,9 @@ def test_ticket_create_sprint_item_parents_it(
     server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
 ) -> None:
     # --item -> --sprint-item: the option renamed; still parents the ticket under the item.
-    iid = cli(server, "sprint", "item", "create", "--title", "Item A", "--project", "Vylo")["id"]
+    iid = cli(
+        server, "sprint", "item", "create", "--title", "Item A", "--project", "Vylo"
+    )["id"]
     tid = cli(
         server,
         "ticket",
@@ -318,17 +378,21 @@ def test_ticket_create_sprint_item_parents_it(
     )["id"]
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["sprint_item_id"] == iid
-    assert [t["id"] for t in cli(server, "ticket", "list", "--sprint-item", iid)["tickets"]] == [
-        tid
-    ]
+    assert [
+        t["id"] for t in cli(server, "ticket", "list", "--sprint-item", iid)["tickets"]
+    ] == [tid]
 
 
 def test_ticket_list_day_filter(
     server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
 ) -> None:
     # `ticket list --day today` scopes to the day's board (day_tickets join).
-    t_on = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "On today")["id"]
-    t_off = cli(server, "ticket", "create", "--worker-type", "coding", "--title", "Off day")["id"]
+    t_on = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "On today"
+    )["id"]
+    t_off = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", "Off day"
+    )["id"]
     cli(server, "day", "add-ticket", t_on, "--date", "today")  # add t_on to today's day
     cli(server, "day", "remove-ticket", t_off, "--date", "today")
 
@@ -338,7 +402,9 @@ def test_ticket_list_day_filter(
     assert t_off not in ids
 
     # The fake clock's planning date is 2026-07-04: an ISO --day gives the same set.
-    dated = [t["id"] for t in cli(server, "ticket", "list", "--day", "2026-07-04")["tickets"]]
+    dated = [
+        t["id"] for t in cli(server, "ticket", "list", "--day", "2026-07-04")["tickets"]
+    ]
     assert dated == ids
 
     # the unscoped list still returns both.
@@ -349,12 +415,29 @@ def test_ticket_list_day_filter(
 def test_project_create_list_and_project_id_item_filter(
     server: ServerHandle, cli: Callable[..., JsonObject]
 ) -> None:
-    project = cli(server, "project", "create", "--name", "Alpha One")
+    missing_priority = CliRunner().invoke(
+        cli_main, ["project", "create", "--name", "Missing Priority", "--json"]
+    )
+    assert missing_priority.exit_code == 2
+    assert "Missing option '--priority'" in missing_priority.output
+
+    project = cli(
+        server,
+        "project",
+        "create",
+        "--name",
+        "Alpha One",
+        "--priority",
+        "P1",
+    )
     assert project["id"] == "project_alpha_one"
     assert project["name"] == "Alpha One"
+    assert project["priority"] == "P1"
 
     listed_projects = cli(server, "project", "list")
-    assert project["id"] in {entry["id"] for entry in listed_projects["projects"]}
+    listed_by_id = {entry["id"]: entry for entry in listed_projects["projects"]}
+    assert listed_by_id[project["id"]]["priority"] == "P1"
+    assert listed_by_id["project_other"]["priority"] is None
 
     item = cli(
         server,
@@ -393,7 +476,9 @@ def test_ticket_approval_copy_and_worker_note_shape(
     )["id"]
     created = api.get(server, f"/api/tickets/{tid}")
     assert created["stage"] == "needs_kickoff"
-    assert created["fields"]["kickoff"]["proposal"]["body"] == "intake context from user"
+    assert (
+        created["fields"]["kickoff"]["proposal"]["body"] == "intake context from user"
+    )
 
     accepted_kickoff = cli(
         server,
@@ -424,11 +509,22 @@ def test_ticket_approval_copy_and_worker_note_shape(
         ticket_id=tid,
         stdin="success body",
     )
-    approved = cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
+    approved = cli(
+        server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose"
+    )
     assert approved["stage"] == "needs_approach"
     assert approved["fields"]["success"]["value"] == "success body"
 
-    cli(server, "worker", "note", tid, "approach", "--body-file", "-", stdin="approach note")
+    cli(
+        server,
+        "worker",
+        "note",
+        tid,
+        "approach",
+        "--body-file",
+        "-",
+        stdin="approach note",
+    )
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["fields"]["approach"]["user_note"] == "approach note"
 
@@ -460,7 +556,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
     assert "approach note" in copied["text"]
 
 
-def test_sprint_ticket_commands_use_sprint_option_and_current_selector(
+def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(
     server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
 ) -> None:
     sprint = cli(
@@ -483,13 +579,31 @@ def test_sprint_ticket_commands_use_sprint_option_and_current_selector(
         "--title",
         "Loose sprint ticket",
     )["id"]
+    item = cli(
+        server,
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        "CLI item",
+        "--project-id",
+        "project_other",
+        "--sprint",
+        "current",
+    )
 
-    cli(server, "sprint", "add-ticket", tid, "--sprint", "current")
-    assert api.get(server, f"/api/tickets/{tid}")["sprint_id"] == sprint["id"]
+    cli(server, "sprint", "item", "move-ticket", item["id"], tid)
+    detail = api.get(server, f"/api/tickets/{tid}")
+    assert detail["sprint_item_id"] == item["id"]
+    assert detail["effective_sprint_id"] == sprint["id"]
 
-    renamed = cli(server, "sprint", "set", "current", "name", "--value", "Renamed CLI sprint")
+    renamed = cli(
+        server, "sprint", "set", "current", "name", "--value", "Renamed CLI sprint"
+    )
     assert renamed["id"] == sprint["id"]
     assert renamed["name"] == "Renamed CLI sprint"
 
-    cli(server, "sprint", "remove-ticket", tid, "--sprint", "current")
-    assert api.get(server, f"/api/tickets/{tid}")["sprint_id"] is None
+    cli(server, "sprint", "item", "move-ticket-to-backlog", item["id"], tid)
+    detail = api.get(server, f"/api/tickets/{tid}")
+    assert detail["sprint_item_id"] is None
+    assert detail["effective_sprint_id"] is None

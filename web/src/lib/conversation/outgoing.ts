@@ -14,6 +14,7 @@
  */
 
 import type { ConversationEvent, PromptDeliveryMode, SentMessagePiece } from "./wire";
+import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
 
 /** What this browser knows about what happened to a message it sent.
  *
@@ -50,6 +51,53 @@ export type OutgoingMessage = {
   sentAtUnixMilliseconds: number;
   knownFate: OutgoingMessageKnownFate;
 };
+
+const outgoingImageReservations = new Map<string, number>();
+let rememberedMessagesWereScanned = false;
+
+export function outgoingMessageImageBytes(message: OutgoingMessage): number {
+  return message.content.reduce(
+    (total, piece) => total + (piece.piece === "image" ? base64DecodedByteCount(piece.data) : 0),
+    0
+  );
+}
+
+export function reserveOutgoingMessageImages(message: OutgoingMessage): boolean {
+  includeRememberedMessagesInReservations();
+  if (outgoingImageReservations.has(message.messageId)) return true;
+  const byteCount = outgoingMessageImageBytes(message);
+  const reserved = Array.from(outgoingImageReservations.values()).reduce(
+    (total, value) => total + value,
+    0
+  );
+  if (reserved + byteCount > MAX_CONVERSATION_MESSAGE_IMAGE_BYTES) return false;
+  outgoingImageReservations.set(message.messageId, byteCount);
+  return true;
+}
+
+export function releaseOutgoingMessageImages(messageId: string): void {
+  includeRememberedMessagesInReservations();
+  if (messageIsRememberedAnywhere(messageId)) return;
+  outgoingImageReservations.delete(messageId);
+}
+
+export function reserveRecalledOutgoingMessages(
+  messages: readonly OutgoingMessage[]
+): OutgoingMessage[] {
+  return messages.filter((message) => reserveOutgoingMessageImages(message));
+}
+
+/** Test isolation for the tab-local ledger. A real tab resets it by ending. */
+export function resetOutgoingImageReservationsForTest(): void {
+  outgoingImageReservations.clear();
+  rememberedMessagesWereScanned = false;
+}
+
+function base64DecodedByteCount(data: string): number {
+  if (data === "") return 0;
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.floor(data.length / 4) * 3 - padding;
+}
 
 const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   nothing_yet: null,
@@ -135,15 +183,29 @@ export function rememberOutgoingMessages(
   conversationId: string,
   messages: readonly OutgoingMessage[]
 ): void {
+  includeRememberedMessagesInReservations();
+  const previous = outgoingMessagesStoredUnder(conversationId);
   try {
     if (messages.length === 0) {
       window.sessionStorage.removeItem(rememberedUnder(conversationId));
-      return;
+    } else {
+      window.sessionStorage.setItem(rememberedUnder(conversationId), JSON.stringify(messages));
     }
-    window.sessionStorage.setItem(rememberedUnder(conversationId), JSON.stringify(messages));
   } catch {
     // A browser that will not keep anything for this tab still sends messages perfectly
     // well; it just cannot survive a reload, which is what it was always going to do.
+    // If an older remembered value could not be replaced, it still consumes this tab's
+    // recall envelope even when the live component already stopped drawing it.
+    for (const message of previous) {
+      outgoingImageReservations.set(message.messageId, outgoingMessageImageBytes(message));
+    }
+    return;
+  }
+  const nextIds = new Set(messages.map((message) => message.messageId));
+  for (const message of previous) {
+    if (!nextIds.has(message.messageId) && !messageIsRememberedAnywhere(message.messageId)) {
+      releaseOutgoingMessageImages(message.messageId);
+    }
   }
 }
 
@@ -156,12 +218,25 @@ export function rememberOutgoingMessages(
  * that, because that is still what was last known about it.
  */
 export function recallOutgoingMessages(conversationId: string): OutgoingMessage[] {
-  let stored: string | null = null;
+  includeRememberedMessagesInReservations();
+  return outgoingMessagesStoredUnder(conversationId).map((message) =>
+    message.knownFate === "nothing_yet"
+      ? { ...message, knownFate: "sent_before_this_page" as const }
+      : message
+  );
+}
+
+function outgoingMessagesStoredUnder(conversationId: string): OutgoingMessage[] {
   try {
-    stored = window.sessionStorage.getItem(rememberedUnder(conversationId));
+    return outgoingMessagesFromStored(
+      window.sessionStorage.getItem(rememberedUnder(conversationId))
+    );
   } catch {
     return [];
   }
+}
+
+function outgoingMessagesFromStored(stored: string | null): OutgoingMessage[] {
   if (stored === null) return [];
   let parsed: unknown;
   try {
@@ -172,13 +247,45 @@ export function recallOutgoingMessages(conversationId: string): OutgoingMessage[
   if (!Array.isArray(parsed)) return [];
   return parsed.flatMap((entry) => {
     const message = outgoingMessageFrom(entry);
-    if (message === null) return [];
-    return [
-      message.knownFate === "nothing_yet"
-        ? { ...message, knownFate: "sent_before_this_page" as const }
-        : message
-    ];
+    return message === null ? [] : [message];
   });
+}
+
+function includeRememberedMessagesInReservations(): void {
+  if (rememberedMessagesWereScanned) return;
+  rememberedMessagesWereScanned = true;
+  try {
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (key === null || !key.startsWith(`${REMEMBERED_OUTGOING_MESSAGES}.`)) continue;
+      for (const message of outgoingMessagesFromStored(window.sessionStorage.getItem(key))) {
+        outgoingImageReservations.set(
+          message.messageId,
+          outgoingMessageImageBytes(message)
+        );
+      }
+    }
+  } catch {
+    // Storage is an optional recall aid. The live tab ledger still enforces its own sends.
+  }
+}
+
+function messageIsRememberedAnywhere(messageId: string): boolean {
+  try {
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+      const key = window.sessionStorage.key(index);
+      if (key === null || !key.startsWith(`${REMEMBERED_OUTGOING_MESSAGES}.`)) continue;
+      if (
+        outgoingMessagesFromStored(window.sessionStorage.getItem(key))
+          .some((message) => message.messageId === messageId)
+      ) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 /** The record has been read, and these are the messages it did not have.
@@ -213,16 +320,45 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   const { messageId, content, senderLabel, mode, sentAtUnixMilliseconds, knownFate } = held;
   if (typeof messageId !== "string" || messageId === "") return null;
   if (!Array.isArray(content) || content.length === 0) return null;
+  const pieces = content.flatMap((piece) => {
+    const read = sentMessagePieceFrom(piece);
+    return read === null ? [] : [read];
+  });
+  if (pieces.length !== content.length) return null;
   if (typeof senderLabel !== "string") return null;
   if (!DELIVERY_MODES.includes(mode as PromptDeliveryMode)) return null;
   if (typeof sentAtUnixMilliseconds !== "number") return null;
   if (!KNOWN_FATES.includes(knownFate as OutgoingMessageKnownFate)) return null;
   return {
     messageId,
-    content: content as SentMessagePiece[],
+    content: pieces,
     senderLabel,
     mode: mode as PromptDeliveryMode,
     sentAtUnixMilliseconds,
     knownFate: knownFate as OutgoingMessageKnownFate
+  };
+}
+
+function sentMessagePieceFrom(value: unknown): SentMessagePiece | null {
+  if (value === null || typeof value !== "object") return null;
+  const piece = value as Record<string, unknown>;
+  if (piece.piece === "text") {
+    return typeof piece.text === "string" ? { piece: "text", text: piece.text } : null;
+  }
+  if (
+    piece.piece !== "image"
+    || typeof piece.data !== "string"
+    || piece.data === ""
+    || typeof piece.media_type !== "string"
+    || !piece.media_type.toLowerCase().startsWith("image/")
+    || (piece.file_name !== undefined && typeof piece.file_name !== "string")
+  ) {
+    return null;
+  }
+  return {
+    piece: "image",
+    data: piece.data,
+    media_type: piece.media_type,
+    ...(piece.file_name === undefined ? {} : { file_name: piece.file_name })
   };
 }

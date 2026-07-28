@@ -132,12 +132,14 @@ def _create_projects(conn: sqlite3.Connection, *, now: int) -> tuple[Project, Pr
         projects_data.create_project(
             conn,
             name="Northstar Demo",
+            priority=Priority.P1,
             summary="Fictional product workspace for environment isolation.",
             now=now,
         ),
         projects_data.create_project(
             conn,
             name="Harbor Ops",
+            priority=Priority.P2,
             summary="Fictional operations workspace for staging testing.",
             now=now,
         ),
@@ -238,7 +240,7 @@ def _create_tickets(
         kickoff_note="Keep this pending to show approval state.",
         project_id=project_id,
         priority=Priority.P2,
-        sprint_id=sprint_id,
+        fallback_sprint_id=sprint_id,
         worker_type="initiative_planning",
     )
     tickets_data.mark_ticket_errored(
@@ -247,7 +249,12 @@ def _create_tickets(
         error="Fictional non-production error for inspection.",
         now=now,
     )
-    return (coding, new_worker, tickets_data.read_ticket(conn, exploration.id), initiative)
+    return (
+        coding,
+        new_worker,
+        tickets_data.read_ticket(conn, exploration.id),
+        initiative,
+    )
 
 
 def _write_managed_files(

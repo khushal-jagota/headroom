@@ -18,6 +18,11 @@ from planner.worker_types.contracts import (
 from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
 from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
+from planner.worker_types.planning_day import PLANNING_DAY_WORKER_TYPE_DEFINITION
+from planner.worker_types.planning_midday_check import (
+    PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
+)
+from planner.worker_types.planning_sprint import PLANNING_SPRINT_WORKER_TYPE_DEFINITION
 from planner.worker_types.product_design import PRODUCT_DESIGN_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -64,6 +69,9 @@ PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
         "panels-worker-exploration",
         "panels-worker-initiative-planning",
         "panels-worker-product-design",
+        "panels-worker-planning-day",
+        "panels-worker-planning-midday-check",
+        "panels-worker-planning-sprint",
         PROBE_SPECIALIST_SKILL,
     }
 )
@@ -78,6 +86,9 @@ def build_probe_registry() -> WorkerTypeRegistry:
             EXPLORATION_WORKER_TYPE_DEFINITION,
             INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION,
             PRODUCT_DESIGN_WORKER_TYPE_DEFINITION,
+            PLANNING_DAY_WORKER_TYPE_DEFINITION,
+            PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
+            PLANNING_SPRINT_WORKER_TYPE_DEFINITION,
             PROBE_WORKER_TYPE_DEFINITION,
         ),
         known_skills=PROBE_KNOWN_SKILLS,

@@ -9,7 +9,7 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Five Worker types ship today:
+Eight Worker types ship today:
 
 - **`coding`** handles product and repository work.
 - **`new_worker`** designs and lands a new kind of worker.
@@ -18,6 +18,12 @@ Five Worker types ship today:
   then creates the bounded Tickets that carry it.
 - **`product_design`** designs holistic product flows and implementation-ready interactive
   artifacts before handing implementation to a coding Ticket.
+- **`planning-day`** gathers the evidence for a morning planning conversation, plans the
+  Day with the user, and commits the agreement.
+- **`planning-midday-check`** compares the morning intent with current execution at
+  14:30, agrees any useful intervention, carries it out, and records the result.
+- **`planning-sprint`** reviews the current sprint and plans the next at the final-day
+  boundary, with canonical writes deferred until Closeout.
 
 Tests also register **`probe`**. It has deliberately unfamiliar Stage and field names so
 the test suite catches code that still assumes every Ticket is coding-shaped. It is not a
@@ -51,9 +57,14 @@ the frame and reach the decision together; its other non-terminal Stages default
 ownership. `initiative_planning` uses paired ownership for Question Answers, where
 consequential cross-Ticket choices are settled with the user; its other non-terminal
 Stages default to worker ownership. `product_design` uses paired ownership for Wireframe
-and Design, while its Direction and handoff are worker-owned. Every Worker type chooses
-deliberately for each Stage; it does not inherit that choice from registry order or
-another definition.
+and Design, while its Direction and handoff are worker-owned. `planning-day` uses paired
+ownership for Planning, where the Worker and user settle the Day together; Gather and
+Closeout are worker-owned. `planning-midday-check` keeps its Stages worker-owned, but
+Action deliberately pauses through user-help before any approved intervention is
+performed in Closeout. `planning-sprint` also keeps its four non-terminal Stages
+worker-owned, but Review and Next Sprint deliberately pause through user-help until the
+user explicitly releases the conversation. Every Worker type chooses deliberately for
+each Stage; it does not inherit that choice from registry order or another definition.
 
 This makes the definition the one authority for both the data and behavior of that
 workflow. Ticket contracts still own universal Ticket facts such as status, per-Ticket
@@ -63,8 +74,11 @@ _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable dec
 types and behavior. `src/planner/worker_types/coding.py`,
 `src/planner/worker_types/new_worker.py`,
 `src/planner/worker_types/exploration.py`,
-`src/planner/worker_types/initiative_planning.py`, and
-`src/planner/worker_types/product_design.py` contain the five shipped definitions.
+`src/planner/worker_types/initiative_planning.py`,
+`src/planner/worker_types/product_design.py`,
+`src/planner/worker_types/planning_day.py`,
+`src/planner/worker_types/planning_midday_check.py`, and
+`src/planner/worker_types/planning_sprint.py` contain the eight shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -114,7 +128,7 @@ There is no compatibility bridge or special coding seam. The application boundar
 definition, and framework-free rule are the whole path.
 
 _Code paths:_ `src/planner/worker_types/configuration.py` supplies the configured
-registry. Ticket, sprint, seed, runtime, and API boundaries import it where workflow
+registry. Ticket, sprint, external-work, runtime, and API boundaries import it where workflow
 behavior is needed. Rules under `src/planner/tickets/logic/` receive
 `worker_type_definition` explicitly.
 
@@ -123,8 +137,9 @@ behavior is needed. Rules under `src/planner/tickets/logic/` receive
 Application composition lives in `src/planner/worker_types/configuration.py`. It owns the
 catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
 definitions, and the production registry built from them. The shipped tuple currently
-contains `coding`, `new_worker`, `exploration`, `initiative_planning`, and
-`product_design`; its order is also the manifest order.
+contains `coding`, `new_worker`, `exploration`, `initiative_planning`,
+`product_design`, `planning-day`, `planning-midday-check`, and `planning-sprint`; its
+order is also the manifest order.
 
 Which agent backends exist is not this composition's business. It is the conversation
 system's closed set of three — `hermes`, `codex`, and `claude` — and a Worker type naming
@@ -140,22 +155,6 @@ that "a Worker type may run on a different agent" stays under test.
 
 No registry position means “default.” Order is composition and presentation order only.
 
-## The one-time seed boundary
-
-The retained legacy importer is run directly, not through the server or `panels`:
-
-```text
-python -m planner.seed --source <dir> --worker-type <id>
-```
-
-The command requires an explicit Worker type. The importer resolves that exact registry
-definition once, then uses its Stage order and field set to validate every imported
-Ticket. It stores the same Worker type on every Ticket in that run. It never defaults to
-`coding`, uses registry order, or infers a type from the source document. If a legacy
-Stage is incompatible with the selected definition, the whole import rolls back.
-
-There is no `/api/seed` route or `panels seed` command.
-
 ## The served manifest and frontend
 
 `GET /api/worker-types` calls the Worker-type registry's `manifest` method for each
@@ -170,8 +169,9 @@ clients do not reconstruct the rule.
 
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `new_worker`,
-`exploration`, `initiative_planning`, and `product_design` Tickets therefore show their
-own Stage spines without frontend type tables.
+`exploration`, `initiative_planning`, `product_design`, `planning-day`, and
+`planning-midday-check`, and `planning-sprint` Tickets therefore show their own Stage
+spines without frontend type tables.
 
 During pristine Kickoff, the Kickoff section shows the Ticket's launch setup beside its
 approval flow: Worker, Model, and Reasoning when that Worker and model support it. The
@@ -314,6 +314,9 @@ process is started again under it when there is a reason to.
 - `panels-worker-exploration` guides `exploration` Tickets.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
 - `panels-worker-product-design` guides `product_design` Tickets.
+- `panels-worker-planning-day` guides `planning-day` Tickets.
+- `panels-worker-planning-midday-check` guides `planning-midday-check` Tickets.
+- `panels-worker-planning-sprint` guides `planning-sprint` Tickets.
 
 For `new_worker`, the visible lifecycle after universal Kickoff is
 Understanding, Stages, Thinking, Runtime Defaults, Drafting, Closeout, Done. Understanding

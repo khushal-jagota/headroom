@@ -66,6 +66,19 @@ fetches the picture from it, and the agent is handed it — codex wants the file
 path and is given exactly that, while claude and hermes want the bytes and they
 are read from the same file.
 
+A message's pictures total at most 3 MiB of raw bytes and each is a structurally
+valid PNG, JPEG, GIF, or WebP. That raw limit leaves room for base64 expansion in
+both adapter payloads and the browser's outgoing-message recall. A picture is no
+more than 8,000 pixels on either side or 25 megapixels. Plain and Adam7 PNGs use
+the same bounded scanline validation. The composer turns away unsupported stated
+types and files that would exceed the raw envelope before reading them. Messages
+that are still optimistic share that 3 MiB budget across the whole tab, including
+copies remembered under other conversations; the budget is released when the
+notebook catches up or a refusal restores the draft. The server remains
+authoritative: it validates the completed bytes and the aggregate before keeping
+any file or prompt, and records the media type those bytes prove, not the type the
+browser claimed.
+
 Those files last as long as the notebook does, which is forever. Nothing in
 Panels deletes a conversation: resetting one stops it and unlinks it, and
 deleting a Ticket leaves its conversation behind. A file removed by either would
@@ -96,6 +109,12 @@ own `_meta` is the only place it appears. The thread draws it as a seam, in the
 same stylesheet the pane that came before drew the same thing with.
 
 ## Sending
+
+The composer accepts pictures from its image picker, the clipboard, or a drop. They
+wait beside the draft in one visible order, can be removed one at a time, and can be
+sent with words or as the whole message. The browser sends one native content run:
+the trimmed words when there are any, followed by every remaining picture in the
+order shown. There is no separate upload conversation or attachment record.
 
 Send has one knob with three settings. The default runs the message when the
 agent is free — if it is busy, the message waits in line. "Send now" makes the
@@ -137,14 +156,15 @@ gets. Showing them is not choosing them: a picker nobody touched still sends
 nothing, and the message that makes the conversation is created on those values
 because they are what the server resolves again when it arrives.
 
-Nobody waits for the network to see what they typed. The browser gives a message
+Nobody waits for the network to see what they typed or attached. The browser gives a message
 its own name and stamps the moment the person pressed send, draws it in the
 thread there and then, and empties the box — which stays typeable, with only the
 send arrow saying anything is still in flight. Those two stamps travel with the
 message and are kept on its row, so when the row comes back the browser knows it
 for its own and simply stops drawing its copy; nothing is swapped and nothing
-moves. If the message turns out to have got nowhere, the copy goes and the exact
-words come back to the box, unless something else has been typed there since. A
+moves. If the message turns out to have got nowhere, the copy goes and its exact
+words, pictures and pending run choices come back to the box, unless something
+else has been composed there since. A
 message the agent was too busy for stays in the thread and says it is waiting,
 because nothing is answering it yet.
 

@@ -17,10 +17,12 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "day_midday_reconciliation"
+HEAD_REVISION = "project_priority"
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, int, int]]:
+def _table_columns(
+    conn: sqlite3.Connection, table: str
+) -> list[tuple[str, str, int, int]]:
     """Each column's name, type, NOT NULL and place in the primary key."""
     return [
         (str(row[1]), str(row[2]), int(row[3]), int(row[5]))
@@ -35,7 +37,9 @@ def upgraded(tmp_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def test_the_upgrade_leaves_the_database_at_this_revision(upgraded: sqlite3.Connection) -> None:
+def test_the_upgrade_leaves_the_database_at_this_revision(
+    upgraded: sqlite3.Connection,
+) -> None:
     assert (
         str(upgraded.execute("SELECT version_num FROM alembic_version").fetchone()[0])
         == HEAD_REVISION
@@ -147,7 +151,9 @@ def _build_a_database_at(path: Path, revision: str) -> sqlite3.Connection:
     engine = db_module._migration_engine(str(path), 5000)  # noqa: SLF001
     try:
         with engine.begin() as connection:
-            command.upgrade(db_module._alembic_config(connection), revision)  # noqa: SLF001
+            command.upgrade(
+                db_module._alembic_config(connection), revision
+            )  # noqa: SLF001
     finally:
         engine.dispose()
     return connect(str(path))
@@ -206,7 +212,9 @@ def test_the_retired_tables_go_and_the_ticket_keeps_its_link_under_its_real_name
     # The link itself is untouched. Only what it is called changed, because what it holds
     # had already changed.
     assert (
-        conn.execute("SELECT conversation_id FROM tickets WHERE id = 't_linked'").fetchone()[0]
+        conn.execute(
+            "SELECT conversation_id FROM tickets WHERE id = 't_linked'"
+        ).fetchone()[0]
         == "conversation-abc"
     )
     assert "employee_session_id" not in {
@@ -254,7 +262,9 @@ def test_a_conversation_from_before_the_column_arrives_with_no_commands(
 # --- conversations nothing was ever said in ----------------------------------------------
 
 
-def _conversation(conn: sqlite3.Connection, conversation_id: str, *, spoken_in: bool) -> None:
+def _conversation(
+    conn: sqlite3.Connection, conversation_id: str, *, spoken_in: bool
+) -> None:
     conn.execute(
         "INSERT INTO conversations (conversation_id, backend_key, workspace_folder, access, "
         "created_at, vendor_session_cursor) VALUES (?, 'claude', '/tmp/workspace', 'full', 1, ?)",
@@ -268,7 +278,9 @@ def _conversation(conn: sqlite3.Connection, conversation_id: str, *, spoken_in: 
         )
 
 
-def test_owners_let_go_of_conversations_nothing_was_ever_said_in(tmp_path: Path) -> None:
+def test_owners_let_go_of_conversations_nothing_was_ever_said_in(
+    tmp_path: Path,
+) -> None:
     """The stuck ones are cut loose on the upgrade, and the working ones are untouched.
 
     A conversation used to be made before there was anything to say, and the message that
@@ -281,7 +293,10 @@ def test_owners_let_go_of_conversations_nothing_was_ever_said_in(tmp_path: Path)
     _conversation(conn, "never-spoke", spoken_in=False)
     _conversation(conn, "spoke", spoken_in=True)
     _conversation(conn, "chief-never-spoke", spoken_in=False)
-    for ticket_id, conversation_id in (("t_stuck", "never-spoke"), ("t_working", "spoke")):
+    for ticket_id, conversation_id in (
+        ("t_stuck", "never-spoke"),
+        ("t_working", "spoke"),
+    ):
         conn.execute(
             "INSERT INTO tickets (id, title, worker_type, employee_backend, ceiling, fields, "
             "conversation_id, created_at, updated_at) VALUES (?, 'T', 'coding', 'claude', "
@@ -299,5 +314,7 @@ def test_owners_let_go_of_conversations_nothing_was_ever_said_in(tmp_path: Path)
         "t_stuck": None,
         "t_working": "spoke",
     }
-    assert dict(conn.execute("SELECT agent_key, conversation_id FROM agents")) == {"chief": None}
+    assert dict(conn.execute("SELECT agent_key, conversation_id FROM agents")) == {
+        "chief": None
+    }
     conn.close()

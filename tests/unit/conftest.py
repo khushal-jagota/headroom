@@ -50,11 +50,12 @@ def fake_clock() -> TestClock:
 
 @pytest.fixture
 def planning_worker_registry() -> Iterator[None]:
-    """Install coding-shaped planning types only for authorization boundary tests."""
+    """Install missing coding-shaped planning types for authorization boundary tests."""
     current = configured_worker_type_registry()
     production = tuple(
         current.require(worker_type) for worker_type in current.registered_worker_types()
     )
+    registered = frozenset(current.registered_worker_types())
     planning = tuple(
         replace(
             CODING_WORKER_TYPE_DEFINITION,
@@ -66,6 +67,7 @@ def planning_worker_registry() -> Iterator[None]:
             "planning-midday-check",
             "planning-sprint",
         )
+        if worker_type not in registered
     )
     registry = WorkerTypeRegistry(
         production + planning,

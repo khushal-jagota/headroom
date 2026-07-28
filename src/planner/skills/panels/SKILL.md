@@ -19,12 +19,17 @@ Tickets have a Worker type that sets their stages and worker. Worker types inclu
 `coding` (product or repo work), `new_worker` (creating a new kind of worker),
 `exploration` (a worker for exploring something undefined and making it clearer),
 `initiative_planning` (working out the shared top-level how for a confirmed direction
-before creating its downstream Tickets), and `product_design` (designing holistic product
-flows and implementation-ready interactive artifacts). New Worker types are added here as
-they ship.
+before creating its downstream Tickets), `product_design` (designing holistic product
+flows and implementation-ready interactive artifacts), `planning-day` (planning the
+morning's Day with the user), `planning-midday-check` (checking execution against the
+morning intent), and `planning-sprint` (reviewing one sprint and planning the next at the
+boundary). New Worker types are added here as they ship.
 
-Ticket workers shape a Ticket through **Kickoff → Success → Approach → Plan →
-Implementation → Closeout → Done**, filling one canonical field at each step.
+Each Worker type defines its own ordered lifecycle and one canonical field for each
+non-terminal Stage. For example, coding uses **Kickoff → Success → Approach → Plan →
+Implementation → Closeout → Done**, while `planning-day` uses **Kickoff → Gather →
+Planning → Closeout → Done**, `planning-midday-check` uses **Kickoff → Action → Closeout
+→ Done**, and `planning-sprint` uses **Kickoff → Review → Next Sprint → Closeout → Done**.
 
 ## Communication
 
@@ -37,14 +42,20 @@ for exactly what they are, avoid speculative machinery, and preserve direct user
 
 A ticket can own durable work products such as HTML, images, Markdown documents, and other files. These live in Panels-managed ticket storage — by default under `data/files/tickets/<ticket-id>/...` — and appear in ticket Markdown through ordinary links such as `[UI plan](/files/tickets/<ticket-id>/artifacts/ui-plan.html)`. Use the served `/files/tickets/...` link rather than exposing a local filesystem path; Panels owns how the file is previewed or opened.
 
-Artifacts complement the ticket record. Kickoff, success, approach, plan, implementation, closeout, recaps, and notes remain concise canonical Markdown, with links to richer work when it helps.
+Artifacts complement the ticket record. The Worker type's gated fields, recap, and notes
+remain concise canonical Markdown, with links to richer work when it helps.
 
-## Rollover
+## Scheduled planning
 
-The `panels-rollover` skill carries the plan across the 5am boundary. It drafts the
-new day's likely overview and records only obvious carryover candidates pending review.
-It does not put tickets on today until the user agrees; broad sprint reprioritization
-stays in sprint planning.
+Panels schedules ordinary planning Tickets and hands each one to its specialist Worker:
+
+- `planning-day` gathers the morning evidence and plans the Day with the user.
+- `planning-midday-check` checks execution against the morning intent.
+- `planning-sprint` reviews the current sprint and plans the next at the boundary.
+
+The 5am planning-day boundary determines which Day is current; it does not run a
+separate rollover workflow. If a scheduled run is missed, recover by creating the
+intended planning Ticket through ordinary `panels ticket create`.
 
 ## The CLI
 
@@ -61,5 +72,6 @@ The command groups describe both the object being changed and the operation's au
 ## Skills
 
 - **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.
-- **`panels-rollover`** — carrying the plan across a day boundary.
-- **`panels-sprint-planning`** — planning and reconciling at the sprint level.
+- **`panels-worker-planning-day`** — gathering evidence and planning the Day.
+- **`panels-worker-planning-midday-check`** — checking the Day at midday.
+- **`panels-worker-planning-sprint`** — reviewing the current sprint and planning the next.
