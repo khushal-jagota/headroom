@@ -31,6 +31,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     PromptDeliveryRefused,
 )
+from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.days.logic import dates
@@ -100,18 +101,8 @@ async def start_ready_worker_step(
 
         try:
             conversation_id = claimed.conversation_id
-            if conversation_id is None:
-                conversation_id = await conversation_start.start_ticket_conversation(
-                    conversation_system,
-                    conn,
-                    claimed,
-                    conversation_start.worker_resolve(
-                        conn,
-                        claimed,
-                        worker_type_registry=worker_type_registry,
-                    ),
-                    now=now(),
-                )
+            # Composed before anything is made: a prepare that falls over must not leave a
+            # conversation behind, and the opener is what would have brought one into being.
             prepared = worker_context_service.prepare(
                 ticket_id,
                 worker_step_prompt(
@@ -119,15 +110,20 @@ async def start_ready_worker_step(
                     worker_type_definition=worker_type_registry.require(claimed.worker_type),
                 ),
             )
-            fate = await conversation_start.send_to_ticket_conversation(
+            delivered = await conversation_start.send_to_ticket_conversation(
                 conversation_system,
                 conn,
                 ticket_id,
-                prepared.model_text,
+                text_message_content(prepared.model_text),
+                conversation_id=conversation_id,
+                created_conversation_id=conversation_start.new_conversation_id(),
                 sender_label=LOOP_SENDER_LABEL,
                 mode=PromptDeliveryMode.run_when_free,
+                worker_type_registry=worker_type_registry,
                 now=now(),
             )
+            conversation_id = delivered.conversation_id
+            fate = delivered.fate
         except Exception:
             _log.exception(
                 "worker step could not be started (ticket=%s conversation=%s)",

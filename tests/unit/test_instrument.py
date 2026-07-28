@@ -43,6 +43,19 @@ def _write(directory: Path, name: str, body: str) -> Path:
 
 
 def test_a21_instrument_integrity(tmp_path: Path) -> None:
+    assert verify_lib.parse_verify_mode([]) == "full"
+    assert verify_lib.parse_verify_mode(["full"]) == "full"
+    assert verify_lib.parse_verify_mode(["fast"]) == "fast"
+    assert verify_lib.parse_verify_mode(["integration"]) == "integration"
+    assert verify_lib.parse_verify_mode(["e2e"]) == "e2e"
+    for invalid in (["quick"], ["fast", "e2e"]):
+        try:
+            verify_lib.parse_verify_mode(invalid)
+        except ValueError as exc:
+            assert str(exc) == "usage: ./verify [full|fast|integration|e2e]"
+        else:
+            raise AssertionError(f"accepted invalid verify mode: {invalid}")
+
     # --- half 1: the skip-scan detects all six forbidden patterns ---
     dirty = tmp_path / "dirty"
     dirty.mkdir()

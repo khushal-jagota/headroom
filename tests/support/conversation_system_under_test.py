@@ -519,9 +519,9 @@ class ConversationSystemUnderTest:
 
     async def arm_backend_write_failure(self, conversation_id: str) -> None:
         conversation = self._conversation(conversation_id)
-        # An agent spawned from here on breaks its wire as soon as it has a session, so the
-        # first write is the first thing that fails. One that is already running is told to
-        # break it now.
+        # An agent spawned from here on breaks its wire as soon as it has a session on the
+        # model the conversation named, so the first prompt write is the first thing that
+        # fails. One that is already running is told to break it now.
         conversation.arms.add(ARM_BREAK_WIRE_ON_SESSION)
         await conversation.control.send({"command": "break_wire"})
 

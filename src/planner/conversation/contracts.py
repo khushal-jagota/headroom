@@ -137,19 +137,23 @@ class ConversationStartRequest:
     """The concrete, already-resolved values a conversation is created from.
 
     ``conversation_id`` is caller-owned and is the identity of this conversation
-    everywhere afterwards. Every other field may be absent. An absent ``backend_key``,
-    ``workspace_folder`` or ``access`` takes its floor default (codex, ``~/Coding``,
-    full access), so a request carrying only a conversation id still produces a working
-    conversation. ``model``, ``reasoning_effort`` and ``role_materials`` have no floor
-    default: absent means the conversation is started without them, and the backend's
-    own defaults apply.
+    everywhere afterwards. ``model`` is the model the agent runs on, and naming it is not
+    optional: a conversation started without one runs on whatever its backend picked for
+    itself, which is a value nobody chose, nobody here can see, and the backend may change
+    from under us. There is no floor default to fall back on either, because a model name
+    means nothing to a backend that has never heard of it.
+
+    An absent ``backend_key``, ``workspace_folder`` or ``access`` takes its floor default
+    (codex, ``~/Coding``, full access). ``reasoning_effort`` and ``role_materials`` have
+    no floor default: absent means the conversation is started without them, and for
+    reasoning effort that is a real answer — some models take none.
 
     ``workspace_folder`` is the folder the agent runs in.
     """
 
     conversation_id: str
+    model: str
     backend_key: ConversationBackendKey | None = None
-    model: str | None = None
     reasoning_effort: str | None = None
     role_materials: ConversationRoleMaterials | None = None
     workspace_folder: Path | None = None
@@ -160,16 +164,17 @@ class ConversationStartRequest:
 class ResolvedConversationStart:
     """A start request with the floor defaults already applied.
 
-    This is what a conversation is actually started with. ``backend_key``,
-    ``workspace_folder`` and ``access`` are always concrete here because each has a
-    floor default. ``model``, ``reasoning_effort`` and ``role_materials`` stay optional
-    because none of them has one — there is nothing to fall back to, so absent stays
-    absent.
+    This is what a conversation is actually started with, and what every backend adapter
+    is handed. ``backend_key``, ``workspace_folder`` and ``access`` are always concrete
+    here because each has a floor default; ``model`` is always concrete because the
+    request had to name one. ``reasoning_effort`` and ``role_materials`` stay optional
+    because neither has a floor default — there is nothing to fall back to, so absent
+    stays absent.
     """
 
     conversation_id: str
     backend_key: ConversationBackendKey
-    model: str | None
+    model: str
     reasoning_effort: str | None
     role_materials: ConversationRoleMaterials | None
     workspace_folder: Path
@@ -340,10 +345,10 @@ class ConversationSystem(Protocol):
         """Create the conversation named by the request's conversation id.
 
         The request carries concrete, already-resolved values: the caller-owned
-        conversation id, the backend key, the model and reasoning effort, the role
-        materials, the workspace folder the agent runs in, and the access posture.
-        Absent fields take their floor defaults, so a request carrying only a
-        conversation id still produces a working conversation.
+        conversation id, the model, the backend key, the reasoning effort, the role
+        materials, the workspace folder the agent runs in, and the access posture. A
+        conversation id and a model are what a request must carry; the rest may be absent
+        and take their floor defaults.
 
         Creating the conversation writes its record as step one. No path may create a
         conversation without its record existing.
@@ -364,6 +369,8 @@ class ConversationSystem(Protocol):
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
         """Send a message into a conversation. This is the only way anything gets to an agent.
 

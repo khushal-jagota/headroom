@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
     AgentCommand,
     ConversationAccess,
@@ -49,7 +50,11 @@ from planner.conversation.message_content import (
     MessageText,
     text_message_content,
 )
-from planner.conversation.storage import ConversationRecordMissing, ConversationStore
+from planner.conversation.storage import (
+    ConversationRecordMissing,
+    ConversationRecordNamesNoModel,
+    ConversationStore,
+)
 from planner.core.db import connect, create_schema
 
 A_PROMPT = PromptEventPayload(
@@ -112,7 +117,7 @@ def _resolved(
     conversation_id: str = "c",
     *,
     role_materials: ConversationRoleMaterials | None = None,
-    model: str | None = None,
+    model: str = "a-model",
 ) -> ResolvedConversationStart:
     return ResolvedConversationStart(
         conversation_id=conversation_id,
@@ -286,6 +291,44 @@ def test_creating_the_same_conversation_twice_is_refused(store: ConversationStor
 
 def test_an_unknown_conversation_reads_as_nothing(store: ConversationStore) -> None:
     assert asyncio.run(store.read_conversation("never-started")) is None
+
+
+def test_a_stored_conversation_that_names_no_model_reads_but_cannot_be_started(
+    tmp_path: Path,
+) -> None:
+    """A row from before every conversation named its model.
+
+    Nobody can say what it ran on — the backend chose and never wrote it down — so it is
+    never resumed on whatever that backend would choose today. But it still reads: those
+    rows are part of the account of what happened, and a screen that lists conversations
+    has to be able to list them. Refusing the read instead is how a live server answered
+    every request that touched one with a 500.
+    """
+    db_path = tmp_path / "conversations.db"
+    schema_connection = connect(str(db_path))
+    create_schema(schema_connection)
+    schema_connection.close()
+    store = ConversationStore(str(db_path))
+
+    async def exercise() -> None:
+        await store.create_conversation(_resolved(model="first-model"))
+        conn = connect(str(db_path))
+        try:
+            with conn:
+                conn.execute("UPDATE conversations SET model = NULL WHERE conversation_id = 'c'")
+        finally:
+            conn.close()
+
+        record = await store.read_conversation("c")
+        assert record is not None
+        assert record.model is None
+        # And it is a spawn failure, so a message sent into it is refused rather than
+        # breaking the request.
+        assert issubclass(ConversationRecordNamesNoModel, BackendSpawnFailed)
+        with pytest.raises(ConversationRecordNamesNoModel):
+            record.resolved_start()
+
+    asyncio.run(exercise())
 
 
 def test_the_session_cursor_moves(store: ConversationStore) -> None:

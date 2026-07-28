@@ -43,7 +43,9 @@ stop service → create verified database + managed-files snapshot
 replace current/app → restart + prove requested SHA
         │
         ▼
-success, or stop candidate → restore snapshot + prior app → prove prior SHA
+success → reconcile managed skills into Hermes, Codex, and Claude homes
+
+or stop candidate → restore snapshot + prior app → prove prior SHA
 ```
 
 The self-hosted runner proves Python is at least 3.12 and Node is version 22. It builds
@@ -62,6 +64,16 @@ The workflow uses the fixed VPS contract:
 - health: loopback port 8767
 - service manager: `systemctl`
 - service: `panels-live.service`
+- managed skills: `~/Deployments/Panels/current/data/skills`
+- agent homes: `~/.hermes`, `~/.codex`, and `~/.claude`
+
+After the app deployment succeeds, the current workflow deployment tool invokes
+`environment provision-skills` with all four paths explicitly. Using the workflow tool
+means an intentional rollback to an older app still applies the current skill-retirement
+policy. The command reconciles Panels skills into each agent home, removes explicitly
+retired Panels skills, and leaves unrelated custom skills in place. This post-deploy step
+is idempotent. If it fails after app cutover, the app remains deployed and the workflow
+reports failure; rerunning the deployment safely retries skill reconciliation.
 
 ## Replacement and recovery
 
@@ -96,7 +108,8 @@ live host, rename `vps-agent`, or change the existing Tailscale Serve route. UID
 preserved later by renaming that account, not by creating a second identity.
 
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
-`src/planner/environments/deployment.py`, and `src/planner/environments/cli.py`.
+`src/planner/environments/deployment.py`, `src/planner/environments/cli.py`, and
+`src/planner/skill_sources.py`.
 
 ---
 

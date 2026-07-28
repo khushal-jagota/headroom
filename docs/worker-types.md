@@ -188,9 +188,13 @@ the product and does not replace a managed edit. Hermes contains symlinks to the
 managed home, never copied overlays.
 
 The browser navigation and settings page is **Agents** at `#/agents`. It has exactly two
-stacked sections:
+quiet, whitespace-separated sections. Every destination is a whole-row link showing
+only its human-readable name, its current managed skill description, and a restrained
+arrow. The index does not show structural ids, skill names, launch settings, Stage
+counts, or configuration labels, and it keeps the same one-column order on narrow
+screens.
 
-- **Agents** contains Chief of Staff and the shared `panels-worker` role skill. Chief
+- **Agents** contains Chief of Staff and the shared Worker role skill. Chief
   opens at `#/agents/chief-of-staff` with Backend, Model, and Reasoning launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
   skill opens at `#/agents/worker-skill`. It is shown as an Agent-like configurable
@@ -198,7 +202,8 @@ stacked sections:
   runtime. Its name is read-only; its description and Markdown body edit the canonical
   skill through the shared skills home. It has no independent launch, model, reasoning,
   or Stage controls.
-- **Workers** lists the configured Worker types. A Worker opens at
+- **Workers** links the configured Worker types. Each supporting line comes from that
+  Worker's managed specialist skill. A Worker opens at
   `#/agents/workers/<worker-type>` with its launch defaults, Stage ownership table, and
   specialist skill editor. Worker identity and lifecycle structure stay read-only.
 
@@ -217,10 +222,11 @@ direct edits that save, fail, and retry independently. Successful skill edits re
 the configured planner Hermes home without changing existing Employee session ids.
 Codex and Claude Code use the same managed home.
 
-`GET /api/workers` serves the Agents-page index data, including Chief settings.
+`GET /api/workers` serves the Agents-page destinations and Chief settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
-`GET /api/skills` serves the shared skills home used for `panels-worker`. Worker and
-Chief endpoints edit skill description and body or launch defaults; the shared
+`GET /api/skills` serves the shared skills home used for the Worker role and specialist
+descriptions on the index. Worker and Chief endpoints edit skill description and body
+or launch defaults; the shared
 `PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill. A saved change
 announces itself, and any Agents screen on display refetches what it is showing.
 
@@ -236,15 +242,30 @@ Worker does not restore an earlier set of choices.
 
 The complete trio may be edited in the Kickoff controls only while the Ticket is still
 at pristine Kickoff and has no conversation yet. One save replaces the whole setup.
-Changing Worker resets Model and Reasoning to that backend's native defaults. Changing
-Model retains an explicit Reasoning choice only when the new model still supports it.
-Starting the Ticket's first conversation, or any move past Kickoff, removes those
-controls.
+Changing Worker names the new backend's own model in the same save, because a model name
+belongs to the backend that gave it and means nothing to another one; Reasoning is cleared,
+since it belonged to the model being replaced. Changing Model retains an explicit Reasoning
+choice only when the new model still supports it. Starting the Ticket's first conversation,
+or any move past Kickoff, removes those controls.
+
+A backend this machine reported no models for has no model to name, so a save that switches
+to it names none and is refused. That is the honest end of it: the alternative is a Ticket
+whose worker runs on something nobody chose.
 
 Hermes offers Model but not Reasoning. Codex and Claude Code offer Model, and their
-Reasoning choices depend on the selected model. Leaving Model or Reasoning at its native
-value means the backend chooses its own default. A missing or unavailable explicit value
-fails visibly instead of silently selecting something else.
+Reasoning choices depend on the selected model.
+
+Every conversation is started on a named model. Panels never lets a backend pick one for
+itself: that is a value nobody chose, nobody here can see, and the tool may change it from
+under us. A Ticket holding no model — one set up before this was so — has chosen nothing
+that can be run, so it starts on its Worker type's own backend and model instead of on a
+model picked for it. A saved launch setting that names no model is repaired the same way,
+to the whole set of values its Worker type or the Chief ships with, and the settings file
+is rewritten so the setting on the screen is the setting that runs.
+
+Leaving Reasoning at its native value means the backend chooses its own default, which is
+a real answer because some models take none. A missing or unavailable explicit value fails
+visibly instead of silently selecting something else.
 
 The Backend, Model, and Reasoning menus use a durable catalog for that backend and candidate
 model. A catalog stays fresh for 24 hours across a server restart. The user can choose

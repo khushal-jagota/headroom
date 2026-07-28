@@ -2,30 +2,75 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, cast
 
-from tests.e2e.harness import ServerHandle
+import httpx
+import pytest
+from click.testing import CliRunner
+from fastapi.testclient import TestClient
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAN_BIN = REPO_ROOT / ".venv" / "bin" / "panels"
+from planner.cli.main import main as cli_main
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.core.clock import build_clock
+from planner.core.config import load_config
+from planner.core.db import connect, create_schema
+from planner.core.server import create_app
+
+ServerHandle = object
+
+
+@pytest.fixture(autouse=True)
+def scrub_ambient_plan_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in tuple(os.environ):
+        if key.startswith("PLAN_"):
+            monkeypatch.delenv(key)
 
 
 def _run(
-    server: ServerHandle, *args: str, actor: str | None = "chief"
-) -> subprocess.CompletedProcess[str]:
-    env = {key: value for key, value in os.environ.items() if not key.startswith("PLAN_")}
-    env["PLAN_SERVER_URL"] = server.base
+    _server: object, *args: str, actor: str | None = "chief"
+) -> Any:
+    env = {"PLAN_SERVER_URL": "http://testserver"}
     if actor is not None:
         env["PLAN_ACTOR"] = actor
-    return subprocess.run(
-        [str(PLAN_BIN), *args],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO_ROOT),
-        env=env,
-        timeout=30,
+    return CliRunner().invoke(cli_main, list(args), env=env)
+
+
+@pytest.fixture
+def server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[object]:
+    db_path = tmp_path / "chief-cli.db"
+    with connect(str(db_path)) as conn:
+        create_schema(conn)
+    config = load_config(
+        path=None,
+        env={"PLAN_TEST_MODE": "1", "PLAN_DB_PATH": str(db_path)},
     )
+    app = create_app(
+        config,
+        build_clock(config),
+        lambda: connect(str(db_path)),
+        conversation_system_for_test=InMemoryConversationSystem(),
+    )
+    with TestClient(app) as client:
+        def request(
+            method: str,
+            url: str,
+            *,
+            json: Any = None,
+            params: dict[str, Any] | None = None,
+            headers: dict[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> httpx.Response:
+            del timeout
+            path = httpx.URL(url).raw_path.decode()
+            return cast(
+                httpx.Response,
+                client.request(method, path, json=json, params=params, headers=headers),
+            )
+
+        monkeypatch.setattr(httpx, "request", request)
+        yield object()
 
 
 def _file(tmp_path: Path, name: str, text: str) -> str:
@@ -45,7 +90,7 @@ def test_chief_external_work_help_lists_stage_and_worker_type_options(
         "create-ticket-from-external-work",
     ):
         result = _run(server, "chief", command, "--help", actor=None)
-        assert result.returncode == 0, result.stderr
+        assert result.exit_code == 0, result.output
         assert "--stage" in result.stdout
         assert "--field-file" in result.stdout
     create_help = _run(server, "chief", "create-ticket-from-external-work", "--help", actor=None)
@@ -73,6 +118,8 @@ def test_chief_external_work_cli_create_and_reconcile(
         "coding",
         "--employee-backend",
         "hermes",
+        "--employee-launch-model",
+        "hermes-model",
         "--stage",
         "needs_plan",
         "--kickoff-note-file",
@@ -85,7 +132,7 @@ def test_chief_external_work_cli_create_and_reconcile(
         approach,
         "--json",
     )
-    assert created.returncode == 0, created.stderr
+    assert created.exit_code == 0, created.output
     created_json = json.loads(created.stdout)
     assert created_json["stage"] == "needs_plan"
     assert created_json["employee_backend"] == "hermes"
@@ -111,7 +158,7 @@ def test_chief_external_work_cli_create_and_reconcile(
         closeout,
         "--json",
     )
-    assert reconciled.returncode == 0, reconciled.stderr
+    assert reconciled.exit_code == 0, reconciled.output
     reconciled_json = json.loads(reconciled.stdout)
     assert reconciled_json["id"] == created_json["id"]
     assert reconciled_json["stage"] == "done"
@@ -146,7 +193,7 @@ def test_chief_external_work_cli_carries_new_worker_fields(
         f"thinking={thinking}",
         "--json",
     )
-    assert created.returncode == 0, created.stderr
+    assert created.exit_code == 0, created.output
     created_json = json.loads(created.stdout)
     assert created_json["stage"] == "needs_runtime_defaults"
     assert created_json["fields"]["understanding"]["value"] == "Bounded worker-design understanding"
@@ -169,7 +216,7 @@ def test_chief_external_work_cli_carries_new_worker_fields(
         f"runtime_defaults={runtime_defaults}",
         "--json",
     )
-    assert reconciled.returncode == 0, reconciled.stderr
+    assert reconciled.exit_code == 0, reconciled.output
     reconciled_json = json.loads(reconciled.stdout)
     assert reconciled_json["stage"] == "needs_drafting"
     assert (
@@ -186,7 +233,7 @@ def test_chief_field_file_rejects_ambiguity_before_read_or_request(
     server: ServerHandle,
 ) -> None:
     before = _run(server, "ticket", "list", "--json")
-    assert before.returncode == 0, before.stderr
+    assert before.exit_code == 0, before.output
     before_ids = {ticket["id"] for ticket in json.loads(before.stdout)["tickets"]}
 
     cases = (
@@ -216,11 +263,11 @@ def test_chief_field_file_rejects_ambiguity_before_read_or_request(
             *options,
             "--json",
         )
-        assert rejected.returncode == 1
+        assert rejected.exit_code == 1
         assert json.loads(rejected.stderr)["error"]["message"] == message
 
     after = _run(server, "ticket", "list", "--json")
-    assert after.returncode == 0, after.stderr
+    assert after.exit_code == 0, after.output
     assert {ticket["id"] for ticket in json.loads(after.stdout)["tickets"]} == before_ids
 
 
@@ -238,10 +285,10 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
         "--json",
         actor=None,
     )
-    assert existing.returncode == 0, existing.stderr
+    assert existing.exit_code == 0, existing.output
     ticket_id = json.loads(existing.stdout)["id"]
     before = _run(server, "ticket", "list", "--json")
-    assert before.returncode == 0, before.stderr
+    assert before.exit_code == 0, before.output
     before_ids = {ticket["id"] for ticket in json.loads(before.stdout)["tickets"]}
 
     common_fixed_keys = ("stage", "kickoff_note", "recap")
@@ -249,6 +296,7 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
         "title",
         "worker_type",
         "employee_backend",
+        "employee_launch_model",
         "priority",
         "deadline",
         "project",
@@ -270,7 +318,7 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
             f"{key}=/missing-field-value",
             "--json",
         )
-        assert rejected.returncode == 1
+        assert rejected.exit_code == 1
         assert json.loads(rejected.stderr)["error"]["message"] == (
             f"field file conflicts with fixed request key: {key}"
         )
@@ -292,7 +340,7 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
             f"{key}=/missing-field-value",
             "--json",
         )
-        assert rejected.returncode == 1
+        assert rejected.exit_code == 1
         assert json.loads(rejected.stderr)["error"]["message"] == (
             f"field file conflicts with fixed request key: {key}"
         )
@@ -314,7 +362,7 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
         f"title={title_field}",
         "--json",
     )
-    assert api_rejected.returncode == 1
+    assert api_rejected.exit_code == 1
     assert json.loads(api_rejected.stderr)["error"] == {
         "code": "validation",
         "message": "unknown external-work field",
@@ -322,7 +370,7 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
     }
 
     after = _run(server, "ticket", "list", "--json")
-    assert after.returncode == 0, after.stderr
+    assert after.exit_code == 0, after.output
     assert {ticket["id"] for ticket in json.loads(after.stdout)["tickets"]} == before_ids
 
 
@@ -345,7 +393,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "--kickoff-note-file",
         note,
     )
-    assert created.returncode == 0, created.stderr
+    assert created.exit_code == 0, created.output
     ticket_id = created.stdout.split()[0]
     assert ticket_id.startswith("t_")
     assert "external work created" in created.stdout
@@ -362,7 +410,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "--json",
         actor=None,
     )
-    assert ordinary.returncode == 0, ordinary.stderr
+    assert ordinary.exit_code == 0, ordinary.output
     ordinary_id = json.loads(ordinary.stdout)["id"]
     kickoff = _run(
         server,
@@ -376,7 +424,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "--json",
         actor=None,
     )
-    assert kickoff.returncode == 0, kickoff.stderr
+    assert kickoff.exit_code == 0, kickoff.output
     reconciled = _run(
         server,
         "chief",
@@ -389,7 +437,7 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "--success-file",
         success,
     )
-    assert reconciled.returncode == 0, reconciled.stderr
+    assert reconciled.exit_code == 0, reconciled.output
     assert ordinary_id in reconciled.stdout
     assert "external work reconciled" in reconciled.stdout
     assert "needs_approach" in reconciled.stdout
@@ -409,5 +457,5 @@ def test_real_server_chief_external_work_terse_output_and_actor_rejection(
         "--json",
         actor="worker",
     )
-    assert rejected.returncode == 1
+    assert rejected.exit_code == 1
     assert json.loads(rejected.stderr)["error"]["code"] == "agent_forbidden"

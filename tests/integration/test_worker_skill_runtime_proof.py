@@ -1,4 +1,4 @@
-"""Proof that a Worker actually reads the guidance Panels installed for it.
+"""Process integration proving a Worker reads the guidance Panels installed for it.
 
 Two things have to be true for a Worker to know its job, and neither is provable from a
 database row. The role Panels gives the conversation has to arrive as text in the agent's
@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from tests.support.worker_skill_proof_acp_agent import (
+    MODEL,
     ROLE_DIRECTIVE,
     WORKTREE_ACKNOWLEDGEMENT,
     WORKTREE_GUIDANCE,
@@ -103,6 +104,7 @@ def test_ticket_worker_reads_provisioned_worktree_guidance_through_a_real_prompt
             await system.start_conversation(
                 ConversationStartRequest(
                     conversation_id=CONVERSATION_ID,
+                    model=MODEL,
                     backend_key=ConversationBackendKey.hermes,
                     role_materials=ConversationRoleMaterials(role_text=ROLE_DIRECTIVE),
                     workspace_folder=REPOSITORY_ROOT,

@@ -24,11 +24,17 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 
+from planner.conversation.api import (
+    OwnerSendBody,
+    conversation_message_content,
+    delivery_fate_json,
+)
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationSystem,
     require_conversation_backend_key,
 )
+from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.snapshot import BackendSnapshotService
 from planner.conversation.storage import ConversationStore
 from planner.core.authctx import (
@@ -45,6 +51,10 @@ from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
+from planner.runtime.logic.conversation_start_resolution import (
+    ConversationStartOverrides,
+    ConversationStartValues,
+)
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -124,6 +134,19 @@ def get_conversation_record(request: Request) -> ConversationStore:
     return cast(ConversationStore, store)
 
 
+def get_conversation_message_files(request: Request) -> ConversationMessageFiles:
+    """The files messages carry, for the send doors that keep a picture's bytes."""
+    runtime = getattr(request.app.state, "conversation", None)
+    message_files = getattr(runtime, "message_files", None) if runtime is not None else None
+    if message_files is None:
+        raise PlannerError(
+            ErrorCode.gateway_offline,
+            "the conversation record is unavailable",
+            {},
+        )
+    return cast(ConversationMessageFiles, message_files)
+
+
 def get_worker_context_service(request: Request) -> WorkerContextService:
     return cast(WorkerContextService, request.app.state.worker_context_service)
 
@@ -133,6 +156,7 @@ Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
+MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
 WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
@@ -267,6 +291,8 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
     )
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
+    if "employee_launch_model" in raw:
+        body["employee_launch_model"] = body_str(raw, "employee_launch_model")
     return body
 
 
@@ -279,6 +305,7 @@ _EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
         "title",
         "worker_type",
         "employee_backend",
+        "employee_launch_model",
         "priority",
         "deadline",
         "project",
@@ -365,6 +392,8 @@ def _marshal_external_create(
         body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
     if "employee_backend" in raw:
         body["employee_backend"] = body_str(raw, "employee_backend")
+    if "employee_launch_model" in raw:
+        body["employee_launch_model"] = body_str(raw, "employee_launch_model")
     body["blocked_by_ticket_ids"] = body_str_list(raw, "blocked_by_ticket_ids")
     return body
 
@@ -464,6 +493,7 @@ async def create_ticket(
         sprint_item_id=body["sprint_item_id"],
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
@@ -512,6 +542,7 @@ async def create_ticket_from_external_work(
         sprint_item_id=body.get("sprint_item_id"),
         worker_type=worker_type,
         employee_backend=body.get("employee_backend"),
+        employee_launch_model=body.get("employee_launch_model"),
         blocked_by_ticket_ids=body.get("blocked_by_ticket_ids", []),
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
@@ -721,7 +752,9 @@ async def put_ticket_employee_configuration(
         )
     body = EmployeeConfigurationBody(
         employee_backend=body_str(raw, "employee_backend"),
-        employee_launch_model=body_opt_str(raw, "employee_launch_model"),
+        # The model is read the way the backend is: a null is a body that did not say what
+        # this Ticket runs on, and there is nothing here that could answer for it.
+        employee_launch_model=body_str(raw, "employee_launch_model"),
         employee_launch_reasoning_effort=body_opt_str(
             raw, "employee_launch_reasoning_effort"
         ),
@@ -938,6 +971,65 @@ async def return_ticket_for_revision(
     return tickets_views.ticket_json(ticket, now)
 
 
+def _what_this_message_runs_under(body: OwnerSendBody) -> ConversationStartOverrides:
+    """The values a message says it runs on, as the resolver takes them."""
+    return ConversationStartOverrides(
+        backend_key=(
+            None
+            if body.backend_key is None
+            else require_conversation_backend_key(body.backend_key)
+        ),
+        model=body.model,
+        reasoning_effort=body.reasoning_effort,
+    )
+
+
+def _conversation_the_files_belong_to(
+    body: OwnerSendBody, owner_is_in: str | None, created_conversation_id: str
+) -> str:
+    """Which conversation's folder this message's files are kept in.
+
+    A file lives in the folder of the conversation whose message names it, and it is kept
+    before the send that settles which conversation that is. So the answer here has to be
+    the one the send will reach: the conversation the sender named, else the one its owner
+    is already in — a sender that has none joins the owner's rather than making a second —
+    else the conversation this message is about to bring into being.
+
+    Guessing wrong is not a broken row, it is bytes nobody can reach: a message can only
+    ever name a file kept for the conversation it belongs to, so a picture filed under the
+    wrong one is gone to the browser and to the backends that read it as they send.
+    """
+    return body.conversation_id or owner_is_in or created_conversation_id
+
+
+def _delivered_message_json(delivered: conversation_start.DeliveredMessage) -> JsonDict:
+    """The fate, and which conversation it happened in.
+
+    The id is null when a message that was to make a conversation did not land, because
+    then there is none: a sender reading null has nothing to open and nothing to hold on to.
+    """
+    return {
+        "conversation_id": delivered.conversation_id,
+        **delivery_fate_json(delivered.fate),
+    }
+
+
+def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict:
+    """What a start resolved to, as far as anybody looking at it can choose.
+
+    The backend, the model and the reasoning effort, under the names a started
+    conversation reports them under — so a panel reads the same three fields whether it is
+    asking what a conversation runs on or what one would. The rest of a resolved start is
+    nobody's choice: the role an agent is told to be, the folder it runs in and what it
+    may reach are the same however the person answers, so nothing shows them.
+    """
+    return {
+        "backend_key": values.backend_key.value,
+        "model": values.model,
+        "reasoning_effort": values.reasoning_effort,
+    }
+
+
 @router.get("/chief/conversation")
 async def read_chief_conversation(conn: DbConn) -> JsonDict:
     """Which conversation the Chief is currently talking in, or none."""
@@ -946,24 +1038,55 @@ async def read_chief_conversation(conn: DbConn) -> JsonDict:
     }
 
 
-@router.post("/chief/conversation")
-async def start_chief_conversation(
-    conn: DbConn, ctx: Ctx, conversations: Conversations
-) -> JsonDict:
-    """Start the Chief's conversation. The same door a Ticket has, on the same writers.
+@router.get("/chief/conversation/start-values")
+async def read_chief_conversation_start_values(conn: DbConn) -> JsonDict:
+    """What a conversation started for the Chief right now would run on.
 
-    What it starts as comes from the Chief's own managed settings, exactly as a Ticket's
-    comes from its worker type and its last choice. A Chief that already has a
-    conversation keeps it, for the reason a Ticket does: starting again would leave a
-    live conversation nothing could reach.
+    This is the question a panel with no conversation has to answer to show anything at
+    all, and it is answered by the same resolve the send door runs when a message brings
+    one into being — so what a person is shown before they type is what they get. It reads
+    the Chief's own managed settings and writes nothing, and asking twice costs nothing.
+    """
+    return _conversation_start_values_json(conversation_start.agent_resolve(conn))
+
+
+@router.post("/chief/conversation/send")
+async def send_to_chief_conversation(
+    body: OwnerSendBody,
+    conn: DbConn,
+    ctx: Ctx,
+    conversations: Conversations,
+    message_files: MessageFiles,
+) -> JsonDict:
+    """Send a message to the Chief, making its conversation if there is not one yet.
+
+    The Chief's door has the shape a Ticket's has, and for the same reason: a conversation
+    is not something a person makes and then talks into, it is what talking makes.
     """
     require_direct_write(ctx)
-    conversation_id = conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
-    if conversation_id is None:
-        conversation_id = await conversation_start.start_agent_conversation(
-            conversations, conn, CHIEF_SETTINGS_KEY, conversation_start.agent_resolve(conn)
-        )
-    return {"conversation_id": conversation_id}
+    created_conversation_id = conversation_start.new_conversation_id()
+    runs_under = _what_this_message_runs_under(body)
+    delivered = await conversation_start.send_to_agent_conversation(
+        conversations,
+        conn,
+        CHIEF_SETTINGS_KEY,
+        await conversation_message_content(
+            message_files,
+            _conversation_the_files_belong_to(
+                body,
+                conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY),
+                created_conversation_id,
+            ),
+            body.content,
+        ),
+        conversation_start.agent_resolve(conn, runs_under),
+        conversation_id=body.conversation_id,
+        created_conversation_id=created_conversation_id,
+        runs_under=runs_under,
+        sender_label=body.sender_label,
+        mode=body.mode,
+    )
+    return _delivered_message_json(delivered)
 
 
 @router.post("/chief/conversation/reset")
@@ -976,37 +1099,59 @@ async def reset_chief_conversation(
     return {"conversation_id": None}
 
 
-@router.post("/tickets/{ticket_id}/conversation")
-async def start_ticket_conversation(
+@router.get("/tickets/{ticket_id}/conversation/start-values")
+async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
+    """What a conversation started for this Ticket's worker right now would run on.
+
+    The Chief's question, asked of a Ticket: the same resolve the send door runs, so the
+    Worker type's launch defaults and whatever this Ticket last ran on answer here exactly
+    as they will answer when a message makes the conversation.
+    """
+    return _conversation_start_values_json(
+        conversation_start.worker_resolve(conn, tickets_data.read_ticket(conn, ticket_id))
+    )
+
+
+@router.post("/tickets/{ticket_id}/conversation/send")
+async def send_to_ticket_conversation(
     ticket_id: str,
+    body: OwnerSendBody,
     conn: DbConn,
     ctx: Ctx,
     clk: Clk,
     conversations: Conversations,
+    message_files: MessageFiles,
 ) -> JsonDict:
-    """Start this Ticket's conversation, so a person can talk to it before a step runs.
+    """Send a message to this Ticket's worker, making its conversation if there is none.
 
-    The readiness loop starts one when it has a step to send. This is the other door: a
-    Ticket nobody has run yet, opened by its owner, who types into it. Both doors reach
-    the same writer, so a conversation started by hand is the conversation the loop will
-    find and use.
-
-    A Ticket that already has one keeps it. Starting again would leave the conversation it
-    is pointing at running with nothing able to reach it.
+    This is the whole of talking to a worker. A Ticket nobody has run has no conversation
+    at all — not an empty one — and this message is what brings one into being, on the
+    values it says it runs under. The readiness loop comes through the same door when it
+    has a step to send, so a conversation begun by hand is the one the loop finds.
     """
     require_direct_write(ctx)
-    now = clk.now_unix()
-    ticket = tickets_data.read_ticket(conn, ticket_id)
-    if ticket.conversation_id is None:
-        await conversation_start.start_ticket_conversation(
-            conversations,
-            conn,
-            ticket,
-            conversation_start.worker_resolve(conn, ticket),
-            now=now,
-        )
-        ticket = tickets_data.read_ticket(conn, ticket_id)
-    return tickets_views.ticket_json(ticket, now)
+    created_conversation_id = conversation_start.new_conversation_id()
+    delivered = await conversation_start.send_to_ticket_conversation(
+        conversations,
+        conn,
+        ticket_id,
+        await conversation_message_content(
+            message_files,
+            _conversation_the_files_belong_to(
+                body,
+                tickets_data.read_ticket(conn, ticket_id).conversation_id,
+                created_conversation_id,
+            ),
+            body.content,
+        ),
+        conversation_id=body.conversation_id,
+        created_conversation_id=created_conversation_id,
+        runs_under=_what_this_message_runs_under(body),
+        sender_label=body.sender_label,
+        mode=body.mode,
+        now=clk.now_unix(),
+    )
+    return _delivered_message_json(delivered)
 
 
 @router.post("/tickets/{ticket_id}/conversation/reset")

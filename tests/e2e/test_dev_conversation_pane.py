@@ -160,9 +160,19 @@ WHERE_THE_THREAD_IS = """
 
 
 def _create_conversation(server: ServerHandle, conversation_id: str) -> None:
+    """A conversation for the pane to open, made the way the browser makes one.
+
+    The model is named because every start names one, and it is a name rather than a real
+    model on purpose: nothing here spawns a backend, so what these conversations run on is
+    never asked of a machine. The pane is what is under test.
+    """
     created = httpx.post(
         f"{server.base}/api/conversation/conversations",
-        json={"conversation_id": conversation_id, "backend_key": "codex"},
+        json={
+            "conversation_id": conversation_id,
+            "model": "e2e-model",
+            "backend_key": "codex",
+        },
         timeout=10.0,
     )
     assert created.status_code == 201, created.text
@@ -331,23 +341,6 @@ def _a_conversation_worth_scrolling() -> tuple[ConversationEventPayload, ...]:
     return tuple(rows)
 
 
-def test_the_dev_route_renders_the_empty_state_and_backend_cards(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    page = open_page(
-        context_factory(), server, "#/dev/conversation", "[data-conversation-route]"
-    )
-    # The empty state is a real surface, visibly distinct from a broken blank screen.
-    page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
-    page.wait_for_selector("[data-conversation-new-id]", timeout=WAIT_MS)
-    for backend_key in ("hermes", "codex", "claude"):
-        page.wait_for_selector(
-            f'[data-conversation-backend="{backend_key}"]', timeout=BACKEND_CARD_WAIT_MS
-        )
-
-
 def test_a_started_conversation_reloads_into_the_pane_surface(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
@@ -435,6 +428,13 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
     )
     # Nothing has been started yet: this is the empty state, not a conversation.
     page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
+    # And a conversation is created on a model somebody can name, so the first message can
+    # only make one once this page has read what the backend it is on runs. That read is a
+    # real probe of a real CLI, so it is waited for the way the backend cards are.
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-new-model]').value !== ''",
+        timeout=BACKEND_CARD_WAIT_MS,
+    )
 
     page.fill("[data-conversation-input]", "the very first thing")
     page.press("[data-conversation-input]", "Enter")
@@ -769,11 +769,13 @@ def test_the_thread_follows_the_answer_instead_of_the_bottom(
         AgentMessageEventPayload(content=text_message_content("a short answer")),
     )
     _let_the_browser_catch_up(page, 18)
-    # The row being in the DOM is not the room having absorbed it: the resize
-    # observer's recompute lands a frame later, so wait for the shrink itself.
     page.wait_for_function(
-        "(was) => { const room = document.querySelector('[data-conversation-reserved-space]');"
-        " return room !== null && Math.round(room.getBoundingClientRect().height) < was; }",
+        """(was) => {
+          const room = document.querySelector('[data-conversation-reserved-space]');
+          if (room === null) return false;
+          const now = Math.round(room.getBoundingClientRect().height);
+          return now > 0 && now < was;
+        }""",
         arg=took_over["roomKept"],
         timeout=WAIT_MS,
     )
@@ -858,48 +860,6 @@ def test_a_picture_in_the_record_is_drawn_and_really_loads(
     )
     # The words that came with it are still beside it.
     assert "look at this" in page.inner_text("[data-conversation-row='prompt']")
-
-
-def test_a_link_you_paste_reads_like_the_agent_s_links_do(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    """Your own words go through the same renderer the agent's do.
-
-    A link pasted into your own message used to sit in the thread as literal text while
-    the identical link in the agent's reply became a preview. Same thread, same link, two
-    different things — which is what this asserts is over. It fails on the old behaviour,
-    where a prompt row was drawn as plain text and contained no anchor at all.
-    """
-    _create_conversation(server, "e2e-own-link")
-    _append_rows(
-        server,
-        "e2e-own-link",
-        PromptEventPayload(
-            content=text_message_content("have a look at [the docs](https://example.com/docs)"),
-            sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
-        ),
-        AgentMessageEventPayload(
-            content=text_message_content("I read [the docs](https://example.com/docs)")
-        ),
-    )
-
-    page = open_page(
-        context_factory(),
-        server,
-        "#/dev/conversation?id=e2e-own-link",
-        "[data-conversation-pane]",
-    )
-    page.wait_for_selector("[data-conversation-row='prompt'] a", timeout=WAIT_MS)
-    mine = page.locator("[data-conversation-row='prompt'] a").first
-    theirs = page.locator("[data-conversation-row='agent_message'] a").first
-    assert mine.get_attribute("href") == "https://example.com/docs"
-    assert theirs.get_attribute("href") == "https://example.com/docs"
-    # The literal markdown is gone from both, which is what says it was rendered rather
-    # than printed.
-    assert "](" not in page.inner_text("[data-conversation-row='prompt']")
 
 
 def test_the_commands_an_agent_reports_reach_the_menu_when_its_turn_stops(

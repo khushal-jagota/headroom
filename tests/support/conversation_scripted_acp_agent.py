@@ -191,6 +191,7 @@ class ScriptedAcpAgent:
         self._read_transport: asyncio.ReadTransport | None = None
         self._open_turn: asyncio.Future[PromptResponse] | None = None
         self._break_wire_at_next_answer = False
+        self._break_wire_once_the_session_is_on_its_model = False
         self._seconds_to_take_over_a_cancel = 0.0
         self._wire_broken = False
         self.shutting_down = asyncio.Event()
@@ -219,7 +220,7 @@ class ScriptedAcpAgent:
         self.account.sessions_created += 1
         self.account.session_id = f"scripted-session-{self.account.sessions_created}"
         if ARM_BREAK_WIRE_ON_SESSION in self._arms:
-            self._break_wire_at_next_answer = True
+            self._break_wire_once_the_session_is_on_its_model = True
         return NewSessionResponse(
             session_id=self.account.session_id, config_options=[self._reasoning_effort_option()]
         )
@@ -232,7 +233,7 @@ class ScriptedAcpAgent:
         self.account.loaded_from = session_id
         self.account.session_id = session_id
         if ARM_BREAK_WIRE_ON_SESSION in self._arms:
-            self._break_wire_at_next_answer = True
+            self._break_wire_once_the_session_is_on_its_model = True
         return LoadSessionResponse(config_options=[self._reasoning_effort_option()])
 
     async def set_config_option(
@@ -247,6 +248,9 @@ class ScriptedAcpAgent:
         """Hermes' retired ``session/set_model``, which is how its model really changes."""
         payload = params if isinstance(params, dict) else {}
         self.account.model = str(payload.get("modelId"))
+        if self._break_wire_once_the_session_is_on_its_model:
+            self._break_wire_once_the_session_is_on_its_model = False
+            self._break_wire_at_next_answer = True
         return {}
 
     async def prompt(
@@ -670,6 +674,11 @@ class ScriptedAcpAgent:
         gone by the time the system writes again is the way to write. A wire broken after
         the answer had already been read would be a race, and a test would sometimes watch
         the write it was told would fail succeed instead.
+
+        Arming this on a session waits for the model, because a session is not established
+        until it is on the model the conversation named: breaking before that would fail
+        the model's own request, which is a session that would not load rather than a
+        prompt that could not be written.
         """
         if not self._break_wire_at_next_answer:
             return

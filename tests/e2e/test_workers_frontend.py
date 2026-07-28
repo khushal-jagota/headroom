@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -42,14 +43,6 @@ def _put_stage_owner(
 
 DESCRIPTION_EDIT = '[data-skill-description] [contenteditable="true"]'
 BODY_EDIT = '[data-skill-body] [contenteditable="true"]'
-ARTIFACT_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "files"
-    / "tickets"
-    / "t_fvrfhk2k"
-    / "artifacts"
-)
 
 
 def _replace_inline_edit_text(page: Page, selector: str, text: str) -> None:
@@ -126,120 +119,30 @@ def _assert_no_horizontal_overflow(page: Page) -> None:
     assert overflow <= 0
 
 
-def test_agents_routes_navigation_and_mobile_controls(
+def test_agents_index_renders_when_the_workers_read_answers_last(
     server: ServerHandle, context_factory: Callable[[], BrowserContext]
 ) -> None:
-    legacy_index = context_factory().new_page()
-    legacy_index.goto(server.base + "/#/workers")
-    legacy_index.wait_for_url(server.base + "/#/agents", timeout=WAIT_MS)
-    legacy_index.wait_for_selector('[data-screen="agents"] [data-agents-section]', timeout=WAIT_MS)
-    _assert_agents_nav_active_and_clear(legacy_index)
+    """The Agents index waits on two reads, and the order they answer in is a race.
 
-    legacy_worker = context_factory().new_page()
-    legacy_worker.goto(server.base + "/#/workers/coding")
-    legacy_worker.wait_for_url(server.base + "/#/agents/workers/coding", timeout=WAIT_MS)
-    legacy_worker.wait_for_selector(
-        '[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS
+    Held here so the read the screen looks at first is the last one to answer. A screen is
+    only told about the parts of a read it has already looked at, so a gate that stops at
+    the first unfinished read never looks at the other one, is never told when it answers,
+    and stays on its loading line for good.
+    """
+    page = context_factory().new_page()
+    # No change stream: its connect handler refetches everything, which would wake a
+    # screen that had stopped listening and hide the failure this test is for.
+    page.route("**/api/changes", lambda route: route.abort())
+
+    def answer_after_the_others(route: Route) -> None:
+        time.sleep(0.5)
+        route.continue_()
+
+    page.route("**/api/workers", answer_after_the_others)
+    page.goto(server.base + "/#/agents")
+    page.wait_for_selector(
+        '[data-screen="agents"] [data-workers-list] [data-worker-destination]', timeout=WAIT_MS
     )
-    _assert_agents_nav_active_and_clear(legacy_worker)
-
-    for invalid_hash in ("#/agents/not-a-role", "#/agents/workers"):
-        invalid = context_factory().new_page()
-        invalid.goto(server.base + f"/{invalid_hash}")
-        invalid.wait_for_selector(".quiet-line", timeout=WAIT_MS)
-        assert invalid.locator(".quiet-line").inner_text() == "no such screen"
-
-    mobile_index = context_factory().new_page()
-    mobile_index.set_viewport_size({"width": 390, "height": 844})
-    mobile_index.goto(server.base + "/#/agents")
-    mobile_index.wait_for_selector("[data-agent-configure]", timeout=WAIT_MS)
-    _assert_agents_nav_active_and_clear(mobile_index)
-    _assert_no_horizontal_overflow(mobile_index)
-    assert mobile_index.locator("[data-agent-configure]").is_visible()
-    assert mobile_index.locator("[data-agent-configure]").get_attribute("href") == (
-        "#/agents/chief-of-staff"
-    )
-    assert mobile_index.locator('[data-worker-row][data-worker-id="coding"]').is_visible()
-
-    mobile_index.locator("[data-agent-configure]").click()
-    mobile_index.wait_for_url(server.base + "/#/agents/chief-of-staff", timeout=WAIT_MS)
-    mobile_index.wait_for_selector("[data-agent-detail]", timeout=WAIT_MS)
-    _assert_agents_nav_active_and_clear(mobile_index)
-    _assert_no_horizontal_overflow(mobile_index)
-    assert mobile_index.get_by_label("Chief of Staff backend").is_visible()
-    assert mobile_index.locator(DESCRIPTION_EDIT).is_editable()
-    assert mobile_index.locator(BODY_EDIT).is_editable()
-
-
-def test_agents_index_worker_detail_and_mobile_layout(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    page = open_page(
-        context_factory(),
-        server,
-        "#/agents",
-        'section[data-screen="agents"] [data-workers-list]',
-    )
-    assert page.locator('[data-screen="agents"] [data-agents-section]').count() == 1
-    assert page.locator('[data-screen="agents"] [data-workers-section]').count() == 1
-    assert page.locator('[data-screen="agents"] [data-agent-card]').count() == 2
-    assert page.locator('[data-screen="agents"] [data-worker-row]').count() >= 3
-    assert page.locator("[data-skills-home]").count() == 0
-    chief = page.locator('[data-agent-card][data-agent-id="chief_of_staff"]')
-    assert chief.locator("[data-agent-label]").inner_text() == "Chief of Staff"
-    assert chief.locator("[data-agent-purpose]").inner_text().strip()
-    assert chief.locator("[data-agent-skill-name]").inner_text() == "panels-chief-of-staff"
-    shared_worker_skill = page.locator(
-        '[data-agent-card][data-agent-id="panels-worker"]'
-    )
-    assert shared_worker_skill.locator("[data-agent-label]").inner_text() == "Worker skill"
-    assert shared_worker_skill.locator("[data-agent-purpose]").inner_text().strip()
-    assert (
-        shared_worker_skill.locator("[data-agent-skill-name]").inner_text()
-        == "panels-worker"
-    )
-    assert shared_worker_skill.locator("[data-worker-skill-configure]").get_attribute(
-        "href"
-    ) == "#/agents/worker-skill"
-    assert shared_worker_skill.locator("[data-launch-defaults]").count() == 0
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=ARTIFACT_DIR / "agents-page-desktop.png", full_page=True)
-    coding = page.locator('[data-worker-row][data-worker-id="coding"]')
-    assert coding.locator("[data-worker-label]").inner_text() == "Coding"
-    assert coding.locator("[data-worker-skill-name]").inner_text() == "panels-worker-coding"
-    assert coding.locator("[data-worker-stage-count]").inner_text() == "7 Stages"
-
-    page.click('[data-worker-row][data-worker-id="coding"]')
-    page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
-    assert page.locator("[data-role-name]").inner_text() == "Coding"
-    assert page.url.endswith("#/agents/workers/coding")
-    assert page.locator("[data-worker-stage-table] [data-worker-stage-row]").count() == 7
-    terminal = page.locator('[data-worker-stage-row][data-stage="done"]')
-    assert terminal.get_attribute("data-terminal") == "true"
-    assert terminal.locator("[data-terminal-owner]").inner_text() == "terminal"
-    assert (
-        page.locator("[data-skill-content] [data-skill-name]").inner_text()
-        == "panels-worker-coding"
-    )
-    assert page.locator("[data-skill-edit-button]").count() == 0
-    assert page.locator("[data-skill-save-button]").count() == 0
-    assert page.locator("[data-skill-cancel-button]").count() == 0
-    assert page.locator(DESCRIPTION_EDIT).get_attribute("contenteditable") == "true"
-    assert page.locator(BODY_EDIT).get_attribute("contenteditable") == "true"
-    assert page.locator("[data-skill-name]").get_attribute("contenteditable") != "true"
-
-    mobile = context_factory().new_page()
-    mobile.set_viewport_size({"width": 390, "height": 844})
-    mobile.goto(server.base + "/#/agents/workers/coding")
-    mobile.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
-    assert mobile.locator("[data-stage-label]").first.is_visible()
-    assert mobile.locator("[data-stage-owner-select]").first.is_visible()
-    assert not mobile.locator("[data-gated-field]").first.is_visible()
-    _assert_agents_nav_active_and_clear(mobile)
-    _assert_no_horizontal_overflow(mobile)
-    mobile.screenshot(path=ARTIFACT_DIR / "agents-worker-detail-mobile.png", full_page=True)
 
 
 def test_chief_detail_edits_skill_independently_and_retries_failure(

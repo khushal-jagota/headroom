@@ -144,7 +144,7 @@ def _snapshot(db_path: Path, ticket_id: str) -> dict[str, Any]:
 
 def _employee_configuration_body(
     employee_backend: str,
-    employee_launch_model: str | None = None,
+    employee_launch_model: str,
     employee_launch_reasoning_effort: str | None = None,
 ) -> dict[str, object]:
     return {
@@ -169,6 +169,18 @@ def test_ticket_creation_copies_worker_type_configuration_once(
                 "title": "Override backend",
                 "worker_type": "probe",
                 "employee_backend": "hermes",
+                "employee_launch_model": "hermes-model",
+            },
+        )
+        # A model named on its own stays on the type's backend and replaces the model
+        # there. The type's reasoning effort was chosen for the model being replaced, so
+        # it does not follow the new one.
+        model_only = client.post(
+            "/api/tickets",
+            json={
+                "title": "Another model on the same backend",
+                "worker_type": "probe",
+                "employee_launch_model": "probe-other",
             },
         )
         before = connect(str(db_path))
@@ -180,6 +192,17 @@ def test_ticket_creation_copies_worker_type_configuration_once(
                 "title": "Unknown backend",
                 "worker_type": "probe",
                 "employee_backend": "missing-backend",
+                "employee_launch_model": "whatever-it-runs",
+            },
+        )
+        # A backend other than the type's own that names no model for itself. There is
+        # nothing left for this Ticket to run on, so no Ticket is made.
+        unnamed = client.post(
+            "/api/tickets",
+            json={
+                "title": "Override with nothing to run",
+                "worker_type": "probe",
+                "employee_backend": "hermes",
             },
         )
 
@@ -189,10 +212,17 @@ def test_ticket_creation_copies_worker_type_configuration_once(
     assert defaulted.json()["employee_launch_reasoning_effort"] == "probe-high"
     assert overridden.status_code == 200
     assert overridden.json()["employee_backend"] == "hermes"
-    assert overridden.json()["employee_launch_model"] is None
+    assert overridden.json()["employee_launch_model"] == "hermes-model"
+    # The reasoning effort belonged to the type's own model, so it does not come along.
     assert overridden.json()["employee_launch_reasoning_effort"] is None
     assert rejected.status_code == 400
     assert rejected.json()["error"]["code"] == "validation"
+    assert unnamed.status_code == 400
+    assert unnamed.json()["error"]["code"] == "validation"
+    assert model_only.status_code == 200
+    assert model_only.json()["employee_backend"] == "claude"
+    assert model_only.json()["employee_launch_model"] == "probe-other"
+    assert model_only.json()["employee_launch_reasoning_effort"] is None
     check = connect(str(db_path))
     try:
         assert check.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
@@ -250,11 +280,11 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
     with TestClient(app) as client:
         awaiting = client.put(
             f"/api/tickets/{awaiting_id}/employee-configuration",
-            json=_employee_configuration_body("hermes"),
+            json=_employee_configuration_body("hermes", "hermes-model"),
         )
         empty = client.put(
             f"/api/tickets/{empty_id}/employee-configuration",
-            json=_employee_configuration_body("hermes"),
+            json=_employee_configuration_body("hermes", "hermes-model"),
         )
 
     assert awaiting.status_code == empty.status_code == 200
@@ -266,7 +296,8 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
         for ticket_id in (awaiting_id, empty_id):
             stored = tickets_data.read_ticket(check, ticket_id)
             assert stored.employee_backend == "hermes"
-            assert stored.employee_launch_model is None
+            # The new backend's model came with it, so the Ticket says what it runs on.
+            assert stored.employee_launch_model == "hermes-model"
             assert stored.employee_launch_reasoning_effort is None
     finally:
         check.close()
@@ -342,7 +373,7 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         )
         backend_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "not-a-hermes-model", "extreme"),
+            json=_employee_configuration_body("hermes", "hermes-model", "medium"),
         )
         switched_back = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -361,18 +392,21 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         model_changed.json()["employee_launch_model"],
         model_changed.json()["employee_launch_reasoning_effort"],
     ) == ("probe-b", None)
+    # A backend change is taken whole. Nothing carries over from the backend being left —
+    # a model id belongs to the backend that named it — so the body is the whole answer,
+    # and there is no catalog of the new backend's to weigh it against here.
     assert backend_changed.status_code == 200
     assert (
         backend_changed.json()["employee_backend"],
         backend_changed.json()["employee_launch_model"],
         backend_changed.json()["employee_launch_reasoning_effort"],
-    ) == ("hermes", None, None)
+    ) == ("hermes", "hermes-model", "medium")
     assert switched_back.status_code == 200
     assert (
         switched_back.json()["employee_backend"],
         switched_back.json()["employee_launch_model"],
         switched_back.json()["employee_launch_reasoning_effort"],
-    ) == ("claude", None, None)
+    ) == ("claude", "probe-a", "high")
 
 
 def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(
@@ -480,14 +514,14 @@ def test_employee_configuration_change_rejects_every_pristine_freeze_boundary(
     with TestClient(app) as client:
         response = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes"),
+            json=_employee_configuration_body("hermes", "hermes-model"),
         )
 
     assert response.status_code == 409
     assert _snapshot(db_path, ticket_id) == before
 
 
-def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_body(
+def test_employee_configuration_endpoint_requires_the_exact_complete_body(
     tmp_path: Path,
     probe_runtime: None,
 ) -> None:
@@ -507,31 +541,46 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_bo
     with TestClient(app) as client:
         bound = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes"),
+            json=_employee_configuration_body("hermes", "hermes-model"),
         )
         indirect = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("claude"),
+            json=_employee_configuration_body("claude", "probe-a"),
             headers={"X-Plan-Actor": "worker"},
         )
         extra = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json={**_employee_configuration_body("claude"), "extra": True},
+            json={**_employee_configuration_body("claude", "probe-a"), "extra": True},
         )
         unknown = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("missing-backend"),
+            json=_employee_configuration_body("missing-backend", "probe-a"),
         )
         missing = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json={"employee_backend": "claude"},
         )
-        wrong_nullable_type = client.put(
+        wrong_type = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
             json={
-                **_employee_configuration_body("claude"),
+                **_employee_configuration_body("claude", "probe-a"),
                 "employee_launch_model": 42,
             },
+        )
+        # A complete body that names no model is not a launch configuration: it would
+        # leave the backend to run whatever it liked, so the door does not take it. Text
+        # that names nothing — blank, or padded out with spaces — is the same thing said
+        # a longer way, and it is refused in the same place.
+        unnamed_model = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json={
+                **_employee_configuration_body("claude", "probe-a"),
+                "employee_launch_model": None,
+            },
+        )
+        blank_model = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("claude", "   "),
         )
         detail = client.get(f"/api/tickets/{ticket_id}")
 
@@ -541,7 +590,11 @@ def test_employee_configuration_endpoint_requires_the_exact_complete_nullable_bo
     assert extra.status_code == 400
     assert unknown.status_code == 400
     assert missing.status_code == 400
-    assert wrong_nullable_type.status_code == 400
+    assert wrong_type.status_code == 400
+    assert unnamed_model.status_code == 400
+    assert unnamed_model.json()["error"]["code"] == "validation"
+    assert blank_model.status_code == 400
+    assert blank_model.json()["error"]["code"] == "validation"
     assert detail.status_code == 200
     assert detail.json()["employee_configuration_editable"] is False
     assert _snapshot(db_path, ticket_id) == before

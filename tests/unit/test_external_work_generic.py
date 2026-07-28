@@ -127,7 +127,7 @@ _MISALIGNED = WorkerTypeDefinition(
     ),
     worker_profile=WorkerProfile(
         specialist_skill="panels-worker",
-        default_model=None,
+        default_model="a-model",
         default_reasoning_effort=None,
         toolset_profile="default",
         default_backend="hermes",
@@ -171,7 +171,7 @@ _NO_PREFIX = WorkerTypeDefinition(
     fields=(FieldDefinition(id="kickoff", label="Kickoff"), FieldDefinition(id="one", label="One")),
     worker_profile=WorkerProfile(
         specialist_skill="panels-worker",
-        default_model=None,
+        default_model="a-model",
         default_reasoning_effort=None,
         toolset_profile="default",
         default_backend="hermes",

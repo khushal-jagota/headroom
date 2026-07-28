@@ -29,6 +29,7 @@ from planner.tickets.data import (
     create_ticket,
     drop_ticket,
     file_proposal,
+    request_user_help,
 )
 from planner.tickets.views import review_view
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -110,16 +111,17 @@ def test_review_uses_each_shipped_worker_types_stored_stage_field(tmp_db: Connec
 
     response = _review(tmp_db)
 
-    assert set(response) == {"ticket_decisions", "user_help_requests", "running_worker_count"}
-    assert response["user_help_requests"] == []
-    assert response["ticket_decisions"] == [
+    assert set(response) == {"items", "running_worker_count"}
+    assert response["items"] == [
         {
+            "review_item_type": "proposal",
             "ticket_id": new_worker_id,
             "field": "understanding",
             "title": "New worker",
             "waiting_since": 3,
         },
         {
+            "review_item_type": "proposal",
             "ticket_id": coding_id,
             "field": "success",
             "title": "Coding",
@@ -127,8 +129,9 @@ def test_review_uses_each_shipped_worker_types_stored_stage_field(tmp_db: Connec
         },
     ]
     assert all(
-        set(decision) == {"ticket_id", "field", "title", "waiting_since"}
-        for decision in response["ticket_decisions"]
+        set(item)
+        == {"review_item_type", "ticket_id", "field", "title", "waiting_since"}
+        for item in response["items"]
     )
     assert response["running_worker_count"] == 0
 
@@ -146,8 +149,9 @@ def test_review_uses_test_only_worker_type_field(
     )
     days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, probe_id, 4)
 
-    assert _review(tmp_db)["ticket_decisions"] == [
+    assert _review(tmp_db)["items"] == [
         {
+            "review_item_type": "proposal",
             "ticket_id": probe_id,
             "field": FIELD_ALPHA,
             "title": "Probe",
@@ -193,11 +197,51 @@ def test_review_is_day_scoped_and_orders_equal_times_by_ticket_id(tmp_db: Connec
     days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, second_id, 6)
     days_data.add_day_ticket(tmp_db, YESTERDAY_DAY_ID, off_day_id, 6)
 
-    decision_ids = [row["ticket_id"] for row in _review(tmp_db)["ticket_decisions"]]
+    decision_ids = [row["ticket_id"] for row in _review(tmp_db)["items"]]
 
     assert decision_ids == sorted((first_id, second_id))
     assert off_day_id not in decision_ids
     assert no_day_id not in decision_ids
+
+
+def test_review_orders_proposals_and_needs_user_requests_together(
+    tmp_db: Connection,
+) -> None:
+    proposal_id = _park_after_kickoff(
+        tmp_db,
+        worker_type="coding",
+        title="Proposal",
+        next_ceiling="needs_success",
+        field="success",
+        proposal_at=5,
+    )
+    help_id = _park_after_kickoff(
+        tmp_db,
+        worker_type="coding",
+        title="Needs user",
+        next_ceiling="needs_success",
+        field="success",
+        proposal_at=7,
+    )
+    request_user_help(tmp_db, help_id, actor="agent", now=3)
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, proposal_id, 8)
+    days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, help_id, 8)
+
+    assert _review(tmp_db)["items"] == [
+        {
+            "review_item_type": "needs_user",
+            "ticket_id": help_id,
+            "title": "Needs user",
+            "waiting_since": 3,
+        },
+        {
+            "review_item_type": "proposal",
+            "ticket_id": proposal_id,
+            "field": "success",
+            "title": "Proposal",
+            "waiting_since": 5,
+        },
+    ]
 
 
 def test_running_ticket_is_not_a_decision_and_global_count_includes_off_day(
@@ -228,16 +272,15 @@ def test_running_ticket_is_not_a_decision_and_global_count_includes_off_day(
 
     response = _review(tmp_db)
 
-    assert response["ticket_decisions"] == []
+    assert response["items"] == []
     assert response["running_worker_count"] == 2
 
 
-def test_review_membership_is_the_awaiting_approval_status_and_nothing_else(
+def test_review_membership_is_the_two_human_work_statuses_and_nothing_else(
     tmp_db: Connection,
 ) -> None:
     # Review is a pure filter on the status. The proposal stays on file throughout,
-    # so only the status decides membership - including for `paired`, which is where
-    # a filed proposal lands once the user replies.
+    # so only awaiting_approval and needs_user decide membership.
     ticket_id = _park_after_kickoff(
         tmp_db,
         worker_type="coding",
@@ -252,9 +295,16 @@ def test_review_membership_is_the_awaiting_approval_status_and_nothing_else(
         tmp_db.execute(
             "UPDATE tickets SET ticket_status = ? WHERE id = ?", (status.value, ticket_id)
         )
-        decision_ids = [row["ticket_id"] for row in _review(tmp_db)["ticket_decisions"]]
-        expected = [ticket_id] if status is TicketStatus.awaiting_approval else []
-        assert decision_ids == expected, status
+        items = _review(tmp_db)["items"]
+        expected_type = {
+            TicketStatus.awaiting_approval: "proposal",
+            TicketStatus.needs_user: "needs_user",
+        }.get(status)
+        assert [row["ticket_id"] for row in items] == (
+            [ticket_id] if expected_type is not None else []
+        ), status
+        if expected_type is not None:
+            assert items[0]["review_item_type"] == expected_type
 
 
 def test_a_terminal_ticket_never_reaches_review(tmp_db: Connection) -> None:
@@ -269,11 +319,11 @@ def test_a_terminal_ticket_never_reaches_review(tmp_db: Connection) -> None:
         proposal_at=3,
     )
     days_data.add_day_ticket(tmp_db, TODAY_DAY_ID, ticket_id, 4)
-    assert [row["ticket_id"] for row in _review(tmp_db)["ticket_decisions"]] == [ticket_id]
+    assert [row["ticket_id"] for row in _review(tmp_db)["items"]] == [ticket_id]
 
     drop_ticket(tmp_db, ticket_id, actor="human", now=5)
 
-    assert _review(tmp_db)["ticket_decisions"] == []
+    assert _review(tmp_db)["items"] == []
 
 
 def test_overdue_ticket_and_sprint_item_do_not_create_review_output(
@@ -297,8 +347,7 @@ def test_overdue_ticket_and_sprint_item_do_not_create_review_output(
     tmp_db.execute("UPDATE sprint_items SET deadline = '2020-01-01' WHERE id = ?", (item.id,))
 
     assert _review(tmp_db) == {
-        "ticket_decisions": [],
-        "user_help_requests": [],
+        "items": [],
         "running_worker_count": 0,
     }
 
@@ -327,8 +376,7 @@ def test_review_http_contract_and_old_route_absence(tmp_path: Path) -> None:
 
     assert review.status_code == 200
     assert review.json() == {
-        "ticket_decisions": [],
-        "user_help_requests": [],
+        "items": [],
         "running_worker_count": 0,
     }
     assert old_route.status_code == 404
@@ -359,6 +407,8 @@ def test_old_queue_surface_is_absent_from_scoped_live_files() -> None:
         '"overdue"',
         '"running_agents"',
         ".review-queue-line",
+        '"ticket_decisions"',
+        '"user_help_requests"',
     ):
         assert forbidden not in joined
 
@@ -377,6 +427,6 @@ def test_review_component_has_only_ticket_specific_entry_contract() -> None:
         ".running_agents",
     ):
         assert forbidden not in source
-    assert "data-ticket-id={decision.ticket_id}" in source
-    assert "data-field={decision.field}" in source
+    assert "data-ticket-id={currentItem.ticket_id}" in source
+    assert "data-field={currentItem.field}" in source
     assert "refreshReviewAfter" not in source

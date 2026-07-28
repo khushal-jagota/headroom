@@ -37,7 +37,7 @@ SYNTHETIC_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
         FieldDefinition(FIELD_ALPHA, "Alpha"),
         FieldDefinition(FIELD_BETA, "Beta"),
     ),
-    worker_profile=WorkerProfile("synthetic-worker", None, None, "default", "hermes"),
+    worker_profile=WorkerProfile("synthetic-worker", "a-model", None, "default", "hermes"),
     supports_prefix_reconciliation=True,
 )
 

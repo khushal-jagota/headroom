@@ -22,6 +22,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 
+from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
     AgentCommand,
     ConversationAccess,
@@ -52,6 +53,23 @@ class ConversationRecordMissing(RuntimeError):
     """
 
 
+class ConversationRecordNamesNoModel(BackendSpawnFailed):
+    """A conversation's row names no model, so it cannot say what to start again on.
+
+    Every conversation is created with a model named, so this is a row from before that
+    was so. Nobody knows what it ran on — the backend chose and never wrote it down — so
+    it is not repaired: putting a model in its mouth now would make the record say
+    something untrue.
+
+    What it stops is starting a child, and only that. Reading such a row is fine and has
+    to be: the record is the account of what happened, those rows are part of what
+    happened, and a screen that shows a conversation must be able to show them. So this
+    is raised where a start is asked for rather than where a row is read, and it is a
+    spawn failure because that is exactly what it is — a conversation that cannot be
+    started refuses the message rather than breaking the page that lists it.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class ConversationRecord:
     """A conversation as it is stored: what it was started with, and where it is now.
@@ -65,6 +83,8 @@ class ConversationRecord:
 
     conversation_id: str
     backend_key: ConversationBackendKey
+    # Null only on a row written before a model was required. Nothing new can be, and the
+    # rows that are cannot start a child — but they are still part of the record.
     model: str | None
     reasoning_effort: str | None
     workspace_folder: Path
@@ -91,6 +111,8 @@ class ConversationRecord:
                 identity_environment_variables=self.identity_environment_variables,
             )
         )
+        if self.model is None:
+            raise ConversationRecordNamesNoModel(self.conversation_id)
         return ResolvedConversationStart(
             conversation_id=self.conversation_id,
             backend_key=self.backend_key,

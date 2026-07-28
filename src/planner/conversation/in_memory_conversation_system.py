@@ -179,7 +179,12 @@ class InMemoryConversationSystem:
         mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
+        # The sender's own two facts about this message are carried on the real system's
+        # rows. There are no rows here, and nothing this fake answers depends on them.
+        del sender_message_id, sent_at_unix_milliseconds
         if mode is PromptDeliveryMode.steer and (
             model_change is not None or reasoning_effort_change is not None
         ):

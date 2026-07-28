@@ -1,4 +1,4 @@
-"""Real-process acceptance tests for the foreground Panels supervisor."""
+"""Real-process integration tests for the foreground Panels supervisor."""
 
 from __future__ import annotations
 

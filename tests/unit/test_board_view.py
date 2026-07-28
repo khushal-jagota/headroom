@@ -84,6 +84,7 @@ _ENRICHMENT_CARD_KEYS = [
     "is_dropped",
     "blocked",
     "conversation_id",
+    "waiting_to_closeout",
 ]
 
 # The three signals the async route asks the conversation system for and appends after
@@ -262,6 +263,37 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connectio
     assert card["is_dropped"] is False
     assert card["blocked"] is False
     assert card["conversation_id"] is None
+    assert card["waiting_to_closeout"] is False
+
+
+@pytest.mark.parametrize(
+    ("stage", "ticket_status", "ceiling", "at_cap", "expected"),
+    [
+        ("needs_closeout", "empty", "needs_closeout", "propose", True),
+        ("needs_closeout", "empty", "needs_closeout", "stop", False),
+        ("needs_closeout", "empty", "done", "stop", True),
+        ("needs_success", "empty", "done", "stop", False),
+        ("needs_closeout", "agent", "done", "stop", False),
+    ],
+)
+def test_board_card_identifies_only_runnable_empty_closeout_tickets(
+    tmp_db: Connection,
+    stage: str,
+    ticket_status: str,
+    ceiling: str,
+    at_cap: str,
+    expected: bool,
+) -> None:
+    ticket_id = _ticket(tmp_db, "Closeout classification", 1)
+    tmp_db.execute(
+        "UPDATE tickets SET stage = ?, ticket_status = ?, ceiling = ?, at_cap = ? "
+        "WHERE id = ?",
+        (stage, ticket_status, ceiling, at_cap, ticket_id),
+    )
+
+    card = next(card for column in _board(tmp_db)["columns"] for card in column["cards"])
+
+    assert card["waiting_to_closeout"] is expected
 
 
 def test_board_mixed_coding_probe_does_not_throw(
@@ -327,7 +359,7 @@ def test_board_card_carries_where_its_conversation_last_had_a_turn_end(
                 ResolvedConversationStart(
                     conversation_id=conversation_id,
                     backend_key=ConversationBackendKey.codex,
-                    model=None,
+                    model="a-model",
                     reasoning_effort=None,
                     role_materials=None,
                     workspace_folder=Path("/tmp"),
@@ -427,7 +459,7 @@ def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
     async def start_turns() -> None:
         for conversation_id in ("conv-running", "conv-asking", "conv-answered"):
             await conversations.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id)
+                ConversationStartRequest(conversation_id=conversation_id, model="a-model")
             )
             await conversations.send(
                 conversation_id,
@@ -477,7 +509,7 @@ def test_board_route_stops_working_when_the_conversation_turn_ends(
 
     async def start_turn() -> None:
         await conversations.start_conversation(
-            ConversationStartRequest(conversation_id="conv-finishing")
+            ConversationStartRequest(conversation_id="conv-finishing", model="a-model")
         )
         await conversations.send(
             "conv-finishing",

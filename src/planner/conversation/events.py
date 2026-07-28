@@ -263,12 +263,15 @@ class ModelChangedEventPayload:
     """The values the conversation runs on from this delivery onwards.
 
     Both are carried, not just the one that changed, because the row answers "what is this
-    conversation running on now" rather than "what did the owner touch".
+    conversation running on now" rather than "what did the owner touch". The model is
+    always one of them: a conversation is started on a named model and a change moves it
+    to another named model, so there is no delivery after which nobody could say what it
+    is running on.
     """
 
     kind: ClassVar[ConversationEventKind] = ConversationEventKind.model_changed
 
-    model: str | None
+    model: str
     reasoning_effort: str | None
 
 
@@ -557,7 +560,7 @@ def _payload_from_json_object(
             )
         case ConversationEventKind.model_changed:
             return ModelChangedEventPayload(
-                model=_optional_text(stored, "model"),
+                model=_text(stored, "model"),
                 reasoning_effort=_optional_text(stored, "reasoning_effort"),
             )
         case ConversationEventKind.token_usage:

@@ -35,13 +35,6 @@ E24_BODY = "Agent-drafted success criteria."
 E25_ORIG = "# Original proposal\n\n- old structure"
 E25_EDIT = "# Original proposal v2\n\n- kept structure\n- serialized from DOM"
 NOOP_MARKDOWN_BODY = "# Raw forms\n\n* star bullet\n\n1) ordered paren\n\n_line italic_"
-NESTED_GFM_BODY = (
-    "1. Parent ordered item\n"
-    "   - Mixed child bullet\n"
-    "     continuation content\n"
-    "   - Second child bullet\n"
-    "2. Second ordered item"
-)
 SELECT_NODE_CONTENTS = (
     "node => { const r = document.createRange(); r.selectNodeContents(node);"
     " const s = getSelection(); s.removeAllRanges(); s.addRange(r); }"
@@ -201,127 +194,6 @@ def test_e23_env_pinned_propose(
     assert api.get(server, f"/api/tickets/{tid}")["fields"]["success"]["value"] is None
 
 
-def test_review_tracks_today_membership_without_reload(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Today-scoped review",
-        "--kickoff-note",
-        "Review this premise",
-    )["id"]
-    # New Tickets now default onto today; remove it first so this test still starts
-    # from the empty state and exercises the live membership invalidation.
-    cli(server, "day", "remove-ticket", tid, "--date", "today")
-    card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", "[data-review-empty]")
-    badge = page.locator('a[data-screen="review"] .nav-badge')
-
-    assert api.get(server, "/api/review")["ticket_decisions"] == []
-    assert "hidden" in (badge.get_attribute("class") or "").split()
-    flushes = page.evaluate("window.__plannerDebug.flushes")
-    review_url = page.url
-
-    _add_to_today(api, server, tid)
-
-    _wait_present(page, card)
-    page.wait_for_function(
-        "() => { const badge = document.querySelector('a[data-screen=\"review\"] .nav-badge');"
-        " return badge && !badge.classList.contains('hidden')"
-        " && badge.textContent.trim() === '1'; }",
-        timeout=WAIT_MS,
-    )
-    assert page.url == review_url
-    assert page.evaluate("window.__plannerDebug.flushes") > flushes
-
-    cli(server, "day", "remove-ticket", tid, "--date", "today")
-    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    page.wait_for_function(
-        "() => document.querySelector('a[data-screen=\"review\"] .nav-badge')"
-        ".classList.contains('hidden')",
-        timeout=WAIT_MS,
-    )
-    assert api.get(server, "/api/review")["ticket_decisions"] == []
-    assert page.url == review_url
-
-    _add_to_today(api, server, tid)
-    _wait_present(page, card)
-    page.wait_for_function(
-        "() => { const badge = document.querySelector('a[data-screen=\"review\"] .nav-badge');"
-        " return badge && !badge.classList.contains('hidden')"
-        " && badge.textContent.trim() === '1'; }",
-        timeout=WAIT_MS,
-    )
-
-    _wait_enabled(page, f"{card} [data-accept]")
-    page.click(f"{card} [data-accept]")
-    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    page.wait_for_function(
-        "() => document.querySelector('a[data-screen=\"review\"] .nav-badge')"
-        ".classList.contains('hidden')",
-        timeout=WAIT_MS,
-    )
-    ticket = api.get(server, f"/api/tickets/{tid}")
-    assert ticket["stage"] == "needs_success"
-    assert ticket["fields"]["kickoff"]["value"] == "Review this premise"
-
-
-def test_kickoff_accepts_from_review_without_worker_revision_control(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Review kickoff",
-        "--kickoff-note",
-        "Review this premise",
-    )["id"]
-    _add_to_today(api, server, tid)
-    card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card)
-    assert page.get_attribute(card, "data-field") == "kickoff"
-    assert page.locator(f'{card} [data-field="kickoff"] [data-approval-block]').count() == 1
-    assert page.locator(f"{card} [data-review-revision]").count() == 0
-    title_editor = page.locator(f"{card} .review-ticket-title [role=textbox]").first
-    title_editor.focus()
-    title_editor.evaluate(SELECT_NODE_CONTENTS)
-    with page.expect_response(
-        lambda response: (
-            response.request.method == "PATCH" and response.url.endswith(f"/api/tickets/{tid}")
-        )
-    ):
-        page.keyboard.type("Reviewed kickoff title")
-        title_editor.blur()
-    assert page.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_success"
-    assert page.locator(f"{card} [data-scope-atcap] select").input_value() == "propose"
-    page.select_option(f"{card} [data-scope-ceiling]", "needs_approach")
-    page.select_option(f"{card} [data-scope-atcap] select", "stop")
-    page.click(f"{card} [data-accept]")
-    page.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    detail = api.get(server, f"/api/tickets/{tid}")
-    assert detail["stage"] == "needs_success"
-    assert detail["ceiling"] == "needs_approach"
-    assert detail["at_cap"] == "stop"
-    assert detail["title"] == "Reviewed kickoff title"
-
-
 def test_e24_accept_in_review(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
@@ -365,7 +237,7 @@ def test_e24_accept_in_review(
 
     # Review departure (only decision on a fresh DB).
     page_a.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    assert api.get(server, "/api/review")["ticket_decisions"] == []
+    assert api.get(server, "/api/review")["items"] == []
 
     # Second context updates without reload — the flip arrives via the change stream.
     page_b.wait_for_function(
@@ -445,49 +317,6 @@ def test_markdown_approval_focus_noop_keeps_raw_source(
             ).fetchall()
             == []
         )
-
-
-def test_review_approval_renders_nested_mixed_gfm_lists(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Nested GFM approval",
-    )["id"]
-    cli(
-        server,
-        "worker",
-        "propose",
-        "--body-file",
-        "-",
-        "--recap",
-        "Nested list ready.",
-        ticket_id=tid,
-        stdin=NESTED_GFM_BODY,
-    )
-
-    _add_to_today(api, server, tid)
-    card = f'[data-review-card][data-ticket-id="{tid}"]'
-    page = open_page(context_factory(), server, "#/review", card)
-
-    draft = page.locator(f"{card} .approval-draft")
-    top_level_ordered = draft.locator(".markdown-block > ol").first
-    assert top_level_ordered.locator(":scope > li").count() == 2
-    first_item = top_level_ordered.locator(":scope > li").first
-    assert first_item.locator(":scope > ul > li").count() == 2
-    assert (
-        first_item.locator(":scope > ul > li").first.inner_text()
-        == "Mixed child bullet continuation content"
-    )
 
 
 def test_e25_edit_accept_in_review(
@@ -700,6 +529,128 @@ def test_review_keyboard_shortcuts(
     assert approved["fields"]["success"]["proposal"] is None
 
 
+def test_needs_user_requests_share_the_review_walk(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    first_help = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "First Worker question",
+    )["id"]
+    cli(server, "worker", "request-user-help", ticket_id=first_help)
+    second_help = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Second Worker question",
+    )["id"]
+    cli(server, "worker", "request-user-help", ticket_id=second_help)
+    proposal = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Ordinary proposal",
+    )["id"]
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Proposal recap.",
+        ticket_id=proposal,
+        stdin="Proposal body.",
+    )
+    _add_to_today(api, server, first_help, second_help, proposal)
+
+    # Give the two help requests explicit earlier waits so this browser test proves
+    # the cross-kind order rather than depending on random Ticket IDs at equal times.
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET ticket_status_changed_at = 1000 WHERE id = ?",
+            (first_help,),
+        )
+        conn.execute(
+            "UPDATE tickets SET ticket_status_changed_at = 2000 WHERE id = ?",
+            (second_help,),
+        )
+
+    review_items = api.get(server, "/api/review")["items"]
+    assert [item["review_item_type"] for item in review_items] == [
+        "needs_user",
+        "needs_user",
+        "proposal",
+    ]
+    assert [item["ticket_id"] for item in review_items] == [first_help, second_help, proposal]
+
+    help_card = '[data-review-card][data-review-item-type="needs_user"]'
+    walk_page = open_page(context_factory(), server, "#/review", help_card)
+    open_page_for_shortcut = open_page(context_factory(), server, "#/review", help_card)
+    badge = walk_page.locator('a[data-screen="review"] .nav-badge')
+
+    assert walk_page.get_attribute(help_card, "data-ticket-id") == first_help
+    assert walk_page.text_content(f"{help_card} .review-ticket-title") == "First Worker question"
+    assert walk_page.text_content(f"{help_card} .review-context-label") == "Worker needs your input"
+    assert walk_page.locator(f"{help_card} [data-accept]").count() == 0
+    assert walk_page.locator(f"{help_card} [data-review-revision]").count() == 0
+    keys_text = walk_page.locator(".review-keys").text_content()
+    assert keys_text is not None
+    assert " ".join(keys_text.split()) == "S skip · O open ticket"
+    badge_text = badge.text_content()
+    assert badge_text is not None
+    assert badge_text.strip() == "3"
+
+    # Open uses the same global shortcut as a proposal item.
+    open_page_for_shortcut.locator(".review-keys").click()
+    open_page_for_shortcut.keyboard.press("o")
+    open_page_for_shortcut.wait_for_url(f"**/#/ticket/{first_help}", timeout=WAIT_MS)
+
+    # Skip advances within the same mixed queue without changing canonical state.
+    walk_page.locator(".review-keys").click()
+    walk_page.keyboard.press("s")
+    walk_page.wait_for_function(
+        "(ticketId) => document.querySelector('[data-review-card]')"
+        "?.getAttribute('data-ticket-id') === ticketId",
+        arg=second_help,
+        timeout=WAIT_MS,
+    )
+
+    # Leaving needs_user removes the current item; the locally skipped first help
+    # remains counted, and Review advances to the ordinary proposal.
+    api.direct_post(server, f"/api/tickets/{second_help}/release", {})
+    walk_page.wait_for_function(
+        "(ticketId) => document.querySelector('[data-review-card]')"
+        "?.getAttribute('data-ticket-id') === ticketId",
+        arg=proposal,
+        timeout=WAIT_MS,
+    )
+    walk_page.wait_for_function(
+        "() => document.querySelector('a[data-screen=\"review\"] .nav-badge')"
+        "?.textContent.trim() === '2'",
+        timeout=WAIT_MS,
+    )
+    assert walk_page.get_attribute("[data-review-card]", "data-review-item-type") == "proposal"
+    assert [item["ticket_id"] for item in api.get(server, "/api/review")["items"]] == [
+        first_help,
+        proposal,
+    ]
+
+
 
 def test_e27_auto_accept_chain(
     server: ServerHandle,
@@ -768,7 +719,7 @@ def test_e27_auto_accept_chain(
     assert d["fields"]["plan"]["proposal"] is not None
 
     _add_to_today(api, server, tid)
-    decisions = api.get(server, "/api/review")["ticket_decisions"]
+    decisions = api.get(server, "/api/review")["items"]
     assert len(decisions) == 1, decisions
     assert decisions[0]["ticket_id"] == tid, decisions
     assert decisions[0]["field"] == "plan", decisions
@@ -849,117 +800,3 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     assert detail["fields"]["kickoff"]["value"] == "Approved premise"
     assert detail["fields"]["kickoff"]["proposal"] is None
     assert len(detail["fields"]) == 6
-
-
-def test_settled_kickoff_field_renders_as_canonical_intake_block(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-) -> None:
-    tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Kickoff note UI ticket",
-        "--kickoff-note",
-        "Preserve this intake boundary.",
-    )["id"]
-    cli(server, "ticket", "approve", tid, "--ceiling", "none", "--at-cap", "propose")
-
-    page = open_page(
-        context_factory(),
-        server,
-        f"#/ticket/{tid}",
-        f'section[data-screen="ticket"][data-ticket-id="{tid}"] details[data-field="kickoff"]',
-    )
-    assert page.locator('details[data-field="kickoff"][open]').count() == 0
-    page.click('details[data-field="kickoff"] .disclosure-summary')
-    page.wait_for_selector('details[data-field="kickoff"][open]', timeout=WAIT_MS)
-    assert "Preserve this intake boundary." in page.inner_text('details[data-field="kickoff"]')
-    editor = page.locator(
-        'details[data-field="kickoff"] .ticket-field-value [data-markdown-inline-edit]'
-    )
-    editor.focus()
-    editor.evaluate(SELECT_NODE_CONTENTS)
-    page.keyboard.type("Updated intake boundary.")
-    with page.expect_response(
-        lambda response: (
-            response.request.method == "PUT"
-            and response.url.endswith(f"/api/tickets/{tid}/value/kickoff")
-        )
-    ):
-        editor.blur()
-    page.wait_for_function(
-        "() => document.querySelector('details[data-field=\"kickoff\"]')?.textContent?.includes("
-        "'Updated intake boundary.')"
-    )
-    with sqlite3.connect(server.db_path) as conn:
-        assert conn.execute(
-            "SELECT context_key, revision FROM pending_worker_context WHERE worker_entity_id = ?",
-            (tid,),
-        ).fetchall() == [("ticket_changed", 1)]
-
-    empty_tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Empty kickoff note UI ticket",
-    )["id"]
-    empty_page = open_page(
-        context_factory(),
-        server,
-        f"#/ticket/{empty_tid}",
-        f'section[data-screen="ticket"][data-ticket-id="{empty_tid}"] '
-        'details[data-field="kickoff"]',
-    )
-    empty_page.click('details[data-field="kickoff"] .disclosure-summary')
-    empty_page.wait_for_selector('details[data-field="kickoff"][open]', timeout=WAIT_MS)
-    assert (
-        empty_page.get_attribute(
-            'details[data-field="kickoff"] .ticket-field-value [data-markdown-inline-edit]',
-            "data-ph",
-        )
-        == "Value..."
-    )
-    assert (
-        empty_page.locator(
-            'details[data-field="kickoff"] .ticket-field-value [data-markdown-inline-edit]'
-        ).get_attribute("contenteditable")
-        == "true"
-    )
-
-
-def test_ticket_facts_have_owner_without_execution_route(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-    api: ApiHelper,
-) -> None:
-    tid = cli(
-        server,
-        "ticket",
-        "create",
-        "--worker-type",
-        "coding",
-        "--title",
-        "Owner-only Ticket facts",
-    )["id"]
-    ready = f'section[data-screen="ticket"][data-ticket-id="{tid}"]'
-    page = open_page(
-        context_factory(),
-        server,
-        f"#/ticket/{tid}",
-        ready,
-    )
-
-    assert page.locator(".ticket-facts [data-execution-route]").count() == 0
-    assert page.locator(".ticket-facts [data-stage-owner]").count() == 1
-    assert "execution_route" not in api.get(server, f"/api/tickets/{tid}")

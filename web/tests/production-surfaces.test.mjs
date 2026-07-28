@@ -47,14 +47,14 @@ for (const [name, source] of [
 // --- the Ticket screen -----------------------------------------------------------------
 
 // What the route hands the pane is the conversation the Ticket names, plus the two doors
-// a person can open and close one with. Nothing is attached on arrival: the conversation
-// system spawns nothing until a message is sent, which is what the old deferInitialAttach
-// existed to avoid while a Ticket's configuration was still editable. The absence is
-// asserted so the removal carries its reason forward instead of being quietly re-added.
+// a person has: saying something, and New. There is no door that makes a conversation —
+// the message is what makes one — so nothing is attached on arrival and nothing is
+// started on arrival either. Both absences are asserted so the removals carry their
+// reasons forward instead of being quietly re-added.
 assert.match(ticketRouteSource, /conversationId=\{detail\.conversation_id\}/);
-assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation`/);
+assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/send`/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/reset`/);
-assert.doesNotMatch(ticketRouteSource, /deferInitialAttach/);
+assert.doesNotMatch(ticketRouteSource, /deferInitialAttach|onStartConversation/);
 
 assert.match(ticketRouteSource, /<WorkerConfigurationSetup/);
 assert.match(ticketRouteSource, /contextRow=\{name === "kickoff" && kickoffCardShowsContextRow/);
@@ -94,5 +94,41 @@ assert.doesNotMatch(
   /readReplyWatermark\(/,
   "the row mark reads the positions it was given, never storage"
 );
+
+// --- the Workspace groups --------------------------------------------------------------
+
+// Kickoff approval is the one approval subtype Workspace can classify entirely from the
+// existing board card. Done and the server-projected Closeout exception keep precedence,
+// then this predicate separates Kickoff from every later approval.
+const groupKeySource = boardRouteSource.slice(
+  boardRouteSource.indexOf("function groupKeyFor"),
+  boardRouteSource.indexOf("const GROUP_ORDER"),
+);
+assert.match(
+  groupKeySource,
+  /if \(card\.is_done\) return "done";[\s\S]*if \(card\.waiting_to_closeout\) return "waiting_to_closeout";[\s\S]*card\.ticket_status === "awaiting_approval"[\s\S]*card\.gating_field === "kickoff"[\s\S]*return "waiting_for_kickoff";/,
+);
+assert.match(boardRouteSource, /waiting_for_kickoff: "Waiting for Kickoff"/);
+
+const groupOrderMatch = boardRouteSource.match(
+  /const GROUP_ORDER: readonly string\[\] = \[([\s\S]*?)\n  \];/,
+);
+assert.ok(groupOrderMatch, "Workspace declares one canonical group order");
+const groupOrder = [...groupOrderMatch[1].matchAll(/"([^"]+)"/g)].map(
+  (match) => match[1],
+);
+assert.deepEqual(groupOrder, [
+  "errored",
+  "needs_user",
+  "waiting_to_closeout",
+  "user",
+  "paired",
+  "agent",
+  "waiting_for_kickoff",
+  "awaiting_approval",
+  "empty",
+  "blocked",
+  "done",
+]);
 
 console.log("production-surfaces.test.mjs: all assertions passed");

@@ -135,6 +135,7 @@ def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> No
             await subject.system.start_conversation(
                 ConversationStartRequest(
                     conversation_id="c",
+                    model="a-model",
                     backend_key=ConversationBackendKey.hermes,
                     role_materials=ConversationRoleMaterials(
                         role_text=ROLE_TEXT, identity_environment_variables=(IDENTITY_VARIABLE,)
@@ -168,6 +169,7 @@ def test_the_role_text_rides_the_first_prompt_and_no_other(tmp_path: Path) -> No
             await subject.system.start_conversation(
                 ConversationStartRequest(
                     conversation_id="c",
+                    model="a-model",
                     role_materials=ConversationRoleMaterials(role_text=ROLE_TEXT),
                     workspace_folder=tmp_path,
                 )
@@ -377,6 +379,14 @@ def test_a_tool_call_getting_on_with_it_is_shown_and_not_kept(tmp_path: Path) ->
                     },
                 )
                 shown = await _next_frame(watching)
+                # The durable started row and the ephemeral progress frame are
+                # published by different async paths. Their arrival order is not
+                # contractual; consume the started row when it wins the race.
+                if not isinstance(shown, ToolCallProgressFrame):
+                    assert getattr(shown, "kind", None) == (
+                        ConversationEventKind.tool_call_started
+                    )
+                    shown = await _next_frame(watching)
 
             assert isinstance(shown, ToolCallProgressFrame)
             assert shown.tool_call_id == "t-9"
@@ -474,7 +484,9 @@ def test_a_send_now_waits_for_the_cancelled_turn_to_be_over_at_the_agent(tmp_pat
     async def exercise() -> None:
         async with open_conversation_system_under_test() as subject:
             await subject.system.start_conversation(
-                ConversationStartRequest(conversation_id="c", workspace_folder=tmp_path)
+                ConversationStartRequest(
+                    conversation_id="c", model="a-model", workspace_folder=tmp_path
+                )
             )
             await subject.system.send(
                 "c",
@@ -513,7 +525,9 @@ def test_an_interrupt_waits_for_the_cancelled_turn_too(tmp_path: Path) -> None:
     async def exercise() -> None:
         async with open_conversation_system_under_test() as subject:
             await subject.system.start_conversation(
-                ConversationStartRequest(conversation_id="c", workspace_folder=tmp_path)
+                ConversationStartRequest(
+                    conversation_id="c", model="a-model", workspace_folder=tmp_path
+                )
             )
             await subject.system.send(
                 "c",
@@ -709,7 +723,9 @@ def test_a_backend_that_is_not_there_says_it_would_not_spawn(tmp_path: Path) -> 
     async def exercise() -> None:
         async with open_conversation_system_under_test() as subject:
             await subject.system.start_conversation(
-                ConversationStartRequest(conversation_id="c", workspace_folder=tmp_path)
+                ConversationStartRequest(
+                    conversation_id="c", model="a-model", workspace_folder=tmp_path
+                )
             )
             await subject.arm_backend_start_failure("c")
             fate = await subject.system.send(
@@ -892,7 +908,7 @@ def test_real_hermes_stops_a_running_turn_when_it_is_cancelled(tmp_path: Path) -
 
 async def _start_and_send(subject: ConversationSystemUnderTest, workspace: Path) -> None:
     await subject.system.start_conversation(
-        ConversationStartRequest(conversation_id="c", workspace_folder=workspace)
+        ConversationStartRequest(conversation_id="c", model="a-model", workspace_folder=workspace)
     )
     await subject.system.send("c", text_message_content("hello"), sender_label="owner")
 
@@ -903,7 +919,7 @@ def _resolved_start(
     return ResolvedConversationStart(
         conversation_id="c",
         backend_key=backend_key,
-        model=None,
+        model="a-model",
         reasoning_effort=None,
         role_materials=None,
         workspace_folder=workspace,

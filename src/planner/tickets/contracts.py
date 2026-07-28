@@ -99,7 +99,11 @@ class ScopePair:  # required on every direct accept/edit-accept
 
 class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     worker_type: Required[str]  # required registry type id (no ingress default)
+    # A backend other than the Worker type's own brings its model with it: the type's
+    # launch defaults belong to the type's backend, so there is nothing left for this
+    # Ticket to run on unless the creator names one.
     employee_backend: str
+    employee_launch_model: str
     title: str  # default ""
     kickoff_note: str  # default ""; proposed intake context / user guidance
     priority: str | None  # Priority value; default P3
@@ -129,6 +133,7 @@ class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     title: str
     worker_type: str
     employee_backend: NotRequired[str]
+    employee_launch_model: NotRequired[str]
     priority: NotRequired[str | None]
     deadline: NotRequired[str | None]
     project: NotRequired[str | None]
@@ -180,8 +185,11 @@ class StageBody(TypedDict, total=False):  # POST /tickets/{id}/stage
 
 
 class EmployeeConfigurationBody(TypedDict):
+    # The complete launch configuration, and the model is named as surely as the backend:
+    # a Ticket saved without one would launch its worker on whatever the backend picked
+    # for itself. The reasoning effort may be null, because some models take none.
     employee_backend: str
-    employee_launch_model: str | None
+    employee_launch_model: str
     employee_launch_reasoning_effort: str | None
 
 
@@ -197,7 +205,11 @@ class Ticket:  # §3.3 — column names match exactly
     title: str  # <= TITLE_MAX_CHARS (200), every write path
     worker_type: str  # immutable registry id selected at creation
     employee_backend: str  # last-chosen backend for this Ticket's worker
-    # Last-chosen model and reasoning effort; null means the backend's own default.
+    # The last-chosen model, and the reasoning effort that went with it. A null model is a
+    # Ticket that has never chosen: the column was filled in back when leaving it empty
+    # meant the backend's own model, and that is a value nobody picked, so such a Ticket
+    # says nothing about what it runs on and its Worker type answers whole instead. A null
+    # reasoning effort is a real answer — some models take none.
     employee_launch_model: str | None = field(default=None, kw_only=True)
     employee_launch_reasoning_effort: str | None = field(default=None, kw_only=True)
     stage: str  # directly stored Stage id
@@ -233,6 +245,9 @@ class EmployeeLaunchConfiguration:
     Kept up to date as the Ticket's conversation changes, so a fresh conversation
     starts from where the last one ended. The field names are the storage and wire
     names of the three columns and are frozen with them.
+
+    The model is optional here for the one reason the column is: a Ticket written before a
+    model had to be named has none. Nothing writes a null into it any more.
     """
 
     employee_backend: str

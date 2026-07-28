@@ -1,11 +1,19 @@
 <script lang="ts">
   import { fetchJson } from "../lib/api";
+  import type { ConnectionStatus } from "../lib/changeStream";
   import type { VpsStatusSection, VpsStatusSnapshot } from "../lib/types";
+
+  let { connectionState }: { connectionState: ConnectionStatus } = $props();
 
   let isOpen = $state(false);
   let isLoading = $state(false);
   let error = $state<string | null>(null);
   let snapshot = $state<VpsStatusSnapshot | null>(null);
+
+  const connectionLabels = {
+    connected: "Connected",
+    reconnecting: "Reconnecting"
+  } as const;
 
   const stateLabels = {
     healthy: "Healthy",
@@ -49,11 +57,15 @@
     type="button"
     aria-expanded={isOpen}
     aria-controls="vps-status-popover"
-    data-state={snapshot?.overall_state || "unavailable"}
+    aria-label={`${connectionLabels[connectionState]}. Show VPS status`}
+    data-connection-status
+    data-state={connectionState}
     onclick={toggle}
   >
     <span class="vps-status-mark" aria-hidden="true"></span>
-    Status
+    <span class="vps-status-label" role="status" aria-live="polite">
+      {connectionLabels[connectionState]}
+    </span>
   </button>
   {#if isOpen}
     <section id="vps-status-popover" class="vps-status-popover" aria-label="Panels status">

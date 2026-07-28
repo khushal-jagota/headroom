@@ -6,6 +6,7 @@
   import RoleSkillEditor from "../components/RoleSkillEditor.svelte";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
+  import { resourceStateForQueries } from "../lib/resourceStateForQueries";
   import type { WorkerTypeManifest } from "../lib/lifecycle";
   import { errorMessage, labelize } from "../lib/ui";
   import type {
@@ -14,8 +15,7 @@
     ManagedSkill,
     StageOwnershipMode,
     WorkerManagementDetail,
-    WorkerManagementSettings,
-    WorkerManagementSummary
+    WorkerManagementSettings
   } from "../lib/types";
 
   type RoleKind = "index" | "agent" | "skill" | "worker";
@@ -28,10 +28,6 @@
   const workers = createQuery(() => ({
     ...queries.workers(),
     enabled: stableRoleKind === "index" || stableRoleKind === "agent"
-  }));
-  const manifests = createQuery(() => ({
-    ...queries.workerTypeManifests(),
-    enabled: stableRoleKind === "index"
   }));
   const skillsHome = createQuery(() => ({
     ...queries.skillsHome(),
@@ -53,16 +49,10 @@
   let stageSaving = $state<Record<string, boolean>>({});
   let stageSaveErrors = $state<Record<string, unknown>>({});
 
-  let indexedManifests = $derived(
-    new Map((manifests.data?.worker_types || []).map((item) => [item.worker_type, item]))
+  let indexedSkills = $derived(
+    new Map((skillsHome.data?.skills || []).map((skill) => [skill.name, skill]))
   );
-  let sharedWorkerSkill = $derived(
-    skillsHome.data?.skills.find((skill) => skill.name === "panels-worker")
-  );
-
-  function stageCount(workerSummary: WorkerManagementSummary): number {
-    return indexedManifests.get(workerSummary.worker_type)?.stages.length || 0;
-  }
+  let sharedWorkerSkill = $derived(indexedSkills.get("panels-worker"));
 
   function displaySkillForEdit(settings: WorkerManagementSettings): ManagedSkill {
     return settings.candidate_specialist_skill || settings.specialist_skill;
@@ -156,10 +146,6 @@
     return manifest.fields.find((field) => field.id === fieldId)?.label || labelize(fieldId);
   }
 
-  function launchValue(value: string | null): string {
-    return value || "default";
-  }
-
   $effect(() => {
     const settings = worker.data?.settings;
     if (!settings) return;
@@ -190,74 +176,64 @@
     <div class="agents-page agents-page--index">
       <header class="agents-page-head">
         <h1>Agents</h1>
-        <p>Every configurable role. Agents run at the top level; Workers run one Ticket at a time.</p>
       </header>
       <ResourceState
-        error={workers.error || manifests.error || skillsHome.error}
-        loading={workers.isFetching || manifests.isFetching || skillsHome.isFetching}
-        hasData={Boolean(workers.data && manifests.data && skillsHome.data)}
+        {...resourceStateForQueries(workers, skillsHome)}
         loadingText="Loading agents..."
       >
         {#if workers.data}
           <section class="agents-index-section" data-agents-section>
-            <header class="agents-section-head">
-              <h2>Agents</h2>
-              <span>top-level · no ticket lifecycle</span>
-            </header>
-            <div class="agent-card-list">
-              <article class="agent-card" data-agent-card data-agent-id="chief_of_staff">
-                <div class="agent-card-head">
-                  <h3 data-agent-label>{workers.data.chief_of_staff.label}</h3>
-                  <span>Agent</span>
-                </div>
-                <p data-agent-purpose>{workers.data.chief_of_staff.skill.description}</p>
-                <div class="agent-card-foot">
-                  <span class="agent-chip">backend <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_backend)}</b></span>
-                  <span class="agent-chip">model <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_launch_model)}</b></span>
-                  <span class="agent-chip">reasoning <b>{launchValue(workers.data.chief_of_staff.launch_defaults.employee_launch_reasoning_effort)}</b></span>
-                  <span class="agent-chip">skill <b data-agent-skill-name>{workers.data.chief_of_staff.skill.name}</b></span>
-                  <a class="agent-configure-link" href="#/agents/chief-of-staff" data-agent-configure>
-                    Configure &amp; edit skill →
-                  </a>
-                </div>
-              </article>
+            <h2 class="agents-section-title">Agents</h2>
+            <div class="agents-destination-list">
+              <a
+                class="agents-destination"
+                href="#/agents/chief-of-staff"
+                data-agent-destination
+              >
+                <span class="agents-destination-copy">
+                  <span class="agents-destination-name" data-destination-name>
+                    {workers.data.chief_of_staff.label}
+                  </span>
+                  <span class="agents-destination-description" data-destination-description>
+                    {workers.data.chief_of_staff.skill.description}
+                  </span>
+                </span>
+                <span class="agents-destination-arrow" aria-hidden="true">→</span>
+              </a>
               {#if sharedWorkerSkill}
-                <article class="agent-card" data-agent-card data-agent-id="panels-worker">
-                  <div class="agent-card-head">
-                    <h3 data-agent-label>Worker skill</h3>
-                    <span>Shared role skill</span>
-                  </div>
-                  <p data-agent-purpose>{sharedWorkerSkill.description}</p>
-                  <div class="agent-card-foot">
-                    <span class="agent-chip">skill <b data-agent-skill-name>{sharedWorkerSkill.name}</b></span>
-                    <a class="agent-configure-link" href="#/agents/worker-skill" data-worker-skill-configure>
-                      Configure &amp; edit skill →
-                    </a>
-                  </div>
-                </article>
+                <a
+                  class="agents-destination"
+                  href="#/agents/worker-skill"
+                  data-agent-destination
+                >
+                  <span class="agents-destination-copy">
+                    <span class="agents-destination-name" data-destination-name>Worker skill</span>
+                    <span class="agents-destination-description" data-destination-description>
+                      {sharedWorkerSkill.description}
+                    </span>
+                  </span>
+                  <span class="agents-destination-arrow" aria-hidden="true">→</span>
+                </a>
               {/if}
             </div>
           </section>
 
           <section class="agents-index-section" data-workers-section>
-            <header class="agents-section-head">
-              <h2>Workers</h2>
-              <span>ticket worker types · stage lifecycle</span>
-            </header>
-            <div class="workers-list" data-workers-list>
+            <h2 class="agents-section-title">Workers</h2>
+            <div class="agents-destination-list" data-workers-list>
               {#each workers.data.workers as item}
                 <a
-                  class="workers-row"
+                  class="agents-destination"
                   href={`#/agents/workers/${encodeURIComponent(item.worker_type)}`}
-                  data-worker-row
-                  data-worker-id={item.worker_type}
+                  data-worker-destination
                 >
-                  <span class="workers-row-main">
-                    <span class="workers-row-title" data-worker-label>{item.label}</span>
-                    <span class="workers-row-id" data-worker-structural-id>{item.worker_type}</span>
+                  <span class="agents-destination-copy">
+                    <span class="agents-destination-name" data-destination-name>{item.label}</span>
+                    <span class="agents-destination-description" data-destination-description>
+                      {indexedSkills.get(item.specialist_skill_name)?.description || ""}
+                    </span>
                   </span>
-                  <span class="workers-row-meta" data-worker-skill-name>{item.specialist_skill_name}</span>
-                  <span class="workers-row-count" data-worker-stage-count>{stageCount(item)} Stages</span>
+                  <span class="agents-destination-arrow" aria-hidden="true">→</span>
                 </a>
               {/each}
             </div>
