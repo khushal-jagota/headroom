@@ -194,21 +194,21 @@ def test_workspace_ticket_route_restores_on_load_refresh_and_history(
 
     page.reload()
     page.wait_for_selector(first_ticket, timeout=WAIT_MS)
-    # The only ticket with a parked kickoff proposal groups under its status.
-    approval_bucket = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
-    approval_summary = f"{approval_bucket} > .disclosure-summary"
-    page.click(approval_summary)
-    assert page.get_attribute(approval_bucket, "open") is None
+    # The only ticket with a parked Kickoff proposal has its own approval group.
+    kickoff_bucket = '[data-bucket-section][data-bucket-key="waiting_for_kickoff"]'
+    kickoff_summary = f"{kickoff_bucket} > .disclosure-summary"
+    page.click(kickoff_summary)
+    assert page.get_attribute(kickoff_bucket, "open") is None
 
     page.click(f'[data-card][data-ticket-id="{second_id}"]')
     page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)
     page.wait_for_selector(second_ticket, timeout=WAIT_MS)
-    assert page.get_attribute(approval_bucket, "open") is None
+    assert page.get_attribute(kickoff_bucket, "open") is None
 
     page.go_back()
     page.wait_for_url(f"{server.base}/#/workspace/{encoded_first_id}", timeout=WAIT_MS)
     page.wait_for_selector(first_ticket, timeout=WAIT_MS)
-    assert page.get_attribute(approval_bucket, "open") is None
+    assert page.get_attribute(kickoff_bucket, "open") is None
 
     page.go_forward()
     page.wait_for_url(f"{server.base}/#/workspace/{second_id}", timeout=WAIT_MS)

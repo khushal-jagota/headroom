@@ -160,7 +160,7 @@ def test_workspace_ticket_rows_contain_only_title_and_signal_mark(
         "[data-bucket-section]",
         "els => els.map(el => el.getAttribute('data-bucket-key'))",
     )
-    assert rendered == ["errored", "empty", "agent", "done"]
+    assert rendered == ["errored", "agent", "empty", "done"]
     assert page.locator("[data-project-section]").count() == 0
     assert page.locator("[data-worker-section]").count() == 0
     assert page.locator("[data-stage-section]").count() == 0
