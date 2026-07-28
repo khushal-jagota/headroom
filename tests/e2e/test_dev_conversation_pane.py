@@ -26,7 +26,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 import httpx
-from playwright.sync_api import BrowserContext, Page
+from playwright.sync_api import BrowserContext, FilePayload, Page
 from tests.e2e.harness import ServerHandle
 
 from planner.conversation.contracts import AgentCommand, PromptDeliveryMode
@@ -377,13 +377,11 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
         context, server, "#/dev/conversation?id=e2e-optimistic", "[data-conversation-pane]"
     )
 
-    page.set_input_files(
-        "[data-conversation-image-input]",
-        [
-            {"name": "red.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
-            {"name": "red-again.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
-        ],
-    )
+    image_files: list[FilePayload] = [
+        {"name": "red.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
+        {"name": "red-again.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
+    ]
+    page.set_input_files("[data-conversation-image-input]", image_files)
     page.wait_for_selector(
         "[data-chat-image-preview]:nth-child(2)",
         timeout=WAIT_MS,

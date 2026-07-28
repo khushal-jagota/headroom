@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 import uvicorn
-from playwright.sync_api import BrowserContext, Page, Request
+from playwright.sync_api import BrowserContext, FilePayload, Page, Request
 from tests.e2e.harness import REPO_ROOT, WAIT_MS, ApiHelper, JsonObject, ServerHandle
 from tests.e2e.test_dev_conversation_pane import _A_RED_PNG, HOLD_THE_SEND
 
@@ -97,14 +97,19 @@ def _browser_server_with_accepting_backend(tmp_path: Path) -> Iterator[tuple[str
     original_web_index = server_module._WEB_INDEX
     original_assets = server_module._ASSETS_DIR
     original_static = server_module._STATIC_DIR
-    original_backend_factories = server_module.production_backend_child_factories
+    backend_factories_attribute = "production_backend_child_factories"
+    original_backend_factories = getattr(server_module, backend_factories_attribute)
     server_module._WEB_DIST = REPO_ROOT / "web" / "dist"
     server_module._WEB_INDEX = server_module._WEB_DIST / "index.html"
     server_module._ASSETS_DIR = REPO_ROOT / "assets"
     server_module._STATIC_DIR = REPO_ROOT / "static"
-    server_module.production_backend_child_factories = lambda **_machine: {
-        key: _accepting_backend_factory for key in ConversationBackendKey
-    }
+    setattr(
+        server_module,
+        backend_factories_attribute,
+        lambda **_machine: {
+            key: _accepting_backend_factory for key in ConversationBackendKey
+        },
+    )
     app = server_module.create_app(
         config,
         build_clock(config),
@@ -131,7 +136,11 @@ def _browser_server_with_accepting_backend(tmp_path: Path) -> Iterator[tuple[str
         server_module._WEB_INDEX = original_web_index
         server_module._ASSETS_DIR = original_assets
         server_module._STATIC_DIR = original_static
-        server_module.production_backend_child_factories = original_backend_factories
+        setattr(
+            server_module,
+            backend_factories_attribute,
+            original_backend_factories,
+        )
         assert not thread.is_alive()
 
 
@@ -247,12 +256,13 @@ def test_ticket_images_cross_the_owner_api_become_managed_files_and_reload(
             f"{composer} [data-conversation-input]:not([disabled])",
             timeout=30_000,
         )
+        image_files: list[FilePayload] = [
+            {"name": "first.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
+            {"name": "second.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
+        ]
         page.set_input_files(
             f"{composer} [data-conversation-image-input]",
-            [
-                {"name": "first.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
-                {"name": "second.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
-            ],
+            image_files,
         )
         page.wait_for_function(
             "() => document.querySelectorAll('[data-chat-image-preview]').length === 2"
