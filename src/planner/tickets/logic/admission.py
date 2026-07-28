@@ -11,7 +11,9 @@ from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 _LEGACY_DIRECT_ACTOR: Final[str] = "human"
-DIRECT_ACTORS: Final[frozenset[str]] = frozenset({"unattributed", "chief", _LEGACY_DIRECT_ACTOR})
+DIRECT_ACTORS: Final[frozenset[str]] = frozenset(
+    {"unattributed", "chief", _LEGACY_DIRECT_ACTOR}
+)
 
 
 def is_direct_actor(actor: str) -> bool:
@@ -78,15 +80,6 @@ def check_agent_proposal(
             ErrorCode.validation,
             "at the ceiling agents may propose only the current gating field",
             {"field": field, "gating_field": gating, "stage": stage},
-        )
-
-
-def check_sprint_assignable(ticket_id: str, sprint_item_id: str | None) -> None:
-    if sprint_item_id is not None:
-        raise PlannerError(
-            ErrorCode.sprint_derived,
-            "sprint_id is derived from the parent item",
-            {"ticket_id": ticket_id, "sprint_item_id": sprint_item_id},
         )
 
 

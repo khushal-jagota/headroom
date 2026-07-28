@@ -69,7 +69,11 @@ def test_coding_prefix_counts_are_golden() -> None:  # T-EW-golden (PERMANENT)
 
 
 def test_probe_derivation() -> None:
-    assert PROBE_WORKER_TYPE_DEFINITION.reconciliation_field_order() == ("kickoff", "alpha", "beta")
+    assert PROBE_WORKER_TYPE_DEFINITION.reconciliation_field_order() == (
+        "kickoff",
+        "alpha",
+        "beta",
+    )
     assert {
         state: _prefix_count(PROBE_WORKER_TYPE_DEFINITION, state)
         for state in ("needs_alpha", "needs_beta", "done")
@@ -168,7 +172,10 @@ _NO_PREFIX = WorkerTypeDefinition(
         is_terminal=True,
         default_ownership_mode=None,
     ),
-    fields=(FieldDefinition(id="kickoff", label="Kickoff"), FieldDefinition(id="one", label="One")),
+    fields=(
+        FieldDefinition(id="kickoff", label="Kickoff"),
+        FieldDefinition(id="one", label="One"),
+    ),
     worker_profile=WorkerProfile(
         specialist_skill="panels-worker",
         default_model="a-model",
@@ -203,7 +210,7 @@ def _needs_kickoff_ticket(defn: WorkerTypeDefinition) -> Ticket:
         project_id=None,
         project_name=None,
         sprint_item_id=None,
-        sprint_id=None,
+        effective_sprint_id=None,
         recap="",
         ceiling=defn.default_ceiling(),
         at_cap=AtCap.propose,
@@ -240,5 +247,7 @@ def test_type_declining_prefix_reconciliation_is_rejected() -> None:
             worker_type_definition=_NO_PREFIX,
         )
     assert exc.value.code == ErrorCode.validation
-    assert exc.value.message == "type does not support external-work prefix reconciliation"
+    assert (
+        exc.value.message == "type does not support external-work prefix reconciliation"
+    )
     assert exc.value.detail == {"worker_type": "noprefix"}

@@ -137,7 +137,9 @@ def get_conversation_record(request: Request) -> ConversationStore:
 def get_conversation_message_files(request: Request) -> ConversationMessageFiles:
     """The files messages carry, for the send doors that keep a picture's bytes."""
     runtime = getattr(request.app.state, "conversation", None)
-    message_files = getattr(runtime, "message_files", None) if runtime is not None else None
+    message_files = (
+        getattr(runtime, "message_files", None) if runtime is not None else None
+    )
     if message_files is None:
         raise PlannerError(
             ErrorCode.gateway_offline,
@@ -156,7 +158,9 @@ Ctx = Annotated[RequestContext, Depends(request_context)]
 Cfg = Annotated[Config, Depends(get_config)]
 Clk = Annotated[Clock, Depends(get_clock)]
 Conversations = Annotated[ConversationSystem, Depends(get_conversation_system)]
-MessageFiles = Annotated[ConversationMessageFiles, Depends(get_conversation_message_files)]
+MessageFiles = Annotated[
+    ConversationMessageFiles, Depends(get_conversation_message_files)
+]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
 WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
 
@@ -203,7 +207,9 @@ def parse_enum[E: StrEnum](enum_cls: type[E], raw: str, what: str) -> E:
     try:
         return enum_cls(raw)
     except ValueError:
-        raise PlannerError(ErrorCode.validation, f"invalid {what}", {what: raw}) from None
+        raise PlannerError(
+            ErrorCode.validation, f"invalid {what}", {what: raw}
+        ) from None
 
 
 def body_str(body: JsonDict, key: str, default: str = "") -> str:
@@ -277,6 +283,10 @@ def _validate_field(worker_type_definition: WorkerTypeDefinition, field: str) ->
 
 
 def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
+    if "sprint_id" in raw:
+        raise PlannerError(
+            ErrorCode.validation, "unknown ticket field", {"field": "sprint_id"}
+        )
     body = CreateTicketBody(
         worker_type=_require_create_worker_type(raw),
         title=body_str(raw, "title"),
@@ -285,7 +295,6 @@ def _marshal_create_ticket(raw: JsonDict) -> CreateTicketBody:
         deadline=body_opt_str(raw, "deadline"),
         project=body_opt_str(raw, "project"),
         project_id=body_opt_str(raw, "project_id"),
-        sprint_id=body_opt_str(raw, "sprint_id"),
         sprint_item_id=body_opt_str(raw, "sprint_item_id"),
         blocked_by_ticket_ids=body_str_list(raw, "blocked_by_ticket_ids"),
     )
@@ -310,7 +319,6 @@ _EXTERNAL_FIXED_CREATE_KEYS = _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(
         "deadline",
         "project",
         "project_id",
-        "sprint_id",
         "sprint_item_id",
         "blocked_by_ticket_ids",
     }
@@ -322,7 +330,9 @@ def _external_field_keys(
 ) -> tuple[str, ...]:
     """The type's field-value body keys: its declared field ids minus kickoff (which
     arrives as kickoff_note)."""
-    return tuple(field for field in worker_type_definition.field_ids() if field != "kickoff")
+    return tuple(
+        field for field in worker_type_definition.field_ids() if field != "kickoff"
+    )
 
 
 def _reject_unknown_external_keys(raw: JsonDict, allowed: frozenset[str]) -> None:
@@ -339,7 +349,9 @@ def _marshal_external_reconcile(
     raw: JsonDict, worker_type_definition: WorkerTypeDefinition
 ) -> ReconcileTicketFromExternalWorkBody:
     field_keys = _external_field_keys(worker_type_definition)
-    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys))
+    _reject_unknown_external_keys(
+        raw, _EXTERNAL_FIXED_RECONCILE_KEYS | frozenset(field_keys)
+    )
     missing = [key for key in ("stage", "kickoff_note") if key not in raw]
     if missing:
         raise PlannerError(
@@ -360,7 +372,9 @@ def _marshal_external_create(
     raw: JsonDict, worker_type_definition: WorkerTypeDefinition
 ) -> CreateTicketFromExternalWorkBody:
     field_keys = _external_field_keys(worker_type_definition)
-    _reject_unknown_external_keys(raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys))
+    _reject_unknown_external_keys(
+        raw, _EXTERNAL_FIXED_CREATE_KEYS | frozenset(field_keys)
+    )
     if "title" not in raw:
         raise PlannerError(
             ErrorCode.validation,
@@ -386,8 +400,6 @@ def _marshal_external_create(
         body["project"] = body_opt_str(raw, "project")
     if "project_id" in raw:
         body["project_id"] = body_opt_str(raw, "project_id")
-    if "sprint_id" in raw:
-        body["sprint_id"] = body_opt_str(raw, "sprint_id")
     if "sprint_item_id" in raw:
         body["sprint_item_id"] = body_opt_str(raw, "sprint_item_id")
     if "employee_backend" in raw:
@@ -413,7 +425,9 @@ def _external_values(
     return values
 
 
-def _validate_external_stage(stage: str, worker_type_definition: WorkerTypeDefinition) -> str:
+def _validate_external_stage(
+    stage: str, worker_type_definition: WorkerTypeDefinition
+) -> str:
     """An external-work target Stage validated against the Worker type's Stages.
 
     A Stage that is neither linear nor the reserved ``dropped`` is rejected at
@@ -443,7 +457,9 @@ def _parse_next_ceiling(
     if raw == NO_FURTHER:
         return NO_FURTHER
     if raw not in worker_type_definition.ceiling_range():
-        raise PlannerError(ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw})
+        raise PlannerError(
+            ErrorCode.scope_invalid, "unknown next_ceiling", {"next_ceiling": raw}
+        )
     return raw
 
 
@@ -453,7 +469,9 @@ def _parse_scope_at_cap(raw: str | None) -> AtCap | None:
     try:
         return AtCap(raw)
     except ValueError:
-        raise PlannerError(ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": raw}) from None
+        raise PlannerError(
+            ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": raw}
+        ) from None
 
 
 # --- ticket routes -------------------------------------------------------------
@@ -489,7 +507,6 @@ async def create_ticket(
         project_id=project.id if project is not None else None,
         priority=priority,
         deadline=body["deadline"],
-        sprint_id=body["sprint_id"],
         sprint_item_id=body["sprint_item_id"],
         worker_type=body["worker_type"],
         employee_backend=body.get("employee_backend"),
@@ -497,7 +514,7 @@ async def create_ticket(
         blocked_by_ticket_ids=body["blocked_by_ticket_ids"],
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
-        sprint_id_explicit="sprint_id" in raw,
+        sprint_item_id_explicit="sprint_item_id" in raw,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -517,7 +534,9 @@ async def create_ticket_from_external_work(
     target_stage = _validate_external_stage(body["stage"], worker_type_definition)
     priority_raw = body.get("priority")
     priority = (
-        parse_enum(Priority, priority_raw, "priority") if priority_raw is not None else Priority.P3
+        parse_enum(Priority, priority_raw, "priority")
+        if priority_raw is not None
+        else Priority.P3
     )
     project = projects_data.resolve_project(
         conn,
@@ -530,7 +549,9 @@ async def create_ticket_from_external_work(
         title=body["title"],
         kickoff_note=body["kickoff_note"],
         target_stage=target_stage,
-        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
+        provided_values=_external_values(
+            raw, body["kickoff_note"], worker_type_definition
+        ),
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
@@ -538,7 +559,6 @@ async def create_ticket_from_external_work(
         project_id=project.id if project is not None else None,
         priority=priority,
         deadline=body.get("deadline"),
-        sprint_id=body.get("sprint_id"),
         sprint_item_id=body.get("sprint_item_id"),
         worker_type=worker_type,
         employee_backend=body.get("employee_backend"),
@@ -546,7 +566,7 @@ async def create_ticket_from_external_work(
         blocked_by_ticket_ids=body.get("blocked_by_ticket_ids", []),
         planning_now=clk.now(),
         boundary_hour=cfg.boundary_hour,
-        sprint_id_explicit="sprint_id" in raw,
+        sprint_item_id_explicit="sprint_item_id" in raw,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -562,7 +582,9 @@ async def reconcile_ticket_from_external_work(
 ) -> JsonDict:
     require_chief(ctx)
     await reject_while_the_conversation_is_running(conn, conversations, ticket_id)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
+        conn, ticket_id
+    )
     body = _marshal_external_reconcile(raw, worker_type_definition)
     target_stage = _validate_external_stage(body["stage"], worker_type_definition)
     now = clk.now_unix()
@@ -571,7 +593,9 @@ async def reconcile_ticket_from_external_work(
         ticket_id,
         kickoff_note=body["kickoff_note"],
         target_stage=target_stage,
-        provided_values=_external_values(raw, body["kickoff_note"], worker_type_definition),
+        provided_values=_external_values(
+            raw, body["kickoff_note"], worker_type_definition
+        ),
         recap=body.get("recap"),
         actor=ctx.actor,
         now=now,
@@ -597,7 +621,9 @@ async def list_tickets(
         conn, project_id=project_id, project_name=project
     )
     # `day` ('today' | ISO) scopes the list to one day's board via the day_tickets join.
-    day_id = resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
+    day_id = (
+        resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
+    )
     return {
         "tickets": tickets_views.list_tickets(
             conn,
@@ -613,7 +639,9 @@ async def list_tickets(
 
 def _backend_snapshots(request: Request) -> BackendSnapshotService:
     runtime = getattr(request.app.state, "conversation", None)
-    service = getattr(runtime, "backend_snapshots", None) if runtime is not None else None
+    service = (
+        getattr(runtime, "backend_snapshots", None) if runtime is not None else None
+    )
     if service is None:
         raise PlannerError(
             ErrorCode.gateway_offline,
@@ -671,7 +699,9 @@ async def get_worker_self_ticket(
     (`ticket_detail` + the worker specialist skill) the by-session route returns."""
     ticket = tickets_data.read_ticket(conn, ticket_id)
     if ticket.conversation_id is not None:
-        owner = tickets_data.read_ticket_by_conversation_id(conn, ticket.conversation_id)
+        owner = tickets_data.read_ticket_by_conversation_id(
+            conn, ticket.conversation_id
+        )
         if owner.id != ticket.id:
             raise PlannerError(
                 ErrorCode.validation,
@@ -772,10 +802,12 @@ async def put_ticket_employee_configuration(
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
     if registered_backend == expected.employee_backend and candidate != expected:
-        advertised_models, advertised_reasoning_efforts = await _advertised_launch_options(
-            request,
-            registered_backend,
-            body["employee_launch_model"],
+        advertised_models, advertised_reasoning_efforts = (
+            await _advertised_launch_options(
+                request,
+                registered_backend,
+                body["employee_launch_model"],
+            )
         )
         reasoning_supported = len(advertised_reasoning_efforts) > 0
     ticket = tickets_data.write_employee_configuration(
@@ -830,11 +862,12 @@ async def patch_ticket(
         "deadline",
         "project",
         "project_id",
-        "sprint_id",
     )
     for key in body:
         if key not in recognized:
-            raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": key})
+            raise PlannerError(
+                ErrorCode.validation, "unknown ticket field", {"field": key}
+            )
     if not body:
         raise PlannerError(ErrorCode.validation, "no ticket fields to update", {})
     reject_agent_fields(ctx, body, _TICKET_DIRECT_ONLY_FIELDS)
@@ -854,9 +887,6 @@ async def patch_ticket(
             conn, project_id=project_id_raw, project_name=project_raw
         )
         edit["project_id"] = project.id if project is not None else None
-    if "sprint_id" in body:
-        edit["sprint_id"] = body_opt_str(body, "sprint_id")
-
     now = clk.now_unix()
     ticket = tickets_data.edit_ticket(
         conn,
@@ -903,7 +933,9 @@ async def propose_field(
     clk: Clk,
 ) -> JsonDict:
     body = ProposeBody(body=body_str(raw, "body"))
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
+        conn, ticket_id
+    )
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     ticket = tickets_data.file_proposal(
@@ -928,7 +960,9 @@ async def accept_field(
 ) -> JsonDict:
     body = _marshal_accept(raw)
     require_direct_write(ctx)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
+        conn, ticket_id
+    )
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     next_ceiling = _parse_next_ceiling(body["next_ceiling"], worker_type_definition)
@@ -1034,7 +1068,9 @@ def _conversation_start_values_json(values: ConversationStartValues) -> JsonDict
 async def read_chief_conversation(conn: DbConn) -> JsonDict:
     """Which conversation the Chief is currently talking in, or none."""
     return {
-        "conversation_id": conversation_start.read_agent_conversation(conn, CHIEF_SETTINGS_KEY)
+        "conversation_id": conversation_start.read_agent_conversation(
+            conn, CHIEF_SETTINGS_KEY
+        )
     }
 
 
@@ -1102,12 +1138,16 @@ async def reset_chief_conversation(
 ) -> JsonDict:
     """Cut the Chief loose from its conversation. This is what New does."""
     require_direct_write(ctx)
-    await conversation_start.reset_agent_conversation(conversations, conn, CHIEF_SETTINGS_KEY)
+    await conversation_start.reset_agent_conversation(
+        conversations, conn, CHIEF_SETTINGS_KEY
+    )
     return {"conversation_id": None}
 
 
 @router.get("/tickets/{ticket_id}/conversation/start-values")
-async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) -> JsonDict:
+async def read_ticket_conversation_start_values(
+    ticket_id: str, conn: DbConn
+) -> JsonDict:
     """What a conversation started for this Ticket's worker right now would run on.
 
     The Chief's question, asked of a Ticket: the same resolve the send door runs, so the
@@ -1115,7 +1155,9 @@ async def read_ticket_conversation_start_values(ticket_id: str, conn: DbConn) ->
     as they will answer when a message makes the conversation.
     """
     return _conversation_start_values_json(
-        conversation_start.worker_resolve(conn, tickets_data.read_ticket(conn, ticket_id))
+        conversation_start.worker_resolve(
+            conn, tickets_data.read_ticket(conn, ticket_id)
+        )
     )
 
 
@@ -1184,7 +1226,9 @@ async def reset_ticket_conversation(
     """
     require_direct_write(ctx)
     now = clk.now_unix()
-    await conversation_start.reset_ticket_conversation(conversations, conn, ticket_id, now=now)
+    await conversation_start.reset_ticket_conversation(
+        conversations, conn, ticket_id, now=now
+    )
     return tickets_views.ticket_json(tickets_data.read_ticket(conn, ticket_id), now)
 
 
@@ -1192,10 +1236,14 @@ async def reset_ticket_conversation(
 async def put_notes(
     ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    body = NoteBody(note=body_opt_str(raw, "note"), user_note=body_opt_str(raw, "user_note"))
+    body = NoteBody(
+        note=body_opt_str(raw, "note"), user_note=body_opt_str(raw, "user_note")
+    )
     if "note" in raw and "user_note" in raw:
         raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
+        conn, ticket_id
+    )
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     ticket = tickets_data.set_note(
@@ -1215,7 +1263,9 @@ async def put_recap(
 ) -> JsonDict:
     body = RecapBody(body=body_str(raw, "body"))
     now = clk.now_unix()
-    ticket = tickets_data.write_recap(conn, ticket_id, body=body["body"], actor=ctx.actor, now=now)
+    ticket = tickets_data.write_recap(
+        conn, ticket_id, body=body["body"], actor=ctx.actor, now=now
+    )
     return tickets_views.ticket_json(ticket, now)
 
 
@@ -1230,7 +1280,9 @@ async def put_value(
 ) -> JsonDict:
     body = ValueEditBody(body=body_str(raw, "body"))
     require_direct_write(ctx)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
+        conn, ticket_id
+    )
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
     ticket = tickets_data.edit_field_value(
@@ -1252,7 +1304,9 @@ async def scope_ticket(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    body = ScopeBody(ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap"))
+    body = ScopeBody(
+        ceiling=body_opt_str(raw, "ceiling"), at_cap=body_opt_str(raw, "at_cap")
+    )
     require_direct_write(ctx)
     now = clk.now_unix()
     ceiling_raw = body["ceiling"]
@@ -1264,11 +1318,17 @@ async def scope_ticket(
             if value is None
         ]
         raise PlannerError(
-            ErrorCode.scope_missing, "scope requires ceiling and at_cap", {"missing": missing}
+            ErrorCode.scope_missing,
+            "scope requires ceiling and at_cap",
+            {"missing": missing},
         )
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
+        conn, ticket_id
+    )
     if ceiling_raw not in worker_type_definition.ceiling_range():
-        raise PlannerError(ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": ceiling_raw})
+        raise PlannerError(
+            ErrorCode.scope_invalid, "unknown ceiling", {"ceiling": ceiling_raw}
+        )
     try:
         at_cap = AtCap(at_cap_raw)
     except ValueError:
@@ -1296,7 +1356,9 @@ async def set_stage(
 ) -> JsonDict:
     body = StageBody(to_stage=body_str(raw, "to_stage"))
     require_direct_write(ctx)
-    _ticket, worker_type_definition = _ticket_and_worker_type_definition(conn, ticket_id)
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
+        conn, ticket_id
+    )
     to_stage = body["to_stage"]
     # A linear stage of the type, or the reserved dropped (the writer rejects dropped
     # with "use the drop action"); anything else is foreign to the type.
@@ -1374,7 +1436,10 @@ async def request_user_help(
 ) -> JsonDict:
     now = clk.now_unix()
     ticket = tickets_data.request_user_help(
-        conn, ticket_id, actor=ctx.actor, now=now,
+        conn,
+        ticket_id,
+        actor=ctx.actor,
+        now=now,
     )
     return tickets_views.ticket_json(ticket, now)
 
@@ -1488,7 +1553,11 @@ async def add_conversation_row_signals(
     """
     cards = [card for column in board["columns"] for card in column["cards"]]
     latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
-        [card["conversation_id"] for card in cards if card["conversation_id"] is not None]
+        [
+            card["conversation_id"]
+            for card in cards
+            if card["conversation_id"] is not None
+        ]
     )
     for card in cards:
         conversation_id = card["conversation_id"]
@@ -1503,7 +1572,9 @@ async def add_conversation_row_signals(
             else False
         )
         card["latest_turn_ended_sequence"] = (
-            latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
+            latest_turn_ended.get(conversation_id, 0)
+            if conversation_id is not None
+            else 0
         )
     return board
 
@@ -1518,7 +1589,9 @@ async def board(
 ) -> JsonDict:
     day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
     return await add_conversation_row_signals(
-        tickets_views.board_view(conn, day_id=day_id), conversations, conversation_record
+        tickets_views.board_view(conn, day_id=day_id),
+        conversations,
+        conversation_record,
     )
 
 

@@ -28,10 +28,14 @@ panels day list-tickets --date today --json
 panels day show --date YYYY-MM-DD --json
 panels day list-tickets --date YYYY-MM-DD --json
 panels sprint show current --json
-panels ticket list --sprint current --json
+panels sprint item list --sprint current --json
+panels ticket list --sprint-item <item-id> --json
 ```
 
 Work out what finished, what remains unfinished, what is waiting for approval or blocked, and which unfinished tickets are obvious carryover candidates.
+Read the children of every current-sprint item. Surface children under `kind: other`
+items explicitly in the kickoff draft and review so fallback placement never hides work
+that needs shaping or a carryover decision.
 
 Do not rewrite a Ticket Stage during rollover. Surface uncertain choices instead of inventing them.
 

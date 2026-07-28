@@ -10,9 +10,7 @@ from planner.core.contracts import JsonDict
 from planner.sprints import data as sprints_data
 from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
-from planner.tickets import data as tickets_data
 from planner.tickets.logic import fields_codec, machine
-from planner.tickets.views import ticket_json
 from planner.worker_types.configuration import configured_worker_type_registry
 
 _PRIORITY_RANK = ("P0", "P1", "P2", "P3")
@@ -41,6 +39,7 @@ def item_json(
         "project_id": item.project_id,
         "project": item.project_name,
         "sprint_id": item.sprint_id,
+        "kind": item.kind.value,
         "blocked_by": list(blocking_ticket_ids or []),
         "status_proposal": None,
         "created_at": item.created_at,
@@ -77,7 +76,9 @@ def idea_json(row: sqlite3.Row) -> JsonDict:
         "title": str(row["title"]),
         "body": str(row["body"]),
         "project_id": str(row["project_id"]) if row["project_id"] is not None else None,
-        "project": str(row["project_name"]) if row["project_name"] is not None else None,
+        "project": (
+            str(row["project_name"]) if row["project_name"] is not None else None
+        ),
         "created_at": int(row["created_at"]),
         "updated_at": int(row["updated_at"]),
     }
@@ -146,7 +147,9 @@ def blocked_by_titles(conn: sqlite3.Connection, blocked_by: list[str]) -> list[s
     """Resolve active/read blocker ids to titles, preserving order."""
     titles: list[str] = []
     for ticket_id in blocked_by:
-        row = conn.execute("SELECT title FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        row = conn.execute(
+            "SELECT title FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone()
         if row is not None:
             titles.append(str(row["title"]))
     return titles
@@ -210,11 +213,15 @@ def item_detail(conn: sqlite3.Connection, item_id: str) -> JsonDict:
 
 
 def list_sprints(conn: sqlite3.Connection) -> list[JsonDict]:
-    rows = conn.execute("SELECT id FROM sprints ORDER BY date_start DESC, id").fetchall()
+    rows = conn.execute(
+        "SELECT id FROM sprints ORDER BY date_start DESC, id"
+    ).fetchall()
     return [sprint_json(sprints_data.read_sprint(conn, str(r["id"]))) for r in rows]
 
 
-def list_ideas(conn: sqlite3.Connection, *, project_id: str | None = None) -> list[JsonDict]:
+def list_ideas(
+    conn: sqlite3.Connection, *, project_id: str | None = None
+) -> list[JsonDict]:
     where = "WHERE ideas.project_id = ?" if project_id is not None else ""
     params = (project_id,) if project_id is not None else ()
     sql = (
@@ -232,7 +239,11 @@ def list_ideas(conn: sqlite3.Connection, *, project_id: str | None = None) -> li
 
 def sprint_current_view(conn: sqlite3.Connection, today_iso: str, now: int) -> JsonDict:
     ranges = [
-        DateRange(id=str(r["id"]), date_start=str(r["date_start"]), date_end=str(r["date_end"]))
+        DateRange(
+            id=str(r["id"]),
+            date_start=str(r["date_start"]),
+            date_end=str(r["date_end"]),
+        )
         for r in conn.execute("SELECT id, date_start, date_end FROM sprints").fetchall()
     ]
     sid = current_sprint_id(today_iso, ranges)
@@ -240,7 +251,6 @@ def sprint_current_view(conn: sqlite3.Connection, today_iso: str, now: int) -> J
         return {
             "sprint": None,
             "groups": {s.value: [] for s in ItemStatus},
-            "loose_tickets": [],
         }
     item_rows = conn.execute(
         "SELECT id, priority, created_at FROM sprint_items WHERE sprint_id = ?", (sid,)
@@ -261,14 +271,7 @@ def sprint_current_view(conn: sqlite3.Connection, today_iso: str, now: int) -> J
                 "blocked_by_titles": blocked_by_titles(conn, read.blocking_ticket_ids),
             }
         )
-    loose_rows = conn.execute(
-        "SELECT id FROM tickets WHERE sprint_id = ? AND sprint_item_id IS NULL "
-        "ORDER BY created_at, id",
-        (sid,),
-    ).fetchall()
-    loose = [ticket_json(tickets_data.read_ticket(conn, str(r["id"])), now) for r in loose_rows]
     return {
         "sprint": sprint_json(sprints_data.read_sprint(conn, sid)),
         "groups": groups,
-        "loose_tickets": loose,
     }

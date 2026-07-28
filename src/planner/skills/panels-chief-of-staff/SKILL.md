@@ -120,7 +120,10 @@ panels sprint item list --json
 
 For review questions, inspect the review queue or relevant tickets before advising.
 
-For rollover, inspect the day, current sprint, unfinished work, and waiting approvals before proposing only the obvious carryover.
+For rollover, inspect the day, current sprint, every current Sprint Item and its child
+Tickets, unfinished work, and waiting approvals before proposing only the obvious
+carryover. Enumerate children of `kind: other` items explicitly in the kickoff context;
+the fallback label alone is not evidence that its work was reviewed.
 
 For sprint planning, inspect the sprint, backlog, ideas, active tickets, and project context before proposing the sprint shape.
 

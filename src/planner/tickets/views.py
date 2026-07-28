@@ -60,14 +60,15 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "project_id": ticket.project_id,
         "project": ticket.project_name,
         "sprint_item_id": ticket.sprint_item_id,
-        "sprint_id": ticket.sprint_id,
+        "effective_sprint_id": ticket.effective_sprint_id,
         "recap": ticket.recap,
         "ceiling": str(ticket.ceiling),
         "at_cap": ticket.at_cap.value,
         "ticket_status": ticket.ticket_status.value,
         "backend_error": ticket.backend_error,
         "stage_ownership_overrides": {
-            stage: mode.value for stage, mode in ticket.stage_ownership_overrides.items()
+            stage: mode.value
+            for stage, mode in ticket.stage_ownership_overrides.items()
         },
         "default_stage_ownership_mode": (
             ticket.default_stage_ownership_mode.value
@@ -103,41 +104,49 @@ def list_tickets(
     clauses: list[str] = []
     params: list[str] = []
     if stage is not None:
-        clauses.append("stage = ?")
+        clauses.append("tickets.stage = ?")
         params.append(str(stage))
     if project_id is not None:
-        clauses.append("project_id = ?")
+        clauses.append("COALESCE(sprint_items.project_id, tickets.project_id) = ?")
         params.append(project_id)
     if sprint_id is not None:
         if sprint_id == "null":
-            clauses.append("sprint_id IS NULL")
+            clauses.append("sprint_items.sprint_id IS NULL")
         else:
-            clauses.append("sprint_id = ?")
+            clauses.append("sprint_items.sprint_id = ?")
             params.append(sprint_id)
     if sprint_item_id is not None:
-        clauses.append("sprint_item_id = ?")
+        clauses.append("tickets.sprint_item_id = ?")
         params.append(sprint_item_id)
     if day_id is not None:  # scope to one day's board via the day_tickets join
-        clauses.append("id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)")
+        clauses.append(
+            "tickets.id IN (SELECT ticket_id FROM day_tickets WHERE day_id = ?)"
+        )
         params.append(day_id)
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     rows = conn.execute(
-        "SELECT id FROM tickets" + where + " ORDER BY created_at ASC, id", tuple(params)
+        "SELECT tickets.id FROM tickets "
+        "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id"
+        + where
+        + " ORDER BY tickets.created_at ASC, tickets.id",
+        tuple(params),
     ).fetchall()
-    return [ticket_json(tickets_data.read_ticket(conn, str(row["id"])), now) for row in rows]
+    return [
+        ticket_json(tickets_data.read_ticket(conn, str(row["id"])), now) for row in rows
+    ]
 
 
 def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDict:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     detail = ticket_json(ticket, now)
     day_rows = conn.execute(
-        "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC", (ticket_id,)
+        "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id ASC",
+        (ticket_id,),
     ).fetchall()
     blocker_summary = core_links.blocker_summary(conn, ticket_id)
     detail.update(
         {
             "blocked": blocker_summary.blocked,
-            "effective_sprint_id": tickets_data.get_effective_sprint_id(conn, ticket_id),
             "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
                 ticket
@@ -152,7 +161,9 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
 def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     ticket = tickets_data.read_ticket(conn, ticket_id)
     fields = ticket.fields
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    worker_type_definition = configured_worker_type_registry().require(
+        ticket.worker_type
+    )
 
     def show(value: str | None) -> str:
         return value if value else "(none)"
@@ -164,8 +175,7 @@ def copy_text(conn: sqlite3.Connection, ticket_id: str) -> str:
     blocked_by_rows = tuple(row for row in blocker_summary.blocked_by if row.active)
     blocked_by_block = (
         "\n".join(
-            f"- {row.title} ({row.ticket_id}, {row.stage})"
-            for row in blocked_by_rows
+            f"- {row.title} ({row.ticket_id}, {row.stage})" for row in blocked_by_rows
         )
         if blocked_by_rows
         else "(none)"
@@ -252,32 +262,39 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             else None
         )
         parent_project_id = (
-            str(row["parent_project_id"]) if row["parent_project_id"] is not None else None
+            str(row["parent_project_id"])
+            if row["parent_project_id"] is not None
+            else None
         )
         parent_project_name = (
-            str(row["parent_project_name"]) if row["parent_project_name"] is not None else None
+            str(row["parent_project_name"])
+            if row["parent_project_name"] is not None
+            else None
         )
-        ticket_project_id = str(row["project_id"]) if row["project_id"] is not None else None
-        ticket_project_name = str(row["project_name"]) if row["project_name"] is not None else None
+        ticket_project_id = (
+            str(row["project_id"]) if row["project_id"] is not None else None
+        )
+        ticket_project_name = (
+            str(row["project_name"]) if row["project_name"] is not None else None
+        )
         is_parented = row["sprint_item_id"] is not None
         group_project_id = parent_project_id if is_parented else ticket_project_id
         group_project_name = parent_project_name if is_parented else ticket_project_name
         ticket_status = str(row["ticket_status"])
-        stopped_at_current_stage = (
-            str(row["at_cap"]) == AtCap.stop.value
-            and machine.at_or_beyond_ceiling(
-                stage,
-                str(row["ceiling"]),
-                worker_type_definition=worker_type_definition,
-            )
+        stopped_at_current_stage = str(
+            row["at_cap"]
+        ) == AtCap.stop.value and machine.at_or_beyond_ceiling(
+            stage,
+            str(row["ceiling"]),
+            worker_type_definition=worker_type_definition,
         )
         card: JsonDict = {
             "id": str(row["id"]),
             "title": str(row["title"]),
             "priority": priority,
             "deadline": deadline,
-            "project_id": ticket_project_id,
-            "project": ticket_project_name,
+            "project_id": group_project_id,
+            "project": group_project_name,
             "group_project_id": group_project_id,
             "group_project": group_project_name,
             "activity_at": int(row["updated_at"]),
@@ -300,7 +317,9 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
             "is_dropped": stage == worker_type_definition.dropped_stage.id,
             "blocked": str(row["id"]) in blocked_target_ids,
             "conversation_id": (
-                str(row["conversation_id"]) if row["conversation_id"] is not None else None
+                str(row["conversation_id"])
+                if row["conversation_id"] is not None
+                else None
             ),
             "waiting_to_closeout": (
                 gating_field_id == "closeout"
@@ -321,7 +340,9 @@ def board_view(conn: sqlite3.Connection, *, day_id: str) -> JsonDict:
     columns: list[JsonDict] = [
         {
             "stage": sid,
-            "cards": [card for _, card in sorted(by_stage[sid], key=lambda item: item[0])],
+            "cards": [
+                card for _, card in sorted(by_stage[sid], key=lambda item: item[0])
+            ],
         }
         for sid in column_order
     ]
@@ -393,5 +414,7 @@ def review_view(
     ).fetchone()
     return {
         "items": _review_items(conn, day_id=day_id),
-        "running_worker_count": int(running_workers["count"] if running_workers is not None else 0),
+        "running_worker_count": int(
+            running_workers["count"] if running_workers is not None else 0
+        ),
     }

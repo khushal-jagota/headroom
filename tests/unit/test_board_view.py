@@ -28,7 +28,9 @@ from planner.conversation.events import (
     ConversationTurnEnding,
     TurnEndedEventPayload,
 )
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from planner.conversation.message_content import text_message_content
 from planner.conversation.storage import ConversationStore
 from planner.core import links as core_links
@@ -159,7 +161,9 @@ def _enriched_board(
     clock = SimpleNamespace(now=lambda: datetime(2026, 7, 4, 12, 0))
     config = load_config(path=None, env={"PLAN_BOUNDARY_HOUR": "5"})
     return asyncio.run(
-        board_route(conn, config, clock, conversations, ConversationStore(_database_path(conn)))
+        board_route(
+            conn, config, clock, conversations, ConversationStore(_database_path(conn))
+        )
     )
 
 
@@ -220,16 +224,20 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
         clock=fake_clock,
     )
     parented = _ticket(tmp_db, "Parented ticket", 1, sprint_item_id=item.id)
-    standalone = _ticket(tmp_db, "Standalone ticket", 2, project_id=standalone_project.id)
+    standalone = _ticket(
+        tmp_db, "Standalone ticket", 2, project_id=standalone_project.id
+    )
     unprojected = _ticket(tmp_db, "Unprojected ticket", 3)
     for ticket_id in (parented, standalone, unprojected):
         add_day_ticket(tmp_db, "day_2026-07-04", ticket_id, 10)
 
     board = _board(tmp_db)
-    cards = {card["title"]: card for column in board["columns"] for card in column["cards"]}
+    cards = {
+        card["title"]: card for column in board["columns"] for card in column["cards"]
+    }
 
-    assert cards["Parented ticket"]["project_id"] is None
-    assert cards["Parented ticket"]["project"] is None
+    assert cards["Parented ticket"]["project_id"] == "project_vylo"
+    assert cards["Parented ticket"]["project"] == "Vylo"
     assert cards["Parented ticket"]["group_project_id"] == "project_vylo"
     assert cards["Parented ticket"]["group_project"] == "Vylo"
     assert cards["Standalone ticket"]["group_project_id"] == "project_client_work"
@@ -238,7 +246,9 @@ def test_board_view_groups_parented_ticket_by_parent_item_project(
     assert cards["Unprojected ticket"]["group_project"] is None
 
 
-def test_board_coding_card_keys_superset_and_columns_unchanged(tmp_db: Connection) -> None:
+def test_board_coding_card_keys_superset_and_columns_unchanged(
+    tmp_db: Connection,
+) -> None:
     _ticket(tmp_db, "Coding board ticket", 1)
 
     board = _board(tmp_db)
@@ -291,7 +301,9 @@ def test_board_card_identifies_only_runnable_empty_closeout_tickets(
         (stage, ticket_status, ceiling, at_cap, ticket_id),
     )
 
-    card = next(card for column in _board(tmp_db)["columns"] for card in column["cards"])
+    card = next(
+        card for column in _board(tmp_db)["columns"] for card in column["cards"]
+    )
 
     assert card["waiting_to_closeout"] is expected
 
@@ -435,7 +447,9 @@ def test_board_cards_expose_active_incoming_blocking_without_changing_real_stage
     core_links.add_link(tmp_db, blocker, later_dependent, LinkKind.blocks, 5)
 
     board = _board(tmp_db)
-    cards = {card["id"]: card for column in board["columns"] for card in column["cards"]}
+    cards = {
+        card["id"]: card for column in board["columns"] for card in column["cards"]
+    }
 
     assert cards[kickoff_dependent]["stage"] == "needs_kickoff"
     assert cards[kickoff_dependent]["blocked"] is True
@@ -459,7 +473,9 @@ def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
     async def start_turns() -> None:
         for conversation_id in ("conv-running", "conv-asking", "conv-answered"):
             await conversations.start_conversation(
-                ConversationStartRequest(conversation_id=conversation_id, model="a-model")
+                ConversationStartRequest(
+                    conversation_id=conversation_id, model="a-model"
+                )
             )
             await conversations.send(
                 conversation_id,
@@ -473,7 +489,9 @@ def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
     conversations.answer_permission_ask("conv-answered", already_answered, "allow")
 
     board = _enriched_board(tmp_db, conversations)
-    cards = {card["id"]: card for column in board["columns"] for card in column["cards"]}
+    cards = {
+        card["id"]: card for column in board["columns"] for card in column["cards"]
+    }
 
     # The card carries the link the signals were read against, and the browser keys its
     # reply watermark by.
@@ -518,7 +536,12 @@ def test_board_route_stops_working_when_the_conversation_turn_ends(
         )
 
     asyncio.run(start_turn())
-    assert _enriched_board(tmp_db, conversations)["columns"][0]["cards"][0]["agent_working"] is True
+    assert (
+        _enriched_board(tmp_db, conversations)["columns"][0]["cards"][0][
+            "agent_working"
+        ]
+        is True
+    )
 
     conversations.complete_running_turn("conv-finishing")
 

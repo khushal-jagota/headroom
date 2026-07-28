@@ -39,7 +39,6 @@ panels sprint list --json
 panels sprint show current --json
 panels sprint item list --sprint <sprint-id> --json
 panels sprint item list --sprint none --json
-panels ticket list --sprint <sprint-id> --json
 panels ticket list --sprint-item <item-id> --json
 panels project list --json
 ```
@@ -51,7 +50,10 @@ panels sprint item show <item-id> --json
 panels ticket show <ticket-id> --json
 ```
 
-`panels ticket list --sprint <sprint-id>` returns loose tickets placed directly on the sprint. It does not replace the child-ticket read: for every sprint item being reviewed, use `--sprint-item <item-id>` so parented ticket evidence is not missed.
+Every scheduled Ticket belongs to a Sprint Item. For every item being reviewed,
+including each item whose `kind` is `other`, use `--sprint-item <item-id>` so its child
+Ticket evidence is included. Treat Other as visible catch-all work to inspect, not as a
+group to skip because it was created automatically.
 
 Separate three things in the conversation:
 
@@ -207,7 +209,12 @@ Consider candidate items from:
 - current work that materially changed the next sprint’s constraints;
 - new outcome-shaped work discovered during planning.
 
-Each item must earn its place. Prefer outcome-shaped items over task lists. Use only current Panels fields: title, body, priority, deadline, project, and sprint placement. Do not recreate legacy fields that the current contract does not support.
+Each normal item must earn its place. Prefer outcome-shaped normal items over task lists.
+An item whose `kind` is `other` is the machine-recognized fallback for its sprint and
+Project: keep it visible and review its children, but do not pretend it is a shaped
+outcome or create another Other manually. Use only current Panels fields: title, body,
+priority, deadline, project, and sprint placement. Do not recreate legacy fields that
+the current contract does not support.
 
 Move an existing backlog item into the new sprint:
 
@@ -236,13 +243,15 @@ panels sprint show <new-sprint-id> --json
 panels sprint item list --sprint <new-sprint-id> --json
 ```
 
-**Phase 2 is complete when:** the new sprint has a coherent kickoff, every item has earned its place, and the readback matches the approved plan.
+**Phase 2 is complete when:** the new sprint has a coherent kickoff, every normal item
+has earned its place, fallback children are explicitly surfaced, and the readback
+matches the approved plan.
 
 # In-sprint reconciliation
 
 Use this path when the user wants the current sprint made truthful without starting a boundary review and next-sprint plan.
 
-1. Read the current sprint, its items, loose sprint tickets, and each relevant item's child tickets through `--sprint-item`.
+1. Read the current sprint, all of its items, and each item's child Tickets through `--sprint-item`. Explicitly call out children of `kind: other` items so fallback work is visible.
 2. Identify only material sprint-level changes: outcome movement, real blockers, changed scope, priority/deadline/project corrections, or work that no longer belongs.
 3. Present factual mismatches and recommended corrections before writing.
 4. Apply only settled changes with `panels sprint set` or `panels sprint item set`.
@@ -300,7 +309,8 @@ Before declaring a sprint workflow complete, confirm:
 - [ ] The current sprint review was completed before next-sprint planning.
 - [ ] Outcomes, user reflection, joint discussion, learning, and carry-forward were read back correctly.
 - [ ] The next limiting factor, primary bet, supports, and pre-mortem were user decisions.
-- [ ] Every next-sprint item earned its place and uses supported Panels fields.
+- [ ] Every normal next-sprint item earned its place and uses supported Panels fields.
+- [ ] Children of Other fallback items were explicitly surfaced rather than hidden in totals.
 - [ ] The final sprint and item list match the approved decisions.
 - [ ] No daily tickets were added merely because they belong to the sprint.
 - [ ] No legacy planning file or direct database write was used.

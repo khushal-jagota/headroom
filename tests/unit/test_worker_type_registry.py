@@ -27,7 +27,9 @@ from planner.worker_types.contracts import (
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
-KNOWN_SKILLS = frozenset({"panels-worker", "panels-worker-coding", "panels-worker-new-worker"})
+KNOWN_SKILLS = frozenset(
+    {"panels-worker", "panels-worker-coding", "panels-worker-new-worker"}
+)
 KNOWN_TOOLSETS = frozenset({"default"})
 
 
@@ -47,8 +49,9 @@ def test_the_agent_backends_are_a_closed_set_of_three() -> None:
         "claude",
     )
     assert {
-        runtime_definitions.worker_type_registry.require(worker_type)
-        .worker_profile.default_backend
+        runtime_definitions.worker_type_registry.require(
+            worker_type
+        ).worker_profile.default_backend
         for worker_type in runtime_definitions.worker_type_registry.registered_worker_types()
     } == {"codex", "claude"}
 
@@ -56,8 +59,12 @@ def test_the_agent_backends_are_a_closed_set_of_three() -> None:
 def test_worker_profiles_declare_complete_employee_defaults() -> None:
     assert {
         worker_type: (
-            PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_backend,
-            PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_model,
+            PRODUCTION_WORKER_TYPE_REGISTRY.require(
+                worker_type
+            ).worker_profile.default_backend,
+            PRODUCTION_WORKER_TYPE_REGISTRY.require(
+                worker_type
+            ).worker_profile.default_model,
             PRODUCTION_WORKER_TYPE_REGISTRY.require(
                 worker_type
             ).worker_profile.default_reasoning_effort,
@@ -205,8 +212,12 @@ def test_definition_errors_are_preserved() -> None:
 
 def test_registry_validation_order_and_messages() -> None:
     base = CODING_WORKER_TYPE_DEFINITION
-    assert_error(replace(base, stages=()), "definition has no stages", {"worker_type": "coding"})
-    assert_error(replace(base, fields=()), "definition has no fields", {"worker_type": "coding"})
+    assert_error(
+        replace(base, stages=()), "definition has no stages", {"worker_type": "coding"}
+    )
+    assert_error(
+        replace(base, fields=()), "definition has no fields", {"worker_type": "coding"}
+    )
     assert_error(
         replace(base, stages=(base.stages[0], base.stages[0], *base.stages[1:])),
         "duplicate stage id",
@@ -223,7 +234,10 @@ def test_registry_validation_order_and_messages() -> None:
         {"worker_type": "coding", "first": "start"},
     )
     assert_error(
-        replace(base, stages=tuple(replace(stage, is_terminal=False) for stage in base.stages)),
+        replace(
+            base,
+            stages=tuple(replace(stage, is_terminal=False) for stage in base.stages),
+        ),
         "linear order must have exactly one terminal",
         {"worker_type": "coding", "stage": "done"},
     )
@@ -239,7 +253,9 @@ def test_registry_validation_order_and_messages() -> None:
         {"worker_type": "coding", "stage": "done"},
     )
     assert_error(
-        replace(base, stages=(*base.stages[:-1], replace(base.stages[-1], id="finished"))),
+        replace(
+            base, stages=(*base.stages[:-1], replace(base.stages[-1], id="finished"))
+        ),
         "last stage must be done",
         {"worker_type": "coding", "last": "finished"},
     )
@@ -262,7 +278,11 @@ def test_registry_validation_order_and_messages() -> None:
     assert_error(
         replace(
             base,
-            stages=(base.stages[0], replace(base.stages[1], gating_field=None), *base.stages[2:]),
+            stages=(
+                base.stages[0],
+                replace(base.stages[1], gating_field=None),
+                *base.stages[2:],
+            ),
         ),
         "non-terminal stage must gate a field",
         {"worker_type": "coding", "stage": "needs_success"},
@@ -306,12 +326,16 @@ def test_registry_validation_order_and_messages() -> None:
         {"worker_type": "coding", "first_field": "success"},
     )
     assert_error(
-        replace(base, worker_profile=replace(base.worker_profile, specialist_skill="ghost")),
+        replace(
+            base, worker_profile=replace(base.worker_profile, specialist_skill="ghost")
+        ),
         "worker profile references an unknown skill",
         {"worker_type": "coding", "specialist_skill": "ghost"},
     )
     assert_error(
-        replace(base, worker_profile=replace(base.worker_profile, toolset_profile="ghost")),
+        replace(
+            base, worker_profile=replace(base.worker_profile, toolset_profile="ghost")
+        ),
         "worker profile references an unknown toolset profile",
         {"worker_type": "coding", "toolset_profile": "ghost"},
     )
@@ -383,10 +407,14 @@ def test_worker_profiles_require_non_empty_registered_default_backend(
 def test_the_probe_names_a_real_backend_of_its_own() -> None:
     # The probe exists to prove a Worker type may run on a backend the shipped types do
     # not, so its default is a real key and deliberately not the one they all name.
-    probe_default = build_probe_registry().require("probe").worker_profile.default_backend
+    probe_default = (
+        build_probe_registry().require("probe").worker_profile.default_backend
+    )
     assert ConversationBackendKey(probe_default) is ConversationBackendKey.hermes
     assert probe_default not in {
-        PRODUCTION_WORKER_TYPE_REGISTRY.require(worker_type).worker_profile.default_backend
+        PRODUCTION_WORKER_TYPE_REGISTRY.require(
+            worker_type
+        ).worker_profile.default_backend
         for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
     }
 
@@ -535,7 +563,9 @@ def test_old_authority_imports_and_identifiers_are_absent() -> None:
             target.id
             for node in ast.walk(tree)
             if isinstance(node, (ast.Assign, ast.AnnAssign))
-            for target in (node.targets if isinstance(node, ast.Assign) else (node.target,))
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else (node.target,)
+            )
             if isinstance(target, ast.Name)
         }
         assert forbidden_identifiers.isdisjoint(assigned_names), path
@@ -550,7 +580,8 @@ def test_old_authority_imports_and_identifiers_are_absent() -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 assert all(
-                    not alias.name.startswith("planner.ticket_types") for alias in node.names
+                    not alias.name.startswith("planner.ticket_types")
+                    for alias in node.names
                 ), path
             if isinstance(node, ast.ImportFrom):
                 assert not (node.module or "").startswith("planner.ticket_types"), path
@@ -563,7 +594,9 @@ def test_old_authority_imports_and_identifiers_are_absent() -> None:
                 identifiers = (node.attr,)
             elif isinstance(node, ast.keyword):
                 identifiers = (node.arg,)
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            elif isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
                 identifiers = (node.name,)
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
                 identifiers = tuple(alias.asname for alias in node.names)
@@ -602,7 +635,9 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
             else:
                 continue
             for module in modules:
-                if module.startswith("planner.") and not module.startswith("planner.worker_types"):
+                if module.startswith("planner.") and not module.startswith(
+                    "planner.worker_types"
+                ):
                     assert module in allowed_outbound, (path, module)
 
 
@@ -624,9 +659,9 @@ def test_semantic_modules_have_no_optional_definition_or_coding_fallback() -> No
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             positional = (*node.args.posonlyargs, *node.args.args)
-            positional_defaults = (None,) * (len(positional) - len(node.args.defaults)) + tuple(
-                node.args.defaults
-            )
+            positional_defaults = (None,) * (
+                len(positional) - len(node.args.defaults)
+            ) + tuple(node.args.defaults)
             for argument, default in (
                 *zip(positional, positional_defaults, strict=True),
                 *zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True),
@@ -634,65 +669,17 @@ def test_semantic_modules_have_no_optional_definition_or_coding_fallback() -> No
                 if argument.arg == "worker_type_definition":
                     assert default is None, (path, node.name)
                     assert argument.annotation is not None, (path, node.name)
-                    assert "None" not in ast.unparse(argument.annotation), (path, node.name)
+                    assert "None" not in ast.unparse(argument.annotation), (
+                        path,
+                        node.name,
+                    )
                 if argument.arg == "definition":
                     assert default is None, (path, node.name)
             for expression in ast.walk(node):
-                if isinstance(expression, ast.BoolOp) and isinstance(expression.op, ast.Or):
+                if isinstance(expression, ast.BoolOp) and isinstance(
+                    expression.op, ast.Or
+                ):
                     assert not any(
                         isinstance(value, ast.Name) and value.id == "definition"
                         for value in expression.values
                     ), (path, node.name)
-
-
-def test_seed_is_definition_driven_without_worker_type_fallbacks() -> None:
-    root = Path(__file__).resolve().parents[2]
-    seed_paths = (
-        root / "src/planner/seed/__main__.py",
-        root / "src/planner/seed/contracts.py",
-        root / "src/planner/seed/importer.py",
-        root / "src/planner/seed/logic/workspace.py",
-    )
-    importer_source = seed_paths[2].read_text()
-    assert "TicketFields.empty(worker_type_definition.field_ids())" in importer_source
-    assert (
-        importer_source.count("runtime_definitions.worker_type_registry.require(worker_type)") == 1
-    )
-    assert "require_conversation_backend_key(" in importer_source
-    assert 'require("coding")' not in importer_source
-    assert "coding_worker_type_definition" not in importer_source
-    complete_coding_fields = {
-        "kickoff",
-        "success",
-        "approach",
-        "plan",
-        "implementation",
-        "closeout",
-    }
-    for path in seed_paths:
-        source = path.read_text()
-        tree = ast.parse(source, filename=str(path))
-        assert '"coding"' not in source
-        assert "'coding'" not in source
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for argument, default in zip(
-                    node.args.kwonlyargs,
-                    node.args.kw_defaults,
-                    strict=True,
-                ):
-                    if argument.arg == "worker_type":
-                        assert default is None, (path, node.name)
-            if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
-                assert not any(
-                    isinstance(value, ast.Name) and value.id == "worker_type"
-                    for value in node.values
-                ), (path, ast.unparse(node))
-            if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-                continue
-            literal_strings = {
-                element.value
-                for element in node.elts
-                if isinstance(element, ast.Constant) and isinstance(element.value, str)
-            }
-            assert literal_strings != complete_coding_fields

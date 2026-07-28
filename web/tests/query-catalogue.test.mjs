@@ -45,6 +45,7 @@ const expectedEntries = [
   "ideas",
   "projects",
   "sprintSummaries",
+  "sprintItems",
   "currentSprint",
   "ticket",
   "ticketConversationStartValues",
@@ -65,6 +66,7 @@ const catalogue = [
   [queries.ideas(), ["ideas"], "/api/ideas"],
   [queries.projects(), ["projects"], "/api/projects"],
   [queries.sprintSummaries(), ["sprints"], "/api/sprints"],
+  [queries.sprintItems(), ["items"], "/api/items"],
   [queries.currentSprint(), ["sprint", "current"], "/api/sprint/current"],
   [queries.ticket("t_demo"), ["ticket", "t_demo"], "/api/tickets/t_demo"],
   [

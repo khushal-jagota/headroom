@@ -101,8 +101,7 @@ def test_e22_cli_create_live_board(
         "create",
         "--worker-type",
         "coding",
-        "--sprint",
-        "none",
+        "--backlog",
         "--title",
         "T18 board ticket",
     )
