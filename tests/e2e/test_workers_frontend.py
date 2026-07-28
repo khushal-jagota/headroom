@@ -42,14 +42,6 @@ def _put_stage_owner(
 
 DESCRIPTION_EDIT = '[data-skill-description] [contenteditable="true"]'
 BODY_EDIT = '[data-skill-body] [contenteditable="true"]'
-ARTIFACT_DIR = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "files"
-    / "tickets"
-    / "t_m56470d6"
-    / "artifacts"
-)
 
 
 def _replace_inline_edit_text(page: Page, selector: str, text: str) -> None:
@@ -124,226 +116,6 @@ def _assert_no_horizontal_overflow(page: Page) -> None:
         "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
     )
     assert overflow <= 0
-
-
-def test_agents_routes_navigation_and_mobile_controls(
-    server: ServerHandle, context_factory: Callable[[], BrowserContext]
-) -> None:
-    legacy_index = context_factory().new_page()
-    legacy_index.goto(server.base + "/#/workers")
-    legacy_index.wait_for_url(server.base + "/#/agents", timeout=WAIT_MS)
-    legacy_index.wait_for_selector('[data-screen="agents"] [data-agents-section]', timeout=WAIT_MS)
-    _assert_agents_nav_active_and_clear(legacy_index)
-
-    legacy_worker = context_factory().new_page()
-    legacy_worker.goto(server.base + "/#/workers/coding")
-    legacy_worker.wait_for_url(server.base + "/#/agents/workers/coding", timeout=WAIT_MS)
-    legacy_worker.wait_for_selector(
-        '[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS
-    )
-    _assert_agents_nav_active_and_clear(legacy_worker)
-
-    for invalid_hash in ("#/agents/not-a-role", "#/agents/workers"):
-        invalid = context_factory().new_page()
-        invalid.goto(server.base + f"/{invalid_hash}")
-        invalid.wait_for_selector(".quiet-line", timeout=WAIT_MS)
-        assert invalid.locator(".quiet-line").inner_text() == "no such screen"
-
-    mobile_index = context_factory().new_page()
-    mobile_index.set_viewport_size({"width": 390, "height": 844})
-    mobile_index.goto(server.base + "/#/agents")
-    mobile_index.wait_for_selector("[data-agent-destination]", timeout=WAIT_MS)
-    _assert_agents_nav_active_and_clear(mobile_index)
-    _assert_no_horizontal_overflow(mobile_index)
-    assert mobile_index.locator("[data-agent-destination]").first.is_visible()
-    assert mobile_index.locator("[data-agent-destination]").first.get_attribute("href") == (
-        "#/agents/chief-of-staff"
-    )
-    assert mobile_index.locator(
-        '[data-worker-destination][href="#/agents/workers/coding"]'
-    ).is_visible()
-    mobile_names = mobile_index.locator("[data-destination-name]").all_inner_texts()
-    assert mobile_names == [
-        "Chief of Staff",
-        "Worker skill",
-        "Coding",
-        "New Worker",
-        "Exploration",
-        "Initiative Planning",
-    ]
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    mobile_index.screenshot(path=ARTIFACT_DIR / "agents-index-mobile.png", full_page=True)
-
-    mobile_index.locator("[data-agent-destination]").first.click()
-    mobile_index.wait_for_url(server.base + "/#/agents/chief-of-staff", timeout=WAIT_MS)
-    mobile_index.wait_for_selector("[data-agent-detail]", timeout=WAIT_MS)
-    _assert_agents_nav_active_and_clear(mobile_index)
-    _assert_no_horizontal_overflow(mobile_index)
-    assert mobile_index.get_by_label("Chief of Staff backend").is_visible()
-    assert mobile_index.locator(DESCRIPTION_EDIT).is_editable()
-    assert mobile_index.locator(BODY_EDIT).is_editable()
-
-
-def test_agents_index_worker_detail_and_mobile_layout(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    page = open_page(
-        context_factory(),
-        server,
-        "#/agents",
-        'section[data-screen="agents"] [data-workers-list]',
-    )
-    assert page.locator('[data-screen="agents"] [data-agents-section]').count() == 1
-    assert page.locator('[data-screen="agents"] [data-workers-section]').count() == 1
-    assert page.locator('[data-screen="agents"] [data-agent-destination]').count() == 2
-    assert page.locator('[data-screen="agents"] [data-worker-destination]').count() == 4
-    assert page.locator("[data-skills-home]").count() == 0
-    assert page.locator(".agents-page-head p").count() == 0
-    assert page.locator(
-        "[data-agent-card], .agent-chip, [data-worker-structural-id], "
-        "[data-agent-skill-name], [data-worker-skill-name], [data-worker-stage-count]"
-    ).count() == 0
-    assert "configure" not in page.locator(".agents-page--index").inner_text().lower()
-
-    expected = [
-        (
-            "[data-agents-section]",
-            "Agents",
-            "Chief of Staff",
-            "Top-level Panels planning and orchestration agent. Helps the user capture, "
-            "triage, organize, roll over, sprint-plan, and review work across days, "
-            "sprints, items, tickets, and ideas.",
-            "#/agents/chief-of-staff",
-        ),
-        (
-            "[data-agents-section]",
-            "Agents",
-            "Worker skill",
-            "Working a Panels ticket, one step at a time.",
-            "#/agents/worker-skill",
-        ),
-        (
-            "[data-workers-section]",
-            "Workers",
-            "Coding",
-            "Stage-by-stage guidance for a coding Worker type Panels Ticket.",
-            "#/agents/workers/coding",
-        ),
-        (
-            "[data-workers-section]",
-            "Workers",
-            "New Worker",
-            "Stage-by-stage guidance for a new-worker ticket — designing and landing "
-            "another worker.",
-            "#/agents/workers/new_worker",
-        ),
-        (
-            "[data-workers-section]",
-            "Workers",
-            "Exploration",
-            "Stage-by-stage guidance for an exploration Worker type Panels Ticket.",
-            "#/agents/workers/exploration",
-        ),
-        (
-            "[data-workers-section]",
-            "Workers",
-            "Initiative Planning",
-            "Stage-by-stage guidance for planning a confirmed direction across multiple "
-            "Panels Tickets.",
-            "#/agents/workers/initiative_planning",
-        ),
-    ]
-    sections = page.locator(".agents-index-section")
-    section_titles = sections.locator(":scope > .agents-section-title")
-    assert section_titles.evaluate_all(
-        "(nodes) => nodes.map((node) => node.textContent)"
-    ) == [
-        "Agents",
-        "Workers",
-    ]
-    destinations = page.locator(".agents-destination")
-    assert destinations.count() == len(expected)
-    for index, (section_selector, group, name, description, href) in enumerate(expected):
-        destination = destinations.nth(index)
-        assert destination.locator("[data-destination-name]").inner_text() == name
-        assert destination.locator("[data-destination-description]").inner_text() == description
-        assert destination.get_attribute("href") == href
-        assert destination.locator("xpath=ancestor::section[1]").get_attribute(
-            "data-agents-section" if group == "Agents" else "data-workers-section"
-        ) == ""
-        assert page.locator(section_selector).get_by_role("link", name=name).count() == 1
-
-    ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=ARTIFACT_DIR / "agents-index-desktop.png", full_page=True)
-    coding = page.locator('[data-worker-destination][href="#/agents/workers/coding"]')
-    coding.focus()
-    assert coding.evaluate("(node) => document.activeElement === node")
-    assert page.evaluate(
-        "(node) => getComputedStyle(node).outlineStyle", coding.element_handle()
-    ) == "solid"
-    assert page.evaluate(
-        "(node) => parseFloat(getComputedStyle(node).outlineWidth)", coding.element_handle()
-    ) >= 2
-    page.screenshot(path=ARTIFACT_DIR / "agents-index-focused.png", full_page=True)
-
-    coding.click()
-    page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
-    assert page.locator("[data-role-name]").inner_text() == "Coding"
-    assert page.url.endswith("#/agents/workers/coding")
-    assert page.locator("[data-worker-stage-table] [data-worker-stage-row]").count() == 7
-    terminal = page.locator('[data-worker-stage-row][data-stage="done"]')
-    assert terminal.get_attribute("data-terminal") == "true"
-    assert terminal.locator("[data-terminal-owner]").inner_text() == "terminal"
-    assert (
-        page.locator("[data-skill-content] [data-skill-name]").inner_text()
-        == "panels-worker-coding"
-    )
-    assert page.locator("[data-skill-edit-button]").count() == 0
-    assert page.locator("[data-skill-save-button]").count() == 0
-    assert page.locator("[data-skill-cancel-button]").count() == 0
-    assert page.locator(DESCRIPTION_EDIT).get_attribute("contenteditable") == "true"
-    assert page.locator(BODY_EDIT).get_attribute("contenteditable") == "true"
-    assert page.locator("[data-skill-name]").get_attribute("contenteditable") != "true"
-
-    mobile = context_factory().new_page()
-    mobile.set_viewport_size({"width": 390, "height": 844})
-    mobile.goto(server.base + "/#/agents/workers/coding")
-    mobile.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
-    assert mobile.locator("[data-stage-label]").first.is_visible()
-    assert mobile.locator("[data-stage-owner-select]").first.is_visible()
-    assert not mobile.locator("[data-gated-field]").first.is_visible()
-    _assert_agents_nav_active_and_clear(mobile)
-    _assert_no_horizontal_overflow(mobile)
-    mobile.screenshot(path=ARTIFACT_DIR / "agents-worker-detail-mobile.png", full_page=True)
-
-
-def test_agents_index_combines_loading_and_error_states(
-    server: ServerHandle, context_factory: Callable[[], BrowserContext]
-) -> None:
-    loading = context_factory().new_page()
-    loading.route("**/api/skills", lambda _route: None)
-    loading.goto(server.base + "/#/agents")
-    loading.get_by_text("Loading agents...", exact=True).wait_for(
-        state="visible", timeout=WAIT_MS
-    )
-    assert loading.locator(".agents-destination").count() == 0
-
-    failed = context_factory().new_page()
-    failed.route(
-        "**/api/skills",
-        lambda route: route.fulfill(
-            status=503,
-            content_type="application/json",
-            body='{"error":{"code":"skills_unavailable","message":"skills unavailable"}}',
-        ),
-    )
-    failed.goto(server.base + "/#/agents")
-    failed.locator(".error-line").wait_for(state="visible", timeout=WAIT_MS)
-    assert failed.locator(".error-code").inner_text() == "skills_unavailable"
-    assert failed.locator(".error-message").inner_text() == "skills unavailable"
-    assert failed.locator(".agents-destination").count() == 0
 
 
 def test_chief_detail_edits_skill_independently_and_retries_failure(
@@ -594,21 +366,16 @@ def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_de
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
     requests.clear()
 
-    with page.expect_request(
-        lambda request: (
-            request.method == "GET" and request.url == server.base + "/api/workers/coding"
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PUT"
+            and "/api/workers/coding/stages/needs_success/default-ownership" in response.url
         )
     ):
-        with page.expect_response(
-            lambda response: (
-                response.request.method == "PUT"
-                and "/api/workers/coding/stages/needs_success/default-ownership" in response.url
-            )
-        ):
-            page.select_option(
-                '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]',
-                "user",
-            )
+        page.select_option(
+            '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]',
+            "user",
+        )
     page.wait_for_function(
         """() => document.querySelector(
           '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]'

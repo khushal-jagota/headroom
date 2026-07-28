@@ -1,3 +1,5 @@
+"""Process integration for the persistent staging-environment boundary."""
+
 from __future__ import annotations
 
 import json

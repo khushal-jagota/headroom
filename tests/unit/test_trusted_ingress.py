@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.core import server as server_module
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -191,7 +192,15 @@ def test_hosted_ingress_is_noop_when_not_configured(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_static_and_file_surfaces_pass_through_trusted_ingress(tmp_path: Path) -> None:
+def test_static_and_file_surfaces_pass_through_trusted_ingress(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    # The developer shell may point PLAN_APP_ROOT at a deployed Panels instance.
+    # This source-tree test must serve the source tree whose asset route it selected.
+    monkeypatch.setattr(server_module, "_WEB_DIST", _REPO_ROOT / "web" / "dist")
+    monkeypatch.setattr(server_module, "_WEB_INDEX", _REPO_ROOT / "web" / "dist" / "index.html")
+    monkeypatch.setattr(server_module, "_ASSETS_DIR", _REPO_ROOT / "assets")
+    monkeypatch.setattr(server_module, "_STATIC_DIR", _REPO_ROOT / "static")
     app, db_path = _make_app(tmp_path)
     ticket_path = db_path.parent / "files" / "tickets" / "t_file123" / "notes.md"
     ticket_path.parent.mkdir(parents=True)

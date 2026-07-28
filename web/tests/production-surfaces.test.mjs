@@ -95,4 +95,40 @@ assert.doesNotMatch(
   "the row mark reads the positions it was given, never storage"
 );
 
+// --- the Workspace groups --------------------------------------------------------------
+
+// Kickoff approval is the one approval subtype Workspace can classify entirely from the
+// existing board card. Done and the server-projected Closeout exception keep precedence,
+// then this predicate separates Kickoff from every later approval.
+const groupKeySource = boardRouteSource.slice(
+  boardRouteSource.indexOf("function groupKeyFor"),
+  boardRouteSource.indexOf("const GROUP_ORDER"),
+);
+assert.match(
+  groupKeySource,
+  /if \(card\.is_done\) return "done";[\s\S]*if \(card\.waiting_to_closeout\) return "waiting_to_closeout";[\s\S]*card\.ticket_status === "awaiting_approval"[\s\S]*card\.gating_field === "kickoff"[\s\S]*return "waiting_for_kickoff";/,
+);
+assert.match(boardRouteSource, /waiting_for_kickoff: "Waiting for Kickoff"/);
+
+const groupOrderMatch = boardRouteSource.match(
+  /const GROUP_ORDER: readonly string\[\] = \[([\s\S]*?)\n  \];/,
+);
+assert.ok(groupOrderMatch, "Workspace declares one canonical group order");
+const groupOrder = [...groupOrderMatch[1].matchAll(/"([^"]+)"/g)].map(
+  (match) => match[1],
+);
+assert.deepEqual(groupOrder, [
+  "errored",
+  "needs_user",
+  "waiting_to_closeout",
+  "user",
+  "paired",
+  "agent",
+  "waiting_for_kickoff",
+  "awaiting_approval",
+  "empty",
+  "blocked",
+  "done",
+]);
+
 console.log("production-surfaces.test.mjs: all assertions passed");
