@@ -45,6 +45,7 @@
     queries.ticketConversationStartValues(stableId)
   );
   const sprints = createQuery(() => queries.sprintSummaries());
+  const sprintItems = createQuery(() => queries.sprintItems());
   const projects = createQuery(() => queries.projects());
   const currentSprint = createQuery(() => queries.currentSprint());
   const manifest = createQuery(() => queries.workerTypeManifests());
@@ -78,11 +79,29 @@
   /** How far open this page's conversation is.
    *
    * The state a conversation opens in belongs to the page that shows it, so this page
-   * names its own: a Ticket opens at rest — the composer, and above it one line of
-   * whatever happened last, against the bottom of the ticket. The person moves it from
-   * there and the conversation writes back here when they do.
+   * names its own. A Ticket opens at rest — the composer, and above it one line of
+   * whatever happened last, against the bottom of the ticket — unless it is paired, which
+   * opens full (seeded below). The person moves it from there and the conversation writes
+   * back here when they do.
    */
   let conversationState = $state<ConversationState>("rest");
+
+  /** A paired Ticket opens straight into the full conversation.
+   *
+   * Paired is work the person is doing with the worker right now, so arriving on one puts
+   * the conversation full rather than making them open it. This is the page's opening
+   * state, not a rule the page keeps enforcing: it is seeded once, the first time this
+   * visit's status is known, and after that the person's own expand and collapse are the
+   * only things that move it — a paired conversation they put away stays away until they
+   * next land on the Ticket, when a fresh visit seeds it full again.
+   */
+  let seededOpenStateFromStatus = false;
+  $effect(() => {
+    const status = ticket.data?.ticket_status;
+    if (status === undefined || seededOpenStateFromStatus) return;
+    seededOpenStateFromStatus = true;
+    if (status === "paired") conversationState = "opened";
+  });
 
   /** A click on the ticket drops the conversation back one state.
    *
@@ -113,6 +132,17 @@
     { value: "", label: "+ project" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
+  let sprintItemOptions = $derived([
+    { value: "", label: "Backlog" },
+    ...(sprintItems.data?.items || []).map((item) => {
+      const sprint = item.sprint_id ? sprintLabel(item.sprint_id) : "Unscheduled";
+      const fallback = item.kind === "other" ? " · fallback" : "";
+      return {
+        value: item.id,
+        label: `${sprint} · ${item.project} · ${item.title}${fallback}`
+      };
+    })
+  ]);
 
   onMount(() => {
     // What the conversation's model and effort pickers offer. Read once on arrival rather
@@ -142,6 +172,28 @@
     } catch (err) {
       // The message itself got through. Failing to move the Ticket is worth saying and
       // not worth taking the reply back for.
+      headerError = err;
+    }
+  }
+
+  async function saveSprintItemPlacement(
+    detail: TicketDetail,
+    sprintItemId: string
+  ): Promise<void> {
+    try {
+      headerError = null;
+      if (sprintItemId) {
+        await mutateJson(`/api/items/${encodeURIComponent(sprintItemId)}/tickets`, {
+          method: "POST",
+          body: { ticket_id: stableId }
+        });
+      } else if (detail.sprint_item_id) {
+        await mutateJson(
+          `/api/items/${encodeURIComponent(detail.sprint_item_id)}/tickets/${encodeURIComponent(stableId)}`,
+          { method: "DELETE" }
+        );
+      }
+    } catch (err) {
       headerError = err;
     }
   }
@@ -469,20 +521,18 @@
                 />
               </span>
             {/if}
-            {#if detail.sprint_item_id !== null && detail.sprint_item_id !== undefined}
-              <Pill keyLabel="sprint" data-sprint-control>
-                {sprintLabel(detail.effective_sprint_id)}
-              </Pill>
-            {:else}
-              <span class:ticket-planning-add={!detail.sprint_id} data-sprint-control>
-                <EnumPill
-                  keyLabel={detail.sprint_id ? "sprint" : ""}
-                  value={detail.sprint_id || ""}
-                  options={[{ value: "", label: "+ sprint" }, ...(sprints.data?.sprints || []).map((sprint) => ({ value: sprint.id, label: sprintLabel(sprint.id) }))]}
-                  onChange={(sprint_id) => void patch({ sprint_id: sprint_id || null })}
-                />
-              </span>
-            {/if}
+            <span class:ticket-planning-add={!detail.sprint_item_id} data-sprint-item-control>
+              <EnumPill
+                keyLabel="placement"
+                value={detail.sprint_item_id || ""}
+                options={sprintItemOptions}
+                onChange={(sprintItemId) => {
+                  if (sprintItemId !== (detail.sprint_item_id || "")) {
+                    void saveSprintItemPlacement(detail, sprintItemId);
+                  }
+                }}
+              />
+            </span>
           </div>
           {#if detail.backend_error}
             <div class="ticket-backend-error" data-backend-error role="alert">

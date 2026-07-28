@@ -106,9 +106,10 @@ scope, and ownership-derived resting status together. A validation or concurrenc
 failure leaves the ticket exactly as it was. Committing is itself what tells the
 readiness loop to look again.
 
-Standalone tickets may point at a project by `project_id`. API responses also include
-`project`, the display name, for compatibility. A ticket under a sprint item does not
-store its own project because the parent item owns that classification.
+An unparented backlog Ticket may point at a project by `project_id`. A Ticket under a
+Sprint Item derives its Project and effective sprint from that item. Ticket responses
+expose `sprint_item_id` and `effective_sprint_id`; they do not expose or accept a direct
+Ticket `sprint_id`. The `project` display name remains in responses for compatibility.
 
 ### Blockers
 
@@ -225,9 +226,8 @@ automatically dispatched; paired Stages only get their opening turn. New tickets
 the human-approved intake until the human grants scope onward — review before agents
 start. Every later stage behaves the same way, including the last two: an accepted
 implementation advances to **needs closeout**, and an accepted closeout advances
-straight to **done**. (The threshold two other behaviours key off —
-sprint-in-progress, external-work seed — is the *second* stage, held distinct from this
-start ceiling; see `worker-types.md`.)
+straight to **done**. (The threshold used by sprint-in-progress behavior is the
+*second* stage, held distinct from this start ceiling; see `worker-types.md`.)
 
 ## The approval gate, and the scope row
 
@@ -310,7 +310,8 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
   notes; it deliberately holds no accept/approve/grant verb.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
   render a ticket's story and carry the human's decisions.
-- **Projects** (`projects.md`) — the catalog used by standalone ticket project fields.
+- **Projects** (`projects.md`) — the catalog used directly by backlog Tickets and
+  inherited through Sprint Items by scheduled Tickets.
 
 ## Deferred
 

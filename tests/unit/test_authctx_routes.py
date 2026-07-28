@@ -92,7 +92,9 @@ def _planning_headers(db_path: Path, worker_type: str) -> dict[str, str]:
 def _item(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
-        item = create_item(conn, title="Item.", project_id="project_vylo", clock=RealClock())
+        item = create_item(
+            conn, title="Item.", project_id="project_vylo", clock=RealClock()
+        )
     finally:
         conn.close()
     return item.id
@@ -117,7 +119,11 @@ def _sprint(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
         sprint = create_sprint(
-            conn, name="S1", date_start="2026-07-01", date_end="2026-07-14", clock=RealClock()
+            conn,
+            name="S1",
+            date_start="2026-07-01",
+            date_end="2026-07-14",
+            clock=RealClock(),
         )
     finally:
         conn.close()
@@ -141,7 +147,7 @@ def _ticket_edit_effects(db_path: Path, ticket_id: str) -> tuple[Any, ...]:
     conn = connect(str(db_path))
     try:
         ticket = conn.execute(
-            "SELECT title, priority, deadline, project_id, sprint_id, updated_at "
+            "SELECT title, priority, deadline, project_id, updated_at "
             "FROM tickets WHERE id = ?",
             (ticket_id,),
         ).fetchone()
@@ -199,7 +205,9 @@ def test_patch_ticket_agent_direct_only_field_is_forbidden(tmp_path: Path) -> No
     tid = _ticket(db_path)
     with TestClient(app) as client:
         for field, value in (("title", "Renamed by agent"), ("project", "Vylo")):
-            response = client.patch(f"/api/tickets/{tid}", json={field: value}, headers=_AGENT)
+            response = client.patch(
+                f"/api/tickets/{tid}", json={field: value}, headers=_AGENT
+            )
             assert response.status_code == 400
             error = response.json()["error"]
             assert error["code"] == "agent_forbidden"
@@ -253,24 +261,21 @@ def test_patch_ticket_worker_mixing_permitted_then_forbidden_field_is_atomic(
     assert _ticket_edit_effects(db_path, tid) == before
 
 
-def test_patch_ticket_worker_can_compound_priority_deadline_and_sprint_without_context(
+def test_patch_ticket_worker_can_compound_priority_and_deadline_without_context(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     tid = _ticket(db_path)
-    sid = _sprint(db_path)
-
     with TestClient(app) as client:
         response = client.patch(
             f"/api/tickets/{tid}",
-            json={"priority": "P1", "deadline": "2026-08-01", "sprint_id": sid},
+            json={"priority": "P1", "deadline": "2026-08-01"},
             headers=_AGENT,
         )
 
     assert response.status_code == 200, response.json()
     assert response.json()["priority"] == "P1"
     assert response.json()["deadline"] == "2026-08-01"
-    assert response.json()["sprint_id"] == sid
     assert _ticket_edit_effects(db_path, tid)[1] == ()
 
 
@@ -320,7 +325,6 @@ def test_patch_ticket_rejects_bad_field_types(tmp_path: Path) -> None:
     assert _col(db_path, "tickets", tid, "priority") == "P3"
     assert _col(db_path, "tickets", tid, "deadline") is None
     assert _col(db_path, "tickets", tid, "project_id") is None
-    assert _col(db_path, "tickets", tid, "sprint_id") is None
 
 
 # --- PATCH /items/{id}: status is derived; fields/sprint remain direct-only --------
@@ -373,6 +377,16 @@ def test_planning_sprint_worker_can_shape_item_and_sprint_but_not_delete(
             },
             headers=headers,
         )
+        created_item = client.post(
+            "/api/items",
+            json={
+                "title": "New planned outcome",
+                "priority": "P1",
+                "project_id": "project_vylo",
+                "sprint_id": sid,
+            },
+            headers=headers,
+        )
         populated = client.post(
             f"/api/items/{iid}/tickets",
             json={"ticket_id": child},
@@ -390,12 +404,17 @@ def test_planning_sprint_worker_can_shape_item_and_sprint_but_not_delete(
     assert sprint.json()["primary_bet"] == "One clear bet"
     assert sprint.json()["date_end"] == "2026-07-15"
     assert created_sprint.status_code == 200, created_sprint.json()
+    assert created_item.status_code == 200, created_item.json()
+    assert created_item.json()["title"] == "New planned outcome"
+    assert created_item.json()["sprint_id"] == sid
     assert populated.status_code == 200, populated.json()
     assert wrong.json()["error"]["code"] == "agent_forbidden"
     assert deleted.json()["error"]["code"] == "agent_forbidden"
 
 
-def test_delete_item_is_direct_only_and_returns_affected_resources(tmp_path: Path) -> None:
+def test_delete_item_is_direct_only_and_returns_affected_resources(
+    tmp_path: Path,
+) -> None:
     app, db_path = _make_app(tmp_path)
     sprint_id = _sprint(db_path)
     item_id = _item_in_sprint(db_path, sprint_id)
@@ -430,7 +449,9 @@ def test_patch_item_status_write_is_rejected(tmp_path: Path) -> None:
     iid = _item(db_path)
     with TestClient(app) as client:
         response = client.patch(f"/api/items/{iid}", json={"status": "in_progress"})
-        agent = client.patch(f"/api/items/{iid}", json={"status": "in_progress"}, headers=_AGENT)
+        agent = client.patch(
+            f"/api/items/{iid}", json={"status": "in_progress"}, headers=_AGENT
+        )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "validation"
     assert response.json()["error"]["detail"]["field"] == "status"
@@ -502,8 +523,10 @@ def test_item_ticket_routes_parent_and_unparent_existing_ticket(tmp_path: Path) 
         assert removed.json()["rollup"]["needs_success"] == 0
 
     assert _col(db_path, "tickets", tid, "sprint_item_id") is None
-    assert _col(db_path, "tickets", tid, "sprint_id") == sid
-    assert _col(db_path, "tickets", tid, "project_id") is None
+    assert _col(db_path, "tickets", tid, "project_id") == "project_vylo"
+    _values, context = _ticket_edit_effects(db_path, tid)
+    assert context[0][0] == "ticket_changed"
+    assert context[0][2] == 2
 
 
 def test_item_membership_retries_do_not_detach_a_newer_move(tmp_path: Path) -> None:
@@ -516,9 +539,6 @@ def test_item_membership_retries_do_not_detach_a_newer_move(tmp_path: Path) -> N
         for _ in range(2):
             added = client.post(f"/api/items/{first}/tickets", json={"ticket_id": tid})
             assert added.status_code == 200
-        for _ in range(2):
-            removed = client.delete(f"/api/items/{first}/tickets/{tid}")
-            assert removed.status_code == 200
         moved = client.post(f"/api/items/{second}/tickets", json={"ticket_id": tid})
         stale_remove = client.delete(f"/api/items/{first}/tickets/{tid}")
 
@@ -527,13 +547,33 @@ def test_item_membership_retries_do_not_detach_a_newer_move(tmp_path: Path) -> N
     assert _col(db_path, "tickets", tid, "sprint_item_id") == second
 
 
+def test_item_placement_changes_notify_child_ticket_workers(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    sid = _sprint(db_path)
+    iid = _item_in_sprint(db_path, sid)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        moved = client.post(f"/api/items/{iid}/tickets", json={"ticket_id": tid})
+        changed_project = client.patch(
+            f"/api/items/{iid}", json={"project_id": "project_other"}
+        )
+
+    assert moved.status_code == 200
+    assert changed_project.status_code == 200
+    _values, context = _ticket_edit_effects(db_path, tid)
+    assert context[0][0] == "ticket_changed"
+    assert context[0][2] == 2
+
+
 def test_item_ticket_routes_are_direct_only(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     sid = _sprint(db_path)
     iid = _item_in_sprint(db_path, sid)
     tid = _ticket(db_path)
     with TestClient(app) as client:
-        added = client.post(f"/api/items/{iid}/tickets", json={"ticket_id": tid}, headers=_AGENT)
+        added = client.post(
+            f"/api/items/{iid}/tickets", json={"ticket_id": tid}, headers=_AGENT
+        )
         removed = client.delete(f"/api/items/{iid}/tickets/{tid}", headers=_AGENT)
     assert added.status_code == 400
     assert added.json()["error"]["code"] == "agent_forbidden"
@@ -549,7 +589,9 @@ def test_patch_sprint_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -
     app, db_path = _make_app(tmp_path)
     sid = _sprint(db_path)
     with TestClient(app) as client:
-        agent = client.patch(f"/api/sprints/{sid}", json={"name": "Agent edit"}, headers=_AGENT)
+        agent = client.patch(
+            f"/api/sprints/{sid}", json={"name": "Agent edit"}, headers=_AGENT
+        )
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
         assert _col(db_path, "sprints", sid, "name") == "S1"  # unchanged
@@ -577,7 +619,9 @@ def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
         assert nul.json()["error"]["code"] == "validation"
         assert _col(db_path, "sprints", sid, "premortem") == ""  # unchanged, no crash
 
-        ok = client.patch(f"/api/sprints/{sid}", json={"mid_where_we_stand": "Halfway, tracking."})
+        ok = client.patch(
+            f"/api/sprints/{sid}", json={"mid_where_we_stand": "Halfway, tracking."}
+        )
     assert ok.status_code == 200
     assert ok.json()["mid_where_we_stand"] == "Halfway, tracking."
     assert _col(db_path, "sprints", sid, "mid_where_we_stand") == "Halfway, tracking."
@@ -589,9 +633,13 @@ def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
 def test_patch_day_agent_is_forbidden_unattributed_succeeds(tmp_path: Path) -> None:
     app, _db_path = _make_app(tmp_path)
     with TestClient(app) as client:
-        agent = client.patch("/api/day/2026-07-05", json={"focus": "Agent focus"}, headers=_AGENT)
+        agent = client.patch(
+            "/api/day/2026-07-05", json={"focus": "Agent focus"}, headers=_AGENT
+        )
         assert agent.status_code == 400
         assert agent.json()["error"]["code"] == "agent_forbidden"
-        unattributed = client.patch("/api/day/2026-07-05", json={"focus": "Direct focus"})
+        unattributed = client.patch(
+            "/api/day/2026-07-05", json={"focus": "Direct focus"}
+        )
     assert unattributed.status_code == 200
     assert unattributed.json()["focus"] == "Direct focus"

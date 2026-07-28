@@ -48,6 +48,7 @@ describe("query catalogue", () => {
     ["ideas", () => queries.ideas(), ["ideas"], "/api/ideas"],
     ["projects", () => queries.projects(), ["projects"], "/api/projects"],
     ["sprint summaries", () => queries.sprintSummaries(), ["sprints"], "/api/sprints"],
+    ["sprint items", () => queries.sprintItems(), ["items"], "/api/items"],
     [
       "current sprint",
       () => queries.currentSprint(),

@@ -52,7 +52,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         project_id=None,
         project_name=None,
         sprint_item_id=None,
-        sprint_id=None,
+        effective_sprint_id=None,
         recap="",
         ceiling=ceiling,
         at_cap=AtCap.propose,
@@ -110,15 +110,21 @@ def _passed_ticket(conn: Connection, cfg: Config, clock: TestClock) -> Ticket:
     t = data.change_scope(
         conn, t.id, ceiling="needs_plan", at_cap=AtCap.propose, actor="human", now=now
     )
-    t = data.file_proposal(conn, t.id, field="success", body="success v1", actor="agent", now=now)
-    t = data.file_proposal(conn, t.id, field="approach", body="approach v1", actor="agent", now=now)
+    t = data.file_proposal(
+        conn, t.id, field="success", body="success v1", actor="agent", now=now
+    )
+    t = data.file_proposal(
+        conn, t.id, field="approach", body="approach v1", actor="agent", now=now
+    )
     assert t.stage == "needs_plan"
     assert fields_codec.get_slot(t.fields, "success").value == "success v1"
     assert fields_codec.get_slot(t.fields, "approach").value == "approach v1"
     return t
 
 
-def test_edit_passed_field_succeeds(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
+def test_edit_passed_field_succeeds(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
     # Decision shape: exactly one field_value_edited event; Stage/ceiling/at_cap left None.
     ticket = _ticket(
         "needs_plan",
@@ -239,10 +245,14 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     t = data.change_scope(
         tmp_db, t.id, ceiling="needs_plan", at_cap=AtCap.propose, actor="human", now=now
     )
-    t = data.file_proposal(tmp_db, t.id, field="success", body="s", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="s", actor="agent", now=now
+    )
     assert t.stage == "needs_approach"
     # plan is non-gating at needs_approach and below the ceiling: the proposal stays pending.
-    t = data.file_proposal(tmp_db, t.id, field="plan", body="plan draft", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="plan", body="plan draft", actor="agent", now=now
+    )
     assert t.stage == "needs_approach"
     plan_slot = fields_codec.get_slot(t.fields, "plan")
     assert plan_slot.proposal is not None and plan_slot.value is None
@@ -263,7 +273,9 @@ def test_accept_dropped_ticket_with_pending_proposal_rejected(
     assert exc.value.code is ErrorCode.validation
     assert exc.value.detail == {"stage": "dropped"}
     t = data.read_ticket(tmp_db, t.id)
-    assert fields_codec.get_slot(t.fields, "plan").value is None  # the write never landed
+    assert (
+        fields_codec.get_slot(t.fields, "plan").value is None
+    )  # the write never landed
     assert fields_codec.get_slot(t.fields, "plan").proposal is not None
     assert _ticket_row(tmp_db, t.id) == snapshot_before
 

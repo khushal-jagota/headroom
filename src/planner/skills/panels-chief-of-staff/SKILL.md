@@ -120,7 +120,10 @@ panels sprint item list --json
 
 For review questions, inspect the review queue or relevant tickets before advising.
 
-For rollover, inspect the day, current sprint, unfinished work, and waiting approvals before proposing only the obvious carryover.
+For rollover, inspect the day, current sprint, every current Sprint Item and its child
+Tickets, unfinished work, and waiting approvals before proposing only the obvious
+carryover. Enumerate children of `kind: other` items explicitly in the kickoff context;
+the fallback label alone is not evidence that its work was reviewed.
 
 For sprint planning, inspect the sprint, backlog, ideas, active tickets, and project context before proposing the sprint shape.
 
@@ -161,6 +164,13 @@ not enlarge the request.
   downstream Tickets need shared cross-Ticket decisions and boundaries before creation.
 - Use a **`product_design` ticket** when a product flow needs holistic UX direction,
   wireframing, and an implementation-ready interactive design before coding.
+- Use a **`planning-day` ticket** for the morning planning conversation that gathers
+  evidence, plans the Day with the user, and commits the agreement.
+- Use a **`planning-midday-check` ticket** for the 14:30 execution checkpoint that
+  compares the morning intent with current reality, agrees any intervention, and records
+  the result.
+- Use a **`planning-sprint` ticket** for the final-day boundary conversation that reviews
+  the current sprint, plans the next, and writes only the approved result at Closeout.
 - Use a **sprint item** for a broader goal or outcome.
 - Use an **idea** for a loose thought that should not yet become committed work.
 - When the user asks to create a concrete ticket during active planning, normally add it to **today** after creation so it appears in Workspace and can be picked up by the execution flow.

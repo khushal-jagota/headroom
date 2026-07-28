@@ -25,12 +25,19 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 PREVIOUS_REVISION = "ticket_status_reshape"
 # The database is brought all the way up, so it comes to rest at the current head rather
 # than at the revision this module is about.
-HEAD_REVISION = "day_midday_reconciliation"
+HEAD_REVISION = "sprint_item_only_placement"
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {
         field: {"value": None, "proposal": None, "user_note": None}
-        for field in ("kickoff", "success", "approach", "plan", "implementation", "closeout")
+        for field in (
+            "kickoff",
+            "success",
+            "approach",
+            "plan",
+            "implementation",
+            "closeout",
+        )
     },
     separators=(",", ":"),
 )
@@ -149,7 +156,9 @@ def test_the_event_log_and_its_index_are_gone(upgraded: sqlite3.Connection) -> N
     assert _revision(upgraded) == HEAD_REVISION
     names = {
         str(row[0])
-        for row in upgraded.execute("SELECT name FROM sqlite_master WHERE sql IS NOT NULL")
+        for row in upgraded.execute(
+            "SELECT name FROM sqlite_master WHERE sql IS NOT NULL"
+        )
     }
     assert "events" not in names
     assert "idx_events_entity" not in names

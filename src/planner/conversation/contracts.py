@@ -42,7 +42,7 @@ class ConversationBackendKey(StrEnum):
 def require_conversation_backend_key(value: object) -> ConversationBackendKey:
     """Turn a string that claims to name a backend into the key it names, or refuse it.
 
-    Backend keys reach Panels as untrusted text — a request body, a seed argument, a
+    Backend keys reach Panels as untrusted text — a request body, a CLI argument, a
     settings file somebody edited, a row written before a rename. This is the one door
     that text comes through, so that a name nothing can run is refused where it is read
     rather than discovered when a conversation fails to start.
@@ -304,7 +304,10 @@ class PromptDeliveryRefused:
 # the running turn's wire, refused means impossible. No member carries a turn outcome,
 # because a turn's ending is an event and never a return value.
 type PromptDeliveryFate = (
-    PromptDeliveryStarted | PromptDeliveryQueued | PromptDeliveryInjected | PromptDeliveryRefused
+    PromptDeliveryStarted
+    | PromptDeliveryQueued
+    | PromptDeliveryInjected
+    | PromptDeliveryRefused
 )
 
 
