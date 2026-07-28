@@ -3,6 +3,7 @@ ticket agents use these read-only and add their own fixtures locally.
 """
 
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from sqlite3 import Connection
@@ -16,6 +17,14 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.core.clock import TestClock
 from planner.core.config import Config, load_config
 from planner.core.db import connect, create_schema
+from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
+from planner.worker_types.configuration import (
+    ConfiguredWorkerRuntimeDefinitions,
+    configured_worker_type_registry,
+    install_worker_runtime_definitions_for_test,
+    restore_worker_runtime_definitions_for_test,
+)
+from planner.worker_types.registry import WorkerTypeRegistry
 
 
 @pytest.fixture
@@ -37,6 +46,43 @@ def tmp_db(tmp_path: Path) -> Iterator[Connection]:
 def fake_clock() -> TestClock:
     """Mutable clock pinned to a mid-day baseline; tests move it as needed."""
     return TestClock(datetime(2026, 7, 4, 12, 0, 0).astimezone())
+
+
+@pytest.fixture
+def planning_worker_registry() -> Iterator[None]:
+    """Install coding-shaped planning types only for authorization boundary tests."""
+    current = configured_worker_type_registry()
+    production = tuple(
+        current.require(worker_type) for worker_type in current.registered_worker_types()
+    )
+    planning = tuple(
+        replace(
+            CODING_WORKER_TYPE_DEFINITION,
+            worker_type=worker_type,
+            label=worker_type,
+        )
+        for worker_type in (
+            "planning-day",
+            "planning-midday-check",
+            "planning-sprint",
+        )
+    )
+    registry = WorkerTypeRegistry(
+        production + planning,
+        known_skills=frozenset(
+            definition.worker_profile.specialist_skill
+            for definition in production + planning
+        )
+        | {"panels-worker"},
+        known_toolset_profiles=frozenset({"default"}),
+    )
+    previous = install_worker_runtime_definitions_for_test(
+        ConfiguredWorkerRuntimeDefinitions(registry)
+    )
+    try:
+        yield
+    finally:
+        restore_worker_runtime_definitions_for_test(previous)
 
 
 class RealBackendChildInAUnitTest(AssertionError):

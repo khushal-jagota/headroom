@@ -131,8 +131,8 @@ path.
 - **Database backups** (`backups.md`) — verified live snapshots and restore.
 - **The command-line tool** (`cli.md`) — the command tree that exposes environment
   lifecycle verbs.
-- **Worker orchestration** (`worker-orchestration.md`) — the background loop the
-  foreground server started by `environment run` owns.
+- **Worker orchestration** (`worker-orchestration.md`) — the scheduled-Ticket and
+  worker-readiness loops the foreground server started by `environment run` owns.
 - **Hermes gateway** (`systems.md`) — the external worker gateway whose homes stay
   separate between live, staging, and Ticket worktrees.
 

@@ -11,7 +11,12 @@ import json
 from dataclasses import dataclass
 from typing import Any, Final
 
-from planner.core.authctx import PLAN_ACTOR_SCOPE_KEY, X_PLAN_ACTOR
+from planner.core.authctx import (
+    PLAN_ACTOR_SCOPE_KEY,
+    PLAN_TICKET_ID_SCOPE_KEY,
+    X_PLAN_ACTOR,
+    X_PLAN_TICKET_ID,
+)
 from planner.core.config import Config
 
 TAILSCALE_USER_LOGIN_HEADER: Final = "tailscale-user-login"
@@ -76,7 +81,9 @@ class TrustedIngressMiddleware:
                     await self._reject(scope, send, "Tailscale user is not allowed")
                     return
                 scope = _without_header(scope, X_PLAN_ACTOR)
+                scope = _without_header(scope, X_PLAN_TICKET_ID)
                 scope[PLAN_ACTOR_SCOPE_KEY] = None
+                scope[PLAN_TICKET_ID_SCOPE_KEY] = None
 
         await self.app(scope, receive, send)
 

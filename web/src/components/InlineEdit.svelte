@@ -32,7 +32,7 @@
     placeholder?: string;
     ariaLabel?: string;
     className?: string;
-    dataAttr?: "day-focus" | "day-take-body" | "day-watch-body" | "day-lands-body" | "";
+    dataAttr?: "day-focus" | "day-take-body" | "day-watch-body" | "day-lands-body" | "day-midday-body" | "";
     dataEdit?: boolean;
     onCancel?: () => unknown;
     onSave: (raw: string) => Promise<unknown>;
@@ -186,6 +186,7 @@
   data-day-take-body={dataAttr === "day-take-body" ? "" : undefined}
   data-day-watch-body={dataAttr === "day-watch-body" ? "" : undefined}
   data-day-lands-body={dataAttr === "day-lands-body" ? "" : undefined}
+  data-day-midday-body={dataAttr === "day-midday-body" ? "" : undefined}
   onfocus={enterEdit}
   onblur={(event) => {
     if (reverting) {

@@ -97,6 +97,7 @@ const {
   sendBodyFor
 } = await import(join(directory, "composer.mjs"));
 const {
+  afterTheRecordHasBeenRead,
   mintOutgoingMessage,
   outgoingMessageNote,
   outgoingMessagesTheRecordHasNot,
@@ -980,8 +981,29 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.deepEqual(recalled[1].content, [{ piece: "text", text: "in flight" }]);
   assert.equal(
     recalled[1].knownFate,
-    "answer_never_came_back",
-    "a send the page went away in the middle of is one nobody ever heard the end of"
+    "sent_before_this_page",
+    "a send the page went away in the middle of comes back knowing nothing yet"
+  );
+  assert.equal(
+    outgoingMessageNote(recalled[1]),
+    null,
+    "and says nothing, because the record has not been read and it may be about to arrive"
+  );
+
+  // Reading the record is what settles it. A message the record turned out to have has
+  // already stopped being drawn, so what is still here is what nobody ever answered for.
+  const told = afterTheRecordHasBeenRead(recalled);
+  assert.equal(told[0].knownFate, "waiting_for_the_agent", "the held one is unchanged");
+  assert.equal(told[1].knownFate, "answer_never_came_back");
+  assert.equal(
+    outgoingMessageNote(told[1]),
+    "the server never said whether this arrived",
+    "and only now does it say so"
+  );
+  assert.equal(
+    afterTheRecordHasBeenRead(told),
+    told,
+    "nothing waiting to be told means the same list back, so a reconnect redraws nothing"
   );
 
   const boundaryBase64 = "A".repeat(4 * Math.ceil(MAX_CONVERSATION_IMAGE_BYTES / 3));

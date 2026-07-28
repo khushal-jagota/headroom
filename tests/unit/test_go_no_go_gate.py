@@ -84,7 +84,7 @@ PROBE_MANIFEST = {
     "ceiling_range": ["needs_kickoff", "needs_alpha", "needs_beta", "done"],
     "default_ceiling": "needs_kickoff",
     "worker_profile_id": "probe-worker",
-    "default_backend": "claude",
+    "default_backend": "hermes",
     "default_model": "probe-model",
     "default_reasoning_effort": "probe-high",
 }
@@ -258,6 +258,7 @@ def test_gate_invalid_inputs_return_exact_codes(
                 "new_worker",
                 "exploration",
                 "initiative_planning",
+                "product_design",
                 "probe",
             ],
         }
@@ -273,6 +274,7 @@ def test_gate_invalid_inputs_return_exact_codes(
                 "new_worker",
                 "exploration",
                 "initiative_planning",
+                "product_design",
                 "probe",
             ],
         }

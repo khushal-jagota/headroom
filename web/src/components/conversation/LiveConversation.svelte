@@ -28,6 +28,7 @@
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import {
+    afterTheRecordHasBeenRead,
     mintOutgoingMessage,
     outgoingMessagesTheRecordHasNot,
     recallOutgoingMessages,
@@ -225,10 +226,14 @@
     try {
       view = await readConversation(id);
     } catch (error) {
-      if (!(error instanceof ConversationWireError && error.status === 404)) {
+      if (error instanceof ConversationWireError && error.status === 404) {
+        // A 404 is a conversation named but never started: the empty state, not a failure.
+        // It is also an answer — there is no record and there never was — so anything this
+        // tab brought back for it has been told as much as it is ever going to be.
+        theRecordHasBeenRead();
+      } else {
         errorNote = sentenceFor(error);
       }
-      // A 404 is a conversation named but never started: the empty state, not a failure.
       opening = false;
       return;
     }
@@ -262,12 +267,27 @@
     );
     try {
       await stream.connect();
+      theRecordHasBeenRead();
     } catch (error) {
       connectionTrouble = true;
       errorNote = sentenceFor(error);
     } finally {
       opening = false;
     }
+  }
+
+  /** The record has answered, so the messages brought back from before the page reloaded
+   *  can be told what became of them.
+   *
+   * Everything the record turned out to have has already stopped being drawn — the rows
+   * take those away themselves — so whatever is still here is something the record does
+   * not have, and that is the point at which it is true to say nobody ever said whether it
+   * arrived. Not one moment before: a browser that announces the uncertainty on its way to
+   * looking puts a frightening sentence on a message that is about to turn out fine.
+   */
+  function theRecordHasBeenRead(): void {
+    const told = afterTheRecordHasBeenRead(sentMessages);
+    if (told !== sentMessages) holdOnTo(told);
   }
 
   async function refreshView(): Promise<void> {

@@ -24,9 +24,16 @@ import { MAX_CONVERSATION_MESSAGE_IMAGE_BYTES } from "./pendingImages";
  * that got no answer at all — it may have arrived and it may not, and saying either would
  * be a guess. Both stop mattering the moment the message's row arrives, because then the
  * record has the answer and this copy stops being drawn.
+ *
+ * ``sent_before_this_page`` is the one that knows nothing at all: a message this tab was
+ * holding when the page went away, come back before the record has been read. Whether it
+ * arrived is a question the record answers a moment later, so this says nothing while it
+ * waits to be told — announcing that nobody knows, to a browser that has not yet looked,
+ * puts a frightening sentence on a message that is about to turn out fine.
  */
 export type OutgoingMessageKnownFate =
   | "nothing_yet"
+  | "sent_before_this_page"
   | "waiting_for_the_agent"
   | "answer_never_came_back";
 
@@ -94,6 +101,7 @@ function base64DecodedByteCount(data: string): number {
 
 const KNOWN_FATE_NOTES: Record<OutgoingMessageKnownFate, string | null> = {
   nothing_yet: null,
+  sent_before_this_page: null,
   waiting_for_the_agent: "waiting for the agent to be free",
   answer_never_came_back: "the server never said whether this arrived"
 };
@@ -203,14 +211,17 @@ export function rememberOutgoingMessages(
 
 /** The messages this tab was still holding when it was last here.
  *
- * A message whose send was in flight when the page went away is one nobody ever heard the
- * answer to, and it comes back saying exactly that rather than pretending it is new.
+ * A message whose send was in flight when the page went away comes back knowing nothing
+ * rather than pretending it is new. What became of it is the record's to say, and the
+ * record is read a moment after this — so it waits to be told, which is what
+ * ``sent_before_this_page`` is. A message the system said it was holding comes back saying
+ * that, because that is still what was last known about it.
  */
 export function recallOutgoingMessages(conversationId: string): OutgoingMessage[] {
   includeRememberedMessagesInReservations();
   return outgoingMessagesStoredUnder(conversationId).map((message) =>
     message.knownFate === "nothing_yet"
-      ? { ...message, knownFate: "answer_never_came_back" as const }
+      ? { ...message, knownFate: "sent_before_this_page" as const }
       : message
   );
 }
@@ -275,6 +286,29 @@ function messageIsRememberedAnywhere(messageId: string): boolean {
     return false;
   }
   return false;
+}
+
+/** The record has been read, and these are the messages it did not have.
+ *
+ * This is the moment a message brought back from before the page reloaded gets its answer.
+ * Anything the record had has already stopped being drawn — that happens off the rows
+ * themselves — so what is still here is what the record does not know about, and for those
+ * the honest thing is that nobody ever said whether they arrived.
+ *
+ * The same list is handed back untouched when there was nothing waiting to be told, so a
+ * reconnect on a conversation with nothing outstanding redraws nothing.
+ */
+export function afterTheRecordHasBeenRead(
+  outgoing: readonly OutgoingMessage[]
+): readonly OutgoingMessage[] {
+  if (!outgoing.some((message) => message.knownFate === "sent_before_this_page")) {
+    return outgoing;
+  }
+  return outgoing.map((message) =>
+    message.knownFate === "sent_before_this_page"
+      ? { ...message, knownFate: "answer_never_came_back" as const }
+      : message
+  );
 }
 
 const DELIVERY_MODES: readonly PromptDeliveryMode[] = ["run_when_free", "send_now", "steer"];
