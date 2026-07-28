@@ -179,16 +179,45 @@ function outgoingMessageFrom(entry: unknown): OutgoingMessage | null {
   const { messageId, content, senderLabel, mode, sentAtUnixMilliseconds, knownFate } = held;
   if (typeof messageId !== "string" || messageId === "") return null;
   if (!Array.isArray(content) || content.length === 0) return null;
+  const pieces = content.flatMap((piece) => {
+    const read = sentMessagePieceFrom(piece);
+    return read === null ? [] : [read];
+  });
+  if (pieces.length !== content.length) return null;
   if (typeof senderLabel !== "string") return null;
   if (!DELIVERY_MODES.includes(mode as PromptDeliveryMode)) return null;
   if (typeof sentAtUnixMilliseconds !== "number") return null;
   if (!KNOWN_FATES.includes(knownFate as OutgoingMessageKnownFate)) return null;
   return {
     messageId,
-    content: content as SentMessagePiece[],
+    content: pieces,
     senderLabel,
     mode: mode as PromptDeliveryMode,
     sentAtUnixMilliseconds,
     knownFate: knownFate as OutgoingMessageKnownFate
+  };
+}
+
+function sentMessagePieceFrom(value: unknown): SentMessagePiece | null {
+  if (value === null || typeof value !== "object") return null;
+  const piece = value as Record<string, unknown>;
+  if (piece.piece === "text") {
+    return typeof piece.text === "string" ? { piece: "text", text: piece.text } : null;
+  }
+  if (
+    piece.piece !== "image"
+    || typeof piece.data !== "string"
+    || piece.data === ""
+    || typeof piece.media_type !== "string"
+    || !piece.media_type.toLowerCase().startsWith("image/")
+    || (piece.file_name !== undefined && typeof piece.file_name !== "string")
+  ) {
+    return null;
+  }
+  return {
+    piece: "image",
+    data: piece.data,
+    media_type: piece.media_type,
+    ...(piece.file_name === undefined ? {} : { file_name: piece.file_name })
   };
 }

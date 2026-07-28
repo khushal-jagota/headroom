@@ -97,6 +97,12 @@ same stylesheet the pane that came before drew the same thing with.
 
 ## Sending
 
+The composer accepts pictures from its image picker, the clipboard, or a drop. They
+wait beside the draft in one visible order, can be removed one at a time, and can be
+sent with words or as the whole message. The browser sends one native content run:
+the trimmed words when there are any, followed by every remaining picture in the
+order shown. There is no separate upload conversation or attachment record.
+
 Send has one knob with three settings. The default runs the message when the
 agent is free — if it is busy, the message waits in line. "Send now" makes the
 message the running turn: a busy agent's current turn is stopped (recorded
@@ -137,14 +143,15 @@ gets. Showing them is not choosing them: a picker nobody touched still sends
 nothing, and the message that makes the conversation is created on those values
 because they are what the server resolves again when it arrives.
 
-Nobody waits for the network to see what they typed. The browser gives a message
+Nobody waits for the network to see what they typed or attached. The browser gives a message
 its own name and stamps the moment the person pressed send, draws it in the
 thread there and then, and empties the box — which stays typeable, with only the
 send arrow saying anything is still in flight. Those two stamps travel with the
 message and are kept on its row, so when the row comes back the browser knows it
 for its own and simply stops drawing its copy; nothing is swapped and nothing
-moves. If the message turns out to have got nowhere, the copy goes and the exact
-words come back to the box, unless something else has been typed there since. A
+moves. If the message turns out to have got nowhere, the copy goes and its exact
+words, pictures and pending run choices come back to the box, unless something
+else has been composed there since. A
 message the agent was too busy for stays in the thread and says it is waiting,
 because nothing is answering it yet.
 

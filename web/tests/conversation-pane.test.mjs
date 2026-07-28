@@ -308,6 +308,28 @@ try {
   assert.match(noDiscard, /data-conversation-outgoing="held"/);
   assert.doesNotMatch(noDiscard, /data-conversation-outgoing-discard/);
 
+  const optimisticPicture = drawn(Pane, {
+    conversationId: "c1",
+    label: "Worker",
+    outgoingMessages: [
+      {
+        ...outgoing("picture", "nothing_yet"),
+        content: [
+          { piece: "text", text: "look now" },
+          {
+            piece: "image",
+            data: "AQID",
+            media_type: "image/png",
+            file_name: "optimistic.png"
+          }
+        ]
+      }
+    ]
+  });
+  assert.match(optimisticPicture, /data-conversation-piece-outgoing="true"/);
+  assert.match(optimisticPicture, /src="data:image\/png;base64,AQID"/);
+  assert.match(optimisticPicture, /alt="optimistic.png"/);
+
   // A message that holds a picture draws the picture, on both sides of the thread, and
   // fetches it from the conversation that kept it. A transcript that drew only the words
   // would show a message the record says had a picture in it and show no picture.
@@ -1172,8 +1194,21 @@ try {
 
   const sends: unknown[] = [];
   const answers: string[] = [];
+  let sendAccepted = true;
+  let holdNextSend = false;
+  let heldSend: ((accepted: boolean) => void) | null = null;
   (window as any).__sends = () => sends;
   (window as any).__answers = () => answers;
+  (window as any).__setSendAccepted = (accepted: boolean) => {
+    sendAccepted = accepted;
+  };
+  (window as any).__holdNextSend = () => {
+    holdNextSend = true;
+  };
+  (window as any).__finishSend = (accepted: boolean) => {
+    heldSend?.(accepted);
+    heldSend = null;
+  };
 
   // What the agent reported it can be asked to do. Settable from the test, because an
   // agent that reports none is a state a person must be able to read, not a second pane.
@@ -1236,9 +1271,15 @@ try {
     }
   ];
 
-  async function onSend(text: string, mode: string, picked: unknown): Promise<boolean> {
-    sends.push({ text, mode, picked });
-    return true;
+  async function onSend(content: unknown[], mode: string, picked: unknown): Promise<boolean> {
+    sends.push({ content, mode, picked });
+    if (holdNextSend) {
+      holdNextSend = false;
+      return await new Promise<boolean>((resolve) => {
+        heldSend = resolve;
+      });
+    }
+    return sendAccepted;
   }
 
   function toolRow(index: number, detail: string | null) {
@@ -1650,6 +1691,133 @@ with sync_playwright() as playwright:
     intoOne = page.evaluate("window.__sends()[3]")
     assert intoOne["picked"]["backendKey"] is None, intoOne
     page.evaluate("window.__setExists(false)")
+
+    # The established image intake is one ordered pending collection, whichever gesture
+    # supplied it. A mixed picker keeps the pictures and says what it rejected.
+    page.evaluate(
+        """() => {
+          window.__revokedImageUrls = [];
+          const revoke = URL.revokeObjectURL.bind(URL);
+          URL.revokeObjectURL = (url) => {
+            window.__revokedImageUrls.push(url);
+            revoke(url);
+          };
+        }"""
+    )
+    image_input = page.locator("[data-conversation-image-input]")
+    image_input.set_input_files([
+        {"name": "first.png", "mimeType": "image/png", "buffer": bytes([1, 2, 3])},
+        {"name": "note.txt", "mimeType": "text/plain", "buffer": b"not an image"},
+        {"name": "second.webp", "mimeType": "image/webp", "buffer": bytes([4, 5])},
+    ])
+    page.wait_for_function(
+        "document.querySelectorAll('[data-chat-image-preview]').length === 2"
+    )
+    assert "Choose image files only." in page.locator("[data-conversation-error]").inner_text()
+    assert page.locator("[data-chat-image-preview]").evaluate_all(
+        "rows => rows.map(row => row.dataset.chatImageName)"
+    ) == ["first.png", "second.webp"]
+
+    # Each picture can be removed without disturbing its neighbors.
+    page.locator("[data-chat-image-remove]").first.click()
+    assert page.locator("[data-chat-image-preview]").evaluate_all(
+        "rows => rows.map(row => row.dataset.chatImageName)"
+    ) == ["second.webp"]
+
+    # Paste and drop join that same collection after what is already there.
+    page.evaluate(
+        """() => {
+          const transfer = new DataTransfer();
+          transfer.items.add(new File([new Uint8Array([6])], "pasted.png", { type: "image/png" }));
+          document.querySelector("[data-conversation-input]")
+            .dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true }));
+        }"""
+    )
+    page.wait_for_function(
+        "document.querySelectorAll('[data-chat-image-preview]').length === 2"
+    )
+    page.evaluate(
+        """() => {
+          const transfer = new DataTransfer();
+          transfer.items.add(new File([new Uint8Array([7, 8])], "dropped.gif", { type: "image/gif" }));
+          const box = document.querySelector("[data-conversation-box]");
+          box.dispatchEvent(new DragEvent("dragenter", { dataTransfer: transfer, bubbles: true }));
+          box.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true }));
+        }"""
+    )
+    page.wait_for_function(
+        "document.querySelectorAll('[data-chat-image-preview]').length === 3"
+    )
+    assert page.locator("[data-chat-image-preview]").evaluate_all(
+        "rows => rows.map(row => row.dataset.chatImageName)"
+    ) == ["second.webp", "pasted.png", "dropped.gif"]
+
+    # Text and every remaining image become one ordered native content run.
+    the_box.fill("look at these")
+    page.locator("[data-conversation-send]").click()
+    page.wait_for_function("window.__sends().length === 5")
+    with_images = page.evaluate("window.__sends()[4]")
+    assert with_images["content"] == [
+        {"piece": "text", "text": "look at these"},
+        {"piece": "image", "data": "BAU=", "media_type": "image/webp", "file_name": "second.webp"},
+        {"piece": "image", "data": "Bg==", "media_type": "image/png", "file_name": "pasted.png"},
+        {"piece": "image", "data": "Bwg=", "media_type": "image/gif", "file_name": "dropped.gif"},
+    ], with_images
+    page.wait_for_function(
+        "document.querySelectorAll('[data-chat-image-preview]').length === 0"
+    )
+    assert page.evaluate("window.__revokedImageUrls.length") == 4, (
+        "the removed image and all three sent image previews released their blob URLs"
+    )
+
+    # A picture is a whole message on its own; text is optional, not a hidden admission
+    # requirement left over from the text-only composer.
+    image_input.set_input_files(
+        {"name": "only.png", "mimeType": "image/png", "buffer": bytes([11])}
+    )
+    page.wait_for_function(
+        "document.querySelectorAll('[data-chat-image-preview]').length === 1"
+    )
+    assert page.locator("[data-conversation-send]").is_enabled()
+    page.locator("[data-conversation-send]").click()
+    page.wait_for_function("window.__sends().length === 6")
+    image_only = page.evaluate("window.__sends()[5]")
+    assert image_only["content"] == [
+        {"piece": "image", "data": "Cw==", "media_type": "image/png", "file_name": "only.png"}
+    ]
+
+    # A definite refusal puts the exact text and image back.
+    page.evaluate("window.__setSendAccepted(false)")
+    image_input.set_input_files(
+        {"name": "return.png", "mimeType": "image/png", "buffer": bytes([9, 10])}
+    )
+    page.wait_for_function(
+        "document.querySelectorAll('[data-chat-image-preview]').length === 1"
+    )
+    the_box.fill("please return")
+    page.locator("[data-conversation-send]").click()
+    page.wait_for_function("window.__sends().length === 7")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value === 'please return'"
+    )
+    assert page.locator("[data-chat-image-preview]").get_attribute(
+        "data-chat-image-name"
+    ) == "return.png"
+
+    # But a refusal never overwrites composing that began after Enter.
+    page.locator("[data-chat-image-remove]").click()
+    assert page.evaluate("window.__revokedImageUrls.length") == 6, (
+        "both later sends released their previews; restored data URLs own no blob resource"
+    )
+    the_box.fill("older")
+    page.evaluate("window.__holdNextSend()")
+    page.locator("[data-conversation-send]").click()
+    page.wait_for_function("window.__sends().length === 8")
+    the_box.fill("newer draft")
+    page.evaluate("window.__finishSend(false)")
+    page.wait_for_timeout(20)
+    assert the_box.input_value() == "newer draft"
+    page.evaluate("window.__setSendAccepted(true)")
 
     # A composer nobody can type into is a picker nobody can open: it goes quiet where it
     # stands, and an open panel goes with it rather than hanging over a shut box.

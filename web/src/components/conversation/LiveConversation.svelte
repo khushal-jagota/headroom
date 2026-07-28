@@ -51,7 +51,8 @@
     type ConversationView,
     type DeliveredMessage,
     type OwnerSendBody,
-    type PromptDeliveryMode
+    type PromptDeliveryMode,
+    type SentMessagePiece
   } from "../../lib/conversation/wire";
 
   let {
@@ -282,17 +283,18 @@
 
   /** Send, having already drawn the message.
    *
-   * The message is this browser's before it is anybody else's: the text is here, so it is
-   * given its id and the instant it was sent and put in the thread straight away.
+   * The message is this browser's before it is anybody else's: its words and pictures are
+   * here, so it is given its id and the instant it was sent and put in the thread straight
+   * away.
    *
    * How it ends decides what happens to the copy, and there are three endings rather than
-   * two. The server saying no means this text reached nothing: the copy goes and the words
-   * go back to the person who wrote them. The server saying yes means the copy waits for
+   * two. The server saying no means this message reached nothing: the copy goes and its
+   * content goes back to the person who composed it. The server saying yes means the copy waits for
    * its row. No answer at all is neither — the message may have arrived and may not, so
    * the copy stays saying exactly that and the words are not put back.
    */
   async function send(
-    text: string,
+    content: SentMessagePiece[],
     mode: PromptDeliveryMode,
     picked: RunValues
   ): Promise<boolean> {
@@ -301,7 +303,7 @@
     // Drawn before anything is asked of the network, including the start: the person has
     // written it and pressed Enter, so it is in the thread from that moment.
     const message = mintOutgoingMessage({
-      content: [{ piece: "text", text }],
+      content,
       senderLabel,
       mode
     });

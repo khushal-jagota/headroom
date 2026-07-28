@@ -18,6 +18,7 @@ between pressing Enter and the server answering is a moment the test can stand i
 from __future__ import annotations
 
 import asyncio
+import base64
 import struct
 import threading
 import zlib
@@ -376,6 +377,17 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
         context, server, "#/dev/conversation?id=e2e-optimistic", "[data-conversation-pane]"
     )
 
+    page.set_input_files(
+        "[data-conversation-image-input]",
+        [
+            {"name": "red.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
+            {"name": "red-again.png", "mimeType": "image/png", "buffer": _A_RED_PNG},
+        ],
+    )
+    page.wait_for_selector(
+        "[data-chat-image-preview]:nth-child(2)",
+        timeout=WAIT_MS,
+    )
     page.fill("[data-conversation-input]", "what is the plan")
     page.press("[data-conversation-input]", "Enter")
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
@@ -383,6 +395,15 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
     drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
     assert drawn is not None
     assert drawn.inner_text().strip() == "what is the plan"
+    page.wait_for_function(
+        "() => {"
+        "  const images = [...document.querySelectorAll("
+        "    '[data-conversation-outgoing] [data-conversation-piece-outgoing]')];"
+        "  return images.length === 2"
+        "    && images.every((image) => image.complete && image.naturalWidth === 8);"
+        "}",
+        timeout=WAIT_MS,
+    )
     # The box is theirs again straight away, and it never stopped being typeable.
     assert page.input_value("[data-conversation-input]") == ""
     assert page.is_enabled("[data-conversation-input]")
@@ -391,9 +412,23 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
 
     # The message carries the identity and the instant this browser minted for it.
     sent = page.evaluate("() => window.__heldSends[0].body")
-    # The message goes out as the pieces it is made of, which for words typed into the box
-    # is one piece of written words.
-    assert sent["content"] == [{"piece": "text", "text": "what is the plan"}]
+    # The optimistic copy and the request are the same native ordered content run.
+    encoded = base64.b64encode(_A_RED_PNG).decode("ascii")
+    assert sent["content"] == [
+        {"piece": "text", "text": "what is the plan"},
+        {
+            "piece": "image",
+            "data": encoded,
+            "media_type": "image/png",
+            "file_name": "red.png",
+        },
+        {
+            "piece": "image",
+            "data": encoded,
+            "media_type": "image/png",
+            "file_name": "red-again.png",
+        },
+    ]
     assert isinstance(sent["sender_message_id"], str)
     assert sent["sender_message_id"] != ""
     assert sent["sent_at_unix_milliseconds"] > 1_700_000_000_000
@@ -406,6 +441,17 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
         "[data-conversation-outgoing-label]"
     )
     assert page.query_selector("[data-conversation-sending]") is None
+
+    # A held message belongs to the tab until its row lands, including its picture bytes.
+    # Reloading recalls and redraws the same two images rather than reducing it to words.
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
+    page.wait_for_function(
+        "() => document.querySelectorAll("
+        "  '[data-conversation-outgoing] [data-conversation-piece-outgoing]'"
+        ").length === 2",
+        timeout=WAIT_MS,
+    )
 
 
 def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(

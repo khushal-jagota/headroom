@@ -32,12 +32,12 @@ async function transpile(name) {
   return ts
     .transpileModule(source, { compilerOptions })
     .outputText.replace(
-      /from\s+["']\.\/(wire|feed|transcript|composer|outgoing)["']/g,
+      /from\s+["']\.\/(wire|feed|transcript|composer|outgoing|pendingImages)["']/g,
       'from "./$1.mjs"'
     );
 }
 
-for (const name of ["wire", "feed", "transcript", "composer", "outgoing"]) {
+for (const name of ["wire", "feed", "transcript", "composer", "outgoing", "pendingImages"]) {
   await writeFile(join(directory, `${name}.mjs`), await transpile(name), "utf8");
 }
 
@@ -104,6 +104,12 @@ const {
   rememberOutgoingMessages,
   senderMessageIdsInTheRecord
 } = await import(join(directory, "outgoing.mjs"));
+const {
+  createPendingConversationImages,
+  pendingImagesAsPieces,
+  releasePendingImages,
+  restoredPendingImages
+} = await import(join(directory, "pendingImages.mjs"));
 
 function event(sequence, kind, payload) {
   return { conversation_id: "c1", sequence, kind, payload, created_at: 1_700_000_000 };
@@ -119,6 +125,66 @@ const TOOL_STARTED = (sequence, tool_call_id, title, tool_kind = "read") =>
 const TOOL_FINISHED = (sequence, tool_call_id, tool_call_status = "completed", detail = null) =>
   event(sequence, "tool_call_finished", { tool_call_id, tool_call_status, detail });
 const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries });
+
+// --- images waiting in the composer -----------------------------------------------------------
+
+{
+  const created = [];
+  const revoked = [];
+  const imageA = new File([new Uint8Array([1, 2, 3])], "a.png", { type: "image/png" });
+  const note = new File(["not a picture"], "note.txt", { type: "text/plain" });
+  const imageB = new File([new Uint8Array([4, 5])], "b.webp", { type: "image/webp" });
+  const intake = await createPendingConversationImages(
+    [imageA, note, imageB],
+    7,
+    (file) => {
+      const url = `blob:${file.name}`;
+      created.push(url);
+      return url;
+    }
+  );
+  assert.deepEqual(
+    intake.accepted.map((image) => [image.id, image.fileName, image.previewUrl]),
+    [
+      [7, "a.png", "blob:a.png"],
+      [8, "b.webp", "blob:b.webp"]
+    ],
+    "accepted images keep the selection order"
+  );
+  assert.deepEqual(intake.rejected.map((file) => file.name), ["note.txt"]);
+  assert.equal(intake.nextId, 9);
+  assert.deepEqual(created, ["blob:a.png", "blob:b.webp"]);
+  assert.deepEqual(pendingImagesAsPieces(intake.accepted), [
+    { piece: "image", data: "AQID", media_type: "image/png", file_name: "a.png" },
+    { piece: "image", data: "BAU=", media_type: "image/webp", file_name: "b.webp" }
+  ]);
+
+  releasePendingImages([intake.accepted[0]], (url) => revoked.push(url));
+  assert.deepEqual(revoked, ["blob:a.png"]);
+  const restored = restoredPendingImages(pendingImagesAsPieces(intake.accepted), 20);
+  assert.deepEqual(restored.images.map((image) => image.id), [20, 21]);
+  assert.match(restored.images[0].previewUrl, /^data:image\/png;base64,AQID$/);
+  releasePendingImages(restored.images, (url) => revoked.push(url));
+  assert.deepEqual(revoked, ["blob:a.png"], "data previews own no browser resource to revoke");
+
+  await assert.rejects(
+    createPendingConversationImages(
+      [imageA, imageB],
+      30,
+      (file) => {
+        if (file === imageB) throw new Error("no more preview resources");
+        return `blob:${file.name}:failed-batch`;
+      },
+      (url) => revoked.push(url)
+    ),
+    /no more preview resources/
+  );
+  assert.deepEqual(
+    revoked,
+    ["blob:a.png", "blob:a.png:failed-batch"],
+    "a partially-created preview batch releases what it already owns"
+  );
+}
 
 // --- the record a reader holds ------------------------------------------------------------
 
@@ -776,7 +842,15 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
 
   const held = {
     ...mintOutgoingMessage({
-      content: [{ piece: "text", text: "held" }],
+      content: [
+        { piece: "text", text: "held" },
+        {
+          piece: "image",
+          data: "AQID",
+          media_type: "image/png",
+          file_name: "held.png"
+        }
+      ],
       senderLabel: "owner",
       mode: "run_when_free"
     }),
@@ -790,7 +864,11 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   rememberOutgoingMessages("c1", [held, stillGoing]);
 
   const recalled = recallOutgoingMessages("c1");
-  assert.deepEqual(recalled[0], held, "what the system is holding comes back as it was");
+  assert.deepEqual(
+    recalled[0],
+    held,
+    "what the system is holding, including image bytes, comes back as it was"
+  );
   assert.deepEqual(recalled[1].content, [{ piece: "text", text: "in flight" }]);
   assert.equal(
     recalled[1].knownFate,
@@ -806,6 +884,20 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.deepEqual(recallOutgoingMessages("c3"), [], "nothing that is not a message is drawn");
   kept.set("panels.conversation.outgoing.c4", "not json at all");
   assert.deepEqual(recallOutgoingMessages("c4"), []);
+  kept.set(
+    "panels.conversation.outgoing.c5",
+    JSON.stringify([
+      {
+        ...held,
+        content: [{ piece: "image", data: "AQID", media_type: "text/plain" }]
+      }
+    ])
+  );
+  assert.deepEqual(
+    recallOutgoingMessages("c5"),
+    [],
+    "untrusted tab storage cannot turn arbitrary data into a drawn image"
+  );
 
   rememberOutgoingMessages("c1", []);
   assert.deepEqual(recallOutgoingMessages("c1"), [], "and holding nothing keeps nothing");
