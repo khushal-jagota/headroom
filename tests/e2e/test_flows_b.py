@@ -66,8 +66,7 @@ E32_START = "2026-07-01"  # range contains baseline planning date 2026-07-04
 E32_END = "2026-07-12"
 E32_ITEM_TITLE = "E32 item"
 E32_ITEM_PROJECT = "Vylo"
-E32_LOOSE_TITLE = "E32 loose ticket"
-
+E32_FALLBACK_TITLE = "E32 fallback ticket"
 
 
 def _set_now(api: ApiHelper, server: ServerHandle, iso: str) -> JsonObject:
@@ -126,13 +125,17 @@ def _snap_ticket(p: Page) -> dict[str, str | None]:
 
 
 def _snap_board(p: Page, mid: str) -> dict[str, Any]:
-    card = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
+    card = (
+        f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
+    )
     bucket = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
         "bucket": p.inner_text(f"{bucket} > summary .board-workspace-bucket-label"),
         "nested": p.eval_on_selector_all(f"{bucket} {card}", "e=>e.length"),
-        "marks": p.eval_on_selector_all(f"{card} .board-workspace-stage-mark", "e=>e.length"),
+        "marks": p.eval_on_selector_all(
+            f"{card} .board-workspace-stage-mark", "e=>e.length"
+        ),
         "agent_working": p.get_attribute(
             f"{card} .board-workspace-stage-mark", "data-agent-working"
         ),
@@ -240,7 +243,9 @@ def test_e30_review_approve_to_done(
     # means the implementation proposal PARKS pending; approving it via Review defaults
     # the onward scope to the next stage (needs_closeout), where closeout PARKS pending
     # in turn until its own Review approval reaches done.
-    mid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", E30_TITLE)["id"]
+    mid = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", E30_TITLE
+    )["id"]
     api.direct_post(server, "/api/day/today/tickets", {"ticket_id": mid})
     _scope_and_advance(
         server,
@@ -290,7 +295,9 @@ def test_e30_review_approve_to_done(
     assert decisions[0]["ticket_id"] == mid, decisions
     assert decisions[0]["field"] == "implementation", decisions
 
-    assert rpage.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_closeout"
+    assert (
+        rpage.locator(f"{card} [data-scope-ceiling]").input_value() == "needs_closeout"
+    )
     rpage.click(f"{card} [data-accept]")
     rpage.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
     assert api.get(server, f"/api/tickets/{mid}")["stage"] == "needs_closeout"
@@ -352,7 +359,9 @@ def test_e31_refresh_restores_state(
     cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
-    mid = cli(server, "ticket", "create", "--worker-type", "coding", "--title", E31_TITLE)["id"]
+    mid = cli(
+        server, "ticket", "create", "--worker-type", "coding", "--title", E31_TITLE
+    )["id"]
     _scope_and_advance(
         server,
         api,
@@ -413,7 +422,9 @@ def test_e31_refresh_restores_state(
 
     # Board surface.
     ready_b = 'section[data-screen="workspace"]'
-    mid_b = f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
+    mid_b = (
+        f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
+    )
     page_b = open_page(context_factory(), server, "#/workspace", ready_b)
     page_b.wait_for_selector(mid_b, timeout=WAIT_MS)
     before_b = _snap_board(page_b, mid)
@@ -444,7 +455,7 @@ def test_e31_refresh_restores_state(
     assert before_d == after_d == expected_d, (before_d, after_d)
 
 
-def test_e32_sprint_live_status_and_loose(
+def test_e32_sprint_live_status_and_fallback(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -470,21 +481,31 @@ def test_e32_sprint_live_status_and_loose(
         "--sprint",
         sid,
     )["id"]
-    ltid = cli(
+    fallback_ticket_id = cli(
         server,
         "ticket",
         "create",
         "--worker-type",
         "coding",
         "--title",
-        E32_LOOSE_TITLE,
-        "--sprint",
-        sid,
+        E32_FALLBACK_TITLE,
+        "--project",
+        E32_ITEM_PROJECT,
     )["id"]
 
     # Status groups were replaced by project groups; the item's status now lives on
-    # the row itself as data-item-status. Assert the item is present exactly once and
-    # carries the todo status, and that the loose ticket sits under the loose group.
+    # the row itself as data-item-status. Omitted placement resolves the current
+    # sprint's Other item, which remains a visible fallback rather than a loose group.
+    current_before = api.get(server, "/api/sprint/current")
+    fallback_item = next(
+        item
+        for group in current_before["groups"].values()
+        for item in group
+        if item["kind"] == "other"
+        and any(ticket["id"] == fallback_ticket_id for ticket in item["tickets"])
+    )
+    fallback_item_id = fallback_item["id"]
+
     ready = f'[data-item-id="{iid}"][data-item-status="todo"]'
     pa = open_page(context_factory(), server, "#/sprint", ready)
     pb = open_page(context_factory(), server, "#/sprint", ready)
@@ -493,7 +514,49 @@ def test_e32_sprint_live_status_and_loose(
         p.wait_for_selector(ready, timeout=WAIT_MS)
         assert p.locator(f'[data-item-id="{iid}"]').count() == 1
         assert p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status") == "todo"
-        assert p.query_selector(f'[data-loose] [data-ticket-id="{ltid}"]') is not None
+        assert (
+            p.get_attribute(f'[data-item-id="{fallback_item_id}"]', "data-item-kind")
+            == "other"
+        )
+        assert (
+            p.query_selector(
+                f'[data-item-id="{fallback_item_id}"] [data-ticket-id="{fallback_ticket_id}"]'
+            )
+            is not None
+        )
+        assert "fallback" in p.inner_text(
+            f'[data-item-id="{fallback_item_id}"] summary'
+        )
+        assert p.query_selector("[data-loose]") is None
+
+    # The Ticket screen exposes the sole placement control: move atomically to another
+    # Sprint Item, then compare-clear that current item to the explicit backlog.
+    ticket_page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{fallback_ticket_id}",
+        "[data-sprint-item-control] select",
+    )
+    placement = ticket_page.locator("[data-sprint-item-control] select")
+    assert placement.input_value() == fallback_item_id
+    placement.select_option(iid)
+    pa.locator(f'[data-item-id="{iid}"]').evaluate(
+        "(element) => { element.open = true; }"
+    )
+    pa.wait_for_selector(
+        f'[data-item-id="{iid}"] [data-ticket-id="{fallback_ticket_id}"]',
+        timeout=WAIT_MS,
+    )
+    placement.select_option("")
+    pa.wait_for_function(
+        '(ticketId) => !document.querySelector(`[data-ticket-id="${ticketId}"]`)',
+        arg=fallback_ticket_id,
+        timeout=WAIT_MS,
+    )
+    backlog_ticket = api.get(server, f"/api/tickets/{fallback_ticket_id}")
+    assert backlog_ticket["sprint_item_id"] is None, backlog_ticket
+    assert backlog_ticket["effective_sprint_id"] is None, backlog_ticket
+    assert "sprint_id" not in backlog_ticket, backlog_ticket
 
     fa = pa.evaluate("window.__plannerDebug.flushes")
     fb = pb.evaluate("window.__plannerDebug.flushes")
@@ -501,7 +564,9 @@ def test_e32_sprint_live_status_and_loose(
     child = cli(
         server,
         "ticket",
-        "create", "--worker-type", "coding",
+        "create",
+        "--worker-type",
+        "coding",
         "--title",
         f"{E32_ITEM_TITLE} child",
         "--sprint-item",
@@ -527,14 +592,17 @@ def test_e32_sprint_live_status_and_loose(
             f'[data-item-id="{iid}"][data-item-status="in_progress"]', timeout=WAIT_MS
         )
         assert p.locator(f'[data-item-id="{iid}"]').count() == 1
-        assert p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status") == "in_progress"
+        assert (
+            p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status")
+            == "in_progress"
+        )
         assert p.query_selector(f'[data-ticket-id="{child}"]') is not None
         assert p.evaluate("window.__plannerDebug.flushes") > f0
 
     cur = api.get(server, "/api/sprint/current")
     assert iid in [i["id"] for i in cur["groups"]["in_progress"]], cur
     assert iid not in [i["id"] for i in cur["groups"]["todo"]], cur
-    assert ltid in [t["id"] for t in cur["loose_tickets"]], cur
+    assert "loose_tickets" not in cur, cur
 
     # The item ticket projection carries the two board-card signals the sprint ticket
     # rows colour off (added this wave): has_pending_proposal + ticket_status. The

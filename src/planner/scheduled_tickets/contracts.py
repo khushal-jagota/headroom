@@ -19,6 +19,12 @@ class OccurrenceOutcome(StrEnum):
     failed = "failed"
 
 
+class ScheduledTicketPlacementMode(StrEnum):
+    current_sprint = "current_sprint"
+    backlog = "backlog"
+    sprint_item = "sprint_item"
+
+
 @dataclass(frozen=True)
 class ScheduledTicketTemplate:
     title: str
@@ -27,7 +33,7 @@ class ScheduledTicketTemplate:
     priority: Priority
     deadline: str | None
     project_id: str | None
-    sprint_id: str | None
+    placement_mode: ScheduledTicketPlacementMode
     sprint_item_id: str | None
     employee_backend: str | None
     employee_launch_model: str | None

@@ -12,6 +12,7 @@ import type {
   ReviewResponse,
   SkillsHomeResponse,
   SprintsResponse,
+  SprintItemsResponse,
   TicketDetail,
   WorkerManagementDetail,
   WorkersResponse
@@ -38,6 +39,7 @@ export const queries = {
   ideas: () => jsonQuery<IdeasResponse>(["ideas"], "/api/ideas"),
   projects: () => jsonQuery<ProjectsResponse>(["projects"], "/api/projects"),
   sprintSummaries: () => jsonQuery<SprintsResponse>(["sprints"], "/api/sprints"),
+  sprintItems: () => jsonQuery<SprintItemsResponse>(["items"], "/api/items"),
   currentSprint: () =>
     jsonQuery<CurrentSprintResponse>(["sprint", "current"], "/api/sprint/current"),
   ticket: (ticketId: string) =>

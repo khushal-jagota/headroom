@@ -38,8 +38,12 @@ generic Stage setter.
 - **`schedule create / list / show / set`** — manage generic internal schedules that
   create and place an ordinary Ticket at an exact local time. A schedule uses either
   `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
-  creation context as `ticket create`, and can be enabled or disabled. `show` includes
-  its durable created, suppressed, or failed occurrence receipts. These commands
+  creation context as `ticket create`, and can be enabled or disabled. By default each
+  occurrence resolves the current sprint's Project fallback item; `--sprint-item`
+  selects an exact item and `--backlog` keeps occurrences out of a sprint. Use
+  `schedule set … placement --value current-sprint|backlog` to switch the reusable
+  placement mode. `show` includes its durable created, suppressed, or failed occurrence
+  receipts. These commands
   configure Ticket supply only; they do not contain planning behavior or start Workers
   directly.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
@@ -63,12 +67,14 @@ generic Stage setter.
   clear one Stage's ownership override. `default` clears the override so the Worker
   type's Stage default applies. Terminal and unknown Stages are rejected.
 - **`ticket copy`** — copy one ticket's plain-text packet.
-- **`sprint create / list / show / set / add-ticket / remove-ticket`** — plan and
-  populate sprints. `current` resolves through `/api/sprint/current`; `none` means the
-  backlog where a list supports it.
-- **`sprint item create / list / show / set / add-ticket / remove-ticket / block / unblock / delete`**
-  — manage sprint items and their ticket membership. Creating a ticket is still
-  `ticket create`; adding an existing ticket to an item is a sprint-item command.
+- **`sprint create / list / show / set`** — plan sprints. `current` resolves through
+  `/api/sprint/current`; `none` means the backlog where a list supports it.
+- **`sprint item create / list / show / set / move-ticket / move-ticket-to-backlog / block / unblock / delete`**
+  — manage Sprint Items and Ticket placement. Creating a Ticket is still `ticket
+  create`. `sprint item move-ticket <item-id> <ticket-id>` atomically moves an existing
+  Ticket from backlog or another item. `sprint item move-ticket-to-backlog <item-id>
+  <ticket-id>` compare-clears the named current item, so a stale command cannot detach
+  a Ticket that has since moved.
   `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
   Item status is read-only and derived from child tickets and active blocking links.
   `sprint item delete <item-id> --yes` permanently removes a childless item. An item
@@ -140,23 +146,6 @@ This is a truthful local process claim, like the existing actor header, not a
 cryptographic login or bearer token. Requests arriving through trusted remote ingress
 have both headers removed. Missing, unknown, or mismatched worker claims fail closed.
 
-## One-time legacy import
-
-There is one retained cutover command outside the `panels` command tree:
-
-```text
-python -m planner.seed --source <dir> --worker-type <id>
-```
-
-`--worker-type` is required. `--employee-backend` may override the selected type's
-registered default. The importer resolves that exact configured Worker type once
-and uses its Stages and fields to validate every imported Ticket. It never chooses a
-default or infers a Worker type from the Markdown. An incompatible legacy Stage rejects
-and rolls back the import.
-
-This is not a product import surface. There is no `/api/seed` route and no `panels seed`
-command.
-
 ## What used to be here and isn't
 
 Earlier documentation listed verbs that belonged to the old dispatcher-and-claim
@@ -177,10 +166,10 @@ lease; Panels starts one worker step at a time and writes the Ticket's status it
 
 ## Deferred
 
-- **No general importer verb.** The old `plan seed` command is gone. The standalone
-  one-time cutover command above is the only retained Markdown importer. Chief
-  external-work intake reconciles a reported outcome; it does not ingest old planner
-  documents. Trigger: a decision to support document import again.
+- **No general importer verb.** The old `plan seed` command and one-time
+  `python -m planner.seed` cutover are gone. Chief external-work intake reconciles a
+  reported outcome; it does not ingest old planner documents. Trigger: a decision to
+  support document import again.
 
 ---
 

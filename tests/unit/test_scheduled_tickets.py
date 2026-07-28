@@ -21,6 +21,7 @@ from planner.scheduled_tickets import actions, data
 from planner.scheduled_tickets.contracts import (
     OccurrenceOutcome,
     ScheduleCadence,
+    ScheduledTicketPlacementMode,
     ScheduledTicketTemplate,
 )
 from planner.scheduled_tickets.logic import cadence_qualifies, validate_local_time
@@ -40,6 +41,9 @@ def _template(
     title: str = "Planned session",
     worker_type: str = "coding",
     blocked_by: tuple[str, ...] = (),
+    project_id: str | None = None,
+    placement_mode: ScheduledTicketPlacementMode = ScheduledTicketPlacementMode.current_sprint,
+    sprint_item_id: str | None = None,
 ) -> ScheduledTicketTemplate:
     return ScheduledTicketTemplate(
         title=title,
@@ -47,9 +51,9 @@ def _template(
         kickoff_note="Gather evidence first.",
         priority=Priority.P3,
         deadline=None,
-        project_id=None,
-        sprint_id=None,
-        sprint_item_id=None,
+        project_id=project_id,
+        placement_mode=placement_mode,
+        sprint_item_id=sprint_item_id,
         employee_backend=None,
         employee_launch_model=None,
         blocked_by_ticket_ids=blocked_by,
@@ -99,7 +103,9 @@ def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
     )
 
 
-def test_due_occurrence_creates_and_places_one_ordinary_ticket(tmp_db: Connection) -> None:
+def test_due_occurrence_creates_and_places_one_ordinary_ticket(
+    tmp_db: Connection,
+) -> None:
     schedule_id = _schedule(tmp_db)
     now = _now("2026-07-28T14:30:20")
 
@@ -128,6 +134,130 @@ def test_due_occurrence_creates_and_places_one_ordinary_ticket(tmp_db: Connectio
         (ticket_id,),
     ).fetchone()
     assert len(data.list_occurrences(tmp_db, schedule_id)) == 1
+
+
+def test_scheduled_ticket_can_explicitly_remain_in_backlog(tmp_db: Connection) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_current', 'Current', '2026-07-20', '2026-08-02', 0, 0)"
+    )
+    _schedule(
+        tmp_db,
+        template=_template(
+            project_id="project_vylo",
+            placement_mode=ScheduledTicketPlacementMode.backlog,
+        ),
+    )
+    now = _now("2026-07-28T14:30:00")
+
+    result = actions.run_current_slot(
+        tmp_db,
+        planning_now=now,
+        now=int(now.timestamp()),
+        boundary_hour=5,
+    )
+
+    ticket = tickets_data.read_ticket(tmp_db, str(result[0].ticket_id))
+    assert ticket.sprint_item_id is None
+    assert ticket.effective_sprint_id is None
+    assert ticket.project_id == "project_vylo"
+    assert (
+        tmp_db.execute(
+            "SELECT count(*) FROM sprint_items WHERE kind = 'other'"
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_scheduled_ticket_can_target_an_explicit_sprint_item(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_current', 'Current', '2026-07-20', '2026-08-02', 0, 0)"
+    )
+    tmp_db.execute(
+        "INSERT INTO sprint_items "
+        "(id, title, project_id, sprint_id, created_at, updated_at) "
+        "VALUES ('si_target', 'Target', 'project_vylo', 'sp_current', 0, 0)"
+    )
+    _schedule(
+        tmp_db,
+        template=_template(
+            placement_mode=ScheduledTicketPlacementMode.sprint_item,
+            sprint_item_id="si_target",
+        ),
+    )
+    now = _now("2026-07-28T14:30:00")
+
+    result = actions.run_current_slot(
+        tmp_db,
+        planning_now=now,
+        now=int(now.timestamp()),
+        boundary_hour=5,
+    )
+
+    ticket = tickets_data.read_ticket(tmp_db, str(result[0].ticket_id))
+    assert ticket.sprint_item_id == "si_target"
+    assert ticket.effective_sprint_id == "sp_current"
+    assert ticket.project_id == "project_vylo"
+
+
+def test_schedule_placement_transitions_preserve_effective_project(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_current', 'Current', '2026-07-20', '2026-08-02', 0, 0)"
+    )
+    tmp_db.execute(
+        "INSERT INTO sprint_items "
+        "(id, title, project_id, sprint_id, created_at, updated_at) "
+        "VALUES ('si_target', 'Target', 'project_vylo', 'sp_current', 0, 0)"
+    )
+    exact = _schedule(
+        tmp_db,
+        template=_template(
+            placement_mode=ScheduledTicketPlacementMode.sprint_item,
+            sprint_item_id="si_target",
+        ),
+    )
+
+    backlog = actions.update_schedule(
+        tmp_db,
+        exact,
+        {
+            "placement_mode": ScheduledTicketPlacementMode.backlog,
+            "sprint_item_id": None,
+        },
+        now=50,
+    )
+    assert backlog.template.project_id == "project_vylo"
+    assert backlog.template.sprint_item_id is None
+
+    exact_again = actions.update_schedule(
+        tmp_db,
+        exact,
+        {
+            "placement_mode": ScheduledTicketPlacementMode.sprint_item,
+            "sprint_item_id": "si_target",
+        },
+        now=60,
+    )
+    assert exact_again.template.project_id is None
+    assert exact_again.template.sprint_item_id == "si_target"
+
+    current_sprint = actions.update_schedule(
+        tmp_db,
+        exact,
+        {
+            "placement_mode": ScheduledTicketPlacementMode.current_sprint,
+            "sprint_item_id": None,
+        },
+        now=70,
+    )
+    assert current_sprint.template.project_id == "project_vylo"
+    assert current_sprint.template.sprint_item_id is None
 
 
 def test_pre_five_am_occurrence_targets_the_previous_planning_day(
@@ -229,9 +359,7 @@ def test_final_sprint_day_uses_canonical_sprint_range(tmp_db: Connection) -> Non
         "VALUES ('sp_current', 'Current', '2026-07-20', '2026-07-28', '', '', '', '', "
         "'', '', '', '', '', 0, 0)"
     )
-    schedule_id = _schedule(
-        tmp_db, cadence=ScheduleCadence.current_sprint_final_day
-    )
+    schedule_id = _schedule(tmp_db, cadence=ScheduleCadence.current_sprint_final_day)
     before = _now("2026-07-27T14:30:00")
     final = _now("2026-07-28T14:30:00")
 
@@ -251,6 +379,16 @@ def test_final_sprint_day_uses_canonical_sprint_range(tmp_db: Connection) -> Non
         boundary_hour=5,
     )
     assert result[0].outcome is OccurrenceOutcome.created
+    assert result[0].ticket_id is not None
+    ticket = tickets_data.read_ticket(tmp_db, result[0].ticket_id)
+    assert ticket.effective_sprint_id == "sp_current"
+    assert ticket.sprint_item_id is not None
+    assert (
+        tmp_db.execute(
+            "SELECT kind FROM sprint_items WHERE id = ?", (ticket.sprint_item_id,)
+        ).fetchone()["kind"]
+        == "other"
+    )
     assert data.list_occurrences(tmp_db, schedule_id) == result
 
 
@@ -317,6 +455,15 @@ def test_api_manages_configuration_and_exposes_occurrences(tmp_path: Path) -> No
         )
         assert created.status_code == 200, created.text
         schedule_id = created.json()["id"]
+        backlog = client.post(
+            "/api/schedules",
+            json={
+                "title": "Backlog schedule",
+                "worker_type": "exploration",
+                "local_time": "15:30",
+                "sprint_item_id": None,
+            },
+        )
         unknown_type = client.post(
             "/api/schedules",
             json={
@@ -337,15 +484,23 @@ def test_api_manages_configuration_and_exposes_occurrences(tmp_path: Path) -> No
         listed = client.get("/api/schedules")
 
     assert updated.status_code == 200, updated.text
+    assert backlog.status_code == 200, backlog.text
+    assert created.json()["placement_mode"] == "current_sprint"
+    assert backlog.json()["placement_mode"] == "backlog"
     assert unknown_type.status_code == 400
     assert unknown_type_update.status_code == 400
     assert updated.json()["enabled"] is False
     assert updated.json()["cadence"] == "current_sprint_final_day"
     assert shown.json()["occurrences"] == []
-    assert [item["id"] for item in listed.json()["schedules"]] == [schedule_id]
+    assert {item["id"] for item in listed.json()["schedules"]} == {
+        schedule_id,
+        backlog.json()["id"],
+    }
 
 
-def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(tmp_path: Path) -> None:
+def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "scheduled-loop.db"
     conn = connect(str(db_path))
     create_schema(conn)
@@ -364,7 +519,9 @@ def test_runtime_loop_uses_injected_clock_and_restart_safe_receipt(tmp_path: Pat
     try:
         assert check.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
         assert (
-            check.execute("SELECT count(*) FROM scheduled_ticket_occurrences").fetchone()[0]
+            check.execute(
+                "SELECT count(*) FROM scheduled_ticket_occurrences"
+            ).fetchone()[0]
             == 1
         )
     finally:
