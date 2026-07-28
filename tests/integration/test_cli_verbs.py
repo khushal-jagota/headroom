@@ -1,4 +1,4 @@
-"""The installed wrapper must preserve worker identity outside a checkout."""
+"""Process integration: the installed wrapper preserves identity outside a checkout."""
 
 from __future__ import annotations
 

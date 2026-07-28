@@ -1,10 +1,11 @@
-"""The verify instrument — the completeness gate.
+"""The verify instrument — complete by default, with explicit focused tiers.
 
 Runs a preflight skip-scan of tests/ (no skipped, xfailed, focused, empty, or
-commented-out tests), then the code and test gates in order (ruff, mypy, unit
-suite, build check, e2e suite), streaming each gate's output live. Ends with
-exactly one final line, ``VERIFY: PASS`` or ``VERIFY: FAIL``. Exit is 0 iff the
-scan is clean and every gate passed.
+commented-out tests). ``./verify`` or ``./verify full`` runs every gate and is
+the sole completeness claim. ``./verify fast`` runs static, unit, build, and
+frontend gates for the implementation loop. ``./verify e2e`` runs the real
+browser journey suite in isolation. ``./verify integration`` runs real process,
+socket, installed-CLI, environment, and agent boundaries without a browser.
 
 Documented limitation: this instrument proves the named tests RAN and PASSED. It
 does not judge assertion strength — that is for reviewers, not this instrument.
@@ -17,7 +18,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from verify_lib import check_css_syntax, scan_test_files
+from verify_lib import check_css_syntax, parse_verify_mode, scan_test_files
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENV_BIN = REPO_ROOT / ".venv" / "bin"
@@ -139,6 +140,13 @@ def run_frontend() -> GateResult:
 
 
 def main() -> int:
+    try:
+        mode = parse_verify_mode(sys.argv[1:])
+    except ValueError as exc:
+        print(exc)
+        print("VERIFY: FAIL")
+        return 2
+
     DATA_VERIFY.mkdir(parents=True, exist_ok=True)
 
     # Preflight skip-scan: a tainted suite (skipped, xfailed, focused, empty, or
@@ -157,20 +165,32 @@ def main() -> int:
         return 1
 
     gates: list[GateResult] = []
-    gates.append(run_ruff())
-    gates.append(run_mypy())
+    if mode in {"full", "fast"}:
+        gates.append(run_ruff())
+        gates.append(run_mypy())
 
-    unit_junit = DATA_VERIFY / "unit.xml"
-    gates.append(run_pytest("tests/unit", unit_junit, "unit suite"))
+        unit_junit = DATA_VERIFY / "unit.xml"
+        gates.append(run_pytest("tests/unit", unit_junit, "unit suite"))
 
-    gates.append(run_build_check())
+        gates.append(run_build_check())
+        gates.append(run_frontend())
 
-    gates.append(run_frontend())
+    if mode in {"full", "integration"}:
+        integration_junit = DATA_VERIFY / "integration.xml"
+        gates.append(
+            run_pytest(
+                "tests/integration",
+                integration_junit,
+                "integration suite",
+                timeout=E2E_TIMEOUT_SECONDS,
+            )
+        )
 
-    e2e_junit = DATA_VERIFY / "e2e.xml"
-    gates.append(
-        run_pytest("tests/e2e", e2e_junit, "e2e suite", timeout=E2E_TIMEOUT_SECONDS)
-    )
+    if mode in {"full", "e2e"}:
+        e2e_junit = DATA_VERIFY / "e2e.xml"
+        gates.append(
+            run_pytest("tests/e2e", e2e_junit, "e2e suite", timeout=E2E_TIMEOUT_SECONDS)
+        )
 
     print()
     for gate in gates:
@@ -180,7 +200,8 @@ def main() -> int:
     print()
 
     ok = all(gate.ok for gate in gates)
-    print(f"VERIFY: {'PASS' if ok else 'FAIL'}")
+    label = "VERIFY" if mode == "full" else f"VERIFY {mode.upper()}"
+    print(f"{label}: {'PASS' if ok else 'FAIL'}")
     return 0 if ok else 1
 
 

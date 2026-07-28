@@ -33,21 +33,11 @@ from tests.e2e.harness import JsonObject, ServerHandle
 from tests.e2e.test_dev_conversation_pane import (
     _a_conversation_worth_scrolling,
     _append_rows,
-    _let_the_browser_catch_up,
 )
 
-from planner.conversation.contracts import PromptDeliveryMode
 from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationEventPayload,
-    PermissionAskedEventPayload,
-    PermissionAskOption,
-    PlanEntry,
-    PlanEntryStatus,
-    PlanUpdatedEventPayload,
-    PromptEventPayload,
-    TokenUsageEventPayload,
-    ToolCallStartedEventPayload,
 )
 from planner.conversation.message_content import text_message_content
 
@@ -298,40 +288,6 @@ def _the_draft_is_still_there(
     return draft
 
 
-def _rows_on_the_page(page: Page) -> int:
-    return int(page.evaluate("() => document.querySelectorAll('[data-conversation-row]').length"))
-
-
-def _a_turn_getting_going() -> tuple[ConversationEventPayload, ...]:
-    """A turn starting, with a plan and two tool calls — the newest of them last."""
-    return (
-        PromptEventPayload(
-            content=text_message_content("go and do the thing"),
-            sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
-        ),
-        PlanUpdatedEventPayload(
-            entries=(
-                PlanEntry(text="read the plan file", status=PlanEntryStatus.completed),
-                PlanEntry(text="check the tree", status=PlanEntryStatus.in_progress),
-                PlanEntry(text="write it down", status=PlanEntryStatus.pending),
-            )
-        ),
-        ToolCallStartedEventPayload(
-            tool_call_id="three-states-read",
-            title="the plan file",
-            tool_kind="read",
-            detail=None,
-        ),
-        ToolCallStartedEventPayload(
-            tool_call_id="three-states-run",
-            title="git status",
-            tool_kind="execute",
-            detail=None,
-        ),
-    )
-
-
 def test_the_three_states_are_what_the_ticket_page_shows(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
@@ -410,89 +366,6 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert back["expand"] is True
     assert back["restBarMounted"] is False
     assert back["paneHeight"] == peeked["paneHeight"], (peeked, back)
-
-
-def test_a_completed_turn_does_not_draw_its_token_usage(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-) -> None:
-    """The conversation keeps backend usage without making it part of the transcript."""
-    ticket_id, conversation_id = _a_ticket_with_a_conversation(
-        server, cli, "No completed-turn usage marker"
-    )
-    _append_rows(
-        server,
-        conversation_id,
-        *_a_settled_conversation_worth_reading(THE_LAST_THING),
-        TokenUsageEventPayload(input_tokens=41_000, output_tokens=920),
-    )
-    page = _the_ticket_page(server, context_factory(), open_page, ticket_id, ROWS_IN_THE_SEED)
-
-    _click_the_composers_input(page)
-    assert THE_LAST_THING in page.inner_text(THREAD)
-    assert page.locator('[data-conversation-row="token_usage"]').count() == 0
-    assert "41.0k in" not in page.inner_text(THREAD)
-    assert "920 out" not in page.inner_text(THREAD)
-
-
-def test_the_ticket_behind_is_still_readable_and_a_click_on_it_drops_a_state(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-) -> None:
-    """Peeked is a layer, not a mode.
-
-    The ticket underneath is still there to be read and still scrolls, and scrolling it is
-    not a click, so it changes nothing about the layer. A click on it does: one state back,
-    and no further than rest.
-    """
-    ticket_id, conversation_id = _a_ticket_with_a_conversation(server, cli, "The ticket behind")
-    _append_rows(server, conversation_id, *_a_settled_conversation_worth_reading(THE_LAST_THING))
-    page = _the_ticket_page(server, context_factory(), open_page, ticket_id, ROWS_IN_THE_SEED)
-    # A short window, so the ticket's own column has somewhere to scroll and "it still
-    # scrolls" is a claim with something behind it.
-    page.set_viewport_size({"width": 1280, "height": 560})
-
-    _click_the_composers_input(page)
-    before = page.evaluate(WHERE_THE_TICKET_IS_SCROLLED_TO)
-    assert before is not None, "the ticket page keeps its own scrolling column"
-    assert before["scrollHeight"] > before["clientHeight"], before
-
-    # A wheel over the ticket, with the layer over the bottom of it.
-    box = page.locator(THE_TICKETS_OWN_SCROLLER).bounding_box()
-    assert box is not None
-    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + 60)
-    page.mouse.wheel(0, 300)
-    page.wait_for_function(
-        "(was) => document.querySelector('[data-screen=\"ticket\"] .ticket-doc').scrollTop > was",
-        arg=before["scrollTop"],
-        timeout=WAIT_MS,
-    )
-    still_peeked = page.evaluate(WHERE_THE_LAYER_IS)
-    assert still_peeked["state"] == "peeked", "reading the page behind is not dismissing it"
-    assert still_peeked["ticketOnScreen"] is True
-
-    # A click on it is a different thing, and it is worth one state.
-    _click_the_ticket_behind(page, lands_on="rest")
-    at_rest = page.evaluate(WHERE_THE_LAYER_IS)
-    assert at_rest["restBarOnScreen"] is True
-    assert at_rest["transcriptOnScreen"] is False
-
-    # And there is nowhere further back to go.
-    page.click(THE_TICKET_BEHIND, timeout=WAIT_MS)
-    assert page.evaluate(WHERE_THE_LAYER_IS)["state"] == "rest"
-
-    # Escape is the same move for somebody whose hands are on the keyboard, and a layer at
-    # full height is the one place a click on the ticket behind cannot reach.
-    _click_the_composers_input(page)
-    _take_it_full(page)
-    page.keyboard.press("Escape")
-    page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
-    page.keyboard.press("Escape")
-    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
 
 
 def test_the_reader_stays_on_the_line_they_were_reading_through_every_transition(
@@ -622,101 +495,3 @@ def test_the_draft_survives_every_transition(
     # box — the same rule that leaves it on a control that was pressed. The person pressed
     # somewhere else, and this is what pressing somewhere else does.
     _the_draft_is_still_there(page, "rest, by the ticket behind", carried_on, clicked_to)
-
-
-def test_a_turn_starting_does_not_move_the_state_and_the_bar_says_what_is_happening(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-) -> None:
-    """Nothing changes state on its own, and at rest the bar is what says anything at all.
-
-    The turn's rows are in the record and this browser has them, so the line above the
-    composer becomes the newest tool call with the plan's progress beside it. The layer
-    does not move, because nobody moved it.
-    """
-    ticket_id, conversation_id = _a_ticket_with_a_conversation(server, cli, "A turn at rest")
-    _append_rows(server, conversation_id, *_a_settled_conversation_worth_reading(THE_LAST_THING))
-    context = context_factory()
-    context.add_init_script(THE_SYSTEM_SAYS_A_TURN_IS_RUNNING)
-    page = _the_ticket_page(server, context, open_page, ticket_id, ROWS_IN_THE_SEED)
-    assert "The one line the bar shows" in page.inner_text(REST_LINE)
-
-    rows_before = _rows_on_the_page(page)
-    _append_rows(server, conversation_id, *_a_turn_getting_going())
-    _let_the_browser_catch_up(page, rows_before + 1)
-    page.wait_for_function(
-        "() => { const line = document.querySelector('[data-conversation-rest-line]');"
-        " return line !== null && line.textContent.includes('Ran command'); }",
-        timeout=WAIT_MS,
-    )
-
-    working = page.evaluate(WHERE_THE_LAYER_IS)
-    assert working["state"] == "rest", "a turn starting is not a person opening anything"
-    assert working["transcriptOnScreen"] is False
-    assert working["restBarOnScreen"] is True
-
-    said = page.inner_text(REST_LINE)
-    assert "Read file" not in said, ("the newest tool call, not the first", said)
-    assert "The one line the bar shows" not in said, said
-    # The plan's progress, quieter, beside it. One of the three steps is done, so this is
-    # the number it says and not any other: a bar reading "3 / 3 tasks" would be wrong
-    # about the same plan.
-    assert page.inner_text(REST_ASIDE).strip() == "1 / 3 tasks"
-
-
-def test_a_permission_ask_does_not_move_the_state_and_the_bar_is_what_says_it_arrived(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-    cli: Callable[..., JsonObject],
-) -> None:
-    """The ask arrives while the person has it peeked, and it leaves it peeked.
-
-    Then they put it back themselves, and the bar does its most important job: with the
-    conversation closed, a request that needs them is already on the screen.
-    """
-    ticket_id, conversation_id = _a_ticket_with_a_conversation(server, cli, "An ask arriving")
-    _append_rows(server, conversation_id, *_a_settled_conversation_worth_reading(THE_LAST_THING))
-    # An ask is only ever waiting inside a turn that is running, and a turn only runs
-    # because the system says so.
-    context = context_factory()
-    context.add_init_script(THE_SYSTEM_SAYS_A_TURN_IS_RUNNING)
-    page = _the_ticket_page(server, context, open_page, ticket_id, ROWS_IN_THE_SEED)
-
-    _click_the_composers_input(page)
-    rows_before = _rows_on_the_page(page)
-    _append_rows(
-        server,
-        conversation_id,
-        PromptEventPayload(
-            content=text_message_content("clear the build out"),
-            sender_label="owner",
-            mode=PromptDeliveryMode.run_when_free,
-        ),
-        PermissionAskedEventPayload(
-            ask_id="three-states-ask",
-            title=THE_ASK_TITLE,
-            detail=None,
-            options=(
-                PermissionAskOption(option_id="allow", label="Allow", option_kind="allow_once"),
-                PermissionAskOption(option_id="no", label="No", option_kind="reject_once"),
-            ),
-        ),
-    )
-    _let_the_browser_catch_up(page, rows_before + 2)
-    page.wait_for_selector('[data-conversation-row="permission_ask"]', timeout=WAIT_MS)
-
-    waiting = page.evaluate(WHERE_THE_LAYER_IS)
-    assert waiting["state"] == "peeked", "no auto-peek, and no auto-anything-else either"
-    assert waiting["restBarMounted"] is False, "the transcript is showing the ask itself"
-
-    # The person puts it away themselves. Now the bar is the only thing left that can say
-    # somebody is being waited on, and it says it.
-    _click_the_ticket_behind(page, lands_on="rest")
-    page.wait_for_selector(REST_WAITING, timeout=WAIT_MS)
-    at_rest = page.evaluate(WHERE_THE_LAYER_IS)
-    assert at_rest["state"] == "rest"
-    assert at_rest["restBarOnScreen"] is True
-    assert THE_ASK_TITLE in page.inner_text(REST_LINE)

@@ -304,7 +304,12 @@ def test_workloads_recognise_python_module_serve_without_serialising_arguments(
     assert secret not in json.dumps(snapshot.as_dict())
 
 
-def test_direct_status_cli_and_read_only_api_serialize_the_same_snapshot(tmp_path: Path) -> None:
+def test_direct_status_cli_and_read_only_api_serialize_the_same_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A worker launched from a deployment can inherit that deployment's PLAN_APP_ROOT.
+    # Pin this source-tree equivalence check to the source tree for both call paths.
+    monkeypatch.setenv("PLAN_APP_ROOT", str(Path.cwd()))
     config = _config(tmp_path)
     dependencies = VpsStatusDependencies(
         now=lambda: datetime(2026, 7, 24, tzinfo=UTC),
