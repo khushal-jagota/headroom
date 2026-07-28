@@ -66,6 +66,12 @@ fetches the picture from it, and the agent is handed it — codex wants the file
 path and is given exactly that, while claude and hermes want the bytes and they
 are read from the same file.
 
+A conversation picture is at most 10 MiB and is a structurally valid PNG, JPEG,
+GIF, or WebP. The composer turns away other stated types and oversize files before
+reading them. The server remains authoritative: it validates the completed bytes
+before keeping any file or prompt and records the media type those bytes prove,
+not the type the browser claimed.
+
 Those files last as long as the notebook does, which is forever. Nothing in
 Panels deletes a conversation: resetting one stops it and unlinks it, and
 deleting a Ticket leaves its conversation behind. A file removed by either would

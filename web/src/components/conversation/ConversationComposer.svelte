@@ -442,7 +442,9 @@
         composeRevision += 1;
         pendingImages = [...pendingImages, ...intake.accepted];
       }
-      intakeError = intake.rejected.length > 0 ? "Choose image files only." : null;
+      intakeError = intake.rejected.length > 0
+        ? "Choose PNG, JPEG, GIF or WebP images up to 10 MiB."
+        : null;
     } catch (error) {
       if (!destroyed) {
         intakeError = error instanceof Error ? error.message : "The image could not be read.";

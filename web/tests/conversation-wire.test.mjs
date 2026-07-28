@@ -105,6 +105,7 @@ const {
   senderMessageIdsInTheRecord
 } = await import(join(directory, "outgoing.mjs"));
 const {
+  MAX_CONVERSATION_IMAGE_BYTES,
   createPendingConversationImages,
   pendingImagesAsPieces,
   releasePendingImages,
@@ -184,6 +185,35 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
     ["blob:a.png", "blob:a.png:failed-batch"],
     "a partially-created preview batch releases what it already owns"
   );
+
+  const svg = new File(["<svg/>"], "vector.svg", { type: "image/svg+xml" });
+  const heic = new File(["heic"], "photo.heic", { type: "image/heic" });
+  const oversize = new File(
+    [new Uint8Array(MAX_CONVERSATION_IMAGE_BYTES + 1)],
+    "huge.png",
+    { type: "image/png" }
+  );
+  let reads = 0;
+  for (const file of [svg, heic, oversize]) {
+    file.arrayBuffer = async () => {
+      reads += 1;
+      throw new Error("a rejected file must not be read");
+    };
+  }
+  const rejectedEarly = await createPendingConversationImages(
+    [svg, heic, oversize],
+    40,
+    () => {
+      throw new Error("a rejected file must not get a preview");
+    }
+  );
+  assert.deepEqual(
+    rejectedEarly.rejected.map((file) => file.name),
+    ["vector.svg", "photo.heic", "huge.png"]
+  );
+  assert.deepEqual(rejectedEarly.accepted, []);
+  assert.equal(rejectedEarly.nextId, 40);
+  assert.equal(reads, 0, "unsupported and oversize files are rejected before reading bytes");
 }
 
 // --- the record a reader holds ------------------------------------------------------------

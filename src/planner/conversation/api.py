@@ -47,6 +47,10 @@ from planner.conversation.events import (
     ToolCallProgressFrame,
     conversation_event_payload_to_canonical_json,
 )
+from planner.conversation.image_validation import (
+    MAX_CONVERSATION_IMAGE_BYTES,
+    validated_image_media_type,
+)
 from planner.conversation.live_tail import ConversationLiveTail, ConversationTailItem
 from planner.conversation.message_content import (
     MessageContent,
@@ -551,19 +555,34 @@ async def conversation_message_content(
     It takes the files rather than the whole runtime because the owner-scoped send doors
     live in another module and need exactly this and nothing else.
     """
+    # Prove every image before keeping any of them. A later malformed piece must reject
+    # the whole request without leaving an earlier piece behind as an unnamed managed file.
+    validated_images: list[tuple[bytes, str]] = []
+    for piece in sent:
+        if isinstance(piece, SentImagePiece):
+            contents = _decoded_image(piece.data)
+            try:
+                media_type = validated_image_media_type(contents)
+            except ValueError as invalid:
+                raise HTTPException(status_code=422, detail=str(invalid)) from invalid
+            validated_images.append((contents, media_type))
+
     pieces: list[MessagePiece] = []
+    image_index = 0
     for piece in sent:
         match piece:
             case SentTextPiece():
                 pieces.append(MessageText(text=piece.text))
             case SentImagePiece():
+                contents, media_type = validated_images[image_index]
+                image_index += 1
                 kept = await message_files.keep(
-                    conversation_id, _decoded(piece.data), media_type=piece.media_type
+                    conversation_id, contents, media_type=media_type
                 )
                 pieces.append(
                     MessageImage(
                         stored_file_id=kept.stored_file_id,
-                        media_type=piece.media_type,
+                        media_type=media_type,
                         file_name=piece.file_name,
                     )
                 )
@@ -582,6 +601,14 @@ def _decoded(data: str) -> bytes:
         raise HTTPException(
             status_code=422, detail="a piece's data is not base64"
         ) from not_bytes
+
+
+def _decoded_image(data: str) -> bytes:
+    """Decode one bounded image without trusting its media-type claim."""
+    maximum_encoded_length = 4 * ((MAX_CONVERSATION_IMAGE_BYTES + 2) // 3)
+    if len(data) > maximum_encoded_length:
+        raise HTTPException(status_code=422, detail="a conversation image is too large")
+    return _decoded(data)
 
 
 def _event_json(event: StoredConversationEvent) -> dict[str, Any]:

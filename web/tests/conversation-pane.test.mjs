@@ -1719,7 +1719,10 @@ with sync_playwright() as playwright:
     page.wait_for_function(
         "document.querySelectorAll('[data-chat-image-preview]').length === 2"
     )
-    assert "Choose image files only." in page.locator("[data-conversation-error]").inner_text()
+    assert (
+        "Choose PNG, JPEG, GIF or WebP images up to 10 MiB."
+        in page.locator("[data-conversation-error]").inner_text()
+    )
     assert page.locator("[data-chat-image-preview]").evaluate_all(
         "rows => rows.map(row => row.dataset.chatImageName)"
     ) == ["first.png", "second.webp"]

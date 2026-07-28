@@ -223,6 +223,7 @@ class _Harness:
     """The real router over the real system, with a fake backend and a fake machine."""
 
     def __init__(self, db_path: Path) -> None:
+        self.db_path = db_path
         self.store = ConversationStore(str(db_path))
         self.live_tail = ConversationLiveTail()
         self.backends: dict[str, _FakeBackend] = {}
@@ -1537,6 +1538,15 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
 A_TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 )
+MALFORMED_CLAIMED_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    + (1).to_bytes(4, "big")
+    + (1).to_bytes(4, "big")
+    + b"\x08\x02\x00\x00\x00"
+    + b"\x00\x00\x00\x00"
+    + b"not image data"
+    + b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 
 def test_a_picture_sent_with_a_message_is_kept_and_the_row_names_what_was_kept(
@@ -1560,7 +1570,9 @@ def test_a_picture_sent_with_a_message_is_kept_and_the_row_names_what_was_kept(
                         {
                             "piece": "image",
                             "data": base64.b64encode(A_TINY_PNG).decode("ascii"),
-                            "media_type": "image/png",
+                            # A client claim is only a hint. The bytes authoritatively say
+                            # PNG, and that canonical type is what every downstream path sees.
+                            "media_type": "image/jpeg",
                             "file_name": "screenshot.png",
                         },
                     ],
@@ -1593,6 +1605,81 @@ def test_a_picture_sent_with_a_message_is_kept_and_the_row_names_what_was_kept(
             assert served.status_code == 200
             assert served.headers["content-type"] == "image/png"
             assert served.content == A_TINY_PNG
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("payload", "claimed_media_type"),
+    [
+        (MALFORMED_CLAIMED_PNG, "image/png"),
+        (b"<svg xmlns='http://www.w3.org/2000/svg'/>", "image/svg+xml"),
+        (b"\x00\x00\x00\x18ftypheicunsupported", "image/heic"),
+    ],
+)
+def test_invalid_or_unsupported_picture_bytes_leave_no_row_or_managed_file(
+    harness: _Harness, payload: bytes, claimed_media_type: str
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            rejected = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [
+                        {"piece": "text", "text": "do not record this"},
+                        {
+                            "piece": "image",
+                            "data": base64.b64encode(A_TINY_PNG).decode("ascii"),
+                            "media_type": "image/png",
+                        },
+                        {
+                            "piece": "image",
+                            "data": base64.b64encode(payload).decode("ascii"),
+                            "media_type": claimed_media_type,
+                        },
+                    ],
+                    "sender_label": "owner",
+                },
+            )
+            assert rejected.status_code == 422
+            assert "unsupported or invalid" in rejected.json()["detail"]
+            assert (
+                await client.get("/api/conversation/conversations/c/events")
+            ).json() == {"events": []}
+            files = harness.db_path.parent / "files" / "conversations"
+            assert not list(files.glob("**/*"))
+
+    _run(exercise)
+
+
+def test_an_oversize_picture_leaves_no_row_or_managed_file(harness: _Harness) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            # This is rejected from its encoded length before the server allocates a
+            # second, decoded 10+ MiB copy.
+            too_large = "A" * (4 * ((10 * 1024 * 1024 + 2) // 3) + 1)
+            rejected = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [
+                        {
+                            "piece": "image",
+                            "data": too_large,
+                            "media_type": "image/png",
+                        }
+                    ],
+                    "sender_label": "owner",
+                },
+            )
+            assert rejected.status_code == 422
+            assert rejected.json()["detail"] == "a conversation image is too large"
+            assert (
+                await client.get("/api/conversation/conversations/c/events")
+            ).json() == {"events": []}
+            files = harness.db_path.parent / "files" / "conversations"
+            assert not list(files.glob("**/*"))
 
     _run(exercise)
 

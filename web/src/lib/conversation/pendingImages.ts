@@ -1,5 +1,15 @@
 import type { SentMessagePiece } from "./wire";
 
+export const MAX_CONVERSATION_IMAGE_BYTES = 10 * 1024 * 1024;
+export const CONVERSATION_IMAGE_MEDIA_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp"
+] as const;
+
+const conversationImageMediaTypes = new Set<string>(CONVERSATION_IMAGE_MEDIA_TYPES);
+
 export type PendingConversationImage = {
   id: number;
   fileName: string;
@@ -16,7 +26,10 @@ export type PendingImageIntake = {
 };
 
 export function isImageFile(file: File): boolean {
-  return file.type.toLowerCase().startsWith("image/");
+  return (
+    file.size <= MAX_CONVERSATION_IMAGE_BYTES
+    && conversationImageMediaTypes.has(file.type.toLowerCase())
+  );
 }
 
 function bytesAsBase64(bytes: Uint8Array): string {

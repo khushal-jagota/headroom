@@ -10,6 +10,7 @@ own record rather than from the route's report of itself.
 from __future__ import annotations
 
 import asyncio
+import base64
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -122,6 +123,34 @@ def test_the_first_message_makes_the_conversation_and_goes_into_it(tmp_path: Pat
             if observation.kind is InMemoryConversationObservationKind.prompt_delivered
         ]
         assert delivered == ["hello"]
+
+
+def test_an_invalid_first_image_makes_neither_conversation_prompt_nor_file(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+    malformed_png = b"\x89PNG\r\n\x1a\nnot a structurally valid png"
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/tickets/{ticket_id}/conversation/send",
+            json={
+                "conversation_id": None,
+                "content": [
+                    {
+                        "piece": "image",
+                        "data": base64.b64encode(malformed_png).decode("ascii"),
+                        "media_type": "image/png",
+                    }
+                ],
+                "sender_label": "owner",
+            },
+        )
+
+    assert response.status_code == 422
+    assert _conversation_id(db_path, ticket_id) is None
+    assert not list((db_path.parent / "files" / "conversations").glob("**/*"))
 
 
 def test_a_second_message_goes_into_the_conversation_the_first_one_made(
