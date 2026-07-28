@@ -27,6 +27,28 @@ class StageOwnershipMode(StrEnum):
     paired = "paired"
 
 
+@dataclass(frozen=True, slots=True)
+class SprintItemPriorityAnchor:
+    id: str
+    title: str
+    priority: Priority
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectPriorityAnchor:
+    id: str
+    name: str
+    priority: Priority | None
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedTicketPriorityAnchors:
+    """The authoritative placement context used when a Ticket is created."""
+
+    sprint_item: SprintItemPriorityAnchor | None
+    project: ProjectPriorityAnchor | None
+
+
 class TicketStatus(
     StrEnum
 ):  # durable state-of-control, written by data-layer transitions
@@ -108,7 +130,7 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     employee_launch_model: str
     title: str  # default ""
     kickoff_note: str  # default ""; proposed intake context / user guidance
-    priority: str | None  # Priority value; default P3
+    priority: str | None  # Explicit Priority value; omission resolves from placement
     deadline: str | None  # ISO date
     project: str | None  # legacy project name
     project_id: str | None
@@ -220,6 +242,7 @@ class Ticket:  # §3.3 — column names match exactly
     project_name: str | None
     sprint_item_id: str | None
     effective_sprint_id: str | None
+    resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose (R2)

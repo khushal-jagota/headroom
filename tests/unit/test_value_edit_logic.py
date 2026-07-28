@@ -19,6 +19,7 @@ from planner.tickets.contracts import (
     AtCap,
     FieldSlot,
     Proposal,
+    ResolvedTicketPriorityAnchors,
     StageOwnershipMode,
     Ticket,
     TicketFields,
@@ -53,6 +54,9 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         project_name=None,
         sprint_item_id=None,
         effective_sprint_id=None,
+        resolved_priority_anchors=ResolvedTicketPriorityAnchors(
+            sprint_item=None, project=None
+        ),
         recap="",
         ceiling=ceiling,
         at_cap=AtCap.propose,

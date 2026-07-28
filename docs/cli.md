@@ -57,7 +57,9 @@ generic Stage setter.
   the Worker type's registered default, and when it names a different backend
   `--employee-launch-model` has to say which model that backend runs the new Ticket's
   worker on — the Worker type's own model belongs to the Worker type's own backend.
-  `ticket list --stage`
+  When `--priority` is omitted, creation uses the parent Sprint Item priority, then an
+  assessed Project priority, then P3. An explicit `--priority P0|P1|P2|P3` overrides
+  that default. `ticket list --stage`
   compares the stored Stage directly. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
   or `project` / `project-id`). Sprint placement is a sprint command,
   not a ticket setter.

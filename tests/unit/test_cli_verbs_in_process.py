@@ -363,7 +363,16 @@ def test_ticket_create_sprint_item_parents_it(
 ) -> None:
     # --item -> --sprint-item: the option renamed; still parents the ticket under the item.
     iid = cli(
-        server, "sprint", "item", "create", "--title", "Item A", "--project", "Vylo"
+        server,
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        "Item A",
+        "--project",
+        "Vylo",
+        "--priority",
+        "P1",
     )["id"]
     tid = cli(
         server,
@@ -378,6 +387,12 @@ def test_ticket_create_sprint_item_parents_it(
     )["id"]
     detail = api.get(server, f"/api/tickets/{tid}")
     assert detail["sprint_item_id"] == iid
+    assert detail["priority"] == "P1"
+    assert detail["resolved_priority_anchors"]["sprint_item"] == {
+        "id": iid,
+        "title": "Item A",
+        "priority": "P1",
+    }
     assert [
         t["id"] for t in cli(server, "ticket", "list", "--sprint-item", iid)["tickets"]
     ] == [tid]

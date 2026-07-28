@@ -132,6 +132,18 @@ export type WorkerManagementDetail = {
   settings: WorkerManagementSettings;
 };
 
+export type ResolvedTicketPriorityAnchors = {
+  sprint_item: {
+    id: string;
+    title: string;
+    priority: string;
+  } | null;
+  project: {
+    id: string;
+    name: string;
+    priority: string | null;
+  } | null;
+};
 
 export type TicketDetail = {
   id: string;
@@ -150,6 +162,7 @@ export type TicketDetail = {
   project?: string | null;
   effective_sprint_id?: string | null;
   sprint_item_id?: string | null;
+  resolved_priority_anchors: ResolvedTicketPriorityAnchors;
   ticket_status?: string;
   backend_error: string | null;
   stage_ownership_overrides: Record<string, StageOwnershipMode>;

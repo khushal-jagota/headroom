@@ -61,6 +61,30 @@ def ticket_json(ticket: Ticket, now: int) -> JsonDict:
         "project": ticket.project_name,
         "sprint_item_id": ticket.sprint_item_id,
         "effective_sprint_id": ticket.effective_sprint_id,
+        "resolved_priority_anchors": {
+            "sprint_item": (
+                {
+                    "id": ticket.resolved_priority_anchors.sprint_item.id,
+                    "title": ticket.resolved_priority_anchors.sprint_item.title,
+                    "priority": ticket.resolved_priority_anchors.sprint_item.priority.value,
+                }
+                if ticket.resolved_priority_anchors.sprint_item is not None
+                else None
+            ),
+            "project": (
+                {
+                    "id": ticket.resolved_priority_anchors.project.id,
+                    "name": ticket.resolved_priority_anchors.project.name,
+                    "priority": (
+                        ticket.resolved_priority_anchors.project.priority.value
+                        if ticket.resolved_priority_anchors.project.priority is not None
+                        else None
+                    ),
+                }
+                if ticket.resolved_priority_anchors.project is not None
+                else None
+            ),
+        },
         "recap": ticket.recap,
         "ceiling": str(ticket.ceiling),
         "at_cap": ticket.at_cap.value,

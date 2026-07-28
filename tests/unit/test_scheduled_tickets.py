@@ -477,8 +477,8 @@ def test_scheduled_ticket_can_target_an_explicit_sprint_item(
     )
     tmp_db.execute(
         "INSERT INTO sprint_items "
-        "(id, title, project_id, sprint_id, created_at, updated_at) "
-        "VALUES ('si_target', 'Target', 'project_vylo', 'sp_current', 0, 0)"
+        "(id, title, priority, project_id, sprint_id, created_at, updated_at) "
+        "VALUES ('si_target', 'Target', 'P0', 'project_vylo', 'sp_current', 0, 0)"
     )
     _schedule(
         tmp_db,
@@ -500,6 +500,7 @@ def test_scheduled_ticket_can_target_an_explicit_sprint_item(
     assert ticket.sprint_item_id == "si_target"
     assert ticket.effective_sprint_id == "sp_current"
     assert ticket.project_id == "project_vylo"
+    assert ticket.priority is Priority.P3
 
 
 def test_schedule_placement_transitions_preserve_effective_project(

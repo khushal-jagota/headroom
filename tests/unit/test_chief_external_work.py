@@ -578,6 +578,7 @@ def test_external_create_and_reconcile_keep_the_parent_item_link(tmp_path: Path)
             conn,
             title="External item",
             project_id=project.id,
+            priority=Priority.P0,
             clock=RealClock(),
         )
     finally:
@@ -594,9 +595,35 @@ def test_external_create_and_reconcile_keep_the_parent_item_link(tmp_path: Path)
             },
             headers=_CHIEF,
         )
+        overridden_response = client.post(
+            "/api/chief/tickets/from-external-work",
+            json={
+                "title": "Parented external override",
+                "worker_type": "coding",
+                "sprint_item_id": item.id,
+                "priority": "P1",
+                **_external_body("needs_success"),
+            },
+            headers=_CHIEF,
+        )
     assert created_response.status_code == 200, created_response.json()
+    assert overridden_response.status_code == 200, overridden_response.json()
     ticket_id = created_response.json()["id"]
     assert created_response.json()["sprint_item_id"] == item.id
+    assert created_response.json()["priority"] == "P0"
+    assert overridden_response.json()["priority"] == "P1"
+    assert created_response.json()["resolved_priority_anchors"] == {
+        "sprint_item": {
+            "id": item.id,
+            "title": "External item",
+            "priority": "P0",
+        },
+        "project": {
+            "id": project.id,
+            "name": "External project",
+            "priority": "P2",
+        },
+    }
 
     conn = connect(str(db_path))
     try:
