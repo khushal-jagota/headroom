@@ -27,7 +27,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "scheduled_ticket_creation"
+HEAD_REVISION = "day_midday_reconciliation"
 
 # How many schema objects a current database holds: the previous head's nineteen, plus
 # the schedule and occurrence tables and their two operational indexes.
@@ -175,6 +175,11 @@ def test_fresh_database_is_built_and_marked_at_the_current_revision(tmp_path: Pa
     create_schema(conn)
 
     assert _revision(conn) == HEAD_REVISION
+    day_columns = {
+        str(row["name"]): str(row["dflt_value"])
+        for row in conn.execute("PRAGMA table_info(days)")
+    }
+    assert day_columns["midday_reconciliation"] == "''"
     assert len(_schema_objects(conn)) == CURRENT_SCHEMA_OBJECT_COUNT
     # Carried so a fresh database is not distinguishable from one the old ladder built.
     # An older checkout reads this marker to decide what it still has to do.
@@ -292,6 +297,9 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(tmp_path: 
     # Two rebuilds dropped and recreated the table the children hang off. With foreign keys
     # enforced those drops would have emptied both of these and said nothing about it.
     assert conn.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT midday_reconciliation FROM days WHERE id = 'day_2026-07-04'"
+    ).fetchone()[0] == ""
     assert conn.execute("SELECT count(*) FROM links").fetchone()[0] == 4
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     # Columns, outgoing foreign keys and indexes, including the unique one on alias: a

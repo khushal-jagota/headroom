@@ -7,7 +7,7 @@ child tickets and blocking links.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import date
 from typing import NamedTuple, cast
@@ -135,6 +135,7 @@ def create_sprint(
     supports: str = "",
     premortem: str = "",
     clock: Clock,
+    admit: Callable[[], None] | None = None,
 ) -> Sprint:
     if not name:
         raise PlannerError(ErrorCode.validation, "sprint name is required", {})
@@ -147,6 +148,8 @@ def create_sprint(
     now = clock.now_unix()
     sprint_id = new_id(ID_PREFIXES["sprint"])
     with _tx(conn):
+        if admit is not None:
+            admit()
         existing = [
             DateRange(id=r["id"], date_start=r["date_start"], date_end=r["date_end"])
             for r in conn.execute("SELECT id, date_start, date_end FROM sprints")
@@ -198,6 +201,83 @@ def update_sprint_field(
             f"UPDATE sprints SET {field} = ?, updated_at = ? WHERE id = ?",
             (value, now, sprint_id),
         )
+    return _load_sprint(conn, sprint_id)
+
+
+def update_sprint(
+    conn: sqlite3.Connection,
+    sprint_id: str,
+    *,
+    text_edits: dict[str, str],
+    set_dates: bool,
+    date_start: str | None,
+    date_end: str | None,
+    clock: Clock,
+    admit: Callable[[], None] | None = None,
+) -> Sprint:
+    """Validate and apply one compound Sprint patch under one write lock."""
+    invalid_fields = sorted(set(text_edits) - _SPRINT_TEXT_FIELDS)
+    if invalid_fields:
+        raise PlannerError(
+            ErrorCode.validation,
+            "field is not an editable sprint text field",
+            {"field": invalid_fields[0]},
+        )
+    now = clock.now_unix()
+    with _tx(conn):
+        if admit is not None:
+            admit()
+        sprint = _load_sprint(conn, sprint_id)
+        new_start = date_start if date_start is not None else sprint.date_start
+        new_end = date_end if date_end is not None else sprint.date_end
+        if set_dates:
+            for label, value in (("date_start", new_start), ("date_end", new_end)):
+                try:
+                    date.fromisoformat(value)
+                except ValueError as exc:
+                    raise PlannerError(
+                        ErrorCode.validation, f"invalid {label}", {label: value}
+                    ) from exc
+            if new_start > new_end:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "date_start must not be after date_end",
+                    {"date_start": new_start, "date_end": new_end},
+                )
+            others = [
+                DateRange(
+                    id=str(row["id"]),
+                    date_start=str(row["date_start"]),
+                    date_end=str(row["date_end"]),
+                )
+                for row in conn.execute(
+                    "SELECT id, date_start, date_end FROM sprints WHERE id != ?",
+                    (sprint_id,),
+                )
+            ]
+            conflict = find_overlap(new_start, new_end, others)
+            if conflict is not None:
+                raise PlannerError(
+                    ErrorCode.sprint_overlap,
+                    "sprint dates overlap",
+                    {
+                        "conflict_id": conflict,
+                        "date_start": new_start,
+                        "date_end": new_end,
+                    },
+                )
+
+        assignments = list(text_edits)
+        values: list[str | int] = [text_edits[field] for field in assignments]
+        if set_dates:
+            assignments.extend(("date_start", "date_end"))
+            values.extend((new_start, new_end))
+        if assignments:
+            set_clause = ", ".join(f"{field} = ?" for field in assignments)
+            conn.execute(
+                f"UPDATE sprints SET {set_clause}, updated_at = ? WHERE id = ?",
+                (*values, now, sprint_id),
+            )
     return _load_sprint(conn, sprint_id)
 
 
@@ -264,6 +344,15 @@ def create_item(
     item_id = new_id(ID_PREFIXES["sprint_item"])
     now = clock.now_unix()
     with _tx(conn):
+        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
+            )
+        if (
+            sprint_id is not None
+            and conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone() is None
+        ):
+            raise PlannerError(ErrorCode.not_found, "sprint not found", {"id": sprint_id})
         conn.execute(
             "INSERT INTO sprint_items ("
             "id, title, body, priority, deadline, project_id, sprint_id, "
@@ -356,6 +445,65 @@ def assign_item_sprint(
             "UPDATE sprint_items SET sprint_id = ?, updated_at = ? WHERE id = ?",
             (sprint_id, now, item_id),
         )
+    return _load_item(conn, item_id)
+
+
+def update_item(
+    conn: sqlite3.Connection,
+    item_id: str,
+    *,
+    edits: dict[str, str | None],
+    set_sprint: bool,
+    sprint_id: str | None,
+    clock: Clock,
+    admit: Callable[[], None] | None = None,
+) -> SprintItem:
+    """Validate references and apply one compound Sprint Item patch atomically."""
+    invalid_fields = sorted(set(edits) - _ITEM_PLAIN_FIELDS)
+    if invalid_fields:
+        raise PlannerError(
+            ErrorCode.validation,
+            "field is not an editable item field",
+            {"field": invalid_fields[0]},
+        )
+    stored_edits = dict(edits)
+    if "priority" in stored_edits:
+        raw_priority = stored_edits["priority"]
+        if raw_priority is None:
+            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": None})
+        try:
+            stored_edits["priority"] = Priority(raw_priority).value
+        except ValueError as exc:
+            raise PlannerError(
+                ErrorCode.validation, "invalid priority", {"value": raw_priority}
+            ) from exc
+    now = clock.now_unix()
+    with _tx(conn):
+        if admit is not None:
+            admit()
+        _load_item(conn, item_id)
+        project_id = stored_edits.get("project_id")
+        if "project_id" in stored_edits and (
+            project_id is None
+            or conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None
+        ):
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
+            )
+        if set_sprint and sprint_id is not None:
+            _load_sprint(conn, sprint_id)
+
+        assignments = list(stored_edits)
+        values: list[str | int | None] = [stored_edits[field] for field in assignments]
+        if set_sprint:
+            assignments.append("sprint_id")
+            values.append(sprint_id)
+        if assignments:
+            set_clause = ", ".join(f"{field} = ?" for field in assignments)
+            conn.execute(
+                f"UPDATE sprint_items SET {set_clause}, updated_at = ? WHERE id = ?",
+                (*values, now, item_id),
+            )
     return _load_item(conn, item_id)
 
 

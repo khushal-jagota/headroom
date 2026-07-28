@@ -1002,7 +1002,18 @@
                 A missing <code>X-Plan-Actor</code> means unattributed, not human.
                 <code>chief</code> is explicit; every other non-empty actor is an
                 attributed non-Chief agent. Direct-only routes allow unattributed and
-                Chief requests while rejecting worker agents.
+                Chief requests while rejecting worker agents. The three planning
+                Workers are a narrow exception: <code>X-Plan-Ticket-ID</code> resolves
+                the stored Ticket Worker type, and the server admits only its exact
+                <code>planning-day</code>, <code>planning-midday-check</code>, or
+                <code>planning-sprint</code> capability. Missing, unknown, or
+                nonmatching claims fail closed.
+              </p>
+              <p>
+                The CLI sends <code>PLAN_TICKET_ID</code> beside the actor as a truthful
+                local process claim. These headers are not credentials or cryptographic
+                authentication. A Ticket claim narrows a worker's authority; it never
+                turns another actor into a worker.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/cli/main.py</code>,

@@ -233,9 +233,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
-        backend_error=(
-            str(row["backend_error"]) if row["backend_error"] is not None else None
-        ),
+        backend_error=(str(row["backend_error"]) if row["backend_error"] is not None else None),
         stage_ownership_overrides=overrides,
         default_stage_ownership_mode=default_ownership,
         effective_stage_ownership_mode=effective_ownership,
@@ -247,9 +245,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         worker_type=worker_type,
         employee_backend=str(row["employee_backend"]),
         employee_launch_model=(
-            str(row["employee_launch_model"])
-            if row["employee_launch_model"] is not None
-            else None
+            str(row["employee_launch_model"]) if row["employee_launch_model"] is not None else None
         ),
         employee_launch_reasoning_effort=(
             str(row["employee_launch_reasoning_effort"])
@@ -356,9 +352,7 @@ def settle_blocked_standin(conn: sqlite3.Connection, ticket_id: str, now: int) -
     writes only when the value actually changes, so a Ticket that stays blocked because
     another live blocker remains writes nothing.
     """
-    row = conn.execute(
-        "SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)
-    ).fetchone()
+    row = conn.execute("SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
     if row is None:
         return
     current = TicketStatus(str(row["ticket_status"]))
@@ -509,9 +503,7 @@ def _entered_stage_status_for_ticket(
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
-    entered = (
-        TicketStatus.user if ownership_mode is StageOwnershipMode.user else TicketStatus.empty
-    )
+    entered = TicketStatus.user if ownership_mode is StageOwnershipMode.user else TicketStatus.empty
     return _blocked_standin(conn, ticket.id, entered)
 
 
@@ -778,9 +770,7 @@ def create_ticket(
         default_model=launch_defaults.employee_launch_model,
         default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
         employee_backend=require_conversation_backend_key(
-            employee_backend
-            if employee_backend is not None
-            else launch_defaults.employee_backend
+            employee_backend if employee_backend is not None else launch_defaults.employee_backend
         ),
         employee_launch_model=employee_launch_model,
     )
@@ -894,9 +884,7 @@ def create_ticket_from_external_work(
         default_model=launch_defaults.employee_launch_model,
         default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
         employee_backend=require_conversation_backend_key(
-            employee_backend
-            if employee_backend is not None
-            else launch_defaults.employee_backend
+            employee_backend if employee_backend is not None else launch_defaults.employee_backend
         ),
         employee_launch_model=employee_launch_model,
     )
@@ -1127,9 +1115,7 @@ def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return _load_ticket(conn, ticket_id)
 
 
-def read_ticket_by_conversation_id(
-    conn: sqlite3.Connection, conversation_id: str
-) -> Ticket:
+def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: str) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
     rows = conn.execute(
         "SELECT tickets.*, projects.name AS project_name "
@@ -1589,8 +1575,8 @@ def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, n
     """Pause a Worker-owned Ticket for explicit human help."""
     admission.require_worker_actor(actor, "request user help")
     with _txn(conn):
-        ticket, _worker_type_definition = (
-            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
+        ticket, _worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
+            conn, ticket_id
         )
         if ticket.stage in ("done", "dropped"):
             raise PlannerError(
@@ -1926,9 +1912,17 @@ def write_recap(
 
 
 def assign_ticket_to_sprint_item(
-    conn: sqlite3.Connection, ticket_id: str, *, sprint_item_id: str, actor: str, now: int
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    sprint_item_id: str,
+    actor: str,
+    now: int,
+    admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
+        if admit is not None:
+            admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         if (
             conn.execute("SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)).fetchone()
@@ -1943,6 +1937,8 @@ def assign_ticket_to_sprint_item(
                 "ticket is already assigned to a sprint item",
                 {"ticket_id": ticket_id, "sprint_item_id": ticket.sprint_item_id},
             )
+        if ticket.sprint_item_id == sprint_item_id:
+            return ticket
         conn.execute(
             "UPDATE tickets SET sprint_item_id = ?, sprint_id = NULL, project_id = NULL, "
             "updated_at = ? WHERE id = ?",
@@ -1952,9 +1948,17 @@ def assign_ticket_to_sprint_item(
 
 
 def remove_ticket_from_sprint_item(
-    conn: sqlite3.Connection, ticket_id: str, *, sprint_item_id: str, actor: str, now: int
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    sprint_item_id: str,
+    actor: str,
+    now: int,
+    admit: Callable[[], None] | None = None,
 ) -> Ticket:
     with _txn(conn):
+        if admit is not None:
+            admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
             "SELECT sprint_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
@@ -1963,16 +1967,11 @@ def remove_ticket_from_sprint_item(
             raise PlannerError(
                 ErrorCode.not_found, "sprint item not found", {"sprint_item_id": sprint_item_id}
             )
+        # Removal is a compare-and-clear operation. A retry after the first removal is a
+        # no-op, and a stale retry after another request moved the ticket elsewhere must
+        # not detach that newer membership.
         if ticket.sprint_item_id != sprint_item_id:
-            raise PlannerError(
-                ErrorCode.validation,
-                "ticket is not assigned to this sprint item",
-                {
-                    "ticket_id": ticket_id,
-                    "sprint_item_id": sprint_item_id,
-                    "actual_sprint_item_id": ticket.sprint_item_id,
-                },
-            )
+            return ticket
         parent_sprint_id: str | None = item["sprint_id"]
         conn.execute(
             "UPDATE tickets SET sprint_item_id = NULL, sprint_id = ?, updated_at = ? WHERE id = ?",

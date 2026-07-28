@@ -51,6 +51,22 @@ def _ticket(db_path: Path) -> str:
         conn.close()
 
 
+def _planning_ticket(db_path: Path, worker_type: str) -> str:
+    conn = connect(str(db_path))
+    try:
+        ticket = create_ticket(
+            conn,
+            worker_type=worker_type,
+            title=f"{worker_type} fixture",
+            actor="human",
+            now=0,
+            title_max_chars=200,
+        )
+    finally:
+        conn.close()
+    return ticket.id
+
+
 def test_day_add_and_removal_are_idempotent_and_land_on_the_day(
     tmp_path: Path,
 ) -> None:
@@ -71,3 +87,73 @@ def test_day_add_and_removal_are_idempotent_and_land_on_the_day(
     assert duplicate.json()["tickets"][0]["id"] == ticket_id
     assert removed.json()["tickets"] == []
     assert absent.json()["tickets"] == []
+
+
+def test_day_planning_workers_receive_only_their_exact_fields(
+    tmp_path: Path,
+    planning_worker_registry: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    day_ticket = _planning_ticket(db_path, "planning-day")
+    midday_ticket = _planning_ticket(db_path, "planning-midday-check")
+
+    def headers(ticket_id: str) -> dict[str, str]:
+        return {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id}
+
+    with TestClient(app) as client:
+        morning = client.patch(
+            "/api/day/2026-07-28",
+            json={"focus": "Ship it", "brief_take": "The morning plan."},
+            headers=headers(day_ticket),
+        )
+        midday = client.patch(
+            "/api/day/2026-07-28",
+            json={"midday_reconciliation": "One task moved; the bet still holds."},
+            headers=headers(midday_ticket),
+        )
+        day_cannot_reconcile = client.patch(
+            "/api/day/2026-07-28",
+            json={"midday_reconciliation": "Wrong worker."},
+            headers=headers(day_ticket),
+        )
+        midday_cannot_rewrite_morning = client.patch(
+            "/api/day/2026-07-28",
+            json={"focus": "Rewrite"},
+            headers=headers(midday_ticket),
+        )
+        midday_cannot_write_notes = client.patch(
+            "/api/day/2026-07-28",
+            json={"notes": "Out of scope"},
+            headers=headers(midday_ticket),
+        )
+
+    assert morning.status_code == 200, morning.json()
+    assert midday.status_code == 200, midday.json()
+    assert midday.json()["focus"] == "Ship it"
+    assert midday.json()["midday_reconciliation"] == "One task moved; the bet still holds."
+    for denied in (
+        day_cannot_reconcile,
+        midday_cannot_rewrite_morning,
+        midday_cannot_write_notes,
+    ):
+        assert denied.status_code == 400
+        assert denied.json()["error"]["code"] == "agent_forbidden"
+
+
+def test_invalid_compound_day_patch_changes_nothing(tmp_path: Path) -> None:
+    app, _db_path = _make_app(tmp_path)
+    with TestClient(app) as client:
+        seeded = client.patch(
+            "/api/day/2026-07-28",
+            json={"focus": "Original", "watchout": "Original risk"},
+        )
+        invalid = client.patch(
+            "/api/day/2026-07-28",
+            json={"focus": "Must roll back", "watchout": 42},
+        )
+        readback = client.get("/api/day/2026-07-28")
+
+    assert seeded.status_code == 200
+    assert invalid.status_code == 400
+    assert readback.json()["focus"] == "Original"
+    assert readback.json()["watchout"] == "Original risk"

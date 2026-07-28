@@ -16,8 +16,9 @@ def materialize_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Non
     if conn.execute("SELECT 1 FROM days WHERE id = ?", (day_id,)).fetchone() is not None:
         return
     conn.execute(
-        "INSERT INTO days (id, focus, brief_take, watchout, if_today_lands, notes, "
-        "created_at, updated_at) VALUES (?, '', '', '', '', '', ?, ?)",
+        "INSERT INTO days (id, focus, brief_take, watchout, if_today_lands, "
+        "midday_reconciliation, notes, created_at, updated_at) "
+        "VALUES (?, '', '', '', '', '', '', ?, ?)",
         (day_id, now_unix, now_unix),
     )
 
@@ -27,7 +28,7 @@ def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
     SELECTs the row and builds a Day."""
     materialize_day(conn, day_id, now_unix)
     row = conn.execute(
-        "SELECT id, focus, brief_take, watchout, if_today_lands, notes, "
+        "SELECT id, focus, brief_take, watchout, if_today_lands, midday_reconciliation, notes, "
         "created_at, updated_at "
         "FROM days WHERE id = ?",
         (day_id,),
@@ -39,6 +40,7 @@ def read_day(conn: sqlite3.Connection, day_id: str, now_unix: int) -> Day:
         brief_take=row["brief_take"],
         watchout=row["watchout"],
         if_today_lands=row["if_today_lands"],
+        midday_reconciliation=row["midday_reconciliation"],
         notes=row["notes"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -111,7 +113,14 @@ def remove_day_ticket(
 # The direct-editable day text fields (the four overview fields + notes). The api
 # validates the field name against this set before calling set_day_field, so the
 # column name is safe to interpolate.
-DAY_TEXT_FIELDS = ("focus", "brief_take", "watchout", "if_today_lands", "notes")
+DAY_TEXT_FIELDS = (
+    "focus",
+    "brief_take",
+    "watchout",
+    "if_today_lands",
+    "midday_reconciliation",
+    "notes",
+)
 
 
 def set_day_field(
@@ -126,4 +135,3 @@ def set_day_field(
     conn.execute(
         f"UPDATE days SET {field} = ?, updated_at = ? WHERE id = ?", (value, now_unix, day_id)
     )
-

@@ -84,11 +84,14 @@ def cli_app(
             _server: ServerHandle,
             *args: str,
             ticket_id: str | None = None,
+            actor: str | None = None,
             stdin: str | None = None,
         ) -> JsonObject:
             env = {"PLAN_SERVER_URL": server.base}
             if ticket_id is not None:
                 env["PLAN_TICKET_ID"] = ticket_id
+            if actor is not None:
+                env["PLAN_ACTOR"] = actor
             result = CliRunner().invoke(cli_main, [*args, "--json"], input=stdin, env=env)
             assert result.exit_code == 0, result.output
             return cast(JsonObject, json.loads(result.stdout))
@@ -111,6 +114,110 @@ def cli(
 @pytest.fixture
 def api(cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper]) -> ApiHelper:
     return cli_app[2]
+
+
+def test_day_cli_round_trips_midday_reconciliation(
+    server: ServerHandle, cli: Callable[..., JsonObject]
+) -> None:
+    updated = cli(
+        server,
+        "day",
+        "set",
+        "midday-reconciliation",
+        "--date",
+        "2026-07-04",
+        "--value",
+        "The morning bet still holds.",
+    )
+    shown = cli(server, "day", "show", "--date", "2026-07-04")
+
+    assert updated["midday_reconciliation"] == "The morning bet still holds."
+    assert shown["midday_reconciliation"] == "The morning bet still holds."
+
+
+def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
+    planning_worker_registry: None,
+    server: ServerHandle,
+    cli: Callable[..., JsonObject],
+) -> None:
+    day_ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "planning-day",
+        "--title",
+        "Plan the day",
+    )
+    midday_ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "planning-midday-check",
+        "--title",
+        "Reconcile midday",
+    )
+    sprint_ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "planning-sprint",
+        "--title",
+        "Plan the sprint",
+    )
+
+    day = cli(
+        server,
+        "day",
+        "set",
+        "focus",
+        "--date",
+        "2026-07-04",
+        "--value",
+        "Ship the planning boundary.",
+        ticket_id=day_ticket["id"],
+        actor="worker",
+    )
+    midday = cli(
+        server,
+        "day",
+        "set",
+        "midday-reconciliation",
+        "--date",
+        "2026-07-04",
+        "--value",
+        "The morning bet still holds.",
+        ticket_id=midday_ticket["id"],
+        actor="worker",
+    )
+    sprint = cli(
+        server,
+        "sprint",
+        "create",
+        "--name",
+        "Planning proof",
+        "--date-start",
+        "2026-07-06",
+        "--date-end",
+        "2026-07-19",
+        "--limiting-factor",
+        "No durable plan.",
+        "--primary-bet",
+        "Use one canonical sprint.",
+        "--supports",
+        "Keep it small.",
+        "--premortem",
+        "The plan drifts.",
+        ticket_id=sprint_ticket["id"],
+        actor="worker",
+    )
+    sprint_readback = cli(server, "sprint", "show", sprint["id"])
+
+    assert day["focus"] == "Ship the planning boundary."
+    assert midday["midday_reconciliation"] == "The morning bet still holds."
+    assert sprint_readback["primary_bet"] == "Use one canonical sprint."
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(

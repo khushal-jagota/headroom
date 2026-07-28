@@ -73,6 +73,22 @@ def _ticket(db_path: Path) -> str:
     return ticket.id
 
 
+def _planning_headers(db_path: Path, worker_type: str) -> dict[str, str]:
+    conn = connect(str(db_path))
+    try:
+        ticket = create_ticket(
+            conn,
+            title=f"{worker_type} fixture",
+            actor="unattributed",
+            now=0,
+            title_max_chars=200,
+            worker_type=worker_type,
+        )
+    finally:
+        conn.close()
+    return {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket.id}
+
+
 def _item(db_path: Path) -> str:
     conn = connect(str(db_path))
     try:
@@ -327,6 +343,58 @@ def test_patch_item_agent_plain_field_or_sprint_is_forbidden(tmp_path: Path) -> 
     assert _col(db_path, "sprint_items", iid, "sprint_id") is None
 
 
+def test_planning_sprint_worker_can_shape_item_and_sprint_but_not_delete(
+    tmp_path: Path,
+    planning_worker_registry: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    headers = _planning_headers(db_path, "planning-sprint")
+    wrong_headers = _planning_headers(db_path, "planning-day")
+    iid = _item(db_path)
+    sid = _sprint(db_path)
+    child = _ticket(db_path)
+    with TestClient(app) as client:
+        item = client.patch(
+            f"/api/items/{iid}",
+            json={"title": "Planned outcome", "priority": "P1", "sprint_id": sid},
+            headers=headers,
+        )
+        sprint = client.patch(
+            f"/api/sprints/{sid}",
+            json={"primary_bet": "One clear bet", "date_end": "2026-07-15"},
+            headers=headers,
+        )
+        created_sprint = client.post(
+            "/api/sprints",
+            json={
+                "name": "Next",
+                "date_start": "2026-07-16",
+                "date_end": "2026-07-29",
+            },
+            headers=headers,
+        )
+        populated = client.post(
+            f"/api/items/{iid}/tickets",
+            json={"ticket_id": child},
+            headers=headers,
+        )
+        wrong = client.patch(
+            f"/api/sprints/{sid}", json={"name": "Wrong worker"}, headers=wrong_headers
+        )
+        deleted = client.delete(f"/api/items/{iid}", headers=headers)
+
+    assert item.status_code == 200, item.json()
+    assert item.json()["title"] == "Planned outcome"
+    assert item.json()["sprint_id"] == sid
+    assert sprint.status_code == 200, sprint.json()
+    assert sprint.json()["primary_bet"] == "One clear bet"
+    assert sprint.json()["date_end"] == "2026-07-15"
+    assert created_sprint.status_code == 200, created_sprint.json()
+    assert populated.status_code == 200, populated.json()
+    assert wrong.json()["error"]["code"] == "agent_forbidden"
+    assert deleted.json()["error"]["code"] == "agent_forbidden"
+
+
 def test_delete_item_is_direct_only_and_returns_affected_resources(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     sprint_id = _sprint(db_path)
@@ -396,6 +464,30 @@ def test_patch_item_rejects_bad_field_types(tmp_path: Path) -> None:
     assert _col(db_path, "sprint_items", iid, "sprint_id") is None
 
 
+def test_invalid_compound_item_and_sprint_patches_roll_back_every_field(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    iid = _item(db_path)
+    sid = _sprint(db_path)
+    with TestClient(app) as client:
+        item = client.patch(
+            f"/api/items/{iid}",
+            json={"title": "Must not land", "sprint_id": "sp_missing"},
+        )
+        sprint = client.patch(
+            f"/api/sprints/{sid}",
+            json={"name": "Must not land", "date_end": "not-a-date"},
+        )
+
+    assert item.status_code == 404
+    assert sprint.status_code == 400
+    assert _col(db_path, "sprint_items", iid, "title") == "Item."
+    assert _col(db_path, "sprint_items", iid, "sprint_id") is None
+    assert _col(db_path, "sprints", sid, "name") == "S1"
+    assert _col(db_path, "sprints", sid, "date_end") == "2026-07-14"
+
+
 def test_item_ticket_routes_parent_and_unparent_existing_ticket(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     sid = _sprint(db_path)
@@ -412,6 +504,27 @@ def test_item_ticket_routes_parent_and_unparent_existing_ticket(tmp_path: Path) 
     assert _col(db_path, "tickets", tid, "sprint_item_id") is None
     assert _col(db_path, "tickets", tid, "sprint_id") == sid
     assert _col(db_path, "tickets", tid, "project_id") is None
+
+
+def test_item_membership_retries_do_not_detach_a_newer_move(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    sid = _sprint(db_path)
+    first = _item_in_sprint(db_path, sid)
+    second = _item_in_sprint(db_path, sid)
+    tid = _ticket(db_path)
+    with TestClient(app) as client:
+        for _ in range(2):
+            added = client.post(f"/api/items/{first}/tickets", json={"ticket_id": tid})
+            assert added.status_code == 200
+        for _ in range(2):
+            removed = client.delete(f"/api/items/{first}/tickets/{tid}")
+            assert removed.status_code == 200
+        moved = client.post(f"/api/items/{second}/tickets", json={"ticket_id": tid})
+        stale_remove = client.delete(f"/api/items/{first}/tickets/{tid}")
+
+    assert moved.status_code == 200
+    assert stale_remove.status_code == 200
+    assert _col(db_path, "tickets", tid, "sprint_item_id") == second
 
 
 def test_item_ticket_routes_are_direct_only(tmp_path: Path) -> None:
