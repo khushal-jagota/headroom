@@ -22,17 +22,19 @@ from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
 
-# Workspace groups by the Ticket's own status, except for done and runnable empty
-# Closeout Tickets. This is the full display order, top to bottom.
+# Workspace groups by the Ticket's own status, except for done, runnable empty
+# Closeout Tickets, and Kickoff approvals. This is the full display order, top to
+# bottom.
 BUCKET_ORDER = [
     "errored",
     "needs_user",
     "waiting_to_closeout",
-    "empty",
     "user",
     "paired",
     "agent",
+    "waiting_for_kickoff",
     "awaiting_approval",
+    "empty",
     "blocked",
     "done",
 ]
@@ -42,11 +44,12 @@ BUCKET_LABELS = {
     "errored": "Errored",
     "needs_user": "Needs user",
     "waiting_to_closeout": "Waiting to Closeout",
-    "empty": "Empty",
     "user": "User",
     "paired": "Paired",
     "agent": "Agent",
+    "waiting_for_kickoff": "Waiting for Kickoff",
     "awaiting_approval": "Awaiting approval",
+    "empty": "Empty",
     "blocked": "Blocked",
     "done": "Done",
 }
@@ -638,7 +641,8 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         assert is_open is (key not in ("blocked", "done")), key
 
     # Membership: exactly one group per ticket. Runnable empty Closeout Tickets
-    # get the one semantic group outside their status.
+    # get the server-projected semantic group outside their status, and a Kickoff
+    # approval is separated from approval at every later gated field.
     memberships = {
         errored: "errored",
         needs_user_ticket: "needs_user",
@@ -650,8 +654,7 @@ def test_workspace_buckets_render_membership_in_canonical_order(
         closing: "waiting_to_closeout",
         closing_later_stop: "waiting_to_closeout",
         closing_stopped: "empty",
-        # ...and an awaiting-approval Ticket is one group whatever its stage.
-        kickoff_awaiting: "awaiting_approval",
+        kickoff_awaiting: "waiting_for_kickoff",
         approval: "awaiting_approval",
         user_owned: "user",
         paired: "paired",

@@ -29,15 +29,16 @@ One screen per part of the system:
   that item's project; a standalone ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
   tickets into collapsible boxed groups in a fixed order that puts what needs the user
-  first: Errored, Needs user, Waiting to Closeout, Empty, User, Paired, Agent, Awaiting
-  approval, Blocked, Done. A group with no tickets is not rendered; Blocked and Done
-  start collapsed. Every ticket sits in exactly one group. A done ticket goes to Done.
-  A ticket resting at Closeout with an `empty` status goes to Waiting to Closeout when
-  its current Closeout step is still runnable; Stop at its current Closeout ceiling
-  keeps it under Empty, while Stop at a later ceiling does not. Every other ticket goes
-  to its own status. Unknown statuses still get their own group at the end rather than
-  being dropped. Rows carry only the ticket title and one mark, sorted by recent
-  activity.
+  first: Errored, Needs user, Waiting to Closeout, User, Paired, Agent, Waiting for
+  Kickoff, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
+  rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group.
+  A done ticket goes to Done. A ticket resting at Closeout with an `empty` status goes
+  to Waiting to Closeout when its current Closeout step is still runnable; Stop at its
+  current Closeout ceiling keeps it under Empty, while Stop at a later ceiling does
+  not. An approval at the Kickoff gated field goes to Waiting for Kickoff; approval at
+  every later field stays under Awaiting approval. Every other ticket goes to its own
+  status. Unknown statuses still get their own group at the end rather than being
+  dropped. Rows carry only the ticket title and one mark, sorted by recent activity.
 
   The mark carries three signals in one order of precedence, and each is one
   system's own fact rather than a blend of several. A **pure white dot** means the

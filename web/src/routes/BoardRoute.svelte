@@ -185,11 +185,18 @@
   }
 
   // Every ticket sits in exactly one group: Done wins, a resting Closeout ticket
-  // that the server says is runnable gets its one semantic exception, and every
-  // other ticket uses its own status.
+  // that the server says is runnable gets its server-projected semantic exception,
+  // and Kickoff approvals use the existing gating field to split from later
+  // approvals. Every other ticket uses its own status.
   function groupKeyFor(card: Record<string, any>): string {
     if (card.is_done) return "done";
     if (card.waiting_to_closeout) return "waiting_to_closeout";
+    if (
+      card.ticket_status === "awaiting_approval" &&
+      card.gating_field === "kickoff"
+    ) {
+      return "waiting_for_kickoff";
+    }
     return String(card.ticket_status);
   }
 
@@ -200,18 +207,20 @@
     "errored",
     "needs_user",
     "waiting_to_closeout",
-    "empty",
     "user",
     "paired",
     "agent",
+    "waiting_for_kickoff",
     "awaiting_approval",
+    "empty",
     "blocked",
     "done"
   ];
 
   const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set(["blocked", "done"]);
   const GROUP_LABELS: Readonly<Record<string, string>> = {
-    waiting_to_closeout: "Waiting to Closeout"
+    waiting_to_closeout: "Waiting to Closeout",
+    waiting_for_kickoff: "Waiting for Kickoff"
   };
 
   type GroupSection = {
