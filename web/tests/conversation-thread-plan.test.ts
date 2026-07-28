@@ -4,7 +4,11 @@ import {
   emptyConversationFeed,
   feedWithCommittedEvents
 } from "../src/lib/conversation/feed";
-import { threadItems, transcriptRows } from "../src/lib/conversation/transcript";
+import { transcriptRows } from "../src/lib/conversation/transcript";
+import {
+  threadItems,
+  type ThreadItem
+} from "../src/lib/conversation/threadLayout";
 import type { ConversationEvent } from "../src/lib/conversation/wire";
 import {
   agentMessageEvent,
@@ -13,7 +17,6 @@ import {
   turnEndedEvent
 } from "./support/conversationEvents";
 
-type ThreadItem = ReturnType<typeof threadItems>[number];
 type TurnItem = Extract<ThreadItem, { kind: "turn" }>;
 
 function threadFrom(events: readonly ConversationEvent[]): {

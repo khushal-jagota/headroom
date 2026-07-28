@@ -9,13 +9,16 @@
   import MessagePieces from "./MessagePieces.svelte";
   import TurnAnchor from "./TurnAnchor.svelte";
   import WorkGroup from "./WorkGroup.svelte";
-  import type { ThreadItem, TranscriptRow } from "../../lib/conversation/transcript";
+  import type { TranscriptRow } from "../../lib/conversation/transcript";
   import { readableConversationDetail } from "../../lib/conversation/conversationDetail";
+  import {
+    threadItems,
+    type ThreadItem
+  } from "../../lib/conversation/threadLayout";
   import {
     askDeadSentence,
     CONTEXT_COMPACTED_SENTENCE,
     promptLabelFor,
-    threadItems,
     turnEndingSentence,
     PROMPT_DISCARDED_SENTENCE,
     TURN_STOPPED_SENTENCE

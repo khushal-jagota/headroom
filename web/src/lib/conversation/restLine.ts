@@ -19,13 +19,13 @@ import {
   liveAskFrom,
   planProgressSentence,
   promptLabelFor,
-  threadItems,
   turnEndingSentence,
   workingSentence,
   PROMPT_DISCARDED_SENTENCE,
   TURN_STOPPED_SENTENCE
 } from "./transcript";
-import type { ThreadItem, ToolCallRow, TranscriptRow } from "./transcript";
+import type { ToolCallRow, TranscriptRow } from "./transcript";
+import { threadItems, type ThreadItem } from "./threadLayout";
 import { presentToolCall } from "./toolCallPresentation";
 import { messageContentText } from "./wire";
 
