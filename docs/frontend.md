@@ -91,21 +91,21 @@ One screen per part of the system:
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
 - **Agents** — the browser navigation and page at `#/agents`. The page has exactly two
-  stacked sections: **Agents**, then **Workers**. Agents contains **Chief of Staff** and
-  the shared **Worker skill** (`panels-worker`). Chief of Staff opens at
-  `#/agents/chief-of-staff`; it has launch defaults and its canonical editable skill,
-  but no Ticket Stage table. Worker skill opens at `#/agents/worker-skill`; its name is
-  read-only and its description and Markdown body edit the canonical shared role skill.
-  It is presented as an Agent-like configurable role, but it has no independent launch,
-  model, or Stage controls.
+  quiet sections: **Agents**, then **Workers**. Every destination is one generous
+  whole-row link with its human-readable name, the current managed skill description,
+  and a restrained arrow. The index does not show launch settings, skill names,
+  structural ids, Stage counts, or configuration labels. The same one-column order is
+  used on mobile.
 
-  Workers remains a compact list of configured Worker types. A Worker opens at
-  `#/agents/workers/<worker-type>` with the same launch defaults, Stage ownership
-  controls, and specialist skill editor as before. Worker and skill identities and
-  lifecycle structure stay read-only. Each editable value saves independently; a failed
-  save keeps the attempted value and a useful error so it can be corrected or retried.
-  The layout collapses cleanly on mobile. Legacy `#/workers` and
-  `#/workers/<worker-type>` addresses redirect to their Agents-page equivalents.
+  Agents contains **Chief of Staff** and the shared **Worker skill**. Chief of Staff
+  opens at `#/agents/chief-of-staff`; Worker skill opens at
+  `#/agents/worker-skill`. Workers contains each configured Worker type, which opens at
+  `#/agents/workers/<worker-type>`. Those detail screens still provide the applicable
+  launch defaults, Stage ownership controls, and skill editors. Worker and skill
+  identities and lifecycle structure stay read-only. Each editable value saves
+  independently; a failed save keeps the attempted value and a useful error so it can
+  be corrected or retried. Legacy `#/workers` and `#/workers/<worker-type>` addresses
+  redirect to their Agents-page equivalents.
 
 The shell carries one combined status control and, on desktop, worker presence.
 The status control says Connected or Reconnecting from the change stream and opens
