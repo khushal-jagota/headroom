@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
     AgentCommand,
     ConversationAccess,
@@ -292,11 +293,16 @@ def test_an_unknown_conversation_reads_as_nothing(store: ConversationStore) -> N
     assert asyncio.run(store.read_conversation("never-started")) is None
 
 
-def test_a_stored_conversation_that_names_no_model_is_refused(tmp_path: Path) -> None:
+def test_a_stored_conversation_that_names_no_model_reads_but_cannot_be_started(
+    tmp_path: Path,
+) -> None:
     """A row from before every conversation named its model.
 
     Nobody can say what it ran on — the backend chose and never wrote it down — so it is
-    refused rather than resumed on whatever that backend would choose today.
+    never resumed on whatever that backend would choose today. But it still reads: those
+    rows are part of the account of what happened, and a screen that lists conversations
+    has to be able to list them. Refusing the read instead is how a live server answered
+    every request that touched one with a 500.
     """
     db_path = tmp_path / "conversations.db"
     schema_connection = connect(str(db_path))
@@ -313,8 +319,14 @@ def test_a_stored_conversation_that_names_no_model_is_refused(tmp_path: Path) ->
         finally:
             conn.close()
 
+        record = await store.read_conversation("c")
+        assert record is not None
+        assert record.model is None
+        # And it is a spawn failure, so a message sent into it is refused rather than
+        # breaking the request.
+        assert issubclass(ConversationRecordNamesNoModel, BackendSpawnFailed)
         with pytest.raises(ConversationRecordNamesNoModel):
-            await store.read_conversation("c")
+            record.resolved_start()
 
     asyncio.run(exercise())
 
