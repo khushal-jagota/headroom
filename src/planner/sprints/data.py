@@ -25,6 +25,7 @@ from planner.sprints.contracts import (
     Sprint,
     SprintItem,
     SprintItemDeletion,
+    SprintItemKind,
 )
 from planner.sprints.logic import (
     DateRange,
@@ -32,6 +33,7 @@ from planner.sprints.logic import (
     derive_sprint_item_status,
     find_overlap,
 )
+from planner.tickets import worker_context as ticket_worker_context
 from planner.tickets.logic import admission
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.contracts import WorkerTypeDefinition
@@ -54,6 +56,17 @@ _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(
 
 @contextmanager
 def _tx(conn: sqlite3.Connection) -> Iterator[None]:
+    if conn.in_transaction:
+        conn.execute("SAVEPOINT sprint_write")
+        try:
+            yield
+        except BaseException:
+            conn.execute("ROLLBACK TO sprint_write")
+            conn.execute("RELEASE sprint_write")
+            raise
+        else:
+            conn.execute("RELEASE sprint_write")
+        return
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield
@@ -97,6 +110,7 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
         project_id=row["project_id"],
         project_name=row["project_name"],
         sprint_id=row["sprint_id"],
+        kind=SprintItemKind(row["kind"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -109,6 +123,14 @@ def _load_sprint(conn: sqlite3.Connection, sprint_id: str) -> Sprint:
     return _row_to_sprint(row)
 
 
+def _set_child_ticket_placement_changed(conn: sqlite3.Connection, item_id: str) -> None:
+    rows = conn.execute(
+        "SELECT id FROM tickets WHERE sprint_item_id = ? ORDER BY id", (item_id,)
+    ).fetchall()
+    for row in rows:
+        ticket_worker_context.set_ticket_placement_changed(conn, str(row["id"]))
+
+
 def _load_item(conn: sqlite3.Connection, item_id: str) -> SprintItem:
     row = conn.execute(
         "SELECT sprint_items.*, projects.name AS project_name "
@@ -117,7 +139,9 @@ def _load_item(conn: sqlite3.Connection, item_id: str) -> SprintItem:
         (item_id,),
     ).fetchone()
     if row is None:
-        raise PlannerError(ErrorCode.not_found, "sprint item not found", {"id": item_id})
+        raise PlannerError(
+            ErrorCode.not_found, "sprint item not found", {"id": item_id}
+        )
     return _row_to_item(row)
 
 
@@ -159,7 +183,11 @@ def create_sprint(
             raise PlannerError(
                 ErrorCode.sprint_overlap,
                 "sprint dates overlap",
-                {"conflict_id": conflict, "date_start": date_start, "date_end": date_end},
+                {
+                    "conflict_id": conflict,
+                    "date_start": date_start,
+                    "date_end": date_end,
+                },
             )
         conn.execute(
             "INSERT INTO sprints ("
@@ -296,7 +324,9 @@ def set_sprint_dates(
         try:
             date.fromisoformat(value)
         except ValueError as exc:
-            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: value}) from exc
+            raise PlannerError(
+                ErrorCode.validation, f"invalid {label}", {label: value}
+            ) from exc
     if new_start > new_end:
         raise PlannerError(
             ErrorCode.validation,
@@ -304,7 +334,11 @@ def set_sprint_dates(
             {"date_start": new_start, "date_end": new_end},
         )
     others = [
-        DateRange(id=str(r["id"]), date_start=str(r["date_start"]), date_end=str(r["date_end"]))
+        DateRange(
+            id=str(r["id"]),
+            date_start=str(r["date_start"]),
+            date_end=str(r["date_end"]),
+        )
         for r in conn.execute(
             "SELECT id, date_start, date_end FROM sprints WHERE id != ?", (sprint_id,)
         ).fetchall()
@@ -344,15 +378,25 @@ def create_item(
     item_id = new_id(ID_PREFIXES["sprint_item"])
     now = clock.now_unix()
     with _tx(conn):
-        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            is None
+        ):
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
         if (
             sprint_id is not None
-            and conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone() is None
+            and conn.execute(
+                "SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)
+            ).fetchone()
+            is None
         ):
-            raise PlannerError(ErrorCode.not_found, "sprint not found", {"id": sprint_id})
+            raise PlannerError(
+                ErrorCode.not_found, "sprint not found", {"id": sprint_id}
+            )
         conn.execute(
             "INSERT INTO sprint_items ("
             "id, title, body, priority, deadline, project_id, sprint_id, "
@@ -370,6 +414,44 @@ def create_item(
                 now,
             ),
         )
+    return _load_item(conn, item_id)
+
+
+def get_or_create_other_item(
+    conn: sqlite3.Connection,
+    *,
+    sprint_id: str,
+    project_id: str,
+    now: int,
+) -> SprintItem:
+    """Resolve the sole machine-recognizable fallback for a sprint and Project."""
+    with _tx(conn):
+        _load_sprint(conn, sprint_id)
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            is None
+        ):
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
+            )
+        row = conn.execute(
+            "SELECT id FROM sprint_items "
+            "WHERE sprint_id = ? AND project_id = ? AND kind = 'other'",
+            (sprint_id, project_id),
+        ).fetchone()
+        if row is None:
+            item_id = new_id(ID_PREFIXES["sprint_item"])
+            conn.execute(
+                "INSERT INTO sprint_items ("
+                "id, title, body, priority, deadline, project_id, sprint_id, kind, "
+                "created_at, updated_at) "
+                "VALUES (?, 'Other', '', ?, NULL, ?, ?, 'other', ?, ?)",
+                (item_id, Priority.P3.value, project_id, sprint_id, now, now),
+            )
+        else:
+            item_id = str(row["id"])
     return _load_item(conn, item_id)
 
 
@@ -404,32 +486,52 @@ def create_idea(
 
 
 def update_item_field(
-    conn: sqlite3.Connection, item_id: str, field: str, value: str | None, *, clock: Clock
+    conn: sqlite3.Connection,
+    item_id: str,
+    field: str,
+    value: str | None,
+    *,
+    clock: Clock,
 ) -> SprintItem:
     if field not in _ITEM_PLAIN_FIELDS:
         raise PlannerError(
-            ErrorCode.validation, "field is not an editable item field", {"field": field}
+            ErrorCode.validation,
+            "field is not an editable item field",
+            {"field": field},
         )
     _load_item(conn, item_id)
     stored: str | None = value
     if field == "priority":
         if value is None:
-            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": value})
+            raise PlannerError(
+                ErrorCode.validation, "invalid priority", {"value": value}
+            )
         try:
             stored = Priority(value).value
         except ValueError as exc:
-            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": value}) from exc
+            raise PlannerError(
+                ErrorCode.validation, "invalid priority", {"value": value}
+            ) from exc
     elif field == "project_id":
         if value is None:
-            raise PlannerError(ErrorCode.validation, "invalid project_id", {"value": value})
-        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (value,)).fetchone() is None:
-            raise PlannerError(ErrorCode.validation, "invalid project_id", {"project_id": value})
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"value": value}
+            )
+        if (
+            conn.execute("SELECT 1 FROM projects WHERE id = ?", (value,)).fetchone()
+            is None
+        ):
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": value}
+            )
     now = clock.now_unix()
     with _tx(conn):
         conn.execute(
             f"UPDATE sprint_items SET {field} = ?, updated_at = ? WHERE id = ?",
             (stored, now, item_id),
         )
+        if field == "project_id":
+            _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
 
@@ -445,6 +547,7 @@ def assign_item_sprint(
             "UPDATE sprint_items SET sprint_id = ?, updated_at = ? WHERE id = ?",
             (sprint_id, now, item_id),
         )
+        _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
 
@@ -470,7 +573,9 @@ def update_item(
     if "priority" in stored_edits:
         raw_priority = stored_edits["priority"]
         if raw_priority is None:
-            raise PlannerError(ErrorCode.validation, "invalid priority", {"value": None})
+            raise PlannerError(
+                ErrorCode.validation, "invalid priority", {"value": None}
+            )
         try:
             stored_edits["priority"] = Priority(raw_priority).value
         except ValueError as exc:
@@ -485,7 +590,10 @@ def update_item(
         project_id = stored_edits.get("project_id")
         if "project_id" in stored_edits and (
             project_id is None
-            or conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None
+            or conn.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            is None
         ):
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
@@ -504,6 +612,8 @@ def update_item(
                 f"UPDATE sprint_items SET {set_clause}, updated_at = ? WHERE id = ?",
                 (*values, now, item_id),
             )
+            if set_sprint or "project_id" in stored_edits:
+                _set_child_ticket_placement_changed(conn, item_id)
     return _load_item(conn, item_id)
 
 
@@ -571,7 +681,9 @@ def delete_item(
 # --- reads ----------------------------------------------------------------------
 
 
-def _child_stage_in_progress(worker_type_definition: WorkerTypeDefinition, stage: str) -> bool:
+def _child_stage_in_progress(
+    worker_type_definition: WorkerTypeDefinition, stage: str
+) -> bool:
     """Per-type "in progress by stage": a non-terminal linear stage strictly past the
     type's first worker stage (its first real-work stage — needs_success for coding,
     needs_understanding for new_worker). Resolves the row's own definition so the pure
@@ -588,7 +700,9 @@ def _child_stage_in_progress(worker_type_definition: WorkerTypeDefinition, stage
     first_worker_idx = worker_type_definition.stage_index(
         worker_type_definition.first_worker_stage()
     )
-    return (not terminal) and worker_type_definition.stage_index(stage) > first_worker_idx
+    return (not terminal) and worker_type_definition.stage_index(
+        stage
+    ) > first_worker_idx
 
 
 def read_item(conn: sqlite3.Connection, item_id: str) -> ItemRead:

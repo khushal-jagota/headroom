@@ -27,7 +27,9 @@ class StageOwnershipMode(StrEnum):
     paired = "paired"
 
 
-class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer transitions
+class TicketStatus(
+    StrEnum
+):  # durable state-of-control, written by data-layer transitions
     empty = "empty"
     blocked = "blocked"  # empty's stand-in while a live blocker exists
     agent = "agent"
@@ -110,7 +112,6 @@ class CreateTicketBody(TypedDict, total=False):  # POST /tickets
     deadline: str | None  # ISO date
     project: str | None  # legacy project name
     project_id: str | None
-    sprint_id: str | None
     sprint_item_id: str | None
     blocked_by_ticket_ids: list[str]
 
@@ -120,7 +121,6 @@ class TicketEdit(TypedDict, total=False):  # PATCH /tickets/{id}, parsed values
     priority: Priority
     deadline: str | None
     project_id: str | None
-    sprint_id: str | None
 
 
 class ReconcileTicketFromExternalWorkBody(TypedDict):
@@ -138,7 +138,6 @@ class CreateTicketFromExternalWorkBody(ReconcileTicketFromExternalWorkBody):
     deadline: NotRequired[str | None]
     project: NotRequired[str | None]
     project_id: NotRequired[str | None]
-    sprint_id: NotRequired[str | None]
     sprint_item_id: NotRequired[str | None]
     blocked_by_ticket_ids: NotRequired[list[str]]
 
@@ -171,7 +170,9 @@ class ValueEditBody(TypedDict, total=False):  # PUT /tickets/{id}/value/{field}
     body: str  # default ""
 
 
-class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-for-revision
+class RevisionMessageBody(
+    TypedDict, total=False
+):  # POST /tickets/{id}/return-for-revision
     message: str  # required non-empty by the writer
 
 
@@ -215,14 +216,16 @@ class Ticket:  # §3.3 — column names match exactly
     stage: str  # directly stored Stage id
     priority: Priority  # default P3
     deadline: str | None  # ISO date
-    project_id: str | None  # NULL when parented (derived)
+    project_id: str | None  # effective Project, derived from the item when parented
     project_name: str | None
     sprint_item_id: str | None
-    sprint_id: str | None  # writable only when sprint_item_id IS NULL
+    effective_sprint_id: str | None
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
     at_cap: AtCap  # default propose (R2)
-    ticket_status: TicketStatus  # durable state-of-control; transition functions write it
+    ticket_status: (
+        TicketStatus  # durable state-of-control; transition functions write it
+    )
     # When ticket_status last actually changed. Claiming a Ticket for a worker step
     # captures it, and giving that claim back compares it, so a late release cannot erase
     # a later transition that happens to have landed on the same status value.
@@ -231,7 +234,9 @@ class Ticket:  # §3.3 — column names match exactly
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]
     default_stage_ownership_mode: StageOwnershipMode | None
     effective_stage_ownership_mode: StageOwnershipMode | None
-    conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
+    conversation_id: (
+        str | None
+    )  # the Ticket's conversation link (column name is frozen)
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields
     created_at: int

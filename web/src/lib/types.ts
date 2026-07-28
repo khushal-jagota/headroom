@@ -40,6 +40,21 @@ export type SprintsResponse = {
   sprints: SprintSummary[];
 };
 
+export type SprintItemKind = "normal" | "other";
+
+export type SprintItemSummary = AnyRecord & {
+  id: string;
+  title: string;
+  project_id: string;
+  project: string;
+  sprint_id: string | null;
+  kind: SprintItemKind;
+};
+
+export type SprintItemsResponse = {
+  items: SprintItemSummary[];
+};
+
 export type ProjectSummary = {
   id: string;
   name: string;
@@ -130,7 +145,6 @@ export type TicketDetail = {
   deadline?: string | null;
   project_id?: string | null;
   project?: string | null;
-  sprint_id?: string | null;
   effective_sprint_id?: string | null;
   sprint_item_id?: string | null;
   ticket_status?: string;
@@ -165,7 +179,6 @@ export type TicketDeletionResponse = {
 export type CurrentSprintResponse = {
   sprint: AnyRecord | null;
   groups: Record<string, AnyRecord[]>;
-  loose_tickets: AnyRecord[];
 };
 
 export type ReviewProposalItem = {
@@ -206,9 +219,7 @@ export type DayResponse = {
   midday_reconciliation?: string | null;
 };
 
-export type BacklogResponse = {
-  items: AnyRecord[];
-};
+export type BacklogResponse = SprintItemsResponse;
 
 export type IdeasResponse = {
   ideas: AnyRecord[];

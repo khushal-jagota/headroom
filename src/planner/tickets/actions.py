@@ -33,14 +33,12 @@ def resolve_creation_placement(
     *,
     planning_now: datetime,
     boundary_hour: int,
-    sprint_id: str | None,
     sprint_item_id: str | None,
-    sprint_id_explicit: bool = False,
 ) -> tuple[str, str | None]:
     """Resolve defaults for a newly created Ticket without overriding placement intent."""
     day_id = resolve_day_id("today", planning_now, boundary_hour)
-    if sprint_item_id is not None or sprint_id_explicit or sprint_id is not None:
-        return day_id, sprint_id
+    if sprint_item_id is not None:
+        return day_id, None
     planning_day = day_id.removeprefix("day_")
     ranges = [
         DateRange(
@@ -48,7 +46,9 @@ def resolve_creation_placement(
             date_start=str(row["date_start"]),
             date_end=str(row["date_end"]),
         )
-        for row in conn.execute("SELECT id, date_start, date_end FROM sprints").fetchall()
+        for row in conn.execute(
+            "SELECT id, date_start, date_end FROM sprints"
+        ).fetchall()
     ]
     return day_id, current_sprint_id(planning_day, ranges)
 
@@ -67,23 +67,24 @@ def create_ticket(
     project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,
-    sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     planning_now: datetime | None = None,
     boundary_hour: int = 5,
-    sprint_id_explicit: bool = False,
+    sprint_item_id_explicit: bool = False,
 ) -> Ticket:
     if planning_now is None:
-        day_id, resolved_sprint_id = None, sprint_id
+        day_id, fallback_sprint_id = None, None
     else:
-        day_id, resolved_sprint_id = resolve_creation_placement(
-            conn,
-            planning_now=planning_now,
-            boundary_hour=boundary_hour,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
-            sprint_id_explicit=sprint_id_explicit,
+        day_id, fallback_sprint_id = (
+            (resolve_day_id("today", planning_now, boundary_hour), None)
+            if sprint_item_id_explicit
+            else resolve_creation_placement(
+                conn,
+                planning_now=planning_now,
+                boundary_hour=boundary_hour,
+                sprint_item_id=sprint_item_id,
+            )
         )
     return tickets_data.create_ticket(
         conn,
@@ -95,8 +96,8 @@ def create_ticket(
         project_id=project_id,
         priority=priority,
         deadline=deadline,
-        sprint_id=resolved_sprint_id,
         sprint_item_id=sprint_item_id,
+        fallback_sprint_id=fallback_sprint_id,
         day_id=day_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
@@ -122,23 +123,24 @@ def create_ticket_from_external_work(
     project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,
-    sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     planning_now: datetime | None = None,
     boundary_hour: int = 5,
-    sprint_id_explicit: bool = False,
+    sprint_item_id_explicit: bool = False,
 ) -> Ticket:
     if planning_now is None:
-        day_id, resolved_sprint_id = None, sprint_id
+        day_id, fallback_sprint_id = None, None
     else:
-        day_id, resolved_sprint_id = resolve_creation_placement(
-            conn,
-            planning_now=planning_now,
-            boundary_hour=boundary_hour,
-            sprint_id=sprint_id,
-            sprint_item_id=sprint_item_id,
-            sprint_id_explicit=sprint_id_explicit,
+        day_id, fallback_sprint_id = (
+            (resolve_day_id("today", planning_now, boundary_hour), None)
+            if sprint_item_id_explicit
+            else resolve_creation_placement(
+                conn,
+                planning_now=planning_now,
+                boundary_hour=boundary_hour,
+                sprint_item_id=sprint_item_id,
+            )
         )
     return tickets_data.create_ticket_from_external_work(
         conn,
@@ -153,8 +155,8 @@ def create_ticket_from_external_work(
         project_id=project_id,
         priority=priority,
         deadline=deadline,
-        sprint_id=resolved_sprint_id,
         sprint_item_id=sprint_item_id,
+        fallback_sprint_id=fallback_sprint_id,
         day_id=day_id,
         worker_type=worker_type,
         employee_backend=employee_backend,
@@ -235,7 +237,9 @@ async def return_ticket_for_revision(
     resolution.decide_return_for_revision(
         ticket,
         actor,
-        worker_type_definition=configured_worker_type_registry().require(ticket.worker_type),
+        worker_type_definition=configured_worker_type_registry().require(
+            ticket.worker_type
+        ),
     )
     prepared = worker_context_service.prepare(
         ticket_id,

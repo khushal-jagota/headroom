@@ -13,17 +13,19 @@ for humans and agents: what the project is, what matters about it, and any repo 
 file locations worth remembering. There is no separate repo-location field yet;
 locations belong in the summary text when they matter.
 
-Tickets, sprint items, and ideas store `project_id`. API responses also include the
-legacy `project` field as the display name so older callers can keep reading it.
-Existing write surfaces accept either `project_id` or the legacy project name; if both
-are sent and they point to different rows, the server rejects the request.
+Unparented backlog Tickets, Sprint Items, and ideas store `project_id`. API responses
+also include the legacy `project` field as the display name so older callers can keep
+reading it. Existing direct Project write surfaces accept either `project_id` or the
+legacy project name; if both are sent and they point to different rows, the server
+rejects the request.
 
-Parented tickets do not carry their own project. Their `project_id` stays null because
-the parent sprint item owns the project.
+Tickets on Sprint Items do not carry their own Project or sprint placement. Their
+`project_id`, `project`, and `effective_sprint_id` response values are derived from the
+parent item.
 
-The Workspace board groups tickets by an effective display project. Standalone tickets
-use their own project. Tickets under a sprint item use the parent item's project.
-Tickets with neither source appear under `No project`.
+The Workspace board groups Tickets by effective Project. Unparented backlog Tickets use
+their own Project. Tickets under a Sprint Item use the parent item's Project. Tickets
+with neither source appear under `No project`.
 
 ## Surfaces
 
@@ -44,4 +46,4 @@ _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 
 ---
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-07-28._

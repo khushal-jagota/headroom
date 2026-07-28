@@ -10,7 +10,11 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from planner.core.authctx import reject_agent_fields, require_direct_write, require_planning_write
+from planner.core.authctx import (
+    reject_agent_fields,
+    require_direct_write,
+    require_planning_write,
+)
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date
@@ -21,14 +25,22 @@ from planner.sprints.contracts import (
     KICKOFF_FIELDS,
     MID_SPRINT_FIELDS,
     REVIEW_FIELDS,
-    AddItemTicketBody,
     CreateIdeaBody,
     CreateItemBody,
     CreateSprintBody,
     ItemStatus,
+    MoveItemTicketBody,
 )
 from planner.tickets import data as tickets_data
-from planner.tickets.api import Cfg, Clk, Ctx, DbConn, body_opt_str, body_str, parse_enum
+from planner.tickets.api import (
+    Cfg,
+    Clk,
+    Ctx,
+    DbConn,
+    body_opt_str,
+    body_str,
+    parse_enum,
+)
 
 router = APIRouter()
 
@@ -80,7 +92,9 @@ def _marshal_item_deadline(raw: object) -> None:
     try:
         date.fromisoformat(raw)
     except ValueError as exc:
-        raise PlannerError(ErrorCode.validation, "invalid deadline", {"deadline": raw}) from exc
+        raise PlannerError(
+            ErrorCode.validation, "invalid deadline", {"deadline": raw}
+        ) from exc
 
 
 # --- item routes ---------------------------------------------------------------
@@ -120,7 +134,9 @@ async def list_items(
     project_id: str | None = None,
     sprint_id: str | None = None,
 ) -> JsonDict:
-    status_enum = parse_enum(ItemStatus, status, "status") if status is not None else None
+    status_enum = (
+        parse_enum(ItemStatus, status, "status") if status is not None else None
+    )
     resolved_project = projects_data.resolve_project(
         conn, project_id=project_id, project_name=project
     )
@@ -153,11 +169,11 @@ async def delete_item(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
 
 
 @router.post("/items/{item_id}/tickets")
-async def add_item_ticket(
+async def move_item_ticket(
     item_id: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    body = AddItemTicketBody(ticket_id=body_str(raw, "ticket_id"))
-    tickets_data.assign_ticket_to_sprint_item(
+    body = MoveItemTicketBody(ticket_id=body_str(raw, "ticket_id"))
+    tickets_data.move_ticket_to_sprint_item(
         conn,
         body["ticket_id"],
         sprint_item_id=item_id,
@@ -169,10 +185,10 @@ async def add_item_ticket(
 
 
 @router.delete("/items/{item_id}/tickets/{ticket_id}")
-async def remove_item_ticket(
+async def move_item_ticket_to_backlog(
     item_id: str, ticket_id: str, conn: DbConn, ctx: Ctx, clk: Clk
 ) -> JsonDict:
-    tickets_data.remove_ticket_from_sprint_item(
+    tickets_data.move_ticket_to_backlog(
         conn,
         ticket_id,
         sprint_item_id=item_id,
@@ -190,7 +206,9 @@ async def patch_item(
     recognized = set(_ITEM_PLAIN_FIELDS) | {"project", "sprint_id"}
     for key in body:
         if key not in recognized:
-            raise PlannerError(ErrorCode.validation, "unknown item field", {"field": key})
+            raise PlannerError(
+                ErrorCode.validation, "unknown item field", {"field": key}
+            )
     if not body:
         raise PlannerError(ErrorCode.validation, "no item fields to update", {})
     # Sprint item status is derived from child tickets and blocking links; item patching is
@@ -235,13 +253,20 @@ async def patch_item(
 
 
 @router.post("/sprints")
-async def create_sprint(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+async def create_sprint(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     body = _marshal_create_sprint(raw)
-    for label, value in (("date_start", body["date_start"]), ("date_end", body["date_end"])):
+    for label, value in (
+        ("date_start", body["date_start"]),
+        ("date_end", body["date_end"]),
+    ):
         try:
             date.fromisoformat(value)
         except ValueError:
-            raise PlannerError(ErrorCode.validation, f"invalid {label}", {label: value}) from None
+            raise PlannerError(
+                ErrorCode.validation, f"invalid {label}", {label: value}
+            ) from None
     sprint = sprints_data.create_sprint(
         conn,
         name=body["name"],
@@ -274,7 +299,9 @@ async def patch_sprint(
     recognized = set(_SPRINT_TEXT_FIELDS) | {"date_start", "date_end"}
     for key in body:
         if key not in recognized:
-            raise PlannerError(ErrorCode.validation, "unknown sprint field", {"field": key})
+            raise PlannerError(
+                ErrorCode.validation, "unknown sprint field", {"field": key}
+            )
     # Marshal each field to a string, mirroring the Day PATCH: a null or non-string
     # value raises the validation envelope instead of hitting the NOT NULL constraint
     # or a raw SQLite binding error. A null is treated as absent (skipped).

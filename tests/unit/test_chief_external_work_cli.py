@@ -12,7 +12,9 @@ from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from planner.cli.main import main as cli_main
-from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.in_memory_conversation_system import (
+    InMemoryConversationSystem,
+)
 from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
@@ -28,9 +30,7 @@ def scrub_ambient_plan_environment(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(key)
 
 
-def _run(
-    _server: object, *args: str, actor: str | None = "chief"
-) -> Any:
+def _run(_server: object, *args: str, actor: str | None = "chief") -> Any:
     env = {"PLAN_SERVER_URL": "http://testserver"}
     if actor is not None:
         env["PLAN_ACTOR"] = actor
@@ -53,6 +53,7 @@ def server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[object]:
         conversation_system_for_test=InMemoryConversationSystem(),
     )
     with TestClient(app) as client:
+
         def request(
             method: str,
             url: str,
@@ -93,7 +94,9 @@ def test_chief_external_work_help_lists_stage_and_worker_type_options(
         assert result.exit_code == 0, result.output
         assert "--stage" in result.stdout
         assert "--field-file" in result.stdout
-    create_help = _run(server, "chief", "create-ticket-from-external-work", "--help", actor=None)
+    create_help = _run(
+        server, "chief", "create-ticket-from-external-work", "--help", actor=None
+    )
     assert "--worker-type" in create_help.stdout
 
 
@@ -168,10 +171,14 @@ def test_chief_external_work_cli_carries_new_worker_fields(
     server: ServerHandle, tmp_path: Path
 ) -> None:
     note = _file(tmp_path, "new-worker-note.md", "Design imported outside Panels")
-    understanding = _file(tmp_path, "understanding.md", "Bounded worker-design understanding")
+    understanding = _file(
+        tmp_path, "understanding.md", "Bounded worker-design understanding"
+    )
     stages = _file(tmp_path, "stages.md", "needs_thinking, needs_drafting")
     thinking = _file(tmp_path, "thinking.md", "Worker reasoning contract")
-    runtime_defaults = _file(tmp_path, "runtime-defaults.md", "codex / gpt-5.6-sol / medium")
+    runtime_defaults = _file(
+        tmp_path, "runtime-defaults.md", "codex / gpt-5.6-sol / medium"
+    )
 
     created = _run(
         server,
@@ -196,7 +203,10 @@ def test_chief_external_work_cli_carries_new_worker_fields(
     assert created.exit_code == 0, created.output
     created_json = json.loads(created.stdout)
     assert created_json["stage"] == "needs_runtime_defaults"
-    assert created_json["fields"]["understanding"]["value"] == "Bounded worker-design understanding"
+    assert (
+        created_json["fields"]["understanding"]["value"]
+        == "Bounded worker-design understanding"
+    )
     assert created_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
     assert created_json["fields"]["thinking"]["value"] == "Worker reasoning contract"
     assert created_json["fields"]["runtime_defaults"]["value"] is None
@@ -220,9 +230,12 @@ def test_chief_external_work_cli_carries_new_worker_fields(
     reconciled_json = json.loads(reconciled.stdout)
     assert reconciled_json["stage"] == "needs_drafting"
     assert (
-        reconciled_json["fields"]["understanding"]["value"] == "Bounded worker-design understanding"
+        reconciled_json["fields"]["understanding"]["value"]
+        == "Bounded worker-design understanding"
     )
-    assert reconciled_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
+    assert (
+        reconciled_json["fields"]["stages"]["value"] == "needs_thinking, needs_drafting"
+    )
     assert reconciled_json["fields"]["thinking"]["value"] == "Worker reasoning contract"
     assert reconciled_json["fields"]["runtime_defaults"]["value"] == (
         "codex / gpt-5.6-sol / medium"
@@ -238,7 +251,12 @@ def test_chief_field_file_rejects_ambiguity_before_read_or_request(
 
     cases = (
         (
-            ["--field-file", "stages=/missing-one", "--field-file", "stages=/missing-two"],
+            [
+                "--field-file",
+                "stages=/missing-one",
+                "--field-file",
+                "stages=/missing-two",
+            ],
             "field file provided more than once: stages",
         ),
         (
@@ -268,7 +286,9 @@ def test_chief_field_file_rejects_ambiguity_before_read_or_request(
 
     after = _run(server, "ticket", "list", "--json")
     assert after.exit_code == 0, after.output
-    assert {ticket["id"] for ticket in json.loads(after.stdout)["tickets"]} == before_ids
+    assert {
+        ticket["id"] for ticket in json.loads(after.stdout)["tickets"]
+    } == before_ids
 
 
 def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
@@ -301,7 +321,6 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
         "deadline",
         "project",
         "project_id",
-        "sprint_id",
         "sprint_item_id",
     )
     for key in common_fixed_keys:
@@ -371,7 +390,9 @@ def test_chief_field_file_rejects_command_fixed_keys_before_read_or_request(
 
     after = _run(server, "ticket", "list", "--json")
     assert after.exit_code == 0, after.output
-    assert {ticket["id"] for ticket in json.loads(after.stdout)["tickets"]} == before_ids
+    assert {
+        ticket["id"] for ticket in json.loads(after.stdout)["tickets"]
+    } == before_ids
 
 
 def test_real_server_chief_external_work_terse_output_and_actor_rejection(

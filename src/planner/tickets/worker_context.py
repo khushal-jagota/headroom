@@ -21,3 +21,10 @@ def set_ticket_changed(conn: sqlite3.Connection, ticket_id: str, actor: str) -> 
     worker_context_data.set_context(
         conn, ticket_id, TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
     )
+
+
+def set_ticket_placement_changed(conn: sqlite3.Connection, ticket_id: str) -> None:
+    """Coalesce placement context even when a planning worker made the change."""
+    worker_context_data.set_context(
+        conn, ticket_id, TICKET_CHANGED_CONTEXT_KEY, TICKET_CHANGED_TEXT
+    )

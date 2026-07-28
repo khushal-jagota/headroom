@@ -77,13 +77,17 @@ def _create(conn: Connection, cfg: Config, clock: TestClock, **kw: Any) -> Ticke
     return ticket
 
 
-def _scope(conn: Connection, t: Ticket, ceiling: str, at_cap: AtCap, clock: TestClock) -> Ticket:
+def _scope(
+    conn: Connection, t: Ticket, ceiling: str, at_cap: AtCap, clock: TestClock
+) -> Ticket:
     return data.change_scope(
         conn, t.id, ceiling=ceiling, at_cap=at_cap, actor="human", now=clock.now_unix()
     )
 
 
-def _claim_ready_worker_step(conn: Connection, ticket_id: str, *, now: int) -> Ticket | None:
+def _claim_ready_worker_step(
+    conn: Connection, ticket_id: str, *, now: int
+) -> Ticket | None:
     if (
         conn.execute(
             "SELECT 1 FROM day_tickets WHERE day_id = ? AND ticket_id = ?",
@@ -121,7 +125,9 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
         actor="human",
         now=fake_clock.now_unix(),
     )
-    assert fields_codec.get_slot(t.fields, "kickoff").value == "updated intake direction"
+    assert (
+        fields_codec.get_slot(t.fields, "kickoff").value == "updated intake direction"
+    )
 
     t = data.set_field_user_note(
         tmp_db,
@@ -135,7 +141,11 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
 
     legacy = json.dumps(
         {
-            "kickoff": {"value": None, "proposal": None, "notes": "legacy kickoff guidance"},
+            "kickoff": {
+                "value": None,
+                "proposal": None,
+                "notes": "legacy kickoff guidance",
+            },
             "success": {"value": None, "proposal": None, "notes": "legacy guidance"},
             "approach": {"value": None, "proposal": None, "user_note": "new guidance"},
             "plan": {"value": None, "proposal": None, "notes": None},
@@ -144,7 +154,9 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
         }
     )
     parsed = fields_codec.fields_from_json(legacy)
-    assert fields_codec.get_slot(parsed, "kickoff").user_note == "legacy kickoff guidance"
+    assert (
+        fields_codec.get_slot(parsed, "kickoff").user_note == "legacy kickoff guidance"
+    )
     assert fields_codec.get_slot(parsed, "success").user_note == "legacy guidance"
     assert fields_codec.get_slot(parsed, "approach").user_note == "new guidance"
     assert json.loads(fields_codec.fields_to_json(parsed))["success"] == {
@@ -182,7 +194,9 @@ def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
         "closeout",
     }
     assert (
-        machine.has_pending_parked_proposal(t, worker_type_definition=CODING_WORKER_TYPE_DEFINITION)
+        machine.has_pending_parked_proposal(
+            t, worker_type_definition=CODING_WORKER_TYPE_DEFINITION
+        )
         is True
     )
 
@@ -242,7 +256,9 @@ def test_action_create_uses_worker_default_or_registered_override_before_mutatio
     assert overridden.employee_launch_model == "hermes-model"
     assert raised.value.code is ErrorCode.validation
     assert unnamed.value.code is ErrorCode.validation
-    assert tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
+    assert (
+        tmp_db.execute("SELECT COUNT(*) FROM tickets").fetchone()[0] == tickets_before
+    )
 
 
 def test_review_exposes_kickoff_as_ordinary_ticket_decision(
@@ -330,7 +346,9 @@ def test_accept_kickoff_field_leaves_ticket_ready(
     )
 
     assert settled.stage == "needs_success"
-    days_data.add_day_ticket(tmp_db, _AUTOMATIC_PLANNING_DAY_ID, settled.id, fake_clock.now_unix())
+    days_data.add_day_ticket(
+        tmp_db, _AUTOMATIC_PLANNING_DAY_ID, settled.id, fake_clock.now_unix()
+    )
     assert (
         worker_step_readiness.is_ready_for_worker_step(
             tmp_db,
@@ -396,7 +414,9 @@ def test_direct_state_changes_cannot_bypass_or_reenter_kickoff(
         )
 
 
-def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
+def test_ticket_status_transitions(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
     assert t.ticket_status is TicketStatus.empty
@@ -473,7 +493,9 @@ def test_ticket_status_transitions(tmp_db: Connection, cfg: Config, fake_clock: 
     claimed_again = _claim_ready_worker_step(tmp_db, t.id, now=now)
     assert claimed_again is not None
     t = claimed_again
-    t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="parked", actor="agent", now=now
+    )
     assert t.ticket_status is TicketStatus.awaiting_approval
 
     t = data.accept_proposal(
@@ -594,7 +616,9 @@ def _park_paired(
         "UPDATE tickets SET conversation_id = ? WHERE id = ?",
         (f"conv-{t.id}", t.id),
     )
-    t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="parked", actor="agent", now=now
+    )
     assert t.ticket_status is TicketStatus.awaiting_approval
     t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.paired
@@ -618,7 +642,9 @@ def test_enter_paired_on_human_reply_flips_only_from_awaiting_approval(
     t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.agent
     # Flips from awaiting_approval.
-    t = data.file_proposal(tmp_db, t.id, field="success", body="parked", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="parked", actor="agent", now=now
+    )
     assert t.ticket_status is TicketStatus.awaiting_approval
     t = data.enter_paired_on_human_reply(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.paired
@@ -629,7 +655,9 @@ def test_paired_exit_re_propose_returns_to_awaiting_approval(
 ) -> None:
     now = fake_clock.now_unix()
     t = _park_paired(tmp_db, cfg, fake_clock, now)
-    t = data.file_proposal(tmp_db, t.id, field="success", body="revised", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="revised", actor="agent", now=now
+    )
     assert t.ticket_status is TicketStatus.awaiting_approval
 
 
@@ -660,7 +688,9 @@ def test_paired_exit_send_back_reopens_and_clears_proposal(
     )
     assert t.ticket_status is TicketStatus.agent
     fields = json.loads(
-        tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()["fields"]
+        tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()[
+            "fields"
+        ]
     )
     assert fields["success"]["proposal"] is None
 
@@ -675,6 +705,7 @@ def test_take_over_from_paired_re_derives_the_user_status(
     t = data.take_over_ticket(tmp_db, t.id, now=now)
     assert t.ticket_status is TicketStatus.user
 
+
 def test_an_errored_ticket_stays_errored_and_is_never_claimed(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
@@ -684,7 +715,8 @@ def test_an_errored_ticket_stays_errored_and_is_never_claimed(
     # The Ticket keeps the conversation it named through erroring and release: a worker
     # that fell over is still the worker that was talking there.
     tmp_db.execute(
-        "UPDATE tickets SET conversation_id = 'conversation-errored' WHERE id = ?", (t.id,)
+        "UPDATE tickets SET conversation_id = 'conversation-errored' WHERE id = ?",
+        (t.id,),
     )
     tmp_db.commit()
     t = data.mark_ticket_errored(tmp_db, t.id, error="boom", now=now)
@@ -832,7 +864,9 @@ def test_auto_accepted_proposal_does_not_park_status(
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
     _scope(tmp_db, t, "needs_plan", AtCap.propose, fake_clock)
-    t = data.file_proposal(tmp_db, t.id, field="success", body="success", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="success", actor="agent", now=now
+    )
     assert t.stage == "needs_approach"
     assert t.ticket_status is TicketStatus.empty
 
@@ -912,7 +946,9 @@ def test_a02_gating_chain_one_state_per_accept(
     assert t.stage == "needs_plan"
     assert fields_codec.get_slot(t.fields, "approach").value == "approach body"
 
-    t = data.file_proposal(tmp_db, t.id, field="plan", body="plan body", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="plan", body="plan body", actor="agent", now=now
+    )
     assert t.stage == "needs_implementation"
     assert fields_codec.get_slot(t.fields, "plan").value == "plan body"
 
@@ -925,7 +961,9 @@ def test_a02_gating_chain_one_state_per_accept(
         now=now,
     )
     assert t.stage == "needs_closeout"
-    assert fields_codec.get_slot(t.fields, "implementation").value == "implementation body"
+    assert (
+        fields_codec.get_slot(t.fields, "implementation").value == "implementation body"
+    )
     assert all(
         fields_codec.get_slot(t.fields, field).proposal is None
         for field in ("success", "approach", "plan", "implementation")
@@ -939,12 +977,18 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
     t = _create(tmp_db, cfg, fake_clock)
     _scope(tmp_db, t, "needs_plan", AtCap.propose, fake_clock)
 
-    t = data.file_proposal(tmp_db, t.id, field="success", body="s", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="s", actor="agent", now=now
+    )
     assert t.stage == "needs_approach"
-    t = data.file_proposal(tmp_db, t.id, field="approach", body="a", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="approach", body="a", actor="agent", now=now
+    )
     assert t.stage == "needs_plan"
 
-    t = data.file_proposal(tmp_db, t.id, field="plan", body="plan body", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="plan", body="plan body", actor="agent", now=now
+    )
     assert t.stage == "needs_plan"
     plan_slot = fields_codec.get_slot(t.fields, "plan")
     assert plan_slot.value is None
@@ -963,17 +1007,23 @@ def test_a03_ceiling_auto_accept_until_cap_then_pending(
     assert t.ticket_status is TicketStatus.awaiting_approval
 
 
-def test_a04_at_cap_stop_vs_propose(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
+def test_a04_at_cap_stop_vs_propose(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
     now = fake_clock.now_unix()
     a = _create(tmp_db, cfg, fake_clock)
     _scope(tmp_db, a, "needs_approach", AtCap.propose, fake_clock)
-    a = data.file_proposal(tmp_db, a.id, field="success", body="s", actor="agent", now=now)
+    a = data.file_proposal(
+        tmp_db, a.id, field="success", body="s", actor="agent", now=now
+    )
     assert a.stage == "needs_approach"
     _scope(tmp_db, a, "needs_approach", AtCap.stop, fake_clock)
     row_at_stop = _ticket_row(tmp_db, a.id)
 
     with pytest.raises(PlannerError) as exc_gating:
-        data.file_proposal(tmp_db, a.id, field="approach", body="x", actor="agent", now=now)
+        data.file_proposal(
+            tmp_db, a.id, field="approach", body="x", actor="agent", now=now
+        )
     assert exc_gating.value.code is ErrorCode.at_cap_stop
     assert exc_gating.value.detail["gating_field"] == "approach"
 
@@ -1009,8 +1059,12 @@ def test_a04_at_cap_stop_vs_propose(tmp_db: Connection, cfg: Config, fake_clock:
     c = _create(tmp_db, cfg, fake_clock)
     _scope(tmp_db, c, "needs_plan", AtCap.propose, fake_clock)
 
-    b = data.file_proposal(tmp_db, b.id, field="success", body="s", actor="agent", now=now)
-    c = data.file_proposal(tmp_db, c.id, field="success", body="s", actor="agent", now=now)
+    b = data.file_proposal(
+        tmp_db, b.id, field="success", body="s", actor="agent", now=now
+    )
+    c = data.file_proposal(
+        tmp_db, c.id, field="success", body="s", actor="agent", now=now
+    )
     assert b.stage == "needs_approach"
     assert c.stage == "needs_approach"
     assert (
@@ -1035,7 +1089,9 @@ def test_a05_one_pending_proposal_per_field_supersede(
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
 
-    t = data.file_proposal(tmp_db, t.id, field="success", body="first body", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="first body", actor="agent", now=now
+    )
     first_success = fields_codec.get_slot(t.fields, "success")
     assert first_success.proposal is not None
     assert first_success.proposal.body == "first body"
@@ -1055,7 +1111,9 @@ def test_a06_edit_accept_stores_edited_text(
 ) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
-    t = data.file_proposal(tmp_db, t.id, field="success", body="draft body", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="draft body", actor="agent", now=now
+    )
 
     t = data.accept_proposal(
         tmp_db,
@@ -1075,7 +1133,9 @@ def test_a06_edit_accept_stores_edited_text(
     assert t.at_cap is AtCap.propose
 
 
-def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
+def test_a07_closeout_routing(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
     now = fake_clock.now_unix()
 
     # Ceiling stops exactly at needs_closeout: implementation auto-accepts up to
@@ -1089,9 +1149,13 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         ("plan", "p"),
         ("implementation", "i"),
     ]:
-        t1 = data.file_proposal(tmp_db, t1.id, field=f, body=body, actor="agent", now=now)
+        t1 = data.file_proposal(
+            tmp_db, t1.id, field=f, body=body, actor="agent", now=now
+        )
     assert t1.stage == "needs_closeout"
-    t1 = data.file_proposal(tmp_db, t1.id, field="closeout", body="c", actor="agent", now=now)
+    t1 = data.file_proposal(
+        tmp_db, t1.id, field="closeout", body="c", actor="agent", now=now
+    )
     assert t1.stage == "needs_closeout"
     assert fields_codec.get_slot(t1.fields, "closeout").proposal is not None
     assert fields_codec.get_slot(t1.fields, "closeout").value is None
@@ -1121,7 +1185,9 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
         ("implementation", "i"),
         ("closeout", "c"),
     ]:
-        t2 = data.file_proposal(tmp_db, t2.id, field=f, body=body, actor="agent", now=now)
+        t2 = data.file_proposal(
+            tmp_db, t2.id, field=f, body=body, actor="agent", now=now
+        )
     assert t2.stage == "done"
     assert all(
         fields_codec.get_slot(t2.fields, field).value == body
@@ -1139,9 +1205,13 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
     t3 = _create(tmp_db, cfg, fake_clock)
     _scope(tmp_db, t3, "needs_implementation", AtCap.propose, fake_clock)
     for f, body in [("success", "s"), ("approach", "a"), ("plan", "p")]:
-        t3 = data.file_proposal(tmp_db, t3.id, field=f, body=body, actor="agent", now=now)
+        t3 = data.file_proposal(
+            tmp_db, t3.id, field=f, body=body, actor="agent", now=now
+        )
     assert t3.stage == "needs_implementation"
-    t3 = data.file_proposal(tmp_db, t3.id, field="implementation", body="i", actor="agent", now=now)
+    t3 = data.file_proposal(
+        tmp_db, t3.id, field="implementation", body="i", actor="agent", now=now
+    )
     assert t3.stage == "needs_implementation"
     assert fields_codec.get_slot(t3.fields, "implementation").proposal is not None
 
@@ -1158,7 +1228,9 @@ def test_a07_closeout_routing(tmp_db: Connection, cfg: Config, fake_clock: TestC
     assert t3.stage == "needs_closeout"
 
 
-def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
+def test_a08_recap_rules(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
     now = fake_clock.now_unix()
     t = _create(tmp_db, cfg, fake_clock)
 
@@ -1169,7 +1241,9 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
     assert t.stage == "needs_success"
 
     _scope(tmp_db, t, "needs_approach", AtCap.propose, fake_clock)
-    t = data.file_proposal(tmp_db, t.id, field="success", body="s", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="s", actor="agent", now=now
+    )
     assert t.stage == "needs_approach"
 
     t = data.write_recap(tmp_db, t.id, body="second recap", actor="agent", now=now)
@@ -1183,7 +1257,7 @@ def test_a08_recap_rules(tmp_db: Connection, cfg: Config, fake_clock: TestClock)
     assert t.recap == "post-drop recap"
 
 
-def test_a13_sprint_assignment_rules(
+def test_a13_sprint_placement_is_derived_from_item_membership(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:
     now = fake_clock.now_unix()
@@ -1193,38 +1267,15 @@ def test_a13_sprint_assignment_rules(
         (now, now),
     )
 
-    standalone = _create(tmp_db, cfg, fake_clock)
-    standalone = data.edit_ticket(
-        tmp_db,
-        standalone.id,
-        edit=TicketEdit(sprint_id="sp_test"),
-        title_max_chars=TITLE_MAX_CHARS,
-        actor="agent",
-        now=now,
-    )
-    assert data.read_ticket(tmp_db, standalone.id).sprint_id == "sp_test"
-
     tmp_db.execute(
         "INSERT INTO sprint_items (id, title, project_id, sprint_id, created_at, updated_at) "
         "VALUES ('si_test', 'Parent item', 'project_vylo', 'sp_test', ?, ?)",
         (now, now),
     )
     parented = _create(tmp_db, cfg, fake_clock, sprint_item_id="si_test")
-
-    with pytest.raises(PlannerError) as exc:
-        data.edit_ticket(
-            tmp_db,
-            parented.id,
-            edit=TicketEdit(sprint_id="sp_test"),
-            title_max_chars=TITLE_MAX_CHARS,
-            actor="human",
-            now=now,
-        )
-    assert exc.value.code is ErrorCode.sprint_derived
-    assert data.read_ticket(tmp_db, parented.id).sprint_id is None
-
+    backlog = _create(tmp_db, cfg, fake_clock)
     assert data.get_effective_sprint_id(tmp_db, parented.id) == "sp_test"
-    assert data.get_effective_sprint_id(tmp_db, standalone.id) == "sp_test"
+    assert data.get_effective_sprint_id(tmp_db, backlog.id) is None
 
 
 def test_x06_title_and_project_edits_land_on_the_ticket_row(
@@ -1280,14 +1331,18 @@ def test_x06_project_edit_preserves_parented_error_shape(
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.message == "project is derived when parented"
-    assert data.read_ticket(tmp_db, ticket.id).project_id is None
+    assert data.read_ticket(tmp_db, ticket.id).project_id == "project_vylo"
 
 
-def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock) -> None:
+def test_a36_onward_scope(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
     now = fake_clock.now_unix()
 
     t = _create(tmp_db, cfg, fake_clock)
-    t = data.file_proposal(tmp_db, t.id, field="success", body="body", actor="agent", now=now)
+    t = data.file_proposal(
+        tmp_db, t.id, field="success", body="body", actor="agent", now=now
+    )
     assert fields_codec.get_slot(t.fields, "success").proposal is not None
     row_before = _ticket_row(tmp_db, t.id)
 
@@ -1375,11 +1430,15 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
     assert t.ceiling == "needs_approach"
     assert t.at_cap is AtCap.stop
     with pytest.raises(PlannerError) as e_rest:
-        data.file_proposal(tmp_db, t.id, field="approach", body="x", actor="agent", now=now)
+        data.file_proposal(
+            tmp_db, t.id, field="approach", body="x", actor="agent", now=now
+        )
     assert e_rest.value.code is ErrorCode.at_cap_stop
 
     t2 = _create(tmp_db, cfg, fake_clock)
-    t2 = data.file_proposal(tmp_db, t2.id, field="success", body="body", actor="agent", now=now)
+    t2 = data.file_proposal(
+        tmp_db, t2.id, field="success", body="body", actor="agent", now=now
+    )
     t2 = data.accept_proposal(
         tmp_db,
         t2.id,
@@ -1390,12 +1449,16 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         at_cap=AtCap.propose,
     )
     assert t2.stage == "needs_approach"
-    t2 = data.file_proposal(tmp_db, t2.id, field="approach", body="draft", actor="agent", now=now)
+    t2 = data.file_proposal(
+        tmp_db, t2.id, field="approach", body="draft", actor="agent", now=now
+    )
     assert fields_codec.get_slot(t2.fields, "approach").proposal is not None
     assert t2.stage == "needs_approach"
 
     t3 = _create(tmp_db, cfg, fake_clock)
-    t3 = data.file_proposal(tmp_db, t3.id, field="success", body="body", actor="agent", now=now)
+    t3 = data.file_proposal(
+        tmp_db, t3.id, field="success", body="body", actor="agent", now=now
+    )
     t3 = data.accept_proposal(
         tmp_db,
         t3.id,
@@ -1406,7 +1469,9 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         at_cap=AtCap.propose,
     )
     assert t3.ceiling == "needs_plan"
-    t3 = data.file_proposal(tmp_db, t3.id, field="approach", body="a", actor="agent", now=now)
+    t3 = data.file_proposal(
+        tmp_db, t3.id, field="approach", body="a", actor="agent", now=now
+    )
     assert t3.stage == "needs_plan"
     assert t3.ceiling == "needs_plan"
     assert t3.at_cap is AtCap.propose
@@ -1422,7 +1487,9 @@ def test_a36_onward_scope(tmp_db: Connection, cfg: Config, fake_clock: TestClock
         ("implementation", "i"),
         ("closeout", "c"),
     ]:
-        t4 = data.file_proposal(tmp_db, t4.id, field=f, body=body, actor="agent", now=now)
+        t4 = data.file_proposal(
+            tmp_db, t4.id, field=f, body=body, actor="agent", now=now
+        )
     assert t4.stage == "done"
     assert t4.ceiling == ceiling_before
     assert t4.at_cap is at_cap_before
@@ -1433,7 +1500,9 @@ def test_read_ticket_by_conversation_id(
 ) -> None:
     """A worker resolves its own ticket from its live session key; unknown key -> not_found."""
     t = _create(tmp_db, cfg, fake_clock)
-    tmp_db.execute("UPDATE tickets SET conversation_id = ? WHERE id = ?", ("sess_abc", t.id))
+    tmp_db.execute(
+        "UPDATE tickets SET conversation_id = ? WHERE id = ?", ("sess_abc", t.id)
+    )
     assert data.read_ticket_by_conversation_id(tmp_db, "sess_abc").id == t.id
     with pytest.raises(PlannerError) as exc:
         data.read_ticket_by_conversation_id(tmp_db, "no_such_session")
@@ -1452,7 +1521,8 @@ def _links_from(conn: Connection, ticket_id: str) -> list[tuple[str, str]]:
     return [
         (str(row["to_id"]), str(row["kind"]))
         for row in conn.execute(
-            "SELECT to_id, kind FROM links WHERE from_id = ? ORDER BY to_id", (ticket_id,)
+            "SELECT to_id, kind FROM links WHERE from_id = ? ORDER BY to_id",
+            (ticket_id,),
         ).fetchall()
     ]
 
@@ -1571,7 +1641,9 @@ def test_reopening_a_done_blocker_blocks_its_target_again(
     _block(tmp_db, blocker_id=blocker.id, target_id=target.id, now=now)
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
-    data.set_stage(tmp_db, blocker.id, new_stage="needs_success", actor="human", now=now)
+    data.set_stage(
+        tmp_db, blocker.id, new_stage="needs_success", actor="human", now=now
+    )
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.blocked
 
 
@@ -1660,7 +1732,9 @@ def test_auto_accepted_closeout_frees_a_blocked_target(
         ("plan", "p"),
         ("implementation", "i"),
     ]:
-        data.file_proposal(tmp_db, blocker.id, field=field, body=body, actor="agent", now=now)
+        data.file_proposal(
+            tmp_db, blocker.id, field=field, body=body, actor="agent", now=now
+        )
     assert data.read_ticket(tmp_db, blocker.id).stage == "needs_closeout"
 
     target = _create(tmp_db, cfg, fake_clock, title="Target")
@@ -1725,7 +1799,9 @@ def test_a_rejected_reopen_leaves_everything_untouched(
     second_row_before = _ticket_row(tmp_db, second.id)
 
     with pytest.raises(PlannerError) as excinfo:
-        data.set_stage(tmp_db, first.id, new_stage="needs_success", actor="human", now=now)
+        data.set_stage(
+            tmp_db, first.id, new_stage="needs_success", actor="human", now=now
+        )
     assert excinfo.value.code is ErrorCode.link_cycle
 
     assert data.read_ticket(tmp_db, first.id).stage == "done"

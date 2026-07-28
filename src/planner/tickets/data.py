@@ -93,40 +93,38 @@ def _validate_ticket_creation_placement(
     conn: sqlite3.Connection,
     *,
     project_id: str | None,
-    sprint_id: str | None,
     sprint_item_id: str | None,
     blocked_by_ticket_ids: list[str] | None,
 ) -> None:
     if sprint_item_id is not None:
         if (
-            conn.execute("SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)).fetchone()
+            conn.execute(
+                "SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            ).fetchone()
             is None
         ):
             raise PlannerError(
-                ErrorCode.not_found, "sprint item not found", {"sprint_item_id": sprint_item_id}
-            )
-        if sprint_id is not None:
-            raise PlannerError(
-                ErrorCode.sprint_derived,
-                "sprint_id is derived from the parent item",
+                ErrorCode.not_found,
+                "sprint item not found",
                 {"sprint_item_id": sprint_item_id},
             )
         if project_id is not None:
             raise PlannerError(ErrorCode.validation, "project is derived when parented")
-    elif sprint_id is not None:
-        exists = conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone()
-        if exists is None:
-            raise PlannerError(
-                ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id}
-            )
     if project_id is not None:
-        if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
+            is None
+        ):
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
     for blocker_ticket_id in blocked_by_ticket_ids or []:
         if (
-            conn.execute("SELECT 1 FROM tickets WHERE id = ?", (blocker_ticket_id,)).fetchone()
+            conn.execute(
+                "SELECT 1 FROM tickets WHERE id = ?", (blocker_ticket_id,)
+            ).fetchone()
             is None
         ):
             raise PlannerError(
@@ -146,7 +144,6 @@ def validate_ticket_creation_context(
     employee_launch_model: str | None = None,
     project_id: str | None = None,
     deadline: str | None = None,
-    sprint_id: str | None = None,
     sprint_item_id: str | None = None,
     blocked_by_ticket_ids: list[str] | None = None,
     worker_runtime_definitions: ConfiguredWorkerRuntimeDefinitions | None = None,
@@ -154,7 +151,9 @@ def validate_ticket_creation_context(
     """Validate a future ordinary Ticket without creating one."""
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
-    runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
+    runtime_definitions = (
+        worker_runtime_definitions or configured_worker_runtime_definitions()
+    )
     runtime_definitions.worker_type_registry.require(worker_type)
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
@@ -173,7 +172,6 @@ def validate_ticket_creation_context(
     _validate_ticket_creation_placement(
         conn,
         project_id=project_id,
-        sprint_id=sprint_id,
         sprint_item_id=sprint_item_id,
         blocked_by_ticket_ids=blocked_by_ticket_ids,
     )
@@ -224,16 +222,18 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         stage=stage,
         priority=Priority(row["priority"]),
         deadline=row["deadline"],
-        project_id=row["project_id"],
+        project_id=row["effective_project_id"],
         project_name=row["project_name"],
         sprint_item_id=row["sprint_item_id"],
-        sprint_id=row["sprint_id"],
+        effective_sprint_id=row["effective_sprint_id"],
         recap=row["recap"],
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
-        backend_error=(str(row["backend_error"]) if row["backend_error"] is not None else None),
+        backend_error=(
+            str(row["backend_error"]) if row["backend_error"] is not None else None
+        ),
         stage_ownership_overrides=overrides,
         default_stage_ownership_mode=default_ownership,
         effective_stage_ownership_mode=effective_ownership,
@@ -245,7 +245,9 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         worker_type=worker_type,
         employee_backend=str(row["employee_backend"]),
         employee_launch_model=(
-            str(row["employee_launch_model"]) if row["employee_launch_model"] is not None else None
+            str(row["employee_launch_model"])
+            if row["employee_launch_model"] is not None
+            else None
         ),
         employee_launch_reasoning_effort=(
             str(row["employee_launch_reasoning_effort"])
@@ -257,13 +259,19 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
 
 def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
     row: sqlite3.Row | None = conn.execute(
-        "SELECT tickets.*, projects.name AS project_name "
-        "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
+        "SELECT tickets.*, COALESCE(sprint_items.project_id, tickets.project_id) "
+        "AS effective_project_id, projects.name AS project_name, "
+        "sprint_items.sprint_id AS effective_sprint_id "
+        "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
+        "LEFT JOIN projects ON projects.id = "
+        "COALESCE(sprint_items.project_id, tickets.project_id) "
         "WHERE tickets.id = ?",
         (ticket_id,),
     ).fetchone()
     if row is None:
-        raise PlannerError(ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id})
+        raise PlannerError(
+            ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id}
+        )
     return row
 
 
@@ -275,9 +283,15 @@ def _load_ticket_and_worker_type_definition_for_write(
     conn: sqlite3.Connection, ticket_id: str
 ) -> tuple[Ticket, WorkerTypeDefinition]:
     row = _ticket_row(conn, ticket_id)
-    worker_type_definition = configured_worker_type_registry().require(str(row["worker_type"]))
-    worker_type_definition.validate_ticket_position(str(row["stage"]), str(row["ceiling"]))
-    fields_codec.declared_fields_from_json(str(row["fields"]), worker_type_definition.field_ids())
+    worker_type_definition = configured_worker_type_registry().require(
+        str(row["worker_type"])
+    )
+    worker_type_definition.validate_ticket_position(
+        str(row["stage"]), str(row["ceiling"])
+    )
+    fields_codec.declared_fields_from_json(
+        str(row["fields"]), worker_type_definition.field_ids()
+    )
     return _row_to_ticket(row), worker_type_definition
 
 
@@ -310,7 +324,9 @@ def _default_stage_ownership_for_entry(
     )
 
 
-def _outgoing_block_target_ids(conn: sqlite3.Connection, ticket_id: str) -> tuple[str, ...]:
+def _outgoing_block_target_ids(
+    conn: sqlite3.Connection, ticket_id: str
+) -> tuple[str, ...]:
     rows = conn.execute(
         "SELECT to_id FROM links WHERE from_id = ? AND kind = 'blocks' ORDER BY to_id",
         (ticket_id,),
@@ -352,7 +368,9 @@ def settle_blocked_standin(conn: sqlite3.Connection, ticket_id: str, now: int) -
     writes only when the value actually changes, so a Ticket that stays blocked because
     another live blocker remains writes nothing.
     """
-    row = conn.execute("SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+    row = conn.execute(
+        "SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)
+    ).fetchone()
     if row is None:
         return
     current = TicketStatus(str(row["ticket_status"]))
@@ -390,13 +408,21 @@ def _release_outgoing_blocks_links(
 def _apply_decision(
     conn: sqlite3.Connection, ticket: Ticket, decision: Decision, now: int
 ) -> Ticket:
-    new_fields = decision.new_fields if decision.new_fields is not None else ticket.fields
+    new_fields = (
+        decision.new_fields if decision.new_fields is not None else ticket.fields
+    )
     new_stage = decision.new_stage if decision.new_stage is not None else ticket.stage
-    new_ceiling = decision.new_ceiling if decision.new_ceiling is not None else ticket.ceiling
-    new_at_cap = decision.new_at_cap if decision.new_at_cap is not None else ticket.at_cap
+    new_ceiling = (
+        decision.new_ceiling if decision.new_ceiling is not None else ticket.ceiling
+    )
+    new_at_cap = (
+        decision.new_at_cap if decision.new_at_cap is not None else ticket.at_cap
+    )
     # Pre-persist door: the prospective (stage, ceiling) must be registry-valid for
     # this ticket's type before any SQL — the enforcement the dropped DB CHECKs gave.
-    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    worker_type_definition = configured_worker_type_registry().require(
+        ticket.worker_type
+    )
     worker_type_definition.validate_ticket_position(str(new_stage), str(new_ceiling))
     new_default_stage_ownership_mode = (
         _default_stage_ownership_for_entry(conn, worker_type_definition, str(new_stage))
@@ -410,7 +436,9 @@ def _apply_decision(
         affected_blocked_target_ids = _outgoing_block_target_ids(conn, ticket.id)
         if active_after:
             for target_id in affected_blocked_target_ids:
-                if core_links.would_create_active_blocks_cycle(conn, ticket.id, target_id):
+                if core_links.would_create_active_blocks_cycle(
+                    conn, ticket.id, target_id
+                ):
                     raise PlannerError(
                         ErrorCode.link_cycle,
                         "ticket stage change would activate a blocks cycle",
@@ -442,7 +470,9 @@ def _apply_decision(
         else:
             # Completed into done/dropped: drop the blocks links this Ticket holds and
             # rewrite each named target's status in this same transaction.
-            _release_outgoing_blocks_links(conn, ticket.id, affected_blocked_target_ids, now)
+            _release_outgoing_blocks_links(
+                conn, ticket.id, affected_blocked_target_ids, now
+            )
     return _load_ticket(conn, ticket.id)
 
 
@@ -503,7 +533,11 @@ def _entered_stage_status_for_ticket(
         worker_type_definition=worker_type_definition,
         default_stage_ownership_mode=ticket.default_stage_ownership_mode,
     )
-    entered = TicketStatus.user if ownership_mode is StageOwnershipMode.user else TicketStatus.empty
+    entered = (
+        TicketStatus.user
+        if ownership_mode is StageOwnershipMode.user
+        else TicketStatus.empty
+    )
     return _blocked_standin(conn, ticket.id, entered)
 
 
@@ -749,8 +783,8 @@ def create_ticket(
     project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,
-    sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    fallback_sprint_id: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -760,8 +794,12 @@ def create_ticket(
 ) -> Ticket:
     admission.validate_title(title, title_max_chars)
     admission.validate_deadline(deadline)
-    runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
-    worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
+    runtime_definitions = (
+        worker_runtime_definitions or configured_worker_runtime_definitions()
+    )
+    worker_type_definition = runtime_definitions.worker_type_registry.require(
+        worker_type
+    )
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
     )
@@ -770,7 +808,9 @@ def create_ticket(
         default_model=launch_defaults.employee_launch_model,
         default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
         employee_backend=require_conversation_backend_key(
-            employee_backend if employee_backend is not None else launch_defaults.employee_backend
+            employee_backend
+            if employee_backend is not None
+            else launch_defaults.employee_backend
         ),
         employee_launch_model=employee_launch_model,
     )
@@ -791,10 +831,19 @@ def create_ticket(
     )
     fields_json = fields_codec.fields_to_json(initial_fields)
     with _txn(conn):
+        if sprint_item_id is None and fallback_sprint_id is not None:
+            from planner.sprints import data as sprints_data
+
+            sprint_item_id = sprints_data.get_or_create_other_item(
+                conn,
+                sprint_id=fallback_sprint_id,
+                project_id=project_id or "project_other",
+                now=now,
+            ).id
+            project_id = None
         _validate_ticket_creation_placement(
             conn,
             project_id=project_id,
-            sprint_id=sprint_id,
             sprint_item_id=sprint_item_id,
             blocked_by_ticket_ids=blocked_by_ticket_ids,
         )
@@ -803,11 +852,11 @@ def create_ticket(
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, "
+            "recap, ceiling, at_cap, "
             "ticket_status, stage_ownership_overrides, default_stage_ownership_mode, "
             "conversation_id, alias, fields, created_at, updated_at, "
             "ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -821,7 +870,6 @@ def create_ticket(
                 deadline,
                 project_id,
                 sprint_item_id,
-                sprint_id,
                 default_ceiling,
                 AtCap.propose.value,
                 TicketStatus.awaiting_approval.value,
@@ -840,7 +888,9 @@ def create_ticket(
         if day_id is not None:
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
-            core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
+            core_links.add_link(
+                conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now
+            )
         return _load_ticket_for_write(conn, ticket_id)
 
 
@@ -858,8 +908,8 @@ def create_ticket_from_external_work(
     project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,
-    sprint_id: str | None = None,
     sprint_item_id: str | None = None,
+    fallback_sprint_id: str | None = None,
     worker_type: str,
     employee_backend: str | None = None,
     employee_launch_model: str | None = None,
@@ -874,8 +924,12 @@ def create_ticket_from_external_work(
     admission.validate_deadline(deadline)
     if recap is not None:
         admission.validate_body(recap, "recap")
-    runtime_definitions = worker_runtime_definitions or configured_worker_runtime_definitions()
-    worker_type_definition = runtime_definitions.worker_type_registry.require(worker_type)
+    runtime_definitions = (
+        worker_runtime_definitions or configured_worker_runtime_definitions()
+    )
+    worker_type_definition = runtime_definitions.worker_type_registry.require(
+        worker_type
+    )
     launch_defaults = read_worker_launch_defaults_for_ticket_creation(
         conn, runtime_definitions.worker_type_registry, worker_type
     )
@@ -884,11 +938,13 @@ def create_ticket_from_external_work(
         default_model=launch_defaults.employee_launch_model,
         default_reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
         employee_backend=require_conversation_backend_key(
-            employee_backend if employee_backend is not None else launch_defaults.employee_backend
+            employee_backend
+            if employee_backend is not None
+            else launch_defaults.employee_backend
         ),
         employee_launch_model=employee_launch_model,
     )
-    # External work is "already done elsewhere": seed at the type's FIRST WORKER stage
+    # External work is "already done elsewhere": start at the type's FIRST WORKER stage
     # (needs_success / needs_understanding / needs_alpha), NOT the leading needs_kickoff — the
     # applied decision then jumps it to target_stage. first_worker_stage is the concept
     # here; default_ceiling is now needs_kickoff and would wrongly re-park kickoff.
@@ -903,6 +959,16 @@ def create_ticket_from_external_work(
         FieldSlot(value=kickoff_note),
     )
     with _txn(conn):
+        if sprint_item_id is None and fallback_sprint_id is not None:
+            from planner.sprints import data as sprints_data
+
+            sprint_item_id = sprints_data.get_or_create_other_item(
+                conn,
+                sprint_id=fallback_sprint_id,
+                project_id=project_id or "project_other",
+                now=now,
+            ).id
+            project_id = None
         if sprint_item_id is not None:
             if (
                 conn.execute(
@@ -915,29 +981,20 @@ def create_ticket_from_external_work(
                     "sprint item not found",
                     {"sprint_item_id": sprint_item_id},
                 )
-            if sprint_id is not None:
-                raise PlannerError(
-                    ErrorCode.sprint_derived,
-                    "sprint_id is derived from the parent item",
-                    {"sprint_item_id": sprint_item_id},
-                )
             if project_id is not None:
-                raise PlannerError(ErrorCode.validation, "project is derived when parented")
-        elif (
-            sprint_id is not None
-            and conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone() is None
-        ):
-            raise PlannerError(ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id})
+                raise PlannerError(
+                    ErrorCode.validation, "project is derived when parented"
+                )
 
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
             "employee_launch_reasoning_effort, stage, priority, deadline, "
             "project_id, sprint_item_id, "
-            "sprint_id, recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
+            "recap, ceiling, at_cap, ticket_status, stage_ownership_overrides, "
             "default_stage_ownership_mode, conversation_id, alias, fields, "
             "created_at, updated_at, ticket_status_changed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, "
             "?, ?, ?, ?)",
             (
                 ticket_id,
@@ -946,8 +1003,8 @@ def create_ticket_from_external_work(
                 launch_configuration.employee_backend,
                 launch_configuration.employee_launch_model,
                 launch_configuration.employee_launch_reasoning_effort,
-                # Seed at the type's FIRST WORKER stage. The applied external-work
-                # decision then moves it to target_stage; the seed only needs to be a
+                # Start at the type's FIRST WORKER stage. The applied external-work
+                # decision then moves it to target_stage; this initial position only needs to be a
                 # valid non-terminal worker stage so the pre-persist guard passes
                 # (coding: needs_success; probe: needs_alpha). This is NOT default_ceiling,
                 # which is now the leading needs_kickoff.
@@ -956,7 +1013,6 @@ def create_ticket_from_external_work(
                 deadline,
                 project_id,
                 sprint_item_id,
-                sprint_id,
                 first_worker,
                 AtCap.propose.value,
                 TicketStatus.empty.value,
@@ -975,9 +1031,11 @@ def create_ticket_from_external_work(
         if day_id is not None:
             days_data.add_day_ticket(conn, day_id, ticket_id, now)
         for blocker_ticket_id in blocked_by_ticket_ids or []:
-            core_links.add_link(conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now)
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+            core_links.add_link(
+                conn, blocker_ticket_id, ticket_id, LinkKind.blocks, now
+            )
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         values_decision, position_decision = external_work.decide_external_work(
             ticket,
@@ -1019,8 +1077,8 @@ def reconcile_ticket_from_external_work(
     if recap is not None:
         admission.validate_body(recap, "recap")
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         if ticket.ticket_status not in (
             TicketStatus.empty,
@@ -1080,8 +1138,8 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
     row's id and the specific reason.
 
     Invocation is deliberately narrow: this full scan runs once in the ``panels
-    serve`` lifespan, after the registry build and before background loops. Seed and
-    CLI paths do NOT run it — sanctioned writes use validation doors, while the
+    serve`` lifespan, after the registry build and before background loops. CLI paths
+    do NOT run it — sanctioned writes use validation doors, while the
     production server audits existing rows once before serving or starting background
     work. Plain row loading intentionally returns stored values without resolving a
     Worker type merely to read a Stage."""
@@ -1093,7 +1151,9 @@ def audit_ticket_registry_integrity(conn: sqlite3.Connection) -> None:
         try:
             require_conversation_backend_key(str(row["employee_backend"]))
             worker_type_definition = registry.require(str(row["worker_type"]))
-            worker_type_definition.validate_ticket_position(str(row["stage"]), str(row["ceiling"]))
+            worker_type_definition.validate_ticket_position(
+                str(row["stage"]), str(row["ceiling"])
+            )
             fields_codec.declared_fields_from_json(
                 str(row["fields"]), worker_type_definition.field_ids()
             )
@@ -1115,11 +1175,17 @@ def read_ticket(conn: sqlite3.Connection, ticket_id: str) -> Ticket:
     return _load_ticket(conn, ticket_id)
 
 
-def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: str) -> Ticket:
+def read_ticket_by_conversation_id(
+    conn: sqlite3.Connection, conversation_id: str
+) -> Ticket:
     """Resolve the Ticket that owns this durable Employee conversation."""
     rows = conn.execute(
-        "SELECT tickets.*, projects.name AS project_name "
-        "FROM tickets LEFT JOIN projects ON projects.id = tickets.project_id "
+        "SELECT tickets.*, COALESCE(sprint_items.project_id, tickets.project_id) "
+        "AS effective_project_id, projects.name AS project_name, "
+        "sprint_items.sprint_id AS effective_sprint_id "
+        "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
+        "LEFT JOIN projects ON projects.id = "
+        "COALESCE(sprint_items.project_id, tickets.project_id) "
         "WHERE tickets.conversation_id = ? ORDER BY tickets.id",
         (conversation_id,),
     ).fetchall()
@@ -1142,16 +1208,7 @@ def read_ticket_by_conversation_id(conn: sqlite3.Connection, conversation_id: st
 
 
 def get_effective_sprint_id(conn: sqlite3.Connection, ticket_id: str) -> str | None:
-    ticket = _load_ticket(conn, ticket_id)
-    if ticket.sprint_item_id is None:
-        return ticket.sprint_id
-    row = conn.execute(
-        "SELECT sprint_id FROM sprint_items WHERE id = ?", (ticket.sprint_item_id,)
-    ).fetchone()
-    if row is None:
-        return None
-    sprint_id: str | None = row["sprint_id"]
-    return sprint_id
+    return _load_ticket(conn, ticket_id).effective_sprint_id
 
 
 def claim_ticket_for_worker_step(
@@ -1173,8 +1230,8 @@ def claim_ticket_for_worker_step(
     are what ``release_worker_step_claim`` must be given to give the claim back.
     """
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         planning_day_id = planning_day_id_resolver()
         if not readiness_check(
@@ -1256,8 +1313,8 @@ def file_proposal(
     now: int,
 ) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         decision = resolution.decide_file_proposal(
             ticket,
@@ -1308,8 +1365,8 @@ def file_current_proposal_with_recap(
     """
     admission.validate_body(recap, "recap")
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         field = worker_type_definition.gating_field(ticket.stage)
         if field is None:
@@ -1364,8 +1421,8 @@ def accept_proposal(
     at_cap: AtCap | None = None,
 ) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         decision = resolution.decide_accept(
             ticket,
@@ -1405,8 +1462,8 @@ def set_stage_ownership(
     now: int,
 ) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         if not worker_type_definition.is_known_stage(stage):
             raise PlannerError(ErrorCode.validation, "invalid stage", {"stage": stage})
@@ -1423,7 +1480,9 @@ def set_stage_ownership(
             default_stage_ownership_mode=(
                 ticket.default_stage_ownership_mode
                 if stage == ticket.stage
-                else _default_stage_ownership_for_entry(conn, worker_type_definition, stage)
+                else _default_stage_ownership_for_entry(
+                    conn, worker_type_definition, stage
+                )
             ),
         )
         assert effective_before is not None
@@ -1439,7 +1498,9 @@ def set_stage_ownership(
             default_stage_ownership_mode=(
                 ticket.default_stage_ownership_mode
                 if stage == ticket.stage
-                else _default_stage_ownership_for_entry(conn, worker_type_definition, stage)
+                else _default_stage_ownership_for_entry(
+                    conn, worker_type_definition, stage
+                )
             ),
         )
         if overrides == ticket.stage_ownership_overrides:
@@ -1472,8 +1533,8 @@ def set_stage_ownership(
 
 def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         if ticket.stage in ("done", "dropped"):
             raise PlannerError(
@@ -1487,7 +1548,10 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
                 "kickoff must be settled before takeover",
                 {"ticket_id": ticket_id},
             )
-        if ticket.stage_ownership_overrides.get(ticket.stage) is StageOwnershipMode.user:
+        if (
+            ticket.stage_ownership_overrides.get(ticket.stage)
+            is StageOwnershipMode.user
+        ):
             return ticket
         effective_before = ticket.effective_stage_ownership_mode
         overrides = dict(ticket.stage_ownership_overrides)
@@ -1497,10 +1561,14 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
             (_stage_ownership_overrides_to_json(overrides), now, ticket_id),
         )
         updated = _load_ticket_for_write(conn, ticket_id)
-        if effective_before is not StageOwnershipMode.user and updated.ticket_status not in (
-            TicketStatus.agent,
-            TicketStatus.awaiting_approval,
-            TicketStatus.errored,
+        if (
+            effective_before is not StageOwnershipMode.user
+            and updated.ticket_status
+            not in (
+                TicketStatus.agent,
+                TicketStatus.awaiting_approval,
+                TicketStatus.errored,
+            )
         ):
             _write_entered_stage_ticket_status(
                 conn,
@@ -1514,8 +1582,8 @@ def take_over_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> T
 
 def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         if ticket.stage in ("done", "dropped"):
             raise PlannerError(
@@ -1571,12 +1639,14 @@ def release_ticket(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Tic
         return updated
 
 
-def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
+def request_user_help(
+    conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int
+) -> Ticket:
     """Pause a Worker-owned Ticket for explicit human help."""
     admission.require_worker_actor(actor, "request user help")
     with _txn(conn):
-        ticket, _worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, _worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         if ticket.stage in ("done", "dropped"):
             raise PlannerError(
@@ -1595,7 +1665,9 @@ def request_user_help(conn: sqlite3.Connection, ticket_id: str, *, actor: str, n
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def enter_paired_on_human_reply(conn: sqlite3.Connection, ticket_id: str, *, now: int) -> Ticket:
+def enter_paired_on_human_reply(
+    conn: sqlite3.Connection, ticket_id: str, *, now: int
+) -> Ticket:
     """Flip a filed proposal to paired when a human replies with a typed message.
 
     Automatic consequence of message admission, not an actor-authored write, so no actor is
@@ -1618,8 +1690,8 @@ def edit_field_value(
     now: int,
 ) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         decision = resolution.decide_edit_value(
             ticket,
@@ -1643,8 +1715,8 @@ def return_for_revision(
 ) -> Ticket:
     admission.validate_body(message, "revision guidance")
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         decision = resolution.decide_return_for_revision(
             ticket,
@@ -1660,8 +1732,8 @@ def set_stage(
     conn: sqlite3.Connection, ticket_id: str, *, new_stage: str, actor: str, now: int
 ) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         worker_type_definition.validate_ticket_position(new_stage, ticket.ceiling)
         # decide_stage_jump guards only on the universal bookends + the equality check,
@@ -1678,10 +1750,12 @@ def set_stage(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def drop_ticket(conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int) -> Ticket:
+def drop_ticket(
+    conn: sqlite3.Connection, ticket_id: str, *, actor: str, now: int
+) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         decision = resolution.decide_drop(ticket, actor)
         updated = _apply_decision(conn, ticket, decision, now)
@@ -1733,17 +1807,16 @@ def delete_ticket(
                 }
             )
         )
-        sprint_item_ids = (ticket.sprint_item_id,) if ticket.sprint_item_id is not None else ()
-        effective_sprint_id = ticket.sprint_id
-        if ticket.sprint_item_id is not None:
-            item_row = conn.execute(
-                "SELECT sprint_id FROM sprint_items WHERE id = ?", (ticket.sprint_item_id,)
-            ).fetchone()
-            if item_row is not None and item_row["sprint_id"] is not None:
-                effective_sprint_id = str(item_row["sprint_id"])
+        sprint_item_ids = (
+            (ticket.sprint_item_id,) if ticket.sprint_item_id is not None else ()
+        )
+        effective_sprint_id = ticket.effective_sprint_id
         sprint_ids = (effective_sprint_id,) if effective_sprint_id is not None else ()
 
-        conn.execute("DELETE FROM pending_worker_context WHERE worker_entity_id = ?", (ticket_id,))
+        conn.execute(
+            "DELETE FROM pending_worker_context WHERE worker_entity_id = ?",
+            (ticket_id,),
+        )
 
         for day_id in day_ids:
             days_data.remove_day_ticket(conn, day_id, ticket_id, now)
@@ -1758,7 +1831,10 @@ def delete_ticket(
         # The deleted Ticket held those blocks links; every target it named re-derives
         # its stand-in now that they are gone.
         for row in link_rows:
-            if str(row["from_id"]) == ticket_id and str(row["kind"]) == LinkKind.blocks.value:
+            if (
+                str(row["from_id"]) == ticket_id
+                and str(row["kind"]) == LinkKind.blocks.value
+            ):
                 settle_blocked_standin_for_link_target(conn, str(row["to_id"]), now)
 
         conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
@@ -1782,8 +1858,8 @@ def change_scope(
     now: int,
 ) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         decision = resolution.decide_scope_change(
             ticket,
@@ -1807,13 +1883,17 @@ def set_field_user_note(
     now: int,
 ) -> Ticket:
     with _txn(conn):
-        ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
-            conn, ticket_id
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
         )
         if not worker_type_definition.has_field(field):
-            raise PlannerError(ErrorCode.validation, "unknown ticket field", {"field": str(field)})
+            raise PlannerError(
+                ErrorCode.validation, "unknown ticket field", {"field": str(field)}
+            )
         slot = fields_codec.get_slot(ticket.fields, str(field))
-        new_slot = FieldSlot(value=slot.value, proposal=slot.proposal, user_note=user_note)
+        new_slot = FieldSlot(
+            value=slot.value, proposal=slot.proposal, user_note=user_note
+        )
         new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
         conn.execute(
             "UPDATE tickets SET fields = ?, updated_at = ? WHERE id = ?",
@@ -1833,7 +1913,9 @@ def set_note(
     actor: str,
     now: int,
 ) -> Ticket:
-    return set_field_user_note(conn, ticket_id, field=field, user_note=note, actor=actor, now=now)
+    return set_field_user_note(
+        conn, ticket_id, field=field, user_note=note, actor=actor, now=now
+    )
 
 
 def edit_ticket(
@@ -1853,7 +1935,6 @@ def edit_ticket(
         deadline = edit["deadline"] if "deadline" in edit else ticket.deadline
 
         project_id = edit["project_id"] if "project_id" in edit else ticket.project_id
-        sprint_id = edit["sprint_id"] if "sprint_id" in edit else ticket.sprint_id
 
         # Validate the intended final Ticket before its first durable effect. Parent
         # restrictions use request-key presence: explicitly assigning the same/null
@@ -1864,32 +1945,27 @@ def edit_ticket(
             raise PlannerError(ErrorCode.validation, "project is derived when parented")
         if (
             project_id is not None
-            and conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone()
+            and conn.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
+            ).fetchone()
             is None
         ):
             raise PlannerError(
                 ErrorCode.validation, "invalid project_id", {"project_id": project_id}
             )
-        if "sprint_id" in edit:
-            admission.check_sprint_assignable(ticket_id, ticket.sprint_item_id)
-        if (
-            sprint_id is not None
-            and conn.execute("SELECT 1 FROM sprints WHERE id = ?", (sprint_id,)).fetchone() is None
-        ):
-            raise PlannerError(ErrorCode.not_found, "sprint not found", {"sprint_id": sprint_id})
-
         candidates: tuple[tuple[str, str, str | None, str | None], ...] = (
             ("title", "title", ticket.title, title),
             ("priority", "priority", ticket.priority.value, priority.value),
             ("deadline", "deadline", ticket.deadline, deadline),
             ("project_id", "project_id", ticket.project_id, project_id),
-            ("sprint_id", "sprint_id", ticket.sprint_id, sprint_id),
         )
         changes = [change for change in candidates if change[2] != change[3]]
         if not changes:
             return ticket
 
-        assignments = ", ".join(f"{column} = ?" for _field, column, _old, _new in changes)
+        assignments = ", ".join(
+            f"{column} = ?" for _field, column, _old, _new in changes
+        )
         params = [new for _field, _column, _old, new in changes]
         conn.execute(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
@@ -1905,13 +1981,14 @@ def write_recap(
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
         conn.execute(
-            "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?", (body, now, ticket_id)
+            "UPDATE tickets SET recap = ?, updated_at = ? WHERE id = ?",
+            (body, now, ticket_id),
         )
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def assign_ticket_to_sprint_item(
+def move_ticket_to_sprint_item(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -1925,29 +2002,28 @@ def assign_ticket_to_sprint_item(
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         if (
-            conn.execute("SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)).fetchone()
+            conn.execute(
+                "SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            ).fetchone()
             is None
         ):
             raise PlannerError(
-                ErrorCode.not_found, "sprint item not found", {"sprint_item_id": sprint_item_id}
-            )
-        if ticket.sprint_item_id is not None and ticket.sprint_item_id != sprint_item_id:
-            raise PlannerError(
-                ErrorCode.validation,
-                "ticket is already assigned to a sprint item",
-                {"ticket_id": ticket_id, "sprint_item_id": ticket.sprint_item_id},
+                ErrorCode.not_found,
+                "sprint item not found",
+                {"sprint_item_id": sprint_item_id},
             )
         if ticket.sprint_item_id == sprint_item_id:
             return ticket
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = ?, sprint_id = NULL, project_id = NULL, "
+            "UPDATE tickets SET sprint_item_id = ?, project_id = NULL, "
             "updated_at = ? WHERE id = ?",
             (sprint_item_id, now, ticket_id),
         )
+        ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)
 
 
-def remove_ticket_from_sprint_item(
+def move_ticket_to_backlog(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -1961,20 +2037,23 @@ def remove_ticket_from_sprint_item(
             admit()
         ticket = _load_ticket_for_write(conn, ticket_id)
         item = conn.execute(
-            "SELECT sprint_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
+            "SELECT project_id FROM sprint_items WHERE id = ?", (sprint_item_id,)
         ).fetchone()
         if item is None:
             raise PlannerError(
-                ErrorCode.not_found, "sprint item not found", {"sprint_item_id": sprint_item_id}
+                ErrorCode.not_found,
+                "sprint item not found",
+                {"sprint_item_id": sprint_item_id},
             )
         # Removal is a compare-and-clear operation. A retry after the first removal is a
         # no-op, and a stale retry after another request moved the ticket elsewhere must
         # not detach that newer membership.
         if ticket.sprint_item_id != sprint_item_id:
             return ticket
-        parent_sprint_id: str | None = item["sprint_id"]
         conn.execute(
-            "UPDATE tickets SET sprint_item_id = NULL, sprint_id = ?, updated_at = ? WHERE id = ?",
-            (parent_sprint_id, now, ticket_id),
+            "UPDATE tickets SET sprint_item_id = NULL, project_id = ?, "
+            "updated_at = ? WHERE id = ?",
+            (str(item["project_id"]), now, ticket_id),
         )
+        ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)

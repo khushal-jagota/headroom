@@ -115,7 +115,7 @@
   }
 
   // A ticket row reads active when it is in a non-empty working/review state, green
-  // when done. Works for both item-ticket projections and loose tickets.
+  // when done.
   function ticketIsActive(ticket: AnyRecord): boolean {
     return (
       ticket.has_pending_proposal === true ||
@@ -163,7 +163,6 @@
     {:else}
       {@const sprint = current.data.sprint}
       {@const groups = current.data.groups || {}}
-      {@const looseTickets = current.data.loose_tickets || []}
       <div class="doc">
       <div class="col">
         {#if documents}
@@ -236,6 +235,7 @@
                     chevron="leading"
                     class={item.status === "done" ? "item--dim" : ""}
                     data-item-id={item.id}
+                    data-item-kind={item.kind}
                     data-item-status={item.status}
                     data-selected={selectedItemId === item.id ? "true" : undefined}
                     tabindex={selectedItemId === item.id ? "-1" : undefined}
@@ -243,6 +243,7 @@
                   >
                     {#snippet summary()}
                       <span class="it list-row-title">{item.title}</span>
+                      {#if item.kind === "other"}<Chip keyLabel="kind" value="fallback" />{/if}
                       <span class={`st${item.status === "in_progress" ? " st--now" : ""}`}>{itemStatusWord[item.status]}</span>
                       <span class="frac">{doneFraction(item)}</span>
                     {/snippet}
@@ -273,24 +274,6 @@
             </Disclosure>
           {/each}
 
-          {#if looseTickets.length}
-            <Disclosure variant="pgroup" chevron="none" defaultOpen={true} data-project-group="__loose__">
-              {#snippet summary()}
-                <span class="pchev">›</span>
-                <span class="plabel">Loose tickets</span>
-                <span class="pn">{looseTickets.length}</span>
-              {/snippet}
-              <div class="pbody" data-loose>
-                {#each looseTickets as ticket}
-                  <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                    <span class="pr">{ticket.priority}</span>
-                    <span class="t">{ticket.title}</span>
-                    <span class={ticketStageClass(ticket)}>{labelize(ticket.stage, { capitalize: false })}</span>
-                  </a>
-                {/each}
-              </div>
-            </Disclosure>
-          {/if}
         {/if}
       </div>
     </div>

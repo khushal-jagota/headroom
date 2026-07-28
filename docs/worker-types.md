@@ -114,7 +114,7 @@ There is no compatibility bridge or special coding seam. The application boundar
 definition, and framework-free rule are the whole path.
 
 _Code paths:_ `src/planner/worker_types/configuration.py` supplies the configured
-registry. Ticket, sprint, seed, runtime, and API boundaries import it where workflow
+registry. Ticket, sprint, external-work, runtime, and API boundaries import it where workflow
 behavior is needed. Rules under `src/planner/tickets/logic/` receive
 `worker_type_definition` explicitly.
 
@@ -139,22 +139,6 @@ probe names a real backend of its own, deliberately not one the shipped types na
 that "a Worker type may run on a different agent" stays under test.
 
 No registry position means “default.” Order is composition and presentation order only.
-
-## The one-time seed boundary
-
-The retained legacy importer is run directly, not through the server or `panels`:
-
-```text
-python -m planner.seed --source <dir> --worker-type <id>
-```
-
-The command requires an explicit Worker type. The importer resolves that exact registry
-definition once, then uses its Stage order and field set to validate every imported
-Ticket. It stores the same Worker type on every Ticket in that run. It never defaults to
-`coding`, uses registry order, or infers a type from the source document. If a legacy
-Stage is incompatible with the selected definition, the whole import rolls back.
-
-There is no `/api/seed` route or `panels seed` command.
 
 ## The served manifest and frontend
 

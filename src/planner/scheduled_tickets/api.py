@@ -10,7 +10,11 @@ from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.projects import data as projects_data
 from planner.scheduled_tickets import actions, data, views
-from planner.scheduled_tickets.contracts import ScheduleCadence, ScheduledTicketTemplate
+from planner.scheduled_tickets.contracts import (
+    ScheduleCadence,
+    ScheduledTicketPlacementMode,
+    ScheduledTicketTemplate,
+)
 from planner.tickets.api import (
     Clk,
     DbConn,
@@ -35,7 +39,7 @@ _CREATE_KEYS = frozenset(
         "deadline",
         "project",
         "project_id",
-        "sprint_id",
+        "placement_mode",
         "sprint_item_id",
         "employee_backend",
         "employee_launch_model",
@@ -81,6 +85,25 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         project_name=body_opt_str(raw, "project"),
     )
     priority_raw = body_opt_str(raw, "priority")
+    sprint_item_id = body_opt_str(raw, "sprint_item_id")
+    placement_mode_raw = body_opt_str(raw, "placement_mode")
+    placement_mode = (
+        parse_enum(
+            ScheduledTicketPlacementMode,
+            placement_mode_raw,
+            "placement_mode",
+        )
+        if placement_mode_raw is not None
+        else (
+            ScheduledTicketPlacementMode.current_sprint
+            if "sprint_item_id" not in raw
+            else (
+                ScheduledTicketPlacementMode.backlog
+                if sprint_item_id is None
+                else ScheduledTicketPlacementMode.sprint_item
+            )
+        )
+    )
     return ScheduledTicketTemplate(
         title=body_str(raw, "title"),
         worker_type=worker_type,
@@ -92,8 +115,8 @@ def _template_from_create(raw: JsonDict, conn: DbConn) -> ScheduledTicketTemplat
         ),
         deadline=body_opt_str(raw, "deadline"),
         project_id=None if project is None else project.id,
-        sprint_id=body_opt_str(raw, "sprint_id"),
-        sprint_item_id=body_opt_str(raw, "sprint_item_id"),
+        placement_mode=placement_mode,
+        sprint_item_id=sprint_item_id,
         employee_backend=body_opt_str(raw, "employee_backend"),
         employee_launch_model=body_opt_str(raw, "employee_launch_model"),
         blocked_by_ticket_ids=tuple(body_str_list(raw, "blocked_by_ticket_ids")),
@@ -120,7 +143,9 @@ async def create_schedule(raw: dict[str, Any], conn: DbConn, clk: Clk) -> JsonDi
 
 @router.get("/schedules")
 async def list_schedules(conn: DbConn) -> JsonDict:
-    return {"schedules": [views.schedule_json(item) for item in data.list_schedules(conn)]}
+    return {
+        "schedules": [views.schedule_json(item) for item in data.list_schedules(conn)]
+    }
 
 
 @router.get("/schedules/{schedule_id}")
@@ -157,13 +182,26 @@ async def patch_schedule(
     for key in (
         "deadline",
         "project_id",
-        "sprint_id",
         "sprint_item_id",
         "employee_backend",
         "employee_launch_model",
     ):
         if key in raw:
             changes[key] = body_opt_str(raw, key)
+    if "sprint_item_id" in raw:
+        changes["placement_mode"] = (
+            ScheduledTicketPlacementMode.backlog
+            if changes["sprint_item_id"] is None
+            else ScheduledTicketPlacementMode.sprint_item
+        )
+    if "placement_mode" in raw:
+        changes["placement_mode"] = parse_enum(
+            ScheduledTicketPlacementMode,
+            body_str(raw, "placement_mode"),
+            "placement_mode",
+        )
+        if changes["placement_mode"] is not ScheduledTicketPlacementMode.sprint_item:
+            changes["sprint_item_id"] = None
     if "blocked_by_ticket_ids" in raw:
         changes["blocked_by_ticket_ids"] = tuple(
             body_str_list(raw, "blocked_by_ticket_ids")

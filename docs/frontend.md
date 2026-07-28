@@ -25,8 +25,8 @@ One screen per part of the system:
   appear. One project selector narrows the roster by each ticket's effective project,
   including **All projects** and **No project**. It sits just below the Chief of Staff
   entry and reads as a small header showing the active project; clicking it opens a
-  menu of the projects. A ticket parented by a sprint item uses
-  that item's project; a standalone ticket uses its own project. The selector does not
+  menu of the projects. A Ticket on a Sprint Item uses
+  that item's project; an unparented backlog Ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
   tickets into collapsible boxed groups in a fixed order that puts what needs the user
   first: Errored, Needs user, Waiting to Closeout, User, Paired, Agent, Waiting for
@@ -88,10 +88,13 @@ One screen per part of the system:
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
   Ticket has a conversation, the pill becomes read-only. Its project picker is backed by the shared
-  `projects` resource.
+  `projects` resource. Its placement picker selects one Sprint Item or the explicit
+  unparented Backlog. Moving to an item is atomic; choosing Backlog compare-clears the
+  current item so a stale browser cannot detach a Ticket that has already moved.
 - **Sprint** — one tracking page that scrolls (name, a meta line, the bet, then the
-  work grouped by project with loose tickets as the same group), plus a separate
-  documents page for the kickoff/mid/review record (see `sprints.md`).
+  Sprint Items grouped by project and their child Tickets), plus a separate documents
+  page for the kickoff/mid/review record (see `sprints.md`). Other items are marked as
+  fallbacks so catch-all work is not mistaken for an intentionally shaped outcome.
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
 - **Agents** — the browser navigation and page at `#/agents`. The page has exactly two
@@ -341,4 +344,5 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-27 (the Ticket screen's conversation is a layer along the bottom in three states; Workspace groups by Ticket status and its row mark carries three signals; one conversation pane over the record, GFM rendering, the change stream feeding cached reads, and shared file previews)._
+_Last verified: 2026-07-28 (including Sprint Item-only Ticket placement and visible
+Other fallbacks)._
