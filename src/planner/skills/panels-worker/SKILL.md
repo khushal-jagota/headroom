@@ -21,6 +21,7 @@ Worker skills:
 - `panels-worker-initiative-planning` — initiative_planning tickets (planning a confirmed direction across multiple Tickets).
 - `panels-worker-product-design` — product_design tickets (designing holistic product flows and implementation-ready interactive artifacts).
 - `panels-worker-planning-day` — planning-day tickets (planning the morning's Day with the user).
+- `panels-worker-planning-sprint` — planning-sprint tickets (reviewing the current sprint and planning the next).
 - `probe-worker` — the probe fixture Worker type (test genericity proof).
 
 ### Who owns the current Stage

@@ -1,9 +1,9 @@
 """t_tt03 — GET /api/worker-types serves the registry's manifests.
 
 Production serves coding, new_worker, exploration, initiative_planning, product_design,
-then planning-day. With the test registry installed it serves those shipped types, then
-probe in registration order. The JSON response round-trips unchanged because it is the
-single manifest source consumed by the CLI and web.
+planning-day, then planning-sprint. With the test registry installed it serves those
+shipped types, then probe in registration order. The JSON response round-trips unchanged
+because it is the single manifest source consumed by the CLI and web.
 """
 
 from __future__ import annotations
@@ -64,6 +64,7 @@ def test_production_serves_all_shipped_worker_types(app: FastAPI) -> None:
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("initiative_planning"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("product_design"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-day"),
+            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-sprint"),
         ],
     }
 
@@ -82,6 +83,7 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
         "codex",
         "claude",
         "claude",
+        "claude",
         "hermes",
     ]
     assert [item["default_model"] for item in served["worker_types"]] == [
@@ -91,11 +93,21 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
         "gpt-5.6-sol",
         "opus[1m]",
         "opus[1m]",
+        "opus[1m]",
         "probe-model",
     ]
     assert [
         item["default_reasoning_effort"] for item in served["worker_types"]
-    ] == ["medium", "medium", "medium", "medium", "high", "medium", "probe-high"]
+    ] == [
+        "medium",
+        "medium",
+        "medium",
+        "medium",
+        "high",
+        "medium",
+        "medium",
+        "probe-high",
+    ]
 
 
 def test_coding_entry_json_roundtrips(app: FastAPI) -> None:
@@ -117,6 +129,7 @@ def test_installed_probe_appears_after_shipped_worker_types(
         "initiative_planning",
         "product_design",
         "planning-day",
+        "planning-sprint",
         "probe",
     ]
     assert served["worker_types"][0] == PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")

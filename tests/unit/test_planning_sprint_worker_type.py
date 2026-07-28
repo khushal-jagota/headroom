@@ -9,9 +9,9 @@ from planner.worker_types import configuration
 from planner.worker_types.configuration import PRODUCTION_WORKER_TYPE_REGISTRY
 from planner.worker_types.contracts import WorkerTypeManifest
 
-PLANNING_DAY_MANIFEST: WorkerTypeManifest = {
-    "worker_type": "planning-day",
-    "label": "Planning Day",
+PLANNING_SPRINT_MANIFEST: WorkerTypeManifest = {
+    "worker_type": "planning-sprint",
+    "label": "Planning Sprint",
     "stages": [
         {
             "id": "needs_kickoff",
@@ -21,18 +21,18 @@ PLANNING_DAY_MANIFEST: WorkerTypeManifest = {
             "default_ownership_mode": "worker",
         },
         {
-            "id": "needs_gather",
-            "label": "Gather",
-            "gating_field": "gather",
+            "id": "needs_review",
+            "label": "Review",
+            "gating_field": "review",
             "is_terminal": False,
             "default_ownership_mode": "worker",
         },
         {
-            "id": "needs_planning",
-            "label": "Planning",
-            "gating_field": "planning",
+            "id": "needs_next_sprint",
+            "label": "Next Sprint",
+            "gating_field": "next_sprint",
             "is_terminal": False,
-            "default_ownership_mode": "paired",
+            "default_ownership_mode": "worker",
         },
         {
             "id": "needs_closeout",
@@ -57,33 +57,33 @@ PLANNING_DAY_MANIFEST: WorkerTypeManifest = {
         "default_ownership_mode": None,
     },
     "advance": {
-        "needs_kickoff": "needs_gather",
-        "needs_gather": "needs_planning",
-        "needs_planning": "needs_closeout",
+        "needs_kickoff": "needs_review",
+        "needs_review": "needs_next_sprint",
+        "needs_next_sprint": "needs_closeout",
         "needs_closeout": "done",
     },
     "fields": [
         {"id": "kickoff", "label": "Kickoff"},
-        {"id": "gather", "label": "Gather"},
-        {"id": "planning", "label": "Planning"},
+        {"id": "review", "label": "Review"},
+        {"id": "next_sprint", "label": "Next Sprint"},
         {"id": "closeout", "label": "Closeout"},
     ],
     "ceiling_range": [
         "needs_kickoff",
-        "needs_gather",
-        "needs_planning",
+        "needs_review",
+        "needs_next_sprint",
         "needs_closeout",
         "done",
     ],
     "default_ceiling": "needs_kickoff",
-    "worker_profile_id": "panels-worker-planning-day",
+    "worker_profile_id": "panels-worker-planning-sprint",
     "default_backend": "claude",
     "default_model": "opus[1m]",
     "default_reasoning_effort": "medium",
 }
 
 
-def test_production_registry_carries_complete_planning_day_manifest() -> None:
+def test_production_registry_carries_complete_planning_sprint_manifest() -> None:
     assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
         "coding",
         "new_worker",
@@ -93,43 +93,46 @@ def test_production_registry_carries_complete_planning_day_manifest() -> None:
         "planning-day",
         "planning-sprint",
     )
-    assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-day") == PLANNING_DAY_MANIFEST
+    assert (
+        PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-sprint")
+        == PLANNING_SPRINT_MANIFEST
+    )
 
 
-def test_planning_day_definition_carries_complete_execution_contract() -> None:
-    definition = PRODUCTION_WORKER_TYPE_REGISTRY.require("planning-day")
+def test_planning_sprint_definition_carries_complete_execution_contract() -> None:
+    definition = PRODUCTION_WORKER_TYPE_REGISTRY.require("planning-sprint")
 
     assert definition.stage_ids() == tuple(
-        stage["id"] for stage in PLANNING_DAY_MANIFEST["stages"]
+        stage["id"] for stage in PLANNING_SPRINT_MANIFEST["stages"]
     )
     assert definition.field_ids() == tuple(
-        field["id"] for field in PLANNING_DAY_MANIFEST["fields"]
+        field["id"] for field in PLANNING_SPRINT_MANIFEST["fields"]
     )
     assert tuple(
         stage.default_ownership_mode.value if stage.default_ownership_mode else None
         for stage in definition.stages
-    ) == ("worker", "worker", "paired", "worker", None)
-    assert definition.worker_profile.specialist_skill == "panels-worker-planning-day"
+    ) == ("worker", "worker", "worker", "worker", None)
+    assert definition.worker_profile.specialist_skill == "panels-worker-planning-sprint"
     assert definition.worker_profile.toolset_profile == "default"
     assert definition.supports_prefix_reconciliation is True
 
 
-def test_planning_day_specialist_is_known_public_and_provisioned() -> None:
-    assert "panels-worker-planning-day" in configuration._KNOWN_SKILLS
-    assert "panels-worker-planning-day" in PLANNER_SKILL_NAMES
+def test_planning_sprint_specialist_is_known_public_and_provisioned() -> None:
+    assert "panels-worker-planning-sprint" in configuration._KNOWN_SKILLS
+    assert "panels-worker-planning-sprint" in PLANNER_SKILL_NAMES
     assert (
-        worker_types.PLANNING_DAY_WORKER_TYPE_DEFINITION
-        is PRODUCTION_WORKER_TYPE_REGISTRY.require("planning-day")
+        worker_types.PLANNING_SPRINT_WORKER_TYPE_DEFINITION
+        is PRODUCTION_WORKER_TYPE_REGISTRY.require("planning-sprint")
     )
 
 
-def test_planning_day_managed_settings_bootstrap_uses_approved_runtime_defaults(
+def test_planning_sprint_managed_settings_bootstrap_uses_approved_runtime_defaults(
     tmp_path: Path,
 ) -> None:
     settings = read_worker_settings(
         tmp_path,
         PRODUCTION_WORKER_TYPE_REGISTRY,
-        "planning-day",
+        "planning-sprint",
     )
 
     assert settings.launch_defaults.employee_backend == "claude"
@@ -137,30 +140,41 @@ def test_planning_day_managed_settings_bootstrap_uses_approved_runtime_defaults(
     assert settings.launch_defaults.employee_launch_reasoning_effort == "medium"
     assert settings.stage_ownership_defaults == {
         "needs_kickoff": "worker",
-        "needs_gather": "worker",
-        "needs_planning": "paired",
+        "needs_review": "worker",
+        "needs_next_sprint": "worker",
         "needs_closeout": "worker",
     }
 
 
-def test_planning_day_is_announced_at_both_agent_front_doors() -> None:
+def test_planning_sprint_is_announced_at_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
+    panels = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
     chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
         encoding="utf-8"
     )
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
+    route = (root / "src/planner/skills/panels-sprint-planning/SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
-    assert "`panels-worker-planning-day` — planning-day tickets" in worker
-    assert "Use a **`planning-day` ticket**" in chief
+    assert "`planning-sprint` (reviewing one sprint" in panels
+    assert "Use a **`planning-sprint` ticket**" in chief
+    assert "`panels-worker-planning-sprint` — planning-sprint tickets" in worker
+    assert "panels ticket create --worker-type planning-sprint" in route
+    assert "midpoint review" in route
 
 
-def test_planning_day_skill_preserves_the_approved_planning_judgments() -> None:
+def test_planning_sprint_skill_preserves_the_approved_judgments() -> None:
     root = Path(__file__).resolve().parents[2]
     skill = (
-        root / "src/planner/skills/panels-worker-planning-day/SKILL.md"
+        root / "src/planner/skills/panels-worker-planning-sprint/SKILL.md"
     ).read_text(encoding="utf-8")
 
-    assert "one evidence-backed best guess of today's focus" in skill
-    assert "without automatic carryover" in skill
-    assert "create or reshape agreed Tickets" in skill
-    assert "no backfill, guilt, streak, or rollover ceremony" in skill
+    assert "facts from Panels, worker judgment, and user" in skill
+    assert "request-user-help" in skill
+    assert "explicitly Releases" in skill
+    assert "review before planning" in skill
+    assert "first sprint" in skill
+    assert "perform no review" in skill
+    assert "Closeout is the only canonical-write phase" in skill
+    assert "midpoint review, in-sprint reconciliation" in skill
