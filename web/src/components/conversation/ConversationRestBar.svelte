@@ -78,10 +78,19 @@
     gap: var(--space-2);
     min-width: 0;
     max-width: 100%;
-    /* Inside the card, above the line. It draws nothing of its own: the card carries the
-       surface and the outline, and the line beneath is the well's own top edge. */
-    padding: var(--space-3) 0;
-    color: var(--text-faintest);
+    /* Inside the card, above the well. It carries the accent surface rather than the
+       card's own, because at rest this line is the whole of the conversation on screen and
+       it should read as a thing rather than as text lying on the card. The inline padding
+       comes with the surface: text flush against the edge of a colour reads as a mistake. */
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--accent-surface-bright);
+    /* Every step on this line is two brighter than it would be on the card. The text scale
+       is set against the near-black base, and this surface is lighter than that, so the
+       bottom of the scale reads at 3.3 to one here — under the floor the scale exists to
+       keep. Muted is the first step that clears it, and the line sits a step above that
+       again because a status nobody reads is not doing its job. */
+    color: var(--text-default);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     letter-spacing: var(--tracking-mono);
@@ -105,7 +114,7 @@
     flex: none;
     font-variant-numeric: tabular-nums;
   }
-  .c2-rest-who { flex: none; color: var(--text-faint); }
+  .c2-rest-who { flex: none; color: var(--text-default); }
   .c2-rest-who::after { content: "·"; padding-inline-start: var(--space-1); }
   /* One line whatever is in it: what will not fit is cut here rather than wrapping the
      bar into two rows and moving the composer down the page. */
@@ -115,11 +124,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-muted);
+    color: var(--text-strong);
   }
   .c2-rest-aside {
     flex: none;
-    color: var(--text-faintest);
+    color: var(--text-default);
     font-variant-numeric: tabular-nums;
   }
   /* Being waited on is not a state to read past: what is being asked comes up to the
