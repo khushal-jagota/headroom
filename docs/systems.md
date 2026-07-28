@@ -71,7 +71,37 @@ Cross-domain actions call those owners rather than writing around them.
 _Code paths:_ `src/planner/days/`, `sprints/`, `tickets/`, `ideas/`, `projects/`,
 and `src/planner/core/links.py`.
 
-### 3. The Ticket Gate System
+### 3. Scheduled Ticket Creation
+
+Panels can persist a generic schedule that supplies an ordinary Ticket at one exact
+local clock time. A schedule carries one of two planning-neutral cadences — every
+planning day or the final day of the current sprint — plus the same creation context an
+ordinary Ticket uses. Schedule configuration and its created, suppressed, or failed
+occurrence receipts are canonical SQLite records, managed through the actor-neutral
+HTTP and `panels schedule` CLI surfaces.
+
+The schedule loop runs under the same single-machine ownership and server lifespan as
+Worker readiness. It evaluates only schedules matching the current local minute. It
+never searches elapsed minutes after downtime, so a missed trigger produces no late or
+backlog occurrence. The existing 5am planning-date rule picks the target day; canonical
+sprint ranges decide whether a final-sprint-day cadence qualifies.
+
+One transaction settles a due occurrence. A Ticket of the configured Worker type already
+on the target day suppresses creation, including a manually laid Ticket. Otherwise the
+ordinary Ticket writer applies Worker registration, launch defaults, hierarchy
+validation, lifecycle initialization, and day placement. A durable occurrence identity
+makes repeated polls and restarts idempotent. A failed occurrence is recorded and does
+not stop later schedules.
+
+Scheduling ends at the committed Ticket and day placement. That commit emits the ordinary
+change signal; the readiness loop decides whether the Ticket is eligible and the
+conversation system performs any Worker handoff. The scheduler has no planning judgment,
+planning-state authority, Stage behavior, or second Worker engine.
+
+_Code paths:_ `src/planner/scheduled_tickets/`, `src/planner/core/loops.py`, and
+`src/planner/core/migrations/`.
+
+### 4. The Ticket Gate System
 
 A Ticket's Worker type declares its ordered Stages, gated fields, default Stage
 ownership, scope range, and specialist skill. The coding lifecycle is one configured
@@ -106,7 +136,7 @@ no proposal controls. Replying to a parked proposal in chat instead moves the Ti
 _Code paths:_ `src/planner/tickets/`, `src/planner/worker_types/`, and the proposal
 resolver in `src/planner/tickets/logic/resolution.py`.
 
-### 4. Worker Orchestration
+### 5. Worker Orchestration
 
 One loop asks, over and over, which of today's Tickets are ready for their next worker
 step, and starts one for each. Ready means the record allows it — on today, not
@@ -135,7 +165,7 @@ but chooses a port only while it is running. Ticket worktree servers are tempora
 processes with worktree-local state, not prepared environment instances. See
 [`runtime environments`](environments.md).
 
-### 5. The Conversation System
+### 6. The Conversation System
 
 This is the one way Panels talks to an AI agent. One conversation is one agent process
 — hermes, codex, or claude — working in a folder, plus a permanent notebook of
@@ -178,7 +208,7 @@ probed when asked and kept until asked again.
 _Code paths:_ `src/planner/conversation/`, and `/api/conversation` in
 `src/planner/core/server.py`.
 
-### 6. The Human UI System
+### 7. The Human UI System
 
 The web app is Svelte built by Vite. FastAPI serves `web/dist` at `/`, Vite chunks
 under `/_app/`, and the shared token and application CSS under `/assets/`.
@@ -217,8 +247,12 @@ Worker type and specialist skill, write notes and recaps, and file proposals. It
 general approval power.
 
 Human and service actions carry explicit actor and claim context. Direct-only
-operations reject worker claims. Worker writes remain proposals. The Chief's bounded
-operations do not create a second path around the proposal resolver.
+operations reject worker claims. The three planning Workers are the narrow exception:
+the server resolves the claimed Ticket's stored Worker type and admits only its matching
+`planning-day`, `planning-midday-check`, or `planning-sprint` operations. Missing,
+unknown, and mismatched claims fail closed. Existing direct and generic permissions do
+not change, and other Worker writes remain proposals. The Chief's bounded operations do
+not create a second path around the proposal resolver.
 
 Worker identity uses `PLAN_TICKET_ID` and the Ticket's worker-self endpoint. The agent a
 conversation runs on is told the exact Ticket identity and the address the server that
@@ -227,8 +261,11 @@ another one on another port. All three agents are told it, because a Ticket's wo
 be any of them, and it is read from the running server rather than remembered with the
 conversation — a conversation resumed after a restart reaches the server that resumed it.
 Duplicate session ownership fails instead of guessing which Ticket a worker belongs to.
+The CLI sends `PLAN_TICKET_ID` as `X-Plan-Ticket-ID` alongside `X-Plan-Actor`. These are
+truthful local process claims, not credentials or cryptographic authentication; the
+Ticket claim narrows worker authority and never turns another actor into a worker.
 
-_Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission rules.
+_Code paths:_ `src/planner/cli/`, `src/planner/core/authctx.py`, and domain admission rules.
 
 ## Boundaries That Matter
 
@@ -255,18 +292,18 @@ _Code paths:_ `src/planner/cli/`, `src/planner/authctx.py`, and domain admission
 - **A crash leaves a Ticket looking busy.** Its status still says a worker has it while
   nothing is running. Deliberate: liveness is asked of the conversation system, and no
   recovery machinery pretends to know better.
-- **Rollover scheduling is external.** Panels provisions the role skill but does not own
-  a deterministic morning/afternoon scheduler.
+- **Rollover initiation is still external.** Generic internal Ticket scheduling now
+  exists, but no planning schedules are live and rollover has not been cut over.
 - **Built frontend artifacts are tracked.** Source changes still require one deliberate
   Vite build before the served app changes.
 
 ## Deferred
 
 - An explicit retry/reset policy for an errored Ticket.
-- In-server rollover scheduling, if the product chooses to own it.
+- Activating the planning schedules and retiring external rollover initiation.
 
 ---
 
-_Last verified: 2026-07-27 (the eight Ticket statuses, the unified Review walk, one
-contentless change signal per commit, and worker orchestration rebuilt on the
-conversation contract)._
+_Last verified: 2026-07-28 (generic scheduled Ticket creation and occurrence receipts,
+the eight Ticket statuses, the unified Review walk, one contentless change signal per
+commit, and worker orchestration on the conversation contract)._

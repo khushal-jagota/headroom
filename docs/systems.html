@@ -617,6 +617,10 @@
             <span>Worker Orchestration. The readiness loop decides a Ticket is ready, claims it with one status flip, and sends the step.</span>
           </li>
           <li>
+            <strong>Why did a Ticket appear?</strong>
+            <span>Scheduled Ticket Creation. A due exact-minute occurrence either creates one ordinary Ticket or records why creation was suppressed or failed.</span>
+          </li>
+          <li>
             <strong>Where is conversation?</strong>
             <span>ACP typed replay and live updates share one durable Employee session.</span>
           </li>
@@ -692,6 +696,35 @@
           <details>
             <summary>
               <span class="number">03</span>
+              <span><strong>Scheduled Ticket Creation</strong><span>Supply an ordinary Ticket at one durable exact-minute occurrence.</span></span>
+            </summary>
+            <div class="detail-body">
+              <p>
+                A persisted schedule combines an exact local time with either every
+                planning day or the final day of the current sprint, plus ordinary
+                Ticket creation context. The actor-neutral HTTP and CLI surfaces manage
+                schedules; SQLite stores created, suppressed, and failed occurrence
+                receipts.
+              </p>
+              <p>
+                The clock-driven loop evaluates only the current minute under the same
+                server lifespan and machine lock as Worker readiness. It never backfills
+                a missed minute. One transaction claims the occurrence and either
+                suppresses it when that Worker type is already on the target day or
+                delegates to the ordinary Ticket writer. The resulting change signal
+                lets the unchanged readiness decision consider the Ticket.
+              </p>
+              <p class="code-paths">
+                Code paths: <code>src/planner/scheduled_tickets/</code>,
+                <code>src/planner/core/loops.py</code>,
+                <code>src/planner/core/migrations/</code>
+              </p>
+            </div>
+          </details>
+
+          <details>
+            <summary>
+              <span class="number">04</span>
               <span><strong>The Ticket Gate System</strong><span>The correctness center.</span></span>
             </summary>
             <div class="detail-body">
@@ -750,7 +783,7 @@
 
           <details>
             <summary>
-              <span class="number">04</span>
+              <span class="number">05</span>
               <span><strong>Worker Orchestration</strong><span>Decide a Ticket is ready, claim it, send the step.</span></span>
             </summary>
             <div class="detail-body">
@@ -810,7 +843,7 @@
 
           <details>
             <summary>
-              <span class="number">05</span>
+              <span class="number">06</span>
               <span><strong>The Conversation System</strong><span>The one way Panels talks to an AI agent.</span></span>
             </summary>
             <div class="detail-body">
@@ -860,7 +893,7 @@
 
           <details>
             <summary>
-              <span class="number">06</span>
+              <span class="number">07</span>
               <span><strong>The Browser Conversation</strong><span>A pane over the record, read the way every other screen reads.</span></span>
             </summary>
             <div class="detail-body">
@@ -890,7 +923,7 @@
 
           <details>
             <summary>
-              <span class="number">07</span>
+              <span class="number">08</span>
               <span><strong>The Human UI System</strong><span>Svelte resource projections.</span></span>
             </summary>
             <div class="detail-body">
@@ -969,7 +1002,18 @@
                 A missing <code>X-Plan-Actor</code> means unattributed, not human.
                 <code>chief</code> is explicit; every other non-empty actor is an
                 attributed non-Chief agent. Direct-only routes allow unattributed and
-                Chief requests while rejecting worker agents.
+                Chief requests while rejecting worker agents. The three planning
+                Workers are a narrow exception: <code>X-Plan-Ticket-ID</code> resolves
+                the stored Ticket Worker type, and the server admits only its exact
+                <code>planning-day</code>, <code>planning-midday-check</code>, or
+                <code>planning-sprint</code> capability. Missing, unknown, or
+                nonmatching claims fail closed.
+              </p>
+              <p>
+                The CLI sends <code>PLAN_TICKET_ID</code> beside the actor as a truthful
+                local process claim. These headers are not credentials or cryptographic
+                authentication. A Ticket claim narrows a worker's authority; it never
+                turns another actor into a worker.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/cli/main.py</code>,

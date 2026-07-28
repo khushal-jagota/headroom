@@ -370,7 +370,9 @@
     border-radius: 0;
     color: var(--text-strong);
     font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    /* A focusable text field: touch screens raise this to 16px so iOS Safari does not
+     * zoom the page into the search box on focus. */
+    font-size: var(--type-input-compact);
     letter-spacing: var(--tracking-mono);
     outline: none;
     padding: var(--space-1) var(--space-2);

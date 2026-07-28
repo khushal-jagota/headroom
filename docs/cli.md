@@ -15,6 +15,7 @@ The command tree matches the system model:
 
 - `day ...` — plan and inspect a day.
 - `project ...` — list and create project catalog rows.
+- `schedule ...` — configure exact-time creation of ordinary Tickets.
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
 - `worker ...` — worker-only writes such as ticket proposals, recaps, and notes.
@@ -30,9 +31,17 @@ generic Stage setter.
 
 - **`day show / list-tickets / set / add-ticket / remove-ticket`** — plan a day and
   assign tickets to it. `day show` includes the day's tickets; `day list-tickets`
-  returns the ticket list explicitly.
+  returns the ticket list explicitly. `day set midday-reconciliation` writes the
+  day’s separate mid-day check.
 - **`project list / create`** — inspect and add projects. Project availability is
   data-backed, not enum-backed.
+- **`schedule create / list / show / set`** — manage generic internal schedules that
+  create and place an ordinary Ticket at an exact local time. A schedule uses either
+  `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
+  creation context as `ticket create`, and can be enabled or disabled. `show` includes
+  its durable created, suppressed, or failed occurrence receipts. These commands
+  configure Ticket supply only; they do not contain planning behavior or start Workers
+  directly.
 - **`ticket create / show / list / set / approve / block / unblock / delete`** — manage
   tickets. `ticket create` requires `--worker-type` and can take a `--kickoff-note` /
   `--kickoff-note-file` intake body for the Kickoff field. `--employee-backend` overrides
@@ -118,6 +127,19 @@ Project-aware commands accept `--project-id` as the preferred selector and keep
 `--project` as legacy name compatibility. Passing both is allowed only when they
 resolve to the same project.
 
+## Planning Worker identity
+
+A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The CLI
+forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
+an ordinary planning command. The server checks the claimed Ticket’s stored Worker type.
+Only the exact `planning-day`, `planning-midday-check`, and `planning-sprint`
+capabilities receive their narrow day or sprint writes. These Worker definitions are
+introduced by their own tickets; this change only recognizes their exact stored names.
+
+This is a truthful local process claim, like the existing actor header, not a
+cryptographic login or bearer token. Requests arriving through trusted remote ingress
+have both headers removed. Missing, unknown, or mismatched worker claims fail closed.
+
 ## One-time legacy import
 
 There is one retained cutover command outside the `panels` command tree:
@@ -162,4 +184,4 @@ lease; Panels starts one worker step at a time and writes the Ticket's status it
 
 ---
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-07-28._

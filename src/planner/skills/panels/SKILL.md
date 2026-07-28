@@ -18,9 +18,10 @@ The planning system has these pieces:
 Tickets have a Worker type that sets their stages and worker. Worker types include
 `coding` (product or repo work), `new_worker` (creating a new kind of worker),
 `exploration` (a worker for exploring something undefined and making it clearer),
-and `initiative_planning` (working out the shared top-level how for a confirmed
-direction before creating its downstream Tickets). New Worker types are added here
-as they ship.
+`initiative_planning` (working out the shared top-level how for a confirmed direction
+before creating its downstream Tickets), and `product_design` (designing holistic product
+flows and implementation-ready interactive artifacts). New Worker types are added here as
+they ship.
 
 Ticket workers shape a Ticket through **Kickoff → Success → Approach → Plan →
 Implementation → Closeout → Done**, filling one canonical field at each step.

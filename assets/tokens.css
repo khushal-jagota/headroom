@@ -32,14 +32,11 @@
   /* Accent — THE one brand accent (Soft Steel slate blue). Means "needs the human". */
   --accent-bright: #9aadd2;
   --accent-surface: #222a38;
-  /* The accent as a surface wide enough to read a line of text on. --accent-surface is
-   * the fill of small marked things — a chip, a pill, the primary button — and is dark
-   * enough that it barely lifts off the page, which is what makes it right for them and
-   * wrong for a band. This one is lighter and more saturated, so an area of it reads as
-   * a coloured surface rather than as a tint. */
-  --accent-surface-bright: #294053;
+  /* The fill of small marked things — a chip, a pill, the primary button. Dark enough
+   * that it barely lifts off the page, which is what makes it right for them. */
   --accent-text: #dce6f8;
-  --accent-ink: #111318;   /* dark text on the accent fill (e.g. Approve) */
+  --accent-ink: #111318;   /* dark text on the accent fill (e.g. Approve), and the near-black
+                            * surface behind the conversation band and the permission card */
   --accent-done: #7fa564;  /* the green done marks */
   --accent-error: #d85d5d; /* red marks for errored ticket stages */
   /* The one pure white in the palette: the row dot for a worker waiting on a permission
@@ -94,6 +91,12 @@
   --type-md: 15px;
   --type-lg: 20px;
 
+  /* Focusable chat controls (the composer's textarea and pickers). Separate from
+   * the ladder because touch screens must raise them: iOS Safari zooms the whole
+   * page into any focused field smaller than 16px. */
+  --type-input: var(--type-sm);
+  --type-input-compact: var(--type-xs);
+
   /* Serif voice — the system speaks in Newsreader where content speaks; the
    * machine's sans controls stay --font-ui. Its own ladder (mockup px). */
   --font-serif: "Newsreader", Georgia, serif;
@@ -109,4 +112,13 @@
   --tracking-title: -0.008em;
   --tracking-label: 0.12em;
   --tracking-mono: 0.03em;
+}
+
+/* Touch screens get 16px chat inputs: anything smaller has iOS Safari zoom the
+ * page into the field on focus, and the zoomed page never comes back on its own. */
+@media (pointer: coarse) {
+  :root {
+    --type-input: 16px;
+    --type-input-compact: 16px;
+  }
 }

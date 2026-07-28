@@ -371,8 +371,30 @@ textarea {
   padding: var(--space-5);
 }
 
+/* The chief chat is a chat surface, not a flowing page: the shell hands it the same
+ * bounded height chain the ticket screen uses, so the thread scrolls internally and
+ * the composer sits at the bottom of the screen. 100dvh, not 100vh — a phone's
+ * browser chrome must never push the composer below the fold. Under the old
+ * min-height chain the page simply grew with the thread: nothing ever scrolled
+ * internally, and every reply pushed the composer further off a phone's screen. */
+.shell:has(.chief-chat-page) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell:has(.chief-chat-page) .shell-content {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: max(var(--space-5), env(safe-area-inset-bottom));
+}
+
+.shell:has(.chief-chat-page) .screen {
+  height: 100%;
+}
+
 .chief-chat-page {
-  min-height: calc(100vh - var(--space-5) - var(--space-5) - var(--space-5) - var(--space-5));
+  height: 100%;
   min-width: 0;
   width: 100%;
   display: flex;
@@ -1460,7 +1482,8 @@ button.list-row:hover .list-row-title {
   color: var(--accent-done);
 }
 
-[data-screen="day"] .lands .body {
+[data-screen="day"] .lands .body,
+[data-screen="day"] .midday .body {
   font-family: var(--font-serif);
   font-size: var(--type-serif-md);
   line-height: 1.66;
@@ -1678,8 +1701,12 @@ button.list-row:hover .list-row-title {
 }
 
 .chat-lbl {
+  /* Squeezed, the name loses its tail to an ellipsis; wrapping would stack it a
+   * letter per line on a narrow screen. */
   min-width: 0;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: var(--type-xs);
   color: var(--text-default);
   font-family: var(--font-mono);
@@ -1997,7 +2024,7 @@ button.list-row:hover .list-row-title {
   resize: none;
   color: var(--text-strong);
   font: inherit;
-  font-size: var(--type-sm);
+  font-size: var(--type-input);
   line-height: 1.5;
   outline: none;
   min-height: 40px;
@@ -2005,7 +2032,10 @@ button.list-row:hover .list-row-title {
   display: block;
 }
 .chat-ta::placeholder { color: var(--text-faintest); }
-.chat-foot { display: flex; align-items: center; justify-content: flex-start; margin-top: var(--space-1); }
+/* The foot may wrap: on a phone the pickers and the mid-turn delivery segment do
+ * not all fit one row, and a row that refuses to wrap forces the page wider than
+ * the screen — the browser then zooms the whole layout out to fit it. */
+.chat-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; row-gap: var(--space-1); margin-top: var(--space-1); }
 .chat-slash {
   background: none;
   border: none;
@@ -3506,8 +3536,9 @@ select {
   height: 100%;
   min-height: 0;
   /* The gap under the conversation, matching the one between the nav and the ticket's
-   * title, so the page breathes the same at both ends. */
-  padding-bottom: var(--space-6);
+   * title, so the page breathes the same at both ends. On a notched phone the
+   * safe-area inset wins, so the composer clears the home indicator. */
+  padding-bottom: max(var(--space-6), env(safe-area-inset-bottom));
 }
 
 /* The ticket takes what the conversation is not using, and scrolls inside it. */
@@ -3567,7 +3598,7 @@ select {
 [data-conversation-pane][data-conversation-state="peeked"] {
   /* The card's own surface, and the status bar is what you see of it: the well covers the
    * rest, so this colour is the bar at rest and the bar's head once it is opened up. */
-  background: var(--accent-surface-bright);
+  background: var(--accent-ink);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
@@ -3613,6 +3644,26 @@ select {
 
 .ticket-conversation-layer:has([data-conversation-state="opened"]) {
   height: 100%;
+}
+
+/* A phone-width screen gives the conversation its gutters back: 48px a side would
+ * spend a quarter of the width on margin. The header rows also learn to share —
+ * the workspace path yields to an ellipsis instead of crushing the worker's name
+ * into a one-letter-per-line column. */
+@media (max-width: 720px) {
+  .ticket-conversation-column {
+    padding: 0 var(--space-4);
+  }
+
+  .chat-head-right {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .chat-usage {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 /* Opened stops being a card: the whole of the page's height, this column's width, no

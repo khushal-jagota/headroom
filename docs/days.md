@@ -1,7 +1,9 @@
 # Days
 
 A day is one page per day: the small overview you use to orient the day. It has four
-editable fields — focus, brief take, watchout, and what makes the day land. The day
+morning fields — focus, brief take, watchout, and what makes the day land — followed
+by a separate **Midday reconciliation** field. The reconciliation records where things
+actually stand without replacing or rewriting the morning plan. The day
 has a deliberate quirk — it flips at **5am, not midnight** — so a late night still
 belongs to the day it felt like.
 
@@ -20,7 +22,9 @@ belongs to the day it felt like.
 
 The current Day page is an overview, not a dashboard. It does not show the plan tree,
 today's ticket list, the Review queue, or chat. Each field saves independently when
-you edit it, and a refresh restores the same values from the server. Crossing the
+you edit it, and a refresh restores the same values from the server. An empty midday
+reconciliation renders the same `(none)` edit state as the other Markdown sections.
+Crossing the
 5am boundary creates the new day record.
 
 The repo-owned `panels-rollover` role skill prepares the kickoff when the user starts
@@ -50,10 +54,10 @@ _Code paths:_ `src/planner/days/` (the day record and 5am planning date),
 
 ## Deferred
 
-- **The app does not schedule rollover itself.** The repository owns and provisions the
-  rollover role skill, which expects thin morning and afternoon prompts outside the
-  deterministic server runtime. See `worker-orchestration.md`.
+- **Rollover has not moved onto internal scheduling.** Panels now has generic scheduled
+  Ticket creation, but rollover still expects thin morning and afternoon prompts and no
+  planning schedule is live yet. See `worker-orchestration.md`.
 
 ---
 
-_Last verified: 2026-07-10._
+_Last verified: 2026-07-28._

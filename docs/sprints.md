@@ -43,6 +43,13 @@ ticket or blocked/errored child, and todo otherwise.
 Each sprint item stores a `project_id` from the projects catalog; child tickets
 inherit that classification from the item.
 
+Planning writes validate the full requested change before altering the sprint or item,
+then commit the compound change once. Repeating an add or remove membership request is
+safe. In particular, a stale removal names both the item and Ticket and cannot detach a
+Ticket that was subsequently moved to a different item. Sprint creation remains an
+explicit non-idempotent operation: after an ambiguous response, read the sprint list
+before trying another create.
+
 An unwanted Sprint Item can be permanently deleted through
 `panels sprint item delete <item-id> --yes`. Panels refuses deletion while the item
 has child Tickets, so existing work cannot disappear as a side effect. Deleting a

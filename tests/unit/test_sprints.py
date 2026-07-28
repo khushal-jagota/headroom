@@ -17,13 +17,17 @@ sprint overlap rejection (inclusive ranges).
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from sqlite3 import Connection
+from threading import Barrier, Event
 
 import pytest
 
 from planner.core import links as core_links
+from planner.core.authctx import _classify, require_planning_write
 from planner.core.clock import TestClock
 from planner.core.contracts import BlockerSummary, LinkKind
+from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints.contracts import ItemStatus
 from planner.sprints.data import (
@@ -33,6 +37,7 @@ from planner.sprints.data import (
     read_item,
     read_sprint,
     set_sprint_dates,
+    update_sprint,
 )
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets.contracts import TicketFields
@@ -274,3 +279,127 @@ def test_x06_set_sprint_dates_writer_updates_and_rejects_overlap(
         )
     assert exc.value.code is ErrorCode.sprint_overlap
     assert exc.value.detail["conflict_id"] == other.id
+
+
+def test_compound_sprint_updates_serialize_overlap_validation_with_the_write(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
+    first = create_sprint(
+        tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-05", clock=fake_clock
+    )
+    second = create_sprint(
+        tmp_db, name="B", date_start="2026-07-16", date_end="2026-07-20", clock=fake_clock
+    )
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    start_together = Barrier(2)
+
+    def attempt(sprint_id: str, date_start: str, date_end: str) -> str:
+        conn = connect(db_path)
+        try:
+            start_together.wait()
+            try:
+                update_sprint(
+                    conn,
+                    sprint_id,
+                    text_edits={},
+                    set_dates=True,
+                    date_start=date_start,
+                    date_end=date_end,
+                    clock=fake_clock,
+                )
+            except PlannerError as exc:
+                assert exc.code is ErrorCode.sprint_overlap
+                return "overlap"
+            return "updated"
+        finally:
+            conn.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (
+            executor.submit(attempt, first.id, "2026-07-01", "2026-07-12"),
+            executor.submit(attempt, second.id, "2026-07-10", "2026-07-20"),
+        )
+        results = sorted(future.result() for future in futures)
+
+    assert results == ["overlap", "updated"]
+    ranges = {
+        first.id: (
+            read_sprint(tmp_db, first.id).date_start,
+            read_sprint(tmp_db, first.id).date_end,
+        ),
+        second.id: (
+            read_sprint(tmp_db, second.id).date_start,
+            read_sprint(tmp_db, second.id).date_end,
+        ),
+    }
+    assert ranges in (
+        {
+            first.id: ("2026-07-01", "2026-07-12"),
+            second.id: ("2026-07-16", "2026-07-20"),
+        },
+        {
+            first.id: ("2026-07-01", "2026-07-05"),
+            second.id: ("2026-07-10", "2026-07-20"),
+        },
+    )
+
+
+def test_planning_claim_and_sprint_write_share_one_write_lock(
+    tmp_db: Connection, fake_clock: TestClock
+) -> None:
+    sprint = create_sprint(
+        tmp_db, name="A", date_start="2026-07-01", date_end="2026-07-14", clock=fake_clock
+    )
+    _insert_ticket(tmp_db, "t_planning_sprint", "needs_success")
+    tmp_db.execute(
+        "UPDATE tickets SET worker_type = 'planning-sprint' WHERE id = 't_planning_sprint'"
+    )
+    db_path = str(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    admitted = Event()
+    deletion_attempted = Event()
+    deletion_done = Event()
+    ctx = _classify("worker", "t_planning_sprint")
+
+    def write_as_planning_worker() -> None:
+        conn = connect(db_path)
+        try:
+
+            def admit() -> None:
+                require_planning_write(conn, ctx, "planning-sprint")
+                admitted.set()
+                assert deletion_attempted.wait(timeout=5)
+                assert not deletion_done.is_set()
+
+            update_sprint(
+                conn,
+                sprint.id,
+                text_edits={"primary_bet": "Ship the generalized surface."},
+                set_dates=False,
+                date_start=None,
+                date_end=None,
+                clock=fake_clock,
+                admit=admit,
+            )
+        finally:
+            conn.close()
+
+    def revoke_claim() -> None:
+        assert admitted.wait(timeout=5)
+        conn = connect(db_path)
+        try:
+            deletion_attempted.set()
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute("DELETE FROM tickets WHERE id = 't_planning_sprint'")
+            conn.execute("COMMIT")
+            deletion_done.set()
+        finally:
+            conn.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        writer = executor.submit(write_as_planning_worker)
+        revoker = executor.submit(revoke_claim)
+        writer.result()
+        revoker.result()
+
+    assert read_sprint(tmp_db, sprint.id).primary_bet == "Ship the generalized surface."
+    assert tmp_db.execute("SELECT 1 FROM tickets WHERE id = 't_planning_sprint'").fetchone() is None
