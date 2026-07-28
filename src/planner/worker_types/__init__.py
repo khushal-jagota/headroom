@@ -20,6 +20,7 @@ from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
 from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 from planner.worker_types.planning_day import PLANNING_DAY_WORKER_TYPE_DEFINITION
+from planner.worker_types.planning_sprint import PLANNING_SPRINT_WORKER_TYPE_DEFINITION
 from planner.worker_types.product_design import PRODUCT_DESIGN_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -29,6 +30,7 @@ __all__ = [
     "INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION",
     "NEW_WORKER_TYPE_DEFINITION",
     "PLANNING_DAY_WORKER_TYPE_DEFINITION",
+    "PLANNING_SPRINT_WORKER_TYPE_DEFINITION",
     "PRODUCTION_WORKER_TYPE_REGISTRY",
     "PRODUCT_DESIGN_WORKER_TYPE_DEFINITION",
     "FieldDefinition",

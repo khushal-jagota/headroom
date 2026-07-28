@@ -19,14 +19,16 @@ Tickets have a Worker type that sets their stages and worker. Worker types inclu
 `coding` (product or repo work), `new_worker` (creating a new kind of worker),
 `exploration` (a worker for exploring something undefined and making it clearer),
 `initiative_planning` (working out the shared top-level how for a confirmed direction
-before creating its downstream Tickets), and `product_design` (designing holistic product
-flows and implementation-ready interactive artifacts), and `planning-day` (planning the
-morning's Day with the user). New Worker types are added here as they ship.
+before creating its downstream Tickets), `product_design` (designing holistic product
+flows and implementation-ready interactive artifacts), `planning-day` (planning the
+morning's Day with the user), and `planning-sprint` (reviewing one sprint and planning
+the next at the boundary). New Worker types are added here as they ship.
 
 Each Worker type defines its own ordered lifecycle and one canonical field for each
 non-terminal Stage. For example, coding uses **Kickoff → Success → Approach → Plan →
 Implementation → Closeout → Done**, while `planning-day` uses **Kickoff → Gather →
-Planning → Closeout → Done**.
+Planning → Closeout → Done** and `planning-sprint` uses **Kickoff → Review → Next
+Sprint → Closeout → Done**.
 
 ## Communication
 

@@ -260,6 +260,7 @@ def test_gate_invalid_inputs_return_exact_codes(
                 "initiative_planning",
                 "product_design",
                 "planning-day",
+                "planning-sprint",
                 "probe",
             ],
         }
@@ -277,6 +278,7 @@ def test_gate_invalid_inputs_return_exact_codes(
                 "initiative_planning",
                 "product_design",
                 "planning-day",
+                "planning-sprint",
                 "probe",
             ],
         }
