@@ -50,10 +50,10 @@ _Code paths:_ `src/planner/days/` (the day record and 5am planning date),
 
 ## Deferred
 
-- **The app does not schedule rollover itself.** The repository owns and provisions the
-  rollover role skill, which expects thin morning and afternoon prompts outside the
-  deterministic server runtime. See `worker-orchestration.md`.
+- **Rollover has not moved onto internal scheduling.** Panels now has generic scheduled
+  Ticket creation, but rollover still expects thin morning and afternoon prompts and no
+  planning schedule is live yet. See `worker-orchestration.md`.
 
 ---
 
-_Last verified: 2026-07-10._
+_Last verified: 2026-07-28._

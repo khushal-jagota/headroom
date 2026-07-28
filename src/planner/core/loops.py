@@ -1,4 +1,4 @@
-"""The background work one Panels process owns: the worker-step readiness loop."""
+"""The scheduled-Ticket and worker-readiness loops one Panels process owns."""
 
 from __future__ import annotations
 
@@ -13,13 +13,14 @@ from planner.core.clock import Clock
 from planner.core.config import Config
 from planner.runtime.lock import ensure_machine_lock, release_machine_lock
 from planner.runtime.worker_step_readiness_loop import WorkerStepReadinessLoop
+from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 from planner.worker_context.contracts import WorkerContextService
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class BackgroundLoops:
-    """The readiness loop and the machine lock it runs under, stopped as one."""
+    """The background loops and their shared machine lock, stopped as one."""
 
     def __init__(
         self,
@@ -27,8 +28,10 @@ class BackgroundLoops:
         lock_path: str | None = None,
         stop_waking_on_change: Callable[[], None] | None = None,
         shutdown_grace_seconds: float = 30.0,
+        scheduled_ticket_loop: ScheduledTicketLoop | None = None,
     ) -> None:
         self.worker_step_readiness_loop = worker_step_readiness_loop
+        self.scheduled_ticket_loop = scheduled_ticket_loop
         self._lock_path = lock_path
         self._stop_waking_on_change = stop_waking_on_change
         self._shutdown_grace_seconds = shutdown_grace_seconds
@@ -49,6 +52,11 @@ class BackgroundLoops:
             self._stop_waking_on_change = None
         if deadline is None:
             deadline = _monotonic() + self._shutdown_grace_seconds
+        if self.scheduled_ticket_loop is not None:
+            await asyncio.to_thread(
+                self.scheduled_ticket_loop.stop,
+                deadline=deadline,
+            )
         if self.worker_step_readiness_loop is not None:
             await asyncio.to_thread(
                 self.worker_step_readiness_loop.stop,
@@ -71,30 +79,39 @@ def start_background_loops(
     worker_context_service: WorkerContextService,
     asyncio_loop: asyncio.AbstractEventLoop,
 ) -> BackgroundLoops:
-    """Own the readiness loop when this process holds the machine lock, else own nothing.
+    """Own both background loops when this process holds the machine lock.
 
-    While the loop runs it is subscribed to the change signal, so any committed write asks
-    it to look again instead of waiting out its periodic timer. Over-waking costs a
-    read-only re-run of the readiness decision.
+    The readiness loop subscribes to the change signal, so any committed write asks it
+    to look again instead of waiting out its periodic timer. Over-waking costs a
+    read-only re-run of readiness. The schedule loop remains clock-driven so each due
+    local-minute slot is evaluated through its durable occurrence identity.
     """
     global _active
     if _active is not None:
         raise RuntimeError("background loops already running")
 
     worker_step_readiness_loop: WorkerStepReadinessLoop | None = None
+    scheduled_ticket_loop: ScheduledTicketLoop | None = None
     lock_path: str | None = None
     stop_waking_on_change: Callable[[], None] | None = None
 
     if not config.dispatch_enabled:
-        _LOGGER.info("Worker-step readiness loop disabled (dispatch_enabled=false)")
+        _LOGGER.info("Background scheduling and dispatch disabled (dispatch_enabled=false)")
     elif not ensure_machine_lock(config.dispatcher_lock_path):
         _LOGGER.info(
-            "Worker-step readiness loop not started: another process holds the polling lock"
+            "Background loops not started: another process holds the polling lock"
         )
     else:
         candidate_loop: WorkerStepReadinessLoop | None = None
+        candidate_schedule_loop: ScheduledTicketLoop | None = None
         candidate_unsubscribe: Callable[[], None] | None = None
         try:
+            candidate_schedule_loop = ScheduledTicketLoop(
+                config.db_path,
+                clock,
+                boundary_hour=config.boundary_hour,
+                busy_timeout_ms=config.db_busy_timeout_ms,
+            )
             candidate_loop = WorkerStepReadinessLoop(
                 config.db_path,
                 clock,
@@ -104,10 +121,11 @@ def start_background_loops(
                 boundary_hour=config.boundary_hour,
                 busy_timeout_ms=config.db_busy_timeout_ms,
             )
+            candidate_schedule_loop.start(config.tick_seconds)
             candidate_loop.start(config.tick_seconds)
             candidate_unsubscribe = change_signal.subscribe(candidate_loop.wake)
         except Exception:
-            _LOGGER.exception("Worker-step readiness loop failed to start")
+            _LOGGER.exception("Background loops failed to start")
             if candidate_unsubscribe is not None:
                 candidate_unsubscribe()
             if candidate_loop is not None:
@@ -115,9 +133,15 @@ def start_background_loops(
                     candidate_loop.stop()
                 except Exception:
                     _LOGGER.exception("partially started worker-step readiness loop failed to stop")
+            if candidate_schedule_loop is not None:
+                try:
+                    candidate_schedule_loop.stop()
+                except Exception:
+                    _LOGGER.exception("partially started scheduled Ticket loop failed to stop")
             release_machine_lock(config.dispatcher_lock_path)
         else:
             worker_step_readiness_loop = candidate_loop
+            scheduled_ticket_loop = candidate_schedule_loop
             stop_waking_on_change = candidate_unsubscribe
             lock_path = config.dispatcher_lock_path
 
@@ -126,6 +150,7 @@ def start_background_loops(
         lock_path,
         stop_waking_on_change,
         shutdown_grace_seconds=float(config.shutdown_grace_seconds),
+        scheduled_ticket_loop=scheduled_ticket_loop,
     )
     _active = loops
     return loops

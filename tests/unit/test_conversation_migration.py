@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "no_conversation_before_a_message"
+HEAD_REVISION = "scheduled_ticket_creation"
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> list[tuple[str, str, int, int]]:
