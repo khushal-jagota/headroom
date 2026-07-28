@@ -61,7 +61,14 @@ class InMemoryConversationTurnEnding(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class InMemoryConversationObservation:
-    """One thing this fake observed. The fake's own surface, not an event record."""
+    """One thing this fake observed. The fake's own surface, not an event record.
+
+    ``sender_message_id`` and ``sent_at_unix_milliseconds`` are the sender's own two facts
+    about the message, kept exactly as they arrived. The real system writes them onto the
+    message's row; there are no rows here, so this is where a caller that wants to know
+    whether they survived the trip finds out. Both are absent for a sender that minted
+    neither, which is every sender that is not a browser.
+    """
 
     kind: InMemoryConversationObservationKind
     content: MessageContent | None = None
@@ -72,6 +79,8 @@ class InMemoryConversationObservation:
     permission_ask_id: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
+    sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
 
     @property
     def text(self) -> str | None:
@@ -135,6 +144,8 @@ class _HeldPrompt:
     sender_label: str
     model_change: str | None = None
     reasoning_effort_change: str | None = None
+    sender_message_id: str | None = None
+    sent_at_unix_milliseconds: int | None = None
 
 
 @dataclass
@@ -182,9 +193,6 @@ class InMemoryConversationSystem:
         sender_message_id: str | None = None,
         sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryFate:
-        # The sender's own two facts about this message are carried on the real system's
-        # rows. There are no rows here, and nothing this fake answers depends on them.
-        del sender_message_id, sent_at_unix_milliseconds
         if mode is PromptDeliveryMode.steer and (
             model_change is not None or reasoning_effort_change is not None
         ):
@@ -201,7 +209,13 @@ class InMemoryConversationSystem:
             )
 
         if mode is PromptDeliveryMode.steer:
-            return self._steer(state, content, sender_label)
+            return self._steer(
+                state,
+                content,
+                sender_label,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+            )
 
         if mode is PromptDeliveryMode.run_when_free and state.running_turn is not None:
             state.held_prompts.append(
@@ -210,20 +224,36 @@ class InMemoryConversationSystem:
                     sender_label=sender_label,
                     model_change=model_change,
                     reasoning_effort_change=reasoning_effort_change,
+                    sender_message_id=sender_message_id,
+                    sent_at_unix_milliseconds=sent_at_unix_milliseconds,
                 )
             )
             return PromptDeliveryQueued(queue_position=len(state.held_prompts))
 
         if state.running_turn is None:
             return self._start_turn(
-                state, content, sender_label, mode, model_change, reasoning_effort_change
+                state,
+                content,
+                sender_label,
+                mode,
+                model_change,
+                reasoning_effort_change,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             )
 
         # send-now against a busy agent: the incumbent dies first, and this message runs
         # next — ahead of everything already held, which keeps its order behind it.
         self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
         fate = self._start_turn(
-            state, content, sender_label, mode, model_change, reasoning_effort_change
+            state,
+            content,
+            sender_label,
+            mode,
+            model_change,
+            reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
         if isinstance(fate, PromptDeliveryRefused):
             # The incumbent is already dead and the agent is free, so the held prompts
@@ -251,6 +281,8 @@ class InMemoryConversationSystem:
                     kind=InMemoryConversationObservationKind.prompt_discarded,
                     content=held.content,
                     sender_label=held.sender_label,
+                    sender_message_id=held.sender_message_id,
+                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                 )
             )
         if state.running_turn is not None:
@@ -407,6 +439,9 @@ class InMemoryConversationSystem:
         mode: PromptDeliveryMode,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        *,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> _InMemoryBackendSession | PromptDeliveryRefused:
         established = self._establish_backend_session(state)
         if isinstance(established, PromptDeliveryRefusalReason):
@@ -442,6 +477,8 @@ class InMemoryConversationSystem:
                 content=content,
                 sender_label=sender_label,
                 mode=mode,
+                sender_message_id=sender_message_id,
+                sent_at_unix_milliseconds=sent_at_unix_milliseconds,
             )
         )
         return established
@@ -454,9 +491,19 @@ class InMemoryConversationSystem:
         mode: PromptDeliveryMode,
         model_change: str | None = None,
         reasoning_effort_change: str | None = None,
+        *,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryStarted | PromptDeliveryRefused:
         written = self._write_to_backend(
-            state, content, sender_label, mode, model_change, reasoning_effort_change
+            state,
+            content,
+            sender_label,
+            mode,
+            model_change,
+            reasoning_effort_change,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
@@ -464,7 +511,13 @@ class InMemoryConversationSystem:
         return PromptDeliveryStarted()
 
     def _steer(
-        self, state: _ConversationState, content: MessageContent, sender_label: str
+        self,
+        state: _ConversationState,
+        content: MessageContent,
+        sender_label: str,
+        *,
+        sender_message_id: str | None = None,
+        sent_at_unix_milliseconds: int | None = None,
     ) -> PromptDeliveryInjected | PromptDeliveryRefused:
         if not backend_supports_steer(state.resolved_start.backend_key):
             return PromptDeliveryRefused(
@@ -475,7 +528,12 @@ class InMemoryConversationSystem:
                 refusal_reason=PromptDeliveryRefusalReason.no_running_turn_to_steer_into
             )
         written = self._write_to_backend(
-            state, content, sender_label, PromptDeliveryMode.steer
+            state,
+            content,
+            sender_label,
+            PromptDeliveryMode.steer,
+            sender_message_id=sender_message_id,
+            sent_at_unix_milliseconds=sent_at_unix_milliseconds,
         )
         if isinstance(written, PromptDeliveryRefused):
             return written
@@ -513,6 +571,8 @@ class InMemoryConversationSystem:
                 PromptDeliveryMode.run_when_free,
                 held.model_change,
                 held.reasoning_effort_change,
+                sender_message_id=held.sender_message_id,
+                sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
             )
             if isinstance(fate, PromptDeliveryRefused):
                 state.observations.append(
@@ -522,5 +582,7 @@ class InMemoryConversationSystem:
                         sender_label=held.sender_label,
                         mode=PromptDeliveryMode.run_when_free,
                         refusal_reason=fate.refusal_reason,
+                        sender_message_id=held.sender_message_id,
+                        sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
                     )
                 )

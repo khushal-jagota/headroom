@@ -1062,6 +1062,11 @@ async def send_to_chief_conversation(
 
     The Chief's door has the shape a Ticket's has, and for the same reason: a conversation
     is not something a person makes and then talks into, it is what talking makes.
+
+    The sender's own two facts about the message go through untouched. A browser draws a
+    message the moment Enter is pressed and stops drawing it when the record hands it back
+    — which it can only recognise by the name it minted. A door that takes the name and
+    does not pass it on leaves that browser drawing a message the record already has.
     """
     require_direct_write(ctx)
     created_conversation_id = conversation_start.new_conversation_id()
@@ -1085,6 +1090,8 @@ async def send_to_chief_conversation(
         runs_under=runs_under,
         sender_label=body.sender_label,
         mode=body.mode,
+        sender_message_id=body.sender_message_id,
+        sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
     )
     return _delivered_message_json(delivered)
 
@@ -1128,6 +1135,10 @@ async def send_to_ticket_conversation(
     at all — not an empty one — and this message is what brings one into being, on the
     values it says it runs under. The readiness loop comes through the same door when it
     has a step to send, so a conversation begun by hand is the one the loop finds.
+
+    The sender's own two facts about the message go through untouched, for the reason the
+    Chief's door gives: a browser recognises its own message coming back by the name it
+    minted, and a name this door drops is one the record can never hand back.
     """
     require_direct_write(ctx)
     created_conversation_id = conversation_start.new_conversation_id()
@@ -1149,6 +1160,8 @@ async def send_to_ticket_conversation(
         runs_under=_what_this_message_runs_under(body),
         sender_label=body.sender_label,
         mode=body.mode,
+        sender_message_id=body.sender_message_id,
+        sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
         now=clk.now_unix(),
     )
     return _delivered_message_json(delivered)

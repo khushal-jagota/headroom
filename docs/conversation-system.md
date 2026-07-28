@@ -148,6 +148,14 @@ words come back to the box, unless something else has been typed there since. A
 message the agent was too busy for stays in the thread and says it is waiting,
 because nothing is answering it yet.
 
+A tab keeps the messages it is still holding, so reloading the page cannot take
+somebody's words away before anything has a record of them. They come back saying
+nothing at all, because at that moment nothing is known: the record is read a
+breath later, and almost always it turns out to have the message, which takes the
+copy off the screen the ordinary way. Only a message the record does not have once
+it has been read says that nobody ever said whether it arrived — and it says that
+because it is true, not because the page has just started.
+
 Sending also decides where the thread sits. The message that was just sent
 settles near the top of the view with the rest of it kept for the answer, and
 then nothing moves for as long as the answer fits in that space. Once the turn
