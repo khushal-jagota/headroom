@@ -68,8 +68,6 @@ const {
   promptLabelFor,
   readableDetail,
   refusalSentence,
-  tokenUsageSentence,
-  formatCostUsd,
   toolCallLine,
   toolGlyphKind,
   stoppedSentence,
@@ -1739,7 +1737,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.deepEqual(rows[2].content, [{ piece: "text", text: "and this is only words" }]);
 }
 
-// --- what a turn cost, and where the thread was cut ------------------------------------------
+// --- retained usage records, and where the thread was cut ------------------------------------
 
 {
   const rows = transcriptRows({
@@ -1761,14 +1759,12 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   });
   assert.equal(rows[0].kind, "token_usage");
   assert.equal(rows[1].kind, "context_compacted");
-  assert.equal(tokenUsageSentence(rows[0]), "41.0k in · 920 out · 38.4k cached · $0.42");
-  assert.equal(tokenUsageSentence(rows[2]), "512 in");
+  assert.equal(rows[0].inputTokens, 41_000);
+  assert.equal(rows[0].outputTokens, 920);
+  assert.equal(rows[0].cachedInputTokens, 38_400);
+  assert.equal(rows[0].costUsd, 0.42);
+  assert.equal(rows[2].inputTokens, 512);
   assert.equal(rows[2].costUsd, null, "a cost the backend never gave is absent, not zero");
-
-  // Money to the cent, except where that would round a real cost away to nothing.
-  assert.equal(formatCostUsd(1.5), "$1.50");
-  assert.equal(formatCostUsd(0.0004), "$0.0004");
-  assert.equal(formatCostUsd(0), "$0.00");
 }
 
 await rm(directory, { recursive: true, force: true });

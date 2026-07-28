@@ -901,9 +901,9 @@
                 for a read by name; the shared cache serves one request to all of them.
               </p>
               <p>
-                Review contains exactly today’s Tickets whose
-                <code>ticket_status</code> is <code>awaiting_approval</code>, plus the
-                global running-worker count.
+                Review walks one oldest-first list of today’s Tickets whose
+                <code>ticket_status</code> is <code>awaiting_approval</code> or
+                <code>needs_user</code>, plus the global running-worker count.
               </p>
               <p>
                 The server holds open a change stream at <code>GET /api/changes</code> and

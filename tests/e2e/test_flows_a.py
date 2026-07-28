@@ -226,7 +226,7 @@ def test_review_tracks_today_membership_without_reload(
     page = open_page(context_factory(), server, "#/review", "[data-review-empty]")
     badge = page.locator('a[data-screen="review"] .nav-badge')
 
-    assert api.get(server, "/api/review")["ticket_decisions"] == []
+    assert api.get(server, "/api/review")["items"] == []
     assert "hidden" in (badge.get_attribute("class") or "").split()
     flushes = page.evaluate("window.__plannerDebug.flushes")
     review_url = page.url
@@ -250,7 +250,7 @@ def test_review_tracks_today_membership_without_reload(
         ".classList.contains('hidden')",
         timeout=WAIT_MS,
     )
-    assert api.get(server, "/api/review")["ticket_decisions"] == []
+    assert api.get(server, "/api/review")["items"] == []
     assert page.url == review_url
 
     _add_to_today(api, server, tid)
@@ -365,7 +365,7 @@ def test_e24_accept_in_review(
 
     # Review departure (only decision on a fresh DB).
     page_a.wait_for_selector("[data-review-empty]", timeout=WAIT_MS)
-    assert api.get(server, "/api/review")["ticket_decisions"] == []
+    assert api.get(server, "/api/review")["items"] == []
 
     # Second context updates without reload — the flip arrives via the change stream.
     page_b.wait_for_function(
@@ -700,6 +700,128 @@ def test_review_keyboard_shortcuts(
     assert approved["fields"]["success"]["proposal"] is None
 
 
+def test_needs_user_requests_share_the_review_walk(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    first_help = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "First Worker question",
+    )["id"]
+    cli(server, "worker", "request-user-help", ticket_id=first_help)
+    second_help = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Second Worker question",
+    )["id"]
+    cli(server, "worker", "request-user-help", ticket_id=second_help)
+    proposal = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Ordinary proposal",
+    )["id"]
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Proposal recap.",
+        ticket_id=proposal,
+        stdin="Proposal body.",
+    )
+    _add_to_today(api, server, first_help, second_help, proposal)
+
+    # Give the two help requests explicit earlier waits so this browser test proves
+    # the cross-kind order rather than depending on random Ticket IDs at equal times.
+    with sqlite3.connect(server.db_path) as conn:
+        conn.execute(
+            "UPDATE tickets SET ticket_status_changed_at = 1000 WHERE id = ?",
+            (first_help,),
+        )
+        conn.execute(
+            "UPDATE tickets SET ticket_status_changed_at = 2000 WHERE id = ?",
+            (second_help,),
+        )
+
+    review_items = api.get(server, "/api/review")["items"]
+    assert [item["review_item_type"] for item in review_items] == [
+        "needs_user",
+        "needs_user",
+        "proposal",
+    ]
+    assert [item["ticket_id"] for item in review_items] == [first_help, second_help, proposal]
+
+    help_card = '[data-review-card][data-review-item-type="needs_user"]'
+    walk_page = open_page(context_factory(), server, "#/review", help_card)
+    open_page_for_shortcut = open_page(context_factory(), server, "#/review", help_card)
+    badge = walk_page.locator('a[data-screen="review"] .nav-badge')
+
+    assert walk_page.get_attribute(help_card, "data-ticket-id") == first_help
+    assert walk_page.text_content(f"{help_card} .review-ticket-title") == "First Worker question"
+    assert walk_page.text_content(f"{help_card} .review-context-label") == "Worker needs your input"
+    assert walk_page.locator(f"{help_card} [data-accept]").count() == 0
+    assert walk_page.locator(f"{help_card} [data-review-revision]").count() == 0
+    keys_text = walk_page.locator(".review-keys").text_content()
+    assert keys_text is not None
+    assert " ".join(keys_text.split()) == "S skip · O open ticket"
+    badge_text = badge.text_content()
+    assert badge_text is not None
+    assert badge_text.strip() == "3"
+
+    # Open uses the same global shortcut as a proposal item.
+    open_page_for_shortcut.locator(".review-keys").click()
+    open_page_for_shortcut.keyboard.press("o")
+    open_page_for_shortcut.wait_for_url(f"**/#/ticket/{first_help}", timeout=WAIT_MS)
+
+    # Skip advances within the same mixed queue without changing canonical state.
+    walk_page.locator(".review-keys").click()
+    walk_page.keyboard.press("s")
+    walk_page.wait_for_function(
+        "(ticketId) => document.querySelector('[data-review-card]')"
+        "?.getAttribute('data-ticket-id') === ticketId",
+        arg=second_help,
+        timeout=WAIT_MS,
+    )
+
+    # Leaving needs_user removes the current item; the locally skipped first help
+    # remains counted, and Review advances to the ordinary proposal.
+    api.direct_post(server, f"/api/tickets/{second_help}/release", {})
+    walk_page.wait_for_function(
+        "(ticketId) => document.querySelector('[data-review-card]')"
+        "?.getAttribute('data-ticket-id') === ticketId",
+        arg=proposal,
+        timeout=WAIT_MS,
+    )
+    walk_page.wait_for_function(
+        "() => document.querySelector('a[data-screen=\"review\"] .nav-badge')"
+        "?.textContent.trim() === '2'",
+        timeout=WAIT_MS,
+    )
+    assert walk_page.get_attribute("[data-review-card]", "data-review-item-type") == "proposal"
+    assert [item["ticket_id"] for item in api.get(server, "/api/review")["items"]] == [
+        first_help,
+        proposal,
+    ]
+
+
 
 def test_e27_auto_accept_chain(
     server: ServerHandle,
@@ -768,7 +890,7 @@ def test_e27_auto_accept_chain(
     assert d["fields"]["plan"]["proposal"] is not None
 
     _add_to_today(api, server, tid)
-    decisions = api.get(server, "/api/review")["ticket_decisions"]
+    decisions = api.get(server, "/api/review")["items"]
     assert len(decisions) == 1, decisions
     assert decisions[0]["ticket_id"] == tid, decisions
     assert decisions[0]["field"] == "plan", decisions

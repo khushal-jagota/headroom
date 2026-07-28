@@ -46,6 +46,7 @@ from planner.conversation.events import (
     PlanEntryStatus,
     PlanUpdatedEventPayload,
     PromptEventPayload,
+    TokenUsageEventPayload,
     ToolCallStartedEventPayload,
 )
 from planner.conversation.message_content import text_message_content
@@ -409,6 +410,31 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert back["expand"] is True
     assert back["restBarMounted"] is False
     assert back["paneHeight"] == peeked["paneHeight"], (peeked, back)
+
+
+def test_a_completed_turn_does_not_draw_its_token_usage(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """The conversation keeps backend usage without making it part of the transcript."""
+    ticket_id, conversation_id = _a_ticket_with_a_conversation(
+        server, cli, "No completed-turn usage marker"
+    )
+    _append_rows(
+        server,
+        conversation_id,
+        *_a_settled_conversation_worth_reading(THE_LAST_THING),
+        TokenUsageEventPayload(input_tokens=41_000, output_tokens=920),
+    )
+    page = _the_ticket_page(server, context_factory(), open_page, ticket_id, ROWS_IN_THE_SEED)
+
+    _click_the_composers_input(page)
+    assert THE_LAST_THING in page.inner_text(THREAD)
+    assert page.locator('[data-conversation-row="token_usage"]').count() == 0
+    assert "41.0k in" not in page.inner_text(THREAD)
+    assert "920 out" not in page.inner_text(THREAD)
 
 
 def test_the_ticket_behind_is_still_readable_and_a_click_on_it_drops_a_state(

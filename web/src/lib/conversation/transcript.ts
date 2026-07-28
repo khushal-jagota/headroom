@@ -1253,44 +1253,6 @@ export function lineShowsWholeDetail(line: ToolCallLine, detail: string): boolea
   return addsNothingTo(detail, `${line.title} ${line.summary ?? ""}`);
 }
 
-/** What a turn cost, in the fewest words that say it.
- *
- * Only what the backend actually counted appears. A backend that said nothing about
- * cached tokens contributes nothing here rather than a zero, because a zero would be this
- * pane claiming something the backend never said. Thousands are shortened because a
- * transcript is read at a glance and 41,000 is not a number anybody reads digit by digit.
- */
-export function tokenUsageSentence(row: {
-  inputTokens: number | null;
-  outputTokens: number | null;
-  cachedInputTokens: number | null;
-  costUsd: number | null;
-}): string {
-  const said: string[] = [];
-  if (row.inputTokens !== null) said.push(`${shortenedCount(row.inputTokens)} in`);
-  if (row.outputTokens !== null) said.push(`${shortenedCount(row.outputTokens)} out`);
-  if (row.cachedInputTokens !== null) {
-    said.push(`${shortenedCount(row.cachedInputTokens)} cached`);
-  }
-  if (row.costUsd !== null) said.push(formatCostUsd(row.costUsd));
-  return said.join(" · ");
-}
-
-/** A count of tokens, shortened past a thousand. */
-function shortenedCount(counted: number): string {
-  if (counted < 1_000) return `${counted}`;
-  const thousands = counted / 1_000;
-  return `${thousands >= 100 ? Math.round(thousands) : thousands.toFixed(1)}k`;
-}
-
-/** Money, to the cent — except where that would round a real cost to nothing, and then to
- *  as many places as it takes to show that something was spent. */
-export function formatCostUsd(amount: number): string {
-  if (amount === 0) return "$0.00";
-  if (amount < 0.01) return `$${amount.toFixed(4)}`;
-  return `$${amount.toFixed(2)}`;
-}
-
 /** What the seam where the backend cut the thread says. */
 export const CONTEXT_COMPACTED_SENTENCE = "context compacted";
 
