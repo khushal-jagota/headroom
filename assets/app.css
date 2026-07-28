@@ -3597,7 +3597,7 @@ select {
 [data-conversation-pane][data-conversation-state="peeked"] {
   /* The card's own surface, and the status bar is what you see of it: the well covers the
    * rest, so this colour is the bar at rest and the bar's head once it is opened up. */
-  background: var(--accent-surface-bright);
+  background: var(--accent-ink);
   border: var(--border-hairline) solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
