@@ -779,7 +779,7 @@ def create_ticket(
     actor: str,
     now: int,
     title_max_chars: int,
-    kickoff_note: str = "",
+    kickoff_note: str | None = "",
     project_id: str | None = None,
     priority: Priority = Priority.P3,
     deadline: str | None = None,
@@ -820,15 +820,17 @@ def create_ticket(
         conn, worker_type_definition, initial_stage
     )
     ticket_id = new_id(ID_PREFIXES["ticket"])
-    initial_fields = fields_codec.with_slot(
-        TicketFields.empty(worker_type_definition.field_ids()),
-        "kickoff",
-        FieldSlot(
-            value=None,
-            proposal=Proposal(body=kickoff_note, proposed_by=actor, created_at=now),
-            user_note=None,
-        ),
-    )
+    initial_fields = TicketFields.empty(worker_type_definition.field_ids())
+    if kickoff_note is not None:
+        initial_fields = fields_codec.with_slot(
+            initial_fields,
+            "kickoff",
+            FieldSlot(
+                value=None,
+                proposal=Proposal(body=kickoff_note, proposed_by=actor, created_at=now),
+                user_note=None,
+            ),
+        )
     fields_json = fields_codec.fields_to_json(initial_fields)
     with _txn(conn):
         if sprint_item_id is None and fallback_sprint_id is not None:
@@ -872,7 +874,11 @@ def create_ticket(
                 sprint_item_id,
                 default_ceiling,
                 AtCap.propose.value,
-                TicketStatus.awaiting_approval.value,
+                (
+                    TicketStatus.awaiting_approval.value
+                    if kickoff_note is not None
+                    else TicketStatus.empty.value
+                ),
                 "{}",
                 (
                     default_stage_ownership_mode.value

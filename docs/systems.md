@@ -292,18 +292,15 @@ _Code paths:_ `src/planner/cli/`, `src/planner/core/authctx.py`, and domain admi
 - **A crash leaves a Ticket looking busy.** Its status still says a worker has it while
   nothing is running. Deliberate: liveness is asked of the conversation system, and no
   recovery machinery pretends to know better.
-- **Rollover initiation is still external.** Generic internal Ticket scheduling now
-  exists, but no planning schedules are live and rollover has not been cut over.
 - **Built frontend artifacts are tracked.** Source changes still require one deliberate
   Vite build before the served app changes.
 
 ## Deferred
 
 - An explicit retry/reset policy for an errored Ticket.
-- Activating the planning schedules and retiring external rollover initiation.
 
 ---
 
-_Last verified: 2026-07-28 (generic scheduled Ticket creation and occurrence receipts,
+_Last verified: 2026-07-28 (scheduled planning Ticket creation and occurrence receipts,
 the eight Ticket statuses, the unified Review walk, one contentless change signal per
 commit, and worker orchestration on the conversation contract)._

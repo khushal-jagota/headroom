@@ -38,7 +38,10 @@ generic Stage setter.
 - **`schedule create / list / show / set`** — manage generic internal schedules that
   create and place an ordinary Ticket at an exact local time. A schedule uses either
   `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
-  creation context as `ticket create`, and can be enabled or disabled. By default each
+  placement context as `ticket create`, and can be enabled or disabled. With no kickoff
+  context, the created Ticket has no pending proposal, so readiness can start its
+  Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
+  and waits for approval. By default each
   occurrence resolves the current sprint's Project fallback item; `--sprint-item`
   selects an exact item and `--backlog` keeps occurrences out of a sprint. Use
   `schedule set … placement --value current-sprint|backlog` to switch the reusable

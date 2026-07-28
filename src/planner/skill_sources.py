@@ -9,7 +9,13 @@ from typing import Final
 SKILL_FILE_NAME = "SKILL.md"
 SKILLS_DIR_NAME = "skills"
 LEGACY_WORKER_SETTINGS_DIR_NAME = "worker-settings"
-RETIRED_PANELS_SKILL_NAMES: Final = frozenset({"panels-ticket-management"})
+RETIRED_PANELS_SKILL_NAMES: Final = frozenset(
+    {
+        "panels-rollover",
+        "panels-sprint-planning",
+        "panels-ticket-management",
+    }
+)
 
 
 def panels_skill_root() -> Path:

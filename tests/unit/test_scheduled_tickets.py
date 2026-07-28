@@ -17,6 +17,7 @@ from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
+from planner.runtime import worker_step_readiness
 from planner.scheduled_tickets import actions, data
 from planner.scheduled_tickets.contracts import (
     OccurrenceOutcome,
@@ -29,7 +30,9 @@ from planner.scheduled_tickets.runtime import ScheduledTicketLoop
 from planner.sprints.logic import DateRange
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TITLE_MAX_CHARS
+from planner.tickets.contracts import TITLE_MAX_CHARS, TicketStatus
+from planner.tickets.logic import fields_codec
+from planner.worker_types.configuration import configured_worker_type_registry
 
 
 def _now(value: str) -> datetime:
@@ -40,6 +43,7 @@ def _template(
     *,
     title: str = "Planned session",
     worker_type: str = "coding",
+    kickoff_note: str = "Gather evidence first.",
     blocked_by: tuple[str, ...] = (),
     project_id: str | None = None,
     placement_mode: ScheduledTicketPlacementMode = ScheduledTicketPlacementMode.current_sprint,
@@ -48,7 +52,7 @@ def _template(
     return ScheduledTicketTemplate(
         title=title,
         worker_type=worker_type,
-        kickoff_note="Gather evidence first.",
+        kickoff_note=kickoff_note,
         priority=Priority.P3,
         deadline=None,
         project_id=project_id,
@@ -78,6 +82,61 @@ def _schedule(
     return created.id
 
 
+def _production_planning_schedules(
+    conn: Connection,
+) -> dict[str, str]:
+    conn.execute(
+        "INSERT OR IGNORE INTO projects "
+        "(id, name, summary, created_at, updated_at) "
+        "VALUES ('project_panels', 'Panels', '', 0, 0)"
+    )
+    definitions = (
+        (
+            "Plan the day",
+            "planning-day",
+            "11:30",
+            ScheduleCadence.every_planning_day,
+        ),
+        (
+            "Check the day at 14:30",
+            "planning-midday-check",
+            "14:30",
+            ScheduleCadence.every_planning_day,
+        ),
+        (
+            "Review current sprint and plan the next",
+            "planning-sprint",
+            "11:30",
+            ScheduleCadence.current_sprint_final_day,
+        ),
+    )
+    return {
+        worker_type: _schedule(
+            conn,
+            local_time=local_time,
+            cadence=cadence,
+            template=_template(
+                title=title,
+                worker_type=worker_type,
+                kickoff_note="",
+                project_id="project_panels",
+                placement_mode=ScheduledTicketPlacementMode.current_sprint,
+            ),
+        )
+        for title, worker_type, local_time, cadence in definitions
+    }
+
+
+def _insert_current_sprint(
+    conn: Connection, *, date_end: str = "2026-07-28"
+) -> None:
+    conn.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_current', 'Current', '2026-07-20', ?, 0, 0)",
+        (date_end,),
+    )
+
+
 def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
     assert validate_local_time("00:00") == "00:00"
     assert validate_local_time("23:59") == "23:59"
@@ -101,6 +160,242 @@ def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
         planning_day="2026-08-02",
         sprint_ranges=ranges,
     )
+
+
+def test_approved_production_planning_schedule_definitions_are_exact(
+    tmp_db: Connection,
+) -> None:
+    schedule_ids = _production_planning_schedules(tmp_db)
+    schedules = {
+        schedule.template.worker_type: schedule
+        for schedule in data.list_schedules(tmp_db)
+    }
+
+    assert set(schedules) == set(schedule_ids) == {
+        "planning-day",
+        "planning-midday-check",
+        "planning-sprint",
+    }
+    assert {
+        worker_type: (
+            schedule.template.title,
+            schedule.local_time,
+            schedule.cadence,
+        )
+        for worker_type, schedule in schedules.items()
+    } == {
+        "planning-day": (
+            "Plan the day",
+            "11:30",
+            ScheduleCadence.every_planning_day,
+        ),
+        "planning-midday-check": (
+            "Check the day at 14:30",
+            "14:30",
+            ScheduleCadence.every_planning_day,
+        ),
+        "planning-sprint": (
+            "Review current sprint and plan the next",
+            "11:30",
+            ScheduleCadence.current_sprint_final_day,
+        ),
+    }
+    for schedule in schedules.values():
+        assert schedule.enabled
+        assert schedule.template.priority is Priority.P3
+        assert schedule.template.project_id == "project_panels"
+        assert (
+            schedule.template.placement_mode
+            is ScheduledTicketPlacementMode.current_sprint
+        )
+        assert schedule.template.kickoff_note == ""
+        assert schedule.template.deadline is None
+        assert schedule.template.sprint_item_id is None
+        assert schedule.template.employee_backend is None
+        assert schedule.template.employee_launch_model is None
+        assert schedule.template.blocked_by_ticket_ids == ()
+
+
+def test_production_planning_schedules_create_place_receipt_and_reach_handoff(
+    tmp_db: Connection,
+) -> None:
+    _insert_current_sprint(tmp_db)
+    schedule_ids = _production_planning_schedules(tmp_db)
+    morning = _now("2026-07-28T11:30:00")
+    midday = _now("2026-07-28T14:30:00")
+
+    morning_results = actions.run_current_slot(
+        tmp_db,
+        planning_now=morning,
+        now=int(morning.timestamp()),
+        boundary_hour=5,
+    )
+    repeated_morning = actions.run_current_slot(
+        tmp_db,
+        planning_now=morning.replace(second=59),
+        now=int(morning.timestamp()) + 59,
+        boundary_hour=5,
+    )
+    midday_results = actions.run_current_slot(
+        tmp_db,
+        planning_now=midday,
+        now=int(midday.timestamp()),
+        boundary_hour=5,
+    )
+
+    assert repeated_morning == morning_results
+    assert len(morning_results) == 2
+    assert len(midday_results) == 1
+    results = morning_results + midday_results
+    assert {result.schedule_id for result in results} == set(schedule_ids.values())
+    assert {result.outcome for result in results} == {OccurrenceOutcome.created}
+    assert {result.target_day_id for result in results} == {"day_2026-07-28"}
+
+    registry = configured_worker_type_registry()
+    for result in results:
+        assert result.ticket_id is not None
+        ticket = tickets_data.read_ticket(tmp_db, result.ticket_id)
+        assert ticket.worker_type in schedule_ids
+        assert ticket.priority is Priority.P3
+        assert ticket.deadline is None
+        assert ticket.ticket_status is TicketStatus.empty
+        assert fields_codec.get_slot(ticket.fields, "kickoff").proposal is None
+        assert ticket.project_id == "project_panels"
+        assert ticket.effective_sprint_id == "sp_current"
+        assert ticket.sprint_item_id is not None
+        assert (
+            tmp_db.execute(
+                "SELECT kind FROM sprint_items WHERE id = ?",
+                (ticket.sprint_item_id,),
+            ).fetchone()["kind"]
+            == "other"
+        )
+        assert data.list_occurrences(tmp_db, result.schedule_id) == [result]
+
+        assert worker_step_readiness.is_ready_for_worker_step(
+            tmp_db,
+            ticket,
+            planning_day_id="day_2026-07-28",
+            worker_type_definition=registry.require(ticket.worker_type),
+        )
+
+    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 3
+    assert (
+        tmp_db.execute(
+            "SELECT count(*) FROM sprint_items "
+            "WHERE sprint_id = 'sp_current' "
+            "AND project_id = 'project_panels' AND kind = 'other'"
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_production_planning_schedules_suppress_prelaid_tickets_without_backfill(
+    tmp_db: Connection,
+) -> None:
+    _insert_current_sprint(tmp_db)
+    schedule_ids = _production_planning_schedules(tmp_db)
+    morning = _now("2026-07-28T11:30:00")
+    prelaid_ids: dict[str, str] = {}
+    for worker_type in schedule_ids:
+        ticket = tickets_actions.create_ticket(
+            tmp_db,
+            title=f"Manual {worker_type}",
+            actor="owner",
+            now=int(morning.timestamp()) - 60,
+            title_max_chars=TITLE_MAX_CHARS,
+            worker_type=worker_type,
+            project_id="project_panels",
+            planning_now=morning,
+            boundary_hour=5,
+        )
+        prelaid_ids[worker_type] = ticket.id
+
+    for missed_slot in ("2026-07-28T11:31:00", "2026-07-28T14:31:00"):
+        missed = _now(missed_slot)
+        assert (
+            actions.run_current_slot(
+                tmp_db,
+                planning_now=missed,
+                now=int(missed.timestamp()),
+                boundary_hour=5,
+            )
+            == []
+        )
+    assert all(
+        data.list_occurrences(tmp_db, schedule_id) == []
+        for schedule_id in schedule_ids.values()
+    )
+
+    morning_results = actions.run_current_slot(
+        tmp_db,
+        planning_now=morning,
+        now=int(morning.timestamp()),
+        boundary_hour=5,
+    )
+    midday = _now("2026-07-28T14:30:00")
+    midday_results = actions.run_current_slot(
+        tmp_db,
+        planning_now=midday,
+        now=int(midday.timestamp()),
+        boundary_hour=5,
+    )
+    repeated_midday = actions.run_current_slot(
+        tmp_db,
+        planning_now=midday.replace(second=30),
+        now=int(midday.timestamp()) + 30,
+        boundary_hour=5,
+    )
+
+    assert repeated_midday == midday_results
+    results = morning_results + midday_results
+    assert len(results) == 3
+    assert {result.outcome for result in results} == {OccurrenceOutcome.suppressed}
+    for result in results:
+        schedule = data.read_schedule(tmp_db, result.schedule_id)
+        assert result.ticket_id == prelaid_ids[schedule.template.worker_type]
+        assert data.list_occurrences(tmp_db, result.schedule_id) == [result]
+    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 3
+
+
+def test_production_sprint_schedule_only_qualifies_on_current_sprint_final_day(
+    tmp_db: Connection,
+) -> None:
+    _insert_current_sprint(tmp_db)
+    schedule_ids = _production_planning_schedules(tmp_db)
+    before = _now("2026-07-27T11:30:00")
+
+    before_results = actions.run_current_slot(
+        tmp_db,
+        planning_now=before,
+        now=int(before.timestamp()),
+        boundary_hour=5,
+    )
+
+    assert len(before_results) == 1
+    before_ticket_id = before_results[0].ticket_id
+    assert before_ticket_id is not None
+    assert (
+        tickets_data.read_ticket(tmp_db, before_ticket_id).worker_type
+        == "planning-day"
+    )
+    assert data.list_occurrences(
+        tmp_db, schedule_ids["planning-sprint"]
+    ) == []
+
+    final = _now("2026-07-28T11:30:00")
+    final_results = actions.run_current_slot(
+        tmp_db,
+        planning_now=final,
+        now=int(final.timestamp()),
+        boundary_hour=5,
+    )
+
+    assert {
+        tickets_data.read_ticket(tmp_db, str(result.ticket_id)).worker_type
+        for result in final_results
+    } == {"planning-day", "planning-sprint"}
+    assert len(data.list_occurrences(tmp_db, schedule_ids["planning-sprint"])) == 1
 
 
 def test_due_occurrence_creates_and_places_one_ordinary_ticket(
@@ -129,6 +424,10 @@ def test_due_occurrence_creates_and_places_one_ordinary_ticket(
     ticket = tickets_data.read_ticket(tmp_db, ticket_id)
     assert ticket.title == "Planned session"
     assert ticket.worker_type == "coding"
+    assert ticket.ticket_status is TicketStatus.awaiting_approval
+    kickoff_proposal = fields_codec.get_slot(ticket.fields, "kickoff").proposal
+    assert kickoff_proposal is not None
+    assert kickoff_proposal.body == "Gather evidence first."
     assert tmp_db.execute(
         "SELECT 1 FROM day_tickets WHERE day_id = 'day_2026-07-28' AND ticket_id = ?",
         (ticket_id,),
