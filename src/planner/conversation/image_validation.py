@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import struct
 import zlib
+from typing import Protocol, cast
 
-MAX_CONVERSATION_IMAGE_BYTES = 10 * 1024 * 1024
+# Three raw MiB becomes four MiB in base64. That is a conservative common envelope for
+# direct adapter payloads and leaves headroom in a typical five-MB sessionStorage quota
+# for the outgoing message's JSON and text.
+MAX_CONVERSATION_MESSAGE_IMAGE_BYTES = 3 * 1024 * 1024
+MAX_CONVERSATION_IMAGE_BYTES = MAX_CONVERSATION_MESSAGE_IMAGE_BYTES
+MAX_CONVERSATION_IMAGE_DIMENSION = 8_000
+MAX_CONVERSATION_IMAGE_PIXELS = 25_000_000
 
 _MEDIA_TYPES_BY_FORMAT = {
     "png": "image/png",
@@ -13,6 +20,14 @@ _MEDIA_TYPES_BY_FORMAT = {
     "gif": "image/gif",
     "webp": "image/webp",
 }
+
+
+class _PngDecompressor(Protocol):
+    eof: bool
+    unconsumed_tail: bytes
+    unused_data: bytes
+
+    def decompress(self, data: bytes, max_length: int = 0) -> bytes: ...
 
 
 def validated_image_media_type(payload: bytes) -> str:
@@ -43,7 +58,11 @@ def _valid_png(payload: bytes) -> bool:
         return False
     offset = 8
     saw_header = False
-    compressed_image = bytearray()
+    decompressor: _PngDecompressor | None = None
+    expected_decompressed_bytes: int | None = None
+    png_scanline_bytes: int | None = None
+    decompressed_bytes = 0
+    saw_image_data = False
     while offset + 12 <= len(payload):
         length = int.from_bytes(payload[offset : offset + 4], "big")
         kind = payload[offset + 4 : offset + 8]
@@ -63,29 +82,89 @@ def _valid_png(payload: bytes) -> bool:
                 ">IIBBBBB", data
             )
             if (
-                width <= 0
-                or height <= 0
-                or bit_depth not in (1, 2, 4, 8, 16)
-                or color_type not in (0, 2, 3, 4, 6)
+                not _valid_dimensions(width, height)
+                or bit_depth not in _PNG_BIT_DEPTHS_BY_COLOR_TYPE.get(color_type, ())
                 or compression != 0
                 or filtering != 0
-                or interlace not in (0, 1)
+                # Adam7 has seven differently-sized scanline runs. Rejecting it keeps the
+                # exact decompressed-size proof simple and intentional.
+                or interlace != 0
             ):
                 return False
+            channels = _PNG_CHANNELS_BY_COLOR_TYPE[color_type]
+            scanline_bytes = (width * channels * bit_depth + 7) // 8
+            png_scanline_bytes = 1 + scanline_bytes
+            expected_decompressed_bytes = height * (1 + scanline_bytes)
+            decompressor = cast(_PngDecompressor, zlib.decompressobj())
             saw_header = True
         elif kind == b"IHDR":
             return False
         if kind == b"IDAT":
-            compressed_image.extend(data)
+            if (
+                decompressor is None
+                or expected_decompressed_bytes is None
+                or png_scanline_bytes is None
+            ):
+                return False
+            decompressed_bytes = _consume_png_image_data(
+                decompressor,
+                data,
+                decompressed_bytes=decompressed_bytes,
+                expected_decompressed_bytes=expected_decompressed_bytes,
+                scanline_bytes=png_scanline_bytes,
+            )
+            if decompressed_bytes < 0:
+                return False
+            saw_image_data = True
         if kind == b"IEND":
-            if length != 0 or chunk_end != len(payload) or not compressed_image:
+            if (
+                length != 0
+                or chunk_end != len(payload)
+                or not saw_image_data
+                or decompressor is None
+                or expected_decompressed_bytes is None
+            ):
                 return False
-            try:
-                return bool(zlib.decompress(compressed_image))
-            except zlib.error:
-                return False
+            return (
+                decompressed_bytes == expected_decompressed_bytes
+                and decompressor.eof
+                and not decompressor.unused_data
+                and not decompressor.unconsumed_tail
+            )
         offset = chunk_end
     return False
+
+
+def _consume_png_image_data(
+    decompressor: _PngDecompressor,
+    compressed: bytes,
+    *,
+    decompressed_bytes: int,
+    expected_decompressed_bytes: int,
+    scanline_bytes: int,
+) -> int:
+    """Inflate one IDAT chunk in bounded pieces and validate every scanline filter."""
+    pending = compressed
+    while pending:
+        remaining = expected_decompressed_bytes - decompressed_bytes
+        output_limit = min(64 * 1024, remaining + 1)
+        try:
+            inflated = decompressor.decompress(pending, output_limit)
+        except zlib.error:
+            return -1
+        for index, value in enumerate(inflated):
+            if (decompressed_bytes + index) % scanline_bytes == 0 and value > 4:
+                return -1
+        decompressed_bytes += len(inflated)
+        if decompressed_bytes > expected_decompressed_bytes or decompressor.unused_data:
+            return -1
+        unconsumed = decompressor.unconsumed_tail
+        if not unconsumed:
+            break
+        if not inflated:
+            return -1
+        pending = unconsumed
+    return decompressed_bytes
 
 
 def _valid_jpeg(payload: bytes) -> bool:
@@ -137,8 +216,7 @@ def _valid_jpeg(payload: bytes) -> bool:
             width = int.from_bytes(data[3:5], "big")
             component_count = data[5]
             if (
-                width <= 0
-                or height <= 0
+                not _valid_dimensions(width, height)
                 or component_count <= 0
                 or len(data) < 6 + 3 * component_count
             ):
@@ -159,7 +237,7 @@ def _valid_gif(payload: bytes) -> bool:
     if len(payload) < 14 or payload[:6] not in (b"GIF87a", b"GIF89a"):
         return False
     width, height = struct.unpack_from("<HH", payload, 6)
-    if width <= 0 or height <= 0:
+    if not _valid_dimensions(width, height):
         return False
     packed = payload[10]
     offset = 13 + (3 * (2 ** ((packed & 0x07) + 1)) if packed & 0x80 else 0)
@@ -176,7 +254,7 @@ def _valid_gif(payload: bytes) -> bool:
             if offset + 10 > len(payload):
                 return False
             image_width, image_height = struct.unpack_from("<HH", payload, offset + 5)
-            if image_width <= 0 or image_height <= 0:
+            if not _valid_dimensions(image_width, image_height):
                 return False
             image_packed = payload[offset + 9]
             offset += 10
@@ -229,12 +307,20 @@ def _valid_webp(payload: bytes) -> bool:
         elif kind == b"VP8X":
             if len(data) != 10 or data[1:4] != b"\x00\x00\x00":
                 return False
+            width = int.from_bytes(data[4:7], "little") + 1
+            height = int.from_bytes(data[7:10], "little") + 1
+            if not _valid_dimensions(width, height):
+                return False
             allows_animation = bool(data[0] & 0x02)
         elif kind == b"ANIM":
             if not allows_animation or len(data) != 6:
                 return False
         elif kind == b"ANMF":
             if not allows_animation or len(data) < 24:
+                return False
+            frame_width = int.from_bytes(data[6:9], "little") + 1
+            frame_height = int.from_bytes(data[9:12], "little") + 1
+            if not _valid_dimensions(frame_width, frame_height):
                 return False
             frame_offset = 16
             frame_has_image = False
@@ -262,13 +348,34 @@ def _valid_webp(payload: bytes) -> bool:
 
 def _valid_webp_frame(kind: bytes, data: bytes) -> bool:
     if kind == b"VP8 ":
-        return (
-            len(data) >= 10
-            and not (data[0] & 1)
-            and data[3:6] == b"\x9d\x01\x2a"
-            and int.from_bytes(data[6:8], "little") & 0x3FFF > 0
-            and int.from_bytes(data[8:10], "little") & 0x3FFF > 0
-        )
+        if len(data) < 10 or data[0] & 1 or data[3:6] != b"\x9d\x01\x2a":
+            return False
+        width = int.from_bytes(data[6:8], "little") & 0x3FFF
+        height = int.from_bytes(data[8:10], "little") & 0x3FFF
+        return _valid_dimensions(width, height)
     if kind == b"VP8L":
-        return len(data) >= 5 and data[0] == 0x2F
+        if len(data) < 5 or data[0] != 0x2F:
+            return False
+        dimensions = int.from_bytes(data[1:5], "little")
+        width = (dimensions & 0x3FFF) + 1
+        height = ((dimensions >> 14) & 0x3FFF) + 1
+        return _valid_dimensions(width, height)
     return False
+
+
+_PNG_BIT_DEPTHS_BY_COLOR_TYPE = {
+    0: (1, 2, 4, 8, 16),
+    2: (8, 16),
+    3: (1, 2, 4, 8),
+    4: (8, 16),
+    6: (8, 16),
+}
+_PNG_CHANNELS_BY_COLOR_TYPE = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
+
+
+def _valid_dimensions(width: int, height: int) -> bool:
+    return (
+        0 < width <= MAX_CONVERSATION_IMAGE_DIMENSION
+        and 0 < height <= MAX_CONVERSATION_IMAGE_DIMENSION
+        and width * height <= MAX_CONVERSATION_IMAGE_PIXELS
+    )

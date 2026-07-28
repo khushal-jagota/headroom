@@ -36,6 +36,7 @@
   import type { RunValues } from "../../lib/conversation/composer";
   import {
     createPendingConversationImages,
+    pendingConversationImageBytes,
     pendingImagesAsPieces,
     releasePendingImages,
     restoredPendingImages,
@@ -432,7 +433,11 @@
   async function intakeChosenFiles(files: readonly File[]): Promise<void> {
     imageIntakesInFlight += 1;
     try {
-      const intake = await createPendingConversationImages(files, nextImageId);
+      const intake = await createPendingConversationImages(
+        files,
+        nextImageId,
+        pendingConversationImageBytes(pendingImages)
+      );
       if (destroyed) {
         releasePendingImages(intake.accepted);
         return;
@@ -443,7 +448,7 @@
         pendingImages = [...pendingImages, ...intake.accepted];
       }
       intakeError = intake.rejected.length > 0
-        ? "Choose PNG, JPEG, GIF or WebP images up to 10 MiB."
+        ? "Choose PNG, JPEG, GIF or WebP images totaling up to 3 MiB."
         : null;
     } catch (error) {
       if (!destroyed) {

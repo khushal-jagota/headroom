@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import base64
+import struct
+import zlib
 
 import pytest
 
-from planner.conversation.image_validation import validated_image_media_type
+from planner.conversation.image_validation import (
+    MAX_CONVERSATION_IMAGE_DIMENSION,
+    MAX_CONVERSATION_IMAGE_PIXELS,
+    sniff_image_format,
+    validated_image_media_type,
+)
 
 PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -35,3 +42,77 @@ def test_the_four_established_image_formats_have_canonical_media_types(
     payload: bytes, media_type: str
 ) -> None:
     assert validated_image_media_type(payload) == media_type
+
+
+def _png(width: int, height: int, decompressed: bytes, *, interlace: int = 0) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            len(data).to_bytes(4, "big")
+            + kind
+            + data
+            + (zlib.crc32(kind + data) & 0xFFFFFFFF).to_bytes(4, "big")
+        )
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, interlace)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(decompressed))
+        + chunk(b"IEND", b"")
+    )
+
+
+def test_png_inflation_is_bounded_and_must_match_the_ihdr_scanlines() -> None:
+    assert sniff_image_format(_png(1, 1, b"\x00" * 1_000_000)) is None
+    assert sniff_image_format(_png(1, 1, b"\x00" * 4)) is None
+    assert sniff_image_format(_png(1, 1, b"\x05" + b"\x00" * 4)) is None
+    assert sniff_image_format(_png(1, 1, b"\x00" * 5)) == "png"
+    assert sniff_image_format(_png(1, 1, b"\x00" * 5, interlace=1)) is None
+
+
+def _jpeg(width: int, height: int) -> bytes:
+    return (
+        b"\xff\xd8"
+        + b"\xff\xc0\x00\x0b\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+        + b"\x01\x01\x11\x00"
+        + b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00"
+        + b"\x01\xff\xd9"
+    )
+
+
+def _gif(width: int, height: int) -> bytes:
+    return (
+        b"GIF89a"
+        + struct.pack("<HH", width, height)
+        + b"\x00\x00\x00"
+        + b"\x2c\x00\x00\x00\x00"
+        + struct.pack("<HH", width, height)
+        + b"\x00\x02\x01\x01\x00\x3b"
+    )
+
+
+def _webp(width: int, height: int) -> bytes:
+    frame = (
+        b"\x00\x00\x00\x9d\x01\x2a"
+        + width.to_bytes(2, "little")
+        + height.to_bytes(2, "little")
+    )
+    body = b"WEBPVP8 " + len(frame).to_bytes(4, "little") + frame
+    return b"RIFF" + len(body).to_bytes(4, "little") + body
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _png(MAX_CONVERSATION_IMAGE_DIMENSION + 1, 1, b""),
+        _jpeg(MAX_CONVERSATION_IMAGE_DIMENSION + 1, 1),
+        _gif(MAX_CONVERSATION_IMAGE_DIMENSION + 1, 1),
+        _webp(MAX_CONVERSATION_IMAGE_DIMENSION + 1, 1),
+        _png(5_001, 5_000, b""),
+    ],
+)
+def test_every_format_rejects_backend_incompatible_dimensions(payload: bytes) -> None:
+    assert 5_001 * 5_000 > MAX_CONVERSATION_IMAGE_PIXELS
+    assert sniff_image_format(payload) is None

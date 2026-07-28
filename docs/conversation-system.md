@@ -66,11 +66,14 @@ fetches the picture from it, and the agent is handed it — codex wants the file
 path and is given exactly that, while claude and hermes want the bytes and they
 are read from the same file.
 
-A conversation picture is at most 10 MiB and is a structurally valid PNG, JPEG,
-GIF, or WebP. The composer turns away other stated types and oversize files before
-reading them. The server remains authoritative: it validates the completed bytes
-before keeping any file or prompt and records the media type those bytes prove,
-not the type the browser claimed.
+A message's pictures total at most 3 MiB of raw bytes and each is a structurally
+valid PNG, JPEG, GIF, or WebP. That raw limit leaves room for base64 expansion in
+both adapter payloads and the browser's outgoing-message recall. A picture is no
+more than 8,000 pixels on either side or 25 megapixels; interlaced PNGs are not
+accepted. The composer turns away unsupported stated types and files that would
+exceed the raw envelope before reading them. The server remains authoritative: it
+validates the completed bytes and the aggregate before keeping any file or prompt,
+and records the media type those bytes prove, not the type the browser claimed.
 
 Those files last as long as the notebook does, which is forever. Nothing in
 Panels deletes a conversation: resetting one stops it and unlinks it, and

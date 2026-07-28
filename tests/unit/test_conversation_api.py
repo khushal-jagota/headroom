@@ -14,6 +14,7 @@ import asyncio
 import base64
 import json
 import sqlite3
+import zlib
 from collections.abc import Callable, Coroutine, Iterator, MutableMapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,6 +59,7 @@ from planner.conversation.events import (
     PermissionAskOption,
     ToolCallStatus,
 )
+from planner.conversation.image_validation import MAX_CONVERSATION_MESSAGE_IMAGE_BYTES
 from planner.conversation.live_tail import MAXIMUM_HELD_TAIL_ITEMS, ConversationLiveTail
 from planner.conversation.message_content import (
     MessageContent,
@@ -1549,6 +1551,21 @@ MALFORMED_CLAIMED_PNG = (
 )
 
 
+def _png_with_total_bytes(total_bytes: int) -> bytes:
+    """A real tiny PNG carrying an ignored ancillary chunk to reach an exact wire size."""
+    data_length = total_bytes - len(A_TINY_PNG) - 12
+    assert data_length >= 0
+    kind = b"tEXt"
+    data = b"x" * data_length
+    chunk = (
+        data_length.to_bytes(4, "big")
+        + kind
+        + data
+        + (zlib.crc32(kind + data) & 0xFFFFFFFF).to_bytes(4, "big")
+    )
+    return A_TINY_PNG[:-12] + chunk + A_TINY_PNG[-12:]
+
+
 def test_a_picture_sent_with_a_message_is_kept_and_the_row_names_what_was_kept(
     harness: _Harness,
 ) -> None:
@@ -1658,8 +1675,9 @@ def test_an_oversize_picture_leaves_no_row_or_managed_file(harness: _Harness) ->
         async with harness.client() as client:
             await _start(client, "c")
             # This is rejected from its encoded length before the server allocates a
-            # second, decoded 10+ MiB copy.
-            too_large = "A" * (4 * ((10 * 1024 * 1024 + 2) // 3) + 1)
+            # second decoded copy.
+            limit = MAX_CONVERSATION_MESSAGE_IMAGE_BYTES
+            too_large = "A" * (4 * ((limit + 2) // 3) + 1)
             rejected = await client.post(
                 "/api/conversation/conversations/c/send",
                 json={
@@ -1680,6 +1698,65 @@ def test_an_oversize_picture_leaves_no_row_or_managed_file(harness: _Harness) ->
             ).json() == {"events": []}
             files = harness.db_path.parent / "files" / "conversations"
             assert not list(files.glob("**/*"))
+
+    _run(exercise)
+
+
+def test_the_raw_message_envelope_has_an_exact_boundary_and_counts_all_images(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "boundary")
+            boundary_png = _png_with_total_bytes(MAX_CONVERSATION_MESSAGE_IMAGE_BYTES)
+            accepted = await client.post(
+                "/api/conversation/conversations/boundary/send",
+                json={
+                    "content": [
+                        {
+                            "piece": "image",
+                            "data": base64.b64encode(boundary_png).decode("ascii"),
+                            "media_type": "image/png",
+                        }
+                    ],
+                    "sender_label": "owner",
+                },
+            )
+            assert accepted.json() == {"fate": "started"}
+
+            await _start(client, "aggregate")
+            half_plus_one = MAX_CONVERSATION_MESSAGE_IMAGE_BYTES // 2 + 1
+            image = _png_with_total_bytes(half_plus_one)
+            rejected = await client.post(
+                "/api/conversation/conversations/aggregate/send",
+                json={
+                    "content": [
+                        {
+                            "piece": "image",
+                            "data": base64.b64encode(image).decode("ascii"),
+                            "media_type": "image/png",
+                        },
+                        {
+                            "piece": "image",
+                            "data": base64.b64encode(image).decode("ascii"),
+                            "media_type": "image/png",
+                        },
+                    ],
+                    "sender_label": "owner",
+                },
+            )
+            assert rejected.status_code == 422
+            assert (
+                rejected.json()["detail"]
+                == "a conversation message's images are too large"
+            )
+            assert (
+                await client.get("/api/conversation/conversations/aggregate/events")
+            ).json() == {"events": []}
+            aggregate_files = (
+                harness.db_path.parent / "files" / "conversations" / "aggregate"
+            )
+            assert not aggregate_files.exists()
 
     _run(exercise)
 

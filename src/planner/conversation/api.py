@@ -49,6 +49,7 @@ from planner.conversation.events import (
 )
 from planner.conversation.image_validation import (
     MAX_CONVERSATION_IMAGE_BYTES,
+    MAX_CONVERSATION_MESSAGE_IMAGE_BYTES,
     validated_image_media_type,
 )
 from planner.conversation.live_tail import ConversationLiveTail, ConversationTailItem
@@ -558,9 +559,16 @@ async def conversation_message_content(
     # Prove every image before keeping any of them. A later malformed piece must reject
     # the whole request without leaving an earlier piece behind as an unnamed managed file.
     validated_images: list[tuple[bytes, str]] = []
+    total_image_bytes = 0
     for piece in sent:
         if isinstance(piece, SentImagePiece):
             contents = _decoded_image(piece.data)
+            total_image_bytes += len(contents)
+            if total_image_bytes > MAX_CONVERSATION_MESSAGE_IMAGE_BYTES:
+                raise HTTPException(
+                    status_code=422,
+                    detail="a conversation message's images are too large",
+                )
             try:
                 media_type = validated_image_media_type(contents)
             except ValueError as invalid:

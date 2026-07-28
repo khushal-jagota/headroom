@@ -1720,7 +1720,7 @@ with sync_playwright() as playwright:
         "document.querySelectorAll('[data-chat-image-preview]').length === 2"
     )
     assert (
-        "Choose PNG, JPEG, GIF or WebP images up to 10 MiB."
+        "Choose PNG, JPEG, GIF or WebP images totaling up to 3 MiB."
         in page.locator("[data-conversation-error]").inner_text()
     )
     assert page.locator("[data-chat-image-preview]").evaluate_all(

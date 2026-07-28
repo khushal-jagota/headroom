@@ -1,6 +1,7 @@
 import type { SentMessagePiece } from "./wire";
 
-export const MAX_CONVERSATION_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_CONVERSATION_MESSAGE_IMAGE_BYTES = 3 * 1024 * 1024;
+export const MAX_CONVERSATION_IMAGE_BYTES = MAX_CONVERSATION_MESSAGE_IMAGE_BYTES;
 export const CONVERSATION_IMAGE_MEDIA_TYPES = [
   "image/png",
   "image/jpeg",
@@ -14,6 +15,7 @@ export type PendingConversationImage = {
   id: number;
   fileName: string;
   mediaType: string;
+  byteCount: number;
   data: string;
   previewUrl: string;
   previewUrlNeedsRevoking: boolean;
@@ -27,7 +29,8 @@ export type PendingImageIntake = {
 
 export function isImageFile(file: File): boolean {
   return (
-    file.size <= MAX_CONVERSATION_IMAGE_BYTES
+    file.size > 0
+    && file.size <= MAX_CONVERSATION_IMAGE_BYTES
     && conversationImageMediaTypes.has(file.type.toLowerCase())
   );
 }
@@ -44,14 +47,23 @@ function bytesAsBase64(bytes: Uint8Array): string {
 export async function createPendingConversationImages(
   files: Iterable<File> | ArrayLike<File> | null | undefined,
   firstId: number,
+  currentImageBytes = 0,
   createObjectURL: (file: File) => string = URL.createObjectURL,
   revokeObjectURL: (url: string) => void = URL.revokeObjectURL
 ): Promise<PendingImageIntake> {
   const acceptedFiles: File[] = [];
   const rejected: File[] = [];
+  let acceptedImageBytes = currentImageBytes;
   for (const file of Array.from(files ?? [])) {
-    if (isImageFile(file)) acceptedFiles.push(file);
-    else rejected.push(file);
+    if (
+      isImageFile(file)
+      && acceptedImageBytes + file.size <= MAX_CONVERSATION_MESSAGE_IMAGE_BYTES
+    ) {
+      acceptedFiles.push(file);
+      acceptedImageBytes += file.size;
+    } else {
+      rejected.push(file);
+    }
   }
 
   const encoded = await Promise.all(
@@ -64,6 +76,7 @@ export async function createPendingConversationImages(
         id: firstId + index,
         fileName: file.name,
         mediaType: file.type,
+        byteCount: file.size,
         data: encoded[index] ?? "",
         previewUrl: createObjectURL(file),
         previewUrlNeedsRevoking: true
@@ -99,12 +112,25 @@ export function restoredPendingImages(
       id: firstId + index,
       fileName: piece.file_name ?? "",
       mediaType: piece.media_type,
+      byteCount: base64DecodedByteCount(piece.data),
       data: piece.data,
       previewUrl: `data:${piece.media_type};base64,${piece.data}`,
       previewUrlNeedsRevoking: false
     })),
     nextId: firstId + imagePieces.length
   };
+}
+
+export function pendingConversationImageBytes(
+  images: readonly PendingConversationImage[]
+): number {
+  return images.reduce((total, image) => total + image.byteCount, 0);
+}
+
+function base64DecodedByteCount(data: string): number {
+  if (data === "") return 0;
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.floor(data.length / 4) * 3 - padding;
 }
 
 export function releasePendingImages(

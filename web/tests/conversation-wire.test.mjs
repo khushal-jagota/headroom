@@ -138,6 +138,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   const intake = await createPendingConversationImages(
     [imageA, note, imageB],
     7,
+    0,
     (file) => {
       const url = `blob:${file.name}`;
       created.push(url);
@@ -172,6 +173,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
     createPendingConversationImages(
       [imageA, imageB],
       30,
+      0,
       (file) => {
         if (file === imageB) throw new Error("no more preview resources");
         return `blob:${file.name}:failed-batch`;
@@ -203,6 +205,7 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   const rejectedEarly = await createPendingConversationImages(
     [svg, heic, oversize],
     40,
+    0,
     () => {
       throw new Error("a rejected file must not get a preview");
     }
@@ -214,6 +217,65 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
   assert.deepEqual(rejectedEarly.accepted, []);
   assert.equal(rejectedEarly.nextId, 40);
   assert.equal(reads, 0, "unsupported and oversize files are rejected before reading bytes");
+
+  const exactBoundary = new File(
+    [new Uint8Array(MAX_CONVERSATION_IMAGE_BYTES)],
+    "boundary.png",
+    { type: "image/png" }
+  );
+  const atBoundary = await createPendingConversationImages(
+    [exactBoundary],
+    50,
+    0,
+    () => "blob:boundary"
+  );
+  assert.equal(atBoundary.accepted.length, 1, "the exact raw envelope remains usable");
+  assert.equal(atBoundary.accepted[0].byteCount, MAX_CONVERSATION_IMAGE_BYTES);
+  releasePendingImages(atBoundary.accepted, () => {});
+
+  const firstHalf = new File(
+    [new Uint8Array(MAX_CONVERSATION_IMAGE_BYTES / 2)],
+    "first-half.png",
+    { type: "image/png" }
+  );
+  const overTogether = new File(
+    [new Uint8Array(MAX_CONVERSATION_IMAGE_BYTES / 2 + 1)],
+    "over-together.png",
+    { type: "image/png" }
+  );
+  let aggregateRejectedReads = 0;
+  overTogether.arrayBuffer = async () => {
+    aggregateRejectedReads += 1;
+    throw new Error("aggregate-overflow image must not be read");
+  };
+  const aggregate = await createPendingConversationImages(
+    [firstHalf, overTogether],
+    60,
+    0,
+    () => "blob:aggregate"
+  );
+  assert.deepEqual(aggregate.accepted.map((image) => image.fileName), ["first-half.png"]);
+  assert.deepEqual(aggregate.rejected.map((file) => file.name), ["over-together.png"]);
+  assert.equal(aggregateRejectedReads, 0);
+  releasePendingImages(aggregate.accepted, () => {});
+
+  const wouldOverflowPending = new File([new Uint8Array([1, 2])], "later.png", {
+    type: "image/png"
+  });
+  let pendingOverflowReads = 0;
+  wouldOverflowPending.arrayBuffer = async () => {
+    pendingOverflowReads += 1;
+    return new ArrayBuffer(0);
+  };
+  const pendingOverflow = await createPendingConversationImages(
+    [wouldOverflowPending],
+    70,
+    MAX_CONVERSATION_IMAGE_BYTES - 1
+  );
+  assert.deepEqual(pendingOverflow.accepted, []);
+  assert.deepEqual(pendingOverflow.rejected, [wouldOverflowPending]);
+  assert.equal(pendingOverflow.nextId, 70);
+  assert.equal(pendingOverflowReads, 0, "pending images count toward the pre-read envelope");
 }
 
 // --- the record a reader holds ------------------------------------------------------------
@@ -904,6 +966,23 @@ const PLAN = (sequence, entries) => event(sequence, "plan_updated", { entries })
     recalled[1].knownFate,
     "answer_never_came_back",
     "a send the page went away in the middle of is one nobody ever heard the end of"
+  );
+
+  const boundaryBase64 = "A".repeat(4 * Math.ceil(MAX_CONVERSATION_IMAGE_BYTES / 3));
+  const boundaryOutgoing = mintOutgoingMessage({
+    content: [{ piece: "image", data: boundaryBase64, media_type: "image/png" }],
+    senderLabel: "owner",
+    mode: "run_when_free"
+  });
+  rememberOutgoingMessages("boundary", [boundaryOutgoing]);
+  assert.ok(
+    kept.get("panels.conversation.outgoing.boundary").length < 5_000_000,
+    "the complete outgoing JSON fits beneath a conservative five-MB tab-storage ceiling"
+  );
+  assert.deepEqual(
+    recallOutgoingMessages("boundary")[0].content,
+    boundaryOutgoing.content,
+    "an image at the accepted envelope survives outgoing recall byte-for-byte"
   );
   assert.deepEqual(recallOutgoingMessages("c2"), [], "one conversation's are not another's");
 
