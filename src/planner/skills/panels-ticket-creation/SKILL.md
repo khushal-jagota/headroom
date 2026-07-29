@@ -32,12 +32,13 @@ today, remove it from the Day as a separate follow-up; backlog does not mean not
 
 Sprint placement says which outcome owns the work. Inspect the relevant Project and
 Sprint Items and use an existing specific item when it genuinely owns the Ticket. With
-no explicit placement, Panels creates or reuses the current sprint's Project-specific
-`Other` item. An explicit Sprint Item selects that item; explicit backlog placement
-leaves the Ticket outside a sprint. A Ticket under an item inherits its Project and
-effective sprint from that item, while an unparented backlog Ticket may carry its
-Project directly. Do not create a new Sprint Item merely to avoid the `Other` fallback;
-Sprint Item creation and priority belong to sprint planning.
+no explicit placement and a current sprint, Panels creates or reuses that sprint's
+Project-specific `Other` item; without a current sprint, the Ticket remains unparented.
+An explicit Sprint Item selects that item; explicit backlog placement leaves the Ticket
+outside a sprint. A Ticket under an item inherits its Project and effective sprint from
+that item, while an unparented backlog Ticket may carry its Project directly. Do not
+create a new Sprint Item merely to avoid the `Other` fallback; Sprint Item creation and
+priority belong to sprint planning.
 
 ## Importance, timing, and dependencies
 
@@ -57,7 +58,7 @@ rewrite the Ticket's stored priority.
 
 A real calendar constraint belongs in the deadline. A genuine prerequisite belongs in
 the Ticket's blockers so Panels can hold the dependent work until the prerequisite is
-done. Do not use either as a second priority scale.
+resolved. Do not use either as a second priority scale.
 
 After creation, read the Ticket back as a whole. Its title, Worker type, Kickoff,
 today status, Sprint Item or backlog placement, inherited Project and sprint, priority,
