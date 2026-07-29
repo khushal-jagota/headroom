@@ -74,6 +74,10 @@ Copy the approved Runtime Defaults values into the definition's `WorkerProfile`.
 
 The mechanical recipe for adding a worker to the running system:
 
+First locate the Panels Git checkout in the assigned workspace and make every source
+change there, normally in an isolated worktree. Never land a worker by editing
+`~/Deployments/Panels/current/app` or another deployed app artifact.
+
 1. Place the `SKILL.md` under `src/planner/skills/<name>/`.
 2. Add the `WorkerTypeDefinition` module under `src/planner/worker_types/`.
 3. Register it once in `src/planner/worker_types/configuration.py`: add its skill to the known-skills catalog and its definition to the production configuration tuple.

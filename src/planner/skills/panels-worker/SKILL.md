@@ -24,6 +24,7 @@ Worker skills:
 - `panels-worker-planning-day` — planning-day tickets (planning the morning's Day with the user).
 - `panels-worker-planning-midday-check` — planning-midday-check tickets (checking execution against the morning intent and carrying out any agreed intervention).
 - `panels-worker-planning-sprint` — planning-sprint tickets (reviewing the current sprint and planning the next).
+- `panels-worker-personal-task` — personal task tickets owned by the user, with optional explicit agent support.
 - `probe-worker` — the probe fixture Worker type (test genericity proof).
 
 ### Who owns the current Stage
@@ -70,6 +71,11 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 
 ### Cross-cutting disciplines
 
+- **Treat deployed apps as immutable.** Repository work must happen in a Git checkout
+  under the assigned workspace, normally in an isolated worktree. Never edit or run
+  tests from `~/Deployments/Panels/current/app` or another deployed app artifact. If
+  the source checkout cannot be found, request user help instead of changing the
+  running installation.
 - **Do not over-specify fields.** 
 - **Explain your proposal judgment in chat.** After you propose a gated field, your chat reply should very briefly explain why you shaped the proposal that way. Do not merely announce that the field is ready, repeat which field you proposed, or restate approval/status details, the UI already shows this. 
 - **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is and what was done before this proposal to refresh their mind before reviewing this proposal.

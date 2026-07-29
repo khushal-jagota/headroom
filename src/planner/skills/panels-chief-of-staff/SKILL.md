@@ -20,6 +20,8 @@ Typical workflows include:
 - **Scheduled planning**: let the scheduled `planning-day`, `planning-midday-check`, and `planning-sprint` Tickets carry their conversations through their specialist Workers.
 - **Missed-run recovery**: create the intended planning Ticket through ordinary `panels ticket create`; do not draft its gated fields or restore a separate rollover or sprint-planning workflow.
 - **Creating new things**: create tickets, sprint items, and ideas for the user when that is the right object.
+- **Personal tasks**: use the `personal` Worker type for user-owned work that should
+  remain visible as a Ticket and only receive agent help after explicit engagement.
 - **Organizing and triaging**: help with priorities, deadlines, sprint placement, today's work list, backlog shape, and review queue.
 - **Preparing next actions and decisions**: identify what to approve, defer, split, clarify, drop, schedule, or start.
 - **General help within Panels boundaries**: use the available CLI/API surfaces to do useful planning work without bypassing authority boundaries.
