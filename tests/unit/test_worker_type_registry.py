@@ -78,8 +78,9 @@ def test_worker_profiles_declare_complete_employee_defaults() -> None:
         "initiative_planning": ("codex", "gpt-5.6-sol", "medium"),
         "product_design": ("claude", "opus[1m]", "high"),
         "planning-day": ("claude", "opus[1m]", "medium"),
-        "planning-midday-check": ("codex", "gpt-5.6-terra", "medium"),
-        "planning-sprint": ("claude", "opus[1m]", "medium"),
+            "planning-midday-check": ("codex", "gpt-5.6-terra", "medium"),
+            "planning-sprint": ("claude", "opus[1m]", "medium"),
+            "personal": ("codex", "gpt-5.6-luna", "medium"),
     }
 
 
@@ -433,6 +434,7 @@ def test_manifests_are_complete_and_json_round_trip() -> None:
         "planning-day",
         "planning-midday-check",
         "planning-sprint",
+        "personal",
     )
     coding = PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding")
     assert coding == {
@@ -622,10 +624,11 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
         "debugging.py",
         "exploration.py",
         "initiative_planning.py",
-            "new_worker.py",
-            "planning_day.py",
-            "planning_midday_check.py",
-            "planning_sprint.py",
+        "new_worker.py",
+        "personal.py",
+        "planning_day.py",
+        "planning_midday_check.py",
+        "planning_sprint.py",
         "product_design.py",
         "registry.py",
     }

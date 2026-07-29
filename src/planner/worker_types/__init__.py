@@ -25,6 +25,7 @@ from planner.worker_types.planning_midday_check import (
     PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
 )
 from planner.worker_types.planning_sprint import PLANNING_SPRINT_WORKER_TYPE_DEFINITION
+from planner.worker_types.personal import PERSONAL_TASK_WORKER_TYPE_DEFINITION
 from planner.worker_types.product_design import PRODUCT_DESIGN_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -37,6 +38,7 @@ __all__ = [
     "PLANNING_DAY_WORKER_TYPE_DEFINITION",
     "PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION",
     "PLANNING_SPRINT_WORKER_TYPE_DEFINITION",
+    "PERSONAL_TASK_WORKER_TYPE_DEFINITION",
     "PRODUCTION_WORKER_TYPE_REGISTRY",
     "PRODUCT_DESIGN_WORKER_TYPE_DEFINITION",
     "FieldDefinition",
