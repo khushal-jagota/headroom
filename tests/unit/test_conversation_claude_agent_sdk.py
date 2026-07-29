@@ -1943,6 +1943,24 @@ def test_a_question_that_dies_with_its_turn_is_settled_as_denied(tmp_path: Path)
     _run(exercise)
 
 
+def test_cancelling_settles_the_question_without_waiting_for_a_terminal_result(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await _write(child)
+        asking = await _raise_a_question(clients[0], sink)
+
+        await child.cancel_running_turn()
+
+        assert isinstance(await asking, PermissionResultDeny)
+        assert clients[0].interrupts == 1
+        await child.stop()
+
+    _run(exercise)
+
+
 @pytest.mark.parametrize(
     "tool_input",
     [

@@ -505,6 +505,9 @@ class ClaudeAgentSdkBackendChild:
         except Exception as did_not_reach:
             self._wire_broken = True
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
+        # The core records the interruption as soon as this returns. Settle every callback
+        # at the same boundary instead of waiting for a terminal result Claude may delay.
+        self._settle_parked_asks(turn)
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         """Give the SDK the option a person chose, and wait for its callback to take it.

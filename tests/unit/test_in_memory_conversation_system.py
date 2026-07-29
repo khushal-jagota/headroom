@@ -76,18 +76,24 @@ def test_in_memory_user_input_waits_for_the_complete_answer_map() -> None:
                     question="Which?",
                     options=(UserInputOption(label="One", description="first"),),
                     multi_select=False,
-                    allow_other=True,
+                    allow_other=False,
                 ),
             ),
         )
         assert await system.has_pending_user_input("c") is True
         with pytest.raises(TurnCannotEndWhileUserInputIsPending):
             system.complete_running_turn("c")
+        for invalid in (
+            UserInputAnswer(question_id="q1", answers=("",)),
+            UserInputAnswer(question_id="q1", answers=("One", "Two")),
+            UserInputAnswer(question_id="q1", answers=("unoffered",)),
+        ):
+            assert system.answer_user_input("c", request_id, (invalid,)) is False
         assert system.answer_user_input(
-            "c", request_id, (UserInputAnswer(question_id="q1", answers=("typed",)),)
+            "c", request_id, (UserInputAnswer(question_id="q1", answers=("One",)),)
         )
         assert system.backend_user_input_answers("c", request_id) == (
-            UserInputAnswer(question_id="q1", answers=("typed",)),
+            UserInputAnswer(question_id="q1", answers=("One",)),
         )
         system.complete_running_turn("c")
 

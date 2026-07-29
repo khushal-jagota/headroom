@@ -178,6 +178,16 @@
             ? item.row.questions[0]?.question
             : `${item.row.questions.length} questions`}
         </div>{/if}
+        {#if item.row.state === "answered" && item.row.answers}
+          <div class="c2-ask-detail" data-conversation-user-input-answers>
+            {#each item.row.questions as question (question.question_id)}
+              <div>
+                <strong>{question.header || question.question}</strong>
+                <span> · {item.row.answers[question.question_id]?.answers.join(", ") ?? ""}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else if item.row.kind === "model_changed"}
       <div class="acp-compaction" role="separator" data-conversation-row="model_changed">

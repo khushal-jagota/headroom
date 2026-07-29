@@ -149,7 +149,9 @@ class _InMemoryBackendSession:
 @dataclass
 class _RunningTurn:
     pending_permission_ask_ids: set[str] = field(default_factory=set)
-    pending_user_input_question_ids: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,7 +319,7 @@ class InMemoryConversationSystem:
         state = self._conversations.get(conversation_id)
         if state is None or state.running_turn is None:
             return False
-        return bool(state.running_turn.pending_user_input_question_ids)
+        return bool(state.running_turn.pending_user_input_questions)
 
     # --- driving the backend stand-in ---
 
@@ -329,7 +331,7 @@ class InMemoryConversationSystem:
             return
         if running_turn.pending_permission_ask_ids:
             raise TurnCannotEndWhilePermissionAskIsPending(conversation_id)
-        if running_turn.pending_user_input_question_ids:
+        if running_turn.pending_user_input_questions:
             raise TurnCannotEndWhileUserInputIsPending(conversation_id)
         self._end_running_turn(state, InMemoryConversationTurnEnding.completed)
         self._drain(state)
@@ -394,9 +396,7 @@ class InMemoryConversationSystem:
             raise RuntimeError(f"conversation {conversation_id} has no running turn")
         state.user_input_requests_raised += 1
         request_id = f"user-input-{state.user_input_requests_raised}"
-        running_turn.pending_user_input_question_ids[request_id] = tuple(
-            question.question_id for question in questions
-        )
+        running_turn.pending_user_input_questions[request_id] = questions
         session.pending_user_input_answers[request_id] = None
         state.observations.append(
             InMemoryConversationObservation(
@@ -416,18 +416,33 @@ class InMemoryConversationSystem:
         state = self._conversations.get(conversation_id)
         if state is None or state.running_turn is None or state.backend_session is None:
             return False
-        expected = state.running_turn.pending_user_input_question_ids.get(request_id)
+        questions = state.running_turn.pending_user_input_questions.get(request_id)
         answers_by_question_id = {answer.question_id: answer for answer in answers}
         if (
-            expected is None
+            questions is None
             or len(answers_by_question_id) != len(answers)
-            or set(answers_by_question_id) != set(expected)
+            or set(answers_by_question_id)
+            != {question.question_id for question in questions}
         ):
             return False
-        if any(not answer.answers for answer in answers):
+        ordered_answers = tuple(
+            answers_by_question_id[question.question_id] for question in questions
+        )
+        if any(
+            not answer.answers
+            or any(not value for value in answer.answers)
+            or (not question.multi_select and len(answer.answers) != 1)
+            or (
+                not question.allow_other
+                and any(
+                    value not in {option.label for option in question.options}
+                    for value in answer.answers
+                )
+            )
+            for question, answer in zip(questions, ordered_answers, strict=True)
+        ):
             return False
-        ordered_answers = tuple(answers_by_question_id[question_id] for question_id in expected)
-        del state.running_turn.pending_user_input_question_ids[request_id]
+        del state.running_turn.pending_user_input_questions[request_id]
         state.backend_session.pending_user_input_answers[request_id] = ordered_answers
         state.observations.append(
             InMemoryConversationObservation(
