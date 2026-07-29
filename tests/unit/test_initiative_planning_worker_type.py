@@ -113,6 +113,7 @@ def test_production_registry_carries_complete_initiative_planning_manifest() -> 
         "planning-day",
         "planning-midday-check",
         "planning-sprint",
+        "personal",
     )
     assert (
         PRODUCTION_WORKER_TYPE_REGISTRY.manifest("initiative_planning")

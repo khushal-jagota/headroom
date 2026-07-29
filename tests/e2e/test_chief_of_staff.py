@@ -8,6 +8,7 @@ conversation showing what a first message would actually run on.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import cast
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, Route
@@ -246,7 +247,8 @@ def test_chief_canonical_id_send_and_reset_survive_desktop_navigation(
             return
         if url.endswith("/api/chief/conversation/send"):
             body = route.request.post_data_json
-            sent_bodies.append(body)
+            assert isinstance(body, dict)
+            sent_bodies.append(cast(dict[str, object], body))
             next_id = f"canonical-chief-{len(sent_bodies)}"
             canonical_state["conversation_id"] = next_id
             route.fulfill(
