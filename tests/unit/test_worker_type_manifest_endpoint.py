@@ -65,8 +65,9 @@ def test_production_serves_all_shipped_worker_types(app: FastAPI) -> None:
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("initiative_planning"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("product_design"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-day"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-midday-check"),
-            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-sprint"),
+                PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-midday-check"),
+                PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-sprint"),
+                PRODUCTION_WORKER_TYPE_REGISTRY.manifest("personal"),
         ],
     }
 
