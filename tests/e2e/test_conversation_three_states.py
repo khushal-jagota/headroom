@@ -459,6 +459,9 @@ def test_the_rest_band_is_present_before_activity_and_keeps_its_geometry_through
         timeout=WAIT_MS,
     )
     assert held_reads, "the conversation read is held before it can supply activity"
+    page.locator(".screen-enter").evaluate(
+        "(screen) => Promise.all(screen.getAnimations().map((animation) => animation.finished))"
+    )
 
     before = page.evaluate(THE_REST_BAND_GEOMETRY)
     assert before is not None
