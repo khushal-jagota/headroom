@@ -490,7 +490,7 @@ async def create_ticket(
     priority = (
         parse_enum(Priority, body["priority"], "priority")
         if body["priority"] is not None
-        else Priority.P3
+        else None
     )
     project = projects_data.resolve_project(
         conn,
@@ -536,7 +536,7 @@ async def create_ticket_from_external_work(
     priority = (
         parse_enum(Priority, priority_raw, "priority")
         if priority_raw is not None
-        else Priority.P3
+        else None
     )
     project = projects_data.resolve_project(
         conn,

@@ -108,8 +108,15 @@ readiness loop to look again.
 
 An unparented backlog Ticket may point at a project by `project_id`. A Ticket under a
 Sprint Item derives its Project and effective sprint from that item. Ticket responses
-expose `sprint_item_id` and `effective_sprint_id`; they do not expose or accept a direct
-Ticket `sprint_id`. The `project` display name remains in responses for compatibility.
+expose `sprint_item_id`, `effective_sprint_id`, and `resolved_priority_anchors`; they do
+not expose or accept a direct Ticket `sprint_id`. The resolved anchors name the Sprint
+Item and Project, with each anchor's priority state, so callers can explain the context
+used at creation. The `project` display name remains in responses for compatibility.
+
+If creation does not supply a Ticket priority, Panels uses the Sprint Item priority
+when the Ticket has an item, otherwise the assessed Project priority, otherwise P3. An
+explicit P0–P3 always wins. This is a creation default only: anchor priorities do not
+cap, calculate, or later rewrite the Ticket's stored priority.
 
 ### Blockers
 

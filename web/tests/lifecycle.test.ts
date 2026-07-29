@@ -183,6 +183,10 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     ceiling: "done",
     at_cap: "no",
     priority: "P1",
+    resolved_priority_anchors: {
+      sprint_item: null,
+      project: null
+    },
     backend_error: null,
     stage_ownership_overrides: {},
     default_stage_ownership_mode: "worker",

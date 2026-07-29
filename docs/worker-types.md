@@ -9,9 +9,11 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Eight Worker types ship today:
+Nine Worker types ship today:
 
 - **`coding`** handles product and repository work.
+- **`debugging`** understands a reported software bug, diagnoses its structural cause,
+  and defines the implementation handoff without implementing it.
 - **`new_worker`** designs and lands a new kind of worker.
 - **`exploration`** is a worker for exploring something undefined and making it clearer.
 - **`initiative_planning`** works out the shared top-level how for a confirmed direction,
@@ -48,10 +50,10 @@ advance targets, identify gates and terminals, calculate the default ceiling and
 working Stage, validate a Ticket position, and provide the field order used for
 external-work reconciliation.
 
-The shipped `coding` definition defaults every non-terminal Stage to worker ownership.
-`new_worker` starts with worker-owned Kickoff, then uses paired ownership for Understanding
-before worker-owned Stages and Thinking, pairs again for Runtime Defaults, then returns to
-worker-owned Drafting and Closeout. `exploration`
+The shipped `coding` and `debugging` definitions default every non-terminal Stage to
+worker ownership. `new_worker` starts with worker-owned Kickoff, then uses paired
+ownership for Understanding before worker-owned Stages and Thinking, pairs again for
+Runtime Defaults, then returns to worker-owned Drafting and Closeout. `exploration`
 uses paired ownership for Understanding and Answer, where the user and worker establish
 the frame and reach the decision together; its other non-terminal Stages default to worker
 ownership. `initiative_planning` uses paired ownership for Question Answers, where
@@ -72,13 +74,14 @@ ownership overrides, and scope, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/coding.py`,
+`src/planner/worker_types/debugging.py`,
 `src/planner/worker_types/new_worker.py`,
 `src/planner/worker_types/exploration.py`,
 `src/planner/worker_types/initiative_planning.py`,
 `src/planner/worker_types/product_design.py`,
 `src/planner/worker_types/planning_day.py`,
 `src/planner/worker_types/planning_midday_check.py`, and
-`src/planner/worker_types/planning_sprint.py` contain the eight shipped definitions.
+`src/planner/worker_types/planning_sprint.py` contain the nine shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -137,8 +140,9 @@ behavior is needed. Rules under `src/planner/tickets/logic/` receive
 Application composition lives in `src/planner/worker_types/configuration.py`. It owns the
 catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
 definitions, and the production registry built from them. The shipped tuple currently
-contains `coding`, `new_worker`, `exploration`, `initiative_planning`,
-`product_design`, `planning-day`, `planning-midday-check`, and `planning-sprint`; its
+contains `coding`, `debugging`, `new_worker`, `exploration`, `initiative_planning`,
+`product_design`, `planning-day`, `planning-midday-check`, and
+`planning-sprint`; its
 order is also the manifest order.
 
 Which agent backends exist is not this composition's business. It is the conversation
@@ -168,8 +172,8 @@ The Ticket response supplies the current Stage's default and effective ownership
 clients do not reconstruct the rule.
 
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
-Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `new_worker`,
-`exploration`, `initiative_planning`, `product_design`, `planning-day`, and
+Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `debugging`,
+`new_worker`, `exploration`, `initiative_planning`, `product_design`, `planning-day`,
 `planning-midday-check`, and `planning-sprint` Tickets therefore show their own Stage
 spines without frontend type tables.
 
@@ -310,6 +314,7 @@ owns that name. A restart changes nothing: the conversation is the record, and t
 process is started again under it when there is a reason to.
 
 - `panels-worker-coding` guides coding Tickets.
+- `panels-worker-debugging` guides `debugging` Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
 - `panels-worker-exploration` guides `exploration` Tickets.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
