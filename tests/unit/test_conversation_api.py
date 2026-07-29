@@ -1613,6 +1613,37 @@ def test_an_update_that_cannot_be_run_says_so_rather_than_pretending(
     _run(exercise)
 
 
+def test_the_existing_update_route_exposes_a_native_hermes_result(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        hermes = "/usr/local/bin/hermes"
+        harness.machine.executables["hermes"] = hermes
+        harness.machine.outcomes[(hermes, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
+        )
+        harness.machine.outcomes[(hermes, "update", "--check")] = CommandOutcome(
+            exit_code=0, standard_output="✓ Already up to date.\n", standard_error=""
+        )
+        harness.machine.outcomes[(hermes, "update", "--yes")] = CommandOutcome(
+            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
+        )
+
+        async with harness.client() as client:
+            response = await client.post("/api/conversation/backends/hermes/update")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "outcome": "unchanged",
+            "detail": (
+                "The update command finished, but the installed version is still 0.18.2."
+            ),
+            "output_tail": "✓ Update complete!\n",
+        }
+
+    _run(exercise)
+
+
 def test_an_unknown_backend_is_not_a_backend(harness: _Harness) -> None:
     async def exercise() -> None:
         async with harness.client() as client:
@@ -1664,6 +1695,12 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         # The worker path and the browser's conversation are the same system. A worker's
         # prompt goes into a real conversation, not a stand-in beside it.
         assert app.state.conversation_system is app.state.conversation.system
+        # Backend cards and child startup share the same lifecycle arbiter. This is what
+        # makes the update route's check atomic with a real conversation spawn.
+        assert (
+            app.state.conversation.system._backend_lifecycle
+            is app.state.conversation.backend_snapshots._backend_lifecycle
+        )
 
     assert app.state.conversation is None
 

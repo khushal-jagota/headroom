@@ -210,7 +210,8 @@ not from whichever `hermes` happens to be on `PATH`. The door returns only confi
 provider inventory, with opaque `provider:model` identities and a configured default.
 Panels keeps the answer in process; normal reads use Hermes' cache, and only an explicit
 backend refresh asks Hermes to refresh its own inventory. There is no polling, per-Ticket
-catalog, Hermes reasoning control, or Hermes update action.
+catalog, or Hermes reasoning control. Hermes update checking and execution use its native
+explicit update commands through the same backend-management surface.
 
 _Code paths:_ `src/planner/conversation/`, and `/api/conversation` in
 `src/planner/core/server.py`.

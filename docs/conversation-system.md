@@ -259,6 +259,13 @@ that did not actually restore the agent's memory is refused out loud — never
 silently accepted as a fresh brain behind an old transcript. A failed turn
 writes one error-log line with the ids and the tail of the process's stderr.
 
+Hermes installation maintenance is exclusive with those child processes. Panels
+refuses an update while any Hermes child is starting or alive, including an idle
+child. Once an update has been accepted, a new Hermes child waits until the
+update command and the card refresh have both finished. The reservation is made
+before spawn, so a send and an update cannot both see an empty gap and race into
+it.
+
 Held messages live in memory only: a server restart loses whatever was still
 waiting in line (the notebook keeps what was delivered or discarded). Kill is
 the loud version of stopping: it ends the running turn and throws away the
@@ -284,8 +291,15 @@ configured default. Normal first demand uses Hermes' cached inventory and probes
 only the active custom endpoint; an explicit backend refresh forwards Hermes'
 refresh and may probe every configured custom endpoint. The answer is kept in the
 Panels process until that explicit refresh. It is not polled or copied onto
-Tickets. Hermes still offers no Panels reasoning control and Panels does not
-update Hermes.
+Tickets. Hermes still offers no Panels reasoning control.
+
+Hermes supplies its own update advice through `hermes update --check`. Panels
+withholds the updater when that command identifies an installation it cannot
+drive; a network or authentication failure remains advisory because it does not
+change how the installation is managed. An authorized update runs as
+`hermes update --yes` without force options. A failed check does not make an
+otherwise usable backend unavailable. Every attempted update refreshes the card,
+even when the command fails.
 
 ## The commands an agent takes
 

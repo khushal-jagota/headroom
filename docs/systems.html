@@ -888,8 +888,9 @@
                 opaque <code>provider:model</code> identities and a configured default.
                 Panels keeps that answer in process; ordinary reads use Hermes&rsquo;
                 cache, and only an explicit backend refresh asks Hermes to refresh its
-                inventory. There is no polling, per-Ticket catalog, Hermes reasoning
-                control, or Hermes update action.
+                inventory. There is no polling, per-Ticket catalog, or Hermes reasoning
+                control. Hermes update checking and execution use its native explicit
+                commands through the same backend-management surface.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/conversation/contracts.py</code>,
