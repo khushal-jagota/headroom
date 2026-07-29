@@ -134,11 +134,11 @@ const groupOrder = [...groupOrderMatch[1].matchAll(/"([^"]+)"/g)].map(
 assert.deepEqual(groupOrder, [
   "errored",
   "needs_user",
-  "waiting_to_closeout",
+  "waiting_for_kickoff",
   "user",
   "paired",
   "agent",
-  "waiting_for_kickoff",
+  "waiting_to_closeout",
   "awaiting_approval",
   "empty",
   "blocked",

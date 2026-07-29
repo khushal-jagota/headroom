@@ -799,3 +799,132 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     assert detail["fields"]["kickoff"]["value"] == "Approved premise"
     assert detail["fields"]["kickoff"]["proposal"] is None
     assert len(detail["fields"]) == 6
+
+
+def test_review_pending_kickoff_corrects_own_ticket_priority(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    tid = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Priority correction",
+        "--priority",
+        "P3",
+        "--kickoff-note",
+        "Confirm this kickoff.",
+    )["id"]
+    _add_to_today(api, server, tid)
+
+    card = f'[data-review-card][data-ticket-id="{tid}"]'
+    priority = f"{card} [data-review-priority-control]"
+    page = open_page(context_factory(), server, "#/review", card)
+    assert page.get_attribute(card, "data-field") == "kickoff"
+    assert page.locator(f"{priority} select").input_value() == "P3"
+
+    page.evaluate(
+        """ticketId => {
+          const originalFetch = window.fetch.bind(window);
+          let releasePatch;
+          const heldPatch = new Promise(resolve => { releasePatch = resolve; });
+          let heldOnce = false;
+          window.__releasePriorityPatch = releasePatch;
+          window.fetch = async (input, init = {}) => {
+            const url = typeof input === "string" ? input : input.url;
+            if (
+              !heldOnce &&
+              init.method === "PATCH" &&
+              url.endsWith(`/api/tickets/${ticketId}`) &&
+              JSON.parse(init.body).priority === "P1"
+            ) {
+              heldOnce = true;
+              await heldPatch;
+              return new Response(
+                JSON.stringify({
+                  error: {
+                    code: "priority_save_failed",
+                    message: "priority save failed",
+                  },
+                }),
+                {
+                  status: 500,
+                  headers: { "Content-Type": "application/json" },
+                },
+              );
+            }
+            return originalFetch(input, init);
+          };
+        }""",
+        tid,
+    )
+    page.locator(f"{priority} select").select_option("P1")
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.disabled === true",
+        arg=f"{card} [data-accept]",
+        timeout=WAIT_MS,
+    )
+    assert page.locator(f"{card} [data-accept]").is_disabled()
+    assert page.locator(f"{card} [data-review-priority-error]").count() == 0
+    page.evaluate("window.__releasePriorityPatch()")
+    page.locator(f"{card} [data-review-priority-error]", has_text="priority save failed").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
+    _wait_enabled(page, f"{card} [data-accept]")
+    assert page.locator(f"{priority} select").input_value() == "P3"
+    assert api.get(server, f"/api/tickets/{tid}")["priority"] == "P3"
+
+    with page.expect_response(
+        lambda response: (
+            response.request.method == "PATCH"
+            and response.url.endswith(f"/api/tickets/{tid}")
+            and response.ok
+        )
+    ):
+        page.locator(f"{priority} select").select_option("P0")
+    assert page.locator(f"{priority} select").input_value() == "P0"
+    assert page.locator(f"{card} [data-review-priority-error]").count() == 0
+    assert api.get(server, f"/api/tickets/{tid}")["priority"] == "P0"
+
+    page.reload()
+    page.wait_for_selector(card, timeout=WAIT_MS)
+    assert page.locator(f"{priority} select").input_value() == "P0"
+
+    _wait_enabled(page, f"{card} [data-accept]")
+    with page.expect_request(
+        lambda request: (
+            request.method == "POST"
+            and request.url.endswith(f"/api/tickets/{tid}/accept/kickoff")
+        )
+    ) as approve_request:
+        page.click(f"{card} [data-accept]")
+    assert approve_request.value.post_data_json == {
+        "next_ceiling": "needs_success",
+        "at_cap": "propose",
+    }
+    page.wait_for_selector(card, state="detached", timeout=WAIT_MS)
+    approved = api.get(server, f"/api/tickets/{tid}")
+    assert approved["priority"] == "P0"
+    assert approved["fields"]["kickoff"]["proposal"] is None
+
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Success is ready.",
+        ticket_id=tid,
+        stdin="Later-stage proposal.",
+    )
+    page.reload()
+    page.wait_for_selector(card, timeout=WAIT_MS)
+    assert page.get_attribute(card, "data-field") == "success"
+    assert page.locator(f"{card} [data-review-priority-control]").count() == 0

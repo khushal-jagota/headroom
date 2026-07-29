@@ -28,6 +28,7 @@ PLANNER_SKILL_NAMES: Final = (
     "panels-ticket-creation",
     "panels-worker",
     "panels-worker-coding",
+    "panels-worker-debugging",
     "panels-worker-new-worker",
     "panels-worker-exploration",
     "panels-worker-initiative-planning",

@@ -52,7 +52,11 @@ const inventory = (await readdir(componentDirectory))
   .sort();
 assert.deepEqual(inventory, expectedInventory);
 
-const sourceFiles = [...inventory, "viewport/ConversationViewport.svelte"];
+const sourceFiles = [
+  ...inventory,
+  "viewport/ConversationViewport.svelte",
+  "composer/ComposerRunControls.svelte"
+];
 const sources = {};
 for (const fileName of sourceFiles) {
   const source = await readFile(new URL(fileName, componentDirectory), "utf8");
@@ -105,7 +109,7 @@ assert.match(sources["ConversationTranscript.svelte"], /chat-u|chat-a/);
 // one of them.
 assert.match(sources["MessagePieces.svelte"], /MarkdownBlock/);
 assert.match(sources["ConversationTranscript.svelte"], /MessagePieces/);
-assert.match(sources["ConversationComposer.svelte"], /chat-seg/);
+assert.match(sources["composer/ComposerRunControls.svelte"], /chat-seg/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
 // The pane that came before this one is gone, and nothing may reach for it.
@@ -226,6 +230,7 @@ try {
       'export { default as PlanStrip } from "../src/components/conversation/PlanStrip.svelte";',
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
       'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
+      'export { default as RestBar } from "../src/components/conversation/ConversationRestBar.svelte";',
       'export { default as CommandMenu } from "../src/components/conversation/AgentCommandMenu.svelte";',
       ""
     ].join("\n"),
@@ -243,7 +248,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, BackendRail, CommandMenu, Composer, NewForm, Pane, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, BackendCard, BackendRail, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -281,6 +286,13 @@ try {
       knownFate
     };
   }
+
+  // The band is card structure, not an activity row. Before a conversation read has
+  // answered — and for a conversation where nothing has happened — it occupies the same
+  // place without inventing a status for a screen reader or a person.
+  const emptyRestBar = drawn(RestBar, { line: null });
+  assert.match(emptyRestBar, /data-conversation-rest-bar/);
+  assert.doesNotMatch(emptyRestBar, /data-conversation-rest-line/);
 
   const waiting = drawn(Pane, {
     conversationId: "c1",
@@ -1518,6 +1530,34 @@ with sync_playwright() as playwright:
         picker.locator('[data-conversation-picker-choice="' + value + '"]').click()
         the_panel_is_gone()
 
+    def footer_child_roles():
+        return page.locator(".chat-foot > *").evaluate_all(
+            """nodes => nodes.map((node) => {
+              for (const attribute of [
+                "data-conversation-slash",
+                "data-conversation-image",
+                "data-conversation-image-input",
+                "data-conversation-picker-model",
+                "data-conversation-picker-effort",
+                "data-conversation-delivery",
+                "data-conversation-send",
+                "data-conversation-stop"
+              ]) {
+                if (node.hasAttribute(attribute)) return attribute;
+              }
+              return node.tagName.toLowerCase();
+            })"""
+        )
+
+    assert footer_child_roles() == [
+        "data-conversation-slash",
+        "data-conversation-image",
+        "data-conversation-image-input",
+        "data-conversation-picker-model",
+        "data-conversation-picker-effort",
+        "data-conversation-send",
+    ], footer_child_roles()
+
     assert face(model) == "Opus", face(model)
     # Claude names no default effort, so the control is there but bare — never empty-wide.
     assert face(effort) == "", face(effort)
@@ -1815,8 +1855,11 @@ with sync_playwright() as playwright:
         {"piece": "image", "data": "Cw==", "media_type": "image/png", "file_name": "only.png"}
     ]
 
-    # A definite refusal puts the exact text and image back.
-    page.evaluate("window.__setSendAccepted(false)")
+    # A definite refusal puts the exact text, image, model and effort back. Hold the
+    # ordinary send open so the cleared controls are visible before the refusal lands:
+    # this proves the public component mapping on both sides of the draft transaction.
+    pick(model, "gpt-5.5-codex-mini")
+    pick(effort, "low")
     image_input.set_input_files(
         {"name": "return.png", "mimeType": "image/png", "buffer": bytes([9, 10])}
     )
@@ -1824,11 +1867,23 @@ with sync_playwright() as playwright:
         "document.querySelectorAll('[data-chat-image-preview]').length === 1"
     )
     the_box.fill("please return")
+    page.evaluate("window.__holdNextSend()")
     page.locator("[data-conversation-send]").click()
     page.wait_for_function("window.__sends().length === 7")
+    refused = page.evaluate("window.__sends()[6]")
+    assert refused["picked"]["model"] == "gpt-5.5-codex-mini", refused
+    assert refused["picked"]["reasoningEffort"] == "low", refused
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value === ''"
+    )
+    assert face(model) == "GPT-5.5 Codex", face(model)
+    assert face(effort) == "high", face(effort)
+    page.evaluate("window.__finishSend(false)")
     page.wait_for_function(
         "document.querySelector('[data-conversation-input]').value === 'please return'"
     )
+    assert face(model) == "GPT-5.5 Codex mini", face(model)
+    assert face(effort) == "low", face(effort)
     assert page.locator("[data-chat-image-preview]").get_attribute(
         "data-chat-image-name"
     ) == "return.png"
@@ -2180,6 +2235,15 @@ with sync_playwright() as playwright:
     page.evaluate("window.__setExists(true)")
     page.evaluate("window.__setComposerRunState('hermes', true)")
     page.wait_for_selector('[data-conversation-delivery-mode="steer"]')
+    assert footer_child_roles() == [
+        "data-conversation-slash",
+        "data-conversation-image",
+        "data-conversation-image-input",
+        "data-conversation-picker-model",
+        "data-conversation-picker-effort",
+        "data-conversation-delivery",
+        "data-conversation-stop",
+    ], footer_child_roles()
     pick(model, "sonnet")
     pick(effort, "low")
     page.locator('[data-conversation-delivery-mode="steer"]').click()

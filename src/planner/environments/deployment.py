@@ -36,6 +36,7 @@ class HealthClient(Protocol):
 
 Backup = Callable[[str], Path]
 Restore = Callable[[Path], None]
+LifecycleTransition = Callable[..., None]
 
 
 @dataclass(frozen=True)
@@ -221,6 +222,7 @@ def deploy_app(
     now: Callable[[], float] = time.monotonic,
     health_timeout_seconds: float = 30.0,
     lock_path: Path | None = None,
+    lifecycle_transition: LifecycleTransition | None = None,
 ) -> DeploymentResult:
     """Replace only ``current/app`` and recover the prior app on post-move failure."""
     if health_timeout_seconds <= 0:
@@ -248,12 +250,23 @@ def deploy_app(
                 health=health,
                 now=now,
                 health_timeout_seconds=health_timeout_seconds,
+                lifecycle_transition=lifecycle_transition,
             )
         if prior_manifest.app_sha == candidate_manifest.app_sha:
+            _publish_lifecycle(lifecycle_transition, "verifying")
             if not health.wait_for_sha(
                 prior_manifest.app_sha, deadline=now() + health_timeout_seconds
             ):
+                _publish_lifecycle(
+                    lifecycle_transition,
+                    "failed",
+                    code="unchanged_health_failed",
+                    detail="The current app did not pass exact-SHA health proof.",
+                )
                 raise DeploymentError("unchanged current app did not pass health proof")
+            _publish_lifecycle(
+                lifecycle_transition, "app_healthy", serving_sha=prior_manifest.app_sha
+            )
             return DeploymentResult(
                 "unchanged", candidate_manifest.app_sha, prior_manifest.app_sha, None
             )
@@ -272,16 +285,31 @@ def deploy_app(
                 require_runtime=True,
             )
             try:
+                _publish_lifecycle(lifecycle_transition, "restarting")
                 service.stop()
             except BaseException as exc:
                 try:
                     service.restart()
+                    _publish_lifecycle(lifecycle_transition, "verifying")
                     if not health.wait_for_sha(
                         prior_manifest.app_sha,
                         deadline=now() + health_timeout_seconds,
                     ):
                         raise DeploymentError("prior app did not become healthy")
+                    _publish_lifecycle(
+                        lifecycle_transition,
+                        "failed",
+                        serving_sha=prior_manifest.app_sha,
+                        code="service_stop_failed",
+                        detail="Service stop failed; the prior app recovered.",
+                    )
                 except BaseException as recovery_exc:
+                    _publish_lifecycle(
+                        lifecycle_transition,
+                        "failed",
+                        code="service_recovery_failed",
+                        detail="Service stop failed and recovery could not be proved.",
+                    )
                     raise DeploymentError(
                         f"service stop failed ({exc}); recovery failed: "
                         f"{recovery_exc}; operator continuation path: {current_app}"
@@ -294,12 +322,26 @@ def deploy_app(
             except BaseException as exc:
                 try:
                     service.restart()
+                    _publish_lifecycle(lifecycle_transition, "verifying")
                     if not health.wait_for_sha(
                         prior_manifest.app_sha,
                         deadline=now() + health_timeout_seconds,
                     ):
                         raise DeploymentError("prior app did not become healthy")
+                    _publish_lifecycle(
+                        lifecycle_transition,
+                        "failed",
+                        serving_sha=prior_manifest.app_sha,
+                        code="backup_failed",
+                        detail="Backup failed; the prior app recovered.",
+                    )
                 except BaseException as recovery_exc:
+                    _publish_lifecycle(
+                        lifecycle_transition,
+                        "failed",
+                        code="backup_recovery_failed",
+                        detail="Backup failed and recovery could not be proved.",
+                    )
                     raise DeploymentError(
                         f"database backup failed ({exc}); recovery failed: "
                         f"{recovery_exc}; operator continuation path: {current_app}"
@@ -312,12 +354,26 @@ def deploy_app(
             except BaseException as exc:
                 try:
                     service.restart()
+                    _publish_lifecycle(lifecycle_transition, "verifying")
                     if not health.wait_for_sha(
                         prior_manifest.app_sha,
                         deadline=now() + health_timeout_seconds,
                     ):
                         raise DeploymentError("prior app did not become healthy")
+                    _publish_lifecycle(
+                        lifecycle_transition,
+                        "failed",
+                        serving_sha=prior_manifest.app_sha,
+                        code="cutover_failed",
+                        detail="Cutover failed; the prior app recovered.",
+                    )
                 except BaseException as recovery_exc:
+                    _publish_lifecycle(
+                        lifecycle_transition,
+                        "failed",
+                        code="cutover_recovery_failed",
+                        detail="Cutover failed and recovery could not be proved.",
+                    )
                     raise DeploymentError(
                         f"candidate cutover failed ({exc}); recovery failed: "
                         f"{recovery_exc}; operator continuation path: {current_app}"
@@ -326,11 +382,17 @@ def deploy_app(
             try:
                 os.replace(staged, current_app)
                 service.restart()
+                _publish_lifecycle(lifecycle_transition, "verifying")
                 if not health.wait_for_sha(
                     candidate_manifest.app_sha,
                     deadline=now() + health_timeout_seconds,
                 ):
                     raise DeploymentError("candidate app did not become healthy before cutoff")
+                _publish_lifecycle(
+                    lifecycle_transition,
+                    "app_healthy",
+                    serving_sha=candidate_manifest.app_sha,
+                )
             except BaseException as exc:
                 detail = _restore_fallback(
                     current_app=current_app,
@@ -343,6 +405,7 @@ def deploy_app(
                     now=now,
                     timeout_seconds=health_timeout_seconds,
                     original=exc,
+                    lifecycle_transition=lifecycle_transition,
                 )
                 if detail is not None:
                     raise DeploymentError(detail) from exc
@@ -355,6 +418,13 @@ def deploy_app(
             try:
                 shutil.rmtree(fallback)
             except OSError as exc:
+                _publish_lifecycle(
+                    lifecycle_transition,
+                    "failed",
+                    serving_sha=candidate_manifest.app_sha,
+                    code="cleanup_failed",
+                    detail="The requested app is healthy, but deployment cleanup failed.",
+                )
                 raise DeploymentError(
                     f"candidate is healthy at {current_app}, but fallback cleanup failed: "
                     f"{exc}; retained fallback: {fallback}"
@@ -376,6 +446,7 @@ def _install_first_app(
     health: HealthClient,
     now: Callable[[], float],
     health_timeout_seconds: float,
+    lifecycle_transition: LifecycleTransition | None,
 ) -> DeploymentResult:
     current_app.parent.mkdir(parents=True, exist_ok=True)
     staged = current_app.parent / f".app-candidate-{os.getpid()}"
@@ -390,14 +461,27 @@ def _install_first_app(
         )
         os.replace(staged, current_app)
         try:
+            _publish_lifecycle(lifecycle_transition, "restarting")
             service.restart()
+            _publish_lifecycle(lifecycle_transition, "verifying")
             if not health.wait_for_sha(
                 candidate_manifest.app_sha, deadline=now() + health_timeout_seconds
             ):
                 raise DeploymentError("initial app did not become healthy before cutoff")
+            _publish_lifecycle(
+                lifecycle_transition,
+                "app_healthy",
+                serving_sha=candidate_manifest.app_sha,
+            )
         except BaseException as exc:
             if current_app.exists() and not current_app.is_symlink():
                 shutil.rmtree(current_app)
+            _publish_lifecycle(
+                lifecycle_transition,
+                "failed",
+                code="initial_health_failed",
+                detail="The initial app did not pass exact-SHA health proof.",
+            )
             return DeploymentResult(
                 "initial_failed",
                 candidate_manifest.app_sha,
@@ -440,10 +524,22 @@ def _validate_optional_current_app(current_app: Path) -> AppManifest | None:
 
 
 def _persistent_state_exists(current_root: Path) -> bool:
-    return any(
-        (current_root / name).exists() or (current_root / name).is_symlink()
-        for name in ("data", "logs")
-    )
+    logs = current_root / "logs"
+    if logs.exists() or logs.is_symlink():
+        return True
+    data = current_root / "data"
+    if not data.exists() and not data.is_symlink():
+        return False
+    if data.is_symlink() or not data.is_dir():
+        return True
+    lifecycle_only_names = {
+        "deployment-lifecycle.json",
+        "deployment-lifecycle.json.lock",
+    }
+    try:
+        return any(path.name not in lifecycle_only_names for path in data.iterdir())
+    except OSError:
+        return True
 
 
 def _require_unused(path: Path) -> None:
@@ -463,9 +559,11 @@ def _restore_fallback(
     now: Callable[[], float],
     timeout_seconds: float,
     original: BaseException,
+    lifecycle_transition: LifecycleTransition | None,
 ) -> str | None:
     failed = current_app.parent / f".app-failed-{os.getpid()}"
     try:
+        _publish_lifecycle(lifecycle_transition, "restarting")
         service.stop()
         restore(snapshot)
         _require_unused(failed)
@@ -473,13 +571,27 @@ def _restore_fallback(
             os.replace(current_app, failed)
         os.replace(fallback, current_app)
         service.restart()
+        _publish_lifecycle(lifecycle_transition, "verifying")
         if not health.wait_for_sha(
             prior_manifest.app_sha, deadline=now() + timeout_seconds
         ):
             raise DeploymentError("prior app did not become healthy")
+        _publish_lifecycle(
+            lifecycle_transition,
+            "rolled_back",
+            serving_sha=prior_manifest.app_sha,
+            code="candidate_unhealthy",
+            detail="The requested app failed health proof; the prior app was restored.",
+        )
         if failed.exists() and not failed.is_symlink():
             shutil.rmtree(failed)
     except BaseException as exc:
+        _publish_lifecycle(
+            lifecycle_transition,
+            "failed",
+            code="rollback_recovery_failed",
+            detail="The prior app could not be restored and proved healthy.",
+        )
         continuation_paths = [
             str(path)
             for path in (current_app, fallback, failed)
@@ -491,3 +603,15 @@ def _restore_fallback(
             f"{', '.join(continuation_paths)}"
         )
     return None
+
+
+def _publish_lifecycle(
+    transition: LifecycleTransition | None,
+    phase: str,
+    *,
+    serving_sha: str | None = None,
+    detail: str | None = None,
+    code: str | None = None,
+) -> None:
+    if transition is not None:
+        transition(phase, serving_sha=serving_sha, detail=detail, code=code)

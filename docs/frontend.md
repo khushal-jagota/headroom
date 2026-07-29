@@ -29,8 +29,8 @@ One screen per part of the system:
   that item's project; an unparented backlog Ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
   tickets into collapsible boxed groups in a fixed order that puts what needs the user
-  first: Errored, Needs user, Waiting to Closeout, User, Paired, Agent, Waiting for
-  Kickoff, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
+  first: Errored, Needs user, Waiting for Kickoff, User, Paired, Agent, Waiting to
+  Closeout, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
   rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group.
   A done ticket goes to Done. A ticket resting at Closeout with an `empty` status goes
   to Waiting to Closeout when its current Closeout step is still runnable; Stop at its
@@ -122,10 +122,20 @@ One screen per part of the system:
   redirect to their Agents-page equivalents.
 
 The shell carries one combined status control and, on desktop, worker presence.
-The status control says Connected or Reconnecting from the change stream and opens
-the manually refreshed VPS health details. Worker presence is the small spinner and
-"N working" readout from the global running-worker count; it is hidden at mobile
-widths so navigation links and connection status keep the available space.
+The status control normally says **Connected** or **Reconnecting**. During a deployment
+it can instead say **Preparing**, **Restarting**, **Back up**, or **Problem**. These
+words combine the server's durable deployment account with whether the browser's
+change stream is connected; the stream itself still reports only its own connection.
+A planned phase expires locally at the time the server supplied, even if no new event
+arrives. A deployment problem remains visible through a dropped connection.
+
+Opening the control reads a compact VPS summary: the deployed commit, a relevant
+deployment outcome, CPU, RAM, disk, and the latest verified backup age. A missing
+measurement says **Unavailable**. The VPS read is mounted only while the popover is
+open, so an ordinary database change does not run host probes while it is closed.
+Worker presence is the small spinner and "N working" readout from the global
+running-worker count; it is hidden at mobile widths so navigation links and status
+keep the available space.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
@@ -137,8 +147,9 @@ share.
   Every live-updated read the browser makes is listed in one place — its name and
   the address it comes from — so a screen asks for a resource by name and gets both.
   The reads are cached and shared: two screens asking for the same thing make one
-  request. (A few one-shot reads, like the VPS status check and the worker
-  configuration probe, are plain fetches and sit outside the list.)
+  request. The shell's deployment status is always mounted. Its VPS summary is mounted
+  only while the status popover is open. A few one-shot reads, like the worker
+  configuration probe, are plain fetches and sit outside the list.
 
   The server holds open a change stream and sends one line down it every time a write
   is committed through the database door. (One internal conversation cache writes
@@ -160,10 +171,11 @@ share.
   A conversation's rows, what it is running on, and what it is waiting for are the
   record's own account rather than cached REST resources.
 
-  The change stream is also the browser's connection-health owner. The shell's VPS
-  status trigger starts at Reconnecting and says Connected while the stream is open.
-  When the stream drops, the browser retries on its own and the trigger says
-  Reconnecting until it is back. Because anything that changed during the gap went
+  The change stream is also the browser's connection-health owner. It has exactly two
+  states: connected and reconnecting. The shell combines that transport fact with the
+  separate deployment-status read described above. When the stream drops, the browser
+  retries on its own. Unless a durable deployment problem takes precedence, the
+  trigger says Reconnecting until it is back. Because anything that changed during the gap went
   unheard, opening the stream refetches
   what is on screen — that, plus the same refetch when the window is focused again, is
   the whole recovery story. The server sends an occasional invisible keep-alive line

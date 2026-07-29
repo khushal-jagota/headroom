@@ -22,6 +22,7 @@
     lifecycle = null,
     layout = "default",
     requireScope = false,
+    disabled = false,
     onApprove,
     onNoteSave,
     actions,
@@ -37,6 +38,7 @@
     lifecycle?: Lifecycle | null;
     layout?: "default" | "review";
     requireScope?: boolean;
+    disabled?: boolean;
     onApprove?: (payload: Record<string, unknown>) => Promise<unknown>;
     onNoteSave?: (raw: string) => Promise<unknown>;
     actions?: Snippet;
@@ -60,7 +62,9 @@
     mode === "gating-pending" || (mode === "proposal" && requireScope)
   );
   let actionLabel = $derived(mode === "proposal" ? "Accept" : "Approve");
-  let actionDisabled = $derived(inFlight || resolved || (scopeRequired && scope === null));
+  let actionDisabled = $derived(
+    disabled || inFlight || resolved || (scopeRequired && scope === null)
+  );
 
   async function saveDraft(raw: string): Promise<void> {
     draft = raw;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,69 +12,98 @@ const component = await readFile(new URL("../src/components/VpsStatusPopover.sve
 const app = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
 const catalogue = await readFile(new URL("../src/lib/queryCatalogue.ts", import.meta.url), "utf8");
 
-assert.match(component, /fetchJson<VpsStatusSnapshot>\("\/api\/vps-status"\)/);
-assert.match(component, /onclick=\{toggle\}/);
-assert.match(component, /Refresh/);
-assert.match(component, /healthy.*warning.*critical.*unavailable.*review_needed/s);
-assert.doesNotMatch(component, /onMount|setInterval|setTimeout|WebSocket|cleanup/);
-assert.match(component, /connectionState.*ConnectionStatus/);
-assert.match(component, /data-connection-status/);
-assert.match(component, /connected: "Connected".*reconnecting: "Reconnecting"/s);
-assert.match(component, /aria-label=\{`\$\{connectionLabels\[connectionState\]\}\. Show VPS status`\}/);
+assert.match(component, /queries\.deploymentStatus\(\)/);
+assert.match(component, /queries\.vpsStatusSummary\(\)/);
+assert.match(component, /enabled: isOpen/);
+assert.match(component, /data-status-state=\{statusState\}/);
+assert.match(component, /data-connection-state=\{connectionState\}/);
+assert.match(component, /Deployed commit/);
+assert.match(component, /Latest verified backup/);
+assert.doesNotMatch(component, /Environment|Worktree|Logs|Cleanup|overall_state|collected_at/);
 assert.match(app, /<VpsStatusPopover connectionState=\{\$connectionStatus\} \/>/);
-assert.doesNotMatch(app, /class="shell-connection"|connectionLabels/);
-assert.doesNotMatch(catalogue, /vps-status/);
+assert.match(catalogue, /"\/api\/deployment-status"/);
+assert.match(catalogue, /"\/api\/vps-status-summary"/);
 assert.doesNotMatch(app, /#\/status|name === "status"/);
 
-// Render the focused component without Panels' backend. This is the interaction the
-// old e2e test proved, but its data is route-mocked and therefore does not need a full
-// server boot: opening fetches once, each explicit refresh fetches once, and every state
-// is presented by its human label.
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = join(webRoot, "..");
 const outputDirectory = await mkdtemp(join(tmpdir(), "panels-vps-status-"));
 const hostPath = join(webRoot, "tests", `.vps-status-host-${process.pid}.svelte`);
 const mainPath = join(webRoot, "tests", `.vps-status-main-${process.pid}.ts`);
 const indexPath = join(webRoot, "tests", `.vps-status-index-${process.pid}.html`);
+const screenshotPath = join(
+  repositoryRoot,
+  "data",
+  "test-artifacts",
+  "t_na231g5b-vps-status.png"
+);
 let serverProcess;
 
 try {
   await writeFile(hostPath, `
 <script lang="ts">
+  import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
   import VpsStatusPopover from "../src/components/VpsStatusPopover.svelte";
-  const states = ["healthy", "warning", "unavailable", "review_needed"] as const;
-  let requestCount = 0;
-  function payload(state: typeof states[number]) {
-    const section = { state, summary: state + " evidence" };
+
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const states = ["healthy", "warning", "unavailable", "critical"] as const;
+  let summaryRequestCount = 0;
+  let connectionState = $state<"connected" | "reconnecting">("connected");
+  let deploymentPayload: any = {
+    state: "idle", deployed_sha: "0123456789abcdef", target_sha: null,
+    outcome: "succeeded", detail: null, valid_until: null
+  };
+
+  function metric(state: typeof states[number], value: number | null) {
+    return { used_percent: value, state, unavailable_reason: value === null ? "probe failed" : null };
+  }
+
+  function summary(state: typeof states[number]) {
+    const value = state === "unavailable" ? null : 71.6;
     return {
-      collected_at: "2026-07-24T00:00:00+00:00",
-      overall_state: state,
-      environment: section,
-      app: section,
-      backup: section,
-      disk: section,
-      workloads: { ...section, items: [] },
-      worktrees: { ...section, items: [] },
-      logs: { ...section, file_count: 0, total_bytes: 0 },
-      cleanup_candidates: { ...section, candidates: [] },
-      resources: {
-        ...section, cpu_percent: null, load_averages: null, ram: null, swap: null
+      deployed_sha: state === "unavailable" ? null : "0123456789abcdef",
+      deployment: {
+        outcome: state === "critical" ? "rolled_back" : "succeeded",
+        detail: state === "critical" ? "health check failed" : null
+      },
+      cpu: metric(state, value),
+      ram: metric(state, value),
+      disk: metric(state, value),
+      backup: {
+        age_seconds: value === null ? null : 3660,
+        state,
+        unavailable_reason: value === null ? "no verified backup" : null
       }
     };
   }
-  globalThis.fetch = (async () => {
-    const state = states[Math.min(requestCount, states.length - 1)];
-    requestCount += 1;
-    return new Response(JSON.stringify(payload(state)), {
+
+  globalThis.fetch = (async (input) => {
+    const path = String(input);
+    const payload = path.includes("deployment-status")
+      ? deploymentPayload
+      : summary(states[Math.min(summaryRequestCount++, states.length - 1)]);
+    return new Response(JSON.stringify(payload), {
       status: 200, headers: { "Content-Type": "application/json" }
     });
   }) as typeof fetch;
-  (window as any).__statusRequestCount = () => requestCount;
+  (window as any).__summaryRequestCount = () => summaryRequestCount;
+  (window as any).__setDeployment = async (next: typeof deploymentPayload) => {
+    deploymentPayload = next;
+    await client.invalidateQueries({ queryKey: ["deployment-status"] });
+  };
+  (window as any).__setConnection = (next: "connected" | "reconnecting") => {
+    connectionState = next;
+  };
+  (window as any).__invalidateAll = () => client.invalidateQueries();
 </script>
-<VpsStatusPopover connectionState="connected" />
+<QueryClientProvider client={client}>
+  <VpsStatusPopover {connectionState} />
+</QueryClientProvider>
 `, "utf8");
   await writeFile(mainPath, `
 import { mount } from "svelte";
+import "../../assets/tokens.css";
+import "../../assets/app.css";
 import Host from "./${hostPath.split("/").at(-1)}";
 mount(Host, { target: document.getElementById("app")! });
 `, "utf8");
@@ -107,6 +136,7 @@ mount(Host, { target: document.getElementById("app")! });
   assert.ok(builtIndex);
   const url = `http://127.0.0.1:${port}/${builtIndex}`;
   await waitUntilReady(url);
+  await mkdir(dirname(screenshotPath), { recursive: true });
 
   const browserScript = String.raw`
 from playwright.sync_api import sync_playwright
@@ -114,30 +144,104 @@ import sys
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
-    page = browser.new_page()
+    page = browser.new_page(viewport={"width": 390, "height": 720})
     page.goto(sys.argv[1], wait_until="networkidle")
-    assert page.evaluate("window.__statusRequestCount()") == 0
-    trigger = page.locator("[data-vps-status] button").first
-    assert trigger.get_attribute("aria-label") == "Connected. Show VPS status"
-    trigger.click()
-    page.wait_for_function("window.__statusRequestCount() === 1")
-    page.locator("[data-vps-status-content]").wait_for()
-    assert "Healthy" in page.locator("[data-vps-status-content]").inner_text()
-    refresh = page.get_by_role("button", name="Refresh")
-    for count, label in [(2, "Warning"), (3, "Unavailable"), (4, "Review needed")]:
-        refresh.click()
-        page.wait_for_function(
-            "([count, label]) => window.__statusRequestCount() === count"
-            " && document.querySelector('[data-vps-status-content]')?.textContent.includes(label)",
-            arg=[count, label],
+    assert page.evaluate("window.__summaryRequestCount()") == 0
+    trigger = page.locator("[data-connection-status]")
+    trigger.wait_for()
+    assert trigger.get_attribute("data-status-state") == "connected"
+    assert trigger.get_attribute("data-connection-state") == "connected"
+
+    def set_deployment(state, *, outcome=None, valid_for_ms=None):
+        valid_until = None
+        if valid_for_ms is not None:
+            valid_until = page.evaluate(
+                "(delay) => new Date(Date.now() + delay).toISOString()", valid_for_ms
+            )
+        page.evaluate(
+            """async ([state, outcome, validUntil]) => {
+                await window.__setDeployment({
+                    state,
+                    deployed_sha: "0123456789abcdef",
+                    target_sha: state === "idle" ? null : "fedcba9876543210",
+                    outcome,
+                    detail: state === "problem" ? "health check failed" : null,
+                    valid_until: validUntil
+                });
+            }""",
+            [state, outcome, valid_until],
         )
+
+    for state, label in [
+        ("preparing", "Preparing"),
+        ("restarting", "Restarting"),
+        ("back_up", "Back up"),
+        ("problem", "Problem"),
+    ]:
+        set_deployment(state, valid_for_ms=2000 if state != "problem" else None)
+        page.locator(f'[data-status-state="{state}"]', has_text=label).wait_for()
+
+    # A persistent failure wins even when the transport drops.
+    page.evaluate("window.__setConnection('reconnecting')")
+    assert trigger.get_attribute("data-status-state") == "problem"
+    set_deployment("idle", outcome="succeeded")
+    page.locator('[data-status-state="reconnecting"]', has_text="Reconnecting").wait_for()
+
+    # Planned and Back up phases re-evaluate from valid_until without another response.
+    page.evaluate("window.__setConnection('connected')")
+    # Let the component's initial render clock become meaningfully old. The timeout for
+    # the new response must still be based on Date.now(), not that render-time value.
+    page.wait_for_timeout(800)
+    set_deployment("preparing", valid_for_ms=250)
+    page.locator('[data-status-state="preparing"]').wait_for()
+    page.locator('[data-status-state="reconnecting"]').wait_for(timeout=700)
+    set_deployment("back_up", valid_for_ms=250)
+    page.locator('[data-status-state="back_up"]').wait_for()
+    page.locator('[data-status-state="connected"]').wait_for(timeout=3000)
+
+    trigger.click()
+    page.wait_for_function("window.__summaryRequestCount() === 1")
+    content = page.locator("[data-vps-status-content]")
+    content.wait_for()
+    assert "01234567" in content.inner_text()
+    assert "72% · Healthy" in content.inner_text()
+    assert "1h ago · Healthy" in content.inner_text()
+    assert "Environment" not in content.inner_text()
+    refresh = page.get_by_role("button", name="Refresh")
+    refresh.click()
+    page.wait_for_function(
+        "() => window.__summaryRequestCount() === 2"
+        " && document.querySelector('[data-vps-status-content]')?.textContent.includes('Warning')"
+    )
+    assert "Warning" in content.inner_text()
+    refresh.click()
+    page.wait_for_function(
+        "() => window.__summaryRequestCount() === 3"
+        " && document.querySelector('[data-vps-status-content]')?.textContent.includes('Unavailable')"
+    )
+    assert content.inner_text().count("Unavailable") == 5
+    refresh.click()
+    page.wait_for_function(
+        "() => window.__summaryRequestCount() === 4"
+        " && document.querySelector('[data-vps-status-content]')?.textContent.includes('Rolled back')"
+    )
+    popover = page.locator("[data-vps-status] section")
+    box = popover.bounding_box()
+    assert box and box["x"] >= 0 and box["x"] + box["width"] <= 390, box
+    set_deployment("problem", outcome="rolled_back")
+    page.locator('[data-status-state="problem"]', has_text="Problem").wait_for()
+    page.screenshot(path=sys.argv[2], full_page=True)
+    trigger.click()
+    page.evaluate("window.__invalidateAll()")
+    page.wait_for_timeout(300)
+    assert page.evaluate("window.__summaryRequestCount()") == 4
     browser.close()
 
 print("vps status component assertions passed")
 `;
   const probe = spawn(
     join(repositoryRoot, ".venv", "bin", "python"),
-    ["-c", browserScript, url],
+    ["-c", browserScript, url, screenshotPath],
     { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
   let output = "";

@@ -13,6 +13,7 @@
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
+  import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
 
   const review = createQuery(() => queries.review());
   const manifest = createQuery(() => queries.workerTypeManifests());
@@ -22,6 +23,8 @@
   let revisionError = $state<unknown>(null);
   let revisionBusy = $state(false);
   let revisionDecisionKey = $state<string | null>(null);
+  let priorityError = $state<unknown>(null);
+  let priorityBusy = $state(false);
   const staleRefreshRequests = new Set<string>();
 
   function itemKey(item: ReviewItem): string {
@@ -98,6 +101,8 @@
       revisionDraft = "";
       revisionError = null;
       revisionBusy = false;
+      priorityError = null;
+      priorityBusy = false;
     }
   });
 
@@ -176,6 +181,27 @@
       method: "PATCH",
       body: { title }
     });
+  }
+
+  async function savePriority(
+    item: ReviewProposalItem,
+    priority: string,
+    select: HTMLSelectElement,
+    previousPriority: string
+  ): Promise<void> {
+    priorityError = null;
+    priorityBusy = true;
+    try {
+      await mutateJson(`/api/tickets/${item.ticket_id}`, {
+        method: "PATCH",
+        body: { priority }
+      });
+    } catch (err) {
+      priorityError = err;
+      select.value = previousPriority;
+    } finally {
+      priorityBusy = false;
+    }
   }
 
 
@@ -281,12 +307,38 @@
                   <a data-open-ticket href={`#/ticket/${proposal.ticket_id}`}>Open ticket &rsaquo;</a>
                 </div>
 
-                <div class="review-ticket-title review-arrive review-arrive--2">
-                  <InlineEdit
-                    value={ticketDetail.title}
-                    placeholder="Untitled"
-                    onSave={(raw) => saveTitle(proposal, raw)}
-                  />
+                <div class="review-ticket-heading review-arrive review-arrive--2">
+                  <div class="review-ticket-title">
+                    <InlineEdit
+                      value={ticketDetail.title}
+                      placeholder="Untitled"
+                      onSave={(raw) => saveTitle(proposal, raw)}
+                    />
+                  </div>
+                  {#if field === "kickoff"}
+                    <div class="review-kickoff-priority">
+                      <TicketPriorityControl
+                        priority={ticketDetail.priority}
+                        disabled={priorityBusy}
+                        surface="review"
+                        onChange={(priority, select) => {
+                          if (priority !== ticketDetail.priority) {
+                            void savePriority(
+                              proposal,
+                              priority,
+                              select,
+                              ticketDetail.priority
+                            );
+                          }
+                        }}
+                      />
+                      {#if priorityError}
+                        <div data-review-priority-error>
+                          <ErrorLine error={priorityError} />
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
                 </div>
 
                 <div class="review-arrive review-arrive--3">
@@ -301,6 +353,7 @@
                       stageState={fieldStageVisualStateFor(lc, ticketDetail, field)}
                       recap={ticketDetail.recap}
                       showRecap
+                      approvalDisabled={field === "kickoff" && priorityBusy}
                       onAccept={(payload) => accept(proposal, payload)}
                     />
                   {/if}

@@ -239,6 +239,34 @@ def test_scheduled_and_scripted_backups_use_the_same_deployed_launcher_contract(
     assert "ENVIRONMENT_MANAGER" not in pre_deploy
 
 
+def test_workflow_lifecycle_starts_before_build_and_only_finishes_after_all_work(
+) -> None:
+    workflow = (WORKFLOW_ROOT / "deploy.yml").read_text(encoding="utf-8")
+
+    start = workflow.index("- name: Start deployment lifecycle")
+    prove = workflow.index("- name: Prove exact temporary source")
+    prepare_runtime = workflow.index("- name: Prepare deployment runtime")
+    build = workflow.index("- name: Build and validate exact app")
+    deploy = workflow.index("- name: Deploy exact app")
+    provision = workflow.index("- name: Provision production agent skills")
+    cleanup = workflow.index("- name: Remove runner-temporary deployment state")
+    finalize = workflow.index("- name: Finalize deployment lifecycle")
+
+    assert start < prove < prepare_runtime < build < deploy < provision < cleanup < finalize
+    start_step = workflow[start:prove]
+    assert "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" in start_step
+    assert "$PANELS_DEPLOY_VENV" not in start_step
+    assert " read \\" in start_step
+    assert "--expected-deployment-id" in start_step
+    assert 'except (OSError, AttributeError, json.JSONDecodeError):' in start_step
+    final_step = workflow[finalize:]
+    assert "if: always()" in final_step
+    assert "--preserve-terminal" in final_step
+    assert "phase=succeeded" in final_step
+    assert "phase=failed" in final_step
+    assert "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" in final_step
+
+
 def test_predeploy_backup_replaces_ambient_hermes_home_with_vps_home(
     tmp_path: Path,
 ) -> None:
