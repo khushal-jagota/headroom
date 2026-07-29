@@ -100,9 +100,14 @@ One screen per part of the system:
   fallbacks so catch-all work is not mistaken for an intentionally shaped outcome.
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
-- **Agents** — the home for agents at `#/agents`. Chief of Staff is the first actual
-  agent and opens its conversation at `#/agents/chief-of-staff`. The old `#/chief`
-  address redirects there.
+- **Agents** — the runtime home for agent conversations. Above 960px it follows
+  Workspace's master/detail shape: the agent roster is on the left and the selected
+  agent's canonical conversation fills the right, with Chief of Staff selected by
+  default at `#/agents`. `#/agents/chief-of-staff` records that selection in the
+  address. At 960px or less, `#/agents` is the roster and selecting Chief opens its
+  focused conversation, with a clear return to the roster. Direct loads, refreshes,
+  browser history, and resizing preserve those meanings. The old `#/chief` address
+  redirects to the selected Chief route.
 - **Config** — the management surface at `#/config`. It contains Chief of Staff,
   the shared Worker skill, and every configured Worker type. Chief settings open at
   `#/config/chief-of-staff`, Worker skill at `#/config/worker-skill`, and a Worker at
@@ -114,10 +119,12 @@ One screen per part of the system:
   `#/agents/workers/<worker-type>` paths, plus legacy `#/workers` paths, redirect to
   Config.
 
-The shell has two primary destinations: Review and Workspace. More groups Day, Sprint,
-Backlog, and Ideas under Planning, and Agents and Config under System. On desktop these
-live in the top bar and More opens a dropdown. On mobile the three text-only controls
-form a fixed, full-width bottom bar and More opens a bottom sheet. A slim mobile top bar
+The shell has three primary destinations in order: Review, Workspace, and Agents. More
+groups Day, Sprint, Backlog, and Ideas under Planning, and Config under System. On
+desktop the four direct controls live in the top bar and More opens a dropdown. On
+mobile those same four text-only controls form a fixed, full-width bottom bar and More
+opens a bottom sheet. Agents remains active on both its roster and selected-agent
+addresses. A slim mobile top bar
 shows the current screen and the same quiet connection and worker-presence cluster used
 at desktop. The cluster is a live status label, not a control. It normally says
 **Connected** or **Reconnecting**. During a deployment

@@ -5,7 +5,6 @@
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
-  import ChiefOfStaffRoute from "./routes/ChiefOfStaffRoute.svelte";
   import DayRoute from "./routes/DayRoute.svelte";
   import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
@@ -164,7 +163,7 @@
   }
 
   function secondaryRouteActive(): boolean {
-    return ["day", "sprint", "backlog", "ideas", "agents", "config"].includes(route.name);
+    return ["day", "sprint", "backlog", "ideas", "config"].includes(route.name);
   }
 
   function screenTitle(): string {
@@ -231,6 +230,7 @@
         {/if}
       </a>
       <a class:active={currentNav("workspace")} class="nav-link" data-screen="workspace" href="#/workspace">Workspace</a>
+      <a class:active={currentNav("agents")} class="nav-link" data-screen="agents-nav" href="#/agents">Agents</a>
       <div class="shell-more">
         <button
           type="button"
@@ -259,9 +259,6 @@
             <a class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
             <div class="shell-more-divider"></div>
             <div class="shell-more-group">System</div>
-            <a class:active={currentNav("agents")} href="#/agents" onclick={closeMore}>
-              <span>Agents</span><span class="shell-more-subtitle">Chief of Staff</span>
-            </a>
             <a class:active={currentNav("config")} href="#/config" onclick={closeMore}>
               <span>Config</span>
             </a>
@@ -304,11 +301,7 @@
           {:else if route.name === "ideas"}
             <IdeasRoute />
           {:else if route.name === "agents"}
-            {#if route.params.roleKind === "chief"}
-              <ChiefOfStaffRoute />
-            {:else}
-              <AgentsRoute />
-            {/if}
+            <AgentsRoute selectedAgent={route.params.roleKind === "chief" ? "chief-of-staff" : null} />
           {:else if route.name === "config"}
             <ConfigRoute
               roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"}

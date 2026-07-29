@@ -20,6 +20,10 @@ import type {
   WorkersResponse
 } from "./types";
 
+type ChiefConversationReference = {
+  conversation_id: string | null;
+};
+
 // Every server resource that follows the change stream, in one place: its query
 // key and the API path it comes from. A screen names the resource it needs and
 // gets both. One-shot reads that nothing invalidates — the employee
@@ -63,6 +67,15 @@ export const queries = {
       ["chief", "conversation-start-values"],
       "/api/chief/conversation/start-values"
     ),
+  chiefConversation: () =>
+    queryOptions<ChiefConversationReference>({
+      queryKey: ["chief", "conversation"],
+      queryFn: ({ signal }) =>
+        fetchJson<ChiefConversationReference>("/api/chief/conversation", { signal }),
+      // A failed owner lookup is a screen state with an explicit user-controlled retry.
+      // Hiding it behind automatic attempts makes a blank/new thread appear authoritative.
+      retry: false
+    }),
   workerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
   workers: () => jsonQuery<WorkersResponse>(["workers"], "/api/workers"),
   worker: (workerType: string) =>
