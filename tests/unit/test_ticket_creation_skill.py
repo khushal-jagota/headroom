@@ -54,12 +54,7 @@ def test_creation_model_covers_the_system_without_becoming_a_command_recipe() ->
     for marker in (
         "A Sprint Item is the broader outcome",
         "Choose the Worker type whose lifecycle fits the job",
-        "`coding` changes a product or repository",
-        "`exploration` makes an undefined question clear",
-        "`initiative_planning` settles shared decisions",
-        "`product_design` works out a holistic flow",
-        "`new_worker` designs a new kind of Worker",
-        "`planning-day`, `planning-midday-check`, and `planning-sprint`",
+        "use its registered specialist guidance",
         "light, faithful Kickoff",
         "Today and sprint placement answer different questions",
         "no explicit placement and a current sprint",

@@ -100,12 +100,8 @@ def test_production_registry_carries_complete_planning_day_manifest() -> None:
 def test_planning_day_definition_carries_complete_execution_contract() -> None:
     definition = PRODUCTION_WORKER_TYPE_REGISTRY.require("planning-day")
 
-    assert definition.stage_ids() == tuple(
-        stage["id"] for stage in PLANNING_DAY_MANIFEST["stages"]
-    )
-    assert definition.field_ids() == tuple(
-        field["id"] for field in PLANNING_DAY_MANIFEST["fields"]
-    )
+    assert definition.stage_ids() == tuple(stage["id"] for stage in PLANNING_DAY_MANIFEST["stages"])
+    assert definition.field_ids() == tuple(field["id"] for field in PLANNING_DAY_MANIFEST["fields"])
     assert tuple(
         stage.default_ownership_mode.value if stage.default_ownership_mode else None
         for stage in definition.stages
@@ -146,24 +142,20 @@ def test_planning_day_managed_settings_bootstrap_uses_approved_runtime_defaults(
 
 def test_planning_day_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
-    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    creation = (
-        root / "src/planner/skills/panels-ticket-creation/SKILL.md"
-    ).read_text(encoding="utf-8")
+    panels = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
+    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
 
+    assert "`planning-day` (planning the" in panels
     assert "`panels-worker-planning-day` — planning-day tickets" in worker
     assert "panels-ticket-creation" in chief
-    assert "`planning-day`, `planning-midday-check`, and `planning-sprint`" in creation
 
 
 def test_planning_day_skill_preserves_the_approved_planning_judgments() -> None:
     root = Path(__file__).resolve().parents[2]
-    skill = (
-        root / "src/planner/skills/panels-worker-planning-day/SKILL.md"
-    ).read_text(encoding="utf-8")
+    skill = (root / "src/planner/skills/panels-worker-planning-day/SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     assert "one evidence-backed best guess of today's focus" in skill
     assert "without automatic carryover" in skill

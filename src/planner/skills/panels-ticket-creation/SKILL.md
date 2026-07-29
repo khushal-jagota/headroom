@@ -8,15 +8,8 @@ description: The shared Panels model for creating a coherent Ticket.
 Use a Ticket for a concrete unit of work that one Worker can carry through its
 lifecycle. A Sprint Item is the broader outcome that can own several Tickets; an idea
 is a loose thought that is not committed work. Choose the Worker type whose lifecycle
-fits the job, then let that type supply its normal employee runtime defaults.
-
-The common routes are compact: `coding` changes a product or repository; `exploration`
-makes an undefined question clear; `initiative_planning` settles shared decisions and
-boundaries before several downstream Tickets; `product_design` works out a holistic
-flow and implementation-ready design; and `new_worker` designs a new kind of Worker.
-The `planning-day`, `planning-midday-check`, and `planning-sprint` types are specialized
-planning conversations used by their scheduled or boundary routes, not substitutes for
-ordinary work. Use the registered type's specialist when a newer type exists.
+fits the job, use its registered specialist guidance, and let that type supply its
+normal employee runtime defaults.
 
 Give the Ticket a clear outcome-oriented title and a light, faithful Kickoff. Intake is
 the user's request plus only the factual context the Worker needs to understand it.

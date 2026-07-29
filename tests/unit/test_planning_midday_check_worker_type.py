@@ -128,15 +128,13 @@ def test_planning_midday_check_bootstrap_uses_approved_runtime_defaults(
 
 def test_planning_midday_check_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
+    panels = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
     chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
-    creation = (root / "src/planner/skills/panels-ticket-creation/SKILL.md").read_text(
-        encoding="utf-8"
-    )
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
 
+    assert "`planning-midday-check` (checking execution against the" in panels
     assert "`panels-worker-planning-midday-check` — planning-midday-check tickets" in worker
     assert "panels-ticket-creation" in chief
-    assert "`planning-day`, `planning-midday-check`, and `planning-sprint`" in creation
 
 
 def test_planning_midday_check_skill_preserves_approved_judgments() -> None:
