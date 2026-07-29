@@ -1,9 +1,9 @@
 """t_tt03 — GET /api/worker-types serves the registry's manifests.
 
-Production serves coding, new_worker, exploration, initiative_planning, product_design,
-planning-day, then planning-sprint. With the test registry installed it serves those
-shipped types, then probe in registration order. The JSON response round-trips unchanged
-because it is the single manifest source consumed by the CLI and web.
+Production serves coding, general, new_worker, exploration, initiative_planning,
+product_design, planning-day, then planning-sprint. With the test registry installed it
+serves those shipped types, then probe in registration order. The JSON response round-trips
+unchanged because it is the single manifest source consumed by the CLI and web.
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ def test_production_serves_all_shipped_worker_types(app: FastAPI) -> None:
     assert served == {
         "worker_types": [
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("coding"),
+            PRODUCTION_WORKER_TYPE_REGISTRY.manifest("general"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("new_worker"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration"),
             PRODUCTION_WORKER_TYPE_REGISTRY.manifest("initiative_planning"),
@@ -82,6 +83,7 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
         "codex",
         "codex",
         "codex",
+        "codex",
         "claude",
         "claude",
         "codex",
@@ -89,6 +91,7 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
         "hermes",
     ]
     assert [item["default_model"] for item in served["worker_types"]] == [
+        "gpt-5.6-sol",
         "gpt-5.6-sol",
         "gpt-5.6-sol",
         "gpt-5.6-sol",
@@ -102,6 +105,7 @@ def test_worker_type_manifest_serves_each_type_its_exact_launch_defaults(
     assert [
         item["default_reasoning_effort"] for item in served["worker_types"]
     ] == [
+        "medium",
         "medium",
         "medium",
         "medium",
@@ -128,6 +132,7 @@ def test_installed_probe_appears_after_shipped_worker_types(
         served = client.get("/api/worker-types").json()
     assert [m["worker_type"] for m in served["worker_types"]] == [
         "coding",
+        "general",
         "new_worker",
         "exploration",
         "initiative_planning",

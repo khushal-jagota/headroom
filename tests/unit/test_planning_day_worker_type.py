@@ -86,6 +86,7 @@ PLANNING_DAY_MANIFEST: WorkerTypeManifest = {
 def test_production_registry_carries_complete_planning_day_manifest() -> None:
     assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
         "coding",
+        "general",
         "new_worker",
         "exploration",
         "initiative_planning",

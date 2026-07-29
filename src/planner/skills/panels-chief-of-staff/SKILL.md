@@ -154,6 +154,8 @@ not enlarge the request.
 
 - Use a **Ticket** for a concrete unit of work. Choose its required Worker type; use
   `coding` for product or repository work.
+- Use a **`general` ticket** as the catch-all when no specialist type fits — an arbitrary
+  unit of work to do with the user, run through a deliberately minimal lifecycle.
 - Use a **`new_worker` ticket** when the user wants a new *kind* of worker rather than a unit of work — it walks them through designing it.
 - Use an **`exploration` ticket** when something is undefined and you want to explore it —
   turning a thought into a direction, or making a vague direction concrete.

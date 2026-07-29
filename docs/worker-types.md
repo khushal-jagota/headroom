@@ -9,9 +9,12 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Eight Worker types ship today:
+Nine Worker types ship today:
 
 - **`coding`** handles product and repository work.
+- **`general`** is the catch-all, chosen when no specialist type fits. It runs a
+  deliberately minimal lifecycle — agree the task with the user, do it, then land its
+  consequences — for arbitrary work.
 - **`new_worker`** designs and lands a new kind of worker.
 - **`exploration`** is a worker for exploring something undefined and making it clearer.
 - **`initiative_planning`** works out the shared top-level how for a confirmed direction,
@@ -49,7 +52,8 @@ working Stage, validate a Ticket position, and provide the field order used for
 external-work reconciliation.
 
 The shipped `coding` definition defaults every non-terminal Stage to worker ownership.
-`new_worker` starts with worker-owned Kickoff, then uses paired ownership for Understanding
+`general` pairs only for Understanding, where the task is agreed with the user; its
+Execution and Closeout are worker-owned. `new_worker` starts with worker-owned Kickoff, then uses paired ownership for Understanding
 before worker-owned Stages and Thinking, pairs again for Runtime Defaults, then returns to
 worker-owned Drafting and Closeout. `exploration`
 uses paired ownership for Understanding and Answer, where the user and worker establish
@@ -72,13 +76,14 @@ ownership overrides, and scope, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/coding.py`,
+`src/planner/worker_types/general.py`,
 `src/planner/worker_types/new_worker.py`,
 `src/planner/worker_types/exploration.py`,
 `src/planner/worker_types/initiative_planning.py`,
 `src/planner/worker_types/product_design.py`,
 `src/planner/worker_types/planning_day.py`,
 `src/planner/worker_types/planning_midday_check.py`, and
-`src/planner/worker_types/planning_sprint.py` contain the eight shipped definitions.
+`src/planner/worker_types/planning_sprint.py` contain the nine shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -137,7 +142,7 @@ behavior is needed. Rules under `src/planner/tickets/logic/` receive
 Application composition lives in `src/planner/worker_types/configuration.py`. It owns the
 catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
 definitions, and the production registry built from them. The shipped tuple currently
-contains `coding`, `new_worker`, `exploration`, `initiative_planning`,
+contains `coding`, `general`, `new_worker`, `exploration`, `initiative_planning`,
 `product_design`, `planning-day`, `planning-midday-check`, and `planning-sprint`; its
 order is also the manifest order.
 
@@ -310,6 +315,7 @@ owns that name. A restart changes nothing: the conversation is the record, and t
 process is started again under it when there is a reason to.
 
 - `panels-worker-coding` guides coding Tickets.
+- `panels-worker-general` guides `general` Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
 - `panels-worker-exploration` guides `exploration` Tickets.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
