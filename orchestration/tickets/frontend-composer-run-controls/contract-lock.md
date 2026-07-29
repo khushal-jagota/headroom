@@ -1,8 +1,9 @@
 # Contract lock
 
-## Policy exports
+## Contract exports
 
-`runSelection.ts` exports exactly:
+`web/src/lib/conversation/runControls/contracts.ts` exports exactly the following
+types:
 
 ```ts
 export type ComposerRunSelection = Readonly<{
@@ -81,7 +82,13 @@ export type ComposerRunControlIntents = Readonly<{
   send: () => void;
   stop: () => void;
 }>;
+```
 
+It exports nothing else.
+
+`web/src/lib/conversation/runControls/logic/runSelection.ts` exports exactly:
+
+```ts
 export function resolveComposerRunControls(
   input: ComposerRunControlsInput
 ): ComposerRunControlsView;
@@ -93,6 +100,9 @@ export function applyComposerRunSelectionIntent(
 ```
 
 It exports nothing else.
+
+The logic imports every shared shape from `contracts.ts`; the renderer imports its view
+and intent shapes from `contracts.ts`. No contract shape is redeclared locally.
 
 ## Resolver rules
 

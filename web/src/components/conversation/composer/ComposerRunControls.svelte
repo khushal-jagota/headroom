@@ -4,7 +4,7 @@
   import type {
     ComposerRunControlIntents,
     ComposerRunControlsView
-  } from "./runSelection";
+  } from "../../../lib/conversation/runControls/contracts";
 
   let {
     view,

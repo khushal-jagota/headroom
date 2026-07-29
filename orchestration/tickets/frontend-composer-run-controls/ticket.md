@@ -4,8 +4,8 @@
 
 Extract the composer's backend/model/effort/delivery/submit subsystem into:
 
-- one private framework-free policy module that resolves the complete visible and
-  send-time answer; and
+- one private semantic package with a contracts file and framework-free logic module
+  that resolves the complete visible and send-time answer; and
 - one cohesive fragment-root Svelte renderer driven by that resolved view and named
   intents.
 
@@ -40,8 +40,10 @@ and applies run-value picks restored by `draftTransaction.ts`.
 
 ## Contract files
 
+- New private contracts:
+  `web/src/lib/conversation/runControls/contracts.ts`.
 - New private policy:
-  `web/src/components/conversation/composer/runSelection.ts`.
+  `web/src/lib/conversation/runControls/logic/runSelection.ts`.
 - New private renderer:
   `web/src/components/conversation/composer/ComposerRunControls.svelte`.
 - Existing public component:
@@ -60,28 +62,34 @@ The exact private types, functions, renderer props, and behavior are locked in
 ## Required work
 
 1. Add focused pure tests for run selection and projection.
-2. Add the policy module with no Svelte, DOM, network, focus, or side effect.
-3. Replace `pickedBackend`, `pickedModel`, `pickedEffort`, and `mode` with one
+2. Add the contract and policy modules with no Svelte, DOM, network, focus, or side
+   effect. Both the policy and renderer import their shared shapes from the contract
+   module.
+3. Update the parent, renderer, and tests to import from the new semantic package, then
+   delete the superseded
+   `web/src/components/conversation/composer/runSelection.ts`. No import or declaration
+   may remain at the legacy path.
+4. Replace `pickedBackend`, `pickedModel`, `pickedEffort`, and `mode` with one
    `ComposerRunSelection` state object in the public composer.
-4. Derive one `ComposerRunControlsView`.
-5. Reconcile only `view.normalizedSelection` in an effect. Reconciliation caused by
+5. Derive one `ComposerRunControlsView`.
+6. Reconcile only `view.normalizedSelection` in an effect. Reconciliation caused by
    changing catalogs/defaults is not a user draft change and must not advance
    `compositionRevision`.
-6. Route user intents through one local handler:
+7. Route user intents through one local handler:
    - backend/model/effort changes each record exactly one draft revision;
    - backend switching clears model and effort;
    - model and effort choices return focus to the same textarea;
    - delivery-mode changes do not change the draft revision;
    - send and stop delegate to the existing component-owned operations.
-7. Move the exact backend rail, model picker, effort picker, delivery segment, and
+8. Move the exact backend rail, model picker, effort picker, delivery segment, and
    send/stop button markup into `ComposerRunControls.svelte`.
-8. Render no wrapper. The emitted controls remain direct children of `.chat-foot` in the
+9. Render no wrapper. The emitted controls remain direct children of `.chat-foot` in the
    exact existing order.
-9. Preserve the draft transaction's model/effort snapshot and restoration behavior
+10. Preserve the draft transaction's model/effort snapshot and restoration behavior
    through the controlled selection state.
-10. Extend the structural harness to compile and inspect the nested renderer without
+11. Extend the structural harness to compile and inspect the nested renderer without
     changing its exact top-level conversation-component inventory assertion.
-11. Rebuild `web/dist`.
+12. Rebuild `web/dist`.
 
 ## Non-goals
 
@@ -100,7 +108,9 @@ The exact private types, functions, renderer props, and behavior are locked in
 ## Allowed production and test files
 
 - `web/src/components/conversation/ConversationComposer.svelte`
-- `web/src/components/conversation/composer/runSelection.ts`
+- `web/src/components/conversation/composer/runSelection.ts` (removal only)
+- `web/src/lib/conversation/runControls/contracts.ts`
+- `web/src/lib/conversation/runControls/logic/runSelection.ts`
 - `web/src/components/conversation/composer/ComposerRunControls.svelte`
 - `web/tests/conversation-run-selection.test.ts`
 - `web/tests/conversation-pane.test.mjs`

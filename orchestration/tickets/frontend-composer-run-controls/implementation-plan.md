@@ -6,17 +6,19 @@ Extract the answer to “what will this message run under?” without moving dra
 image, command, focus, or send-transaction ownership out of
 `ConversationComposer.svelte`.
 
-The framework-free policy is the only place that resolves backend catalogs,
-defaults, explicit picks, carried values, delivery, and submit presentation. The
-new Svelte component only renders that resolved view and invokes named intents.
-The parent remains the sole state and side-effect owner.
+The private run-controls package separates its shared contract from its framework-free
+policy. The policy is the only place that resolves backend catalogs, defaults, explicit
+picks, carried values, delivery, and submit presentation. The new Svelte component only
+renders that resolved view and invokes named intents. The parent remains the sole state
+and side-effect owner.
 
 ## Public test seams
 
 Tests use only these seams:
 
-1. Import the two locked functions and their exported types from
-   `composer/runSelection.ts`:
+1. Import the locked types from
+   `lib/conversation/runControls/contracts.ts` and the two locked functions from
+   `lib/conversation/runControls/logic/runSelection.ts`:
    - `resolveComposerRunControls(input)`
    - `applyComposerRunSelectionIntent(input, intent)`
 2. Render the existing public `ConversationComposer` interface. Assert its
@@ -85,8 +87,8 @@ Add red cases, then finish both policy functions:
 - model, effort, and delivery intents change only their named field;
 - all intent calls are pure and retain object values not named by the intent.
 
-Keep all helpers private so `runSelection.ts` exports exactly the contract-lock
-surface.
+Keep all helpers private so the contract file exports only the locked types and
+`runSelection.ts` exports only the two locked functions.
 
 ### 4. Fragment renderer and parent integration
 
@@ -120,6 +122,11 @@ Then:
    When applying a restored draft, replace only those two fields and preserve
    backend and delivery. Pass `view.carriedRunValues` and
    `view.effectiveDeliveryMode` into `beginComposerSend`.
+10. Update every parent, renderer, and test import to read shared shapes from
+    `lib/conversation/runControls/contracts.ts` and functions from
+    `lib/conversation/runControls/logic/runSelection.ts`, then delete the superseded
+    `components/conversation/composer/runSelection.ts`. A repository search for that
+    legacy path and its local contract declarations must return no result.
 
 Extend the browser assertions at the existing public composer seam to prove:
 
@@ -144,7 +151,10 @@ remain the behavioral oracle.
 ## Expected sizes
 
 - `ConversationComposer.svelte`: approximately 680–720 lines; hard limit 760.
-- `composer/runSelection.ts`: approximately 260–340 lines; hard limit 400.
+- `lib/conversation/runControls/contracts.ts`: approximately 80–110 lines; hard
+  limit 400.
+- `lib/conversation/runControls/logic/runSelection.ts`: approximately 220–280
+  lines; hard limit 400.
 - `composer/ComposerRunControls.svelte`: approximately 100–160 lines; hard
   limit 400.
 - `conversation-run-selection.test.ts`: approximately 220–320 lines.
@@ -168,6 +178,7 @@ npm --prefix web run build
 git diff --check -- . ':(exclude,glob)web/dist/assets/*.js'
 ```
 
-Also record `wc -l` for the three production files. Do not run `./verify` in
-this ticket; the frontend architecture program reserves it for the final
-settled tree.
+Also record `wc -l` for all four production files:
+`ConversationComposer.svelte`, `contracts.ts`, logic `runSelection.ts`, and
+`ComposerRunControls.svelte`. Do not run `./verify` in this ticket; the frontend
+architecture program reserves it for the final settled tree.

@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyComposerRunSelectionIntent,
-  resolveComposerRunControls,
-  type ComposerRunControlsInput,
-  type ComposerRunSelection
-} from "../src/components/conversation/composer/runSelection";
+  resolveComposerRunControls
+} from "../src/lib/conversation/runControls/logic/runSelection";
+import type {
+  ComposerRunControlsInput,
+  ComposerRunSelection
+} from "../src/lib/conversation/runControls/contracts";
 import type {
   BackendModel,
   BackendSnapshot,

@@ -1847,8 +1847,11 @@ with sync_playwright() as playwright:
         {"piece": "image", "data": "Cw==", "media_type": "image/png", "file_name": "only.png"}
     ]
 
-    # A definite refusal puts the exact text and image back.
-    page.evaluate("window.__setSendAccepted(false)")
+    # A definite refusal puts the exact text, image, model and effort back. Hold the
+    # ordinary send open so the cleared controls are visible before the refusal lands:
+    # this proves the public component mapping on both sides of the draft transaction.
+    pick(model, "gpt-5.5-codex-mini")
+    pick(effort, "low")
     image_input.set_input_files(
         {"name": "return.png", "mimeType": "image/png", "buffer": bytes([9, 10])}
     )
@@ -1856,11 +1859,23 @@ with sync_playwright() as playwright:
         "document.querySelectorAll('[data-chat-image-preview]').length === 1"
     )
     the_box.fill("please return")
+    page.evaluate("window.__holdNextSend()")
     page.locator("[data-conversation-send]").click()
     page.wait_for_function("window.__sends().length === 7")
+    refused = page.evaluate("window.__sends()[6]")
+    assert refused["picked"]["model"] == "gpt-5.5-codex-mini", refused
+    assert refused["picked"]["reasoningEffort"] == "low", refused
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value === ''"
+    )
+    assert face(model) == "GPT-5.5 Codex", face(model)
+    assert face(effort) == "high", face(effort)
+    page.evaluate("window.__finishSend(false)")
     page.wait_for_function(
         "document.querySelector('[data-conversation-input]').value === 'please return'"
     )
+    assert face(model) == "GPT-5.5 Codex mini", face(model)
+    assert face(effort) == "low", face(effort)
     assert page.locator("[data-chat-image-preview]").get_attribute(
         "data-chat-image-name"
     ) == "return.png"

@@ -32,12 +32,14 @@
   } from "./composer/draftTransaction";
   import {
     applyComposerRunSelectionIntent,
-    resolveComposerRunControls,
-    type ComposerRunControlIntents,
-    type ComposerRunControlsInput,
-    type ComposerRunSelection,
-    type ComposerRunSelectionIntent
-  } from "./composer/runSelection";
+    resolveComposerRunControls
+  } from "../../lib/conversation/runControls/logic/runSelection";
+  import type {
+    ComposerRunControlIntents,
+    ComposerRunControlsInput,
+    ComposerRunSelection,
+    ComposerRunSelectionIntent
+  } from "../../lib/conversation/runControls/contracts";
   import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
   import {
