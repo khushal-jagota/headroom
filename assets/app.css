@@ -178,10 +178,12 @@ textarea {
 /* --- Shell --------------------------------------------------------------- */
 
 .shell {
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .shell-nav {
+  position: relative;
+  z-index: 11;
   display: flex;
   align-items: center;
   gap: var(--space-5);
@@ -198,8 +200,11 @@ textarea {
 }
 
 .nav-link {
+  display: inline-flex;
+  align-items: center;
   color: var(--text-faint);
   font-size: var(--type-sm);
+  font-family: inherit;
   text-decoration: none;
   transition: color var(--motion-base) var(--motion-ease);
 }
@@ -211,6 +216,79 @@ textarea {
 .nav-link.active {
   color: var(--text-strong);
   font-weight: 500;
+}
+
+.shell-more {
+  position: relative;
+}
+
+.shell-more-trigger {
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.shell-more-caret {
+  color: var(--text-faintest);
+  font-size: 10px;
+}
+
+.shell-more-menu {
+  position: absolute;
+  z-index: 13;
+  top: calc(100% + var(--space-4));
+  left: 0;
+  min-width: 224px;
+  padding: var(--space-2);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-float);
+}
+
+.shell-more-group {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.shell-more-menu a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+  text-decoration: none;
+}
+
+.shell-more-menu a:hover,
+.shell-more-menu a.active {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+.shell-more-subtitle {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+}
+
+.shell-more-divider {
+  height: var(--border-hairline);
+  margin: var(--space-2) var(--space-1);
+  background: var(--border-color);
+}
+
+.shell-more-grab,
+.shell-more-scrim,
+.shell-mobile-head {
+  display: none;
 }
 
 .nav-link--review {
@@ -235,87 +313,45 @@ textarea {
 }
 
 .shell-statuses {
-  margin-left: auto;
+  position: fixed;
+  z-index: 12;
+  top: 0;
+  right: var(--space-5);
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  height: var(--shell-nav-height);
   min-width: 0;
 }
 
-.vps-status {
-  position: relative;
-}
-
-.vps-status-trigger,
-.vps-status-refresh {
-  border: 0;
-  background: transparent;
+.shell-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
   color: var(--text-faintest);
-  font: inherit;
   font-size: var(--type-xs);
-  cursor: pointer;
 }
 
-.vps-status-trigger {
+.shell-connection {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   white-space: nowrap;
 }
 
-.vps-status-trigger:hover,
-.vps-status-trigger:focus-visible,
-.vps-status-refresh:hover,
-.vps-status-refresh:focus-visible {
-  color: var(--text-strong);
-}
-
-.vps-status-mark {
+.shell-connection-mark {
   width: var(--space-2);
   height: var(--space-2);
   border-radius: var(--radius-pill);
   background: var(--accent-done);
 }
 
-.vps-status-trigger[data-state="reconnecting"] {
-  color: var(--text-faint);
-}
-
-.vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
+.shell-status[data-state="reconnecting"] .shell-connection-mark {
   background: transparent;
   border: var(--border-hairline) solid var(--text-faintest);
   border-top-color: var(--text-muted);
   box-sizing: border-box;
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
-
-.vps-status-popover {
-  position: absolute;
-  z-index: 3;
-  top: calc(100% + var(--space-3));
-  right: 0;
-  width: min(340px, calc(100vw - var(--space-8)));
-  padding: var(--space-4);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-base);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-float);
-}
-
-.vps-status-heading,
-.vps-status-list > div {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
-.vps-status-list { margin: var(--space-3) 0 0; }
-.vps-status-list > div { padding: var(--space-2) 0; border-top: var(--border-hairline) solid var(--border-color); }
-.vps-status-list dt, .vps-status-list dd { margin: 0; font-size: var(--type-xs); }
-.vps-status-list dd { color: var(--text-faint); text-align: right; }
-.vps-status-list > div[data-state="warning"] dd { color: var(--accent-bright); }
-.vps-status-list > div[data-state="critical"] dd { color: var(--accent-error); }
-.vps-status-error { color: var(--accent-error); font-size: var(--type-xs); }
 
 .shell-presence {
   display: flex;
@@ -340,30 +376,129 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
-  .vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
+  .shell-status[data-state="reconnecting"] .shell-connection-mark {
     animation: none;
   }
 }
 
 @media (max-width: 720px) {
-  .shell-nav {
-    overflow-x: auto;
+  .shell {
+    padding-top: var(--shell-nav-height);
+    padding-bottom: calc(var(--shell-nav-height) + env(safe-area-inset-bottom));
   }
 
-  .shell-links {
-    gap: var(--space-4);
-  }
-
-  .shell-statuses {
-    flex: none;
-    position: sticky;
-    right: 0;
-    padding-left: var(--space-3);
+  .shell-mobile-head {
+    position: fixed;
+    z-index: 10;
+    inset: 0 0 auto;
+    display: flex;
+    align-items: center;
+    height: var(--shell-nav-height);
+    padding: 0 var(--space-4);
+    border-bottom: var(--border-hairline) solid var(--border-color);
     background: var(--surface-base);
   }
 
-  .shell-presence {
+  .shell-mobile-title {
+    overflow: hidden;
+    color: var(--text-strong);
+    font-size: var(--type-md);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shell-nav {
+    position: fixed;
+    z-index: 12;
+    inset: auto 0 0;
+    height: auto;
+    min-height: var(--shell-nav-height);
+    padding: 0 0 env(safe-area-inset-bottom);
+    border-top: var(--border-hairline) solid var(--border-color);
+    border-bottom: 0;
+    background: var(--surface-raised);
+  }
+
+  .shell-links {
+    width: 100%;
+    gap: 0;
+  }
+
+  .shell-links > .nav-link,
+  .shell-more {
+    flex: 1;
+  }
+
+  .shell-links > .nav-link,
+  .shell-more-trigger {
+    justify-content: center;
+    width: 100%;
+    min-height: var(--shell-nav-height);
+    padding: var(--space-3) var(--space-2);
+    color: var(--text-faintest);
+    font-size: var(--type-sm);
+  }
+
+  .shell-links .nav-link.active {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+
+  .shell-more-caret {
     display: none;
+  }
+
+  .nav-link--review {
+    position: relative;
+  }
+
+  .nav-link--review .nav-badge {
+    position: absolute;
+    top: var(--space-1);
+    left: calc(50% + var(--space-5));
+  }
+
+  .shell-statuses {
+    right: var(--space-4);
+  }
+
+  .shell-more-menu {
+    position: fixed;
+    z-index: 14;
+    inset: auto 0 0;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3)
+      calc(var(--space-5) + env(safe-area-inset-bottom));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .shell-more-menu a {
+    padding: var(--space-3) var(--space-2);
+    font-size: var(--type-md);
+  }
+
+  .shell-more-grab {
+    display: block;
+    width: 34px;
+    height: 4px;
+    margin: var(--space-2) auto var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--border-color);
+  }
+
+  .shell-more-scrim {
+    position: fixed;
+    z-index: 11;
+    inset: 0;
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: var(--surface-scrim);
   }
 }
 
@@ -2302,7 +2437,7 @@ select {
 }
 
 .review-empty-state {
-  min-height: calc(100vh - (var(--space-7) * 4));
+  min-height: calc(100dvh - (var(--space-7) * 4));
   max-width: calc(var(--space-7) * 8);
   margin: 0 auto;
   padding: var(--space-7) var(--space-4);
@@ -2660,54 +2795,16 @@ select {
   background: var(--surface-base);
 }
 
-/* The chief pane centers its chat to a readable measure, like the mockup's desk. */
-.board-workspace-desk-inner {
+.board-workspace-empty-inspector {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   min-height: 0;
   min-width: 0;
   flex: 1;
-  width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
 }
-
-/* Chief of Staff is a top-level peer of the project headers: it carries the same
- * serif project-label weight and sits first in the rail, above the projects. It is a
- * navigation target (not a collapsing group), so its selected/hover state is a fill —
- * and it keeps the chief row's original --board-workspace-rail-pad-x horizontal inset,
- * so that fill sits inset exactly as before. */
-.board-workspace-chief-peer {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-strong);
-  cursor: pointer;
-  padding: var(--space-2) var(--board-workspace-rail-pad-x);
-  text-align: left;
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-chief-peer:hover,
-.board-workspace-chief-peer.active {
-  background: var(--surface-overlay);
-}
-
-.board-workspace-chief-peer-label {
-  min-width: 0;
-  font-family: var(--font-serif);
-  font-size: calc(var(--space-7) - var(--space-2));
-  font-weight: 500;
-  line-height: 1;
-}
-
-/* The project filter sits between Chief of Staff and the first bucket, and its
- * own margin-bottom carries the one top-level gap above the buckets — so Chief
- * of Staff reads as a sibling area above the filter and status buckets. */
 
 /* Status buckets — the rail's one level. Each bucket is a box (the worker-section
  * idiom), headed by the serif voice one scale below the project headers. A bucket

@@ -23,9 +23,8 @@ One screen per part of the system:
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
   appear. One project selector narrows the roster by each ticket's effective project,
-  including **All projects** and **No project**. It sits just below the Chief of Staff
-  entry and reads as a small header showing the active project; clicking it opens a
-  menu of the projects. A Ticket on a Sprint Item uses
+  including **All projects** and **No project**. It reads as a small header showing the
+  active project; clicking it opens a menu of the projects. A Ticket on a Sprint Item uses
   that item's project; an unparented backlog Ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
   tickets into collapsible boxed groups in a fixed order that puts what needs the user
@@ -62,16 +61,13 @@ One screen per part of the system:
   browser that has never seen a conversation has read none of it, so a reply shows —
   every failure path over-shows attention rather than hiding a reply.
 
-  **Chief of Staff** sits first in the rail above the groups.
-
-  On screens wider than 960px, the right side opens on the Chief of Staff conversation.
-  Selecting a ticket switches it to the same complete ticket screen used by a direct
+  On screens wider than 960px, the right side starts with a quiet invitation to select
+  a ticket. Selecting a ticket opens the same complete ticket screen used by a direct
   ticket link while leaving the Workspace rail in place, and records the selection at
   `#/workspace/<ticket-id>`. That address can be loaded, refreshed, shared, or
-  revisited with browser history; a missing ticket safely leaves the Chief of Staff
-  view open. At 960px or less, selecting a ticket opens its standalone
-  `#/ticket/<ticket-id>` page, and selecting Chief of Staff opens the standalone
-  `#/chief` page.
+  revisited with browser history; a missing ticket safely returns to the unselected
+  Workspace. At 960px or less, selecting a ticket opens its standalone
+  `#/ticket/<ticket-id>` page.
 - **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
   priority, sprint, due date, and project above a serif title on its own row. Project
   appears when there is no Sprint Item; empty scheduling values are add affordances
@@ -104,28 +100,29 @@ One screen per part of the system:
   fallbacks so catch-all work is not mistaken for an intentionally shaped outcome.
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
-- **Agents** — the browser navigation and page at `#/agents`. The page has exactly two
-  quiet sections: **Agents**, then **Workers**. Every destination is one generous
-  whole-row link with its human-readable name, the current managed skill description,
-  and a restrained arrow. The index does not show launch settings, skill names,
-  structural ids, Stage counts, or configuration labels. The same one-column order is
-  used on mobile.
-
-  Agents contains **Chief of Staff** and the shared **Worker skill**. Chief of Staff
-  opens at `#/agents/chief-of-staff`; Worker skill opens at
-  `#/agents/worker-skill`. Workers contains each configured Worker type, which opens at
-  `#/agents/workers/<worker-type>`. Those detail screens still provide the applicable
+- **Agents** — the home for agents at `#/agents`. Chief of Staff is the first actual
+  agent and opens its conversation at `#/agents/chief-of-staff`. The old `#/chief`
+  address redirects there.
+- **Config** — the management surface at `#/config`. It contains Chief of Staff,
+  the shared Worker skill, and every configured Worker type. Chief settings open at
+  `#/config/chief-of-staff`, Worker skill at `#/config/worker-skill`, and a Worker at
+  `#/config/workers/<worker-type>`. Those detail screens provide the applicable
   launch defaults, Stage ownership controls, and skill editors. Worker and skill
   identities and lifecycle structure stay read-only. Each editable value saves
   independently; a failed save keeps the attempted value and a useful error so it can
-  be corrected or retried. Legacy `#/workers` and `#/workers/<worker-type>` addresses
-  redirect to their Agents-page equivalents.
+  be corrected or retried. The former `#/agents/worker-skill` and
+  `#/agents/workers/<worker-type>` paths, plus legacy `#/workers` paths, redirect to
+  Config.
 
-The shell carries one combined status control and, on desktop, worker presence.
-The status control says Connected or Reconnecting from the change stream and opens
-the manually refreshed VPS health details. Worker presence is the small spinner and
-"N working" readout from the global running-worker count; it is hidden at mobile
-widths so navigation links and connection status keep the available space.
+The shell has two primary destinations: Review and Workspace. More groups Day, Sprint,
+Backlog, and Ideas under Planning, and Agents and Config under System. On desktop these
+live in the top bar and More opens a dropdown. On mobile the three text-only controls
+form a fixed, full-width bottom bar and More opens a bottom sheet. A slim mobile top bar
+shows the current screen and the same quiet connection and worker-presence cluster used
+at desktop. The cluster is a live status label, not a control. Review's count is the
+only navigation accent; active destinations use
+strong text. The shell uses the dynamic viewport and never scrolls the navigation
+horizontally.
 
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens

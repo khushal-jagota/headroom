@@ -10,6 +10,7 @@
   --surface-raised: #24211b;
   --surface-overlay: #26221c;
   --surface-sunken: #141210;
+  --surface-scrim: rgb(10 9 8 / 55%);
 
   /* Text tokens — descending emphasis.
    *

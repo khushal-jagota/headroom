@@ -92,24 +92,10 @@ def _editable_text(page: Page, selector: str) -> str:
     return text
 
 
-def _assert_agents_nav_active_and_clear(page: Page) -> None:
-    nav = page.locator('.shell-links .nav-link[data-screen="agents"]')
-    assert nav.inner_text() == "Agents"
-    assert nav.get_attribute("href") == "#/agents"
+def _assert_config_more_active(page: Page) -> None:
+    nav = page.locator('.shell-links .nav-link[data-screen="more"]')
+    assert nav.inner_text().strip() == "More"
     assert "active" in (nav.get_attribute("class") or "").split()
-    page.wait_for_function(
-        """() => {
-          const active = document.querySelector(
-            '.shell-links .nav-link.active[data-screen="agents"]'
-          );
-          const statuses = document.querySelector('.shell-statuses');
-          if (!active || !statuses) return false;
-          const activeRect = active.getBoundingClientRect();
-          const statusRect = statuses.getBoundingClientRect();
-          return activeRect.width > 0 && activeRect.right <= statusRect.left - 4;
-        }""",
-        timeout=WAIT_MS,
-    )
 
 
 def _assert_no_horizontal_overflow(page: Page) -> None:
@@ -139,9 +125,9 @@ def test_agents_index_renders_when_the_workers_read_answers_last(
         route.continue_()
 
     page.route("**/api/workers", answer_after_the_others)
-    page.goto(server.base + "/#/agents")
+    page.goto(server.base + "/#/config")
     page.wait_for_selector(
-        '[data-screen="agents"] [data-workers-list] [data-worker-destination]', timeout=WAIT_MS
+        '[data-screen="config"] [data-workers-list] [data-worker-destination]', timeout=WAIT_MS
     )
 
 
@@ -151,7 +137,7 @@ def test_chief_detail_edits_skill_independently_and_retries_failure(
     page = context_factory().new_page()
     requests: list[tuple[str, str]] = []
     page.on("request", lambda request: requests.append((request.method, request.url)))
-    page.goto(server.base + "/#/agents/chief-of-staff")
+    page.goto(server.base + "/#/config/chief-of-staff")
     page.wait_for_selector('[data-agent-detail]', timeout=WAIT_MS)
 
     assert page.locator("[data-role-name]").inner_text() == "Chief of Staff"
@@ -227,12 +213,12 @@ def test_shared_worker_skill_detail_edits_independently_and_retries_failure(
     page = context_factory().new_page()
     requests: list[tuple[str, str]] = []
     page.on("request", lambda request: requests.append((request.method, request.url)))
-    page.goto(server.base + "/#/agents/worker-skill")
+    page.goto(server.base + "/#/config/worker-skill")
     page.wait_for_selector(
         '[data-agent-detail][data-agent-id="panels-worker"]', timeout=WAIT_MS
     )
 
-    assert page.url.endswith("#/agents/worker-skill")
+    assert page.url.endswith("#/config/worker-skill")
     assert page.locator("[data-role-name]").inner_text() == "Worker skill"
     assert page.locator("[data-role-purpose]").inner_text().strip()
     assert page.locator("[data-launch-defaults]").count() == 0
@@ -313,9 +299,9 @@ def test_shared_worker_skill_detail_edits_independently_and_retries_failure(
 
     mobile = context_factory().new_page()
     mobile.set_viewport_size({"width": 390, "height": 844})
-    mobile.goto(server.base + "/#/agents/worker-skill")
+    mobile.goto(server.base + "/#/config/worker-skill")
     mobile.wait_for_selector("[data-shared-worker-skill]", timeout=WAIT_MS)
-    _assert_agents_nav_active_and_clear(mobile)
+    _assert_config_more_active(mobile)
     _assert_no_horizontal_overflow(mobile)
     assert mobile.locator(DESCRIPTION_EDIT).is_editable()
     assert mobile.locator(BODY_EDIT).is_editable()
@@ -389,7 +375,7 @@ def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_de
     # Block the change stream: the save must refresh the screen on its own.
     page.route("**/api/changes", lambda route: route.abort())
     page.on("request", lambda request: requests.append((request.method, request.url)))
-    page.goto(server.base + "/#/agents/workers/coding")
+    page.goto(server.base + "/#/config/workers/coding")
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
     requests.clear()
 
@@ -451,7 +437,7 @@ def test_worker_stage_failed_save_keeps_chosen_row_value(
         route.continue_()
 
     page.route("**/api/workers/coding/stages/needs_success/default-ownership", fail_stage)
-    page.goto(server.base + "/#/agents/workers/coding")
+    page.goto(server.base + "/#/config/workers/coding")
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
     selector = '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]'
     page.select_option(selector, "paired")
@@ -500,7 +486,7 @@ def test_worker_skill_edit_save_failure_and_session_stability(
         )
 
     page = context_factory().new_page()
-    page.goto(server.base + "/#/agents/workers/coding")
+    page.goto(server.base + "/#/config/workers/coding")
     page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
     assert page.locator("[data-skill-edit-button]").count() == 0
     assert page.locator("[data-skill-save-button]").count() == 0

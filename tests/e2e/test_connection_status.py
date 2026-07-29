@@ -1,6 +1,6 @@
-"""Browser proof for what the combined status trigger says and for catching up.
+"""Browser proof for what the quiet shell status says and for catching up.
 
-The VPS trigger has two live states: connected or reconnecting. Blocking the change
+The connection label has two live states: connected or reconnecting. Blocking the change
 stream puts it in the second state; letting the stream through puts it back in the
 first. What matters most is the catch-up: everything that changed while the browser
 could not hear anything is on the screen once the stream is back, with no reload.
@@ -31,7 +31,7 @@ def _set_running_worker(server: ServerHandle, ticket_id: str) -> None:
 
 def _assert_desktop_shell_signals_have_geometry(page: Page) -> None:
     presence = page.locator("[data-shell-presence]")
-    status = page.locator("[data-connection-status]")
+    status = page.locator(".shell-connection")
     presence.wait_for(state="visible", timeout=WAIT_MS)
     status.wait_for(state="visible", timeout=WAIT_MS)
     presence_box = presence.bounding_box()
@@ -82,11 +82,11 @@ def test_blocked_change_stream_says_reconnecting_and_catches_up_once_it_returns(
     page.evaluate("() => { window.__documentMark = 'same document'; }")
     url_before = page.url
 
-    # The stream cannot open, and the combined VPS trigger says so.
+    # The stream cannot open, and the shell status says so.
     page.locator('[data-connection-status][data-state="reconnecting"]').wait_for(
         state="visible", timeout=WAIT_MS
     )
-    assert page.locator("[data-connection-status]").inner_text() == "Reconnecting"
+    assert page.locator(".shell-connection").inner_text() == "Reconnecting"
     assert attempts, attempts
     assert page.evaluate("() => window.__plannerDebug.sseOpens") == 0
 
@@ -105,7 +105,7 @@ def test_blocked_change_stream_says_reconnecting_and_catches_up_once_it_returns(
         state="visible", timeout=RECONNECT_WAIT_MS
     )
     assert _status(page) == "connected"
-    assert page.locator("[data-connection-status]").inner_text() == "Connected"
+    assert page.locator(".shell-connection").inner_text() == "Connected"
     page.wait_for_function(
         "() => window.__plannerDebug.sseOpens >= 1", timeout=RECONNECT_WAIT_MS
     )
@@ -119,9 +119,11 @@ def test_blocked_change_stream_says_reconnecting_and_catches_up_once_it_returns(
     assert page.evaluate("() => window.__documentMark") == "same document"
     assert len(attempts) >= 2, attempts
 
-    # Worker presence remains beside the combined status on desktop and leaves the
-    # constrained mobile navigation entirely.
+    # Worker presence remains beside connection state at both widths, outside the
+    # navigation itself.
     _assert_desktop_shell_signals_have_geometry(page)
     page.set_viewport_size({"width": 390, "height": 720})
-    page.locator("[data-shell-presence]").wait_for(state="hidden", timeout=WAIT_MS)
+    page.locator("[data-shell-presence]", has_text="1 working").wait_for(
+        state="visible", timeout=WAIT_MS
+    )
     page.locator("[data-connection-status]").wait_for(state="visible", timeout=WAIT_MS)

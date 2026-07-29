@@ -183,7 +183,7 @@ move into the header or become a display of the worker's current settings.
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
 
-## Managed settings and the Agents page
+## Managed settings and the Config page
 
 The registry remains the immutable workflow definition. A managed source beside the
 database owns the ownership default for each existing non-terminal Stage and every
@@ -192,28 +192,28 @@ The packaged `src/planner/skills` tree seeds a new home only; it is never change
 the product and does not replace a managed edit. Hermes contains symlinks to the
 managed home, never copied overlays.
 
-The browser navigation and settings page is **Agents** at `#/agents`. It has exactly two
+The browser navigation and settings page is **Config** at `#/config`. It has exactly two
 quiet, whitespace-separated sections. Every destination is a whole-row link showing
 only its human-readable name, its current managed skill description, and a restrained
 arrow. The index does not show structural ids, skill names, launch settings, Stage
 counts, or configuration labels, and it keeps the same one-column order on narrow
 screens.
 
-- **Agents** contains Chief of Staff and the shared Worker role skill. Chief
-  opens at `#/agents/chief-of-staff` with Backend, Model, and Reasoning launch defaults
+- **Config** contains Chief of Staff and the shared Worker role skill. Chief
+  opens at `#/config/chief-of-staff` with Backend, Model, and Reasoning launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
-  skill opens at `#/agents/worker-skill`. It is shown as an Agent-like configurable
+  skill opens at `#/config/worker-skill`. It is shown as an Agent-like configurable
   role because it guides every Ticket worker, although it is not an independent
   runtime. Its name is read-only; its description and Markdown body edit the canonical
   skill through the shared skills home. It has no independent launch, model, reasoning,
   or Stage controls.
 - **Workers** links the configured Worker types. Each supporting line comes from that
   Worker's managed specialist skill. A Worker opens at
-  `#/agents/workers/<worker-type>` with its launch defaults, Stage ownership table, and
+  `#/config/workers/<worker-type>` with its launch defaults, Stage ownership table, and
   specialist skill editor. Worker identity and lifecycle structure stay read-only.
 
-Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/agents` and
-`#/agents/workers/<worker-type>`.
+Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/config` and
+`#/config/workers/<worker-type>`.
 
 A Ticket captures the managed ownership default when it enters a Stage. Later global
 changes affect only future entries; the Ticket's explicit Stage override still wins.
@@ -227,16 +227,16 @@ direct edits that save, fail, and retry independently. Successful skill edits re
 the configured planner Hermes home without changing existing Employee session ids.
 Codex and Claude Code use the same managed home.
 
-`GET /api/workers` serves the Agents-page destinations and Chief settings.
+`GET /api/workers` serves the Config-page destinations and Chief settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for the Worker role and specialist
 descriptions on the index. Worker and Chief endpoints edit skill description and body
 or launch defaults; the shared
 `PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill. A saved change
-announces itself, and any Agents screen on display refetches what it is showing.
+announces itself, and any Config screen on display refetches what it is showing.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
-`src/planner/environments/hermes_home.py`, and `web/src/routes/AgentsRoute.svelte`.
+`src/planner/environments/hermes_home.py`, and `web/src/routes/ConfigRoute.svelte`.
 
 ## The Ticket owns its launch setup
 

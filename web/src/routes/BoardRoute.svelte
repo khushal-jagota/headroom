@@ -4,7 +4,6 @@
   import { queries } from "../lib/queryCatalogue";
   import { labelize, type FieldStageVisualState } from "../lib/ui";
   import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
-  import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import StageMark from "../components/StageMark.svelte";
@@ -22,7 +21,6 @@
     )
   );
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
-  let rightPaneMode = $derived<"chief" | "ticket">(selectedCard ? "ticket" : "chief");
   const ALL_PROJECTS = "__all_projects__";
   const NO_PROJECT = "__no_project__";
   let selectedProjectId = $state(ALL_PROJECTS);
@@ -75,12 +73,6 @@
     window.location.hash = window.matchMedia("(max-width: 960px)").matches
       ? `#/ticket/${encodeURIComponent(ticketId)}`
       : `#/workspace/${encodeURIComponent(ticketId)}`;
-  }
-
-  function showChiefOfStaff(): void {
-    window.location.hash = window.matchMedia("(max-width: 960px)").matches
-      ? "#/chief"
-      : "#/workspace";
   }
 
   // The project filter is a mini header that opens a dropdown menu, not a form
@@ -273,17 +265,6 @@
     <div class="board-workspace-wrap">
       <div class="board-workspace-shell">
         <section class="board-workspace-left" aria-label="Workspace tickets by status">
-          <button
-            type="button"
-            class="board-workspace-chief-peer"
-            class:active={rightPaneMode === "chief"}
-            aria-pressed={rightPaneMode === "chief"}
-            data-chief-of-staff-button=""
-            onclick={showChiefOfStaff}
-          >
-            <span class="board-workspace-chief-peer-label">Chief of Staff</span>
-          </button>
-
           <div class="board-workspace-project-filter" bind:this={projectMenuElement}>
             <button
               type="button"
@@ -359,7 +340,7 @@
                   <button
                     type="button"
                     class="list-row list-row--board"
-                    class:active={rightPaneMode === "ticket" && selectedCard?.id === card.id}
+                    class:active={selectedCard?.id === card.id}
                     onclick={() => selectCard(card.id)}
                     data-card=""
                     data-ticket-id={card.id}
@@ -384,18 +365,18 @@
         </section>
 
         <section
-          class:board-workspace-right--ticket={rightPaneMode === "ticket"}
+          class:board-workspace-right--ticket={Boolean(selectedCard)}
           class="board-workspace-right"
           aria-label="Workspace inspector"
         >
-          {#if rightPaneMode === "chief"}
-            <div class="board-workspace-desk-inner">
-              <ChiefConversation />
-            </div>
-          {:else if selectedCard}
+          {#if selectedCard}
             {#key selectedCard.id}
               <TicketRoute id={selectedCard.id} />
             {/key}
+          {:else}
+            <div class="board-workspace-empty-inspector">
+              <span>Select a ticket to inspect it.</span>
+            </div>
           {/if}
         </section>
       </div>

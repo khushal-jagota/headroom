@@ -41,7 +41,7 @@ def test_the_chief_panel_opens_on_the_backend_it_is_configured_on(
     page = open_page(
         context_factory(),
         server,
-        "#/chief",
+        "#/agents/chief-of-staff",
         'section[data-screen="chief"] [data-conversation-input]',
     )
 
@@ -53,4 +53,3 @@ def test_the_chief_panel_opens_on_the_backend_it_is_configured_on(
     # And the model beside it is the Chief's own, whether or not this machine has claude
     # installed to name it more prettily than the value itself.
     assert "sonnet" in page.inner_text(f"{MODEL_PICKER} .c2-pick-face").lower()
-
