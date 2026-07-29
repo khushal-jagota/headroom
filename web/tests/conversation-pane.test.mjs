@@ -52,7 +52,11 @@ const inventory = (await readdir(componentDirectory))
   .sort();
 assert.deepEqual(inventory, expectedInventory);
 
-const sourceFiles = [...inventory, "viewport/ConversationViewport.svelte"];
+const sourceFiles = [
+  ...inventory,
+  "viewport/ConversationViewport.svelte",
+  "composer/ComposerRunControls.svelte"
+];
 const sources = {};
 for (const fileName of sourceFiles) {
   const source = await readFile(new URL(fileName, componentDirectory), "utf8");
@@ -105,7 +109,7 @@ assert.match(sources["ConversationTranscript.svelte"], /chat-u|chat-a/);
 // one of them.
 assert.match(sources["MessagePieces.svelte"], /MarkdownBlock/);
 assert.match(sources["ConversationTranscript.svelte"], /MessagePieces/);
-assert.match(sources["ConversationComposer.svelte"], /chat-seg/);
+assert.match(sources["composer/ComposerRunControls.svelte"], /chat-seg/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
 // The pane that came before this one is gone, and nothing may reach for it.
@@ -1518,6 +1522,34 @@ with sync_playwright() as playwright:
         picker.locator('[data-conversation-picker-choice="' + value + '"]').click()
         the_panel_is_gone()
 
+    def footer_child_roles():
+        return page.locator(".chat-foot > *").evaluate_all(
+            """nodes => nodes.map((node) => {
+              for (const attribute of [
+                "data-conversation-slash",
+                "data-conversation-image",
+                "data-conversation-image-input",
+                "data-conversation-picker-model",
+                "data-conversation-picker-effort",
+                "data-conversation-delivery",
+                "data-conversation-send",
+                "data-conversation-stop"
+              ]) {
+                if (node.hasAttribute(attribute)) return attribute;
+              }
+              return node.tagName.toLowerCase();
+            })"""
+        )
+
+    assert footer_child_roles() == [
+        "data-conversation-slash",
+        "data-conversation-image",
+        "data-conversation-image-input",
+        "data-conversation-picker-model",
+        "data-conversation-picker-effort",
+        "data-conversation-send",
+    ], footer_child_roles()
+
     assert face(model) == "Opus", face(model)
     # Claude names no default effort, so the control is there but bare — never empty-wide.
     assert face(effort) == "", face(effort)
@@ -2180,6 +2212,15 @@ with sync_playwright() as playwright:
     page.evaluate("window.__setExists(true)")
     page.evaluate("window.__setComposerRunState('hermes', true)")
     page.wait_for_selector('[data-conversation-delivery-mode="steer"]')
+    assert footer_child_roles() == [
+        "data-conversation-slash",
+        "data-conversation-image",
+        "data-conversation-image-input",
+        "data-conversation-picker-model",
+        "data-conversation-picker-effort",
+        "data-conversation-delivery",
+        "data-conversation-stop",
+    ], footer_child_roles()
     pick(model, "sonnet")
     pick(effort, "low")
     page.locator('[data-conversation-delivery-mode="steer"]').click()
