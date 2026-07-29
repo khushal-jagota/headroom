@@ -227,6 +227,7 @@ try {
       'export { default as PlanStrip } from "../src/components/conversation/PlanStrip.svelte";',
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
       'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
+      'export { default as RestBar } from "../src/components/conversation/ConversationRestBar.svelte";',
       'export { default as CommandMenu } from "../src/components/conversation/AgentCommandMenu.svelte";',
       ""
     ].join("\n"),
@@ -244,7 +245,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, BackendRail, CommandMenu, Composer, NewForm, Pane, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, BackendCard, BackendRail, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -282,6 +283,13 @@ try {
       knownFate
     };
   }
+
+  // The band is card structure, not an activity row. Before a conversation read has
+  // answered — and for a conversation where nothing has happened — it occupies the same
+  // place without inventing a status for a screen reader or a person.
+  const emptyRestBar = drawn(RestBar, { line: null });
+  assert.match(emptyRestBar, /data-conversation-rest-bar/);
+  assert.doesNotMatch(emptyRestBar, /data-conversation-rest-line/);
 
   const waiting = drawn(Pane, {
     conversationId: "c1",
