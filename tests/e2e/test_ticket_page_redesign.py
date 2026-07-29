@@ -49,7 +49,7 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     empty_ready = f'section[data-screen="ticket"][data-ticket-id="{empty_ticket_id}"]'
     page = open_page(context_factory(), server, f"#/ticket/{empty_ticket_id}", empty_ready)
     assert page.locator("[data-ticket-identity] .ticket-identity-add").count() == 3
-    assert page.locator("[data-priority-alert]").count() == 0
+    assert page.locator('[data-priority-control] [data-priority-tile="P3"]').count() == 1
 
     ticket_id = cli(
         server,
@@ -92,20 +92,27 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     assert page.locator(".ticket-status-display, [data-ticket-status]").count() == 0
     assert page.locator(".ticket-planning").count() == 0
 
-    urgent_colour = page.locator("[data-priority-control]").evaluate(
+    priority_colours = page.locator('[data-priority-tile="P0"]').evaluate(
         """element => {
           const style = getComputedStyle(element);
-          const expected = getComputedStyle(document.documentElement)
-            .getPropertyValue("--accent-error").trim();
+          const tokens = getComputedStyle(document.documentElement);
           const probe = document.createElement("span");
-          probe.style.color = expected;
+          probe.style.color = tokens.getPropertyValue("--priority-p0-ink").trim();
+          probe.style.backgroundColor = tokens.getPropertyValue("--priority-p0-fill").trim();
           document.body.appendChild(probe);
-          const expectedRgb = getComputedStyle(probe).color;
+          const expected = getComputedStyle(probe);
+          const result = {
+            color: style.color,
+            background: style.backgroundColor,
+            expectedColor: expected.color,
+            expectedBackground: expected.backgroundColor,
+          };
           probe.remove();
-          return { actual: style.color, expected: expectedRgb };
+          return result;
         }"""
     )
-    assert urgent_colour["actual"] == urgent_colour["expected"]
+    assert priority_colours["color"] == priority_colours["expectedColor"]
+    assert priority_colours["background"] == priority_colours["expectedBackground"]
 
     order = page.evaluate(
         """() => {

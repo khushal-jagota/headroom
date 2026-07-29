@@ -1536,30 +1536,6 @@ textarea {
   line-height: 1.6;
 }
 
-.chip--p0 {
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border-color: var(--accent-bright);
-}
-
-.chip--p1 {
-  background: var(--surface-overlay);
-  color: var(--text-strong);
-  border-color: var(--text-muted);
-}
-
-.chip--p2 {
-  background: var(--surface-overlay);
-  color: var(--text-default);
-  border-color: var(--text-faint);
-}
-
-.chip--p3 {
-  background: transparent;
-  color: var(--text-muted);
-  border-color: var(--text-faint);
-}
-
 .chip--state {
   background: var(--surface-overlay);
   color: var(--text-default);
@@ -3079,7 +3055,8 @@ select {
   opacity: 1;
 }
 
-/* Ticket rows contain only the title and the existing condition mark. */
+/* Ticket rows keep priority in a fixed leading gutter, followed by the title and
+ * the existing condition mark. Priority never displaces the status signal. */
 .list-row--board {
   width: 100%;
   display: flex;
@@ -3113,6 +3090,7 @@ select {
 
 .list-row--board .list-row-title {
   display: block;
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   color: inherit;
@@ -3121,6 +3099,46 @@ select {
 
 .board-workspace-stage-mark {
   flex: 0 0 auto;
+}
+
+/* --- Priority tile ------------------------------------------------------- */
+
+.priority-tile {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: var(--space-5);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.priority-tile--p0 {
+  color: var(--priority-p0-ink);
+  background: var(--priority-p0-fill);
+}
+
+.priority-tile--p1 {
+  color: var(--priority-p1-ink);
+  background: var(--priority-p1-fill);
+}
+
+.priority-tile--p2 {
+  color: var(--priority-p2-ink);
+  background: var(--priority-p2-fill);
+}
+
+.priority-tile--p3 {
+  color: var(--priority-p3-ink);
+  background: var(--priority-p3-fill);
 }
 
 /* --- Ticket screen (T16) ------------------------------------------------- */
@@ -4071,12 +4089,8 @@ select {
 }
 
 .ticket-identity-priority {
-  color: var(--text-default);
-  font-weight: 700;
-}
-
-.ticket-identity-priority--urgent {
-  color: var(--accent-error);
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .ticket-identity-key,
@@ -4665,13 +4679,6 @@ select {
   background: var(--surface-overlay);
 }
 
-[data-screen="sprint"] .trow .pr {
-  min-width: 20px;
-  white-space: nowrap;
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-}
-
 [data-screen="sprint"] .trow .t {
   flex: 1;
   min-width: 0;
@@ -4822,6 +4829,10 @@ select {
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
+}
+
+[data-screen="backlog"] .grp > .section-heading .section-heading-label {
+  display: inline-flex;
 }
 
 [data-screen="backlog"] .grp > .section-heading .section-heading-count {

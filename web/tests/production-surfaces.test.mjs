@@ -19,6 +19,18 @@ const sprintRouteSource = await readFile(
   new URL("../src/routes/SprintRoute.svelte", import.meta.url),
   "utf8",
 );
+const backlogRouteSource = await readFile(
+  new URL("../src/routes/BacklogRoute.svelte", import.meta.url),
+  "utf8",
+);
+const ticketPriorityControlSource = await readFile(
+  new URL("../src/components/TicketPriorityControl.svelte", import.meta.url),
+  "utf8",
+);
+const priorityTileSource = await readFile(
+  new URL("../src/components/PriorityTile.svelte", import.meta.url),
+  "utf8",
+);
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
 
 // --- the app itself ------------------------------------------------------------------
@@ -79,6 +91,21 @@ assert.doesNotMatch(ticketRouteSource, /detail\.sprint_id|body: \{ sprint_id/);
 assert.match(sprintRouteSource, /data-item-kind=\{item\.kind\}/);
 assert.match(sprintRouteSource, /item\.kind === "other"/);
 assert.doesNotMatch(sprintRouteSource, /loose_tickets|Loose tickets|data-loose/);
+
+// --- the one priority tile ---------------------------------------------------------------
+
+assert.match(priorityTileSource, /aria-label=\{decorative \? undefined : `Priority \$\{priority\}`\}/);
+assert.match(ticketPriorityControlSource, /<PriorityTile \{priority\} decorative \/>[\s\S]*<select/);
+assert.match(
+  boardRouteSource,
+  /<PriorityTile priority=\{card\.priority\} \/>[\s\S]*<span class="list-row-title">\{card\.title\}<\/span>[\s\S]*<StageMark/,
+);
+assert.equal((sprintRouteSource.match(/<PriorityTile priority=/g) || []).length, 2);
+assert.match(backlogRouteSource, /labelContent\(\)}<PriorityTile priority=\{p\} \/>/);
+assert.doesNotMatch(
+  backlogRouteSource.slice(backlogRouteSource.indexOf("{#each groups[p] as item}")),
+  /<PriorityTile/,
+);
 
 // --- the Workspace row mark -------------------------------------------------------------
 

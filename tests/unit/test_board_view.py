@@ -269,6 +269,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(
     # The coding enrichment values for a fresh needs_kickoff card.
     assert card["worker_type"] == "coding"
     assert card["employee_backend"] == "codex"
+    assert card["priority"] == "P3"
     assert card["stage"] == "needs_kickoff"
     assert card["stage_label"] == "Kickoff"
     assert card["gating_field"] == "kickoff"

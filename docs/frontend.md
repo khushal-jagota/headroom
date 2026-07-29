@@ -281,7 +281,11 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ScreenHeader** — a screen's title row plus an optional meta pill.
 - **Button** — the one button (or link), in a primary, quiet, or pill look.
 - **Pill** — a small static tag with an optional key label (dates, counts, due, sprint).
-- **Chip** — the coloured status/priority/project tags, including "blocked by".
+- **Chip** — the coloured status/project tags, including "blocked by".
+- **PriorityTile** — the shared always-coloured P0–P3 square. It appears in the
+  Workspace row's leading gutter, the editable Ticket and Review identity control,
+  both Sprint priority positions, and once in each Backlog priority group heading.
+  Priority never borrows the slate-blue attention accent or the status-mark colours.
 - **StageMark** — the single stage dot showing a field's progress.
 - **ApprovalBlock** — the one approval surface: an editable proposal draft, the scope
   picker, and the approve/accept action, plus a read-only mode for dropped tickets.
@@ -374,5 +378,5 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-28 (including Sprint Item-only Ticket placement and visible
-Other fallbacks)._
+_Last verified: 2026-07-29 (including the shared priority tile across Workspace,
+Ticket/Review, Sprint, and Backlog)._

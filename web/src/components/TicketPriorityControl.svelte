@@ -1,5 +1,6 @@
 <script lang="ts">
   import { PRIORITIES } from "../lib/ui";
+  import PriorityTile from "./PriorityTile.svelte";
 
   let {
     priority,
@@ -13,17 +14,14 @@
     onChange: (priority: string, select: HTMLSelectElement) => void;
   } = $props();
 
-  let urgent = $derived(priority === "P0" || priority === "P1");
 </script>
 
 <span
   class="ticket-identity-fact ticket-identity-priority"
-  class:ticket-identity-priority--urgent={urgent}
   data-priority-control={surface === "ticket" ? "" : undefined}
-  data-priority-alert={surface === "ticket" && urgent ? priority : undefined}
   data-review-priority-control={surface === "review" ? "" : undefined}
 >
-  {priority}
+  <PriorityTile {priority} decorative />
   <select
     aria-label="Ticket priority"
     value={priority}

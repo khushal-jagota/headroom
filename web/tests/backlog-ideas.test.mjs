@@ -141,15 +141,68 @@ with sync_playwright() as playwright:
 
     # The dormant compose writes through the real mutation/query invalidation path.
     page.locator('[data-create="item"] > summary').click()
+    priority_control = page.locator('[data-create="item"] [data-seg="priority"]')
+    expected_colours = {
+        "P0": ("rgb(125, 44, 38)", "rgb(255, 224, 219)"),
+        "P1": ("rgb(81, 39, 37)", "rgb(236, 204, 199)"),
+        "P2": ("rgb(84, 51, 31)", "rgb(236, 216, 198)"),
+        "P3": ("rgb(83, 67, 35)", "rgb(233, 228, 198)"),
+    }
+    assert priority_control.locator("[data-priority-tile]").count() == 4
+    for priority, expected in expected_colours.items():
+        option = priority_control.locator(f'[data-value="{priority}"]')
+        tile = option.locator(f'[data-priority-tile="{priority}"]')
+        assert tile.count() == 1
+        assert tile.get_attribute("class").split() == [
+            "priority-tile",
+            f"priority-tile--{priority.lower()}",
+        ]
+        assert tile.get_attribute("role") == "img"
+        assert tile.get_attribute("aria-label") == f"Priority {priority}"
+        assert option.get_attribute("aria-pressed") == (
+            "true" if priority == "P3" else "false"
+        )
+        presentation = tile.evaluate(
+            """element => {
+              const style = getComputedStyle(element);
+              const box = element.getBoundingClientRect();
+              return {
+                background: style.backgroundColor,
+                color: style.color,
+                minWidth: style.minWidth,
+                padding: [
+                  style.paddingTop,
+                  style.paddingRight,
+                  style.paddingBottom,
+                  style.paddingLeft,
+                ],
+                lineHeight: style.lineHeight,
+                width: box.width,
+                height: box.height,
+              };
+            }"""
+        )
+        assert (presentation["background"], presentation["color"]) == expected
+        assert presentation["minWidth"] == "24px"
+        assert presentation["padding"] == ["1px", "5px", "1px", "5px"]
+        assert presentation["lineHeight"] == "16.5px"
+        assert 24 <= presentation["width"] < 27, presentation
+        assert 18 <= presentation["height"] < 19, presentation
+
     page.locator('[data-create="item"] [data-input="title"]').fill("Wire the audit log")
     page.locator('[data-create="item"] [data-seg="project"] [data-value="project_tribe"]').click()
     page.locator('[data-create="item"] [data-seg="priority"] [data-value="P1"]').click()
+    assert priority_control.locator('[data-value="P1"]').get_attribute("aria-pressed") == "true"
+    assert priority_control.locator('[data-value="P3"]').get_attribute("aria-pressed") == "false"
     page.locator('[data-create="item"] [data-commit]').click()
     item = page.locator('[data-priority-group="P1"] [data-item-id]')
     item.wait_for()
     assert item.locator(".list-row-title").inner_text() == "Wire the audit log"
     assert "Tribe" in item.inner_text()
     assert "P1" not in item.inner_text()
+    group = page.locator('[data-priority-group="P1"]')
+    assert group.locator('.section-heading [data-priority-tile="P1"]').count() == 1
+    assert item.locator("[data-priority-tile]").count() == 0
     assert page.locator("[data-backlog-items] [data-item-id]").count() == 1
 
     page.evaluate("window.location.hash = '#/ideas'")

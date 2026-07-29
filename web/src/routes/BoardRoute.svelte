@@ -6,6 +6,7 @@
   import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import PriorityTile from "../components/PriorityTile.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
 
@@ -347,6 +348,7 @@
                     data-ticket-stage={card.stage}
                     data-ticket-status={card.ticket_status}
                   >
+                    <PriorityTile priority={card.priority} />
                     <span class="list-row-title">{card.title}</span>
                     <StageMark
                       state={presentation.state}
