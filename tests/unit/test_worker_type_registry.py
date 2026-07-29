@@ -72,6 +72,7 @@ def test_worker_profiles_declare_complete_employee_defaults() -> None:
         for worker_type in PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types()
     } == {
         "coding": ("codex", "gpt-5.6-sol", "medium"),
+        "debugging": ("codex", "gpt-5.6-sol", "high"),
         "new_worker": ("codex", "gpt-5.6-sol", "medium"),
         "exploration": ("codex", "gpt-5.6-sol", "medium"),
         "initiative_planning": ("codex", "gpt-5.6-sol", "medium"),
@@ -424,6 +425,7 @@ def test_the_probe_names_a_real_backend_of_its_own() -> None:
 def test_manifests_are_complete_and_json_round_trip() -> None:
     assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
         "coding",
+        "debugging",
         "new_worker",
         "exploration",
         "initiative_planning",
@@ -617,6 +619,7 @@ def test_worker_type_package_has_only_the_locked_modules_and_outbound_imports() 
         "coding.py",
         "configuration.py",
         "contracts.py",
+        "debugging.py",
         "exploration.py",
         "initiative_planning.py",
             "new_worker.py",
