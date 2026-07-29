@@ -115,10 +115,10 @@ jobs:
       - name: Finalize deployment lifecycle
         if: always()
         env:
-          PANELS_PRIOR_STEPS_SUCCEEDED: ${{ success() }}
+          PANELS_PRIOR_JOB_STATUS: ${{ job.status }}
         run: |
           test -f "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" || exit 0
-          if [ "$PANELS_PRIOR_STEPS_SUCCEEDED" = "true" ]; then
+          if [ "$PANELS_PRIOR_JOB_STATUS" = "success" ]; then
             phase=succeeded
             detail="Deployment completed."
             code=deployment_succeeded
