@@ -3,6 +3,7 @@
 The command tree mirrors the product model:
 
 * day: plan and inspect a planning day
+* worker-type: discover the configured Worker types
 * schedule: configure exact-time creation of ordinary Tickets
 * ticket: create, inspect, organize, and approve tickets
 * sprint: create, inspect, edit, and populate sprints and sprint items
@@ -377,7 +378,10 @@ def schedule_group() -> None:
 @schedule_group.command("create")
 @click.option("--title", required=True, help="Title for each created Ticket.")
 @click.option(
-    "--worker-type", "worker_type", required=True, help="Registered Worker type id."
+    "--worker-type",
+    "worker_type",
+    required=True,
+    help="Registered Worker type id. List choices with `panels worker-type list`.",
 )
 @click.option(
     "--time", "local_time", required=True, help="Exact local time in HH:MM form."
@@ -592,6 +596,27 @@ def schedule_set(
     http.emit(result, as_json, f"{result['id']} {field} set")
 
 
+# --- worker types -------------------------------------------------------------
+
+
+@main.group("worker-type")
+def worker_type_group() -> None:
+    """Discover the configured Worker types."""
+
+
+@worker_type_group.command("list")
+@json_option
+def worker_type_list(as_json: bool) -> None:
+    data = http.send(
+        "GET", "/api/worker-types", as_json=as_json, request_actor="ordinary"
+    )
+    http.emit(
+        data,
+        as_json,
+        _lines(data["worker_types"], lambda item: str(item["worker_type"])),
+    )
+
+
 # --- project ------------------------------------------------------------------
 
 
@@ -766,7 +791,10 @@ def ticket() -> None:
 @ticket.command("create")
 @click.option("--title", required=True, help="Ticket title.")
 @click.option(
-    "--worker-type", "worker_type", required=True, help="Worker type id (e.g. coding)."
+    "--worker-type",
+    "worker_type",
+    required=True,
+    help="Registered Worker type id. List choices with `panels worker-type list`.",
 )
 @click.option(
     "--employee-backend", default=None, help="Registered employee backend override."
@@ -1634,7 +1662,10 @@ def chief_reconcile_ticket_from_external_work(
 @chief.command("create-ticket-from-external-work")
 @click.option("--title", required=True, help="Ticket title.")
 @click.option(
-    "--worker-type", "worker_type", required=True, help="Worker type id (e.g. coding)."
+    "--worker-type",
+    "worker_type",
+    required=True,
+    help="Registered Worker type id. List choices with `panels worker-type list`.",
 )
 @click.option(
     "--employee-backend", default=None, help="Registered employee backend override."

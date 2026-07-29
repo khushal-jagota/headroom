@@ -171,6 +171,10 @@ effort. Every Stage also carries its default ownership mode; terminal Stages car
 The Ticket response supplies the current Stage's default and effective ownership, so
 clients do not reconstruct the rule.
 
+`panels worker-type list` exposes this same response at the command line. Its normal
+output lists the registered identifiers in registry order, while `--json` preserves the
+complete manifest for automation. The CLI does not maintain its own Worker-type list.
+
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `debugging`,
 `new_worker`, `exploration`, `initiative_planning`, `product_design`, `planning-day`,
@@ -390,4 +394,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-26._
+_Last verified: 2026-07-29._
