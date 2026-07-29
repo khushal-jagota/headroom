@@ -46,8 +46,8 @@
   });
 </script>
 
-{#if line}
-  <div class="c2-rest" class:is-waiting={line.waiting} data-conversation-rest-bar>
+<div class="c2-rest" class:is-waiting={line?.waiting ?? false} data-conversation-rest-bar>
+  {#if line}
     {#if line.waiting}
       <span class="c2-rest-mark" data-conversation-rest-waiting>
         <span class="c2-rest-dot" aria-hidden="true"></span>
@@ -63,8 +63,8 @@
     {#if line.aside}
       <span class="c2-rest-aside" data-conversation-rest-aside>{line.aside}</span>
     {/if}
-  </div>
-{/if}
+  {/if}
+</div>
 
 <style>
   /* The same mono line the turn head is, because at rest it is standing in for it. */
@@ -89,6 +89,8 @@
     color: var(--text-default);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
+    line-height: 1.5;
+    min-block-size: calc(1.5em + var(--space-3) + var(--space-3));
     letter-spacing: var(--tracking-mono);
   }
   .c2-rest-mark {
