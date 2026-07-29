@@ -94,6 +94,7 @@ def test_production_registry_carries_complete_planning_day_manifest() -> None:
         "planning-day",
         "planning-midday-check",
         "planning-sprint",
+        "personal",
     )
     assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-day") == PLANNING_DAY_MANIFEST
 

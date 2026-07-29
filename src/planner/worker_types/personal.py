@@ -10,7 +10,6 @@ from planner.worker_types.contracts import (
     WorkerTypeDefinition,
 )
 
-
 PERSONAL_TASK_WORKER_TYPE_DEFINITION = WorkerTypeDefinition(
     worker_type="personal",
     label="Personal Task",

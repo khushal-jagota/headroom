@@ -122,6 +122,7 @@ def test_production_registry_carries_complete_exploration_manifest() -> None:
         "planning-day",
         "planning-midday-check",
         "planning-sprint",
+        "personal",
     )
     assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("exploration") == EXPLORATION_MANIFEST
 

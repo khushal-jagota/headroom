@@ -17,9 +17,10 @@ def test_desktop_more_reaches_grouped_destinations_and_marks_secondary_route(
     page.wait_for_selector('[data-screen="workspace"]', timeout=WAIT_MS)
 
     direct = page.locator(".shell-links > .nav-link")
-    assert direct.count() == 2
+    assert direct.count() == 3
     assert direct.nth(0).inner_text().startswith("Review")
     assert direct.nth(1).inner_text() == "Workspace"
+    assert direct.nth(2).inner_text() == "Agents"
 
     more = page.locator('[data-screen="more"]')
     assert more.get_attribute("aria-controls") == "shell-more-panel"
@@ -36,7 +37,6 @@ def test_desktop_more_reaches_grouped_destinations_and_marks_secondary_route(
         "Sprint",
         "Backlog",
         "Ideas",
-        "Agents\nChief of Staff",
         "Config",
     ]
 
@@ -65,7 +65,6 @@ def test_every_more_destination_has_its_canonical_screen(
         ("#/sprint", '[data-screen="sprint"]'),
         ("#/backlog", '[data-screen="backlog"]'),
         ("#/ideas", '[data-screen="ideas"]'),
-        ("#/agents", '[data-screen="agents"] [data-agent-destination]'),
         ("#/config", '[data-screen="config"] [data-workers-list]'),
     ]
 
@@ -86,7 +85,7 @@ def test_agent_and_config_compatibility_routes_have_canonical_homes(
     page = context_factory().new_page()
 
     redirects = [
-        ("#/chief", "#/agents/chief-of-staff", '[data-screen="chief"]'),
+        ("#/chief", "#/agents/chief-of-staff", '[data-screen="agents"]'),
         ("#/workers", "#/config", '[data-screen="config"] [data-workers-list]'),
         (
             "#/workers/coding",
@@ -124,6 +123,7 @@ def test_mobile_tabs_and_short_agents_page_fit_the_dynamic_viewport(
     tabs = page.locator(".shell-links")
     assert tabs.locator('[data-screen="review"]').is_visible()
     assert tabs.locator('[data-screen="workspace"]').is_visible()
+    assert tabs.locator('[data-screen="agents-nav"]').is_visible()
     assert tabs.locator('[data-screen="more"]').is_visible()
     assert page.locator("[data-shell-screen-title]").inner_text() == "Agents"
     status = page.locator("[data-shell-status]")

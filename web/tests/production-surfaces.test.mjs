@@ -30,16 +30,16 @@ assert.doesNotMatch(
   /capabilities|relay_chief_enabled|resolveRelayChiefFromMeta|markRelayChiefMetaError/,
 );
 
-// --- the Chief is one conversation, on its dedicated Agents route ----------------------
+// --- the Chief is one conversation, on the Agents runtime route -------------------------
 
-const chiefOfStaffRouteSource = await readFile(
-  new URL("../src/routes/ChiefOfStaffRoute.svelte", import.meta.url),
+const agentsRouteSource = await readFile(
+  new URL("../src/routes/AgentsRoute.svelte", import.meta.url),
   "utf8",
 );
-assert.match(chiefOfStaffRouteSource, /<ChiefConversation \/>/);
+assert.match(agentsRouteSource, /<ChiefConversation \/>/);
 assert.doesNotMatch(boardRouteSource, /ChiefConversation|Chief of Staff/);
 assert.doesNotMatch(
-  chiefOfStaffRouteSource,
+  agentsRouteSource,
   /ChatPanel|ChiefNeutralPane|relayChief|retryRelayChiefMeta|chatGatewayStatus|\/api\/chat|\/api\/relay/,
 );
 

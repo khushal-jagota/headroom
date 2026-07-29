@@ -10,12 +10,12 @@ from planner.worker_types.debugging import DEBUGGING_WORKER_TYPE_DEFINITION
 from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
 from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
+from planner.worker_types.personal import PERSONAL_TASK_WORKER_TYPE_DEFINITION
 from planner.worker_types.planning_day import PLANNING_DAY_WORKER_TYPE_DEFINITION
 from planner.worker_types.planning_midday_check import (
     PLANNING_MIDDAY_CHECK_WORKER_TYPE_DEFINITION,
 )
 from planner.worker_types.planning_sprint import PLANNING_SPRINT_WORKER_TYPE_DEFINITION
-from planner.worker_types.personal import PERSONAL_TASK_WORKER_TYPE_DEFINITION
 from planner.worker_types.product_design import PRODUCT_DESIGN_WORKER_TYPE_DEFINITION
 from planner.worker_types.registry import WorkerTypeRegistry
 
