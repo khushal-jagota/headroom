@@ -153,9 +153,13 @@ def test_planning_sprint_is_announced_at_agent_front_doors() -> None:
     chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
         encoding="utf-8"
     )
+    creation = (
+        root / "src/planner/skills/panels-ticket-creation/SKILL.md"
+    ).read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
     assert "`planning-sprint` (reviewing one sprint" in panels
-    assert "Use a **`planning-sprint` ticket**" in chief
+    assert "panels-ticket-creation" in chief
+    assert "`planning-day`, `planning-midday-check`, and `planning-sprint`" in creation
     assert "`panels-worker-planning-sprint` — planning-sprint tickets" in worker
     assert "panels ticket create --worker-type <planning-worker-type>" in chief
     assert "panels-sprint-planning" not in PLANNER_SKILL_NAMES

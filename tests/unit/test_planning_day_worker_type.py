@@ -149,10 +149,14 @@ def test_planning_day_is_announced_at_both_agent_front_doors() -> None:
     chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
         encoding="utf-8"
     )
+    creation = (
+        root / "src/planner/skills/panels-ticket-creation/SKILL.md"
+    ).read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
 
     assert "`panels-worker-planning-day` — planning-day tickets" in worker
-    assert "Use a **`planning-day` ticket**" in chief
+    assert "panels-ticket-creation" in chief
+    assert "`planning-day`, `planning-midday-check`, and `planning-sprint`" in creation
 
 
 def test_planning_day_skill_preserves_the_approved_planning_judgments() -> None:

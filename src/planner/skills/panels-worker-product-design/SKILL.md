@@ -43,5 +43,7 @@ correct it. Render Markdown on a recessed—not flat or raised—surface.
 ### needs_closeout
 
 Write a concise implementation bar for the approved artifact and create the downstream
-`coding` Ticket with the artifact link, bar, and applicable product context. Verify the
-handoff. It is final: coding owns implementation and all later feedback.
+`coding` Ticket with the artifact link, bar, and applicable product context. Load and
+follow `panels-ticket-creation` for the shared creation model; the approved design fixes
+the handoff's scope and this stage fixes its Worker type as `coding`. Verify the handoff.
+It is final: coding owns implementation and all later feedback.

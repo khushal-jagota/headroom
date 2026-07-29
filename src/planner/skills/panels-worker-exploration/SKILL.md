@@ -84,6 +84,10 @@ A good **follow-up** is the smallest complete, answer-supported package of conse
 
 Perform exactly the approved follow-up and nothing broader. Verify created IDs, destinations, placements, and links; preserve the exploration's durable artifacts and provenance where they belong. Report what was actually applied and how it was checked.
 
+When the approved follow-up creates a Ticket, load and follow
+`panels-ticket-creation`. The approved answer and follow-up remain the authority for
+what may be created, its provenance, and its destination.
+
 Closeout is application and bookkeeping, not a hidden implementation stage. Do not perform substantive downstream work inside this ticket; create or route that work through the approved destination instead.
 
 ### Exploration disciplines

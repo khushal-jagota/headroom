@@ -160,10 +160,14 @@ def test_product_design_is_announced_at_both_agent_front_doors() -> None:
     chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
         encoding="utf-8"
     )
+    creation = (
+        root / "src/planner/skills/panels-ticket-creation/SKILL.md"
+    ).read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
 
     assert "`panels-worker-product-design` — product_design tickets" in worker
-    assert "Use a **`product_design` ticket**" in chief
+    assert "panels-ticket-creation" in chief
+    assert "`product_design` works out a holistic" in creation
 
 
 def test_product_design_skill_preserves_the_approved_handoff_boundary() -> None:
