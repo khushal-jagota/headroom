@@ -91,6 +91,9 @@ def test_agents_routes_follow_workspace_responsively_and_keep_navigation_active(
     page.go_forward()
     page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
     assert composer.input_value() == "keep this unsent thought"
+    page.evaluate("window.location.hash = '#/chief'")
+    page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
+    assert composer.input_value() == "keep this unsent thought"
 
     page.reload()
     page.wait_for_selector("[data-agents-layout]", timeout=WAIT_MS)
@@ -227,58 +230,69 @@ def test_chief_canonical_id_send_and_reset_survive_desktop_navigation(
     context_factory: Callable[[], BrowserContext],
 ) -> None:
     page = context_factory().new_page()
-    lookup_count = 0
     sent_bodies: list[dict[str, object]] = []
-    reset_count = 0
-    canonical_reads: list[str] = []
+    canonical_state: dict[str, str | None] = {"conversation_id": None}
+    opened_ids: list[str] = []
+    reset_states: list[str | None] = []
 
     def canonical_api(route: Route) -> None:
-        nonlocal lookup_count, reset_count
         url = route.request.url
         if url.endswith("/api/chief/conversation"):
-            lookup_count += 1
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                body=(
-                    '{"conversation_id":"canonical-chief"}'
-                    if sent_bodies
-                    else '{"conversation_id":null}'
-                ),
+                json=canonical_state,
             )
             return
         if url.endswith("/api/chief/conversation/send"):
-            sent_bodies.append(route.request.post_data_json)
+            body = route.request.post_data_json
+            sent_bodies.append(body)
+            next_id = f"canonical-chief-{len(sent_bodies)}"
+            canonical_state["conversation_id"] = next_id
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                body='{"conversation_id":"canonical-chief","fate":"started"}',
+                json={"conversation_id": next_id, "fate": "started"},
             )
             return
         if url.endswith("/api/chief/conversation/reset"):
-            reset_count += 1
+            canonical_state["conversation_id"] = None
+            reset_states.append(canonical_state["conversation_id"])
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                body='{"conversation_id":null}',
+                json=canonical_state,
             )
             return
         route.continue_()
 
     def canonical_conversation(route: Route) -> None:
-        canonical_reads.append(route.request.url)
-        if "/events?" in route.request.url:
+        url = route.request.url
+        conversation_id = next(
+            identifier
+            for identifier in ("canonical-chief-1", "canonical-chief-2")
+            if f"/conversations/{identifier}" in url
+        )
+        if "/events?" in url:
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                body='{"events":[]}',
+                json={"events": []},
             )
             return
+        if "/tail?" in url:
+            route.fulfill(
+                status=200,
+                content_type="text/event-stream",
+                body=": complete\n\n",
+            )
+            return
+        opened_ids.append(conversation_id)
         route.fulfill(
             status=200,
             content_type="application/json",
             body=(
-                '{"conversation_id":"canonical-chief","backend_key":"codex",'
+                f'{{"conversation_id":"{conversation_id}","backend_key":"codex",'
                 '"model":"gpt-5.6-sol","reasoning_effort":"medium",'
                 '"workspace_folder":"/workspace","access":"direct","role_text":null,'
                 '"identity_environment_variable_names":[],"latest_sequence":0,'
@@ -292,16 +306,17 @@ def test_chief_canonical_id_send_and_reset_survive_desktop_navigation(
     page.route("**/api/chief/conversation/send", canonical_api)
     page.route("**/api/chief/conversation/reset", canonical_api)
     page.route(
-        "**/api/conversation/conversations/canonical-chief*",
+        "**/api/conversation/conversations/canonical-chief-**",
         canonical_conversation,
     )
     page.set_viewport_size({"width": 1200, "height": 800})
     page.goto(server.base + "/#/agents")
     page.wait_for_selector("[data-conversation-input]", timeout=WAIT_MS)
     page.locator("[data-conversation-input]").fill("use the canonical thread")
-    with page.expect_request(
-        lambda request: "/api/conversation/conversations/canonical-chief"
-        in request.url,
+    with page.expect_response(
+        lambda response: response.url.endswith(
+            "/api/conversation/conversations/canonical-chief-1"
+        ),
         timeout=WAIT_MS,
     ):
         with page.expect_response(
@@ -318,8 +333,8 @@ def test_chief_canonical_id_send_and_reset_survive_desktop_navigation(
         "() => document.querySelector('[data-conversation-input]')?.placeholder"
         " === 'Message Chief of Staff...'"
     )
-    assert any("/conversations/canonical-chief" in url for url in canonical_reads), canonical_reads
-    lookups_after_send = lookup_count
+    assert canonical_state["conversation_id"] == "canonical-chief-1"
+    assert "canonical-chief-1" in opened_ids
 
     page.locator('[data-agent-id="chief-of-staff"]').click()
     page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
@@ -328,13 +343,34 @@ def test_chief_canonical_id_send_and_reset_survive_desktop_navigation(
     page.set_viewport_size({"width": 1200, "height": 800})
     page.go_back()
     page.wait_for_url("**/#/agents", timeout=WAIT_MS)
-    assert lookup_count == lookups_after_send
 
     page.locator('[aria-label="Conversation options"]').click()
     page.locator("[data-conversation-new-arm]").click()
-    with page.expect_request(
-        lambda request: request.url.endswith("/api/chief/conversation/reset"),
+    with page.expect_response(
+        lambda response: response.url.endswith("/api/chief/conversation/reset"),
         timeout=WAIT_MS,
     ):
         page.locator("[data-conversation-new-confirm]").click()
-    assert reset_count == 1
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-input]')?.placeholder"
+        " === 'Send the first message to start it...'"
+    )
+    assert reset_states == [None]
+    assert canonical_state["conversation_id"] is None
+
+    page.locator("[data-conversation-input]").fill("start a genuinely new thread")
+    with page.expect_response(
+        lambda response: response.url.endswith(
+            "/api/conversation/conversations/canonical-chief-2"
+        ),
+        timeout=WAIT_MS,
+    ):
+        with page.expect_response(
+            lambda response: response.url.endswith("/api/chief/conversation/send"),
+            timeout=WAIT_MS,
+        ):
+            page.locator("[data-conversation-send]").click()
+    assert len(sent_bodies) == 2
+    assert sent_bodies[1]["conversation_id"] is None
+    assert canonical_state["conversation_id"] == "canonical-chief-2"
+    assert "canonical-chief-2" in opened_ids

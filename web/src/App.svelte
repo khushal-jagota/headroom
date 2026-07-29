@@ -56,7 +56,7 @@
       return {
         name: "agents",
         params: { roleKind: "chief" },
-        key: "agents/chief-of-staff"
+        key: "agents"
       };
     }
     if (name === "ticket" && segments[1]) {
