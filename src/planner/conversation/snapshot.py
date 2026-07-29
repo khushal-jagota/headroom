@@ -37,6 +37,10 @@ from typing import Any, Final, Protocol
 
 import httpx
 
+from planner.conversation.backend_lifecycle import (
+    BackendLifecycleCoordinator,
+    BackendMaintenanceLease,
+)
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModelCatalog,
     ClaudeModelCatalogUnavailable,
@@ -76,6 +80,17 @@ VERSION_ARGUMENTS: Final = ("--version",)
 _VERSION_PATTERN: Final = re.compile(r"(?<![\d.])v?(\d+\.\d+\.\d+)(?![\d.])")
 
 _NPM_REGISTRY_URL: Final = "https://registry.npmjs.org"
+_HERMES_UPDATE_AVAILABLE_MARKER: Final = "update available"
+_HERMES_CURRENT_MARKER: Final = "already up to date"
+_HERMES_UNSUPPORTED_MARKERS: Final = (
+    "this hermes installation is managed by",
+    "doesn't apply inside the docker container",
+    "not a git repository",
+    "update hermes through the nix source that installed it",
+    "unrecognized arguments: --check",
+    "invalid choice: 'update'",
+    "no such command",
+)
 
 
 class BackendInstallMethod(StrEnum):
@@ -280,6 +295,13 @@ class SubprocessBackendProbeEnvironment:
                 standard_output="",
                 standard_error=f"{argv[0]} did not answer within {timeout_seconds:g}s",
             )
+        except asyncio.CancelledError:
+            # An HTTP caller going away must not leave an installer working after its
+            # maintenance lease is released. End the whole group before cancellation
+            # leaves this boundary, just as a timeout does.
+            _end_the_whole_process_group(process)
+            await process.wait()
+            raise
         return CommandOutcome(
             exit_code=process.returncode if process.returncode is not None else -1,
             standard_output=standard_output.decode("utf-8", errors="replace"),
@@ -429,6 +451,7 @@ class _BackendProbeRecipe:
     homebrew_formula: str | None
     native_path_marker: str | None
     native_update_command: tuple[str, ...] | None
+    native_update_check_arguments: tuple[str, ...] | None
     manual_only_detail: str
     read_catalog: Callable[[_CatalogRequest], Awaitable[_CatalogAnswer]]
 
@@ -658,6 +681,7 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         homebrew_formula="claude-code",
         native_path_marker=None,
         native_update_command=None,
+        native_update_check_arguments=None,
         manual_only_detail=(
             "Panels cannot tell how `claude` was installed, so it offers no update here."
         ),
@@ -673,6 +697,7 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         homebrew_formula="codex",
         native_path_marker=_CODEX_NATIVE_PATH_MARKER,
         native_update_command=("codex", "update"),
+        native_update_check_arguments=None,
         manual_only_detail=(
             "Panels cannot tell how `codex` was installed, so it offers no update here."
         ),
@@ -687,10 +712,11 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         registry_package_name=None,
         homebrew_formula=None,
         native_path_marker=None,
-        native_update_command=None,
+        native_update_command=("hermes", "update", "--yes"),
+        native_update_check_arguments=("update", "--check"),
         manual_only_detail=(
-            "Hermes is installed from its own checkout, so Panels offers no update here — "
-            "update it where it is installed."
+            "Panels cannot confirm this Hermes installation is managed by Hermes' native "
+            "updater, so it offers no update here."
         ),
         read_catalog=_hermes_catalog,
     ),
@@ -804,11 +830,28 @@ async def _update_advisory(
     )
     update_command = _update_command(recipe, install_method)
     latest_version: str | None = None
+    hermes_detail: str | None = None
+    hermes_update_available = False
+    if recipe.native_update_check_arguments is not None:
+        check = await environment.run(
+            (executable_path, *recipe.native_update_check_arguments),
+            timeout_seconds=VERSION_PROBE_TIMEOUT_SECONDS,
+        )
+        supported, hermes_update_available, hermes_detail = _read_hermes_update_check(check)
+        install_method = (
+            BackendInstallMethod.native if supported else BackendInstallMethod.manual_only
+        )
+        native_update_command = recipe.native_update_command
+        update_command = (
+            (executable_path, *native_update_command[1:])
+            if supported and native_update_command is not None
+            else None
+        )
     if recipe.registry_package_name is not None and install_method in _REGISTRY_INSTALL_METHODS:
         latest_version = await environment.latest_released_version(
             recipe.registry_package_name, timeout_seconds=REGISTRY_LOOKUP_TIMEOUT_SECONDS
         )
-    update_available = (
+    update_available = hermes_update_available or (
         latest_version is not None
         and version is not None
         and _version_is_newer(latest_version, version)
@@ -818,9 +861,32 @@ async def _update_advisory(
         update_command=update_command,
         latest_version=latest_version,
         update_available=update_available,
-        detail=_advisory_detail(
+        detail=hermes_detail
+        or _advisory_detail(
             recipe, install_method, update_command, latest_version, update_available
         ),
+    )
+
+
+def _read_hermes_update_check(
+    outcome: CommandOutcome,
+) -> tuple[bool, bool, str]:
+    """Translate Hermes' human-readable native check without trusting exit code alone."""
+    output = "\n".join(
+        part for part in (outcome.standard_output, outcome.standard_error) if part
+    ).strip()
+    normalized = output.lower()
+    if any(marker in normalized for marker in _HERMES_UNSUPPORTED_MARKERS):
+        return False, False, output or "This Hermes installation cannot update itself."
+    if outcome.succeeded and _HERMES_UPDATE_AVAILABLE_MARKER in normalized:
+        return True, True, "A Hermes update is available."
+    if outcome.succeeded and _HERMES_CURRENT_MARKER in normalized:
+        return True, False, "This Hermes installation is current."
+    detail = output.splitlines()[-1] if output else "The update check returned no answer."
+    return (
+        True,
+        False,
+        f"Panels could not determine whether Hermes has an update: {detail}",
     )
 
 
@@ -886,10 +952,12 @@ class BackendSnapshotService:
         *,
         codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
         claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
+        backend_lifecycle: BackendLifecycleCoordinator | None = None,
     ) -> None:
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._codex_model_catalog_probe = codex_model_catalog_probe
         self._claude_model_catalog_probe = claude_model_catalog_probe
+        self._backend_lifecycle = backend_lifecycle
         self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
         self._lock = asyncio.Lock()
         # One lock per backend, held for a whole update rather than for a probe. Reading a
@@ -952,31 +1020,53 @@ class BackendSnapshotService:
                 ),
                 output_tail="",
             )
-        outcome = await self._environment.run(
-            advisory.update_command, timeout_seconds=UPDATE_COMMAND_TIMEOUT_SECONDS
-        )
-        output_tail = outcome.output_tail(UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS)
-        if not outcome.succeeded:
+        maintenance_lease: BackendMaintenanceLease | None = None
+        backend_lifecycle = self._backend_lifecycle
+        if (
+            backend_key is ConversationBackendKey.hermes
+            and backend_lifecycle is not None
+        ):
+            maintenance_lease = await backend_lifecycle.try_begin_maintenance(backend_key)
+            if maintenance_lease is None:
+                return BackendUpdateResult(
+                    outcome=BackendUpdateOutcome.failed,
+                    detail=(
+                        "Hermes cannot be updated while a Panels-owned Hermes process "
+                        "is starting or running. Stop it and try again."
+                    ),
+                    output_tail="",
+                )
+        try:
+            outcome = await self._environment.run(
+                advisory.update_command, timeout_seconds=UPDATE_COMMAND_TIMEOUT_SECONDS
+            )
+            output_tail = outcome.output_tail(UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS)
+            # Refresh even after a failed command. An updater may have changed part of an
+            # installation before failing, and the card must describe what remains.
+            after = await self.snapshot(backend_key, refresh=True)
+            if not outcome.succeeded:
+                return BackendUpdateResult(
+                    outcome=BackendUpdateOutcome.failed,
+                    detail=f"The update command exited with code {outcome.exit_code}.",
+                    output_tail=output_tail,
+                )
+            if after.version is not None and after.version != before.version:
+                return BackendUpdateResult(
+                    outcome=BackendUpdateOutcome.succeeded,
+                    detail=f"Updated to {after.version}.",
+                    output_tail=output_tail,
+                )
             return BackendUpdateResult(
-                outcome=BackendUpdateOutcome.failed,
-                detail=f"The update command exited with code {outcome.exit_code}.",
+                outcome=BackendUpdateOutcome.unchanged,
+                detail=(
+                    "The update command finished, but the installed version is still "
+                    f"{before.version if before.version is not None else 'unknown'}."
+                ),
                 output_tail=output_tail,
             )
-        after = await self.snapshot(backend_key, refresh=True)
-        if after.version is not None and after.version != before.version:
-            return BackendUpdateResult(
-                outcome=BackendUpdateOutcome.succeeded,
-                detail=f"Updated to {after.version}.",
-                output_tail=output_tail,
-            )
-        return BackendUpdateResult(
-            outcome=BackendUpdateOutcome.unchanged,
-            detail=(
-                "The update command finished, but the installed version is still "
-                f"{before.version if before.version is not None else 'unknown'}."
-            ),
-            output_tail=output_tail,
-        )
+        finally:
+            if maintenance_lease is not None and backend_lifecycle is not None:
+                await backend_lifecycle.end_maintenance(maintenance_lease)
 
 
 def _version_at_least(version: str, minimum: tuple[int, ...]) -> bool:
