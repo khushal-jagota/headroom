@@ -1883,7 +1883,8 @@ def test_a_child_that_sat_idle_is_stopped_and_the_next_message_resumes_it(
     harness: _Harness,
 ) -> None:
     async def exercise() -> None:
-        await _start(harness, "c")
+        qualified_model = "openai-codex:gpt-5.6-sol"
+        await _start(harness, "c", model=qualified_model)
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
         await harness.complete_turn("c")
         backend = harness.backend("c")
@@ -1898,6 +1899,7 @@ def test_a_child_that_sat_idle_is_stopped_and_the_next_message_resumes_it(
 
         assert backend.session_starts == 2
         assert backend.started_from_cursor == VENDOR_SESSION_CURSOR
+        assert backend.model == qualified_model
         assert backend.written_texts() == ("first", "after the gap")
         # Silent: the record says nothing about the child having gone away.
         assert await harness.recorded_kinds("c") == (
@@ -1979,7 +1981,8 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
     """No re-attach on boot: the record is all there and the session is picked up lazily."""
 
     async def exercise() -> None:
-        await _start(harness, "c")
+        qualified_model = "openai-codex:gpt-5.6-sol"
+        await _start(harness, "c", model=qualified_model)
         await harness.system.send(
             "c",
             text_message_content("before the restart"),
@@ -2002,10 +2005,45 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
 
             assert fate == PromptDeliveryStarted()
             assert restarted.backend("c").started_from_cursor == VENDOR_SESSION_CURSOR
+            assert restarted.backend("c").model == qualified_model
             assert await restarted.system.is_running("c") is True
             assert [
                 str(event.kind) for event in await restarted.events("c")
             ] == ["prompt", "prompt"]
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_stored_legacy_bare_hermes_model_is_passed_through_on_restart(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    """Catalog qualification changes new choices, not existing conversation records."""
+
+    async def exercise() -> None:
+        legacy_model = "legacy-hermes-model"
+        await _start(harness, "legacy", model=legacy_model)
+        await harness.system.send(
+            "legacy",
+            text_message_content("before the restart"),
+            sender_label="owner",
+        )
+        await harness.settle()
+        await harness.system.shutdown()
+
+        restarted = _Harness(tmp_path / "conversations.db")
+        restarted.backends = harness.backends
+        try:
+            fate = await restarted.system.send(
+                "legacy",
+                text_message_content("after the restart"),
+                sender_label="owner",
+            )
+
+            assert fate == PromptDeliveryStarted()
+            assert restarted.backend("legacy").started_from_cursor == VENDOR_SESSION_CURSOR
+            assert restarted.backend("legacy").model == legacy_model
         finally:
             await restarted.system.shutdown()
 

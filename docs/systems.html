@@ -881,6 +881,16 @@
                 reasoning efforts each model takes &mdash; is one answer, probed when
                 asked and kept until asked again.
               </p>
+              <p>
+                Hermes&rsquo; answer comes from a packaged door run by its configured
+                Python environment, not from whichever <code>hermes</code> happens to be
+                on <code>PATH</code>. It returns only configured provider inventory, with
+                opaque <code>provider:model</code> identities and a configured default.
+                Panels keeps that answer in process; ordinary reads use Hermes&rsquo;
+                cache, and only an explicit backend refresh asks Hermes to refresh its
+                inventory. There is no polling, per-Ticket catalog, Hermes reasoning
+                control, or Hermes update action.
+              </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/conversation/contracts.py</code>,
                 <code>src/planner/conversation/system.py</code>,

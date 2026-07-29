@@ -276,6 +276,17 @@ afterwards, and reported as succeeded, unchanged, or failed. All of it is
 advisory; nothing blocks on it. Logging in stays in the terminal, and the card
 names the command.
 
+Hermes is found from its configured Python environment, the same installation a
+conversation launches, even when its executable is not on `PATH`. A packaged
+Hermes-only inventory door asks `hermes_cli.inventory` for configured providers
+and returns opaque `provider:model` choices, their provider details, and the
+configured default. Normal first demand uses Hermes' cached inventory and probes
+only the active custom endpoint; an explicit backend refresh forwards Hermes'
+refresh and may probe every configured custom endpoint. The answer is kept in the
+Panels process until that explicit refresh. It is not polled or copied onto
+Tickets. Hermes still offers no Panels reasoning control and Panels does not
+update Hermes.
+
 ## The commands an agent takes
 
 Each agent has its own commands — the things you type at it starting with a

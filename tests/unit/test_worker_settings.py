@@ -166,9 +166,9 @@ def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
         changed = client.put(
             "/api/workers/coding/launch-defaults",
             json={
-                "employee_backend": "claude",
-                "employee_launch_model": "claude-sonnet",
-                "employee_launch_reasoning_effort": "high",
+                "employee_backend": "hermes",
+                "employee_launch_model": "openai-codex:gpt-5.6-sol",
+                "employee_launch_reasoning_effort": None,
             },
         )
         assert changed.status_code == 200
@@ -196,7 +196,7 @@ def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
             after.employee_backend,
             after.employee_launch_model,
             after.employee_launch_reasoning_effort,
-        ) == ("claude", "claude-sonnet", "high")
+        ) == ("hermes", "openai-codex:gpt-5.6-sol", None)
     finally:
         conn.close()
 
