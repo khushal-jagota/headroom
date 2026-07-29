@@ -6,7 +6,7 @@ the same rows the browser saw as they happened.
 
 Two kinds of thing travel through the conversation system and only one of them is a row:
 
-- **Event kinds** — the eleven below. Each has a payload type and a canonical JSON form, and
+- **Event kinds** — the kinds below. Each has a payload type and a canonical JSON form, and
   each is written to ``conversation_events`` when the thing it names has finished
   happening: the prompt reached the backend, the agent's message is complete, the tool
   call started, the tool call finished, the turn ended, the message that was waiting was
@@ -54,6 +54,9 @@ class ConversationEventKind(StrEnum):
     tool_call_finished = "tool_call_finished"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
+    user_input_requested = "user_input_requested"
+    user_input_answered = "user_input_answered"
+    user_input_failed = "user_input_failed"
     plan_updated = "plan_updated"
     model_changed = "model_changed"
     token_usage = "token_usage"
@@ -106,6 +109,34 @@ class PermissionAskOption:
     option_id: str
     label: str
     option_kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class UserInputOption:
+    """One choice the agent offered for a question."""
+
+    label: str
+    description: str
+
+
+@dataclass(frozen=True, slots=True)
+class UserInputQuestion:
+    """One question in an agent's ordered request for input."""
+
+    question_id: str
+    header: str
+    question: str
+    options: tuple[UserInputOption, ...]
+    multi_select: bool
+    allow_other: bool
+
+
+@dataclass(frozen=True, slots=True)
+class UserInputAnswer:
+    """Every selected or typed answer for one question."""
+
+    question_id: str
+    answers: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +272,36 @@ class PermissionAnsweredEventPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class UserInputRequestedEventPayload:
+    """An ordered group of questions the agent is waiting for the owner to answer."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.user_input_requested
+
+    request_id: str
+    questions: tuple[UserInputQuestion, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UserInputAnsweredEventPayload:
+    """A complete answer map that reached the backend."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.user_input_answered
+
+    request_id: str
+    answers: tuple[UserInputAnswer, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class UserInputFailedEventPayload:
+    """A backend question request Panels could not safely present."""
+
+    kind: ClassVar[ConversationEventKind] = ConversationEventKind.user_input_failed
+
+    request_id: str
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
 class PlanUpdatedEventPayload:
     """The agent's plan as it stands, whole, every time it changes.
 
@@ -333,6 +394,9 @@ type ConversationEventPayload = (
     | ToolCallFinishedEventPayload
     | PermissionAskedEventPayload
     | PermissionAnsweredEventPayload
+    | UserInputRequestedEventPayload
+    | UserInputAnsweredEventPayload
+    | UserInputFailedEventPayload
     | PlanUpdatedEventPayload
     | ModelChangedEventPayload
     | TokenUsageEventPayload
@@ -463,6 +527,37 @@ def _payload_json_object(payload: ConversationEventPayload) -> dict[str, Any]:
             }
         case PermissionAnsweredEventPayload():
             return {"ask_id": payload.ask_id, "option_id": payload.option_id}
+        case UserInputRequestedEventPayload():
+            return {
+                "request_id": payload.request_id,
+                "questions": [
+                    {
+                        "question_id": question.question_id,
+                        "header": question.header,
+                        "question": question.question,
+                        "options": [
+                            {
+                                "label": option.label,
+                                "description": option.description,
+                            }
+                            for option in question.options
+                        ],
+                        "multi_select": question.multi_select,
+                        "allow_other": question.allow_other,
+                    }
+                    for question in payload.questions
+                ],
+            }
+        case UserInputAnsweredEventPayload():
+            return {
+                "request_id": payload.request_id,
+                "answers": {
+                    answer.question_id: {"answers": list(answer.answers)}
+                    for answer in payload.answers
+                },
+            }
+        case UserInputFailedEventPayload():
+            return {"request_id": payload.request_id, "detail": payload.detail}
         case PlanUpdatedEventPayload():
             return {
                 "entries": [
@@ -548,6 +643,47 @@ def _payload_from_json_object(
             return PermissionAnsweredEventPayload(
                 ask_id=_text(stored, "ask_id"), option_id=_text(stored, "option_id")
             )
+        case ConversationEventKind.user_input_requested:
+            return UserInputRequestedEventPayload(
+                request_id=_text(stored, "request_id"),
+                questions=tuple(
+                    UserInputQuestion(
+                        question_id=_text(question, "question_id"),
+                        header=_text(question, "header"),
+                        question=_text(question, "question"),
+                        options=tuple(
+                            UserInputOption(
+                                label=_text(option, "label"),
+                                description=_text(option, "description"),
+                            )
+                            for option in question["options"]
+                        ),
+                        multi_select=_boolean(question, "multi_select"),
+                        allow_other=_boolean(question, "allow_other"),
+                    )
+                    for question in stored["questions"]
+                ),
+            )
+        case ConversationEventKind.user_input_answered:
+            answers = stored["answers"]
+            if not isinstance(answers, dict):
+                raise ValueError("answers must be an object")
+            return UserInputAnsweredEventPayload(
+                request_id=_text(stored, "request_id"),
+                answers=tuple(
+                    UserInputAnswer(
+                        question_id=question_id,
+                        answers=tuple(_text_list(answer, "answers")),
+                    )
+                    for question_id, answer in answers.items()
+                    if isinstance(question_id, str) and isinstance(answer, dict)
+                ),
+            )
+        case ConversationEventKind.user_input_failed:
+            return UserInputFailedEventPayload(
+                request_id=_text(stored, "request_id"),
+                detail=_text(stored, "detail"),
+            )
         case ConversationEventKind.plan_updated:
             return PlanUpdatedEventPayload(
                 entries=tuple(
@@ -603,6 +739,20 @@ def _optional_text(stored: dict[str, Any], field_name: str) -> str | None:
         return None
     if not isinstance(value, str):
         raise ValueError(f"{field_name} must be text or absent")
+    return value
+
+
+def _boolean(stored: dict[str, Any], field_name: str) -> bool:
+    value = stored[field_name]
+    if not isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a boolean")
+    return value
+
+
+def _text_list(stored: dict[str, Any], field_name: str) -> list[str]:
+    value = stored[field_name]
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{field_name} must be a list of text")
     return value
 
 

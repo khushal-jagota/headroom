@@ -17,12 +17,15 @@ import type {
   PermissionAskOption,
   PlanEntry,
   PromptDeliveryMode,
-  PromptDeliveryRefusalReason
+  PromptDeliveryRefusalReason,
+  UserInputAnswers,
+  UserInputQuestion
 } from "./wire";
 import { messageContentOf } from "./wire";
 import type { ConversationFeed } from "./feed";
 
 export type PermissionAskState = "live" | "answered" | "dead";
+export type UserInputState = "live" | "answered" | "failed" | "dead";
 
 /** Why a dead ask is dead. Both are the same death — its turn is gone — but they are not
  *  the same story, and a reader who was told the wrong one would go looking for a turn
@@ -97,6 +100,18 @@ export type TranscriptRow =
       state: PermissionAskState;
       deadReason: PermissionAskDeadReason | null;
       answeredOptionLabel: string | null;
+    }
+  | {
+      key: string;
+      kind: "user_input";
+      sequence: number;
+      createdAt: number;
+      requestId: string;
+      questions: readonly UserInputQuestion[];
+      state: UserInputState;
+      deadReason: PermissionAskDeadReason | null;
+      answers: UserInputAnswers | null;
+      failureDetail: string | null;
     }
   | {
       key: string;
@@ -208,6 +223,20 @@ function killOpenAsks(
   askRowIndex.clear();
 }
 
+function killOpenUserInputs(
+  rows: TranscriptRow[],
+  rowIndex: Map<string, number>,
+  reason: PermissionAskDeadReason
+): void {
+  for (const at of rowIndex.values()) {
+    const requested = rows[at];
+    if (requested?.kind === "user_input" && requested.state === "live") {
+      rows[at] = { ...requested, state: "dead", deadReason: reason };
+    }
+  }
+  rowIndex.clear();
+}
+
 export function transcriptRows(
   feed: ConversationFeed,
   reading: TranscriptReading = {}
@@ -215,6 +244,7 @@ export function transcriptRows(
   const rows: TranscriptRow[] = [];
   const toolCallRowIndex = new Map<string, number>();
   const askRowIndex = new Map<string, number>();
+  const userInputRowIndex = new Map<string, number>();
   // Half-finished output belongs to a turn that is running. When the turn is gone,
   // whatever was left in flight is not arriving, and it is not drawn.
   const turnIsGone = reading.turnStoppedWithoutAnEnding === true;
@@ -341,6 +371,63 @@ export function transcriptRows(
         }
         break;
       }
+      case "user_input_requested":
+        userInputRowIndex.set(event.payload.request_id, rows.length);
+        rows.push({
+          key: `e${sequence}`,
+          kind: "user_input",
+          sequence,
+          createdAt,
+          requestId: event.payload.request_id,
+          questions: event.payload.questions,
+          state: "live",
+          deadReason: null,
+          answers: null,
+          failureDetail: null
+        });
+        break;
+      case "user_input_answered": {
+        const at = userInputRowIndex.get(event.payload.request_id);
+        const requested = at === undefined ? undefined : rows[at];
+        if (at !== undefined && requested?.kind === "user_input") {
+          rows[at] = {
+            ...requested,
+            state: "answered",
+            answers: event.payload.answers
+          };
+          userInputRowIndex.delete(event.payload.request_id);
+        }
+        break;
+      }
+      case "user_input_failed": {
+        const at = userInputRowIndex.get(event.payload.request_id);
+        const requested = at === undefined ? undefined : rows[at];
+        if (at !== undefined && requested?.kind === "user_input") {
+          rows[at] = {
+            ...requested,
+            state: "failed",
+            failureDetail: event.payload.detail
+          };
+          userInputRowIndex.delete(event.payload.request_id);
+        } else {
+          // A malformed backend payload cannot safely become a request, so its failure
+          // may be the only row there is. It must still be visible rather than vanishing
+          // merely because there was deliberately no interactive request before it.
+          rows.push({
+            key: `e${sequence}`,
+            kind: "user_input",
+            sequence,
+            createdAt,
+            requestId: event.payload.request_id,
+            questions: [],
+            state: "failed",
+            deadReason: null,
+            answers: null,
+            failureDetail: event.payload.detail
+          });
+        }
+        break;
+      }
       case "plan_updated":
         rows.push({
           key: `e${sequence}`,
@@ -383,6 +470,7 @@ export function transcriptRows(
       case "turn_ended":
         // Every ask still open belonged to the turn that just ended, so it ended too.
         killOpenAsks(rows, askRowIndex, "turn_ended");
+        killOpenUserInputs(rows, userInputRowIndex, "turn_ended");
         rows.push({
           key: `e${sequence}`,
           kind: "turn_ended",
@@ -399,6 +487,7 @@ export function transcriptRows(
     // The turn is gone and its ending was never written, so the asks that were waiting
     // on it are as dead as any other — they just have a different story.
     killOpenAsks(rows, askRowIndex, "no_ending_recorded");
+    killOpenUserInputs(rows, userInputRowIndex, "no_ending_recorded");
     rows.push({
       key: "turn-stopped",
       kind: "turn_stopped",
@@ -650,6 +739,18 @@ export function liveAskFrom(rows: readonly TranscriptRow[]): Extract<
   for (let at = rows.length - 1; at >= 0; at -= 1) {
     const row = rows[at];
     if (row?.kind === "permission_ask" && row.state === "live") return row;
+  }
+  return null;
+}
+
+/** The structured question request currently waiting, reconstructed from durable rows. */
+export function liveUserInputFrom(rows: readonly TranscriptRow[]): Extract<
+  TranscriptRow,
+  { kind: "user_input" }
+> | null {
+  for (let at = rows.length - 1; at >= 0; at -= 1) {
+    const row = rows[at];
+    if (row?.kind === "user_input" && row.state === "live") return row;
   }
   return null;
 }

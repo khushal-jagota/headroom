@@ -22,7 +22,9 @@
     ConversationBackendKey,
     PermissionAskOption,
     PromptDeliveryMode,
-    SentMessagePiece
+    SentMessagePiece,
+    UserInputAnswers,
+    UserInputQuestion
   } from "../../lib/conversation/wire";
 
   let {
@@ -35,6 +37,7 @@
     outgoingMessages = [],
     running = false,
     ask = null,
+    userInput = null,
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
@@ -56,6 +59,7 @@
     onSend,
     onStop,
     onAnswer,
+    onSubmitUserInput,
     onCancelTurn,
     onDiscardHeldPrompt,
     onNewConversation
@@ -78,6 +82,10 @@
       title: string;
       detail: string | null;
       options: readonly PermissionAskOption[];
+    } | null;
+    userInput?: {
+      requestId: string;
+      questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
     current?: RunValues;
@@ -113,6 +121,7 @@
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
+    onSubmitUserInput?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
     onDiscardHeldPrompt?: (messageId: string) => void;
@@ -126,7 +135,7 @@
   let menuButton = $state<HTMLButtonElement | null>(null);
 
   let headerException = $derived.by(() => {
-    if (ask) return { text: "waiting for you", accent: true };
+    if (ask || userInput) return { text: "waiting for you", accent: true };
     if (running) return { text: "working", accent: false };
     return null;
   });
@@ -304,6 +313,8 @@
     {onSend}
     {onStop}
     {onAnswer}
+    {userInput}
+    {onSubmitUserInput}
     {onCancelTurn}
   />
 </div>

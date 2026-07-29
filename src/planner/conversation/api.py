@@ -45,6 +45,8 @@ from planner.conversation.events import (
     ModelThinkingFrame,
     PermissionAskedEventPayload,
     ToolCallProgressFrame,
+    UserInputAnswer,
+    UserInputRequestedEventPayload,
     conversation_event_payload_to_canonical_json,
 )
 from planner.conversation.image_validation import (
@@ -238,6 +240,15 @@ class PermissionAnswerBody(BaseModel):
     option_id: str
 
 
+class UserInputQuestionAnswerBody(BaseModel):
+    answers: list[str]
+
+
+class UserInputAnswerBody(BaseModel):
+    request_id: str
+    answers: dict[str, UserInputQuestionAnswerBody]
+
+
 # --- starting, reading, writing -----------------------------------------------------------
 
 
@@ -397,6 +408,22 @@ async def answer_permission_ask(
     return {"landed": landed}
 
 
+@router.post("/conversations/{conversation_id}/user-input-answers")
+async def answer_user_input(
+    conversation_id: str, body: UserInputAnswerBody, runtime: Runtime
+) -> dict[str, bool]:
+    """Give the backend the complete answer map for one question request."""
+    landed = await runtime.system.answer_user_input(
+        conversation_id,
+        body.request_id,
+        tuple(
+            UserInputAnswer(question_id=question_id, answers=tuple(answer.answers))
+            for question_id, answer in body.answers.items()
+        ),
+    )
+    return {"landed": landed}
+
+
 # --- the backends on this machine ---------------------------------------------------------
 
 
@@ -500,6 +527,7 @@ async def _conversation_view(
         "is_running": await runtime.system.is_running(conversation_id),
         "held_prompt_count": await runtime.system.held_prompt_count(conversation_id),
         "pending_permission_ask": await _pending_permission_ask(runtime, conversation_id),
+        "pending_user_input": await _pending_user_input(runtime, conversation_id),
     }
 
 
@@ -530,6 +558,43 @@ async def _pending_permission_ask(
                         "option_kind": option.option_kind,
                     }
                     for option in payload.options
+                ],
+            }
+    return None
+
+
+async def _pending_user_input(
+    runtime: ConversationRuntime, conversation_id: str
+) -> dict[str, Any] | None:
+    """The pending request, rebuilt from its durable row after a refresh."""
+    waiting = await runtime.system.pending_user_input_request_ids(conversation_id)
+    if not waiting:
+        return None
+    events = await runtime.store.read_events_after(conversation_id, 0)
+    for event in reversed(events):
+        payload = event.payload
+        if (
+            isinstance(payload, UserInputRequestedEventPayload)
+            and payload.request_id in waiting
+        ):
+            return {
+                "request_id": payload.request_id,
+                "questions": [
+                    {
+                        "question_id": question.question_id,
+                        "header": question.header,
+                        "question": question.question,
+                        "options": [
+                            {
+                                "label": option.label,
+                                "description": option.description,
+                            }
+                            for option in question.options
+                        ],
+                        "multi_select": question.multi_select,
+                        "allow_other": question.allow_other,
+                    }
+                    for question in payload.questions
                 ],
             }
     return None

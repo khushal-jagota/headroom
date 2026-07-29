@@ -27,6 +27,8 @@ from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationTurnEnding,
     TurnEndedEventPayload,
+    UserInputOption,
+    UserInputQuestion,
 )
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
@@ -464,16 +466,23 @@ def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
 ) -> None:
     running = _ticket(tmp_db, "Worker mid-turn", 1)
     asking = _ticket(tmp_db, "Worker asking permission", 2)
+    questioning = _ticket(tmp_db, "Worker asking questions", 5)
     answered = _ticket(tmp_db, "Ask already answered", 3)
     unlinked = _ticket(tmp_db, "No conversation at all", 4)
     _link_conversation(tmp_db, running, "conv-running")
     _link_conversation(tmp_db, asking, "conv-asking")
     _link_conversation(tmp_db, answered, "conv-answered")
+    _link_conversation(tmp_db, questioning, "conv-questioning")
 
     conversations = InMemoryConversationSystem()
 
     async def start_turns() -> None:
-        for conversation_id in ("conv-running", "conv-asking", "conv-answered"):
+        for conversation_id in (
+            "conv-running",
+            "conv-asking",
+            "conv-answered",
+            "conv-questioning",
+        ):
             await conversations.start_conversation(
                 ConversationStartRequest(
                     conversation_id=conversation_id, model="a-model"
@@ -489,6 +498,19 @@ def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
     conversations.raise_permission_ask("conv-asking")
     already_answered = conversations.raise_permission_ask("conv-answered")
     conversations.answer_permission_ask("conv-answered", already_answered, "allow")
+    conversations.raise_user_input(
+        "conv-questioning",
+        (
+            UserInputQuestion(
+                question_id="q1",
+                header="Choice",
+                question="Which?",
+                options=(UserInputOption(label="One", description="first"),),
+                multi_select=False,
+                allow_other=True,
+            ),
+        ),
+    )
 
     board = _enriched_board(tmp_db, conversations)
     cards = {
@@ -511,6 +533,9 @@ def test_board_route_reads_working_and_needs_me_from_the_conversation_system(
     # An answered ask is no longer pending; the turn it belongs to still runs.
     assert cards[answered]["agent_working"] is True
     assert cards[answered]["needs_me"] is False
+
+    assert cards[questioning]["agent_working"] is True
+    assert cards[questioning]["needs_me"] is True
 
     # No link means no conversation to ask about: both signals read false.
     assert cards[unlinked]["agent_working"] is False

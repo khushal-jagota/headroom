@@ -174,7 +174,7 @@ does worker orchestration: there is no second path and no stand-in.
 
 The rest of Panels can do exactly five things to a conversation: start it, send a message
 into it, interrupt its running turn, kill its activity outright, and ask whether it is
-running. Plus one more question — is a permission ask waiting. Nothing else crosses the
+running. It also says whether a permission decision or agent question answer is waiting.
 boundary. In particular there is no read of which backend or model a conversation is on,
 because those are values a caller passed in rather than questions the contract answers.
 
@@ -185,7 +185,7 @@ system and appears nowhere else.
 
 The notebook is an append-only run of numbered rows in the same database as everything
 else. A row is a finished thing: a delivered prompt, a completed agent message, a tool
-call starting or finishing, a permission ask and its answer, a model change, a turn
+call starting or finishing, a permission ask or agent question request and its answer, a model change, a turn
 ending. A message is a run of pieces rather than a piece of text — written words and
 pictures — and a picture's bytes are kept in a file beside the notebook, which the row
 names. The browser reads the rows after a position over ordinary HTTP and then keeps up
@@ -227,8 +227,10 @@ of truth; the browser does not keep a second canonical product store.
 Conversation state is separate from that REST cache: a pane reads the rows after the
 position it holds and keeps up over a live tail of the same rows. Chief, Ticket and
 Workspace mounts all use the same restrained pane: bubble-less worker prose, one user
-pill, compact thought/tool disclosures, one persistent status line, and permission as
-the only prominent blocking inset. The composer carries the text, the model and effort
+pill, compact thought/tool disclosures, one persistent status line, and distinct blocking
+insets for permission decisions and agent questions. The question inset walks through
+single-choice, multi-choice, and typed answers before submitting the whole request. The
+composer carries the text, the model and effort
 in force, and a message may be aimed at a skill. Starting a message with a slash opens
 the commands the agent itself said it takes: hermes and claude each report their own,
 codex has none to report, and the menu says so plainly rather than sitting empty.

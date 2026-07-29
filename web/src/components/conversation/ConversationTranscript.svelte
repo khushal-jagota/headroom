@@ -82,6 +82,13 @@
     if (row.state === "dead") return askDeadSentence(row.deadReason);
     return "waiting for you";
   }
+
+  function userInputStateLine(row: Extract<TranscriptRow, { kind: "user_input" }>): string {
+    if (row.state === "answered") return "answered";
+    if (row.state === "failed") return `failed · ${row.failureDetail ?? "the answer could not be delivered"}`;
+    if (row.state === "dead") return askDeadSentence(row.deadReason);
+    return "waiting for you";
+  }
 </script>
 
 <div class="c2-transcript" data-conversation-transcript>
@@ -157,6 +164,30 @@
         <div class="c2-label">permission · {askStateLine(item.row)}</div>
         <div class="c2-ask-title">{item.row.title}</div>
         {#if detail}<pre class="c2-ask-detail" data-conversation-ask-detail>{detail}</pre>{/if}
+      </div>
+    {:else if item.row.kind === "user_input"}
+      <div
+        class="c2-ask-row"
+        class:is-dead={item.row.state === "dead" || item.row.state === "failed"}
+        data-conversation-row="user_input"
+        data-conversation-user-input-state={item.row.state}
+      >
+        <div class="c2-label">question · {userInputStateLine(item.row)}</div>
+        {#if item.row.questions.length > 0}<div class="c2-ask-title">
+          {item.row.questions.length === 1
+            ? item.row.questions[0]?.question
+            : `${item.row.questions.length} questions`}
+        </div>{/if}
+        {#if item.row.state === "answered" && item.row.answers}
+          <div class="c2-ask-detail" data-conversation-user-input-answers>
+            {#each item.row.questions as question (question.question_id)}
+              <div>
+                <strong>{question.header || question.question}</strong>
+                <span> · {item.row.answers[question.question_id]?.answers.join(", ") ?? ""}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
     {:else if item.row.kind === "model_changed"}
       <div class="acp-compaction" role="separator" data-conversation-row="model_changed">

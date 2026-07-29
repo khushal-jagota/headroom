@@ -45,6 +45,7 @@ const expectedInventory = [
   "RunValuePicker.svelte",
   "ToolCallRow.svelte",
   "TurnAnchor.svelte",
+  "UserInputQuestionPanel.svelte",
   "WorkGroup.svelte"
 ];
 const inventory = (await readdir(componentDirectory))
@@ -1211,15 +1212,18 @@ try {
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
   import ConversationTranscript from "../src/components/conversation/ConversationTranscript.svelte";
   import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
+  import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
 
   const sends: unknown[] = [];
   const answers: string[] = [];
+  const userInputAnswers: unknown[] = [];
   let sendAccepted = true;
   let holdNextSend = false;
   let heldSend: ((accepted: boolean) => void) | null = null;
   let showComposer = $state(true);
   (window as any).__sends = () => sends;
   (window as any).__answers = () => answers;
+  (window as any).__userInputAnswers = () => userInputAnswers;
   (window as any).__setSendAccepted = (accepted: boolean) => {
     sendAccepted = accepted;
   };
@@ -1418,6 +1422,33 @@ try {
       { option_id: "q-b", label: "Leave it", option_kind: "choice" }
     ]
   };
+
+  const userInputRequest = {
+    requestId: "input-1",
+    questions: [
+      {
+        question_id: "scope",
+        header: "Scope",
+        question: "Which surfaces should change?",
+        options: [
+          { label: "Composer", description: "The live composer" },
+          { label: "Transcript", description: "Durable history" }
+        ],
+        multi_select: true,
+        allow_other: true
+      },
+      {
+        question_id: "proof",
+        header: "Proof",
+        question: "What proof should be required?",
+        options: [
+          { label: "Browser test", description: "Exercise the whole interaction" }
+        ],
+        multi_select: false,
+        allow_other: true
+      }
+    ]
+  };
 </script>
 
 {#if showComposer}
@@ -1447,6 +1478,12 @@ try {
 </div>
 
 <PermissionAskCard ask={question} onAnswer={(optionId) => answers.push(optionId)} />
+<div data-user-input-fixture>
+  <UserInputQuestionPanel
+    request={userInputRequest}
+    onSubmit={(given) => userInputAnswers.push(given)}
+  />
+</div>
 `,
     "utf8"
   );
@@ -2031,6 +2068,26 @@ with sync_playwright() as playwright:
     page.locator('[data-conversation-ask-choice="q-a"]').click()
     page.wait_for_function("window.__answers().length === 2")
     assert page.evaluate("window.__answers()[1]") == "q-a"
+
+    # Structured agent questions keep their own multi-step answer map and never acquire
+    # permission language or approval buttons.
+    questions = page.locator("[data-user-input-fixture]")
+    assert "1 of 2" in questions.inner_text()
+    assert "Approve" not in questions.inner_text()
+    questions.locator('[data-user-input-option="Composer"]').click()
+    questions.locator('[data-user-input-option="Transcript"]').click()
+    questions.locator("[data-user-input-continue]").click()
+    assert "2 of 2" in questions.inner_text()
+    questions.locator("[data-user-input-other]").fill("Recorded event replay")
+    questions.locator("[data-user-input-back]").click()
+    assert "1 of 2" in questions.inner_text()
+    questions.locator("[data-user-input-continue]").click()
+    questions.locator("[data-user-input-continue]").click()
+    page.wait_for_function("window.__userInputAnswers().length === 1")
+    assert page.evaluate("window.__userInputAnswers()[0]") == {
+        "scope": {"answers": ["Composer", "Transcript"]},
+        "proof": {"answers": ["Recorded event replay"]}
+    }
 
     # A number typed into a field is the number, not the answer.
     page.locator("[data-conversation-input]").fill("")

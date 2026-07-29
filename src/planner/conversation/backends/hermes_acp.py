@@ -100,6 +100,7 @@ from planner.conversation.backends.contracts import (
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
+    UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
     AgentCommand,
@@ -113,6 +114,7 @@ from planner.conversation.events import (
     PlanEntry,
     PlanEntryStatus,
     ToolCallStatus,
+    UserInputAnswer,
 )
 from planner.conversation.message_content import (
     MessageContent,
@@ -479,6 +481,13 @@ class HermesAcpBackendChild:
             raise PermissionAnswerWriteFailed(ask_id) from never_sent
         self._permission_answer_waiters.pop(parked.request_id, None)
         turn.parked_asks.pop(ask_id, None)
+
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        """Hermes ACP exposes permission requests, not an agent-question request."""
+        del answers
+        raise UserInputAnswerWriteFailed(request_id)
 
     def _require_a_live_wire_or_answer_failed(self, ask_id: str) -> None:
         try:

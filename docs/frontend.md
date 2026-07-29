@@ -41,9 +41,9 @@ One screen per part of the system:
 
   The mark carries three signals in one order of precedence, and each is one
   system's own fact rather than a blend of several. A **pure white dot** means the
-  worker is waiting on a permission only the user can grant — it wins outright,
-  because a turn waiting on an ask is still running and the ask is the part only the
-  user can clear. Below it, a **spinner** means the worker is running right now. With
+  worker is waiting on a permission decision or answers only the user can give — it wins
+  outright, because that turn is still running and only the user can clear the wait.
+  Below it, a **spinner** means the worker is running right now. With
   neither, the mark shows the **reply state**: a filled accent dot for a reply the
   user has not seen, the same dot greyed once the user has opened the ticket since
   that reply, and a faint ring when nothing is waiting.

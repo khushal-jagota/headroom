@@ -79,6 +79,55 @@ def test_an_answer_codex_does_not_offer_is_refused_here_not_on_the_wire() -> Non
         bindings.CommandExecutionRequestApprovalResponse.model_validate({"decision": "yes"})
 
 
+def test_user_input_request_and_complete_answer_map_match_the_pinned_protocol() -> None:
+    request = bindings.ToolRequestUserInputParams.model_validate(
+        {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "itemId": "item-1",
+            "questions": [
+                {
+                    "id": "framework",
+                    "header": "Framework",
+                    "question": "Which framework?",
+                    "options": [
+                        {"label": "Svelte", "description": "Use Svelte components"},
+                        {"label": "React", "description": "Use React components"},
+                    ],
+                    "isOther": True,
+                    "isSecret": False,
+                },
+                {
+                    "id": "notes",
+                    "header": "Notes",
+                    "question": "Anything else?",
+                    "options": None,
+                    "isOther": True,
+                    "isSecret": False,
+                },
+            ],
+        }
+    )
+    assert [question.id for question in request.questions] == ["framework", "notes"]
+    assert request.questions[0].options is not None
+    assert request.questions[0].options[0].description == "Use Svelte components"
+
+    answer = bindings.ToolRequestUserInputResponse.model_validate(
+        {
+            "answers": {
+                "framework": {"answers": ["Svelte"]},
+                "notes": {"answers": ["Keep it compact"]},
+            }
+        }
+    )
+    assert answer.model_dump(mode="json", exclude_none=True) == {
+        "answers": {
+            "framework": {"answers": ["Svelte"]},
+            "notes": {"answers": ["Keep it compact"]},
+        }
+    }
+
+
 def test_full_access_is_a_sandbox_the_pinned_protocol_knows() -> None:
     turn = bindings.TurnStartParams(
         threadId="t",

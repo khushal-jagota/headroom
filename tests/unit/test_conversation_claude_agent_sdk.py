@@ -58,11 +58,13 @@ from planner.conversation.backends.contracts import (
     BackendChildFactory,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
+    UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
     AgentCommand,
@@ -72,7 +74,7 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     ResolvedConversationStart,
 )
-from planner.conversation.events import ConversationTurnEnding, ToolCallStatus
+from planner.conversation.events import ConversationTurnEnding, ToolCallStatus, UserInputAnswer
 from planner.conversation.message_content import (
     MessageContent,
     MessageImage,
@@ -199,6 +201,8 @@ class _RecordingSink:
         self.thinking_pulses: list[TurnToken] = []
         self.plans: list[list[tuple[str, str]]] = []
         self.asks: list[BackendPermissionAsk] = []
+        self.user_input_requests: list[BackendUserInputRequest] = []
+        self.user_input_failures: list[tuple[str, str]] = []
         self.endings: list[dict[str, Any]] = []
         self.cursors: list[str] = []
         self.available_commands: list[tuple[AgentCommand, ...]] = []
@@ -304,6 +308,18 @@ class _RecordingSink:
     async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
         del turn_token
         self.asks.append(ask)
+
+    async def user_input_requested(
+        self, turn_token: TurnToken, request: BackendUserInputRequest
+    ) -> None:
+        del turn_token
+        self.user_input_requests.append(request)
+
+    async def user_input_failed(
+        self, turn_token: TurnToken, *, request_id: str, detail: str
+    ) -> None:
+        del turn_token
+        self.user_input_failures.append((request_id, detail))
 
     async def turn_ended(
         self,
@@ -1818,92 +1834,100 @@ async def _raise_a_question(
         return await callback("AskUserQuestion", asked, ToolPermissionContext(tool_use_id="tool-q"))
 
     asking = asyncio.create_task(ask())
-    while not sink.asks:
+    while not sink.user_input_requests and not sink.user_input_failures and not asking.done():
         await asyncio.sleep(0)
     return asking
 
 
-def test_a_question_is_raised_as_the_question_and_its_own_choices(tmp_path: Path) -> None:
-    """The owner is shown what they were asked, not a tool call to approve.
+def _three_question_input() -> dict[str, Any]:
+    return {
+        "questions": [
+            *_ask_user_question_input()["questions"],
+            {
+                "question": "Which work should happen?",
+                "header": "Scope",
+                "multiSelect": True,
+                "options": [
+                    {"label": "Backend", "description": "Change the Python service"},
+                    {"label": "Frontend", "description": "Change the Svelte app"},
+                ],
+            },
+            {
+                "question": "When should it ship?",
+                "header": "Timing",
+                "multiSelect": False,
+                "options": [
+                    {"label": "Now", "description": "Land it immediately"},
+                    {"label": "Later", "description": "Schedule it"},
+                ],
+            },
+        ]
+    }
 
-    The choices are the question's own, and none of them is an allow or a reject — which is
-    what tells a surface to render numbered answers instead of approval buttons.
-    """
 
+def test_three_questions_are_one_distinct_ordered_user_input_request(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
         await _write(child)
-        asking = await _raise_a_question(clients[0], sink)
-
-        ask = sink.asks[0]
-        assert ask.title == f"Colour: {COLOUR_QUESTION}"
-        assert [option.label for option in ask.options] == ["Red", "Blue", "Green"]
-        # The label is the answer, so it is also what goes back as the option id.
-        assert [option.option_id for option in ask.options] == ["Red", "Blue", "Green"]
-        assert {option.option_kind for option in ask.options} == {"choice"}
-        assert not any(option.option_kind.startswith(("allow", "reject")) for option in ask.options)
-        # What each answer means, in plain lines. Never the call's JSON.
-        assert ask.detail == (
-            "Red — A warm, vibrant colour\n"
-            "Blue — A cool, calming colour\n"
-            "Green — A natural, refreshing colour"
+        asking = await _raise_a_question(
+            clients[0], sink, tool_input=_three_question_input()
         )
-        assert "questions" not in str(ask.detail)
 
-        await child.answer_permission_ask(ask.ask_id, "Blue")
-        await asking
-        await child.stop()
+        assert sink.asks == []
+        request = sink.user_input_requests[0]
+        assert [question.question_id for question in request.questions] == [
+            COLOUR_QUESTION,
+            "Which work should happen?",
+            "When should it ship?",
+        ]
+        assert request.questions[1].multi_select is True
+        assert all(question.allow_other for question in request.questions)
+        assert request.questions[0].options[1].description == "A cool, calming colour"
 
-    _run(exercise)
-
-
-def test_a_questions_answer_is_put_where_the_tool_reads_it(tmp_path: Path) -> None:
-    """The chosen answer goes back keyed by the whole question text.
-
-    That is the field the tool takes the owner's answers from, established against the real
-    CLI: allowing the call without it runs the tool and tells the model nobody answered.
-    """
-
-    async def exercise() -> None:
-        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
-        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
-        await _write(child)
-        asking = await _raise_a_question(clients[0], sink)
-
-        await child.answer_permission_ask(sink.asks[0].ask_id, "Blue")
+        await child.answer_user_input(
+            request.request_id,
+            (
+                UserInputAnswer(COLOUR_QUESTION, ("Blue",)),
+                UserInputAnswer("Which work should happen?", ("Backend", "Frontend")),
+                UserInputAnswer("When should it ship?", ("tomorrow morning",)),
+            ),
+        )
         answer = await asking
         assert isinstance(answer, PermissionResultAllow)
         assert answer.updated_input is not None
-        assert answer.updated_input["answers"] == {COLOUR_QUESTION: "Blue"}
-        # The call itself goes back unchanged around the answer.
-        assert answer.updated_input["questions"] == _ask_user_question_input()["questions"]
-        assert answer.updated_permissions is None
+        assert answer.updated_input["answers"] == {
+            COLOUR_QUESTION: "Blue",
+            "Which work should happen?": "Backend, Frontend",
+            "When should it ship?": "tomorrow morning",
+        }
+        assert answer.updated_input["questions"] == _three_question_input()["questions"]
         await child.stop()
 
     _run(exercise)
 
 
-def test_an_answer_the_question_did_not_offer_does_not_land(tmp_path: Path) -> None:
+def test_an_incomplete_question_answer_map_does_not_land(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
         await _write(child)
         asking = await _raise_a_question(clients[0], sink)
+        request = sink.user_input_requests[0]
 
-        for never_offered in ("Purple", APPROVE_ONCE_OPTION_ID):
-            with pytest.raises(PermissionAnswerWriteFailed):
-                await child.answer_permission_ask(sink.asks[0].ask_id, never_offered)
-            assert not asking.done()
-
-        await child.answer_permission_ask(sink.asks[0].ask_id, "Red")
+        with pytest.raises(UserInputAnswerWriteFailed):
+            await child.answer_user_input(request.request_id, ())
+        assert not asking.done()
+        await child.answer_user_input(
+            request.request_id, (UserInputAnswer(COLOUR_QUESTION, ("Blue",)),)
+        )
         await asking
         await child.stop()
 
     _run(exercise)
 
 
-def test_a_question_that_dies_with_its_turn_is_still_settled(tmp_path: Path) -> None:
+def test_a_question_that_dies_with_its_turn_is_settled_as_denied(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
@@ -1911,7 +1935,6 @@ def test_a_question_that_dies_with_its_turn_is_still_settled(tmp_path: Path) -> 
         assert session_id is not None
         await _write(child)
         asking = await _raise_a_question(clients[0], sink)
-
         clients[0].say(_result(session_id=session_id))
         await clients[0].until_taken_in()
         assert isinstance(await asking, PermissionResultDeny)
@@ -1920,74 +1943,90 @@ def test_a_question_that_dies_with_its_turn_is_still_settled(tmp_path: Path) -> 
     _run(exercise)
 
 
+def test_cancelling_settles_the_question_without_waiting_for_a_terminal_result(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        await _write(child)
+        asking = await _raise_a_question(clients[0], sink)
+
+        await child.cancel_running_turn()
+
+        assert isinstance(await asking, PermissionResultDeny)
+        assert clients[0].interrupts == 1
+        await child.stop()
+
+    _run(exercise)
+
+
 @pytest.mark.parametrize(
     "tool_input",
     [
-        pytest.param(_ask_user_question_input(multi_select=True), id="an answer that is a set"),
-        pytest.param(
-            {
-                "questions": [
-                    {
-                        "question": "First?",
-                        "header": "One",
-                        "options": [{"label": "A", "description": ""}],
-                    },
-                    {
-                        "question": "Second?",
-                        "header": "Two",
-                        "options": [{"label": "B", "description": ""}],
-                    },
-                ]
-            },
-            id="more than one question",
-        ),
-        pytest.param({"questions": []}, id="no question at all"),
-        pytest.param(
-            {"questions": [{"question": "Which?", "header": "H", "options": []}]},
-            id="a question with no choices",
-        ),
+        pytest.param({"questions": []}, id="no-question"),
+        pytest.param({"questions": "not a list"}, id="not-a-list"),
         pytest.param(
             {
                 "questions": [
                     {
                         "question": "Which?",
                         "header": "H",
-                        "options": [
-                            {"label": "Same", "description": "one"},
-                            {"label": "Same", "description": "two"},
-                        ],
+                        "multiSelect": False,
+                        "options": [],
                     }
                 ]
             },
-            id="two choices that answer the same",
+            id="no-options",
         ),
-        pytest.param({"questions": "not a list"}, id="nothing this recognises"),
     ],
 )
-def test_a_question_this_cannot_show_whole_stays_a_plain_permission_ask(
+def test_malformed_questions_fail_visibly_and_never_become_permissions(
     tmp_path: Path, tool_input: dict[str, Any]
 ) -> None:
-    """Half a question is worse than none: the owner would answer one part and the rest
-    would go back unanswered, so the fallback is the ask that was always there."""
-
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
         await _write(child)
         asking = await _raise_a_question(clients[0], sink, tool_input=tool_input)
-
-        ask = sink.asks[0]
-        assert ask.title == "AskUserQuestion"
-        assert [option.option_id for option in ask.options] == [
-            APPROVE_ONCE_OPTION_ID,
-            ALWAYS_ALLOW_THIS_SESSION_OPTION_ID,
-            DECLINE_OPTION_ID,
-        ]
-
-        await child.answer_permission_ask(ask.ask_id, DECLINE_OPTION_ID)
         answer = await asking
         assert isinstance(answer, PermissionResultDeny)
-        assert answer.message == "User declined tool execution."
+        assert sink.asks == []
+        assert "malformed question request" in sink.user_input_failures[0][1]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_ask_user_question_tool_lifecycle_is_not_rendered_beside_the_question(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        clients[0].say(
+            _assistant(
+                ToolUseBlock(
+                    id="tool-q",
+                    name="AskUserQuestion",
+                    input=_three_question_input(),
+                ),
+                session_id=session_id,
+            ),
+            UserMessage(
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="tool-q", content="answers received", is_error=False
+                    )
+                ]
+            ),
+        )
+        await clients[0].until_taken_in()
+        assert sink.tools_started == []
+        assert sink.tools_finished == []
         await child.stop()
 
     _run(exercise)
@@ -2228,4 +2267,3 @@ def test_a_picture_reaches_claude_as_a_content_block_beside_the_words(
         ]
 
     _run(exercise)
-

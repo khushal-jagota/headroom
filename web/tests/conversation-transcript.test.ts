@@ -9,6 +9,7 @@ import {
 import {
   askDeadSentence,
   liveAskFrom,
+  liveUserInputFrom,
   promptLabelFor,
   refusalSentence,
   transcriptRows,
@@ -154,6 +155,121 @@ describe("Conversation transcript", () => {
       .toBe("expired — its turn stopped without an ending");
     expect(liveAskFrom(rows)).toBeNull();
     expect(rows.some((row) => row.kind === "turn_stopped")).toBe(true);
+  });
+
+  it("reconstructs a pending multi-question request from durable rows", () => {
+    const requested = {
+      conversation_id: "c1",
+      sequence: 2,
+      kind: "user_input_requested",
+      payload: {
+        request_id: "input-1",
+        questions: [
+          {
+            question_id: "scope",
+            header: "Scope",
+            question: "Which surfaces?",
+            options: [{ label: "Web", description: "The browser app" }],
+            multi_select: true,
+            allow_other: true
+          },
+          {
+            question_id: "tests",
+            header: "Tests",
+            question: "How much coverage?",
+            options: [{ label: "Focused", description: "Regression coverage" }],
+            multi_select: false,
+            allow_other: false
+          }
+        ]
+      },
+      created_at: 1_700_000_000
+    } satisfies ConversationEvent;
+    const rows = rowsFrom([promptEvent(1), requested]);
+    const pending = liveUserInputFrom(rows);
+
+    expect(pending).toMatchObject({
+      kind: "user_input",
+      requestId: "input-1",
+      state: "live"
+    });
+    expect(pending?.questions).toHaveLength(2);
+  });
+
+  it("folds a complete answer map into the request and stops offering it", () => {
+    const requested = {
+      conversation_id: "c1",
+      sequence: 2,
+      kind: "user_input_requested",
+      payload: {
+        request_id: "input-1",
+        questions: [{
+          question_id: "scope",
+          header: "Scope",
+          question: "Which surface?",
+          options: [],
+          multi_select: false,
+          allow_other: true
+        }]
+      },
+      created_at: 1_700_000_000
+    } satisfies ConversationEvent;
+    const answered = {
+      conversation_id: "c1",
+      sequence: 3,
+      kind: "user_input_answered",
+      payload: {
+        request_id: "input-1",
+        answers: { scope: { answers: ["The ticket pane"] } }
+      },
+      created_at: 1_700_000_001
+    } satisfies ConversationEvent;
+    const rows = rowsFrom([promptEvent(1), requested, answered]);
+    const row = rowOfKind(rows, "user_input");
+
+    expect(row).toMatchObject({
+      state: "answered",
+      answers: { scope: { answers: ["The ticket pane"] } }
+    });
+    expect(liveUserInputFrom(rows)).toBeNull();
+  });
+
+  it("keeps malformed delivery failures visible and expires abandoned requests", () => {
+    const request = {
+      conversation_id: "c1",
+      sequence: 2,
+      kind: "user_input_requested",
+      payload: {
+        request_id: "input-1",
+        questions: [{
+          question_id: "q1",
+          header: "Choice",
+          question: "Choose",
+          options: [],
+          multi_select: false,
+          allow_other: true
+        }]
+      },
+      created_at: 1_700_000_000
+    } satisfies ConversationEvent;
+    const failed = {
+      conversation_id: "c1",
+      sequence: 3,
+      kind: "user_input_failed",
+      payload: { request_id: "input-1", detail: "Malformed question payload" },
+      created_at: 1_700_000_001
+    } satisfies ConversationEvent;
+    expect(rowOfKind(rowsFrom([failed]), "user_input")).toMatchObject({
+      state: "failed",
+      questions: [],
+      failureDetail: "Malformed question payload"
+    });
+
+    const expired = rowOfKind(
+      rowsFrom([request, turnEndedEvent(3, { ending: "interrupted" })]),
+      "user_input"
+    );
+    expect(expired).toMatchObject({ state: "dead", deadReason: "turn_ended" });
   });
 
   it("replaces streaming text with its committed message", () => {
