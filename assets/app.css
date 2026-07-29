@@ -345,12 +345,43 @@ textarea {
   background: var(--accent-done);
 }
 
-.shell-status[data-state="reconnecting"] .shell-connection-mark {
+.shell-status[data-status-state="preparing"] {
+  color: var(--accent-bright);
+}
+
+.shell-status[data-status-state="preparing"] .shell-connection-mark {
+  background: var(--accent-bright);
+}
+
+.shell-status[data-status-state="restarting"],
+.shell-status[data-status-state="reconnecting"] {
+  color: var(--text-faint);
+}
+
+.shell-status[data-status-state="restarting"] .shell-connection-mark,
+.shell-status[data-status-state="reconnecting"] .shell-connection-mark {
   background: transparent;
   border: var(--border-hairline) solid var(--text-faintest);
   border-top-color: var(--text-muted);
   box-sizing: border-box;
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
+}
+
+.shell-status[data-status-state="restarting"] .shell-connection-mark {
+  border-color: var(--accent-surface);
+  border-top-color: var(--accent-bright);
+}
+
+.shell-status[data-status-state="back_up"] {
+  color: var(--accent-done);
+}
+
+.shell-status[data-status-state="problem"] {
+  color: var(--accent-error);
+}
+
+.shell-status[data-status-state="problem"] .shell-connection-mark {
+  background: var(--accent-error);
 }
 
 .shell-presence {
@@ -376,7 +407,8 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
-  .shell-status[data-state="reconnecting"] .shell-connection-mark {
+  .shell-status[data-status-state="reconnecting"] .shell-connection-mark,
+  .shell-status[data-status-state="restarting"] .shell-connection-mark {
     animation: none;
   }
 }
@@ -499,6 +531,16 @@ textarea {
     padding: 0;
     border: 0;
     background: var(--surface-scrim);
+  }
+}
+
+@media (max-width: 390px) {
+  .vps-status-popover {
+    position: fixed;
+    top: calc(var(--space-12) + var(--space-2));
+    right: var(--space-3);
+    left: var(--space-3);
+    width: auto;
   }
 }
 
@@ -2510,6 +2552,27 @@ select {
 
 .review-ticket-title:hover {
   color: var(--accent-bright);
+}
+
+.review-ticket-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.review-ticket-heading .review-ticket-title {
+  min-width: 0;
+}
+
+.review-kickoff-priority {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: var(--type-sm);
+}
+
+.review-kickoff-priority [data-review-priority-error] {
+  margin-top: var(--space-2);
 }
 
 /* The context block: a sans RECAP label, then the serif recap, then the collapsed

@@ -171,6 +171,22 @@ THE_DRAFT_IN_THE_BOX = """
 }
 """
 
+THE_REST_BAND_GEOMETRY = """
+() => {
+  const band = document.querySelector('[data-conversation-rest-bar]');
+  const composer = document.querySelector('[data-conversation-composer]');
+  if (band === null || composer === null) return null;
+  const bandBox = band.getBoundingClientRect();
+  const composerBox = composer.getBoundingClientRect();
+  return {
+    bandHeight: Math.round(bandBox.height),
+    bandTop: Math.round(bandBox.top),
+    composerTop: Math.round(composerBox.top),
+    bandAboveTheComposer: Math.round(bandBox.bottom) <= Math.round(composerBox.top)
+  };
+}
+"""
+
 # The one thing rows cannot say, stood in for.
 #
 # Whether a turn is running is the live system's answer and not the record's, and the
@@ -381,6 +397,94 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert back["expand"] is True
     assert back["restBarMounted"] is False
     assert back["paneHeight"] == peeked["paneHeight"], (peeked, back)
+
+
+def test_the_rest_band_is_present_before_activity_and_keeps_its_geometry_through_loading(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """The Ticket card has its status row before a conversation read can supply content."""
+    empty_ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "A conversation with no activity",
+    )["id"]
+    empty_page = _the_ticket_page(
+        server,
+        context_factory(),
+        open_page,
+        empty_ticket_id,
+        0,
+    )
+    empty_page.wait_for_selector("[data-conversation-rest-bar]", timeout=WAIT_MS)
+    assert empty_page.locator(REST_LINE).count() == 0
+    empty_geometry = empty_page.evaluate(THE_REST_BAND_GEOMETRY)
+    assert empty_geometry is not None
+    assert empty_geometry["bandHeight"] > 0
+    assert empty_geometry["bandAboveTheComposer"] is True
+
+    ticket_id, conversation_id = _a_ticket_with_a_conversation(
+        server,
+        cli,
+        "A conversation while its activity loads",
+    )
+    _append_rows(
+        server,
+        conversation_id,
+        AgentMessageEventPayload(content=text_message_content(THE_LAST_THING)),
+    )
+    context = context_factory()
+    held_reads: list[Any] = []
+    page = context.new_page()
+    held_read_pattern = f"**/api/conversation/conversations/{conversation_id}"
+    page.route(
+        held_read_pattern,
+        lambda route: held_reads.append(route),
+        times=1,
+    )
+    page.goto(server.base + f"/#/ticket/{ticket_id}")
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+        timeout=WAIT_MS,
+    )
+    page.wait_for_selector("[data-conversation-rest-bar]", timeout=WAIT_MS)
+    page.wait_for_function(
+        "() => window.__plannerDebug && window.__plannerDebug.sseOpens >= 1",
+        timeout=WAIT_MS,
+    )
+    assert held_reads, "the conversation read is held before it can supply activity"
+    page.locator(".screen-enter").evaluate(
+        "(screen) => Promise.all(screen.getAnimations().map((animation) => animation.finished))"
+    )
+
+    before = page.evaluate(THE_REST_BAND_GEOMETRY)
+    assert before is not None
+    assert page.locator(REST_LINE).count() == 0
+    page.evaluate(
+        "() => { window.__restBandBeforeHydration = "
+        "document.querySelector('[data-conversation-rest-bar]'); }"
+    )
+
+    held_reads[0].continue_()
+    page.wait_for_selector(REST_LINE, timeout=WAIT_MS)
+    page.wait_for_function(
+        "(wanted) => document.querySelector('[data-conversation-rest-line]')"
+        "?.textContent.includes(wanted)",
+        arg="The one line the bar shows",
+        timeout=WAIT_MS,
+    )
+    after = page.evaluate(THE_REST_BAND_GEOMETRY)
+    assert after == before, (before, after)
+    assert page.evaluate(
+        "() => window.__restBandBeforeHydration === "
+        "document.querySelector('[data-conversation-rest-bar]')"
+    )
 
 
 def test_the_reader_stays_on_the_line_they_were_reading_through_every_transition(

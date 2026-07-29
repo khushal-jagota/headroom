@@ -13,9 +13,15 @@ assert.match(shellStatus, /role="status"/);
 assert.match(shellStatus, /aria-live="polite"/);
 assert.match(shellStatus, /data-shell-status/);
 assert.match(shellStatus, /data-connection-status/);
-assert.match(shellStatus, /connected: "Connected".*reconnecting: "Reconnecting"/s);
+assert.match(
+  shellStatus,
+  /connected: "Connected".*reconnecting: "Reconnecting".*preparing: "Preparing".*restarting: "Restarting".*back_up: "Back up".*problem: "Problem"/s,
+);
+assert.match(shellStatus, /queries\.deploymentStatus\(\)/);
+assert.match(shellStatus, /resolveDeploymentStatus/);
+assert.match(shellStatus, /deploymentStatusExpiryDelay/);
 assert.match(shellStatus, /\{runningWorkerCount\} working/);
-assert.doesNotMatch(shellStatus, /button|onclick|fetchJson|VpsStatus|\/api\//);
+assert.doesNotMatch(shellStatus, /button|onclick|VpsStatus|vpsStatusSummary/);
 
 assert.match(
   app,

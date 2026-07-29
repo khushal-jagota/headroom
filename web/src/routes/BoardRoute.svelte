@@ -198,11 +198,11 @@
   const GROUP_ORDER: readonly string[] = [
     "errored",
     "needs_user",
-    "waiting_to_closeout",
+    "waiting_for_kickoff",
     "user",
     "paired",
     "agent",
-    "waiting_for_kickoff",
+    "waiting_to_closeout",
     "awaiting_approval",
     "empty",
     "blocked",

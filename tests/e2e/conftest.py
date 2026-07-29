@@ -85,12 +85,13 @@ def _start_server(
     fake_now: str | None = None,
     trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
     seed_db: Callable[[Path], None] | None = None,
+    port: int | None = None,
 ) -> ServerHandle:
     # A1: the log file is opened from THIS process before the subprocess exists;
     # panels serve only creates directories later, inside itself.
     srvdir.mkdir(parents=True, exist_ok=True)
 
-    port = _free_port()
+    port = _free_port() if port is None else port
     base = f"http://127.0.0.1:{port}"
     db_path = srvdir / "planning.db"
     log_path = srvdir / "server.log"
@@ -202,6 +203,35 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         _stop_server(handle)
 
 
+@pytest.fixture
+def stop_server() -> Callable[[ServerHandle], None]:
+    """Stop an isolated server when a test's subject is the process gap itself."""
+
+    return _stop_server
+
+
+@pytest.fixture
+def restart_server() -> Iterator[Callable[[ServerHandle], ServerHandle]]:
+    """Replace a stopped isolated server on its exact port and runtime root."""
+
+    replacements: list[ServerHandle] = []
+
+    def restart(handle: ServerHandle) -> ServerHandle:
+        if handle.proc.poll() is None:
+            raise AssertionError("restart_server requires a stopped server")
+        replacement = _start_server(
+            handle.db_path.parent,
+            port=handle.port,
+        )
+        replacements.append(replacement)
+        return replacement
+
+    yield restart
+
+    for handle in replacements:
+        _stop_server(handle)
+
+
 def _database_has_conversation_runtime(db_path: Path) -> bool:
     with sqlite3.connect(db_path) as conn:
         return bool(conn.execute("SELECT EXISTS(SELECT 1 FROM conversations)").fetchone()[0])
@@ -242,13 +272,17 @@ def _reset_database(db_path: Path) -> None:
 
 
 def _reset_managed_directories(database_parent: Path) -> None:
-    """Remove mutable stores that a fresh test server would seed on first use."""
+    """Remove mutable stores and runner evidence that must not cross test cases."""
     for name in ("files", "worker-settings", "skills"):
         path = database_parent / name
         if path.is_symlink():
             path.unlink()
         elif path.exists():
             shutil.rmtree(path)
+    for name in ("deployment-lifecycle.json", "deployment-lifecycle.json.lock"):
+        path = database_parent / name
+        if path.exists() or path.is_symlink():
+            path.unlink()
 
 
 class _ReusableServer:

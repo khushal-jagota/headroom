@@ -28,7 +28,7 @@
   let conversationId = $state<string | null>(null);
   let backends = $state<readonly BackendSnapshot[]>([]);
   // What a conversation for the Chief would start on. It is a query rather than a read on
-  // arrival because the owner changes it on the Agents screen, and this must not go on
+  // arrival because the owner changes it on the Config screen, and this must not go on
   // showing what the Chief was configured on before they did.
   const startValues = createQuery(() => queries.chiefConversationStartValues());
 

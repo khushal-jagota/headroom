@@ -1,30 +1,50 @@
 export type AnyRecord = Record<string, any>;
 
-export type VpsStatusState = "healthy" | "warning" | "critical" | "unavailable" | "review_needed";
+export type DeploymentStatusState =
+  | "idle"
+  | "preparing"
+  | "restarting"
+  | "back_up"
+  | "problem"
+  | "unknown";
 
-export type VpsStatusSection = {
-  state: VpsStatusState;
-  summary: string;
-  [key: string]: unknown;
+export type DeploymentOutcome = "succeeded" | "failed" | "rolled_back";
+
+export type DeploymentStatus = {
+  state: DeploymentStatusState;
+  deployed_sha: string | null;
+  target_sha: string | null;
+  outcome: DeploymentOutcome | null;
+  detail: string | null;
+  valid_until: string | null;
 };
 
-export type VpsStatusSnapshot = {
-  collected_at: string;
-  overall_state: VpsStatusState;
-  environment: VpsStatusSection;
-  app: VpsStatusSection;
-  backup: VpsStatusSection;
-  disk: VpsStatusSection;
-  workloads: VpsStatusSection;
-  worktrees: VpsStatusSection;
-  logs: VpsStatusSection;
-  cleanup_candidates: VpsStatusSection;
-  resources: VpsStatusSection & {
-    cpu_percent: number | null;
-    load_averages: number[] | null;
-    ram: unknown | null;
-    swap: unknown | null;
-  };
+export type VpsMetricState = "healthy" | "warning" | "critical" | "unavailable";
+
+export type VpsPercentageMetric = {
+  used_percent: number | null;
+  state: VpsMetricState;
+  unavailable_reason: string | null;
+};
+
+export type VpsBackupMetric = {
+  age_seconds: number | null;
+  state: VpsMetricState;
+  unavailable_reason: string | null;
+};
+
+export type VpsDeploymentSummary = {
+  outcome: DeploymentOutcome | null;
+  detail: string | null;
+};
+
+export type VpsStatusSummary = {
+  deployed_sha: string | null;
+  deployment: VpsDeploymentSummary;
+  cpu: VpsPercentageMetric;
+  ram: VpsPercentageMetric;
+  disk: VpsPercentageMetric;
+  backup: VpsBackupMetric;
 };
 
 // The served Worker-type manifest response (GET /api/worker-types).

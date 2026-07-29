@@ -4,7 +4,7 @@
   import { fetchText } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import { PRIORITIES, fieldSlot, labelize } from "../lib/ui";
+  import { fieldSlot, labelize } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -30,6 +30,7 @@
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
+  import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
 
   let { id }: { id: string } = $props();
   const stableId = untrack(() => id);
@@ -327,10 +328,6 @@
     );
   }
 
-  function priorityNeedsEmphasis(priority: string): boolean {
-    return priority === "P0" || priority === "P1";
-  }
-
   function currentStageRunLabel(detail: TicketDetail): string | null {
     if (detail.blocked || detail.ticket_status === "blocked") return null;
     if (detail.ticket_status === "awaiting_approval") return "awaiting approval";
@@ -392,27 +389,12 @@
       <main class="ticket-doc" onclickcapture={dropConversationBackOneState}>
         <header class="ticket-head">
           <div class="ticket-identity" data-ticket-identity>
-            <span
-              class="ticket-identity-fact ticket-identity-priority"
-              class:ticket-identity-priority--urgent={priorityNeedsEmphasis(detail.priority)}
-              data-priority-control
-              data-priority-alert={priorityNeedsEmphasis(detail.priority) ? detail.priority : undefined}
-            >
-              {detail.priority}
-              <select
-                aria-label="Ticket priority"
-                value={detail.priority}
-                onchange={(event) => {
-                  if (event.currentTarget.value !== detail.priority) {
-                    void patch({ priority: event.currentTarget.value });
-                  }
-                }}
-              >
-                {#each PRIORITIES as priority}
-                  <option value={priority}>{priority}</option>
-                {/each}
-              </select>
-            </span>
+            <TicketPriorityControl
+              priority={detail.priority}
+              onChange={(priority) => {
+                if (priority !== detail.priority) void patch({ priority });
+              }}
+            />
             <span class="ticket-identity-group">
               <span class="ticket-identity-separator" aria-hidden="true">·</span>
               <span

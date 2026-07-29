@@ -1,10 +1,11 @@
 """The browser's live-update stream, served at GET /api/changes.
 
-The stream carries one unnamed ``change`` frame per committed write and nothing else —
-no entity, no kind, no payload. The browser answers a frame by refetching whatever it is
-currently showing, so there is no vocabulary here to keep in step with the backend.
-Frames coalesce: writes that land while a frame is already owed produce one frame, not a
-queue of them.
+The stream carries one unnamed ``change`` frame after canonical evidence changes and
+nothing else — no entity, no kind, no payload. Evidence can be a committed SQLite write
+or a bounded externally owned file observed by the server. The browser answers a frame
+by refetching whatever it is currently showing, so there is no vocabulary here to keep
+in step with the backend. Frames coalesce: changes that land while a frame is already
+owed produce one frame, not a queue of them.
 
 When nothing has changed the stream sends a comment line instead. A comment is invisible
 to the browser's EventSource, keeps anything in between from calling the connection dead,
