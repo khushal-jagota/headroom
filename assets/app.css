@@ -277,16 +277,43 @@ textarea {
   background: var(--accent-done);
 }
 
-.vps-status-trigger[data-state="reconnecting"] {
+.vps-status-trigger[data-status-state="preparing"] {
+  color: var(--accent-bright);
+}
+
+.vps-status-trigger[data-status-state="preparing"] .vps-status-mark {
+  background: var(--accent-bright);
+}
+
+.vps-status-trigger[data-status-state="restarting"],
+.vps-status-trigger[data-status-state="reconnecting"] {
   color: var(--text-faint);
 }
 
-.vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
+.vps-status-trigger[data-status-state="restarting"] .vps-status-mark,
+.vps-status-trigger[data-status-state="reconnecting"] .vps-status-mark {
   background: transparent;
   border: var(--border-hairline) solid var(--text-faintest);
   border-top-color: var(--text-muted);
   box-sizing: border-box;
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
+}
+
+.vps-status-trigger[data-status-state="restarting"] .vps-status-mark {
+  border-color: var(--accent-surface);
+  border-top-color: var(--accent-bright);
+}
+
+.vps-status-trigger[data-status-state="back_up"] {
+  color: var(--accent-done);
+}
+
+.vps-status-trigger[data-status-state="problem"] {
+  color: var(--accent-error);
+}
+
+.vps-status-trigger[data-status-state="problem"] .vps-status-mark {
+  background: var(--accent-error);
 }
 
 .vps-status-popover {
@@ -315,6 +342,7 @@ textarea {
 .vps-status-list dd { color: var(--text-faint); text-align: right; }
 .vps-status-list > div[data-state="warning"] dd { color: var(--accent-bright); }
 .vps-status-list > div[data-state="critical"] dd { color: var(--accent-error); }
+.vps-status-list > div[data-state="unavailable"] dd { color: var(--text-faintest); }
 .vps-status-error { color: var(--accent-error); font-size: var(--type-xs); }
 
 .shell-presence {
@@ -340,7 +368,8 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
-  .vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
+  .vps-status-trigger[data-status-state="reconnecting"] .vps-status-mark,
+  .vps-status-trigger[data-status-state="restarting"] .vps-status-mark {
     animation: none;
   }
 }
@@ -364,6 +393,16 @@ textarea {
 
   .shell-presence {
     display: none;
+  }
+}
+
+@media (max-width: 390px) {
+  .vps-status-popover {
+    position: fixed;
+    top: calc(var(--space-12) + var(--space-2));
+    right: var(--space-3);
+    left: var(--space-3);
+    width: auto;
   }
 }
 
@@ -2375,6 +2414,27 @@ select {
 
 .review-ticket-title:hover {
   color: var(--accent-bright);
+}
+
+.review-ticket-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.review-ticket-heading .review-ticket-title {
+  min-width: 0;
+}
+
+.review-kickoff-priority {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: var(--type-sm);
+}
+
+.review-kickoff-priority [data-review-priority-error] {
+  margin-top: var(--space-2);
 }
 
 /* The context block: a sans RECAP label, then the serif recap, then the collapsed

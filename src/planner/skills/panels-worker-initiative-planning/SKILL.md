@@ -149,7 +149,9 @@ complete enough to approve as the exact creation package.
 ### needs_closeout — create the approved Tickets
 
 Create exactly the approved outlines and nothing broader. Use the outlined Worker type,
-title, placement, and kickoff context. When the planning Ticket belongs to a sprint
+title, placement, and kickoff context. Load and follow `panels-ticket-creation` for the
+shared creation model; the approved outlines remain the authority for what may be
+created. When the planning Ticket belongs to a sprint
 item, create the new Tickets under that same item. Otherwise preserve the planning
 Ticket's project and sprint context without inventing a new container. When creating a
 Ticket that relies on existing Tickets being complete, pass each prerequisite Ticket id

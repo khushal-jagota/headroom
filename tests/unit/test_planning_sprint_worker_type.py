@@ -95,10 +95,7 @@ def test_production_registry_carries_complete_planning_sprint_manifest() -> None
         "planning-midday-check",
         "planning-sprint",
     )
-    assert (
-        PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-sprint")
-        == PLANNING_SPRINT_MANIFEST
-    )
+    assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-sprint") == PLANNING_SPRINT_MANIFEST
 
 
 def test_planning_sprint_definition_carries_complete_execution_contract() -> None:
@@ -151,27 +148,23 @@ def test_planning_sprint_managed_settings_bootstrap_uses_approved_runtime_defaul
 def test_planning_sprint_is_announced_at_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
     panels = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
-    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
     assert "`planning-sprint` (reviewing one sprint" in panels
-    assert "Use a **`planning-sprint` ticket**" in chief
+    assert "panels-ticket-creation" in chief
     assert "`panels-worker-planning-sprint` — planning-sprint tickets" in worker
     assert "panels ticket create --worker-type <planning-worker-type>" in chief
     assert "panels-sprint-planning" not in PLANNER_SKILL_NAMES
     assert "panels-rollover" not in PLANNER_SKILL_NAMES
-    assert not (
-        root / "src/planner/skills/panels-sprint-planning/SKILL.md"
-    ).exists()
+    assert not (root / "src/planner/skills/panels-sprint-planning/SKILL.md").exists()
     assert not (root / "src/planner/skills/panels-rollover/SKILL.md").exists()
 
 
 def test_planning_sprint_skill_preserves_the_approved_judgments() -> None:
     root = Path(__file__).resolve().parents[2]
-    skill = (
-        root / "src/planner/skills/panels-worker-planning-sprint/SKILL.md"
-    ).read_text(encoding="utf-8")
+    skill = (root / "src/planner/skills/panels-worker-planning-sprint/SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     assert "facts from Panels, worker judgment, and user" in skill
     assert "request-user-help" in skill

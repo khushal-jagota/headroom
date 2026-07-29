@@ -121,7 +121,9 @@ generic Stage setter.
   transaction, and create a backup labeled from the validated deployed app. `app-build` requires
   `--source-root`, a lowercase full `--requested-sha`, and `--candidate-app`. `app-deploy` requires
   `--candidate-app`, `--current-root`, database and backup paths, a health URL, and the service
-  manager and name. Linux systemd control is user-scoped; launchctl remains supported.
+  manager and name. The deployment workflow also supplies its lifecycle path and deployment ID,
+  so restart, exact-SHA health, and rollback remain attached to the runner-started operation.
+  Linux systemd control is user-scoped; launchctl remains supported.
   `backup-current` requires `--current-app`; it does not inspect Git.
 - **`restart`** — ask that running `serve` command to load the current Panels code again.
   The command reports when the request is accepted. If `serve` is not running, it reports

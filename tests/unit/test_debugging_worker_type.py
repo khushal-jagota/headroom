@@ -37,9 +37,8 @@ def test_debugging_definition_carries_the_approved_execution_contract() -> None:
 def test_debugging_specialist_is_known_public_and_provisioned() -> None:
     assert "panels-worker-debugging" in configuration._KNOWN_SKILLS
     assert "panels-worker-debugging" in PLANNER_SKILL_NAMES
-    assert (
-        worker_types.DEBUGGING_WORKER_TYPE_DEFINITION
-        is PRODUCTION_WORKER_TYPE_REGISTRY.require("debugging")
+    assert worker_types.DEBUGGING_WORKER_TYPE_DEFINITION is PRODUCTION_WORKER_TYPE_REGISTRY.require(
+        "debugging"
     )
 
 
@@ -60,16 +59,12 @@ def test_debugging_managed_settings_use_the_approved_runtime_defaults(
 def test_debugging_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
     panels = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
-    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
+    worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
 
     assert "`debugging` (understanding a reported bug" in panels
     assert "`panels-worker-debugging` — debugging tickets" in worker
-    assert "Use a **`debugging` ticket**" in chief
+    assert "panels-ticket-creation" in chief
 
 
 def test_debugging_is_current_in_worker_type_docs() -> None:

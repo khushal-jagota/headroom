@@ -158,20 +158,20 @@ def test_product_design_managed_settings_bootstrap_uses_approved_runtime_default
 
 def test_product_design_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
-    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    panels = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
+    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
 
+    assert "`product_design` (designing holistic product" in panels
     assert "`panels-worker-product-design` — product_design tickets" in worker
-    assert "Use a **`product_design` ticket**" in chief
+    assert "panels-ticket-creation" in chief
 
 
 def test_product_design_skill_preserves_the_approved_handoff_boundary() -> None:
     root = Path(__file__).resolve().parents[2]
-    skill = (
-        root / "src/planner/skills/panels-worker-product-design/SKILL.md"
-    ).read_text(encoding="utf-8")
+    skill = (root / "src/planner/skills/panels-worker-product-design/SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     assert "adopt its established patterns, tokens, and" in skill
     assert "coding owns implementation and all later feedback" in skill
