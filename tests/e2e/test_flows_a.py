@@ -828,6 +828,7 @@ def test_review_pending_kickoff_corrects_own_ticket_priority(
     page = open_page(context_factory(), server, "#/review", card)
     assert page.get_attribute(card, "data-field") == "kickoff"
     assert page.locator(f"{priority} select").input_value() == "P3"
+    assert page.locator(f'{priority} [data-priority-tile="P3"]').count() == 1
 
     page.evaluate(
         """ticketId => {
@@ -891,10 +892,14 @@ def test_review_pending_kickoff_corrects_own_ticket_priority(
     assert page.locator(f"{priority} select").input_value() == "P0"
     assert page.locator(f"{card} [data-review-priority-error]").count() == 0
     assert api.get(server, f"/api/tickets/{tid}")["priority"] == "P0"
+    page.locator(f'{priority} [data-priority-tile="P0"]').wait_for(
+        state="visible", timeout=WAIT_MS
+    )
 
     page.reload()
     page.wait_for_selector(card, timeout=WAIT_MS)
     assert page.locator(f"{priority} select").input_value() == "P0"
+    assert page.locator(f'{priority} [data-priority-tile="P0"]').count() == 1
 
     _wait_enabled(page, f"{card} [data-accept]")
     with page.expect_request(

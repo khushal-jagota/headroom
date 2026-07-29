@@ -7,6 +7,12 @@ import { mount } from "svelte";
 
 ensureDebug();
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
+  });
+}
+
 const app = mount(AppWithQueryClient, {
   target: document.getElementById("app") as HTMLElement
 });

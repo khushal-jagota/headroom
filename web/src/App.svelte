@@ -8,6 +8,7 @@
   import DayRoute from "./routes/DayRoute.svelte";
   import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
+  import NotificationsRoute from "./routes/NotificationsRoute.svelte";
   import ReviewRoute from "./routes/ReviewRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
@@ -164,11 +165,11 @@
     if (route.name === "dev") {
       return route.params.sub === "conversation" || route.params.sub === "file-preview-gallery";
     }
-    return ["day", "review", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
+    return ["day", "review", "workspace", "board", "backlog", "ideas", "notifications", "preview"].includes(route.name);
   }
 
   function secondaryRouteActive(): boolean {
-    return ["day", "sprint", "backlog", "ideas", "config"].includes(route.name);
+    return ["day", "sprint", "backlog", "ideas", "config", "notifications"].includes(route.name);
   }
 
   function screenTitle(): string {
@@ -267,6 +268,9 @@
             <a class:active={currentNav("config")} href="#/config" onclick={closeMore}>
               <span>Config</span>
             </a>
+            <a class:active={currentNav("notifications")} href="#/notifications" onclick={closeMore}>
+              <span>Notifications</span>
+            </a>
           </div>
         {/if}
       </div>
@@ -312,6 +316,8 @@
               roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"}
               roleId={route.params.id}
             />
+          {:else if route.name === "notifications"}
+            <NotificationsRoute />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
           {:else if route.name === "dev" && route.params.sub === "file-preview-gallery"}

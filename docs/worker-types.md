@@ -171,6 +171,10 @@ effort. Every Stage also carries its default ownership mode; terminal Stages car
 The Ticket response supplies the current Stage's default and effective ownership, so
 clients do not reconstruct the rule.
 
+`panels worker-type list` exposes this same response at the command line. Its normal
+output lists the registered identifiers in registry order, while `--json` preserves the
+complete manifest for automation. The CLI does not maintain its own Worker-type list.
+
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
 Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `debugging`,
 `new_worker`, `exploration`, `initiative_planning`, `product_design`, `planning-day`,
@@ -231,7 +235,10 @@ direct edits that save, fail, and retry independently. Successful skill edits re
 the configured planner Hermes home without changing existing Employee session ids.
 Codex and Claude Code use the same managed home.
 
-`GET /api/workers` serves the Config-page destinations and Chief settings.
+`GET /api/workers` serves the Config-page destinations and Chief settings. The Chief
+entry also carries its current `conversation_id`, whether it is working or needs the
+owner, and the sequence where its latest turn ended; the Agents roster uses those
+conversation-owned signals without turning them into managed settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for the Worker role and specialist
 descriptions on the index. Worker and Chief endpoints edit skill description and body
@@ -390,4 +397,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-26._
+_Last verified: 2026-07-29._

@@ -10,6 +10,7 @@
   import Disclosure from "../components/Disclosure.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
+  import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
 
   let {
@@ -249,7 +250,7 @@
                     {/snippet}
                     <div class="ibody">
                       <div class="chips">
-                        <Chip variant="priority" value={item.priority} />
+                        <PriorityTile priority={item.priority} />
                         {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
                         {#each item.blocked_by_titles || [] as blockerTitle}
                           <Chip variant="blocked-by" keyLabel="blocked by" value={blockerTitle} />
@@ -259,7 +260,7 @@
                       {#if (item.tickets || []).length}
                         {#each item.tickets || [] as ticket}
                           <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                            <span class="pr">{ticket.priority}</span>
+                            <PriorityTile priority={ticket.priority} />
                             <span class="t">{ticket.title}</span>
                             <span class={ticketStageClass(ticket)}>{labelize(ticket.stage, { capitalize: false })}</span>
                           </a>

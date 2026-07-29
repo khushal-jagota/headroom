@@ -633,26 +633,9 @@ textarea {
   border-right: var(--border-hairline) solid var(--border-color);
 }
 
-.agents-workspace-roster-head {
-  padding: var(--space-2) var(--space-3) var(--space-5);
-}
-
-.agents-workspace-roster-head h1,
-.agents-conversation-head h1 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--type-lg);
-  line-height: 1.2;
-}
-
-.agents-workspace-roster-head p {
-  margin: var(--space-2) 0 0;
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-}
-
 .agents-roster-list {
   display: grid;
+  gap: var(--space-1);
 }
 
 .agents-roster-row {
@@ -665,14 +648,15 @@ textarea {
   border-radius: var(--radius-md);
   color: inherit;
   text-decoration: none;
-  transition:
-    color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
+  transition: background var(--motion-fast) var(--motion-ease);
 }
 
-.agents-roster-row:hover,
-.agents-roster-row.active {
+.agents-roster-row:hover {
   background: var(--surface-raised);
+}
+
+.agents-roster-row.active {
+  background: var(--surface-overlay);
 }
 
 .agents-roster-row:focus-visible,
@@ -681,35 +665,21 @@ textarea {
   outline-offset: var(--space-1);
 }
 
-.agents-roster-copy {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
-}
-
 .agents-roster-name {
+  min-width: 0;
   color: var(--text-strong);
-  font-size: var(--type-md);
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agents-roster-description {
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-  line-height: 1.42;
-  overflow-wrap: anywhere;
-}
-
-.agents-roster-arrow {
-  color: var(--text-faintest);
-  transition:
-    color var(--motion-fast) var(--motion-ease),
-    transform var(--motion-fast) var(--motion-ease);
-}
-
-.agents-roster-row:hover .agents-roster-arrow {
-  color: var(--text-default);
-  transform: translateX(2px);
+.agents-roster-row .stage-mark {
+  width: 0.9rem;
+  height: 0.9rem;
 }
 
 .agents-workspace-conversation {
@@ -720,11 +690,6 @@ textarea {
   flex-direction: column;
   padding: var(--space-5) var(--space-6);
   background: var(--surface-sunken);
-}
-
-.agents-conversation-head {
-  flex: none;
-  margin-bottom: var(--space-3);
 }
 
 .agents-conversation-back {
@@ -1534,30 +1499,6 @@ textarea {
   color: var(--text-default);
   white-space: nowrap;
   line-height: 1.6;
-}
-
-.chip--p0 {
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border-color: var(--accent-bright);
-}
-
-.chip--p1 {
-  background: var(--surface-overlay);
-  color: var(--text-strong);
-  border-color: var(--text-muted);
-}
-
-.chip--p2 {
-  background: var(--surface-overlay);
-  color: var(--text-default);
-  border-color: var(--text-faint);
-}
-
-.chip--p3 {
-  background: transparent;
-  color: var(--text-muted);
-  border-color: var(--text-faint);
 }
 
 .chip--state {
@@ -3079,7 +3020,8 @@ select {
   opacity: 1;
 }
 
-/* Ticket rows contain only the title and the existing condition mark. */
+/* Ticket rows keep priority in a fixed leading gutter, followed by the title and
+ * the existing condition mark. Priority never displaces the status signal. */
 .list-row--board {
   width: 100%;
   display: flex;
@@ -3113,6 +3055,7 @@ select {
 
 .list-row--board .list-row-title {
   display: block;
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   color: inherit;
@@ -3121,6 +3064,46 @@ select {
 
 .board-workspace-stage-mark {
   flex: 0 0 auto;
+}
+
+/* --- Priority tile ------------------------------------------------------- */
+
+.priority-tile {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: var(--space-5);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.priority-tile--p0 {
+  color: var(--priority-p0-ink);
+  background: var(--priority-p0-fill);
+}
+
+.priority-tile--p1 {
+  color: var(--priority-p1-ink);
+  background: var(--priority-p1-fill);
+}
+
+.priority-tile--p2 {
+  color: var(--priority-p2-ink);
+  background: var(--priority-p2-fill);
+}
+
+.priority-tile--p3 {
+  color: var(--priority-p3-ink);
+  background: var(--priority-p3-fill);
 }
 
 /* --- Ticket screen (T16) ------------------------------------------------- */
@@ -4071,12 +4054,8 @@ select {
 }
 
 .ticket-identity-priority {
-  color: var(--text-default);
-  font-weight: 700;
-}
-
-.ticket-identity-priority--urgent {
-  color: var(--accent-error);
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .ticket-identity-key,
@@ -4318,16 +4297,6 @@ select {
     padding: var(--space-5);
   }
 
-  .agents-conversation-head {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-
-  .agents-conversation-head h1 {
-    font-size: var(--type-md);
-  }
-
   .agents-conversation-back {
     display: inline-flex;
     align-items: center;
@@ -4335,6 +4304,7 @@ select {
     color: var(--text-muted);
     font-size: var(--type-sm);
     text-decoration: none;
+    margin-bottom: var(--space-3);
   }
 }
 
@@ -4665,13 +4635,6 @@ select {
   background: var(--surface-overlay);
 }
 
-[data-screen="sprint"] .trow .pr {
-  min-width: 20px;
-  white-space: nowrap;
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-}
-
 [data-screen="sprint"] .trow .t {
   flex: 1;
   min-width: 0;
@@ -4822,6 +4785,10 @@ select {
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
+}
+
+[data-screen="backlog"] .grp > .section-heading .section-heading-label {
+  display: inline-flex;
 }
 
 [data-screen="backlog"] .grp > .section-heading .section-heading-count {
@@ -5092,4 +5059,101 @@ select {
 [data-screen="backlog"] [data-commit].button:hover:not(:disabled),
 [data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+
+/* Notifications — one quiet settings column; choices are content, not cards. */
+[data-screen="notifications"] {
+  width: min(100%, var(--measure-index));
+  margin: 0 auto;
+  padding: var(--space-7) var(--space-5) var(--space-page-tail);
+}
+
+.notifications-head .eyebrow,
+.notifications-section h2 {
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.notifications-head h1 {
+  margin: var(--space-2) 0 var(--space-7);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-display);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.notifications-section {
+  margin-bottom: var(--space-7);
+}
+
+.notifications-section h2 {
+  margin: 0 0 var(--space-3);
+}
+
+.notification-option {
+  display: flex;
+  gap: var(--space-5);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) 0;
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  cursor: pointer;
+}
+
+.notification-option strong,
+.notification-option small {
+  display: block;
+}
+
+.notification-option strong {
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.notification-option small,
+.notifications-section p {
+  margin-top: var(--space-1);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  color: var(--text-muted);
+}
+
+.notification-option input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  accent-color: var(--accent-bright);
+}
+
+.notification-action {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--text-default);
+  background: var(--surface-raised);
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.notification-action--primary {
+  color: var(--accent-ink);
+  background: var(--accent-bright);
+  font-weight: 600;
+}
+
+.notification-action:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+@media (max-width: 720px) {
+  [data-screen="notifications"] {
+    padding: var(--space-5) var(--space-4) var(--space-page-tail);
+  }
 }

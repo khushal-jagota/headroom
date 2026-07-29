@@ -15,6 +15,7 @@ The command tree matches the system model:
 
 - `day ...` — plan and inspect a day.
 - `project ...` — list and create project catalog rows.
+- `worker-type ...` — discover the Worker types registered on this Panels server.
 - `schedule ...` — configure exact-time creation of ordinary Tickets.
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
@@ -37,6 +38,10 @@ generic Stage setter.
   data-backed, not enum-backed. `project create` requires
   `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
   have not yet been assessed.
+- **`worker-type list`** — list the registered Worker type identifiers in registry
+  order. Its normal output is one identifier per line; `--json` returns the complete
+  served Worker-type manifest for automation. Commands that require `--worker-type`
+  point to this list instead of embedding a second catalog.
 - **`schedule create / list / show / set`** — manage generic internal schedules that
   create and place an ordinary Ticket at an exact local time. A schedule uses either
   `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
@@ -175,4 +180,4 @@ one worker step at a time and writes the Ticket's status itself (see
 
 ---
 
-_Last verified: 2026-07-28._
+_Last verified: 2026-07-29._

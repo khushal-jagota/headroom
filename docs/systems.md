@@ -205,6 +205,14 @@ What each backend is on this machine — installed, which version, signed in as 
 which models it offers and which reasoning efforts each of those takes — is one answer,
 probed when asked and kept until asked again.
 
+Hermes' answer comes from a packaged door run by its configured Python environment,
+not from whichever `hermes` happens to be on `PATH`. The door returns only configured
+provider inventory, with opaque `provider:model` identities and a configured default.
+Panels keeps the answer in process; normal reads use Hermes' cache, and only an explicit
+backend refresh asks Hermes to refresh its own inventory. There is no polling, per-Ticket
+catalog, or Hermes reasoning control. Hermes update checking and execution use its native
+explicit update commands through the same backend-management surface.
+
 _Code paths:_ `src/planner/conversation/`, and `/api/conversation` in
 `src/planner/core/server.py`.
 

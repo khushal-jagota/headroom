@@ -37,6 +37,11 @@ assert.match(app, /selectedAgent=\{route\.params\.roleKind === "chief"/);
 assert.match(app, /name === "agents"\s*\?\s*"agents"/);
 assert.match(route, /ChiefConversation/);
 assert.doesNotMatch(route, /fetchJson|mutateJson|\/api\/chief\/conversation/);
+assert.match(route, /conversationSignalPresentation/);
+assert.match(route, /onReplyWatermarkMoved/);
+assert.match(route, /<StageMark/);
+assert.doesNotMatch(route, /agents-workspace-roster-head/);
+assert.doesNotMatch(route, /agents-roster-description|agents-roster-arrow/);
 
 // The Chief wrapper owns the canonical owner API and exposes lookup failure recovery.
 for (const endpoint of [

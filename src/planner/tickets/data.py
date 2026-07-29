@@ -334,6 +334,7 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         at_cap=AtCap(row["at_cap"]),
         ticket_status=TicketStatus(row["ticket_status"]),
         ticket_status_changed_at=int(row["ticket_status_changed_at"]),
+        ticket_status_revision=int(row["ticket_status_revision"]),
         backend_error=(
             str(row["backend_error"]) if row["backend_error"] is not None else None
         ),
@@ -602,8 +603,18 @@ def _write_ticket_status(
     conn.execute(
         "UPDATE tickets SET ticket_status = ?, backend_error = ?, updated_at = ?, "
         "ticket_status_changed_at = CASE WHEN ticket_status = ? "
-        "THEN ticket_status_changed_at ELSE ? END WHERE id = ?",
-        (ticket_status.value, backend_error, now, ticket_status.value, now, ticket_id),
+        "THEN ticket_status_changed_at ELSE ? END, "
+        "ticket_status_revision = CASE WHEN ticket_status = ? "
+        "THEN ticket_status_revision ELSE ticket_status_revision + 1 END WHERE id = ?",
+        (
+            ticket_status.value,
+            backend_error,
+            now,
+            ticket_status.value,
+            now,
+            ticket_status.value,
+            ticket_id,
+        ),
     )
 
 

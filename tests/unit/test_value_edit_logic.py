@@ -62,6 +62,7 @@ def _ticket(stage: str, fields: TicketFields, *, ceiling: str = "done") -> Ticke
         at_cap=AtCap.propose,
         ticket_status=TicketStatus.empty,
         ticket_status_changed_at=0,
+        ticket_status_revision=0,
         backend_error=None,
         stage_ownership_overrides={},
         default_stage_ownership_mode=StageOwnershipMode.worker,

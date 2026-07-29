@@ -15,8 +15,24 @@ const boardRouteSource = await readFile(
   new URL("../src/routes/BoardRoute.svelte", import.meta.url),
   "utf8",
 );
+const conversationSignalPresentationSource = await readFile(
+  new URL("../src/lib/conversationSignalPresentation.ts", import.meta.url),
+  "utf8",
+);
 const sprintRouteSource = await readFile(
   new URL("../src/routes/SprintRoute.svelte", import.meta.url),
+  "utf8",
+);
+const backlogRouteSource = await readFile(
+  new URL("../src/routes/BacklogRoute.svelte", import.meta.url),
+  "utf8",
+);
+const ticketPriorityControlSource = await readFile(
+  new URL("../src/components/TicketPriorityControl.svelte", import.meta.url),
+  "utf8",
+);
+const priorityTileSource = await readFile(
+  new URL("../src/components/PriorityTile.svelte", import.meta.url),
   "utf8",
 );
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
@@ -80,16 +96,41 @@ assert.match(sprintRouteSource, /data-item-kind=\{item\.kind\}/);
 assert.match(sprintRouteSource, /item\.kind === "other"/);
 assert.doesNotMatch(sprintRouteSource, /loose_tickets|Loose tickets|data-loose/);
 
+// --- the one priority tile ---------------------------------------------------------------
+
+assert.match(priorityTileSource, /aria-label=\{decorative \? undefined : `Priority \$\{priority\}`\}/);
+assert.match(ticketPriorityControlSource, /<PriorityTile \{priority\} decorative \/>[\s\S]*<select/);
+assert.match(
+  boardRouteSource,
+  /<PriorityTile priority=\{card\.priority\} \/>[\s\S]*<span class="list-row-title">\{card\.title\}<\/span>[\s\S]*<StageMark/,
+);
+assert.equal((sprintRouteSource.match(/<PriorityTile priority=/g) || []).length, 2);
+assert.match(backlogRouteSource, /labelContent\(\)}<PriorityTile priority=\{p\} \/>/);
+assert.doesNotMatch(
+  backlogRouteSource.slice(backlogRouteSource.indexOf("{#each groups[p] as item}")),
+  /<PriorityTile/,
+);
+
 // --- the Workspace row mark -------------------------------------------------------------
 
-assert.match(boardRouteSource, /state: "needs-me", ariaLabel: "Needs you"/);
-assert.match(boardRouteSource, /state: "current-running", ariaLabel: "Agent working"/);
-assert.match(boardRouteSource, /state: "reply-seen", ariaLabel: "Agent reply seen"/);
+assert.match(conversationSignalPresentationSource, /state: "needs-me", ariaLabel: "Needs you"/);
+assert.match(
+  conversationSignalPresentationSource,
+  /state: "current-running", ariaLabel: "Agent working"/,
+);
+assert.match(
+  conversationSignalPresentationSource,
+  /state: "reply-seen", ariaLabel: "Agent reply seen"/,
+);
 // The mark is drawn from the record's last turn ending and this browser's own watermark.
 // Nothing on the card says whether a reply was seen, because seen is not a fact about the
 // Ticket.
-assert.match(boardRouteSource, /howFarThisBrowserHasRead\[card\.conversation_id\]/);
-assert.match(boardRouteSource, /latest_turn_ended_sequence/);
+assert.match(boardRouteSource, /conversationSignalPresentation/);
+assert.match(
+  conversationSignalPresentationSource,
+  /replyWatermarks\[signals\.conversation_id\]/,
+);
+assert.match(conversationSignalPresentationSource, /latest_turn_ended_sequence/);
 assert.doesNotMatch(boardRouteSource, /agent_reply_state/);
 // How far this browser has read is held in state and the mark reads it from there.
 // Reading a conversation writes nothing a server can announce, so no refetch is coming
@@ -99,7 +140,7 @@ assert.match(boardRouteSource, /onReplyWatermarkMoved\(rereadWhereThisBrowserHas
 // The mark must not read storage while it draws: a plain call has nothing reactive
 // about it, so a row would keep its old dot until something unrelated refetched.
 assert.doesNotMatch(
-  boardRouteSource.slice(boardRouteSource.indexOf("function signalPresentation")),
+  conversationSignalPresentationSource,
   /readReplyWatermark\(/,
   "the row mark reads the positions it was given, never storage"
 );

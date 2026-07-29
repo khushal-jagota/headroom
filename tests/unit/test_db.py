@@ -39,10 +39,10 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "project_priority"
+HEAD_REVISION = "notification_subjects"
 
-# The new Other-item uniqueness index is the one additional current schema object.
-CURRENT_SCHEMA_OBJECT_COUNT = 24
+# The notification revisions add their durable tables and supporting indexes.
+CURRENT_SCHEMA_OBJECT_COUNT = 34
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
@@ -90,15 +90,16 @@ def _table_structure(conn: sqlite3.Connection, table: str) -> dict[str, object]:
 # What the ticket_status_changed_at revision adds to `tickets`: name, type, NOT NULL,
 # default, primary-key position, in PRAGMA table_info's shape.
 STATUS_CHANGED_AT_COLUMN = ("ticket_status_changed_at", "INTEGER", 1, "0", 0)
+STATUS_REVISION_COLUMN = ("ticket_status_revision", "INTEGER", 1, "0", 0)
 
 
 def _table_structure_before_status_changed_at(
     structure: dict[str, object],
 ) -> dict[str, object]:
-    """The tickets structure with the one column this revision adds taken back off."""
+    """The tickets structure before its status-tracking columns were added."""
     columns = list(structure["columns"])  # type: ignore[call-overload]
-    assert columns[-1] == STATUS_CHANGED_AT_COLUMN
-    return {**structure, "columns": columns[:-1]}
+    assert columns[-2:] == [STATUS_CHANGED_AT_COLUMN, STATUS_REVISION_COLUMN]
+    return {**structure, "columns": columns[:-2]}
 
 
 def _with_the_conversation_link_renamed(

@@ -9,6 +9,7 @@
   import ErrorLine from "../components/ErrorLine.svelte";
   import ListRow from "../components/ListRow.svelte";
   import Pill from "../components/Pill.svelte";
+  import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import ScreenHeader from "../components/ScreenHeader.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
@@ -86,7 +87,11 @@
           <textarea class="in detail-in" rows="2" placeholder="Why it matters, any context — optional" data-input="body" bind:value={body}></textarea>
           <div class="foot">
             <SegmentedControl name="project" options={projectOptions} bind:value={project} />
-            <SegmentedControl name="priority" options={priorityOptions} bind:value={priority} />
+            <SegmentedControl name="priority" options={priorityOptions} bind:value={priority}>
+              {#snippet optionContent(option)}
+                <PriorityTile priority={option.label} />
+              {/snippet}
+            </SegmentedControl>
             <input class="in due-in" type="text" placeholder="due YYYY-MM-DD — optional" data-input="deadline" bind:value={deadline} />
             <div class="spacer"></div>
             <Button variant="primary" data-commit="" disabled={creating || !title.trim() || !project} onclick={() => void createItem()}>Add to backlog</Button>
@@ -102,7 +107,9 @@
           {#each PRIORITY_ORDER as p}
             {#if groups[p]?.length}
               <div class="grp" data-priority-group={p}>
-                <SectionHeading label={p} count={groups[p].length} />
+                <SectionHeading count={groups[p].length}>
+                  {#snippet labelContent()}<PriorityTile priority={p} />{/snippet}
+                </SectionHeading>
                 {#each groups[p] as item}
                   <ListRow variant="backlog" title={item.title} href="#/backlog" data-item-id={item.id}>
                     {#snippet trailing()}

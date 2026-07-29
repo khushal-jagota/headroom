@@ -53,6 +53,16 @@ SEMANTIC_TOKENS = {
     "--accent-done": "#7fa564",
     "--accent-error": "#d85d5d",
 }
+PRIORITY_TOKENS = {
+    "--priority-p0-fill": "#7d2c26",
+    "--priority-p0-ink": "#ffe0db",
+    "--priority-p1-fill": "#512725",
+    "--priority-p1-ink": "#ecccc7",
+    "--priority-p2-fill": "#54331f",
+    "--priority-p2-ink": "#ecd8c6",
+    "--priority-p3-fill": "#534323",
+    "--priority-p3-ink": "#e9e4c6",
+}
 SCROLL_SURFACES = {
     ".markdown pre": "x",
     ".file-preview-document-body": "y",
@@ -116,8 +126,12 @@ def assert_brand(browser, mobile):
           <span class="stage-mark stage-mark--current-waiting"></span>
           <span class="stage-mark stage-mark--completed"></span>
           <span class="stage-mark stage-mark--errored"></span>
+          <span class="priority-tile priority-tile--p0">P0</span>
+          <span class="priority-tile priority-tile--p1">P1</span>
+          <span class="priority-tile priority-tile--p2">P2</span>
+          <span class="priority-tile priority-tile--p3">P3</span>
         """)
-        names = [*BRAND_TOKENS, *SEMANTIC_TOKENS]
+        names = [*BRAND_TOKENS, *SEMANTIC_TOKENS, *PRIORITY_TOKENS]
         tokens = page.evaluate("""names => {
           const style = getComputedStyle(document.documentElement);
           return Object.fromEntries(names.map(name => [
@@ -126,6 +140,7 @@ def assert_brand(browser, mobile):
         }""", names)
         assert {name: tokens[name] for name in BRAND_TOKENS} == BRAND_TOKENS
         assert {name: tokens[name] for name in SEMANTIC_TOKENS} == SEMANTIC_TOKENS
+        assert {name: tokens[name] for name in PRIORITY_TOKENS} == PRIORITY_TOKENS
         assert colors(page, ".nav-badge") == {
             "color": "rgb(17, 19, 24)",
             "backgroundColor": "rgb(154, 173, 210)",
@@ -150,6 +165,14 @@ def assert_brand(browser, mobile):
         assert colors(page, ".stage-mark--current-waiting")["borderColor"] == "rgb(154, 173, 210)"
         assert colors(page, ".stage-mark--completed")["backgroundColor"] == "rgb(127, 165, 100)"
         assert colors(page, ".stage-mark--errored")["backgroundColor"] == "rgb(216, 93, 93)"
+        for priority, expected in {
+            "p0": ("rgb(125, 44, 38)", "rgb(255, 224, 219)"),
+            "p1": ("rgb(81, 39, 37)", "rgb(236, 204, 199)"),
+            "p2": ("rgb(84, 51, 31)", "rgb(236, 216, 198)"),
+            "p3": ("rgb(83, 67, 35)", "rgb(233, 228, 198)"),
+        }.items():
+            tile = colors(page, f".priority-tile--{priority}")
+            assert (tile["backgroundColor"], tile["color"]) == expected
         assert page.viewport_size == (
             {"width": 390, "height": 844} if mobile else {"width": 1280, "height": 800}
         )

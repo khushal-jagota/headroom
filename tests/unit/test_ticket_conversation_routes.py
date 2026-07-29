@@ -363,6 +363,16 @@ def test_the_first_message_runs_on_what_the_panel_was_shown(tmp_path: Path) -> N
     """The read and the create are the same resolve, so they cannot say different things."""
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
+    conn = connect(str(db_path))
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE tickets SET employee_backend = ?, employee_launch_model = ?, "
+                "employee_launch_reasoning_effort = NULL WHERE id = ?",
+                ("hermes", "openai-codex:gpt-5.6-sol", ticket_id),
+            )
+    finally:
+        conn.close()
 
     with TestClient(app) as client:
         shown = _start_values(client, ticket_id)
@@ -370,7 +380,9 @@ def test_the_first_message_runs_on_what_the_panel_was_shown(tmp_path: Path) -> N
         conversations = app.state.conversation_system
 
     assert conversations.backend_model(conversation_id) == shown["model"]
+    assert shown["model"] == "openai-codex:gpt-5.6-sol"
     assert conversations.backend_reasoning_effort(conversation_id) == shown["reasoning_effort"]
+    assert shown["reasoning_effort"] is None
 
 
 def test_both_doors_are_human_only(tmp_path: Path) -> None:

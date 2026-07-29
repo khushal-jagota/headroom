@@ -137,6 +137,10 @@ export type ChiefManagementSettings = {
   label: string;
   skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
+  conversation_id: string | null;
+  needs_me: boolean;
+  agent_working: boolean;
+  latest_turn_ended_sequence: number;
 };
 
 export type WorkerManagementSettings = {
@@ -259,4 +263,16 @@ export type BacklogResponse = SprintItemsResponse;
 
 export type IdeasResponse = {
   ideas: AnyRecord[];
+};
+
+export type NotificationTypeSetting = {
+  id: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+};
+
+export type NotificationSettingsResponse = {
+  types: NotificationTypeSetting[];
+  vapid_public_key: string;
 };
