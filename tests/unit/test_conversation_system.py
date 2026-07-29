@@ -24,11 +24,13 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
+    UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
     AgentCommand,
@@ -56,6 +58,11 @@ from planner.conversation.events import (
     PromptDiscardedEventPayload,
     PromptEventPayload,
     TurnEndedEventPayload,
+    UserInputAnswer,
+    UserInputAnsweredEventPayload,
+    UserInputOption,
+    UserInputQuestion,
+    UserInputRequestedEventPayload,
 )
 from planner.conversation.live_tail import (
     ConversationLiveTail,
@@ -114,6 +121,7 @@ class _FakeBackend:
     conversation_id: str
     writes: list[_FakeBackendWrite] = field(default_factory=list)
     permission_answers: dict[str, str] = field(default_factory=dict)
+    user_input_answers: dict[str, tuple[UserInputAnswer, ...]] = field(default_factory=dict)
     cancellations: int = 0
     session_starts: int = 0
     stops: int = 0
@@ -129,6 +137,7 @@ class _FakeBackend:
     session_load_fails: bool = False
     write_fails: bool = False
     permission_answer_write_fails: bool = False
+    user_input_answer_write_fails: bool = False
     needs_rebind_once: bool = False
     ends_the_turn_while_writing: bool = False
     writes_raise_something_unnamed: bool = False
@@ -263,6 +272,13 @@ class _FakeBackendChild:
             raise PermissionAnswerWriteFailed(ask_id)
         self._backend.permission_answers[ask_id] = option_id
 
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        if self._backend.user_input_answer_write_fails:
+            raise UserInputAnswerWriteFailed(request_id)
+        self._backend.user_input_answers[request_id] = answers
+
     async def stop(self) -> None:
         if self._backend.stop_has_begun is not None:
             self._backend.stop_has_begun.set()
@@ -392,6 +408,38 @@ class _Harness:
         )
         await self.settle()
         return ask_id
+
+    async def request_user_input(self, conversation_id: str) -> BackendUserInputRequest:
+        backend = self.backend(conversation_id)
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        request = BackendUserInputRequest(
+            request_id="input-1",
+            questions=(
+                UserInputQuestion(
+                    question_id="scope",
+                    header="Scope",
+                    question="Which parts?",
+                    options=(
+                        UserInputOption(label="Backend", description="Python"),
+                        UserInputOption(label="Frontend", description="Svelte"),
+                    ),
+                    multi_select=True,
+                    allow_other=True,
+                ),
+                UserInputQuestion(
+                    question_id="timing",
+                    header="Timing",
+                    question="When?",
+                    options=(UserInputOption(label="Now", description="Immediately"),),
+                    multi_select=False,
+                    allow_other=True,
+                ),
+            ),
+        )
+        await backend.sink.user_input_requested(token, request)
+        await self.settle()
+        return request
 
     async def agent_message(self, conversation_id: str, content: MessageContent) -> None:
         backend = self.backend(conversation_id)
@@ -1462,6 +1510,83 @@ def test_the_pending_ask_read_tracks_an_ask_through_its_whole_life(harness: _Har
         assert await harness.system.has_pending_permission_ask("c") is True
         await harness.system.interrupt("c")
         assert await harness.system.has_pending_permission_ask("c") is False
+
+    _run(exercise)
+
+
+def test_user_input_is_distinct_durable_and_recorded_only_after_delivery(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        request = await harness.request_user_input("c")
+
+        requested = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, UserInputRequestedEventPayload)
+        ]
+        assert requested[0].questions == request.questions
+        assert await harness.system.has_pending_user_input("c") is True
+        assert await harness.system.has_pending_permission_ask("c") is False
+
+        answers = (
+            UserInputAnswer(question_id="scope", answers=("Backend", "Frontend")),
+            UserInputAnswer(question_id="timing", answers=("Tomorrow",)),
+        )
+        harness.backend("c").user_input_answer_write_fails = True
+        assert await harness.system.answer_user_input("c", request.request_id, answers) is False
+        assert await harness.system.has_pending_user_input("c") is True
+        assert not any(
+            isinstance(event.payload, UserInputAnsweredEventPayload)
+            for event in await harness.events("c")
+        )
+
+        harness.backend("c").user_input_answer_write_fails = False
+        assert await harness.system.answer_user_input("c", request.request_id, answers) is True
+        assert harness.backend("c").user_input_answers == {request.request_id: answers}
+        assert await harness.system.has_pending_user_input("c") is False
+        answered = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, UserInputAnsweredEventPayload)
+        ]
+        assert answered == [
+            UserInputAnsweredEventPayload(request_id=request.request_id, answers=answers)
+        ]
+
+    _run(exercise)
+
+
+def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        request = await harness.request_user_input("c")
+
+        incomplete = (UserInputAnswer(question_id="scope", answers=("Backend",)),)
+        assert (
+            await harness.system.answer_user_input("c", request.request_id, incomplete)
+            is False
+        )
+        assert await harness.system.has_pending_user_input("c") is True
+
+        await harness.system.interrupt("c")
+        assert await harness.system.has_pending_user_input("c") is False
+        assert (
+            await harness.system.answer_user_input(
+                "c",
+                request.request_id,
+                (
+                    *incomplete,
+                    UserInputAnswer(question_id="timing", answers=("Now",)),
+                ),
+            )
+            is False
+        )
 
     _run(exercise)
 

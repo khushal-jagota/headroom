@@ -55,6 +55,7 @@ from tests.support.conversation_scripted_acp_agent import (
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
+    BackendUserInputRequest,
     TurnToken,
 )
 from planner.conversation.backends.hermes_acp import (
@@ -79,6 +80,7 @@ from planner.conversation.events import (
     PromptEventPayload,
     ToolCallStatus,
     TurnEndedEventPayload,
+    UserInputAnswer,
 )
 from planner.conversation.live_tail import ConversationLiveTail, ConversationTailSubscription
 from planner.conversation.message_content import (
@@ -222,6 +224,18 @@ class _ObservingSink:
         self._conversation.permission_asks_reported += 1
         self._conversation.pulse.send()
 
+    async def user_input_requested(
+        self, turn_token: TurnToken, request: BackendUserInputRequest
+    ) -> None:
+        await self._sink.user_input_requested(turn_token, request)
+
+    async def user_input_failed(
+        self, turn_token: TurnToken, *, request_id: str, detail: str
+    ) -> None:
+        await self._sink.user_input_failed(
+            turn_token, request_id=request_id, detail=detail
+        )
+
     async def turn_ended(
         self,
         turn_token: TurnToken,
@@ -319,6 +333,11 @@ class _CountedChild:
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         await self._child.answer_permission_ask(ask_id, option_id)
         self._conversation.expected_permission_answers += 1
+
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        await self._child.answer_user_input(request_id, answers)
 
     async def stop(self) -> None:
         # Read the agent one last time while it is still there, so what it saw stays with

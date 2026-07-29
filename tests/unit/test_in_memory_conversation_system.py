@@ -14,9 +14,11 @@ import asyncio
 import pytest
 
 from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
+from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
     TurnCannotEndWhilePermissionAskIsPending,
+    TurnCannotEndWhileUserInputIsPending,
 )
 from planner.conversation.message_content import text_message_content
 
@@ -50,5 +52,43 @@ def test_completing_a_turn_is_allowed_once_the_ask_is_answered() -> None:
         assert system.answer_permission_ask("c", ask_id, "allow-once") is True
         system.complete_running_turn("c")
         assert await system.is_running("c") is False
+
+    asyncio.run(exercise())
+
+
+def test_in_memory_user_input_waits_for_the_complete_answer_map() -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        await system.start_conversation(
+            ConversationStartRequest(
+                conversation_id="c",
+                model="a-model",
+                backend_key=ConversationBackendKey.claude,
+            )
+        )
+        await system.send("c", text_message_content("incumbent"), sender_label="owner")
+        request_id = system.raise_user_input(
+            "c",
+            (
+                UserInputQuestion(
+                    question_id="q1",
+                    header="Choice",
+                    question="Which?",
+                    options=(UserInputOption(label="One", description="first"),),
+                    multi_select=False,
+                    allow_other=True,
+                ),
+            ),
+        )
+        assert await system.has_pending_user_input("c") is True
+        with pytest.raises(TurnCannotEndWhileUserInputIsPending):
+            system.complete_running_turn("c")
+        assert system.answer_user_input(
+            "c", request_id, (UserInputAnswer(question_id="q1", answers=("typed",)),)
+        )
+        assert system.backend_user_input_answers("c", request_id) == (
+            UserInputAnswer(question_id="q1", answers=("typed",)),
+        )
+        system.complete_running_turn("c")
 
     asyncio.run(exercise())

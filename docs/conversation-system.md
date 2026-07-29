@@ -4,8 +4,8 @@ This is how Panels talks to an AI agent. One conversation = one agent
 process (hermes, codex, or claude) working in a folder, plus a permanent notebook
 of everything that happened in it. The rest of the planner can do exactly five
 things to a conversation — start it, send a message into it, interrupt its running
-turn, kill its activity outright, and ask whether it is running — plus one more
-question: is a permission ask waiting. Nothing else crosses the boundary.
+turn, kill its activity outright, and ask whether it is running. It can also ask whether
+the agent is waiting for a permission decision or answers to its questions.
 
 It serves every screen that shows a conversation: a Ticket's, the Chief of
 Staff's, and the development pane at `#/dev/conversation`. There is no second
@@ -17,7 +17,7 @@ second database, relay, neutral protocol and history adapter that preceded it.
   caller (pane, loop)                the conversation system                agent CLIs
   ───────────────────                ───────────────────────                ──────────
   start / send / interrupt   ──▶   one core: queue, turns, asks,   ──▶   hermes (ACP)
-  kill / is-running / ask?          notebook, janitor                     codex (app-server)
+  kill / running / waiting?         notebook, janitor                     codex (app-server)
                                           │                               claude (Agent SDK)
   read: events after N  ◀──   conversations + conversation_events
         + live tail                 (SQLite, written once)
@@ -30,7 +30,7 @@ its notebook. A row is a finished thing: a prompt that was actually delivered
 (the message itself, who sent it, how, and — when the sender minted them — the
 name the sender gave the message and the moment it was sent), a completed agent
 message, a tool call
-starting, a tool call finishing, a permission ask, its answer, a model change, a
+starting, a tool call finishing, a permission ask or agent question request, its answer, a model change, a
 discarded held message, a turn ending (completed, failed, or interrupted). Rows
 are written once and never edited. Streaming output (the text growing word by word) is live
 decoration only — it is never stored, and the agent's private reasoning is
@@ -234,6 +234,18 @@ is ours). An "always allow" answer is passed to the agent's vendor, who does all
 remembering — this system keeps no grant state at all. Ask and answer are both
 notebook rows; an answer only lands on an ask that is still waiting on the live
 turn, and an unanswered ask dies — visibly — when its turn ends.
+
+Agent questions use a separate path. A request keeps every question in order, including
+its short header, full text, choices, descriptions, whether several choices are allowed,
+and whether a typed answer is allowed. The composer presents one question at a time and
+sends the complete answer map only after all are answered. The answer row is written only
+after the backend accepts that map. Refreshing the page rebuilds a still-pending request
+from the notebook. Cancelling the turn withdraws it. A malformed question request is
+shown as a failure and refused; it never turns into an approval prompt.
+
+Claude receives answers under the full question text expected by `AskUserQuestion`.
+Codex receives the exact `requestUserInput` answer object expected by app-server. Hermes
+ACP has no agent-question request, so its existing permission flow is unchanged.
 
 ## Processes, honestly
 

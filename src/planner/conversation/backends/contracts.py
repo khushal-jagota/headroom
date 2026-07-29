@@ -35,6 +35,8 @@ from planner.conversation.events import (
     PermissionAskOption,
     PlanEntry,
     ToolCallStatus,
+    UserInputAnswer,
+    UserInputQuestion,
 )
 from planner.conversation.message_content import MessageContent
 from planner.conversation.message_files import ConversationMessageFiles
@@ -69,6 +71,10 @@ class PermissionAnswerWriteFailed(BackendAdapterError):
     The answer lands only when the backend has it, so this is the difference between an
     answer that was recorded and one that was actually given.
     """
+
+
+class UserInputAnswerWriteFailed(BackendAdapterError):
+    """A complete answer map did not reach the backend's waiting question request."""
 
 
 class NeedsRebind(BackendAdapterError):
@@ -108,6 +114,14 @@ class BackendPermissionAsk:
     title: str
     detail: str | None
     options: tuple[PermissionAskOption, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class BackendUserInputRequest:
+    """One ordered, complete request for answers raised by a backend."""
+
+    request_id: str
+    questions: tuple[UserInputQuestion, ...]
 
 
 class BackendEventSink(Protocol):
@@ -230,6 +244,16 @@ class BackendEventSink(Protocol):
         returned: an ask waits for a person, however long that takes, and the answer comes
         back the other way, through ``BackendChild.answer_permission_ask``.
         """
+
+    async def user_input_requested(
+        self, turn_token: TurnToken, request: BackendUserInputRequest
+    ) -> None:
+        """The agent asked the owner questions and is waiting for the whole answer map."""
+
+    async def user_input_failed(
+        self, turn_token: TurnToken, *, request_id: str, detail: str
+    ) -> None:
+        """A malformed question request was rejected rather than shown as permission."""
 
     async def turn_ended(
         self,
@@ -370,6 +394,14 @@ class BackendChild(Protocol):
 
         Raises ``PermissionAnswerWriteFailed`` if it did not reach the backend, in which
         case the answer has not landed and the ask is still waiting.
+        """
+
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        """Give the backend every answer for one pending question request.
+
+        Raises ``UserInputAnswerWriteFailed`` when the answer map did not land.
         """
 
     async def stop(self) -> None:

@@ -43,6 +43,7 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendUserInputRequest,
     PromptWriteFailed,
     TurnToken,
 )
@@ -58,6 +59,9 @@ from planner.conversation.events import (
     ConversationTurnEnding,
     PermissionAskOption,
     ToolCallStatus,
+    UserInputAnswer,
+    UserInputOption,
+    UserInputQuestion,
 )
 from planner.conversation.image_validation import MAX_CONVERSATION_MESSAGE_IMAGE_BYTES
 from planner.conversation.live_tail import MAXIMUM_HELD_TAIL_ITEMS, ConversationLiveTail
@@ -101,6 +105,7 @@ class _FakeBackend:
         return [message_content_text(content) for content in self.written_contents]
     steered_contents: list[MessageContent] = field(default_factory=list)
     permission_answers: dict[str, str] = field(default_factory=dict)
+    user_input_answers: dict[str, tuple[UserInputAnswer, ...]] = field(default_factory=dict)
     cancellations: int = 0
     live_turn_token: TurnToken | None = None
     sink: BackendEventSink | None = None
@@ -148,6 +153,11 @@ class _FakeBackendChild:
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         self._backend.permission_answers[ask_id] = option_id
+
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        self._backend.user_input_answers[request_id] = answers
 
     async def stop(self) -> None:
         self._backend.live_turn_token = None
@@ -313,6 +323,38 @@ class _Harness:
         )
         await self.settle()
         return ask_id
+
+    async def request_user_input(self, conversation_id: str) -> BackendUserInputRequest:
+        backend = self.backend(conversation_id)
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        request = BackendUserInputRequest(
+            request_id="input-1",
+            questions=(
+                UserInputQuestion(
+                    question_id="scope",
+                    header="Scope",
+                    question="Which parts?",
+                    options=(
+                        UserInputOption(label="Backend", description="Python"),
+                        UserInputOption(label="Frontend", description="Svelte"),
+                    ),
+                    multi_select=True,
+                    allow_other=True,
+                ),
+                UserInputQuestion(
+                    question_id="timing",
+                    header="Timing",
+                    question="When?",
+                    options=(UserInputOption(label="Now", description="Immediately"),),
+                    multi_select=False,
+                    allow_other=True,
+                ),
+            ),
+        )
+        await backend.sink.user_input_requested(token, request)
+        await self.settle()
+        return request
 
     async def stream_agent_text(self, conversation_id: str, text_delta: str) -> None:
         backend = self.backend(conversation_id)
@@ -883,6 +925,54 @@ def test_the_view_says_what_is_running_and_what_is_waiting(harness: _Harness) ->
                 "allow",
                 "reject",
             ]
+
+    _run(exercise)
+
+
+def test_user_input_replays_after_refresh_and_posts_a_complete_answer_map(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "work"}],
+                    "sender_label": "owner",
+                },
+            )
+            request = await harness.request_user_input("c")
+
+            view = (await client.get("/api/conversation/conversations/c")).json()
+            assert view["pending_permission_ask"] is None
+            assert view["pending_user_input"]["request_id"] == request.request_id
+            question_ids = [
+                question["question_id"]
+                for question in view["pending_user_input"]["questions"]
+            ]
+            assert question_ids == [
+                "scope",
+                "timing",
+            ]
+
+            response = await client.post(
+                "/api/conversation/conversations/c/user-input-answers",
+                json={
+                    "request_id": request.request_id,
+                    "answers": {
+                        "scope": {"answers": ["Backend", "Frontend"]},
+                        "timing": {"answers": ["Tomorrow"]},
+                    },
+                },
+            )
+            assert response.json() == {"landed": True}
+            assert harness.backend("c").user_input_answers[request.request_id] == (
+                UserInputAnswer("scope", ("Backend", "Frontend")),
+                UserInputAnswer("timing", ("Tomorrow",)),
+            )
+            refreshed = (await client.get("/api/conversation/conversations/c")).json()
+            assert refreshed["pending_user_input"] is None
 
     _run(exercise)
 
