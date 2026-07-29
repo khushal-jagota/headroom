@@ -83,6 +83,18 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
 
     identity = page.locator("[data-ticket-identity]")
     assert "P0" in identity.inner_text()
+    worker_label = next(
+        worker_type["label"]
+        for worker_type in api.get(server, "/api/worker-types")["worker_types"]
+        if worker_type["worker_type"] == "coding"
+    )
+    worker_name = identity.locator("[data-ticket-worker-name]")
+    assert worker_name.evaluate("element => element.textContent") == worker_label
+    assert worker_name.locator(".ticket-identity-key").count() == 0
+    worker_name_after_priority = page.locator(
+        "[data-priority-control] + .ticket-identity-group [data-ticket-worker-name]"
+    )
+    assert worker_name_after_priority.count() == 1
     assert "sprint" in identity.inner_text().lower()
     assert "A DELIBERATELY DESCRIPTIVE LATER SPRINT" in identity.inner_text()
     assert "due" in identity.inner_text().lower()
@@ -167,6 +179,7 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
           const leash = document.querySelector(".ticket-leash");
           const ticketDoc = document.querySelector(".ticket-doc");
           const blockers = document.querySelector("[data-blocker-summary]");
+          const workerName = document.querySelector("[data-ticket-worker-name]");
           const tops = element => [...element.children].map(child =>
             Math.round(child.getBoundingClientRect().top)
           );
@@ -180,6 +193,7 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
             overflow: document.documentElement.scrollWidth - window.innerWidth,
             ticketDocOverflow: ticketDoc.scrollWidth - ticketDoc.clientWidth,
             blockerOverflow: blockers.scrollWidth - blockers.clientWidth,
+            workerNameRight: workerName.getBoundingClientRect().right,
           };
         }"""
     )
@@ -190,6 +204,7 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     assert geometry["overflow"] <= 0
     assert geometry["ticketDocOverflow"] <= 0
     assert geometry["blockerOverflow"] <= 0
+    assert geometry["workerNameRight"] <= 320
 
 
 def test_current_stage_only_labels_ambiguous_user_and_approval_states(
