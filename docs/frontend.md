@@ -29,8 +29,8 @@ One screen per part of the system:
   that item's project; an unparented backlog Ticket uses its own project. The selector does not
   close or replace an already-open ticket inspector. The rail groups the visible
   tickets into collapsible boxed groups in a fixed order that puts what needs the user
-  first: Errored, Needs user, Waiting to Closeout, User, Paired, Agent, Waiting for
-  Kickoff, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
+  first: Errored, Needs user, Waiting for Kickoff, User, Paired, Agent, Waiting to
+  Closeout, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
   rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group.
   A done ticket goes to Done. A ticket resting at Closeout with an `empty` status goes
   to Waiting to Closeout when its current Closeout step is still runnable; Stop at its
