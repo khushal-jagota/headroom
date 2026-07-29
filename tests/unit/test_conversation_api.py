@@ -173,9 +173,13 @@ class _FakeMachine:
     executables: dict[str, str] = field(default_factory=dict)
     outcomes: dict[tuple[str, ...], CommandOutcome] = field(default_factory=dict)
     run_commands: list[tuple[str, ...]] = field(default_factory=list)
+    answers_any_other_command: CommandOutcome | None = None
 
     def executable_path(self, executable_name: str) -> str | None:
         return self.executables.get(executable_name)
+
+    def configured_executable_path(self, executable_name: str) -> str | None:
+        return self.executables.get(executable_name) if executable_name == "hermes" else None
 
     def real_path(self, path: str) -> str:
         return path
@@ -191,7 +195,9 @@ class _FakeMachine:
         command = tuple(argv)
         self.run_commands.append(command)
         return self.outcomes.get(
-            command, CommandOutcome(exit_code=-1, standard_output="", standard_error="no such")
+            command,
+            self.answers_any_other_command
+            or CommandOutcome(exit_code=-1, standard_output="", standard_error="no such"),
         )
 
     async def latest_released_version(
@@ -1488,6 +1494,36 @@ def test_a_tail_is_closed_by_the_same_door_that_closes_the_change_stream(
 
 def test_the_backend_cards_are_probed_once_and_again_when_asked(harness: _Harness) -> None:
     async def exercise() -> None:
+        harness.machine.executables["hermes"] = "/usr/local/bin/hermes"
+        harness.machine.outcomes[("/usr/local/bin/hermes", "--version")] = CommandOutcome(
+            exit_code=0,
+            standard_output="Hermes Agent v0.18.2\n",
+            standard_error="",
+        )
+        harness.machine.answers_any_other_command = CommandOutcome(
+            exit_code=0,
+            standard_output=json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "status": "runnable",
+                    "defaultModelId": "openai-codex:gpt-5.6-sol",
+                    "providers": [
+                        {
+                            "id": "openai-codex",
+                            "displayName": "OpenAI Codex",
+                            "models": [
+                                {
+                                    "id": "openai-codex:gpt-5.6-sol",
+                                    "displayName": "GPT-5.6 Sol",
+                                    "detail": "OpenAI Codex",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            standard_error="",
+        )
         harness.machine.executables["claude"] = "/usr/local/bin/claude"
         harness.machine.outcomes[("/usr/local/bin/claude", "--version")] = CommandOutcome(
             exit_code=0, standard_output="2.1.219 (Claude Code)\n", standard_error=""
@@ -1512,6 +1548,13 @@ def test_the_backend_cards_are_probed_once_and_again_when_asked(harness: _Harnes
             assert first.status_code == 200
             cards = {card["backend_key"]: card for card in first.json()["backends"]}
             assert set(cards) == {"hermes", "codex", "claude"}
+
+            hermes = cards["hermes"]
+            assert hermes["default_model_id"] == "openai-codex:gpt-5.6-sol"
+            assert [model["model_id"] for model in hermes["available_models"]] == [
+                "openai-codex:gpt-5.6-sol"
+            ]
+            assert hermes["reasoning_effort_options"] == []
 
             claude = cards["claude"]
             assert claude["installed"] is True
@@ -1560,9 +1603,43 @@ def test_an_update_that_cannot_be_run_says_so_rather_than_pretending(
             assert response.status_code == 200
             assert response.json() == {
                 "outcome": "failed",
-                "detail": "`hermes` is not installed or not on PATH.",
+                "detail": (
+                    "Hermes is not installed at the configured "
+                    "PLAN_HERMES_PYTHON environment."
+                ),
                 "output_tail": "",
             }
+
+    _run(exercise)
+
+
+def test_the_existing_update_route_exposes_a_native_hermes_result(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        hermes = "/usr/local/bin/hermes"
+        harness.machine.executables["hermes"] = hermes
+        harness.machine.outcomes[(hermes, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
+        )
+        harness.machine.outcomes[(hermes, "update", "--check")] = CommandOutcome(
+            exit_code=0, standard_output="✓ Already up to date.\n", standard_error=""
+        )
+        harness.machine.outcomes[(hermes, "update", "--yes")] = CommandOutcome(
+            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
+        )
+
+        async with harness.client() as client:
+            response = await client.post("/api/conversation/backends/hermes/update")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "outcome": "unchanged",
+            "detail": (
+                "The update command finished, but the installed version is still 0.18.2."
+            ),
+            "output_tail": "✓ Update complete!\n",
+        }
 
     _run(exercise)
 
@@ -1618,6 +1695,12 @@ def test_the_application_serves_the_conversation_system_and_puts_it_away(
         # The worker path and the browser's conversation are the same system. A worker's
         # prompt goes into a real conversation, not a stand-in beside it.
         assert app.state.conversation_system is app.state.conversation.system
+        # Backend cards and child startup share the same lifecycle arbiter. This is what
+        # makes the update route's check atomic with a real conversation spawn.
+        assert (
+            app.state.conversation.system._backend_lifecycle
+            is app.state.conversation.backend_snapshots._backend_lifecycle
+        )
 
     assert app.state.conversation is None
 

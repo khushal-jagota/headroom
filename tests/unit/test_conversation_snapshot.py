@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
     ClaudeModelCatalog,
@@ -49,6 +50,7 @@ CLAUDE_REAL_PATH = "/Users/someone/.local/lib/node_modules/@anthropic-ai/claude-
 CODEX_PATH = "/Users/someone/.local/bin/codex"
 CODEX_REAL_PATH = "/Users/someone/.codex/packages/standalone/releases/0.145.0-arm64/bin/codex"
 HERMES_PATH = "/Users/someone/.local/bin/hermes"
+FHS_HERMES_PATH = "/usr/local/bin/hermes"
 
 
 @dataclass
@@ -56,6 +58,7 @@ class _FakeMachine:
     """The machine, answered from a script and never actually touched."""
 
     executables: dict[str, str] = field(default_factory=dict)
+    configured_executables: dict[str, str] = field(default_factory=dict)
     real_paths: dict[str, str] = field(default_factory=dict)
     outcomes: dict[tuple[str, ...], CommandOutcome] = field(default_factory=dict)
     registry_versions: dict[str, str] = field(default_factory=dict)
@@ -75,6 +78,11 @@ class _FakeMachine:
 
     def executable_path(self, executable_name: str) -> str | None:
         return self.executables.get(executable_name)
+
+    def configured_executable_path(self, executable_name: str) -> str | None:
+        return self.configured_executables.get(executable_name) or (
+            self.executables.get(executable_name) if executable_name == "hermes" else None
+        )
 
     def real_path(self, path: str) -> str:
         return self.real_paths.get(path, path)
@@ -577,6 +585,11 @@ def test_hermes_has_no_account_to_report_and_no_effort_to_offer() -> None:
         machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
             exit_code=0, standard_output="Hermes Agent v0.18.2 (2026.7.7.2)\n", standard_error=""
         )
+        machine.outcomes[(HERMES_PATH, "update", "--check")] = CommandOutcome(
+            exit_code=1,
+            standard_output="",
+            standard_error="error: unrecognized arguments: --check",
+        )
 
         card = await probe_backend(ConversationBackendKey.hermes, machine)
 
@@ -587,8 +600,7 @@ def test_hermes_has_no_account_to_report_and_no_effort_to_offer() -> None:
         assert card.update_advisory.install_method is BackendInstallMethod.manual_only
         assert card.update_advisory.update_command is None
         assert card.update_advisory.detail == (
-            "Hermes is installed from its own checkout, so Panels offers no update here — "
-            "update it where it is installed."
+            "error: unrecognized arguments: --check"
         )
         # Nothing was asked of a registry for a backend no registry publishes.
         assert machine.registry_lookups == []
@@ -676,11 +688,26 @@ def test_hermes_names_the_model_its_own_configuration_runs_on() -> None:
             exit_code=0,
             standard_output=json.dumps(
                 {
-                    "provider": "openai",
-                    "nativeModel": "gpt-5.6-sol",
-                    "models": [
-                        {"model": "gpt-5.6-sol", "description": "the fast one"},
-                        {"model": "gpt-5.5", "description": None},
+                    "schemaVersion": 1,
+                    "status": "runnable",
+                    "defaultModelId": "openai:gpt-5.6-sol",
+                    "providers": [
+                        {
+                            "id": "openai",
+                            "displayName": "OpenAI",
+                            "models": [
+                                {
+                                    "id": "openai:gpt-5.6-sol",
+                                    "displayName": "gpt-5.6-sol",
+                                    "detail": "OpenAI",
+                                },
+                                {
+                                    "id": "openai:gpt-5.5",
+                                    "displayName": "gpt-5.5",
+                                    "detail": "OpenAI",
+                                },
+                            ],
+                        }
                     ],
                 }
             ),
@@ -689,14 +716,282 @@ def test_hermes_names_the_model_its_own_configuration_runs_on() -> None:
 
         card = await probe_backend(ConversationBackendKey.hermes, machine)
 
-        assert card.default_model_id == "gpt-5.6-sol"
+        assert card.default_model_id == "openai:gpt-5.6-sol"
         assert [model.model_id for model in card.available_models] == [
-            "gpt-5.6-sol",
-            "gpt-5.5",
+            "openai:gpt-5.6-sol",
+            "openai:gpt-5.5",
         ]
         # Hermes has no reasoning effort at all, so it has no default one either.
         assert card.reasoning_effort_options == ()
         assert card.default_reasoning_effort is None
+
+    _run(exercise)
+
+
+def test_configured_hermes_is_probed_when_it_is_absent_from_path() -> None:
+    async def exercise() -> None:
+        configured_path = "/opt/hermes/venv/bin/hermes"
+        machine = _FakeMachine(
+            executables={"hermes": "/usr/local/bin/unrelated-hermes"},
+            configured_executables={"hermes": configured_path},
+            answers_any_other_command=CommandOutcome(
+                exit_code=0,
+                standard_output=json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "status": "not_configured",
+                        "defaultModelId": None,
+                        "providers": [],
+                    }
+                ),
+                standard_error="",
+            ),
+        )
+        machine.outcomes[(configured_path, "--version")] = CommandOutcome(
+            exit_code=0,
+            standard_output="Hermes Agent v0.18.2\n",
+            standard_error="",
+        )
+
+        card = await probe_backend(ConversationBackendKey.hermes, machine)
+
+        assert card.installed is True
+        assert card.executable_path == configured_path
+        assert card.diagnoses == (
+            "Hermes is installed but has no default provider and model configured. "
+            "Run `hermes model` in a terminal.",
+        )
+
+    _run(exercise)
+
+
+def test_hermes_default_must_be_present_in_its_returned_inventory() -> None:
+    async def exercise() -> None:
+        machine = _FakeMachine(executables={"hermes": HERMES_PATH})
+        machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
+            exit_code=0,
+            standard_output="Hermes Agent v0.18.2\n",
+            standard_error="",
+        )
+        machine.answers_any_other_command = CommandOutcome(
+            exit_code=0,
+            standard_output=json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "status": "default_unavailable",
+                    "defaultModelId": "openai:missing",
+                    "providers": [
+                        {
+                            "id": "openai",
+                            "displayName": "OpenAI",
+                            "models": [
+                                {
+                                    "id": "openai:available",
+                                    "displayName": "Available",
+                                    "detail": "OpenAI",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ),
+            standard_error="",
+        )
+
+        card = await probe_backend(ConversationBackendKey.hermes, machine)
+
+        assert card.default_model_id is None
+        assert [model.model_id for model in card.available_models] == [
+            "openai:available"
+        ]
+        assert "does not have usable credentials" in card.diagnoses[0]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "runnable",
+                "defaultModelId": "bare-model",
+                "providers": [
+                    {
+                        "id": "openai-codex",
+                        "displayName": "OpenAI Codex",
+                        "models": [
+                            {
+                                "id": "bare-model",
+                                "displayName": "Bare model",
+                                "detail": "OpenAI Codex",
+                            }
+                        ],
+                    }
+                ],
+            },
+            id="bare-model-id",
+        ),
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "runnable",
+                "defaultModelId": "openai-codex:gpt-5.6-sol",
+                "providers": [
+                    {
+                        "id": "openai-codex",
+                        "displayName": "OpenAI Codex",
+                        "models": [
+                            {
+                                "id": "other:gpt-5.6-sol",
+                                "displayName": "GPT-5.6 Sol",
+                                "detail": "OpenAI Codex",
+                            }
+                        ],
+                    }
+                ],
+            },
+            id="model-provider-mismatch",
+        ),
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "runnable",
+                "defaultModelId": "openai-codex:gpt-5.6-sol",
+                "providers": [
+                    {
+                        "id": "openai-codex",
+                        "displayName": "OpenAI Codex",
+                        "models": [
+                            {
+                                "id": "openai-codex:gpt-5.6-sol",
+                                "displayName": "GPT-5.6 Sol",
+                            }
+                        ],
+                    }
+                ],
+            },
+            id="partial-model-row",
+        ),
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "not_configured",
+                "defaultModelId": None,
+                "providers": [{"id": "openai-codex", "displayName": "OpenAI Codex"}],
+            },
+            id="partial-provider-row",
+        ),
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "not_configured",
+                "defaultModelId": None,
+                "providers": [
+                    {
+                        "id": "openai-codex",
+                        "displayName": "OpenAI Codex",
+                        "models": [],
+                    }
+                ],
+            },
+            id="empty-provider-models",
+        ),
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "not_configured",
+                "defaultModelId": None,
+                "providers": [
+                    {
+                        "id": "openai-codex",
+                        "displayName": "OpenAI Codex",
+                        "models": [
+                            {
+                                "id": "openai-codex:gpt-5.6-sol",
+                                "displayName": "GPT-5.6 Sol",
+                                "detail": "OpenAI Codex",
+                            }
+                        ],
+                    },
+                    {
+                        "id": "openai-codex",
+                        "displayName": "Duplicate",
+                        "models": [
+                            {
+                                "id": "openai-codex:gpt-5.5",
+                                "displayName": "GPT-5.5",
+                                "detail": "Duplicate",
+                            }
+                        ],
+                    },
+                ],
+            },
+            id="duplicate-provider",
+        ),
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "runnable",
+                "defaultModelId": None,
+                "providers": [],
+            },
+            id="runnable-without-default",
+        ),
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "not_configured",
+                "defaultModelId": "openai-codex:gpt-5.6-sol",
+                "providers": [],
+            },
+            id="not-configured-with-default",
+        ),
+        pytest.param(
+            {
+                "schemaVersion": 1,
+                "status": "default_unavailable",
+                "defaultModelId": "openai-codex:gpt-5.6-sol",
+                "providers": [
+                    {
+                        "id": "openai-codex",
+                        "displayName": "OpenAI Codex",
+                        "models": [
+                            {
+                                "id": "openai-codex:gpt-5.6-sol",
+                                "displayName": "GPT-5.6 Sol",
+                                "detail": "OpenAI Codex",
+                            }
+                        ],
+                    }
+                ],
+            },
+            id="unavailable-default-is-available",
+        ),
+    ],
+)
+def test_a_malformed_hermes_inventory_is_rejected_whole(payload: dict[str, Any]) -> None:
+    async def exercise() -> None:
+        machine = _FakeMachine(executables={"hermes": HERMES_PATH})
+        machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
+            exit_code=0,
+            standard_output="Hermes Agent v0.18.2\n",
+            standard_error="",
+        )
+        machine.answers_any_other_command = CommandOutcome(
+            exit_code=0,
+            standard_output=json.dumps(payload),
+            standard_error="",
+        )
+
+        card = await probe_backend(ConversationBackendKey.hermes, machine)
+
+        assert card.available_models == ()
+        assert card.default_model_id is None
+        assert card.diagnoses == (
+            "Hermes' model inventory returned an invalid answer, so no models are listed.",
+        )
 
     _run(exercise)
 
@@ -712,6 +1007,98 @@ def test_a_backend_that_is_not_there_runs_nothing_by_default() -> None:
 
 
 # --- the update advisory ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("check", "available", "detail"),
+    (
+        (
+            CommandOutcome(
+                exit_code=0,
+                standard_output="✓ Already up to date.\n",
+                standard_error="",
+            ),
+            False,
+            "This Hermes installation is current.",
+        ),
+        (
+            CommandOutcome(
+                exit_code=0,
+                standard_output="⚕ Update available: 2 commits behind upstream/main.\n",
+                standard_error="",
+            ),
+            True,
+            "A Hermes update is available.",
+        ),
+        (
+            CommandOutcome(
+                exit_code=1,
+                standard_output="",
+                standard_error="✗ Network error — cannot reach the remote repository.\n",
+            ),
+            False,
+            (
+                "Panels could not determine whether Hermes has an update: "
+                "✗ Network error — cannot reach the remote repository."
+            ),
+        ),
+    ),
+)
+def test_hermes_native_check_drives_the_advisory_even_for_an_fhs_wrapper(
+    check: CommandOutcome, available: bool, detail: str
+) -> None:
+    async def exercise() -> None:
+        machine = _FakeMachine(
+            executables={"hermes": FHS_HERMES_PATH},
+            real_paths={FHS_HERMES_PATH: FHS_HERMES_PATH},
+        )
+        machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
+        )
+        machine.outcomes[(FHS_HERMES_PATH, "update", "--check")] = check
+
+        card = await probe_backend(ConversationBackendKey.hermes, machine)
+
+        assert card.update_advisory is not None
+        assert card.update_advisory.install_method is BackendInstallMethod.native
+        assert card.update_advisory.update_command == (
+            FHS_HERMES_PATH,
+            "update",
+            "--yes",
+        )
+        assert card.update_advisory.update_available is available
+        assert card.update_advisory.detail == detail
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    (
+        "Cannot update Hermes Agent: this Hermes installation is managed by Homebrew.\n",
+        "✗ `hermes update` doesn't apply inside the Docker container.\n",
+        "✗ Not a git repository — cannot check for updates.\n",
+        "Update Hermes through the Nix source that installed it.\n",
+    ),
+)
+def test_hermes_native_refusals_are_not_offered_as_updates(refusal: str) -> None:
+    async def exercise() -> None:
+        machine = _FakeMachine(executables={"hermes": FHS_HERMES_PATH})
+        machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
+        )
+        machine.outcomes[(FHS_HERMES_PATH, "update", "--check")] = CommandOutcome(
+            exit_code=1, standard_output="", standard_error=refusal
+        )
+
+        card = await probe_backend(ConversationBackendKey.hermes, machine)
+
+        assert card.update_advisory is not None
+        assert card.update_advisory.install_method is BackendInstallMethod.manual_only
+        assert card.update_advisory.update_command is None
+        assert refusal.strip() in card.update_advisory.detail
+
+    _run(exercise)
 
 
 def test_a_newer_published_version_is_offered_with_the_command_that_installs_it() -> None:
@@ -807,6 +1194,146 @@ def _claude_update_command() -> tuple[str, ...]:
     return ("npm", "install", "-g", "@anthropic-ai/claude-code@latest")
 
 
+def _installed_updatable_hermes() -> _FakeMachine:
+    machine = _FakeMachine(executables={"hermes": FHS_HERMES_PATH})
+    machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
+        exit_code=0, standard_output="Hermes Agent v0.18.2\n", standard_error=""
+    )
+    machine.outcomes[(FHS_HERMES_PATH, "update", "--check")] = CommandOutcome(
+        exit_code=0,
+        standard_output="⚕ Update available: 2 commits behind upstream/main.\n",
+        standard_error="",
+    )
+    machine.answers_any_other_command = CommandOutcome(
+        exit_code=0,
+        standard_output='{"nativeModel": null, "models": []}',
+        standard_error="",
+    )
+    return machine
+
+
+def _hermes_update_command() -> tuple[str, ...]:
+    return (FHS_HERMES_PATH, "update", "--yes")
+
+
+def test_hermes_update_uses_only_the_native_non_interactive_safe_path() -> None:
+    async def exercise() -> None:
+        machine = _installed_updatable_hermes()
+        machine.outcomes[_hermes_update_command()] = CommandOutcome(
+            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
+        )
+
+        result = await BackendSnapshotService(machine).update_backend(
+            ConversationBackendKey.hermes
+        )
+
+        assert result.outcome is BackendUpdateOutcome.unchanged
+        assert _hermes_update_command() in machine.run_commands
+        assert all("--force" not in command for command in machine.run_commands)
+        assert all("--force-venv" not in command for command in machine.run_commands)
+
+    _run(exercise)
+
+
+def test_a_hermes_update_that_moves_the_version_succeeds() -> None:
+    async def exercise() -> None:
+        machine = _installed_updatable_hermes()
+        machine.outcomes[_hermes_update_command()] = CommandOutcome(
+            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
+        )
+
+        def the_new_one_is_now_installed() -> None:
+            machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
+                exit_code=0, standard_output="Hermes Agent v0.19.0\n", standard_error=""
+            )
+
+        machine.after_run[_hermes_update_command()] = the_new_one_is_now_installed
+
+        result = await BackendSnapshotService(machine).update_backend(
+            ConversationBackendKey.hermes
+        )
+
+        assert result.outcome is BackendUpdateOutcome.succeeded
+        assert result.detail == "Updated to 0.19.0."
+
+    _run(exercise)
+
+
+def test_a_failed_hermes_update_still_refreshes_its_snapshot() -> None:
+    async def exercise() -> None:
+        machine = _installed_updatable_hermes()
+        machine.outcomes[_hermes_update_command()] = CommandOutcome(
+            exit_code=1, standard_output="", standard_error="migration failed"
+        )
+
+        result = await BackendSnapshotService(machine).update_backend(
+            ConversationBackendKey.hermes
+        )
+
+        assert result.outcome is BackendUpdateOutcome.failed
+        assert result.output_tail == "migration failed"
+        assert machine.run_commands.count((FHS_HERMES_PATH, "--version")) == 2
+        assert machine.run_commands.count(
+            (FHS_HERMES_PATH, "update", "--check")
+        ) == 2
+
+    _run(exercise)
+
+
+def test_concurrent_hermes_updates_are_serialized_and_report_their_own_change() -> None:
+    async def exercise() -> None:
+        machine = _installed_updatable_hermes()
+        machine.outcomes[_hermes_update_command()] = CommandOutcome(
+            exit_code=0, standard_output="✓ Update complete!\n", standard_error=""
+        )
+        machine.slow_commands.add(_hermes_update_command())
+        machine.let_slow_commands_finish = asyncio.Event()
+
+        def the_new_one_is_now_installed() -> None:
+            machine.outcomes[(FHS_HERMES_PATH, "--version")] = CommandOutcome(
+                exit_code=0, standard_output="Hermes Agent v0.19.0\n", standard_error=""
+            )
+
+        machine.after_run[_hermes_update_command()] = the_new_one_is_now_installed
+        service = BackendSnapshotService(machine)
+        updates = [
+            asyncio.create_task(service.update_backend(ConversationBackendKey.hermes))
+            for _ in range(2)
+        ]
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert machine.let_slow_commands_finish is not None
+        machine.let_slow_commands_finish.set()
+        first, second = await asyncio.gather(*updates)
+
+        assert machine.most_commands_at_once == 1
+        assert first.outcome is BackendUpdateOutcome.succeeded
+        assert second.outcome is BackendUpdateOutcome.unchanged
+
+    _run(exercise)
+
+
+def test_a_live_hermes_child_refuses_maintenance_before_the_command_runs() -> None:
+    async def exercise() -> None:
+        machine = _installed_updatable_hermes()
+        lifecycle = BackendLifecycleCoordinator()
+        service = BackendSnapshotService(machine, backend_lifecycle=lifecycle)
+
+        async with lifecycle.child_start(ConversationBackendKey.hermes):
+            pass
+        result = await service.update_backend(ConversationBackendKey.hermes)
+
+        assert result.outcome is BackendUpdateOutcome.failed
+        assert result.detail == (
+            "Hermes cannot be updated while a Panels-owned Hermes process is starting "
+            "or running. Stop it and try again."
+        )
+        assert _hermes_update_command() not in machine.run_commands
+        await lifecycle.child_stopped(ConversationBackendKey.hermes)
+
+    _run(exercise)
+
+
 def test_an_update_that_moves_the_version_succeeded() -> None:
     async def exercise() -> None:
         machine = _installed_claude()
@@ -890,7 +1417,9 @@ def test_an_update_with_no_command_to_run_fails_with_the_reason() -> None:
         )
 
         assert result.outcome is BackendUpdateOutcome.failed
-        assert result.detail == "`hermes` is not installed or not on PATH."
+        assert result.detail == (
+            "Hermes is not installed at the configured PLAN_HERMES_PYTHON environment."
+        )
         assert machine.run_commands == []
 
     _run(exercise)
@@ -1021,6 +1550,43 @@ def test_a_command_that_runs_out_of_time_takes_what_it_started_with_it(
     _run(exercise)
 
 
+def test_cancelling_a_command_takes_what_it_started_with_it(tmp_path: Path) -> None:
+    """A disconnected update caller cannot leave an installer behind its released lease."""
+
+    async def exercise() -> None:
+        child_process_id_file = tmp_path / "the-cancelled-child.pid"
+        running = asyncio.create_task(
+            SubprocessBackendProbeEnvironment().run(
+                (
+                    "/bin/sh",
+                    "-c",
+                    f"sleep 60 & echo $! > {child_process_id_file}; wait",
+                ),
+                timeout_seconds=60.0,
+            )
+        )
+        for _ in range(100):
+            if child_process_id_file.exists():
+                break
+            await asyncio.sleep(0.01)
+        assert child_process_id_file.exists()
+
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+
+        child_process_id = int(child_process_id_file.read_text().strip())
+        for _ in range(100):
+            if not _still_alive(child_process_id):
+                break
+            await asyncio.sleep(0.05)
+        assert not _still_alive(child_process_id), (
+            f"the cancelled command's child ({child_process_id}) outlived it"
+        )
+
+    _run(exercise)
+
+
 # --- keeping the answers ---------------------------------------------------------------------
 
 
@@ -1040,6 +1606,48 @@ def test_a_probe_is_run_once_and_again_only_when_asked() -> None:
 
         await service.snapshot(ConversationBackendKey.claude, refresh=True)
         assert len(machine.run_commands) > commands_after_the_first
+
+    _run(exercise)
+
+
+def test_explicit_snapshot_refresh_is_forwarded_only_to_hermes_inventory() -> None:
+    async def exercise() -> None:
+        machine = _FakeMachine(executables={"hermes": HERMES_PATH})
+        machine.outcomes[(HERMES_PATH, "--version")] = CommandOutcome(
+            exit_code=0,
+            standard_output="Hermes Agent v0.18.2\n",
+            standard_error="",
+        )
+        machine.answers_any_other_command = CommandOutcome(
+            exit_code=0,
+            standard_output=json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "status": "not_configured",
+                    "defaultModelId": None,
+                    "providers": [],
+                }
+            ),
+            standard_error="",
+        )
+        service = BackendSnapshotService(machine)
+
+        await service.snapshot(ConversationBackendKey.hermes)
+        first_inventory_command = next(
+            command
+            for command in machine.run_commands
+            if "hermes_model_catalog.py" in " ".join(command)
+        )
+        assert "--refresh" not in first_inventory_command
+
+        await service.snapshot(ConversationBackendKey.hermes)
+        assert machine.run_commands.count(first_inventory_command) == 1
+
+        await service.snapshot(ConversationBackendKey.hermes, refresh=True)
+        assert any(
+            "hermes_model_catalog.py" in " ".join(command) and "--refresh" in command
+            for command in machine.run_commands
+        )
 
     _run(exercise)
 
@@ -1081,5 +1689,15 @@ def test_the_real_backends_on_this_machine_answer() -> None:
             print(f"update={card.update_advisory}")
             print(f"diagnoses={card.diagnoses}")
         assert len(cards) == len(ConversationBackendKey)
+        hermes = next(
+            card for card in cards if card.backend_key is ConversationBackendKey.hermes
+        )
+        if hermes.installed:
+            assert hermes.available_models
+            assert all(":" in model.model_id for model in hermes.available_models)
+            assert hermes.default_model_id in {
+                model.model_id for model in hermes.available_models
+            }
+            assert hermes.reasoning_effort_options == ()
 
     _run(exercise)

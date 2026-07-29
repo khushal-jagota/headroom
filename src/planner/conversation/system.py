@@ -38,6 +38,7 @@ from enum import StrEnum
 from functools import partial
 from typing import Any
 
+from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
@@ -246,6 +247,7 @@ class SqliteProcessConversationSystem:
         monotonic_now: Callable[[], float] = time.monotonic,
         idle_child_stop_after_seconds: float = IDLE_CHILD_STOP_AFTER_SECONDS,
         idle_child_sweep_interval_seconds: float = IDLE_CHILD_SWEEP_INTERVAL_SECONDS,
+        backend_lifecycle: BackendLifecycleCoordinator | None = None,
     ) -> None:
         missing = sorted(set(ConversationBackendKey) - set(backend_child_factories))
         if missing:
@@ -256,6 +258,7 @@ class SqliteProcessConversationSystem:
         # is written exactly the same way, and there is simply nowhere to show it.
         self._live_tail = live_tail
         self._backend_child_factories = dict(backend_child_factories)
+        self._backend_lifecycle = backend_lifecycle
         self._monotonic_now = monotonic_now
         self._idle_child_stop_after_seconds = idle_child_stop_after_seconds
         self._idle_child_sweep_interval_seconds = idle_child_sweep_interval_seconds
@@ -1211,9 +1214,15 @@ class SqliteProcessConversationSystem:
         # The pump is running before the child is, so news the child makes while it starts
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
-        await child.start(
-            resolved_start, vendor_session_cursor=state.record.vendor_session_cursor
-        )
+        if self._backend_lifecycle is None:
+            await child.start(
+                resolved_start, vendor_session_cursor=state.record.vendor_session_cursor
+            )
+        else:
+            async with self._backend_lifecycle.child_start(state.record.backend_key):
+                await child.start(
+                    resolved_start, vendor_session_cursor=state.record.vendor_session_cursor
+                )
         state.child = child
         return child
 
@@ -1235,6 +1244,11 @@ class SqliteProcessConversationSystem:
                 "conversation %s could not stop its backend child cleanly",
                 state.record.conversation_id,
             )
+            # The process may still be alive. Keep it counted so installation maintenance
+            # remains conservatively refused rather than mutating underneath it.
+            return
+        if self._backend_lifecycle is not None:
+            await self._backend_lifecycle.child_stopped(state.record.backend_key)
 
     async def _cancel_child_turn(self, state: _ConversationState, child: BackendChild) -> None:
         """Tell the child to stop its turn, and deal honestly with a cancel that failed.

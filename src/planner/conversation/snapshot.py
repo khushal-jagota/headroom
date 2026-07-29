@@ -37,6 +37,10 @@ from typing import Any, Final, Protocol
 
 import httpx
 
+from planner.conversation.backend_lifecycle import (
+    BackendLifecycleCoordinator,
+    BackendMaintenanceLease,
+)
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModelCatalog,
     ClaudeModelCatalogUnavailable,
@@ -76,6 +80,17 @@ VERSION_ARGUMENTS: Final = ("--version",)
 _VERSION_PATTERN: Final = re.compile(r"(?<![\d.])v?(\d+\.\d+\.\d+)(?![\d.])")
 
 _NPM_REGISTRY_URL: Final = "https://registry.npmjs.org"
+_HERMES_UPDATE_AVAILABLE_MARKER: Final = "update available"
+_HERMES_CURRENT_MARKER: Final = "already up to date"
+_HERMES_UNSUPPORTED_MARKERS: Final = (
+    "this hermes installation is managed by",
+    "doesn't apply inside the docker container",
+    "not a git repository",
+    "update hermes through the nix source that installed it",
+    "unrecognized arguments: --check",
+    "invalid choice: 'update'",
+    "no such command",
+)
 
 
 class BackendInstallMethod(StrEnum):
@@ -219,6 +234,8 @@ class BackendProbeEnvironment(Protocol):
 
     def executable_path(self, executable_name: str) -> str | None: ...
 
+    def configured_executable_path(self, executable_name: str) -> str | None: ...
+
     def real_path(self, path: str) -> str: ...
 
     async def run(
@@ -239,6 +256,14 @@ class SubprocessBackendProbeEnvironment:
 
     def executable_path(self, executable_name: str) -> str | None:
         return shutil.which(executable_name)
+
+    def configured_executable_path(self, executable_name: str) -> str | None:
+        if executable_name != "hermes":
+            return None
+        from planner.environments.hermes_home import resolve_hermes_python
+
+        hermes_executable = resolve_hermes_python().with_name("hermes")
+        return str(hermes_executable) if hermes_executable.is_file() else None
 
     def real_path(self, path: str) -> str:
         return os.path.realpath(path)
@@ -280,6 +305,13 @@ class SubprocessBackendProbeEnvironment:
                 standard_output="",
                 standard_error=f"{argv[0]} did not answer within {timeout_seconds:g}s",
             )
+        except asyncio.CancelledError:
+            # An HTTP caller going away must not leave an installer working after its
+            # maintenance lease is released. End the whole group before cancellation
+            # leaves this boundary, just as a timeout does.
+            _end_the_whole_process_group(process)
+            await process.wait()
+            raise
         return CommandOutcome(
             exit_code=process.returncode if process.returncode is not None else -1,
             standard_output=standard_output.decode("utf-8", errors="replace"),
@@ -401,6 +433,7 @@ class _CatalogRequest:
     environment: BackendProbeEnvironment
     version: str | None
     executable_path: str
+    refresh: bool
     codex_model_catalog_probe: CodexModelCatalogProbe
     claude_model_catalog_probe: ClaudeModelCatalogProbe
 
@@ -429,6 +462,7 @@ class _BackendProbeRecipe:
     homebrew_formula: str | None
     native_path_marker: str | None
     native_update_command: tuple[str, ...] | None
+    native_update_check_arguments: tuple[str, ...] | None
     manual_only_detail: str
     read_catalog: Callable[[_CatalogRequest], Awaitable[_CatalogAnswer]]
 
@@ -572,7 +606,7 @@ async def _codex_catalog(request: _CatalogRequest) -> _CatalogAnswer:
 # --- hermes ------------------------------------------------------------------------------
 
 _HERMES_MODEL_CATALOG_PROBE = (
-    Path(__file__).resolve().parents[1] / "conversation" / "hermes_model_catalog_probe.py"
+    Path(__file__).resolve().parent / "backends" / "hermes_model_catalog.py"
 )
 
 
@@ -593,8 +627,11 @@ async def _hermes_catalog(request: _CatalogRequest) -> _CatalogAnswer:
 
     hermes_python = resolve_hermes_python()
     source_root = hermes_src_root(hermes_python)
+    command = [str(hermes_python), str(_HERMES_MODEL_CATALOG_PROBE)]
+    if request.refresh:
+        command.append("--refresh")
     outcome = await request.environment.run(
-        (str(hermes_python), str(_HERMES_MODEL_CATALOG_PROBE), str(source_root)),
+        tuple(command),
         timeout_seconds=MODEL_CATALOG_PROBE_TIMEOUT_SECONDS,
         environment_overrides={
             "HERMES_HOME": str(resolve_planner_home()),
@@ -609,42 +646,123 @@ async def _hermes_catalog(request: _CatalogRequest) -> _CatalogAnswer:
                 "are listed. Check that hermes runs from a terminal.",
             )
         )
+    try:
+        payload = json.loads(outcome.standard_output)
+    except ValueError:
+        payload = None
+    inventory = _parse_hermes_inventory(payload)
+    if inventory is None:
+        return _CatalogAnswer(
+            diagnoses=(
+                "Hermes' model inventory returned an invalid answer, so no models are listed.",
+            )
+        )
+    models, configured_default_model_id, status = inventory
+    default_model_id = configured_default_model_id if status == "runnable" else None
+    diagnoses: tuple[str, ...]
+    if status == "not_configured":
+        diagnoses = (
+            "Hermes is installed but has no default provider and model configured. "
+            "Run `hermes model` in a terminal.",
+        )
+    elif status == "default_unavailable":
+        diagnoses = (
+            "Hermes' configured default does not have usable credentials or is not in "
+            "its configured model inventory. Run `hermes model` in a terminal.",
+        )
+    elif status == "runnable":
+        diagnoses = ()
+    else:  # The parser above owns the closed status vocabulary.
+        raise AssertionError(f"unreachable Hermes inventory status: {status}")
     return _CatalogAnswer(
-        models=_hermes_models(outcome.standard_output),
-        # Hermes calls it the native model: the one its own configuration runs on.
-        default_model_id=_hermes_native_model(outcome.standard_output),
+        models=models,
+        default_model_id=default_model_id,
+        diagnoses=diagnoses,
     )
 
 
-def _hermes_native_model(probe_output: str) -> str | None:
-    try:
-        native = json.loads(probe_output)["nativeModel"]
-    except (ValueError, KeyError, TypeError):
+def _parse_hermes_inventory(
+    payload: object,
+) -> tuple[tuple[BackendModel, ...], str | None, str] | None:
+    """Validate the inventory door's complete answer before trusting any of it."""
+    if not isinstance(payload, dict):
         return None
-    return _optional_text(native)
+    if type(payload.get("schemaVersion")) is not int or payload["schemaVersion"] != 1:
+        return None
+    if "status" not in payload or "defaultModelId" not in payload or "providers" not in payload:
+        return None
 
+    status = payload["status"]
+    if not isinstance(status, str) or status not in {
+        "not_configured",
+        "default_unavailable",
+        "runnable",
+    }:
+        return None
+    raw_default_model_id = payload["defaultModelId"]
+    if raw_default_model_id is not None and _optional_text(raw_default_model_id) is None:
+        return None
+    default_model_id = _optional_text(raw_default_model_id)
 
-def _hermes_models(probe_output: str) -> tuple[BackendModel, ...]:
-    try:
-        payload = json.loads(probe_output)
-        listed = payload["models"]
-    except (ValueError, KeyError, TypeError):
-        return ()
-    if not isinstance(listed, list):
-        return ()
+    providers = payload["providers"]
+    if not isinstance(providers, list):
+        return None
     models: list[BackendModel] = []
-    for entry in listed:
-        if not isinstance(entry, dict):
-            continue
-        model_id = _optional_text(entry.get("model"))
-        if model_id is None:
-            continue
-        models.append(
-            BackendModel(
-                model_id=model_id, display_name=_optional_text(entry.get("description"))
+    seen_provider_ids: set[str] = set()
+    seen_model_ids: set[str] = set()
+    for provider in providers:
+        if not isinstance(provider, dict):
+            return None
+        if not {"id", "displayName", "models"} <= provider.keys():
+            return None
+        provider_id = _optional_text(provider["id"])
+        provider_name = _optional_text(provider["displayName"])
+        provider_models = provider["models"]
+        if (
+            provider_id is None
+            or provider_name is None
+            or provider_id in seen_provider_ids
+            or not isinstance(provider_models, list)
+            or not provider_models
+        ):
+            return None
+        seen_provider_ids.add(provider_id)
+        provider_model_prefix = f"{provider_id}:"
+        for entry in provider_models:
+            if not isinstance(entry, dict):
+                return None
+            if not {"id", "displayName", "detail"} <= entry.keys():
+                return None
+            model_id = _optional_text(entry["id"])
+            display_name = _optional_text(entry["displayName"])
+            detail = _optional_text(entry["detail"])
+            if (
+                model_id is None
+                or display_name is None
+                or detail is None
+                or model_id in seen_model_ids
+                or not model_id.startswith(provider_model_prefix)
+                or model_id == provider_model_prefix
+            ):
+                return None
+            seen_model_ids.add(model_id)
+            models.append(
+                BackendModel(
+                    model_id=model_id,
+                    display_name=display_name,
+                    detail=detail,
+                )
             )
-        )
-    return tuple(models)
+
+    if status == "not_configured":
+        if default_model_id is not None:
+            return None
+    elif status == "default_unavailable":
+        if default_model_id is None or default_model_id in seen_model_ids:
+            return None
+    elif default_model_id is None or default_model_id not in seen_model_ids:
+        return None
+    return tuple(models), default_model_id, status
 
 
 _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecipe]] = {
@@ -658,6 +776,7 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         homebrew_formula="claude-code",
         native_path_marker=None,
         native_update_command=None,
+        native_update_check_arguments=None,
         manual_only_detail=(
             "Panels cannot tell how `claude` was installed, so it offers no update here."
         ),
@@ -673,6 +792,7 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         homebrew_formula="codex",
         native_path_marker=_CODEX_NATIVE_PATH_MARKER,
         native_update_command=("codex", "update"),
+        native_update_check_arguments=None,
         manual_only_detail=(
             "Panels cannot tell how `codex` was installed, so it offers no update here."
         ),
@@ -680,17 +800,20 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
     ),
     ConversationBackendKey.hermes: _BackendProbeRecipe(
         executable_name="hermes",
-        missing_binary_diagnosis="`hermes` is not installed or not on PATH.",
+        missing_binary_diagnosis=(
+            "Hermes is not installed at the configured PLAN_HERMES_PYTHON environment."
+        ),
         identity_arguments=None,
         read_identity=None,
         login_command=None,
         registry_package_name=None,
         homebrew_formula=None,
         native_path_marker=None,
-        native_update_command=None,
+        native_update_command=("hermes", "update", "--yes"),
+        native_update_check_arguments=("update", "--check"),
         manual_only_detail=(
-            "Hermes is installed from its own checkout, so Panels offers no update here — "
-            "update it where it is installed."
+            "Panels cannot confirm this Hermes installation is managed by Hermes' native "
+            "updater, so it offers no update here."
         ),
         read_catalog=_hermes_catalog,
     ),
@@ -706,10 +829,17 @@ async def probe_backend(
     *,
     codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
     claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
+    refresh: bool = False,
 ) -> BackendSnapshot:
     """Everything this machine can say about one backend, without touching an agent API."""
     recipe = _BACKEND_PROBE_RECIPES[backend_key]
-    executable_path = environment.executable_path(recipe.executable_name)
+    if backend_key is ConversationBackendKey.hermes:
+        # Hermes launch is derived from PLAN_HERMES_PYTHON, so its snapshot must describe
+        # that exact install rather than an unrelated executable that happens to be on
+        # PATH. Codex and Claude retain their PATH behavior.
+        executable_path = environment.configured_executable_path(recipe.executable_name)
+    else:
+        executable_path = environment.executable_path(recipe.executable_name)
     if executable_path is None:
         return BackendSnapshot(
             backend_key=backend_key,
@@ -752,6 +882,7 @@ async def probe_backend(
             environment=environment,
             version=version,
             executable_path=executable_path,
+            refresh=refresh,
             codex_model_catalog_probe=codex_model_catalog_probe,
             claude_model_catalog_probe=claude_model_catalog_probe,
         )
@@ -804,11 +935,28 @@ async def _update_advisory(
     )
     update_command = _update_command(recipe, install_method)
     latest_version: str | None = None
+    hermes_detail: str | None = None
+    hermes_update_available = False
+    if recipe.native_update_check_arguments is not None:
+        check = await environment.run(
+            (executable_path, *recipe.native_update_check_arguments),
+            timeout_seconds=VERSION_PROBE_TIMEOUT_SECONDS,
+        )
+        supported, hermes_update_available, hermes_detail = _read_hermes_update_check(check)
+        install_method = (
+            BackendInstallMethod.native if supported else BackendInstallMethod.manual_only
+        )
+        native_update_command = recipe.native_update_command
+        update_command = (
+            (executable_path, *native_update_command[1:])
+            if supported and native_update_command is not None
+            else None
+        )
     if recipe.registry_package_name is not None and install_method in _REGISTRY_INSTALL_METHODS:
         latest_version = await environment.latest_released_version(
             recipe.registry_package_name, timeout_seconds=REGISTRY_LOOKUP_TIMEOUT_SECONDS
         )
-    update_available = (
+    update_available = hermes_update_available or (
         latest_version is not None
         and version is not None
         and _version_is_newer(latest_version, version)
@@ -818,9 +966,32 @@ async def _update_advisory(
         update_command=update_command,
         latest_version=latest_version,
         update_available=update_available,
-        detail=_advisory_detail(
+        detail=hermes_detail
+        or _advisory_detail(
             recipe, install_method, update_command, latest_version, update_available
         ),
+    )
+
+
+def _read_hermes_update_check(
+    outcome: CommandOutcome,
+) -> tuple[bool, bool, str]:
+    """Translate Hermes' human-readable native check without trusting exit code alone."""
+    output = "\n".join(
+        part for part in (outcome.standard_output, outcome.standard_error) if part
+    ).strip()
+    normalized = output.lower()
+    if any(marker in normalized for marker in _HERMES_UNSUPPORTED_MARKERS):
+        return False, False, output or "This Hermes installation cannot update itself."
+    if outcome.succeeded and _HERMES_UPDATE_AVAILABLE_MARKER in normalized:
+        return True, True, "A Hermes update is available."
+    if outcome.succeeded and _HERMES_CURRENT_MARKER in normalized:
+        return True, False, "This Hermes installation is current."
+    detail = output.splitlines()[-1] if output else "The update check returned no answer."
+    return (
+        True,
+        False,
+        f"Panels could not determine whether Hermes has an update: {detail}",
     )
 
 
@@ -886,10 +1057,12 @@ class BackendSnapshotService:
         *,
         codex_model_catalog_probe: CodexModelCatalogProbe = probe_codex_model_catalog,
         claude_model_catalog_probe: ClaudeModelCatalogProbe = probe_claude_model_catalog,
+        backend_lifecycle: BackendLifecycleCoordinator | None = None,
     ) -> None:
         self._environment = environment or SubprocessBackendProbeEnvironment()
         self._codex_model_catalog_probe = codex_model_catalog_probe
         self._claude_model_catalog_probe = claude_model_catalog_probe
+        self._backend_lifecycle = backend_lifecycle
         self._snapshots: dict[ConversationBackendKey, BackendSnapshot] = {}
         self._lock = asyncio.Lock()
         # One lock per backend, held for a whole update rather than for a probe. Reading a
@@ -920,6 +1093,7 @@ class BackendSnapshotService:
                 self._environment,
                 codex_model_catalog_probe=self._codex_model_catalog_probe,
                 claude_model_catalog_probe=self._claude_model_catalog_probe,
+                refresh=refresh,
             )
             self._snapshots[backend_key] = probed
             return probed
@@ -952,31 +1126,53 @@ class BackendSnapshotService:
                 ),
                 output_tail="",
             )
-        outcome = await self._environment.run(
-            advisory.update_command, timeout_seconds=UPDATE_COMMAND_TIMEOUT_SECONDS
-        )
-        output_tail = outcome.output_tail(UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS)
-        if not outcome.succeeded:
+        maintenance_lease: BackendMaintenanceLease | None = None
+        backend_lifecycle = self._backend_lifecycle
+        if (
+            backend_key is ConversationBackendKey.hermes
+            and backend_lifecycle is not None
+        ):
+            maintenance_lease = await backend_lifecycle.try_begin_maintenance(backend_key)
+            if maintenance_lease is None:
+                return BackendUpdateResult(
+                    outcome=BackendUpdateOutcome.failed,
+                    detail=(
+                        "Hermes cannot be updated while a Panels-owned Hermes process "
+                        "is starting or running. Stop it and try again."
+                    ),
+                    output_tail="",
+                )
+        try:
+            outcome = await self._environment.run(
+                advisory.update_command, timeout_seconds=UPDATE_COMMAND_TIMEOUT_SECONDS
+            )
+            output_tail = outcome.output_tail(UPDATE_OUTPUT_TAIL_MAXIMUM_CHARACTERS)
+            # Refresh even after a failed command. An updater may have changed part of an
+            # installation before failing, and the card must describe what remains.
+            after = await self.snapshot(backend_key, refresh=True)
+            if not outcome.succeeded:
+                return BackendUpdateResult(
+                    outcome=BackendUpdateOutcome.failed,
+                    detail=f"The update command exited with code {outcome.exit_code}.",
+                    output_tail=output_tail,
+                )
+            if after.version is not None and after.version != before.version:
+                return BackendUpdateResult(
+                    outcome=BackendUpdateOutcome.succeeded,
+                    detail=f"Updated to {after.version}.",
+                    output_tail=output_tail,
+                )
             return BackendUpdateResult(
-                outcome=BackendUpdateOutcome.failed,
-                detail=f"The update command exited with code {outcome.exit_code}.",
+                outcome=BackendUpdateOutcome.unchanged,
+                detail=(
+                    "The update command finished, but the installed version is still "
+                    f"{before.version if before.version is not None else 'unknown'}."
+                ),
                 output_tail=output_tail,
             )
-        after = await self.snapshot(backend_key, refresh=True)
-        if after.version is not None and after.version != before.version:
-            return BackendUpdateResult(
-                outcome=BackendUpdateOutcome.succeeded,
-                detail=f"Updated to {after.version}.",
-                output_tail=output_tail,
-            )
-        return BackendUpdateResult(
-            outcome=BackendUpdateOutcome.unchanged,
-            detail=(
-                "The update command finished, but the installed version is still "
-                f"{before.version if before.version is not None else 'unknown'}."
-            ),
-            output_tail=output_tail,
-        )
+        finally:
+            if maintenance_lease is not None and backend_lifecycle is not None:
+                await backend_lifecycle.end_maintenance(maintenance_lease)
 
 
 def _version_at_least(version: str, minimum: tuple[int, ...]) -> bool:

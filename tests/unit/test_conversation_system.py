@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 
+from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
@@ -315,6 +316,7 @@ class _Harness:
         self.spawned_conversation_ids: list[str] = []
         self.clock = _FakeMonotonicClock()
         self.live_tail = ConversationLiveTail()
+        self.backend_lifecycle = BackendLifecycleCoordinator()
         self.message_files = ConversationMessageFiles(str(db_path))
         self.system = SqliteProcessConversationSystem(
             store=self.store,
@@ -326,6 +328,7 @@ class _Harness:
             monotonic_now=self.clock,
             idle_child_stop_after_seconds=idle_child_stop_after_seconds,
             idle_child_sweep_interval_seconds=idle_child_sweep_interval_seconds,
+            backend_lifecycle=self.backend_lifecycle,
         )
 
     def _make_child(
@@ -646,6 +649,82 @@ def test_run_when_free_starts_the_turn_when_the_agent_is_idle(harness: _Harness)
         assert await harness.system.is_running("c") is True
         assert harness.backend("c").written_texts() == ("first",)
         assert await harness.recorded_prompts("c") == (("first", "owner", "run_when_free"),)
+
+    _run(exercise)
+
+
+def test_an_idle_hermes_child_remains_visible_to_backend_maintenance(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.hermes)
+        await harness.system.send(
+            "c", text_message_content("first"), sender_label="owner"
+        )
+        await harness.complete_turn("c")
+
+        assert (
+            await harness.backend_lifecycle.try_begin_maintenance(
+                ConversationBackendKey.hermes
+            )
+            is None
+        )
+
+        await harness.system.kill("c")
+        lease = await harness.backend_lifecycle.try_begin_maintenance(
+            ConversationBackendKey.hermes
+        )
+        assert lease is not None
+        await harness.backend_lifecycle.end_maintenance(lease)
+
+    _run(exercise)
+
+
+def test_an_accepted_hermes_update_holds_a_real_system_child_before_spawn(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.hermes)
+        lease = await harness.backend_lifecycle.try_begin_maintenance(
+            ConversationBackendKey.hermes
+        )
+        assert lease is not None
+
+        sending = asyncio.create_task(
+            harness.system.send(
+                "c", text_message_content("after maintenance"), sender_label="owner"
+            )
+        )
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert harness.backend("c").session_starts == 0
+
+        await harness.backend_lifecycle.end_maintenance(lease)
+        assert await sending == PromptDeliveryStarted()
+        assert harness.backend("c").session_starts == 1
+        await harness.system.kill("c")
+
+    _run(exercise)
+
+
+def test_a_failed_hermes_start_releases_its_maintenance_reservation(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.hermes)
+        harness.backend("c").session_load_fails = True
+
+        assert await harness.system.send(
+            "c", text_message_content("will not start"), sender_label="owner"
+        ) == PromptDeliveryRefused(
+            refusal_reason=PromptDeliveryRefusalReason.session_did_not_load
+        )
+
+        lease = await harness.backend_lifecycle.try_begin_maintenance(
+            ConversationBackendKey.hermes
+        )
+        assert lease is not None
+        await harness.backend_lifecycle.end_maintenance(lease)
 
     _run(exercise)
 
@@ -1883,7 +1962,8 @@ def test_a_child_that_sat_idle_is_stopped_and_the_next_message_resumes_it(
     harness: _Harness,
 ) -> None:
     async def exercise() -> None:
-        await _start(harness, "c")
+        qualified_model = "openai-codex:gpt-5.6-sol"
+        await _start(harness, "c", model=qualified_model)
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
         await harness.complete_turn("c")
         backend = harness.backend("c")
@@ -1898,6 +1978,7 @@ def test_a_child_that_sat_idle_is_stopped_and_the_next_message_resumes_it(
 
         assert backend.session_starts == 2
         assert backend.started_from_cursor == VENDOR_SESSION_CURSOR
+        assert backend.model == qualified_model
         assert backend.written_texts() == ("first", "after the gap")
         # Silent: the record says nothing about the child having gone away.
         assert await harness.recorded_kinds("c") == (
@@ -1979,7 +2060,8 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
     """No re-attach on boot: the record is all there and the session is picked up lazily."""
 
     async def exercise() -> None:
-        await _start(harness, "c")
+        qualified_model = "openai-codex:gpt-5.6-sol"
+        await _start(harness, "c", model=qualified_model)
         await harness.system.send(
             "c",
             text_message_content("before the restart"),
@@ -2002,10 +2084,45 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
 
             assert fate == PromptDeliveryStarted()
             assert restarted.backend("c").started_from_cursor == VENDOR_SESSION_CURSOR
+            assert restarted.backend("c").model == qualified_model
             assert await restarted.system.is_running("c") is True
             assert [
                 str(event.kind) for event in await restarted.events("c")
             ] == ["prompt", "prompt"]
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_stored_legacy_bare_hermes_model_is_passed_through_on_restart(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    """Catalog qualification changes new choices, not existing conversation records."""
+
+    async def exercise() -> None:
+        legacy_model = "legacy-hermes-model"
+        await _start(harness, "legacy", model=legacy_model)
+        await harness.system.send(
+            "legacy",
+            text_message_content("before the restart"),
+            sender_label="owner",
+        )
+        await harness.settle()
+        await harness.system.shutdown()
+
+        restarted = _Harness(tmp_path / "conversations.db")
+        restarted.backends = harness.backends
+        try:
+            fate = await restarted.system.send(
+                "legacy",
+                text_message_content("after the restart"),
+                sender_label="owner",
+            )
+
+            assert fate == PromptDeliveryStarted()
+            assert restarted.backend("legacy").started_from_cursor == VENDOR_SESSION_CURSOR
+            assert restarted.backend("legacy").model == legacy_model
         finally:
             await restarted.system.shutdown()
 

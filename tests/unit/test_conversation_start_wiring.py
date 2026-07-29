@@ -684,7 +684,7 @@ def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_default
         system = InMemoryConversationSystem()
         moved = ConversationStartValues(
             backend_key=ConversationBackendKey.hermes,
-            model="hermes-model",
+            model="openai-codex:gpt-5.6-sol",
             reasoning_effort=None,
             role_materials=worker_conversation_role_materials(ticket.id),
             workspace_folder=_WORKSPACE,
@@ -697,7 +697,7 @@ def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_default
         )
 
         assert values.backend_key is ConversationBackendKey.hermes
-        assert values.model == "hermes-model"
+        assert values.model == "openai-codex:gpt-5.6-sol"
         assert values.reasoning_effort is None
 
     asyncio.run(exercise())
@@ -730,13 +730,14 @@ def test_worker_resolve_applies_an_override_over_what_it_read(
         tmp_db,
         ticket,
         ConversationStartOverrides(
-            backend_key=ConversationBackendKey.hermes, model="hermes-model"
+            backend_key=ConversationBackendKey.hermes,
+            model="openai-codex:gpt-5.6-sol",
         ),
         workspace_folder=_WORKSPACE,
     )
 
     assert values.backend_key is ConversationBackendKey.hermes
-    assert values.model == "hermes-model"
+    assert values.model == "openai-codex:gpt-5.6-sol"
     assert values.reasoning_effort is None
 
 
