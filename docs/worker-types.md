@@ -235,7 +235,10 @@ direct edits that save, fail, and retry independently. Successful skill edits re
 the configured planner Hermes home without changing existing Employee session ids.
 Codex and Claude Code use the same managed home.
 
-`GET /api/workers` serves the Config-page destinations and Chief settings.
+`GET /api/workers` serves the Config-page destinations and Chief settings. The Chief
+entry also carries its current `conversation_id`, whether it is working or needs the
+owner, and the sequence where its latest turn ended; the Agents roster uses those
+conversation-owned signals without turning them into managed settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for the Worker role and specialist
 descriptions on the index. Worker and Chief endpoints edit skill description and body

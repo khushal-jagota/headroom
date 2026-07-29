@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
+
+NotificationSubjectKind = Literal["ticket", "agent"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,8 +57,9 @@ NOTIFICATION_TYPE_BY_ID: Final[dict[str, NotificationType]] = {
 class NotificationFact:
     fact_id: str
     notification_type: str
-    ticket_id: str
-    ticket_title: str
+    subject_kind: NotificationSubjectKind
+    subject_id: str
+    subject_label: str
     occurred_at: int
 
 

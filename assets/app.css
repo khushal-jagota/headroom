@@ -633,26 +633,9 @@ textarea {
   border-right: var(--border-hairline) solid var(--border-color);
 }
 
-.agents-workspace-roster-head {
-  padding: var(--space-2) var(--space-3) var(--space-5);
-}
-
-.agents-workspace-roster-head h1,
-.agents-conversation-head h1 {
-  margin: 0;
-  color: var(--text-strong);
-  font-size: var(--type-lg);
-  line-height: 1.2;
-}
-
-.agents-workspace-roster-head p {
-  margin: var(--space-2) 0 0;
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-}
-
 .agents-roster-list {
   display: grid;
+  gap: var(--space-1);
 }
 
 .agents-roster-row {
@@ -665,14 +648,15 @@ textarea {
   border-radius: var(--radius-md);
   color: inherit;
   text-decoration: none;
-  transition:
-    color var(--motion-fast) var(--motion-ease),
-    background var(--motion-fast) var(--motion-ease);
+  transition: background var(--motion-fast) var(--motion-ease);
 }
 
-.agents-roster-row:hover,
-.agents-roster-row.active {
+.agents-roster-row:hover {
   background: var(--surface-raised);
+}
+
+.agents-roster-row.active {
+  background: var(--surface-overlay);
 }
 
 .agents-roster-row:focus-visible,
@@ -681,35 +665,21 @@ textarea {
   outline-offset: var(--space-1);
 }
 
-.agents-roster-copy {
-  min-width: 0;
-  display: grid;
-  gap: var(--space-1);
-}
-
 .agents-roster-name {
+  min-width: 0;
   color: var(--text-strong);
-  font-size: var(--type-md);
-  font-weight: 600;
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agents-roster-description {
-  color: var(--text-faint);
-  font-size: var(--type-sm);
-  line-height: 1.42;
-  overflow-wrap: anywhere;
-}
-
-.agents-roster-arrow {
-  color: var(--text-faintest);
-  transition:
-    color var(--motion-fast) var(--motion-ease),
-    transform var(--motion-fast) var(--motion-ease);
-}
-
-.agents-roster-row:hover .agents-roster-arrow {
-  color: var(--text-default);
-  transform: translateX(2px);
+.agents-roster-row .stage-mark {
+  width: 0.9rem;
+  height: 0.9rem;
 }
 
 .agents-workspace-conversation {
@@ -720,11 +690,6 @@ textarea {
   flex-direction: column;
   padding: var(--space-5) var(--space-6);
   background: var(--surface-sunken);
-}
-
-.agents-conversation-head {
-  flex: none;
-  margin-bottom: var(--space-3);
 }
 
 .agents-conversation-back {
@@ -4332,16 +4297,6 @@ select {
     padding: var(--space-5);
   }
 
-  .agents-conversation-head {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-
-  .agents-conversation-head h1 {
-    font-size: var(--type-md);
-  }
-
   .agents-conversation-back {
     display: inline-flex;
     align-items: center;
@@ -4349,6 +4304,7 @@ select {
     color: var(--text-muted);
     font-size: var(--type-sm);
     text-decoration: none;
+    margin-bottom: var(--space-3);
   }
 }
 

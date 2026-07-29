@@ -8,6 +8,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import cast
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -17,11 +18,13 @@ from planner.notifications.contracts import (
     NOTIFICATION_TYPES,
     NotificationFact,
     NotificationIntent,
+    NotificationSubjectKind,
     PendingDelivery,
     PushSubscription,
     WebPushIdentity,
 )
 from planner.notifications.logic.policy import decide_notification
+from planner.worker_settings.service import CHIEF_LABEL, CHIEF_SETTINGS_KEY
 
 
 def _b64url(raw: bytes) -> str:
@@ -166,27 +169,31 @@ def _insert_fact(
     *,
     fact_id: str,
     notification_type: str,
-    ticket_id: str,
-    ticket_title: str,
+    subject_kind: NotificationSubjectKind,
+    subject_id: str,
+    subject_label: str,
     source_kind: str,
     source_id: str,
     source_sequence: int,
     occurred_at: int,
 ) -> None:
     payload = json.dumps(
-        {"ticket_title": ticket_title},
+        {"subject_label": subject_label},
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
     )
     conn.execute(
         "INSERT OR IGNORE INTO notification_facts"
-        "(fact_id, notification_type, ticket_id, source_kind, source_id, "
-        "source_sequence, occurred_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "(fact_id, notification_type, subject_kind, ticket_id, agent_key, source_kind, "
+        "source_id, source_sequence, occurred_at, payload) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             fact_id,
             notification_type,
-            ticket_id,
+            subject_kind,
+            subject_id if subject_kind == "ticket" else None,
+            subject_id if subject_kind == "agent" else None,
             source_kind,
             source_id,
             source_sequence,
@@ -202,6 +209,12 @@ def _ticket_fact_type(status: str) -> str | None:
         "needs_user": "ticket_needs_input",
         "errored": "worker_failed",
     }.get(status)
+
+
+def _agent_label(agent_key: str) -> str:
+    if agent_key == CHIEF_SETTINGS_KEY:
+        return CHIEF_LABEL
+    return agent_key.replace("_", " ").title()
 
 
 def project_facts(conn: sqlite3.Connection) -> int:
@@ -223,8 +236,9 @@ def project_facts(conn: sqlite3.Connection) -> int:
                     conn,
                     fact_id=f"ticket:{row['id']}:{revision}",
                     notification_type=notification_type,
-                    ticket_id=str(row["id"]),
-                    ticket_title=str(row["title"]),
+                    subject_kind="ticket",
+                    subject_id=str(row["id"]),
+                    subject_label=str(row["title"]),
                     source_kind="ticket",
                     source_id=str(row["id"]),
                     source_sequence=revision,
@@ -238,15 +252,29 @@ def project_facts(conn: sqlite3.Connection) -> int:
             )
 
         conversations = conn.execute(
-            "SELECT c.conversation_id, c.latest_sequence, t.id AS ticket_id, "
-            "t.title AS ticket_title, pc.sequence AS projected_sequence "
-            "FROM conversations c JOIN tickets t ON t.conversation_id = c.conversation_id "
+            "SELECT c.conversation_id, c.latest_sequence, "
+            "CASE WHEN t.id IS NOT NULL THEN 'ticket' ELSE 'agent' END AS subject_kind, "
+            "COALESCE(t.id, a.agent_key) AS subject_id, t.title AS ticket_title, "
+            "pc.sequence AS projected_sequence "
+            "FROM conversations c "
+            "LEFT JOIN tickets t ON t.conversation_id = c.conversation_id "
+            "LEFT JOIN agents a ON a.conversation_id = c.conversation_id "
             "LEFT JOIN notification_projection_cursors pc "
             "ON pc.source_kind = 'conversation' AND pc.source_id = c.conversation_id "
-            "WHERE pc.source_id IS NULL OR c.latest_sequence > pc.sequence"
+            "WHERE (t.id IS NOT NULL OR a.agent_key IS NOT NULL) "
+            "AND (pc.source_id IS NULL OR c.latest_sequence > pc.sequence)"
         ).fetchall()
         for conversation in conversations:
             conversation_id = str(conversation["conversation_id"])
+            subject_kind = cast(
+                NotificationSubjectKind, str(conversation["subject_kind"])
+            )
+            subject_id = str(conversation["subject_id"])
+            subject_label = (
+                str(conversation["ticket_title"])
+                if subject_kind == "ticket"
+                else _agent_label(subject_id)
+            )
             after = (
                 int(conversation["projected_sequence"])
                 if conversation["projected_sequence"] is not None
@@ -275,8 +303,9 @@ def project_facts(conn: sqlite3.Connection) -> int:
                         conn,
                         fact_id=f"conversation:{conversation_id}:{sequence}",
                         notification_type=event_notification_type,
-                        ticket_id=str(conversation["ticket_id"]),
-                        ticket_title=str(conversation["ticket_title"]),
+                        subject_kind=subject_kind,
+                        subject_id=subject_id,
+                        subject_label=subject_label,
                         source_kind="conversation",
                         source_id=conversation_id,
                         source_sequence=sequence,
@@ -297,7 +326,9 @@ def apply_policy(conn: sqlite3.Connection, now: int) -> int:
     with _txn(conn):
         preferences = resolved_preferences(conn)
         rows = conn.execute(
-            "SELECT f.fact_id, f.notification_type, f.ticket_id, f.occurred_at, f.payload "
+            "SELECT f.fact_id, f.notification_type, f.subject_kind, "
+            "COALESCE(f.ticket_id, f.agent_key) AS subject_id, "
+            "f.occurred_at, f.payload "
             "FROM notification_facts f LEFT JOIN notification_decisions d "
             "ON d.fact_id = f.fact_id WHERE d.fact_id IS NULL "
             "ORDER BY f.occurred_at, f.fact_id"
@@ -308,8 +339,13 @@ def apply_policy(conn: sqlite3.Connection, now: int) -> int:
             fact = NotificationFact(
                 fact_id=str(row["fact_id"]),
                 notification_type=str(row["notification_type"]),
-                ticket_id=str(row["ticket_id"]),
-                ticket_title=str(payload["ticket_title"]),
+                subject_kind=cast(NotificationSubjectKind, str(row["subject_kind"])),
+                subject_id=str(row["subject_id"]),
+                # Facts copied by notification_subjects retain their original payload
+                # so an undecided pre-upgrade fact remains usable without rewriting history.
+                subject_label=str(
+                    payload.get("subject_label", payload.get("ticket_title", "Panels"))
+                ),
                 occurred_at=int(row["occurred_at"]),
             )
             intent = decide_notification(

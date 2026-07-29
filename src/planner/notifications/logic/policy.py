@@ -17,6 +17,14 @@ _REASONS = {
 }
 
 
+def _subject_route(fact: NotificationFact) -> str:
+    if fact.subject_kind == "ticket":
+        return f"/#/ticket/{fact.subject_id}"
+    if fact.subject_kind == "agent":
+        return f"/#/agents/{fact.subject_id.replace('_', '-')}"
+    raise ValueError(f"unknown notification subject kind: {fact.subject_kind}")
+
+
 def decide_notification(
     fact: NotificationFact, *, enabled: bool
 ) -> NotificationIntent | None:
@@ -27,14 +35,16 @@ def decide_notification(
     """
     if fact.notification_type not in NOTIFICATION_TYPE_BY_ID:
         raise ValueError(f"unknown notification type: {fact.notification_type}")
+    if fact.subject_kind not in {"ticket", "agent"}:
+        raise ValueError(f"unknown notification subject kind: {fact.subject_kind}")
     if not enabled:
         return None
     reason = _REASONS[fact.notification_type]
     return NotificationIntent(
         fact_id=fact.fact_id,
         title="Panels",
-        body=f"{fact.ticket_title} {reason}.",
-        route=f"/#/ticket/{fact.ticket_id}",
+        body=f"{fact.subject_label} {reason}.",
+        route=_subject_route(fact),
         # OS notification replacement is the final overlap coalescing boundary.
-        tag=f"panels-ticket-{fact.ticket_id}",
+        tag=f"panels-{fact.subject_kind}-{fact.subject_id}",
     )

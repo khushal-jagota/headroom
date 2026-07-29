@@ -23,6 +23,7 @@ can see and nobody can send from, which is what a separate start door left behin
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -506,6 +507,27 @@ def read_agent_conversation(conn: sqlite3.Connection, agent_key: str) -> str | N
     if row is None or row[0] is None:
         return None
     return str(row[0])
+
+
+def read_agent_conversations(
+    conn: sqlite3.Connection, agent_keys: Collection[str]
+) -> dict[str, str]:
+    """Read the current conversation links for a small roster of non-Ticket agents.
+
+    An absent row and a row with no conversation both mean that agent has no current
+    conversation, so neither appears in the answer. The caller owns the roster and
+    supplies its own quiet defaults for those agents.
+    """
+    keys = tuple(dict.fromkeys(agent_keys))
+    if not keys:
+        return {}
+    placeholders = ",".join("?" for _ in keys)
+    rows = conn.execute(
+        f"SELECT agent_key, conversation_id FROM agents "
+        f"WHERE agent_key IN ({placeholders}) AND conversation_id IS NOT NULL",
+        keys,
+    ).fetchall()
+    return {str(row[0]): str(row[1]) for row in rows}
 
 
 async def start_agent_conversation(
