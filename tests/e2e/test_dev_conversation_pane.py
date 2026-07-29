@@ -437,12 +437,14 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
     context.route(
         f"**/api/conversation/conversations/{conversation_id}", running_view
     )
+
+    def take_user_input_answer(route: Any) -> None:
+        submitted.append(route.request.post_data_json)
+        route.fulfill(status=200, json={"landed": True})
+
     context.route(
         f"**/api/conversation/conversations/{conversation_id}/user-input-answers",
-        lambda route: (
-            submitted.append(route.request.post_data_json),
-            route.fulfill(status=200, json={"landed": True}),
-        )[-1],
+        take_user_input_answer,
     )
     page = open_page(
         context,

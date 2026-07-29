@@ -37,6 +37,7 @@ from tests.support.conversation_system_under_test import (
 from planner.conversation.backends import hermes_acp
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
+    BackendUserInputRequest,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
@@ -1047,6 +1048,16 @@ class _RecordingSink:
     ) -> None:
         self.asks.append(ask)
         self._an_ask_arrived.set()
+
+    async def user_input_requested(
+        self, turn_token: TurnToken, request: BackendUserInputRequest
+    ) -> None:
+        del turn_token, request
+
+    async def user_input_failed(
+        self, turn_token: TurnToken, *, request_id: str, detail: str
+    ) -> None:
+        del turn_token, request_id, detail
 
     async def turn_ended(
         self,
