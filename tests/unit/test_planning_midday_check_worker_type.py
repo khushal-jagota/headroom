@@ -74,9 +74,10 @@ PLANNING_MIDDAY_CHECK_MANIFEST: WorkerTypeManifest = {
 
 
 def test_production_registry_carries_complete_planning_midday_check_manifest() -> None:
-    assert PRODUCTION_WORKER_TYPE_REGISTRY.manifest(
-        "planning-midday-check"
-    ) == PLANNING_MIDDAY_CHECK_MANIFEST
+    assert (
+        PRODUCTION_WORKER_TYPE_REGISTRY.manifest("planning-midday-check")
+        == PLANNING_MIDDAY_CHECK_MANIFEST
+    )
 
 
 def test_planning_midday_check_definition_carries_complete_execution_contract() -> None:
@@ -92,10 +93,7 @@ def test_planning_midday_check_definition_carries_complete_execution_contract() 
         stage.default_ownership_mode.value if stage.default_ownership_mode else None
         for stage in definition.stages
     ) == ("worker", "worker", "worker", None)
-    assert (
-        definition.worker_profile.specialist_skill
-        == "panels-worker-planning-midday-check"
-    )
+    assert definition.worker_profile.specialist_skill == "panels-worker-planning-midday-check"
     assert definition.worker_profile.toolset_profile == "default"
     assert definition.supports_prefix_reconciliation is True
 
@@ -130,20 +128,22 @@ def test_planning_midday_check_bootstrap_uses_approved_runtime_defaults(
 
 def test_planning_midday_check_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
-    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
+    chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
+    creation = (root / "src/planner/skills/panels-ticket-creation/SKILL.md").read_text(
         encoding="utf-8"
     )
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
 
     assert "`panels-worker-planning-midday-check` — planning-midday-check tickets" in worker
-    assert "Use a **`planning-midday-check` ticket**" in chief
+    assert "panels-ticket-creation" in chief
+    assert "`planning-day`, `planning-midday-check`, and `planning-sprint`" in creation
 
 
 def test_planning_midday_check_skill_preserves_approved_judgments() -> None:
     root = Path(__file__).resolve().parents[2]
-    skill = (
-        root / "src/planner/skills/panels-worker-planning-midday-check/SKILL.md"
-    ).read_text(encoding="utf-8")
+    skill = (root / "src/planner/skills/panels-worker-planning-midday-check/SKILL.md").read_text(
+        encoding="utf-8"
+    )
 
     assert "execution intervention, not a productivity scorecard" in skill
     assert "`panels worker request-user-help`" in skill
