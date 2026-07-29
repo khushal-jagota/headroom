@@ -260,3 +260,15 @@ export type BacklogResponse = SprintItemsResponse;
 export type IdeasResponse = {
   ideas: AnyRecord[];
 };
+
+export type NotificationTypeSetting = {
+  id: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+};
+
+export type NotificationSettingsResponse = {
+  types: NotificationTypeSetting[];
+  vapid_public_key: string;
+};

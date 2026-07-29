@@ -38,6 +38,7 @@ def test_desktop_more_reaches_grouped_destinations_and_marks_secondary_route(
         "Backlog",
         "Ideas",
         "Config",
+        "Notifications",
     ]
 
     menu.locator('a[href="#/config"]').click()
@@ -66,6 +67,7 @@ def test_every_more_destination_has_its_canonical_screen(
         ("#/backlog", '[data-screen="backlog"]'),
         ("#/ideas", '[data-screen="ideas"]'),
         ("#/config", '[data-screen="config"] [data-workers-list]'),
+        ("#/notifications", '[data-screen="notifications"]'),
     ]
 
     page.goto(server.base + "/#/workspace")

@@ -118,9 +118,17 @@ One screen per part of the system:
   be corrected or retried. The former `#/agents/worker-skill` and
   `#/agents/workers/<worker-type>` paths, plus legacy `#/workers` paths, redirect to
   Config.
+- **Notifications** — the personal notification settings at `#/notifications`.
+  “What counts” is rendered from the server's notification catalogue, so adding a
+  future choice does not require a second hard-coded browser list. Each switch saves
+  independently. “This device” asks for browser permission only after the user
+  presses Enable, registers the browser's Web Push subscription, and can remove it
+  again. On iPhone or iPad, Panels explains that the site must first be added to the
+  Home Screen.
 
 The shell has three primary destinations in order: Review, Workspace, and Agents. More
-groups Day, Sprint, Backlog, and Ideas under Planning, and Config under System. On
+groups Day, Sprint, Backlog, and Ideas under Planning, and Config and Notifications
+under System. On
 desktop the four direct controls live in the top bar and More opens a dropdown. On
 mobile those same four text-only controls form a fixed, full-width bottom bar and More
 opens a bottom sheet. Agents remains active on both its roster and selected-agent

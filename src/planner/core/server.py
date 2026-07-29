@@ -12,7 +12,7 @@ from time import monotonic as _monotonic
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.api import build_conversation_runtime
@@ -37,6 +37,7 @@ from planner.environments.vps_status import (
     collect_vps_status_summary,
 )
 from planner.files.api import router as files_router
+from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
 from planner.sprints.api import router as sprints_router
@@ -221,6 +222,7 @@ def create_app(
         sprints_router,
         days_router,
         scheduled_tickets_router,
+        notifications_router,
         worker_settings_router,
     ):
         app.include_router(domain_router, prefix="/api")
@@ -293,6 +295,14 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
         return svelte_index_html()
+
+    @app.get("/service-worker.js", response_class=FileResponse)
+    async def service_worker() -> FileResponse:
+        return FileResponse(
+            _STATIC_DIR / "service-worker.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     if config.test_mode:
         app.include_router(build_test_router(config, clock), prefix="/api")

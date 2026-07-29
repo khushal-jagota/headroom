@@ -5093,3 +5093,100 @@ select {
 [data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
   filter: brightness(1.08);
 }
+
+/* Notifications — one quiet settings column; choices are content, not cards. */
+[data-screen="notifications"] {
+  width: min(100%, var(--measure-index));
+  margin: 0 auto;
+  padding: var(--space-7) var(--space-5) var(--space-page-tail);
+}
+
+.notifications-head .eyebrow,
+.notifications-section h2 {
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.notifications-head h1 {
+  margin: var(--space-2) 0 var(--space-7);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-display);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.notifications-section {
+  margin-bottom: var(--space-7);
+}
+
+.notifications-section h2 {
+  margin: 0 0 var(--space-3);
+}
+
+.notification-option {
+  display: flex;
+  gap: var(--space-5);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) 0;
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  cursor: pointer;
+}
+
+.notification-option strong,
+.notification-option small {
+  display: block;
+}
+
+.notification-option strong {
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.notification-option small,
+.notifications-section p {
+  margin-top: var(--space-1);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  color: var(--text-muted);
+}
+
+.notification-option input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  accent-color: var(--accent-bright);
+}
+
+.notification-action {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--text-default);
+  background: var(--surface-raised);
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.notification-action--primary {
+  color: var(--accent-ink);
+  background: var(--accent-bright);
+  font-weight: 600;
+}
+
+.notification-action:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+@media (max-width: 720px) {
+  [data-screen="notifications"] {
+    padding: var(--space-5) var(--space-4) var(--space-page-tail);
+  }
+}

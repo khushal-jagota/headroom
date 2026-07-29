@@ -61,6 +61,8 @@ can never take a decision that belongs to the human.
 - **Runtime environments** (`environments.md`) — prepared live and staging runtime
   layouts, Ticket worktree servers, scrubbed launch, and user-service inputs.
 - **Database backups** (`backups.md`) — verified SQLite snapshots and the safe operator restore.
+- **Notifications** (`notifications.md`) — installable Panels, notification choices,
+  and the durable Web Push path from a system fact to a phone.
 - **Production deployment** (`deployment.md`) — exact-commit building, single-app replacement,
   and automatic recovery.
 
@@ -87,5 +89,5 @@ can never take a decision that belongs to the human.
 
 ---
 
-_Last verified: 2026-07-28 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-07-29 · Covers the system landscape; each doc carries its own
 code paths._

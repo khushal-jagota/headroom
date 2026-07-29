@@ -9,6 +9,7 @@ import type {
   DayResponse,
   DeploymentStatus,
   IdeasResponse,
+  NotificationSettingsResponse,
   ProjectsResponse,
   ReviewResponse,
   SkillsHomeResponse,
@@ -82,5 +83,10 @@ export const queries = {
       ["worker", workerType],
       `/api/workers/${encodeURIComponent(workerType)}`
     ),
-  skillsHome: () => jsonQuery<SkillsHomeResponse>(["skills-home"], "/api/skills")
+  skillsHome: () => jsonQuery<SkillsHomeResponse>(["skills-home"], "/api/skills"),
+  notificationSettings: () =>
+    jsonQuery<NotificationSettingsResponse>(
+      ["notification-settings"],
+      "/api/notifications/settings"
+    )
 };
