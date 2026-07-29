@@ -55,7 +55,7 @@ class ScriptedAppServer:
         self._turns: list[dict[str, Any]] = list(script.get("turns", []))
         self._turns_started = 0
         self._interrupted = asyncio.Event()
-        self._approval_answered = asyncio.Event()
+        self._server_request_answered = asyncio.Event()
         self._writing = asyncio.Lock()
         self._exit_code: int | None = None
         self._turn_tasks: set[asyncio.Task[None]] = set()
@@ -96,7 +96,7 @@ class ScriptedAppServer:
             # An answer to something we asked. Every ask this makes is one it can carry on
             # without, so the answer is written down and noted and nothing waits on it.
             self._write_down({"answer": message})
-            self._approval_answered.set()
+            self._server_request_answered.set()
             return
         request_id = message.get("id")
         parameters = message.get("params") or {}
@@ -271,11 +271,23 @@ class ScriptedAppServer:
                 )
             case "request_approval":
                 await self._request_approval(action, route)
+            case "request_user_input":
+                await self._ask(
+                    "item/tool/requestUserInput",
+                    {
+                        **route,
+                        "itemId": action.get("item_id", "input-1"),
+                        "questions": action["questions"],
+                    },
+                )
             case "ask_unknown":
-                await self._ask("item/tool/requestUserInput", {**route, "questions": []})
+                await self._ask("item/tool/notHandled", route)
             case "await_approval":
-                await self._approval_answered.wait()
-                self._approval_answered.clear()
+                await self._server_request_answered.wait()
+                self._server_request_answered.clear()
+            case "await_server_request_answer":
+                await self._server_request_answered.wait()
+                self._server_request_answered.clear()
             case "error_notification":
                 await self._notify(
                     "error",
