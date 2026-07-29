@@ -116,6 +116,27 @@ export type PendingPermissionAsk = {
   options: PermissionAskOption[];
 };
 
+export type UserInputOption = {
+  label: string;
+  description: string;
+};
+
+export type UserInputQuestion = {
+  question_id: string;
+  header: string;
+  question: string;
+  options: UserInputOption[];
+  multi_select: boolean;
+  allow_other: boolean;
+};
+
+export type UserInputAnswers = Record<string, { answers: string[] }>;
+
+export type PendingUserInput = {
+  request_id: string;
+  questions: UserInputQuestion[];
+};
+
 /**
  * One command the agent says a person may type at it. The name carries no leading slash
  * — the slash is how a person writes a command, not part of what it is called.
@@ -140,6 +161,7 @@ export type ConversationView = {
   is_running: boolean;
   held_prompt_count: number;
   pending_permission_ask: PendingPermissionAsk | null;
+  pending_user_input: PendingUserInput | null;
   available_commands: AgentCommand[];
 };
 
@@ -200,6 +222,15 @@ export type ConversationEvent =
       { ask_id: string; title: string; detail: string | null; options: PermissionAskOption[] }
     >
   | Row<"permission_answered", { ask_id: string; option_id: string }>
+  | Row<
+      "user_input_requested",
+      { request_id: string; questions: UserInputQuestion[] }
+    >
+  | Row<
+      "user_input_answered",
+      { request_id: string; answers: UserInputAnswers }
+    >
+  | Row<"user_input_failed", { request_id: string; detail: string }>
   | Row<"model_changed", { model: string | null; reasoning_effort: string | null }>
   /** What a turn has cost, as its backend counts it. Every field is absent when the
    *  backend did not say — never zero, because a backend silent about cached tokens has
@@ -467,6 +498,17 @@ export function answerPermissionAsk(
   return request<{ landed: boolean }>(
     `/conversations/${encodeURIComponent(conversationId)}/permission-answers`,
     postJson({ ask_id: askId, option_id: optionId })
+  );
+}
+
+export function answerUserInput(
+  conversationId: string,
+  requestId: string,
+  answers: UserInputAnswers
+): Promise<{ landed: boolean }> {
+  return request<{ landed: boolean }>(
+    `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
+    postJson({ request_id: requestId, answers })
   );
 }
 

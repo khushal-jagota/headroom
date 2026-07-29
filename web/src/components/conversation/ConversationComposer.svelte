@@ -24,6 +24,7 @@
   import BackendRail from "./BackendRail.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
+  import UserInputQuestionPanel from "./UserInputQuestionPanel.svelte";
   import RunValuePicker from "./RunValuePicker.svelte";
   import {
     beginComposerSend,
@@ -53,7 +54,9 @@
     ConversationBackendKey,
     PermissionAskOption,
     PromptDeliveryMode,
-    SentMessagePiece
+    SentMessagePiece,
+    UserInputAnswers,
+    UserInputQuestion
   } from "../../lib/conversation/wire";
 
   let {
@@ -61,6 +64,7 @@
     conversationExists = false,
     running = false,
     ask = null,
+    userInput = null,
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
@@ -77,6 +81,7 @@
     onSend,
     onStop,
     onAnswer,
+    onSubmitUserInput,
     onCancelTurn
   }: {
     /** The backend this conversation runs on — or, before there is one, the backend a
@@ -91,6 +96,10 @@
       title: string;
       detail: string | null;
       options: readonly PermissionAskOption[];
+    } | null;
+    userInput?: {
+      requestId: string;
+      questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
     current?: RunValues;
@@ -124,6 +133,7 @@
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
+    onSubmitUserInput?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
   } = $props();
 
@@ -166,10 +176,10 @@
 
   let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
   let effectiveMode = $derived<PromptDeliveryMode>(running ? mode : "run_when_free");
-  let takenOver = $derived(ask !== null);
+  let takenOver = $derived(ask !== null || userInput !== null);
   let inputDisabled = $derived(disabled || takenOver || imageIntakesInFlight > 0);
   let sendIsInFlight = $derived(sendsInFlight > 0 && !running);
-  let livePlaceholder = $derived(takenOver ? askPlaceholder(ask) : placeholder);
+  let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
   // The backend the rail shows. A conversation that exists shows its own and nothing else,
   // so a choice made before it existed cannot be left standing over it.
   let shownBackend = $derived<ConversationBackendKey | null>(
@@ -690,7 +700,15 @@
       ondragleave={onDragLeave}
       ondrop={onDrop}
     >
-      {#if takenOver && ask}
+      {#if userInput}
+        <UserInputQuestionPanel
+          request={userInput}
+          busy={disabled}
+          note={askNote}
+          onSubmit={(answers) => onSubmitUserInput?.(answers)}
+          onCancelTurn={() => onCancelTurn?.()}
+        />
+      {:else if takenOver && ask}
         <PermissionAskCard
           ask={ask}
           busy={disabled}
@@ -709,7 +727,7 @@
         />
       {/if}
 
-      {#if pendingImages.length > 0}
+      {#if userInput === null && pendingImages.length > 0}
         <div class="chat-image-previews" data-chat-image-previews aria-label="Pending images">
           {#each pendingImages as image, index (image.id)}
             <div
@@ -740,6 +758,7 @@
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
+        hidden={userInput !== null}
         onkeydown={onKeydown}
         oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
@@ -749,6 +768,7 @@
         onpaste={onPaste}
       ></textarea>
 
+      {#if userInput === null}
       <div class="chat-foot">
         {#if takenOver && ask}
           <PermissionAskActions
@@ -878,6 +898,7 @@
           >{running ? "■" : "↑"}</button>
         {/if}
       </div>
+      {/if}
       <div class="chat-drop-label" data-conversation-drop-label aria-hidden="true">
         Drop images to attach
       </div>
