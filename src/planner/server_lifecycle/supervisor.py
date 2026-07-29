@@ -144,13 +144,13 @@ class ServerSupervisor:
                 if self._operator_shutdown_requested:
                     self._stop_application_child()
                     return 0
+                if self._application_child_has_exited():
+                    return 1
                 if restart_requested:
                     self._stop_application_child()
                     if self._operator_shutdown_requested:
                         return 0
                     self._spawn_application_child()
-                elif self._application_child_has_exited():
-                    return 1
         finally:
             selector.close()
             for watched, handler in previous_handlers.items():
@@ -282,15 +282,14 @@ class ServerSupervisor:
         selector.register(signal_read, selectors.EVENT_READ, "signal")
         try:
             while True:
-                for key, _ in selector.select():
-                    if key.data == "signal":
-                        self._drain_signal_pipe(signal_read)
-                        if (
-                            self._operator_shutdown_requested
-                            or self._application_child_has_exited()
-                        ):
-                            raise _ControlRequestSuperseded
-                    elif key.data == "client":
+                events = selector.select()
+                if any(key.data == "signal" for key, _ in events):
+                    self._drain_signal_pipe(signal_read)
+                # Lifecycle changes outrank client readiness within one selector batch.
+                if self._operator_shutdown_requested or self._application_child_has_exited():
+                    raise _ControlRequestSuperseded
+                for key, _ in events:
+                    if key.data == "client":
                         try:
                             return connection.recv(maximum_bytes)
                         except BlockingIOError:
@@ -309,7 +308,16 @@ class ServerSupervisor:
 
     def _application_child_has_exited(self) -> bool:
         child = self._application_child
-        return child is not None and child.poll() is not None
+        if child is None:
+            return False
+        if child.poll() is not None:
+            return True
+        # Linux can expose a zombie before waitpid reports it after the supervisor resumes.
+        try:
+            process_state = Path(f"/proc/{child.pid}/stat").read_text().rpartition(") ")[2]
+        except OSError:
+            return False
+        return process_state.startswith("Z ")
 
     def _handle_operator_signal(self, _signum: int, _frame: FrameType | None) -> None:
         self._operator_shutdown_requested = True
