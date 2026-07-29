@@ -16,7 +16,9 @@ The planning system has these pieces:
 - An **idea** is a loose thought that may or may not become committed work.
 
 Tickets have a Worker type that sets their stages and worker. Worker types include
-`coding` (product or repo work), `new_worker` (creating a new kind of worker),
+`coding` (product or repo work), `debugging` (understanding a reported bug, diagnosing
+its structural cause, and defining the implementation handoff), `new_worker` (creating
+a new kind of worker),
 `exploration` (a worker for exploring something undefined and making it clearer),
 `initiative_planning` (working out the shared top-level how for a confirmed direction
 before creating its downstream Tickets), `product_design` (designing holistic product

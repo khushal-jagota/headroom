@@ -114,6 +114,7 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         assert manifest.status_code == 200
         assert [item["worker_type"] for item in manifest.json()["worker_types"]] == [
             "coding",
+            "debugging",
             "new_worker",
             "exploration",
             "initiative_planning",

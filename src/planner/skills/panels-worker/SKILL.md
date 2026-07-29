@@ -16,6 +16,7 @@ Stage, effective ownership, and scope. Invoke that skill.
 
 Worker skills:
 - `panels-worker-coding` — coding tickets.
+- `panels-worker-debugging` — debugging tickets (understanding a reported bug, diagnosing its structural cause, and defining the implementation handoff).
 - `panels-worker-new-worker` — new_worker tickets (designing another worker).
 - `panels-worker-exploration` — exploration tickets.
 - `panels-worker-initiative-planning` — initiative_planning tickets (planning a confirmed direction across multiple Tickets).
