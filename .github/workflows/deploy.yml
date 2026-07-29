@@ -22,10 +22,50 @@ jobs:
           echo "PANELS_CANDIDATE_SOURCE=$RUNNER_TEMP/panels-source-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
           echo "PANELS_CANDIDATE_APP=$RUNNER_TEMP/panels-candidate-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
           echo "PANELS_DEPLOY_VENV=$RUNNER_TEMP/panels-deploy-venv-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
+          echo "PANELS_DEPLOYMENT_ID=${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
+          echo "PANELS_LIFECYCLE_PATH=$HOME/Deployments/Panels/current/data/deployment-lifecycle.json" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+      - name: Start deployment lifecycle
+        run: |
+          current_record="$(
+            python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" read \
+              --path "$PANELS_LIFECYCLE_PATH"
+          )"
+          expected_id="$(
+            python3 -c 'import json, sys; value=json.load(sys.stdin).get("deployment_id"); print(value if isinstance(value, str) else "")' \
+              <<< "$current_record"
+          )"
+          expected_args=()
+          if [ -n "$expected_id" ]; then
+            expected_args=(--expected-deployment-id "$expected_id")
+          fi
+          prior_sha="$(
+            python3 - "$HOME/Deployments/Panels/current/app/manifest.json" <<'PY'
+          import json
+          import pathlib
+          import re
+          import sys
+
+          try:
+              value = json.loads(pathlib.Path(sys.argv[1]).read_text()).get("app_sha", "")
+          except (OSError, AttributeError, json.JSONDecodeError):
+              value = ""
+          print(value if isinstance(value, str) and re.fullmatch(r"[0-9a-f]{40}", value) else "")
+          PY
+          )"
+          prior_args=()
+          if [ -n "$prior_sha" ]; then
+            prior_args=(--prior-sha "$prior_sha")
+          fi
+          python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" start \
+            --path "$PANELS_LIFECYCLE_PATH" \
+            --deployment-id "$PANELS_DEPLOYMENT_ID" \
+            --requested-sha "$PANELS_REQUESTED_SHA" \
+            "${expected_args[@]}" \
+            "${prior_args[@]}"
       - name: Prove exact temporary source
         run: |
           printf '%s\n' "$PANELS_REQUESTED_SHA" | grep -Eq '^[0-9a-f]{40}$' || {
@@ -37,6 +77,8 @@ jobs:
           test "$(git -C "$PANELS_CANDIDATE_SOURCE" rev-parse HEAD)" = "$PANELS_REQUESTED_SHA"
           python3 -c 'import sys; assert sys.version_info >= (3, 12), "Python 3.12 or newer is required"'
           node -e 'const major = Number(process.versions.node.split(".")[0]); if (major !== 22) throw new Error("Node 22 is required")'
+      - name: Prepare deployment runtime
+        run: |
           python3 -m venv "$PANELS_DEPLOY_VENV"
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install -r requirements.txt
           "$PANELS_DEPLOY_VENV/bin/python" -m pip install --editable .
@@ -55,7 +97,9 @@ jobs:
             --backup-dir "$HOME/Deployments/Panels/current/data/backups" \
             --health-url "http://127.0.0.1:8767/api/health" \
             --service-manager systemctl \
-            --service-name panels-live.service
+            --service-name panels-live.service \
+            --lifecycle-path "$PANELS_LIFECYCLE_PATH" \
+            --deployment-id "$PANELS_DEPLOYMENT_ID"
       - name: Provision production agent skills
         run: |
           "$PANELS_DEPLOY_VENV/bin/python" -m planner environment provision-skills \
@@ -68,3 +112,28 @@ jobs:
         run: |
           git worktree remove --force "$PANELS_CANDIDATE_SOURCE" || rm -rf -- "$PANELS_CANDIDATE_SOURCE"
           rm -rf -- "$PANELS_CANDIDATE_APP" "$PANELS_DEPLOY_VENV"
+      - name: Finalize deployment lifecycle
+        if: always()
+        env:
+          PANELS_PRIOR_STEPS_SUCCEEDED: ${{ success() }}
+        run: |
+          test -f "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" || exit 0
+          if [ "$PANELS_PRIOR_STEPS_SUCCEEDED" = "true" ]; then
+            phase=succeeded
+            detail="Deployment completed."
+            code=deployment_succeeded
+            serving_args=(--serving-sha "$PANELS_REQUESTED_SHA")
+          else
+            phase=failed
+            detail="Deployment workflow did not complete."
+            code=workflow_failed
+            serving_args=()
+          fi
+          python3 "$GITHUB_WORKSPACE/src/planner/environments/deployment_lifecycle.py" transition \
+            --path "$PANELS_LIFECYCLE_PATH" \
+            --deployment-id "$PANELS_DEPLOYMENT_ID" \
+            --phase "$phase" \
+            --detail "$detail" \
+            --code "$code" \
+            --preserve-terminal \
+            "${serving_args[@]}"
