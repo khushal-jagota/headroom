@@ -54,9 +54,8 @@ export const queries = {
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets/${encodeURIComponent(ticketId)}`),
   // What a conversation started right now would run on, for each owner that starts one.
-  // It follows the change stream because the owner can change it: the Agents screen sets
-  // Config sets the Chief's, and a Ticket's own last-chosen values move when its worker
-  // is talked to.
+  // It follows the change stream because the owner can change it: Config sets the
+  // Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
   ticketConversationStartValues: (ticketId: string) =>
     jsonQuery<ConversationStartValues>(
       ["ticket", ticketId, "conversation-start-values"],

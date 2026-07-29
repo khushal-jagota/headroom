@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import ChiefConversation from "../components/ChiefConversation.svelte";
   import ResourceState from "../components/ResourceState.svelte";
@@ -11,6 +12,19 @@
   } = $props();
 
   const workers = createQuery(() => queries.workers());
+  const compactLayoutQuery = window.matchMedia("(max-width: 960px)");
+  let compactLayout = $state(compactLayoutQuery.matches);
+  let chiefIsSelected = $derived(
+    !compactLayout || selectedAgent === "chief-of-staff"
+  );
+
+  onMount(() => {
+    const onLayoutChange = (event: MediaQueryListEvent) => {
+      compactLayout = event.matches;
+    };
+    compactLayoutQuery.addEventListener("change", onLayoutChange);
+    return () => compactLayoutQuery.removeEventListener("change", onLayoutChange);
+  });
 </script>
 
 <section class="agents-screen" data-screen="agents">
@@ -35,11 +49,12 @@
         {#if workers.data}
           <nav class="agents-roster-list" aria-label="Agent conversations">
             <a
-              class="agents-roster-row active"
+              class="agents-roster-row"
+              class:active={chiefIsSelected}
               href="#/agents/chief-of-staff"
               data-agent-destination
               data-agent-id="chief-of-staff"
-              aria-current={selectedAgent === "chief-of-staff" ? "page" : undefined}
+              aria-current={chiefIsSelected ? "page" : undefined}
             >
               <span class="agents-roster-copy">
                 <span class="agents-roster-name" data-destination-name>
@@ -56,17 +71,19 @@
       </ResourceState>
     </aside>
 
-    <section class="agents-workspace-conversation" aria-label="Chief of Staff conversation">
-      <header class="agents-conversation-head">
-        <a class="agents-conversation-back" href="#/agents" aria-label="Back to agents">
-          <span aria-hidden="true">←</span>
-          Agents
-        </a>
-        <h1>Chief of Staff</h1>
-      </header>
-      <div class="agents-conversation-shell">
-        <ChiefConversation />
-      </div>
-    </section>
+    {#if chiefIsSelected}
+      <section class="agents-workspace-conversation" aria-label="Chief of Staff conversation">
+        <header class="agents-conversation-head">
+          <a class="agents-conversation-back" href="#/agents" aria-label="Back to agents">
+            <span aria-hidden="true">←</span>
+            Agents
+          </a>
+          <h1>Chief of Staff</h1>
+        </header>
+        <div class="agents-conversation-shell">
+          <ChiefConversation />
+        </div>
+      </section>
+    {/if}
   </div>
 </section>

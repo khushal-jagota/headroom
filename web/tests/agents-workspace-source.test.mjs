@@ -34,6 +34,7 @@ assert.match(moreMenu, /href="#\/config"/);
 // Both runtime addresses mount one component; selection is a route input, not another
 // conversation implementation.
 assert.match(app, /selectedAgent=\{route\.params\.roleKind === "chief"/);
+assert.match(app, /name === "agents"\s*\?\s*"agents"/);
 assert.match(route, /ChiefConversation/);
 assert.doesNotMatch(route, /fetchJson|mutateJson|\/api\/chief\/conversation/);
 

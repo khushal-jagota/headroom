@@ -708,7 +708,7 @@ textarea {
 }
 
 .agents-roster-row:hover .agents-roster-arrow {
-  color: var(--accent-bright);
+  color: var(--text-default);
   transform: translateX(2px);
 }
 

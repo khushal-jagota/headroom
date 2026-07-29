@@ -139,7 +139,12 @@
     if (name === "sprint" && search.has("item")) {
       params.item = search.get("item") || "";
     }
-    const screenKey = name === "workspace" || name === "board" ? "workspace" : segments.join("/") || "day";
+    const screenKey =
+      name === "workspace" || name === "board"
+        ? "workspace"
+        : name === "agents"
+          ? "agents"
+          : segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
 

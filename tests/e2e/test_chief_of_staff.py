@@ -73,6 +73,9 @@ def test_agents_routes_follow_workspace_responsively_and_keep_navigation_active(
     assert row.is_visible()
     assert "active" in (agents_nav.get_attribute("class") or "").split()
     assert page.locator("[data-chief-conversation-loading]").count() == 0
+    composer = page.locator("[data-conversation-input]")
+    composer.fill("keep this unsent thought")
+    assert row.get_attribute("aria-current") == "page"
 
     row.click()
     page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
@@ -80,6 +83,14 @@ def test_agents_routes_follow_workspace_responsively_and_keep_navigation_active(
     assert conversation.is_visible()
     assert row.get_attribute("aria-current") == "page"
     assert "active" in (agents_nav.get_attribute("class") or "").split()
+    assert composer.input_value() == "keep this unsent thought"
+
+    page.go_back()
+    page.wait_for_url("**/#/agents", timeout=WAIT_MS)
+    assert composer.input_value() == "keep this unsent thought"
+    page.go_forward()
+    page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
+    assert composer.input_value() == "keep this unsent thought"
 
     page.reload()
     page.wait_for_selector("[data-agents-layout]", timeout=WAIT_MS)
@@ -104,6 +115,34 @@ def test_agents_routes_follow_workspace_responsively_and_keep_navigation_active(
     page.go_back()
     page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
     assert page.locator(".agents-workspace-conversation").is_visible()
+
+
+def test_mobile_agents_roster_mounts_no_hidden_chief_conversation(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+) -> None:
+    page = context_factory().new_page()
+    page.set_viewport_size({"width": 390, "height": 700})
+    chief_lookups: list[str] = []
+    page.on(
+        "request",
+        lambda request: chief_lookups.append(request.url)
+        if request.url.endswith("/api/chief/conversation")
+        else None,
+    )
+
+    page.goto(server.base + "/#/agents")
+    page.wait_for_selector("[data-agents-layout]", timeout=WAIT_MS)
+    assert page.locator("[data-conversation-input]").count() == 0
+    assert page.locator('[data-agent-id="chief-of-staff"]').get_attribute(
+        "aria-current"
+    ) is None
+    assert chief_lookups == []
+
+    page.locator('[data-agent-id="chief-of-staff"]').click()
+    page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-input]", timeout=WAIT_MS)
+    assert len(chief_lookups) == 1
 
 
 def test_unknown_agent_route_remains_unknown(
@@ -154,3 +193,148 @@ def test_chief_lookup_failure_is_visible_and_retryable(
     retry.click()
     page.wait_for_selector("[data-conversation-input]", timeout=WAIT_MS)
     assert attempts >= 2
+
+
+def test_delayed_chief_lookup_shows_loading_before_the_conversation(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+) -> None:
+    page = context_factory().new_page()
+    pending: list[Route] = []
+
+    def hold_lookup(route: Route) -> None:
+        if route.request.url.endswith("/api/chief/conversation"):
+            pending.append(route)
+        else:
+            route.continue_()
+
+    page.route("**/api/chief/conversation*", hold_lookup)
+    page.goto(server.base + "/#/agents/chief-of-staff")
+    page.wait_for_selector("[data-chief-conversation-loading]", timeout=WAIT_MS)
+    assert page.locator("[data-conversation-input]").count() == 0
+    assert len(pending) == 1
+
+    pending[0].fulfill(
+        status=200,
+        content_type="application/json",
+        body='{"conversation_id":null}',
+    )
+    page.wait_for_selector("[data-conversation-input]", timeout=WAIT_MS)
+
+
+def test_chief_canonical_id_send_and_reset_survive_desktop_navigation(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+) -> None:
+    page = context_factory().new_page()
+    lookup_count = 0
+    sent_bodies: list[dict[str, object]] = []
+    reset_count = 0
+    canonical_reads: list[str] = []
+
+    def canonical_api(route: Route) -> None:
+        nonlocal lookup_count, reset_count
+        url = route.request.url
+        if url.endswith("/api/chief/conversation"):
+            lookup_count += 1
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=(
+                    '{"conversation_id":"canonical-chief"}'
+                    if sent_bodies
+                    else '{"conversation_id":null}'
+                ),
+            )
+            return
+        if url.endswith("/api/chief/conversation/send"):
+            sent_bodies.append(route.request.post_data_json)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"conversation_id":"canonical-chief","fate":"started"}',
+            )
+            return
+        if url.endswith("/api/chief/conversation/reset"):
+            reset_count += 1
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"conversation_id":null}',
+            )
+            return
+        route.continue_()
+
+    def canonical_conversation(route: Route) -> None:
+        canonical_reads.append(route.request.url)
+        if "/events?" in route.request.url:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body='{"events":[]}',
+            )
+            return
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=(
+                '{"conversation_id":"canonical-chief","backend_key":"codex",'
+                '"model":"gpt-5.6-sol","reasoning_effort":"medium",'
+                '"workspace_folder":"/workspace","access":"direct","role_text":null,'
+                '"identity_environment_variable_names":[],"latest_sequence":0,'
+                '"is_running":false,"held_prompt_count":0,'
+                '"pending_permission_ask":null,"pending_user_input":null,'
+                '"available_commands":[]}'
+            ),
+        )
+
+    page.route("**/api/chief/conversation", canonical_api)
+    page.route("**/api/chief/conversation/send", canonical_api)
+    page.route("**/api/chief/conversation/reset", canonical_api)
+    page.route(
+        "**/api/conversation/conversations/canonical-chief*",
+        canonical_conversation,
+    )
+    page.set_viewport_size({"width": 1200, "height": 800})
+    page.goto(server.base + "/#/agents")
+    page.wait_for_selector("[data-conversation-input]", timeout=WAIT_MS)
+    page.locator("[data-conversation-input]").fill("use the canonical thread")
+    with page.expect_request(
+        lambda request: "/api/conversation/conversations/canonical-chief"
+        in request.url,
+        timeout=WAIT_MS,
+    ):
+        with page.expect_response(
+            lambda response: response.url.endswith("/api/chief/conversation/send"),
+            timeout=WAIT_MS,
+        ):
+            page.locator("[data-conversation-send]").click()
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-input]')?.value === ''"
+    )
+    assert len(sent_bodies) == 1
+    assert sent_bodies[0]["conversation_id"] is None
+    page.wait_for_function(
+        "() => document.querySelector('[data-conversation-input]')?.placeholder"
+        " === 'Message Chief of Staff...'"
+    )
+    assert any("/conversations/canonical-chief" in url for url in canonical_reads), canonical_reads
+    lookups_after_send = lookup_count
+
+    page.locator('[data-agent-id="chief-of-staff"]').click()
+    page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
+    page.set_viewport_size({"width": 390, "height": 700})
+    assert page.locator("[data-conversation-input]").is_visible()
+    page.set_viewport_size({"width": 1200, "height": 800})
+    page.go_back()
+    page.wait_for_url("**/#/agents", timeout=WAIT_MS)
+    assert lookup_count == lookups_after_send
+
+    page.locator('[aria-label="Conversation options"]').click()
+    page.locator("[data-conversation-new-arm]").click()
+    with page.expect_request(
+        lambda request: request.url.endswith("/api/chief/conversation/reset"),
+        timeout=WAIT_MS,
+    ):
+        page.locator("[data-conversation-new-confirm]").click()
+    assert reset_count == 1
