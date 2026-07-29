@@ -174,11 +174,12 @@ def test_live_worker_type_docs_include_shipped_exploration_paths_and_guidance() 
     root = Path(__file__).resolve().parents[2]
     docs = (root / "docs/worker-types.md").read_text(encoding="utf-8")
 
-    assert "Eight Worker types ship today:" in docs
+    assert "Nine Worker types ship today:" in docs
     assert "- **`exploration`**" in docs
     assert "`src/planner/worker_types/exploration.py`" in docs
     assert (
-        "contains `coding`, `new_worker`, `exploration`, `initiative_planning`, "
-        "`product_design`, `planning-day`, `planning-midday-check`, and `planning-sprint`"
+        "contains `coding`, `debugging`, `new_worker`, `exploration`, "
+        "`initiative_planning`, `product_design`, `planning-day`, "
+        "`planning-midday-check`, and `planning-sprint`"
     ) in " ".join(docs.split())
     assert "- `panels-worker-exploration` guides `exploration` Tickets." in docs

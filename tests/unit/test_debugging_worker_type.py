@@ -59,6 +59,7 @@ def test_debugging_managed_settings_use_the_approved_runtime_defaults(
 
 def test_debugging_is_announced_at_both_agent_front_doors() -> None:
     root = Path(__file__).resolve().parents[2]
+    panels = (root / "src/planner/skills/panels/SKILL.md").read_text(encoding="utf-8")
     chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(
         encoding="utf-8"
     )
@@ -66,8 +67,19 @@ def test_debugging_is_announced_at_both_agent_front_doors() -> None:
         encoding="utf-8"
     )
 
+    assert "`debugging` (understanding a reported bug" in panels
     assert "`panels-worker-debugging` — debugging tickets" in worker
     assert "Use a **`debugging` ticket**" in chief
+
+
+def test_debugging_is_current_in_worker_type_docs() -> None:
+    root = Path(__file__).resolve().parents[2]
+    docs = (root / "docs/worker-types.md").read_text(encoding="utf-8")
+
+    assert "Nine Worker types ship today:" in docs
+    assert "- **`debugging`**" in docs
+    assert "`src/planner/worker_types/debugging.py`" in docs
+    assert "`panels-worker-debugging` guides `debugging` Tickets." in docs
 
 
 def test_problem_understanding_stays_separate_from_diagnosis() -> None:
