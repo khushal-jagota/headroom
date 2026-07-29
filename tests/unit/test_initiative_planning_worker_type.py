@@ -105,6 +105,7 @@ INITIATIVE_PLANNING_MANIFEST: WorkerTypeManifest = {
 def test_production_registry_carries_complete_initiative_planning_manifest() -> None:
     assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
         "coding",
+        "debugging",
         "new_worker",
         "exploration",
         "initiative_planning",

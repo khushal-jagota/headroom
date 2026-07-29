@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from planner.worker_types.coding import CODING_WORKER_TYPE_DEFINITION
 from planner.worker_types.contracts import WorkerTypeDefinition
+from planner.worker_types.debugging import DEBUGGING_WORKER_TYPE_DEFINITION
 from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
 from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
@@ -21,6 +22,7 @@ _KNOWN_SKILLS = frozenset(
     {
         "panels-worker",
         "panels-worker-coding",
+        "panels-worker-debugging",
         "panels-worker-new-worker",
         "panels-worker-exploration",
         "panels-worker-initiative-planning",
@@ -33,6 +35,7 @@ _KNOWN_SKILLS = frozenset(
 _KNOWN_TOOLSET_PROFILES = frozenset({"default"})
 _PRODUCTION_WORKER_TYPE_DEFINITIONS = (
     CODING_WORKER_TYPE_DEFINITION,
+    DEBUGGING_WORKER_TYPE_DEFINITION,
     NEW_WORKER_TYPE_DEFINITION,
     EXPLORATION_WORKER_TYPE_DEFINITION,
     INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION,
