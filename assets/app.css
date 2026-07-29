@@ -2377,6 +2377,27 @@ select {
   color: var(--accent-bright);
 }
 
+.review-ticket-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.review-ticket-heading .review-ticket-title {
+  min-width: 0;
+}
+
+.review-kickoff-priority {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: var(--type-sm);
+}
+
+.review-kickoff-priority [data-review-priority-error] {
+  margin-top: var(--space-2);
+}
+
 /* The context block: a sans RECAP label, then the serif recap, then the collapsed
  * NOTES disclosure when the field carries notes. */
 /* Recap sits close above the Notes row; the stage-section gap carries the rest
