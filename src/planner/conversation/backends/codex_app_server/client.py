@@ -65,6 +65,7 @@ CONSUMED_SERVER_NOTIFICATIONS: dict[str, type[BaseModel]] = {
 HANDLED_SERVER_REQUESTS: dict[str, type[BaseModel]] = {
     "item/commandExecution/requestApproval": bindings.CommandExecutionRequestApprovalParams,
     "item/fileChange/requestApproval": bindings.FileChangeRequestApprovalParams,
+    "item/tool/requestUserInput": bindings.ToolRequestUserInputParams,
 }
 
 METHOD_NOT_FOUND_ERROR_CODE = -32601

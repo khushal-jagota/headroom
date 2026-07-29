@@ -92,11 +92,13 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
+    UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
     AgentCommand,
@@ -110,6 +112,9 @@ from planner.conversation.events import (
     PlanEntry,
     PlanEntryStatus,
     ToolCallStatus,
+    UserInputAnswer,
+    UserInputOption,
+    UserInputQuestion,
 )
 from planner.conversation.message_content import (
     MessageContent,
@@ -275,6 +280,7 @@ class _UserQuestion:
     text: str
     header: str
     choices: tuple[_QuestionChoice, ...]
+    multi_select: bool
 
 
 @dataclass(slots=True)
@@ -295,7 +301,14 @@ class _ParkedPermissionAsk:
     handed_over: asyncio.Future[None]
     tool_input: dict[str, Any]
     suggestions: tuple[Any, ...]
-    question: _UserQuestion | None = None
+
+
+@dataclass(slots=True)
+class _ParkedUserInput:
+    answer: asyncio.Future[PermissionResult]
+    handed_over: asyncio.Future[None]
+    tool_input: dict[str, Any]
+    questions: tuple[_UserQuestion, ...]
 
 
 @dataclass(slots=True)
@@ -305,6 +318,8 @@ class _TurnInFlight:
     token: TurnToken
     cancel_requested: bool = False
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
+    parked_user_inputs: dict[str, _ParkedUserInput] = field(default_factory=dict)
+    user_input_tool_use_ids: set[str] = field(default_factory=set)
 
 
 class ClaudeAgentSdkBackendChild:
@@ -490,6 +505,9 @@ class ClaudeAgentSdkBackendChild:
         except Exception as did_not_reach:
             self._wire_broken = True
             raise PromptWriteFailed(str(did_not_reach)) from did_not_reach
+        # The core records the interruption as soon as this returns. Settle every callback
+        # at the same boundary instead of waiting for a terminal result Claude may delay.
+        self._settle_parked_asks(turn)
 
     async def answer_permission_ask(self, ask_id: str, option_id: str) -> None:
         """Give the SDK the option a person chose, and wait for its callback to take it.
@@ -502,7 +520,7 @@ class ClaudeAgentSdkBackendChild:
         parked = None if turn is None else turn.parked_asks.get(ask_id)
         if parked is None or parked.answer.done():
             raise PermissionAnswerWriteFailed(ask_id)
-        answer = _answer_for(option_id, parked.tool_input, parked.suggestions, parked.question)
+        answer = _permission_answer_for(option_id, parked.tool_input, parked.suggestions)
         if answer is None:
             raise PermissionAnswerWriteFailed(f"{ask_id} was not offered {option_id!r}")
         if turn is not None:
@@ -512,6 +530,25 @@ class ClaudeAgentSdkBackendChild:
             await parked.handed_over
         except Exception as never_given:
             raise PermissionAnswerWriteFailed(ask_id) from never_given
+
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        """Give Claude's held callback its complete answer map."""
+        turn = self._turn
+        parked = None if turn is None else turn.parked_user_inputs.get(request_id)
+        if parked is None or parked.answer.done():
+            raise UserInputAnswerWriteFailed(request_id)
+        answer = _user_input_answer_for(answers, parked.tool_input, parked.questions)
+        if answer is None:
+            raise UserInputAnswerWriteFailed(f"{request_id} did not receive complete answers")
+        if turn is not None:
+            turn.parked_user_inputs.pop(request_id, None)
+        parked.answer.set_result(answer)
+        try:
+            await parked.handed_over
+        except Exception as never_given:
+            raise UserInputAnswerWriteFailed(request_id) from never_given
 
     async def stop(self) -> None:
         """Shut the child down: stop reading, settle its asks, close the client."""
@@ -668,6 +705,12 @@ class ClaudeAgentSdkBackendChild:
             if not parked.answer.done():
                 parked.answer.set_result(PermissionResultDeny(message=WITHDRAWN_TOOL_MESSAGE))
         turn.parked_asks.clear()
+        for parked_user_input in list(turn.parked_user_inputs.values()):
+            if not parked_user_input.answer.done():
+                parked_user_input.answer.set_result(
+                    PermissionResultDeny(message=WITHDRAWN_TOOL_MESSAGE)
+                )
+        turn.parked_user_inputs.clear()
 
     # --- what the agent says -------------------------------------------------------------
 
@@ -799,6 +842,9 @@ class ClaudeAgentSdkBackendChild:
                     said.append(block.text)
                 case ToolUseBlock():
                     await self._complete_agent_message(turn, said)
+                    if block.name == ASK_USER_QUESTION_TOOL_NAME:
+                        turn.user_input_tool_use_ids.add(block.id)
+                        continue
                     plan = _todo_write_plan(block)
                     if plan is not None:
                         await self._sink.plan_updated(turn.token, plan)
@@ -843,6 +889,8 @@ class ClaudeAgentSdkBackendChild:
             return
         for block in content:
             if not isinstance(block, ToolResultBlock):
+                continue
+            if block.tool_use_id in turn.user_input_tool_use_ids:
                 continue
             await self._sink.tool_call_finished(
                 turn.token,
@@ -920,29 +968,81 @@ class ClaudeAgentSdkBackendChild:
         turn = self._turn
         if turn is None:
             return PermissionResultDeny(message=WITHDRAWN_TOOL_MESSAGE)
-        question = self._user_question(tool_name, tool_input)
         self._asks_raised += 1
         ask_id = f"{context.tool_use_id or tool_name}:{self._asks_raised}"
+        if tool_name == ASK_USER_QUESTION_TOOL_NAME:
+            questions = _user_questions(tool_input)
+            if questions is None:
+                await self._sink.user_input_failed(
+                    turn.token,
+                    request_id=ask_id,
+                    detail="Claude sent a malformed question request, so Panels refused it.",
+                )
+                return PermissionResultDeny(
+                    message="The question request was malformed and could not be shown."
+                )
+            loop = asyncio.get_running_loop()
+            parked_user_input = _ParkedUserInput(
+                answer=loop.create_future(),
+                handed_over=loop.create_future(),
+                tool_input=dict(tool_input),
+                questions=questions,
+            )
+            turn.parked_user_inputs[ask_id] = parked_user_input
+            if context.tool_use_id is not None:
+                turn.user_input_tool_use_ids.add(context.tool_use_id)
+            await self._sink.user_input_requested(
+                turn.token,
+                BackendUserInputRequest(
+                    request_id=ask_id,
+                    questions=tuple(
+                        UserInputQuestion(
+                            question_id=question.text,
+                            header=question.header,
+                            question=question.text,
+                            options=tuple(
+                                UserInputOption(
+                                    label=choice.label, description=choice.description
+                                )
+                                for choice in question.choices
+                            ),
+                            multi_select=question.multi_select,
+                            allow_other=True,
+                        )
+                        for question in questions
+                    ),
+                ),
+            )
+            try:
+                answer = await parked_user_input.answer
+            except BaseException as never_answered:
+                if not parked_user_input.handed_over.done():
+                    parked_user_input.handed_over.set_exception(
+                        UserInputAnswerWriteFailed(str(never_answered))
+                    )
+                    parked_user_input.handed_over.add_done_callback(
+                        lambda settled: settled.exception()
+                    )
+                raise
+            if not parked_user_input.handed_over.done():
+                parked_user_input.handed_over.set_result(None)
+            return answer
+
         loop = asyncio.get_running_loop()
         parked = _ParkedPermissionAsk(
             answer=loop.create_future(),
             handed_over=loop.create_future(),
             tool_input=dict(tool_input),
             suggestions=tuple(context.suggestions),
-            question=question,
         )
         turn.parked_asks[ask_id] = parked
         await self._sink.permission_ask_raised(
             turn.token,
             BackendPermissionAsk(
                 ask_id=ask_id,
-                title=tool_name if question is None else _question_title(question),
-                detail=(
-                    _canonical_json(tool_input) if question is None else _question_detail(question)
-                ),
-                options=(
-                    PERMISSION_ASK_OPTIONS if question is None else _question_options(question)
-                ),
+                title=tool_name,
+                detail=_canonical_json(tool_input),
+                options=PERMISSION_ASK_OPTIONS,
             ),
         )
         try:
@@ -957,27 +1057,6 @@ class ClaudeAgentSdkBackendChild:
         if not parked.handed_over.done():
             parked.handed_over.set_result(None)
         return answer
-
-    def _user_question(self, tool_name: str, tool_input: dict[str, Any]) -> _UserQuestion | None:
-        """The one question this call is asking, when it is asking exactly one.
-
-        A call carrying several questions, or one whose answer is a set rather than a
-        choice, is left as a plain permission ask. Half-rendering it would be worse than
-        not rendering it: the owner would answer one question and the rest would go back
-        unanswered. Both are rare, and one is not silently different from the other, so the
-        fallback is written down where it happens.
-        """
-        if tool_name != ASK_USER_QUESTION_TOOL_NAME:
-            return None
-        question = _the_single_question(tool_input)
-        if question is None:
-            LOGGER.info(
-                "conversation %s: a %s call was not one single-choice question, so it is "
-                "raised as a plain permission ask",
-                self._resolved_start.conversation_id,
-                ASK_USER_QUESTION_TOOL_NAME,
-            )
-        return question
 
     # --- the child's own noise ------------------------------------------------------------
 
@@ -1118,111 +1197,61 @@ def _durable_session_id(message: Message) -> str | None:
             return None
 
 
-def _the_single_question(tool_input: dict[str, Any]) -> _UserQuestion | None:
-    """The question in an ask-the-owner call, when there is exactly one to show.
-
-    Everything is checked rather than trusted. The call is claude's, and a shape this does
-    not recognise has to fall back to the plain permission ask instead of raising a question
-    with pieces missing.
-    """
+def _user_questions(tool_input: dict[str, Any]) -> tuple[_UserQuestion, ...] | None:
+    """Strictly parse the whole ordered AskUserQuestion payload or reject all of it."""
     questions = tool_input.get("questions")
-    if not isinstance(questions, list) or len(questions) != 1:
+    if not isinstance(questions, list) or not questions:
         return None
-    asked = questions[0]
-    if not isinstance(asked, dict) or asked.get("multiSelect"):
-        return None
-    text = asked.get("question")
-    if not isinstance(text, str) or not text:
-        return None
-    offered = asked.get("options")
-    if not isinstance(offered, list) or not offered:
-        return None
-    choices: list[_QuestionChoice] = []
-    for option in offered:
-        if not isinstance(option, dict):
+    parsed: list[_UserQuestion] = []
+    seen_text: set[str] = set()
+    for asked in questions:
+        if not isinstance(asked, dict):
             return None
-        label = option.get("label")
-        if not isinstance(label, str) or not label:
+        text = asked.get("question")
+        if not isinstance(text, str) or not text or text in seen_text:
             return None
-        description = option.get("description")
-        choices.append(
-            _QuestionChoice(
-                label=label, description=description if isinstance(description, str) else ""
+        seen_text.add(text)
+        offered = asked.get("options")
+        if not isinstance(offered, list) or not offered:
+            return None
+        choices: list[_QuestionChoice] = []
+        for option in offered:
+            if not isinstance(option, dict):
+                return None
+            label = option.get("label")
+            description = option.get("description")
+            if (
+                not isinstance(label, str)
+                or not label
+                or not isinstance(description, str)
+            ):
+                return None
+            choices.append(_QuestionChoice(label=label, description=description))
+        if len({choice.label for choice in choices}) != len(choices):
+            return None
+        multi_select = asked.get("multiSelect")
+        if not isinstance(multi_select, bool):
+            return None
+        header = asked.get("header")
+        if not isinstance(header, str):
+            return None
+        parsed.append(
+            _UserQuestion(
+                text=text,
+                header=header,
+                choices=tuple(choices),
+                multi_select=multi_select,
             )
         )
-    # The label is what the answer goes back as, so two choices sharing one would make an
-    # answer that names neither of them.
-    if len({choice.label for choice in choices}) != len(choices):
-        return None
-    header = asked.get("header")
-    return _UserQuestion(
-        text=text,
-        header=header if isinstance(header, str) else "",
-        choices=tuple(choices),
-    )
+    return tuple(parsed)
 
 
-def _question_title(question: _UserQuestion) -> str:
-    """What the owner is being asked, with claude's own short label for it in front."""
-    return f"{question.header}: {question.text}" if question.header else question.text
-
-
-def _question_detail(question: _UserQuestion) -> str | None:
-    """What each choice would mean, in plain lines.
-
-    Never the call's JSON. The owner is answering a question, and a question's detail is
-    what the answers mean — the shape of the tool call behind it says nothing to anyone.
-    """
-    lines = [
-        f"{choice.label} — {choice.description}" if choice.description else choice.label
-        for choice in question.choices
-    ]
-    return "\n".join(lines) if lines else None
-
-
-def _question_options(question: _UserQuestion) -> tuple[PermissionAskOption, ...]:
-    """The question's own choices, offered as the answers to it.
-
-    Each is a choice and none of them is an allow or a reject, which is what tells a surface
-    that this ask is answered rather than approved. The label goes back as the option id
-    because the label is the answer: it is the text the tool is given for the question.
-    """
-    return tuple(
-        PermissionAskOption(
-            option_id=choice.label, label=choice.label, option_kind=QUESTION_CHOICE_OPTION_KIND
-        )
-        for choice in question.choices
-    )
-
-
-def _answer_for(
+def _permission_answer_for(
     option_id: str,
     tool_input: dict[str, Any],
     suggestions: tuple[Any, ...],
-    question: _UserQuestion | None,
 ) -> PermissionResult | None:
-    """What the SDK is given for one of the answers this adapter offered.
-
-    A question's answer is the chosen choice put where the tool reads it from: its own input
-    has a place for answers, keyed by the full text of the question. Allowing the call with
-    that filled in is how the answer reaches the model — allowing it without is a call that
-    runs and tells the model nobody answered.
-
-    For a permission, an allow goes back with the call's input exactly as it came: a person
-    answering says whether the call may happen, never what the call is. A session-wide allow
-    adds the SDK's own suggested permission updates, which are the only thing that can say
-    "and not again this session" — an ask the SDK suggests nothing for is allowed this once,
-    because that is all there was to give.
-    """
-    if question is not None:
-        if option_id not in {choice.label for choice in question.choices}:
-            return None
-        answers = tool_input.get(USER_ANSWERS_INPUT_FIELD)
-        answered = dict(answers) if isinstance(answers, dict) else {}
-        answered[question.text] = option_id
-        return PermissionResultAllow(
-            updated_input={**tool_input, USER_ANSWERS_INPUT_FIELD: answered}
-        )
+    """Translate one genuine permission decision to Claude's SDK."""
     if option_id == APPROVE_ONCE_OPTION_ID:
         return PermissionResultAllow(updated_input=dict(tool_input))
     if option_id == ALWAYS_ALLOW_THIS_SESSION_OPTION_ID:
@@ -1233,6 +1262,28 @@ def _answer_for(
     if option_id == DECLINE_OPTION_ID:
         return PermissionResultDeny(message=DECLINED_TOOL_MESSAGE)
     return None
+
+
+def _user_input_answer_for(
+    answers: tuple[UserInputAnswer, ...],
+    tool_input: dict[str, Any],
+    questions: tuple[_UserQuestion, ...],
+) -> PermissionResult | None:
+    """Fill Claude's original tool input with a complete full-question-text answer map."""
+    if tuple(answer.question_id for answer in answers) != tuple(
+        question.text for question in questions
+    ):
+        return None
+    answer_map: dict[str, str] = {}
+    for question, answer in zip(questions, answers, strict=True):
+        if not answer.answers or (not question.multi_select and len(answer.answers) != 1):
+            return None
+        if any(not value for value in answer.answers):
+            return None
+        answer_map[question.text] = ", ".join(answer.answers)
+    return PermissionResultAllow(
+        updated_input={**tool_input, USER_ANSWERS_INPUT_FIELD: answer_map}
+    )
 
 
 def _todo_write_plan(block: ToolUseBlock) -> tuple[PlanEntry, ...] | None:

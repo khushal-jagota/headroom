@@ -16,7 +16,9 @@ The planning system has these pieces:
 - An **idea** is a loose thought that may or may not become committed work.
 
 Tickets have a Worker type that sets their stages and worker. Worker types include
-`coding` (product or repo work), `new_worker` (creating a new kind of worker),
+`coding` (product or repo work), `debugging` (understanding a reported bug, diagnosing
+its structural cause, and defining the implementation handoff), `new_worker` (creating
+a new kind of worker),
 `exploration` (a worker for exploring something undefined and making it clearer),
 `initiative_planning` (working out the shared top-level how for a confirmed direction
 before creating its downstream Tickets), `product_design` (designing holistic product
@@ -61,6 +63,10 @@ intended planning Ticket through ordinary `panels ticket create`.
 
 Everything runs through the `panels` command — run `panels --help` to see what it can do. It talks to the Panels server and database.
 
+Before creating any Ticket, load and follow **`panels-ticket-creation`**. It owns the
+shared creation model; the role-specific skill that sent you there still owns whether
+creation is authorized and what follow-up its workflow requires.
+
 The command groups describe both the object being changed and the operation's authority:
 
 - `panels day ...` for planning and operating on a day.
@@ -71,6 +77,7 @@ The command groups describe both the object being changed and the operation's au
 
 ## Skills
 
+- **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.
 - **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.
 - **`panels-worker-planning-day`** — gathering evidence and planning the Day.
 - **`panels-worker-planning-midday-check`** — checking the Day at midday.

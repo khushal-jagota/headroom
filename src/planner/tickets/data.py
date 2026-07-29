@@ -25,7 +25,10 @@ from planner.tickets.contracts import (
     EmployeeLaunchConfiguration,
     FieldSlot,
     NextCeiling,
+    ProjectPriorityAnchor,
     Proposal,
+    ResolvedTicketPriorityAnchors,
+    SprintItemPriorityAnchor,
     StageOwnershipMode,
     Ticket,
     TicketDeletion,
@@ -134,6 +137,82 @@ def _validate_ticket_creation_placement(
             )
 
 
+def _resolve_priority_anchors(
+    conn: sqlite3.Connection,
+    *,
+    project_id: str | None,
+    sprint_item_id: str | None,
+) -> ResolvedTicketPriorityAnchors:
+    """Load the placement anchors that explain a new Ticket's priority default."""
+    if sprint_item_id is not None:
+        row = conn.execute(
+            "SELECT sprint_items.id AS sprint_item_id, "
+            "sprint_items.title AS sprint_item_title, "
+            "sprint_items.priority AS sprint_item_priority, "
+            "projects.id AS project_id, projects.name AS project_name, "
+            "projects.priority AS project_priority "
+            "FROM sprint_items JOIN projects ON projects.id = sprint_items.project_id "
+            "WHERE sprint_items.id = ?",
+            (sprint_item_id,),
+        ).fetchone()
+        if row is None:
+            raise PlannerError(
+                ErrorCode.not_found,
+                "sprint item not found",
+                {"sprint_item_id": sprint_item_id},
+            )
+        return ResolvedTicketPriorityAnchors(
+            sprint_item=SprintItemPriorityAnchor(
+                id=str(row["sprint_item_id"]),
+                title=str(row["sprint_item_title"]),
+                priority=Priority(str(row["sprint_item_priority"])),
+            ),
+            project=ProjectPriorityAnchor(
+                id=str(row["project_id"]),
+                name=str(row["project_name"]),
+                priority=(
+                    Priority(str(row["project_priority"]))
+                    if row["project_priority"] is not None
+                    else None
+                ),
+            ),
+        )
+    if project_id is not None:
+        row = conn.execute(
+            "SELECT id, name, priority FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+        if row is None:
+            raise PlannerError(
+                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
+            )
+        return ResolvedTicketPriorityAnchors(
+            sprint_item=None,
+            project=ProjectPriorityAnchor(
+                id=str(row["id"]),
+                name=str(row["name"]),
+                priority=(
+                    Priority(str(row["priority"]))
+                    if row["priority"] is not None
+                    else None
+                ),
+            ),
+        )
+    return ResolvedTicketPriorityAnchors(sprint_item=None, project=None)
+
+
+def _created_ticket_priority(
+    explicit_priority: Priority | None,
+    anchors: ResolvedTicketPriorityAnchors,
+) -> Priority:
+    if explicit_priority is not None:
+        return explicit_priority
+    if anchors.sprint_item is not None:
+        return anchors.sprint_item.priority
+    if anchors.project is not None and anchors.project.priority is not None:
+        return anchors.project.priority
+    return Priority.P3
+
+
 def validate_ticket_creation_context(
     conn: sqlite3.Connection,
     *,
@@ -226,6 +305,30 @@ def _row_to_ticket(row: sqlite3.Row) -> Ticket:
         project_name=row["project_name"],
         sprint_item_id=row["sprint_item_id"],
         effective_sprint_id=row["effective_sprint_id"],
+        resolved_priority_anchors=ResolvedTicketPriorityAnchors(
+            sprint_item=(
+                SprintItemPriorityAnchor(
+                    id=str(row["sprint_item_id"]),
+                    title=str(row["priority_sprint_item_title"]),
+                    priority=Priority(str(row["priority_sprint_item_priority"])),
+                )
+                if row["sprint_item_id"] is not None
+                else None
+            ),
+            project=(
+                ProjectPriorityAnchor(
+                    id=str(row["effective_project_id"]),
+                    name=str(row["project_name"]),
+                    priority=(
+                        Priority(str(row["priority_project_priority"]))
+                        if row["priority_project_priority"] is not None
+                        else None
+                    ),
+                )
+                if row["effective_project_id"] is not None
+                else None
+            ),
+        ),
         recap=row["recap"],
         ceiling=str(row["ceiling"]),
         at_cap=AtCap(row["at_cap"]),
@@ -261,6 +364,9 @@ def _ticket_row(conn: sqlite3.Connection, ticket_id: str) -> sqlite3.Row:
     row: sqlite3.Row | None = conn.execute(
         "SELECT tickets.*, COALESCE(sprint_items.project_id, tickets.project_id) "
         "AS effective_project_id, projects.name AS project_name, "
+        "projects.priority AS priority_project_priority, "
+        "sprint_items.title AS priority_sprint_item_title, "
+        "sprint_items.priority AS priority_sprint_item_priority, "
         "sprint_items.sprint_id AS effective_sprint_id "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects ON projects.id = "
@@ -781,7 +887,7 @@ def create_ticket(
     title_max_chars: int,
     kickoff_note: str | None = "",
     project_id: str | None = None,
-    priority: Priority = Priority.P3,
+    priority: Priority | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
     fallback_sprint_id: str | None = None,
@@ -849,6 +955,10 @@ def create_ticket(
             sprint_item_id=sprint_item_id,
             blocked_by_ticket_ids=blocked_by_ticket_ids,
         )
+        priority_anchors = _resolve_priority_anchors(
+            conn, project_id=project_id, sprint_item_id=sprint_item_id
+        )
+        stored_priority = _created_ticket_priority(priority, priority_anchors)
         conn.execute(
             "INSERT INTO tickets ("
             "id, title, worker_type, employee_backend, employee_launch_model, "
@@ -868,7 +978,7 @@ def create_ticket(
                 launch_configuration.employee_launch_model,
                 launch_configuration.employee_launch_reasoning_effort,
                 initial_stage,
-                priority.value,
+                stored_priority.value,
                 deadline,
                 project_id,
                 sprint_item_id,
@@ -912,7 +1022,7 @@ def create_ticket_from_external_work(
     kickoff_note: str | None = None,
     recap: str | None = None,
     project_id: str | None = None,
-    priority: Priority = Priority.P3,
+    priority: Priority | None = None,
     deadline: str | None = None,
     sprint_item_id: str | None = None,
     fallback_sprint_id: str | None = None,
@@ -975,22 +1085,16 @@ def create_ticket_from_external_work(
                 now=now,
             ).id
             project_id = None
-        if sprint_item_id is not None:
-            if (
-                conn.execute(
-                    "SELECT 1 FROM sprint_items WHERE id = ?", (sprint_item_id,)
-                ).fetchone()
-                is None
-            ):
-                raise PlannerError(
-                    ErrorCode.not_found,
-                    "sprint item not found",
-                    {"sprint_item_id": sprint_item_id},
-                )
-            if project_id is not None:
-                raise PlannerError(
-                    ErrorCode.validation, "project is derived when parented"
-                )
+        _validate_ticket_creation_placement(
+            conn,
+            project_id=project_id,
+            sprint_item_id=sprint_item_id,
+            blocked_by_ticket_ids=blocked_by_ticket_ids,
+        )
+        priority_anchors = _resolve_priority_anchors(
+            conn, project_id=project_id, sprint_item_id=sprint_item_id
+        )
+        stored_priority = _created_ticket_priority(priority, priority_anchors)
 
         conn.execute(
             "INSERT INTO tickets ("
@@ -1015,7 +1119,7 @@ def create_ticket_from_external_work(
                 # (coding: needs_success; probe: needs_alpha). This is NOT default_ceiling,
                 # which is now the leading needs_kickoff.
                 first_worker,
-                priority.value,
+                stored_priority.value,
                 deadline,
                 project_id,
                 sprint_item_id,
@@ -1188,6 +1292,9 @@ def read_ticket_by_conversation_id(
     rows = conn.execute(
         "SELECT tickets.*, COALESCE(sprint_items.project_id, tickets.project_id) "
         "AS effective_project_id, projects.name AS project_name, "
+        "projects.priority AS priority_project_priority, "
+        "sprint_items.title AS priority_sprint_item_title, "
+        "sprint_items.priority AS priority_sprint_item_priority, "
         "sprint_items.sprint_id AS effective_sprint_id "
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects ON projects.id = "

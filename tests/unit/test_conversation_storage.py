@@ -41,6 +41,12 @@ from planner.conversation.events import (
     ToolCallStartedEventPayload,
     ToolCallStatus,
     TurnEndedEventPayload,
+    UserInputAnswer,
+    UserInputAnsweredEventPayload,
+    UserInputFailedEventPayload,
+    UserInputOption,
+    UserInputQuestion,
+    UserInputRequestedEventPayload,
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
@@ -94,6 +100,24 @@ EVERY_PAYLOAD: tuple[ConversationEventPayload, ...] = (
         ),
     ),
     PermissionAnsweredEventPayload(ask_id="ask-1", option_id="allow-once"),
+    UserInputRequestedEventPayload(
+        request_id="input-1",
+        questions=(
+            UserInputQuestion(
+                question_id="q1",
+                header="Scope",
+                question="Which parts?",
+                options=(UserInputOption(label="Both", description="Backend and frontend"),),
+                multi_select=True,
+                allow_other=True,
+            ),
+        ),
+    ),
+    UserInputAnsweredEventPayload(
+        request_id="input-1",
+        answers=(UserInputAnswer(question_id="q1", answers=("Both", "Docs")),),
+    ),
+    UserInputFailedEventPayload(request_id="input-bad", detail="malformed"),
     PlanUpdatedEventPayload(
         entries=(
             PlanEntry(text="read the code", status=PlanEntryStatus.completed),

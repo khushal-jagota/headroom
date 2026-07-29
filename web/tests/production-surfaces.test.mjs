@@ -30,23 +30,18 @@ assert.doesNotMatch(
   /capabilities|relay_chief_enabled|resolveRelayChiefFromMeta|markRelayChiefMetaError/,
 );
 
-// --- the Chief is one conversation, in both the places it appears ---------------------
+// --- the Chief is one conversation, on its dedicated Agents route ----------------------
 
 const chiefOfStaffRouteSource = await readFile(
   new URL("../src/routes/ChiefOfStaffRoute.svelte", import.meta.url),
   "utf8",
 );
-for (const [name, source] of [
-  ["BoardRoute.svelte", boardRouteSource],
-  ["ChiefOfStaffRoute.svelte", chiefOfStaffRouteSource],
-]) {
-  assert.match(source, /<ChiefConversation \/>/, name);
-  assert.doesNotMatch(
-    source,
-    /ChatPanel|ChiefNeutralPane|relayChief|retryRelayChiefMeta|chatGatewayStatus|\/api\/chat|\/api\/relay/,
-    name,
-  );
-}
+assert.match(chiefOfStaffRouteSource, /<ChiefConversation \/>/);
+assert.doesNotMatch(boardRouteSource, /ChiefConversation|Chief of Staff/);
+assert.doesNotMatch(
+  chiefOfStaffRouteSource,
+  /ChatPanel|ChiefNeutralPane|relayChief|retryRelayChiefMeta|chatGatewayStatus|\/api\/chat|\/api\/relay/,
+);
 
 // --- the Ticket screen -----------------------------------------------------------------
 
@@ -134,11 +129,11 @@ const groupOrder = [...groupOrderMatch[1].matchAll(/"([^"]+)"/g)].map(
 assert.deepEqual(groupOrder, [
   "errored",
   "needs_user",
-  "waiting_to_closeout",
+  "waiting_for_kickoff",
   "user",
   "paired",
   "agent",
-  "waiting_for_kickoff",
+  "waiting_to_closeout",
   "awaiting_approval",
   "empty",
   "blocked",

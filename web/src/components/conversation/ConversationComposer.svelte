@@ -21,25 +21,32 @@
    */
   import { onMount, tick } from "svelte";
   import AgentCommandMenu from "./AgentCommandMenu.svelte";
-  import BackendRail from "./BackendRail.svelte";
+  import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
-  import RunValuePicker from "./RunValuePicker.svelte";
+  import UserInputQuestionPanel from "./UserInputQuestionPanel.svelte";
   import {
-    askPlaceholder,
-    deliveryOptionsFor,
-    effortOptionsFor,
-    modelDetail,
-    modelDisplayName,
-    preselectedValue
-  } from "../../lib/conversation/composer";
+    beginComposerSend,
+    restoreRefusedComposerSend,
+    type ComposerDraft,
+    type ComposerSendAttempt
+  } from "./composer/draftTransaction";
+  import {
+    applyComposerRunSelectionIntent,
+    resolveComposerRunControls
+  } from "../../lib/conversation/runControls/logic/runSelection";
+  import type {
+    ComposerRunControlIntents,
+    ComposerRunControlsInput,
+    ComposerRunSelection,
+    ComposerRunSelectionIntent
+  } from "../../lib/conversation/runControls/contracts";
+  import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
   import {
     createPendingConversationImages,
     pendingConversationImageBytes,
-    pendingImagesAsPieces,
     releasePendingImages,
-    restoredPendingImages,
     type PendingConversationImage
   } from "../../lib/conversation/pendingImages";
   import type {
@@ -49,7 +56,9 @@
     ConversationBackendKey,
     PermissionAskOption,
     PromptDeliveryMode,
-    SentMessagePiece
+    SentMessagePiece,
+    UserInputAnswers,
+    UserInputQuestion
   } from "../../lib/conversation/wire";
 
   let {
@@ -57,6 +66,7 @@
     conversationExists = false,
     running = false,
     ask = null,
+    userInput = null,
     askNote = null,
     current = { model: null, reasoningEffort: null },
     models = [],
@@ -73,6 +83,7 @@
     onSend,
     onStop,
     onAnswer,
+    onSubmitUserInput,
     onCancelTurn
   }: {
     /** The backend this conversation runs on — or, before there is one, the backend a
@@ -87,6 +98,10 @@
       title: string;
       detail: string | null;
       options: readonly PermissionAskOption[];
+    } | null;
+    userInput?: {
+      requestId: string;
+      questions: readonly UserInputQuestion[];
     } | null;
     askNote?: string | null;
     current?: RunValues;
@@ -120,17 +135,17 @@
     ) => Promise<boolean>;
     onStop?: () => void;
     onAnswer?: (optionId: string) => void;
+    onSubmitUserInput?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
   } = $props();
 
   let text = $state("");
-  let mode = $state<PromptDeliveryMode>("run_when_free");
-  let pickedModel = $state<string | null>(null);
-  let pickedEffort = $state<string | null>(null);
-  /** The backend taken off the rail, which only a conversation that does not exist yet can
-   *  have: null is nobody having said, and then what it would be created on is whatever
-   *  the caller says is in force. */
-  let pickedBackend = $state<ConversationBackendKey | null>(null);
+  let runSelection = $state<ComposerRunSelection>({
+    deliveryMode: "run_when_free",
+    pickedBackend: null,
+    pickedModel: null,
+    pickedReasoningEffort: null
+  });
   let inputElement = $state<HTMLTextAreaElement | null>(null);
   // Counted rather than flagged: the box stays typeable through a send, so a second
   // message can be on its way before the first one has landed.
@@ -157,100 +172,28 @@
   let imageIntakesInFlight = $state(0);
   /** Changes only when the person composes something new. A refusal may restore its
    *  snapshot only while this is still the revision that was sent. */
-  let composeRevision = 0;
+  let compositionRevision = 0;
   let destroyed = false;
 
-  let deliveryOptions = $derived(deliveryOptionsFor(backendKey));
-  let effectiveMode = $derived<PromptDeliveryMode>(running ? mode : "run_when_free");
-  let takenOver = $derived(ask !== null);
+  let takenOver = $derived(ask !== null || userInput !== null);
   let inputDisabled = $derived(disabled || takenOver || imageIntakesInFlight > 0);
-  let sendIsInFlight = $derived(sendsInFlight > 0 && !running);
-  let livePlaceholder = $derived(takenOver ? askPlaceholder(ask) : placeholder);
-  // The backend the rail shows. A conversation that exists shows its own and nothing else,
-  // so a choice made before it existed cannot be left standing over it.
-  let shownBackend = $derived<ConversationBackendKey | null>(
-    conversationExists ? backendKey : (pickedBackend ?? backendKey)
-  );
-  // Whether the rail has been used to leave the backend the caller handed the catalog for.
-  let switchedBackend = $derived(!conversationExists && pickedBackend !== null);
-  let switchedTo = $derived(
-    backends.find((snapshot) => snapshot.backend_key === pickedBackend) ?? null
-  );
-  // What the pickers offer: the catalog of the backend now showing. Until the rail is used
-  // that is the one the caller handed, which is the conversation's own — so a caller with
-  // one backend and no list of them is served exactly as it always was. A backend switched
-  // to that this machine reported nothing for offers nothing, rather than the last one's.
-  let modelsOnOffer = $derived(
-    switchedBackend ? (switchedTo?.available_models ?? []) : models
-  );
-  let effortOptionsOnOffer = $derived(
-    switchedBackend ? (switchedTo?.reasoning_effort_options ?? []) : effortOptions
-  );
-  // What a conversation started from here would run on, kept true through a rail switch.
-  // Taking a backend off the rail is saying create it on that one, and a model belongs to
-  // the backend that named it — so nothing carries over and it would start on the new
-  // backend's own, which is what that backend's card says it runs when nobody names one.
-  let modelItWouldStartOn = $derived(
-    switchedBackend ? (switchedTo?.default_model_id ?? null) : startsOnModel
-  );
-  let effortItWouldStartOn = $derived(
-    switchedBackend ? (switchedTo?.default_reasoning_effort ?? null) : startsOnReasoningEffort
-  );
-  let picked = $derived<RunValues>({
-    // Into a conversation that exists, only a pick is anything: it is a change, and there
-    // is nothing to change when nobody touched the picker. A message that has to create
-    // one is the other way round — it has to say which model to create it on, and the
-    // answer is the one on the face of the picker, whether a person put it there or the
-    // owner's own values did. Nothing on the face means nothing to name, and the server
-    // says so rather than this quietly leaving the backend to pick for itself.
-    model: conversationExists ? pickedModel : (pickedModel ?? modelItWouldStartOn),
-    // The effort is not the model's equal here: a model that takes none is a real answer,
-    // so an untouched control has nothing to say and says nothing.
-    reasoningEffort: pickedEffort,
-    // Only a message that has to create a conversation says what to create it on, and only
-    // when somebody took one off the rail. Showing a backend is not choosing it: what is
-    // showing before that is what this caller believes is in force, and a belief sent as
-    // an instruction would overrule the stored defaults it was guessing at.
-    backendKey: conversationExists ? null : pickedBackend
+  let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
+  let runControlsInput = $derived<ComposerRunControlsInput>({
+    selection: runSelection,
+    backendKey,
+    conversationExists,
+    running,
+    current,
+    models,
+    backends,
+    effortOptions,
+    startsOnModel,
+    startsOnReasoningEffort,
+    inputDisabled,
+    hasSendableContent: text.trim() !== "" || pendingImages.length > 0,
+    sendsInFlight
   });
-  // What each selector shows with nothing picked: the concrete value already in force.
-  let shownModel = $derived(
-    pickedModel ?? preselectedValue(current.model, modelItWouldStartOn) ?? ""
-  );
-  let shownEffort = $derived(
-    pickedEffort ?? preselectedValue(current.reasoningEffort, effortItWouldStartOn) ?? ""
-  );
-  // A value the catalog does not list is still the value being run, so it is offered as
-  // itself rather than silently dropped off the face of the selector.
-  let modelOptions = $derived(
-    shownModel !== "" && !modelsOnOffer.some((model) => model.model_id === shownModel)
-      ? [{ model_id: shownModel, display_name: null }, ...modelsOnOffer]
-      : modelsOnOffer
-  );
-  // Effort belongs to the model that will actually run, not to the backend in general.
-  let modelEffortOptions = $derived(
-    effortOptionsFor(modelsOnOffer, shownModel === "" ? null : shownModel, effortOptionsOnOffer)
-  );
-  let effortChoices = $derived(
-    shownEffort !== "" && !modelEffortOptions.includes(shownEffort)
-      ? [shownEffort, ...modelEffortOptions]
-      : modelEffortOptions
-  );
-  // Nothing to show and nothing wide: an effort is still pickable, so the control shrinks
-  // to the affordance that says so and nothing more.
-  let effortIsBare = $derived(shownEffort === "");
-  // The catalog as the picker reads it: a name to pick by, and the quieter line under it.
-  let modelPickerChoices = $derived(
-    modelOptions.map((model) => ({
-      value: model.model_id,
-      name: model.display_name ?? model.model_id,
-      detail: modelSecondLine(model)
-    }))
-  );
-  // An effort is one word and is its own name. There is nothing quieter to say about it.
-  let effortPickerChoices = $derived(
-    effortChoices.map((effort) => ({ value: effort, name: effort, detail: null }))
-  );
+  let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
 
   // --- the command being written -----------------------------------------------------------
   let commandUnderway = $derived(commandOnTheCursorsLine(text, cursorAt));
@@ -284,138 +227,140 @@
     draggingImages = false;
   });
 
-  // What the chosen model really is, when the catalog says — an alias and the version it
-  // reaches. Its row says it out loud; the pill is only as wide as the name, so on the
-  // pill it is the tooltip.
-  let modelTitle = $derived.by(() => {
-    const value = shownModel === "" ? null : shownModel;
-    const name = modelDisplayName(modelsOnOffer, value) ?? "the backend's own model";
-    const detail = modelDetail(modelsOnOffer, value);
-    return detail === null ? name : `${name} — ${detail}`;
-  });
-
-  // A pick belongs to the catalog it was made from. Change backend — or change to a model
-  // that takes no effort — and a value the new catalog does not offer is not a pending
-  // change any more, it is a value nothing would accept. It goes.
+  // Catalog changes may make a pending pick meaningless. That is reconciliation, not
+  // something the person composed, so applying it never advances the draft revision.
   $effect(() => {
-    if (pickedModel !== null && modelsOnOffer.length > 0
-        && !modelsOnOffer.some((model) => model.model_id === pickedModel)) {
-      pickedModel = null;
-    }
+    const normalized = runControlsView.normalizedSelection;
+    if (sameRunSelection(runSelection, normalized)) return;
+    runSelection = normalized;
   });
 
-  $effect(() => {
-    if (pickedEffort !== null && !modelEffortOptions.includes(pickedEffort)) {
-      pickedEffort = null;
-    }
-  });
-
-  /** What a model's row says under its name.
-   *
-   * The catalog's own second line where it has one — claude says which concrete model an
-   * alias reaches — and otherwise the value itself, which is what a display name like
-   * "GPT-5.5 Codex" is standing in for. A model already shown under its own value has
-   * nothing left to say twice.
-   */
-  function modelSecondLine(model: BackendModel): string | null {
-    const said = model.detail ?? null;
-    if (said !== null && said !== "") return said;
-    const name = model.display_name;
-    return name === null || name === model.model_id ? null : model.model_id;
+  function sameRunSelection(
+    one: ComposerRunSelection,
+    other: ComposerRunSelection
+  ): boolean {
+    return (
+      one.deliveryMode === other.deliveryMode
+      && one.pickedBackend === other.pickedBackend
+      && one.pickedModel === other.pickedModel
+      && one.pickedReasoningEffort === other.pickedReasoningEffort
+    );
   }
 
-  /** A value was taken, so the box takes the keyboard back.
+  /** Record one change the person made to the draft.
    *
-   * What a person does after picking a model is carry on writing, and the draft and the
-   * cursor are exactly where they left them — this only moves the keyboard.
+   * Every composable value comes through here exactly once. Applying a send or a refusal
+   * does not: both sides of that transaction preserve the revision they were given.
    */
-  function handTheBoxTheKeyboard(): void {
-    inputElement?.focus();
+  function recordDraftChange(): void {
+    compositionRevision += 1;
   }
 
-  /** Take a backend off the rail: what the next message would create this conversation on.
-   *
-   * The model and effort go with it. They were picked out of the old backend's catalog and
-   * mean nothing to this one — a model id belongs to the backend that named it.
-   *
-   * The panel stays open and the keyboard stays in it, because switching is how a person
-   * gets to the list they came to read.
-   */
-  function takeTheBackend(key: ConversationBackendKey): void {
-    if (conversationExists || key === shownBackend) return;
-    composeRevision += 1;
-    pickedBackend = key;
-    pickedModel = null;
-    pickedEffort = null;
+  function currentComposerDraft(): ComposerDraft {
+    return {
+      text,
+      pendingImages,
+      pickedModel: runSelection.pickedModel,
+      pickedReasoningEffort: runSelection.pickedReasoningEffort,
+      compositionRevision
+    };
+  }
+
+  function applyComposerDraft(draft: ComposerDraft): void {
+    text = draft.text;
+    pendingImages = [...draft.pendingImages];
+    runSelection = {
+      ...runSelection,
+      pickedModel: draft.pickedModel,
+      pickedReasoningEffort: draft.pickedReasoningEffort
+    };
+    compositionRevision = draft.compositionRevision;
+  }
+
+  function applyRunSelectionIntent(intent: ComposerRunSelectionIntent): void {
+    const next = applyComposerRunSelectionIntent(runControlsInput, intent);
+    const changed = !sameRunSelection(runSelection, next);
+    if (changed) {
+      runSelection = next;
+      if (intent.intent !== "choose_delivery_mode") recordDraftChange();
+    }
+    if (
+      intent.intent === "choose_model"
+      || intent.intent === "choose_reasoning_effort"
+    ) {
+      inputElement?.focus();
+    }
   }
 
   async function send(): Promise<void> {
     await intakeTail;
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0) || inputDisabled) return;
-    const carried = picked;
-    const sentComposeRevision = composeRevision;
-    // What goes back if it gets nowhere is what the person had picked, which is not
-    // everything the message carried: a message that creates a conversation also carries
-    // the value the picker was only showing, and showing is not picking.
-    const theirs: RunValues = { ...carried, model: pickedModel, reasoningEffort: pickedEffort };
-    const sentImages = pendingImages;
-    const content: SentMessagePiece[] = [
-      ...(trimmed === "" ? [] : [{ piece: "text" as const, text: trimmed }]),
-      ...pendingImagesAsPieces(sentImages)
-    ];
-    text = "";
+    const modeForAttempt = runControlsView.effectiveDeliveryMode;
+    const attempt = beginComposerSend(
+      currentComposerDraft(),
+      runControlsView.carriedRunValues,
+      modeForAttempt
+    );
+    applyComposerDraft(attempt.draftAfterSend);
     cursorAt = 0;
-    pendingImages = [];
-    releasePendingImages(sentImages);
+    releasePendingImages(attempt.draftBeforeSend.pendingImages);
     if (imageInput) imageInput.value = "";
     intakeError = null;
-    // The change rode out with the message, so it is no longer pending: the selects
-    // fall back to showing what the conversation now runs on.
-    pickedModel = null;
-    pickedEffort = null;
     sendsInFlight += 1;
     try {
-      const delivered = await onSend(content, effectiveMode, carried);
-      if (!delivered) await giveTheMessageBack(content, theirs, sentComposeRevision);
+      const delivered = await onSend(
+        [...attempt.content],
+        modeForAttempt,
+        attempt.carriedRunValues
+      );
+      if (!delivered) await restoreRefusedAttempt(attempt);
     } finally {
       sendsInFlight -= 1;
     }
   }
+
+  const runControlIntents: ComposerRunControlIntents = {
+    chooseBackend: (backendKey) =>
+      applyRunSelectionIntent({ intent: "choose_backend", backendKey }),
+    chooseModel: (model) =>
+      applyRunSelectionIntent({ intent: "choose_model", model }),
+    chooseReasoningEffort: (reasoningEffort) => applyRunSelectionIntent({
+      intent: "choose_reasoning_effort",
+      reasoningEffort
+    }),
+    chooseDeliveryMode: (deliveryMode) => applyRunSelectionIntent({
+      intent: "choose_delivery_mode",
+      deliveryMode
+    }),
+    send: () => void send(),
+    stop: () => onStop?.()
+  };
 
   /** The message got nowhere, so the person is put back where they were.
    *
    * Everything that was about to go comes back together — the content and the change it
    * was carrying — because that is the state they were in when they pressed Enter.
    */
-  async function giveTheMessageBack(
-    content: readonly SentMessagePiece[],
-    carried: RunValues,
-    sentComposeRevision: number
-  ): Promise<void> {
-    if (
-      composeRevision !== sentComposeRevision
-      || text !== ""
-      || pendingImages.length > 0
-      || pickedModel !== null
-      || pickedEffort !== null
-      || imageIntakesInFlight > 0
-    ) return;
-    const sent = content
-      .filter((piece): piece is Extract<SentMessagePiece, { piece: "text" }> =>
-        piece.piece === "text"
-      )
-      .map((piece) => piece.text)
-      .join("");
-    const restored = restoredPendingImages(content, nextImageId);
-    text = sent;
-    pendingImages = restored.images;
-    nextImageId = restored.nextId;
-    pickedModel = carried.model;
-    pickedEffort = carried.reasoningEffort;
+  async function restoreRefusedAttempt(attempt: ComposerSendAttempt): Promise<void> {
+    const restoration = restoreRefusedComposerSend(
+      currentComposerDraft(),
+      attempt,
+      nextImageId,
+      imageIntakesInFlight
+    );
+    if (!restoration.restored) return;
+    applyComposerDraft(restoration.draft);
+    nextImageId = restoration.nextImageId;
+    const restoredText = restoration.draft.text;
+    const restoredRevision = restoration.draft.compositionRevision;
     await tick();
     const input = inputElement;
-    if (input === null || text !== sent) return;
+    if (
+      input === null
+      || text !== restoredText
+      || compositionRevision !== restoredRevision
+    ) return;
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
     cursorAt = input.value.length;
@@ -444,7 +389,7 @@
       }
       nextImageId = intake.nextId;
       if (intake.accepted.length > 0) {
-        composeRevision += 1;
+        recordDraftChange();
         pendingImages = [...pendingImages, ...intake.accepted];
       }
       intakeError = intake.rejected.length > 0
@@ -463,7 +408,7 @@
   }
 
   function removeImage(image: PendingConversationImage): void {
-    composeRevision += 1;
+    recordDraftChange();
     pendingImages = pendingImages.filter((candidate) => candidate.id !== image.id);
     releasePendingImages([image]);
   }
@@ -551,7 +496,7 @@
   }
 
   function textChanged(): void {
-    composeRevision += 1;
+    recordDraftChange();
     readWhereTheCursorIs();
   }
 
@@ -610,7 +555,7 @@
     const underway = commandUnderway;
     if (underway === null) return;
     const written = `/${command.name} `;
-    composeRevision += 1;
+    recordDraftChange();
     // The space the name is followed by is the one already there, where there is one,
     // rather than a second one after it.
     const rest = text.slice(underway.end);
@@ -634,7 +579,7 @@
    * is still theirs to type.
    */
   async function startWritingACommand(): Promise<void> {
-    composeRevision += 1;
+    recordDraftChange();
     if (!text.startsWith("/")) text = `/${text}`;
     menuWasDismissed = false;
     await tick();
@@ -678,7 +623,15 @@
       ondragleave={onDragLeave}
       ondrop={onDrop}
     >
-      {#if takenOver && ask}
+      {#if userInput}
+        <UserInputQuestionPanel
+          request={userInput}
+          busy={disabled}
+          note={askNote}
+          onSubmit={(answers) => onSubmitUserInput?.(answers)}
+          onCancelTurn={() => onCancelTurn?.()}
+        />
+      {:else if takenOver && ask}
         <PermissionAskCard
           ask={ask}
           busy={disabled}
@@ -697,7 +650,7 @@
         />
       {/if}
 
-      {#if pendingImages.length > 0}
+      {#if userInput === null && pendingImages.length > 0}
         <div class="chat-image-previews" data-chat-image-previews aria-label="Pending images">
           {#each pendingImages as image, index (image.id)}
             <div
@@ -728,6 +681,7 @@
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
+        hidden={userInput !== null}
         onkeydown={onKeydown}
         oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
@@ -737,6 +691,7 @@
         onpaste={onPaste}
       ></textarea>
 
+      {#if userInput === null}
       <div class="chat-foot">
         {#if takenOver && ask}
           <PermissionAskActions
@@ -786,86 +741,10 @@
             onchange={() => void intakeFiles(imageInput?.files)}
           />
 
-          <!-- Which backend is a question about the conversation rather than about this
-               message, so it is drawn beside the models it decides rather than as a third
-               pill in the footer. -->
-          {#snippet backendRail()}
-            <BackendRail
-              showing={shownBackend}
-              locked={conversationExists}
-              onChoose={takeTheBackend}
-            />
-          {/snippet}
-
-          <RunValuePicker
-            label="Model"
-            choices={modelPickerChoices}
-            value={shownModel}
-            searchable
-            disabled={inputDisabled}
-            title={modelTitle}
-            attributes={{ "data-conversation-picker-model": "" }}
-            rail={shownBackend === null ? undefined : backendRail}
-            onChoose={(model) => {
-              composeRevision += 1;
-              pickedModel = model;
-              handTheBoxTheKeyboard();
-            }}
-          />
-
-          {#if effortChoices.length > 0}
-            <RunValuePicker
-              label="Reasoning effort"
-              choices={effortPickerChoices}
-              value={shownEffort}
-              disabled={inputDisabled}
-              title="Reasoning effort"
-              attributes={{
-                "data-conversation-picker-effort": "",
-                "data-conversation-picker-effort-bare": effortIsBare ? "true" : undefined
-              }}
-              onChoose={(effort) => {
-                composeRevision += 1;
-                pickedEffort = effort;
-                handTheBoxTheKeyboard();
-              }}
-            />
-          {/if}
-
-          {#if running}
-            <div class="chat-seg" data-conversation-delivery role="group" aria-label="Delivery">
-              {#each deliveryOptions as option (option.mode)}
-                <button
-                  type="button"
-                  class:on={mode === option.mode}
-                  data-conversation-delivery-mode={option.mode}
-                  aria-pressed={mode === option.mode}
-                  title={option.description}
-                  onclick={() => (mode = option.mode)}
-                >{option.label}</button>
-              {/each}
-            </div>
-          {/if}
-
-          <button
-            type="button"
-            class={`chat-send${running ? " stop" : text.trim() || pendingImages.length ? " on" : ""}`}
-            class:is-sending={sendIsInFlight}
-            data-conversation-send={running ? undefined : true}
-            data-conversation-stop={running ? true : undefined}
-            data-conversation-sending={sendIsInFlight ? true : undefined}
-            aria-busy={sendIsInFlight ? "true" : undefined}
-            disabled={running ? false : inputDisabled || (!text.trim() && pendingImages.length === 0)}
-            title={running
-              ? "Stop the turn — press Enter to send instead"
-              : sendIsInFlight
-                ? "On its way"
-                : "Send"}
-            aria-label={running ? "Stop the turn" : sendIsInFlight ? "On its way" : "Send"}
-            onclick={() => (running ? onStop?.() : void send())}
-          >{running ? "■" : "↑"}</button>
+          <ComposerRunControls view={runControlsView} intents={runControlIntents} />
         {/if}
       </div>
+      {/if}
       <div class="chat-drop-label" data-conversation-drop-label aria-hidden="true">
         Drop images to attach
       </div>

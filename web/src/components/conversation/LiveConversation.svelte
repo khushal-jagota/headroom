@@ -39,10 +39,15 @@
     type OutgoingMessage,
     type OutgoingMessageKnownFate
   } from "../../lib/conversation/outgoing";
-  import { liveAskFrom, transcriptRows } from "../../lib/conversation/transcript";
+  import {
+    liveAskFrom,
+    liveUserInputFrom,
+    transcriptRows
+  } from "../../lib/conversation/transcript";
   import { writeReplyWatermark } from "../../lib/replyWatermark";
   import {
     answerPermissionAsk,
+    answerUserInput,
     discardHeldPrompt,
     interruptConversation,
     openConversationTail,
@@ -56,7 +61,8 @@
     type DeliveredMessage,
     type OwnerSendBody,
     type PromptDeliveryMode,
-    type SentMessagePiece
+    type SentMessagePiece,
+    type UserInputAnswers
   } from "../../lib/conversation/wire";
 
   let {
@@ -142,6 +148,7 @@
     })
   );
   let ask = $derived(liveAskFrom(rows));
+  let userInput = $derived(liveUserInputFrom(rows));
   // Looking at a conversation is what reading it means. While this pane is showing one,
   // the reader has seen it as far as the record goes — including mid-turn, because a
   // turn that has not ended yet is not a reply waiting for anybody. The board's reply
@@ -456,6 +463,23 @@
     }
   }
 
+  async function submitUserInput(answers: UserInputAnswers): Promise<void> {
+    const requestId = userInput?.requestId;
+    if (requestId === undefined || openedId === null) return;
+    askNote = null;
+    busy = true;
+    try {
+      const { landed } = await answerUserInput(openedId, requestId, answers);
+      askNote = landed
+        ? null
+        : "The backend did not take those answers. You can try again or stop the turn.";
+    } catch (error) {
+      askNote = sentenceFor(error);
+    } finally {
+      busy = false;
+    }
+  }
+
   /** New is the caller's to define, because what it means depends on what owns the
    *  conversation. All this does is let go of the one on screen once they have. */
   async function newConversation(): Promise<void> {
@@ -507,6 +531,7 @@
   livenessPulse={feed.livenessPulse}
   {running}
   {ask}
+  {userInput}
   {askNote}
   {current}
   models={backendSnapshot?.available_models ?? []}
@@ -525,6 +550,7 @@
   onSend={send}
   onStop={() => void stop()}
   onAnswer={(optionId) => void answer(optionId)}
+  onSubmitUserInput={(answers) => void submitUserInput(answers)}
   onCancelTurn={() => void stop()}
   onDiscardHeldPrompt={(messageId) => void discard(messageId)}
   onNewConversation={() => void newConversation()}

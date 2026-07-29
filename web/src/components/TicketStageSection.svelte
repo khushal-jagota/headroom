@@ -26,6 +26,10 @@
     showRecap = false,
     emptyText = "Not written yet.",
     editableValue = true,
+    approvalDisabled = false,
+    runLabel = null,
+    runLabelAttention = false,
+    onRelease,
     contextRow,
     onAccept,
     onSaveNote,
@@ -42,6 +46,10 @@
     showRecap?: boolean;
     emptyText?: string;
     editableValue?: boolean;
+    approvalDisabled?: boolean;
+    runLabel?: string | null;
+    runLabelAttention?: boolean;
+    onRelease?: () => void;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
     onSaveNote?: (raw: string) => Promise<unknown>;
@@ -100,6 +108,7 @@
       newStage={nextStage}
       {lifecycle}
       {contextRow}
+      disabled={approvalDisabled}
       onApprove={onAccept}
     />
   {:else}
@@ -139,12 +148,34 @@
   <Disclosure
     variant="stage"
     {defaultOpen}
+    chevron="none"
     data-field={name}
     data-stage-state={stageState}
   >
     {#snippet summary()}
       <StageMark state={stageState} />
       <span class="disclosure-stage-name">{name}</span>
+      {#if runLabel}
+        <span
+          class="ticket-stage-run"
+          class:ticket-stage-run--attention={runLabelAttention}
+          data-stage-run-label={runLabel}
+        >
+          {runLabel}
+          {#if onRelease}
+            <button
+              type="button"
+              class="ticket-stage-run-action"
+              data-stage-release
+              onclick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onRelease?.();
+              }}
+            >Release</button>
+          {/if}
+        </span>
+      {/if}
     {/snippet}
     {@render stageBody()}
   </Disclosure>

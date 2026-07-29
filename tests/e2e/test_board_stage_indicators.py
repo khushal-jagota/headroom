@@ -177,7 +177,8 @@ def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
 
     # A reply seen is a POSITION, not a flag: leave the Ticket, let a second turn end
     # past where this browser read, and the row is waiting again.
-    page.click("[data-chief-of-staff-button]")
+    page.goto(server.base + "/#/workspace")
+    page.wait_for_selector(mark, timeout=WAIT_MS)
     _append_rows(
         server,
         conversation_id,

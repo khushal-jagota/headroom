@@ -5,7 +5,7 @@ Production runs one Git-free application as the existing UID-1000 `vps` user:
 ```text
 ~/Deployments/Panels/current/
 ├── app/     deployed executable application
-├── data/    database, managed files, configuration, and runtime state
+├── data/    database, managed files, configuration, deployment lifecycle, and runtime state
 └── logs/    application logs
 ```
 
@@ -31,8 +31,13 @@ one lowercase, full 40-character SHA, including an earlier commit selected for r
 Both routes use the same transaction:
 
 ```text
-exact temporary checkout
-        │ prove HEAD
+workflow checkout
+        ▼
+publish Preparing for the requested SHA
+        │
+        ▼
+exact temporary checkout → prove requested HEAD
+        │
         ▼
 build and validate temporary candidate app
         │ stage candidate while production remains live
@@ -43,7 +48,10 @@ stop service → create verified database + managed-files snapshot
 replace current/app → restart + prove requested SHA
         │
         ▼
-success → reconcile managed skills into Hermes, Codex, and Claude homes
+app healthy → reconcile managed skills into Hermes, Codex, and Claude homes
+        │
+        ▼
+publish workflow success
 
 or stop candidate → restore snapshot + prior app → prove prior SHA
 ```
@@ -61,6 +69,7 @@ The workflow uses the fixed VPS contract:
 - current root: `~/Deployments/Panels/current`
 - live database: `~/Deployments/Panels/current/data/planner.db`
 - backups: `~/Deployments/Panels/current/data/backups`
+- deployment lifecycle: `~/Deployments/Panels/current/data/deployment-lifecycle.json`
 - health: loopback port 8767
 - service manager: `systemctl`
 - service: `panels-live.service`
@@ -74,6 +83,42 @@ policy. The command reconciles Panels skills into each agent home, removes expli
 retired Panels skills, and leaves unrelated custom skills in place. This post-deploy step
 is idempotent. If it fails after app cutover, the app remains deployed and the workflow
 reports failure; rerunning the deployment safely retries skill reconciliation.
+
+## Deployment status evidence
+
+The runner owns one small versioned lifecycle file in persistent `current/data`.
+Checkout is the unavoidable bootstrap because it supplies the canonical stdlib-only
+writer. Immediately after checkout, the workflow reads the current deployment ID and
+starts the new record before proving or building the requested source. A checkout
+failure and a requested value that is not a lowercase full SHA therefore cannot be
+recorded; later Git proof, runtime, build, deployment, and provisioning failures can.
+The app-deploy transaction advances the same deployment ID
+through restart, exact-SHA verification, app health, and rollback. The workflow records
+success only after app deployment and production skill provisioning have both
+completed. Its finalizer turns interrupted work into a public-safe failure and does not
+overwrite a proved rollback.
+
+Writes are serialized beside the record. Starting a run compares the deployment ID the
+runner read—including an explicit expectation that no readable ID existed—with the ID
+observed while holding the write lock. Transitions compare their own deployment ID.
+A stale runner therefore cannot overwrite a newer deployment. Each bounded JSON record is written
+to a same-directory temporary file, synced, atomically replaced, and followed by a
+directory sync. Panels rejects links, non-regular files, oversized files, unsupported
+versions, malformed fields, and invalid SHAs rather than guessing.
+
+`GET /api/deployment-status` projects that evidence into `idle`, `preparing`,
+`restarting`, `back_up`, `problem`, or `unknown`. Preparation and restart evidence
+expires if the runner disappears. A proved success appears as `back_up` only briefly
+and only when the running app SHA exactly matches the requested SHA. Failure and
+rollback remain problems until a later deployment supersedes them. The server watches
+the lifecycle path and sends the existing contentless change signal after create,
+replace, change, or deletion, so connected browsers re-read the canonical file.
+
+An app deployed before this lifecycle feature cannot expose the new status endpoints or
+observe runner updates while that old app is serving. The current workflow tool and
+finalizer still record the rollback durably. The status becomes visible again when a
+compatible app is restored or deployed; this is the bootstrap limitation when crossing
+the feature boundary.
 
 ## Replacement and recovery
 
@@ -108,9 +153,10 @@ live host, rename `vps-agent`, or change the existing Tailscale Serve route. UID
 preserved later by renaming that account, not by creating a second identity.
 
 Code paths: `.github/workflows/deploy.yml`, `src/planner/environments/app.py`,
-`src/planner/environments/deployment.py`, `src/planner/environments/cli.py`, and
-`src/planner/skill_sources.py`.
+`src/planner/environments/deployment.py`,
+`src/planner/environments/deployment_lifecycle.py`,
+`src/planner/environments/cli.py`, and `src/planner/skill_sources.py`.
 
 ---
 
-_Last verified: 2026-07-27._
+_Last verified: 2026-07-29._

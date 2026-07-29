@@ -15,6 +15,7 @@ from planner.environments.app import AppManifest
 from planner.environments.cli import EnvironmentCliDependencies, environment
 from planner.environments.contracts import EnvironmentManifest, ResolvedEnvironmentInstance
 from planner.environments.deployment import DeploymentResult
+from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
 from planner.environments.logic.registry import resolve_environment_instance
 from planner.skill_sources import RETIRED_PANELS_SKILL_NAMES
 
@@ -139,6 +140,54 @@ def test_app_deploy_wires_full_snapshot_restore(tmp_path: Path, monkeypatch: Any
     snapshot = tmp_path / "snapshot"
     captured["restore"](snapshot)
     assert restores == [(snapshot, tmp_path / "planning.db", True)]
+
+
+def test_app_deploy_advances_runner_started_lifecycle_only_through_app_health(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    lifecycle_path = tmp_path / "current" / "data" / "deployment-lifecycle.json"
+    store = DeploymentLifecycleStore(lifecycle_path)
+    store.start("run-1", "b" * 40, prior_sha="a" * 40)
+
+    def deploy(**kwargs: Any) -> DeploymentResult:
+        transition = kwargs["lifecycle_transition"]
+        transition("restarting", serving_sha=None, detail=None, code=None)
+        transition("verifying", serving_sha=None, detail=None, code=None)
+        transition("app_healthy", serving_sha="b" * 40, detail=None, code=None)
+        return DeploymentResult("succeeded", "b" * 40, "a" * 40, None)
+
+    monkeypatch.setattr("planner.environments.cli.deploy_app", deploy)
+    result = CliRunner().invoke(
+        environment,
+        [
+            "app-deploy",
+            "--candidate-app",
+            str(candidate),
+            "--current-root",
+            str(tmp_path / "current"),
+            "--source-db",
+            str(tmp_path / "planning.db"),
+            "--backup-dir",
+            str(tmp_path / "backups"),
+            "--health-url",
+            "http://127.0.0.1:8767/api/health",
+            "--service-manager",
+            "systemctl",
+            "--service-name",
+            "panels-live",
+            "--lifecycle-path",
+            str(lifecycle_path),
+            "--deployment-id",
+            "run-1",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    current = store.read().lifecycle
+    assert current is not None
+    assert current.phase == "app_healthy"
 
 
 def test_provision_skills_reconciles_all_production_agent_homes_idempotently(

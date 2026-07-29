@@ -7,6 +7,7 @@ import type {
   BoardResponse,
   CurrentSprintResponse,
   DayResponse,
+  DeploymentStatus,
   IdeasResponse,
   ProjectsResponse,
   ReviewResponse,
@@ -14,6 +15,7 @@ import type {
   SprintsResponse,
   SprintItemsResponse,
   TicketDetail,
+  VpsStatusSummary,
   WorkerManagementDetail,
   WorkersResponse
 } from "./types";
@@ -21,8 +23,7 @@ import type {
 // Every server resource that follows the change stream, in one place: its query
 // key and the API path it comes from. A screen names the resource it needs and
 // gets both. One-shot reads that nothing invalidates — the employee
-// configuration catalog, the VPS status snapshot — stay imperative fetches
-// where they are used.
+// configuration catalog — stay imperative fetches where they are used.
 function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
   return queryOptions<T>({
     queryKey,
@@ -31,6 +32,10 @@ function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
 }
 
 export const queries = {
+  deploymentStatus: () =>
+    jsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
+  vpsStatusSummary: () =>
+    jsonQuery<VpsStatusSummary>(["vps-status-summary"], "/api/vps-status-summary"),
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
@@ -46,7 +51,8 @@ export const queries = {
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets/${encodeURIComponent(ticketId)}`),
   // What a conversation started right now would run on, for each owner that starts one.
   // It follows the change stream because the owner can change it: the Agents screen sets
-  // the Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
+  // Config sets the Chief's, and a Ticket's own last-chosen values move when its worker
+  // is talked to.
   ticketConversationStartValues: (ticketId: string) =>
     jsonQuery<ConversationStartValues>(
       ["ticket", ticketId, "conversation-start-values"],

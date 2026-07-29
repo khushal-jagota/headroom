@@ -17,12 +17,15 @@ import type {
   PermissionAskOption,
   PlanEntry,
   PromptDeliveryMode,
-  PromptDeliveryRefusalReason
+  PromptDeliveryRefusalReason,
+  UserInputAnswers,
+  UserInputQuestion
 } from "./wire";
 import { messageContentOf } from "./wire";
 import type { ConversationFeed } from "./feed";
 
 export type PermissionAskState = "live" | "answered" | "dead";
+export type UserInputState = "live" | "answered" | "failed" | "dead";
 
 /** Why a dead ask is dead. Both are the same death — its turn is gone — but they are not
  *  the same story, and a reader who was told the wrong one would go looking for a turn
@@ -97,6 +100,18 @@ export type TranscriptRow =
       state: PermissionAskState;
       deadReason: PermissionAskDeadReason | null;
       answeredOptionLabel: string | null;
+    }
+  | {
+      key: string;
+      kind: "user_input";
+      sequence: number;
+      createdAt: number;
+      requestId: string;
+      questions: readonly UserInputQuestion[];
+      state: UserInputState;
+      deadReason: PermissionAskDeadReason | null;
+      answers: UserInputAnswers | null;
+      failureDetail: string | null;
     }
   | {
       key: string;
@@ -208,6 +223,20 @@ function killOpenAsks(
   askRowIndex.clear();
 }
 
+function killOpenUserInputs(
+  rows: TranscriptRow[],
+  rowIndex: Map<string, number>,
+  reason: PermissionAskDeadReason
+): void {
+  for (const at of rowIndex.values()) {
+    const requested = rows[at];
+    if (requested?.kind === "user_input" && requested.state === "live") {
+      rows[at] = { ...requested, state: "dead", deadReason: reason };
+    }
+  }
+  rowIndex.clear();
+}
+
 export function transcriptRows(
   feed: ConversationFeed,
   reading: TranscriptReading = {}
@@ -215,6 +244,7 @@ export function transcriptRows(
   const rows: TranscriptRow[] = [];
   const toolCallRowIndex = new Map<string, number>();
   const askRowIndex = new Map<string, number>();
+  const userInputRowIndex = new Map<string, number>();
   // Half-finished output belongs to a turn that is running. When the turn is gone,
   // whatever was left in flight is not arriving, and it is not drawn.
   const turnIsGone = reading.turnStoppedWithoutAnEnding === true;
@@ -341,6 +371,63 @@ export function transcriptRows(
         }
         break;
       }
+      case "user_input_requested":
+        userInputRowIndex.set(event.payload.request_id, rows.length);
+        rows.push({
+          key: `e${sequence}`,
+          kind: "user_input",
+          sequence,
+          createdAt,
+          requestId: event.payload.request_id,
+          questions: event.payload.questions,
+          state: "live",
+          deadReason: null,
+          answers: null,
+          failureDetail: null
+        });
+        break;
+      case "user_input_answered": {
+        const at = userInputRowIndex.get(event.payload.request_id);
+        const requested = at === undefined ? undefined : rows[at];
+        if (at !== undefined && requested?.kind === "user_input") {
+          rows[at] = {
+            ...requested,
+            state: "answered",
+            answers: event.payload.answers
+          };
+          userInputRowIndex.delete(event.payload.request_id);
+        }
+        break;
+      }
+      case "user_input_failed": {
+        const at = userInputRowIndex.get(event.payload.request_id);
+        const requested = at === undefined ? undefined : rows[at];
+        if (at !== undefined && requested?.kind === "user_input") {
+          rows[at] = {
+            ...requested,
+            state: "failed",
+            failureDetail: event.payload.detail
+          };
+          userInputRowIndex.delete(event.payload.request_id);
+        } else {
+          // A malformed backend payload cannot safely become a request, so its failure
+          // may be the only row there is. It must still be visible rather than vanishing
+          // merely because there was deliberately no interactive request before it.
+          rows.push({
+            key: `e${sequence}`,
+            kind: "user_input",
+            sequence,
+            createdAt,
+            requestId: event.payload.request_id,
+            questions: [],
+            state: "failed",
+            deadReason: null,
+            answers: null,
+            failureDetail: event.payload.detail
+          });
+        }
+        break;
+      }
       case "plan_updated":
         rows.push({
           key: `e${sequence}`,
@@ -383,6 +470,7 @@ export function transcriptRows(
       case "turn_ended":
         // Every ask still open belonged to the turn that just ended, so it ended too.
         killOpenAsks(rows, askRowIndex, "turn_ended");
+        killOpenUserInputs(rows, userInputRowIndex, "turn_ended");
         rows.push({
           key: `e${sequence}`,
           kind: "turn_ended",
@@ -399,6 +487,7 @@ export function transcriptRows(
     // The turn is gone and its ending was never written, so the asks that were waiting
     // on it are as dead as any other — they just have a different story.
     killOpenAsks(rows, askRowIndex, "no_ending_recorded");
+    killOpenUserInputs(rows, userInputRowIndex, "no_ending_recorded");
     rows.push({
       key: "turn-stopped",
       kind: "turn_stopped",
@@ -492,288 +581,9 @@ function believable(minted: number, writtenDown: number): boolean {
 
 export type ToolCallRow = Extract<TranscriptRow, { kind: "tool_call" }>;
 
-/** What the thread is made of once a turn's work is gathered up.
- *
- * The space between a message and its reply is nearly all tool calls, and showing every
- * one of them in full is how a conversation turns into a log file. So they are not rows
- * here: each turn's tool calls become one thing that knows how to be small.
- *
- * The same is true of what the turn said while it worked. A turn that thought out loud
- * for five paragraphs before answering is exactly as long to scroll past as one that made
- * five tool calls, so once the turn settles its commentary goes behind the same fold, and
- * what stays is the last thing it said — the answer somebody came back for.
- */
-export type ThreadItem =
-  | {
-      kind: "row";
-      key: string;
-      row: TranscriptRow;
-      /** The turn whose fold this row goes behind, or nothing when it never folds.
-       *
-       * What the agent said along the way is part of the work rather than part of the
-       * answer, so a settled turn keeps only the last thing it said and the rest go behind
-       * the same fold its tool calls go behind. What the person did never folds: their
-       * message started the turn, and the permission they were asked for is a decision they
-       * made rather than something the turn produced. */
-      behindTheFoldOf: string | null;
-    }
-  /** A turn's stable head. It appears the moment the turn starts, before there is
-   *  anything to put under it, and it is still there — as the fold — when the turn is
-   *  over. Nothing about it moves while the turn runs. */
-  | {
-      kind: "turn";
-      key: string;
-      turnKey: string;
-      settled: boolean;
-      /** The turn stopped without an ending, so there is no length anybody can claim. */
-      stopped: boolean;
-      /** The plan as this turn last stated it, when this is the anchor holding the
-       *  newest one. A conversation has one plan, so only one anchor ever shows it. */
-      plan: readonly PlanEntry[] | null;
-      /** When the turn began, in milliseconds, so a live counter can be honest after a
-       *  reload. This is the sender's browser's clock, and `durationSeconds` below is the
-       *  record's own, so the two are never subtracted from each other: a settled turn's
-       *  length is two rows on one clock, and this is what a counter counts from. */
-      startedAtUnixMilliseconds: number | null;
-      /** How the turn ended, for the turns that ended. */
-      ending: ConversationTurnEnding | null;
-      /** The newest turn in the conversation. Only it takes the stopped wording. */
-      isLatest: boolean;
-      durationSeconds: number | null;
-      toolCallCount: number;
-      /** How many of the turn's own messages went behind the fold, so the label can say
-       *  what is behind it rather than counting only the tool calls. */
-      foldedMessageCount: number;
-    }
-  /** One unbroken run of tool calls, sitting exactly where it happened. A run ends at
-   *  the first thing that is not a tool call, so the work between two pieces of the
-   *  agent's own commentary stays between them rather than being gathered elsewhere. */
-  | {
-      kind: "work_group";
-      key: string;
-      turnKey: string;
-      entries: readonly ToolCallRow[];
-      /** Its turn is over, so it belongs behind that turn's fold. */
-      settled: boolean;
-    };
-
 /** How many of a running turn's tool calls stay visible in each run. The newest one is
  *  what is happening; the ones before it are what happened, and they wait behind a count. */
 export const VISIBLE_RUNNING_WORK_ENTRIES = 1;
-
-type OpenTurn = {
-  turnKey: string;
-  startedAt: number | null;
-  startedAtUnixMilliseconds: number | null;
-  anchorIndex: number | null;
-  groupIndexes: number[];
-  openGroupIndex: number | null;
-  /** Where this turn's own messages landed, in the order it said them. The last is the
-   *  answer and stays; the ones before it are commentary and fold. */
-  messageIndexes: number[];
-};
-
-const NO_TURN: OpenTurn = {
-  turnKey: "turn:none",
-  startedAt: null,
-  startedAtUnixMilliseconds: null,
-  anchorIndex: null,
-  groupIndexes: [],
-  openGroupIndex: null,
-  messageIndexes: []
-};
-
-/** Lay the thread out: a head for every turn, and its work in the places it happened.
- *
- * Two things are being balanced. A turn needs one place that does not move, so a person
- * has something to hold from the moment they send to the moment it is done. And the work
- * needs to stay where it fell, so the tool calls between two pieces of commentary read as
- * having happened between them. So the head is emitted once, at the turn's start, and
- * everything the turn did is emitted in place — and when the turn ends, the head becomes
- * the fold and the work goes behind it.
- *
- * Nothing is ever moved to make that happen. A row that goes behind the fold is marked
- * where it already sits, so opening the fold puts every piece of commentary back between
- * the runs of tool calls it sat between rather than gathered up at the end.
- */
-export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
-  const items: ThreadItem[] = [];
-  let turn: OpenTurn = { ...NO_TURN };
-
-  function settleTurn(
-    endedAt: number | null,
-    stopped: boolean,
-    ending: ConversationTurnEnding | null
-  ): void {
-    // Everything the turn said except the last of it. A turn that said nothing folds
-    // nothing, which is the whole rule an interrupted turn and a tools-only turn need:
-    // there is no answer to keep, so nothing is kept, and the fold holds the lot.
-    const folded = turn.messageIndexes.slice(0, -1);
-    for (const messageAt of folded) {
-      const said = items[messageAt];
-      if (said?.kind === "row") items[messageAt] = { ...said, behindTheFoldOf: turn.turnKey };
-    }
-    const at = turn.anchorIndex;
-    if (at !== null) {
-      const anchor = items[at];
-      if (anchor?.kind === "turn") {
-        items[at] = {
-          ...anchor,
-          settled: true,
-          stopped,
-          ending,
-          foldedMessageCount: folded.length,
-          // A turn nobody saw the end of has no length anybody can claim.
-          durationSeconds:
-            stopped || turn.startedAt === null || endedAt === null
-              ? null
-              : Math.max(0, endedAt - turn.startedAt)
-        };
-      }
-    }
-    for (const groupAt of turn.groupIndexes) {
-      const group = items[groupAt];
-      if (group?.kind === "work_group") items[groupAt] = { ...group, settled: true };
-    }
-    turn = { ...NO_TURN };
-  }
-
-  function countToolCalls(): void {
-    const at = turn.anchorIndex;
-    if (at === null) return;
-    const anchor = items[at];
-    if (anchor?.kind !== "turn") return;
-    let total = 0;
-    for (const groupAt of turn.groupIndexes) {
-      const group = items[groupAt];
-      if (group?.kind === "work_group") total += group.entries.length;
-    }
-    items[at] = { ...anchor, toolCallCount: total };
-  }
-
-  for (const row of rows) {
-    if (row.kind === "tool_call") {
-      const openAt = turn.openGroupIndex;
-      const open = openAt === null ? null : items[openAt];
-      if (openAt !== null && open?.kind === "work_group") {
-        items[openAt] = { ...open, entries: [...open.entries, row] };
-      } else {
-        turn.openGroupIndex = items.length;
-        turn.groupIndexes = [...turn.groupIndexes, items.length];
-        items.push({
-          kind: "work_group",
-          key: `work:${row.key}`,
-          turnKey: turn.turnKey,
-          entries: [row],
-          settled: false
-        });
-      }
-      countToolCalls();
-      continue;
-    }
-
-    // Anything that is not a tool call breaks the run it interrupted.
-    turn.openGroupIndex = null;
-
-    if (row.kind === "plan_updated") {
-      // A plan replaces the plan; it is never merged into the one before it. It is also
-      // never a line of its own — the strip is how a plan is read.
-      const at = turn.anchorIndex;
-      const anchor = at === null ? null : items[at];
-      if (at !== null && anchor?.kind === "turn") {
-        items[at] = { ...anchor, plan: row.entries };
-        continue;
-      }
-      turn = {
-        ...turn,
-        turnKey: `turn:${row.key}`,
-        anchorIndex: items.length,
-        groupIndexes: [],
-        messageIndexes: []
-      };
-      items.push({
-        kind: "turn",
-        key: `turn:${row.key}`,
-        turnKey: `turn:${row.key}`,
-        settled: false,
-        stopped: false,
-        plan: row.entries,
-        startedAtUnixMilliseconds: null,
-        ending: null,
-        isLatest: false,
-        durationSeconds: null,
-        toolCallCount: 0,
-        foldedMessageCount: 0
-      });
-      continue;
-    }
-
-    // Nothing folds as it arrives: a running turn shows everything it has done, and the
-    // collapse happens once, when the turn settles.
-    items.push({ kind: "row", key: row.key, row, behindTheFoldOf: null });
-
-    if (row.kind === "agent_message" && turn.anchorIndex !== null) {
-      turn.messageIndexes = [...turn.messageIndexes, items.length - 1];
-    }
-
-    if (row.kind === "prompt" && turn.startedAt === null) {
-      // The prompt that started this turn. A steer's prompt joins one already running,
-      // so it is not allowed to reset when the turn began, nor to open a second head.
-      turn = {
-        turnKey: `turn:${row.key}`,
-        startedAt: row.createdAt,
-        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
-        anchorIndex: items.length,
-        groupIndexes: [],
-        openGroupIndex: null,
-        messageIndexes: []
-      };
-      items.push({
-        kind: "turn",
-        key: `turn:${row.key}`,
-        turnKey: `turn:${row.key}`,
-        settled: false,
-        stopped: false,
-        plan: null,
-        startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
-        ending: null,
-        isLatest: false,
-        durationSeconds: null,
-        toolCallCount: 0,
-        foldedMessageCount: 0
-      });
-      continue;
-    }
-
-    if (row.kind === "turn_ended" || row.kind === "turn_stopped") {
-      settleTurn(
-        row.createdAt,
-        row.kind === "turn_stopped",
-        row.kind === "turn_ended" ? row.ending : null
-      );
-    }
-  }
-
-  // The newest turn is the only one that takes the stopped wording.
-  for (let at = items.length - 1; at >= 0; at -= 1) {
-    const item = items[at];
-    if (item?.kind !== "turn") continue;
-    items[at] = { ...item, isLatest: true };
-    break;
-  }
-
-  // One conversation, one plan: the newest plan row is the plan, and the heads that
-  // stated earlier ones are history rather than a second strip.
-  let seenNewestPlan = false;
-  for (let at = items.length - 1; at >= 0; at -= 1) {
-    const item = items[at];
-    if (item?.kind !== "turn" || item.plan === null) continue;
-    if (seenNewestPlan) items[at] = { ...item, plan: null };
-    seenNewestPlan = true;
-  }
-
-  return items;
-}
 
 /** A length of time, in the one format this pane says them in.
  *
@@ -929,6 +739,18 @@ export function liveAskFrom(rows: readonly TranscriptRow[]): Extract<
   for (let at = rows.length - 1; at >= 0; at -= 1) {
     const row = rows[at];
     if (row?.kind === "permission_ask" && row.state === "live") return row;
+  }
+  return null;
+}
+
+/** The structured question request currently waiting, reconstructed from durable rows. */
+export function liveUserInputFrom(rows: readonly TranscriptRow[]): Extract<
+  TranscriptRow,
+  { kind: "user_input" }
+> | null {
+  for (let at = rows.length - 1; at >= 0; at -= 1) {
+    const row = rows[at];
+    if (row?.kind === "user_input" && row.state === "live") return row;
   }
   return null;
 }

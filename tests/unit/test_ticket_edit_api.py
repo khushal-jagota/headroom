@@ -242,6 +242,9 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
     conn = connect(str(db_path))
     try:
         _seed_sprint(conn)
+        conn.execute(
+            "UPDATE projects SET priority = 'P1' WHERE id = 'project_vylo'"
+        )
         conn.commit()
     finally:
         conn.close()
@@ -269,12 +272,33 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
                 "sprint_item_id": None,
             },
         )
+        project_priority_default = client.post(
+            "/api/tickets",
+            json={
+                "title": "Assessed project default",
+                "worker_type": "coding",
+                "project_id": "project_vylo",
+                "sprint_item_id": None,
+            },
+        )
+        explicit_priority = client.post(
+            "/api/tickets",
+            json={
+                "title": "Explicit priority",
+                "worker_type": "coding",
+                "priority": "P0",
+                "project_id": "project_vylo",
+                "sprint_item_id": None,
+            },
+        )
 
     assert (
         defaulted.status_code
         == reused.status_code
         == project_fallback.status_code
         == explicit_backlog.status_code
+        == project_priority_default.status_code
+        == explicit_priority.status_code
         == 200
     )
     assert defaulted.json()["effective_sprint_id"] == "sp_edit"
@@ -283,6 +307,16 @@ def test_ticket_creation_defaults_to_today_and_current_sprint_but_preserves_expl
     assert project_fallback.json()["project_id"] == "project_vylo"
     assert project_fallback.json()["effective_sprint_id"] == "sp_edit"
     assert explicit_backlog.json()["effective_sprint_id"] is None
+    assert project_priority_default.json()["priority"] == "P1"
+    assert explicit_priority.json()["priority"] == "P0"
+    assert project_priority_default.json()["resolved_priority_anchors"] == {
+        "sprint_item": None,
+        "project": {
+            "id": "project_vylo",
+            "name": "Vylo",
+            "priority": "P1",
+        },
+    }
 
     conn = connect(str(db_path))
     try:

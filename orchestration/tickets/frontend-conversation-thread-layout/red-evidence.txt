@@ -1,0 +1,79 @@
+Command:
+npm --prefix web run test:vitest -- tests/conversation-thread-items.test.ts
+
+Exit code: 1
+
+Output:
+
+> test:vitest
+> vitest run --typecheck tests/conversation-thread-items.test.ts
+
+Testing types with tsc and vue-tsc is an experimental feature.
+Breaking changes might not follow SemVer, please pin Vitest's version when using it.
+
+ RUN  v4.1.10 /Users/khushaljagota/Coding/planning-v2-worktrees/frontend-conversation-thread-layout/web
+
+ ❯ tests/conversation-thread-items.test.ts (0 test)
+ ❯  TS  tests/conversation-thread-items.test.ts (9 tests | 2 failed)
+     × anchors a running turn at its prompt and keeps only the newest call visibly current
+     × keeps running commentary visible and separates work runs where they occurred
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/conversation-thread-items.test.ts [ tests/conversation-thread-items.test.ts ]
+Error: Cannot find module '../src/lib/conversation/threadLayout' imported from /Users/khushaljagota/Coding/planning-v2-worktrees/frontend-conversation-thread-layout/web/tests/conversation-thread-items.test.ts
+ ❯ tests/conversation-thread-items.test.ts:15:1
+     13|   VISIBLE_RUNNING_WORK_ENTRIES
+     14| } from "../src/lib/conversation/transcript";
+     15| import {
+       | ^
+     16|   threadItems,
+     17|   type ThreadItem
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/conversation-thread-items.test.ts > Conversation thread items > anchors a running turn at its prompt and keeps only the newest call visibly current
+TypeCheckError: Parameter 'entry' implicitly has an 'any' type.
+ ❯ tests/conversation-thread-items.test.ts:85:36
+     83|     expect(itemKinds(items)).toEqual(["prompt", "turn", "work"]);
+     84|     expect(groups).toHaveLength(1);
+     85|     expect(groups[0]!.entries.map((entry) => entry.title)).toEqual([
+       |                                    ^
+     86|       "Read one",
+     87|       "Read two",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/conversation-thread-items.test.ts > Conversation thread items > anchors a running turn at its prompt and keeps only the newest call visibly current
+TypeCheckError: Parameter 'entry' implicitly has an 'any' type.
+ ❯ tests/conversation-thread-items.test.ts:94:15
+     92|       groups[0]!.entries
+     93|         .slice(-VISIBLE_RUNNING_WORK_ENTRIES)
+     94|         .map((entry) => entry.title)
+       |               ^
+     95|     ).toEqual(["Read three"]);
+     96|     expect(hiddenWorkSentence(2)).toBe("+2 previous tool calls");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/conversation-thread-items.test.ts > Conversation thread items > keeps running commentary visible and separates work runs where they occurred
+TypeCheckError: Parameter 'entry' implicitly has an 'any' type.
+ ❯ tests/conversation-thread-items.test.ts:179:53
+    177|       "agent_message"
+    178|     ]);
+    179|     expect(groups.map((group) => group.entries.map((entry) => entry.ti…
+       |                                                     ^
+    180|       ["One", "Two"],
+    181|       ["Three"]
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 7 passed (9)
+Type Errors  2 failed
+   Start at  22:58:58
+   Duration  977ms (transform 44ms, setup 0ms, import 0ms, tests 0ms, environment 0ms, typecheck 839ms)

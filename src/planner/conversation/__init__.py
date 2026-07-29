@@ -28,6 +28,7 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
     InMemoryConversationTurnEnding,
     TurnCannotEndWhilePermissionAskIsPending,
+    TurnCannotEndWhileUserInputIsPending,
 )
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
@@ -58,6 +59,7 @@ __all__ = [
     "PromptDeliveryStarted",
     "ResolvedConversationStart",
     "TurnCannotEndWhilePermissionAskIsPending",
+    "TurnCannotEndWhileUserInputIsPending",
     "backend_supports_steer",
     "resolve_conversation_start_request",
 ]

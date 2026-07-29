@@ -19,13 +19,13 @@ import {
   liveAskFrom,
   planProgressSentence,
   promptLabelFor,
-  threadItems,
   turnEndingSentence,
   workingSentence,
   PROMPT_DISCARDED_SENTENCE,
   TURN_STOPPED_SENTENCE
 } from "./transcript";
-import type { ThreadItem, ToolCallRow, TranscriptRow } from "./transcript";
+import type { ToolCallRow, TranscriptRow } from "./transcript";
+import { threadItems, type ThreadItem } from "./threadLayout";
 import { presentToolCall } from "./toolCallPresentation";
 import { messageContentText } from "./wire";
 
@@ -167,6 +167,7 @@ function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened |
     case "turn_stopped":
       return { who: null, text: TURN_STOPPED_SENTENCE };
     case "permission_ask":
+    case "user_input":
     case "plan_updated":
     case "model_changed":
     case "token_usage":

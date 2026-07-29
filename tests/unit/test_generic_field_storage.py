@@ -53,6 +53,7 @@ from planner.tickets.contracts import (
     AtCap,
     FieldSlot,
     Proposal,
+    ResolvedTicketPriorityAnchors,
     ScopePair,
     StageOwnershipMode,
     Ticket,
@@ -635,6 +636,9 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             project_name=None,
             sprint_item_id=None,
             effective_sprint_id=None,
+            resolved_priority_anchors=ResolvedTicketPriorityAnchors(
+                sprint_item=None, project=None
+            ),
             recap="",
             ceiling="needs_alpha",
             at_cap=AtCap.propose,

@@ -74,6 +74,10 @@ SCHEMA_ROOTS: tuple[tuple[str, str], ...] = (
     ("", "CommandExecutionRequestApprovalResponse"),
     ("", "FileChangeRequestApprovalParams"),
     ("", "FileChangeRequestApprovalResponse"),
+    # A question is a server request too, but it is user input rather than permission.
+    # Its response carries all answers together, keyed by Codex's question ids.
+    ("", "ToolRequestUserInputParams"),
+    ("", "ToolRequestUserInputResponse"),
     # Everything else is v2: the thread, the turn, and the news about them.
     (_V2_NAMESPACE, "ThreadStartParams"),
     (_V2_NAMESPACE, "ThreadStartResponse"),
@@ -246,12 +250,14 @@ def _pruned_subset(dump: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _without_prose(document: Any) -> Any:
+def _without_prose(document: Any, *, property_names: bool = False) -> Any:
     if isinstance(document, dict):
         return {
-            key: _without_prose(value)
+            key: _without_prose(value, property_names=key == "properties")
             for key, value in document.items()
-            if key != "description"
+            # A schema's ``description`` is prose. A property *named* ``description``
+            # is protocol data and must survive into the generated model.
+            if key != "description" or property_names
         }
     if isinstance(document, list):
         return [_without_prose(item) for item in document]

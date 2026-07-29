@@ -24,6 +24,7 @@ from planner.tickets.contracts import (
     AtCap,
     FieldSlot,
     Proposal,
+    ResolvedTicketPriorityAnchors,
     StageOwnershipMode,
     Ticket,
     TicketFields,
@@ -211,6 +212,9 @@ def _needs_kickoff_ticket(defn: WorkerTypeDefinition) -> Ticket:
         project_name=None,
         sprint_item_id=None,
         effective_sprint_id=None,
+        resolved_priority_anchors=ResolvedTicketPriorityAnchors(
+            sprint_item=None, project=None
+        ),
         recap="",
         ceiling=defn.default_ceiling(),
         at_cap=AtCap.propose,

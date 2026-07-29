@@ -59,10 +59,12 @@ from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendUserInputRequest,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
+    UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -75,6 +77,9 @@ from planner.conversation.events import (
     PlanEntry,
     PlanEntryStatus,
     ToolCallStatus,
+    UserInputAnswer,
+    UserInputOption,
+    UserInputQuestion,
 )
 from planner.conversation.message_content import (
     MessageContent,
@@ -197,6 +202,13 @@ class _ParkedPermissionAsk:
 
 
 @dataclass(slots=True)
+class _ParkedUserInput:
+    """One complete question request waiting for its complete answer map."""
+
+    request_id: Any
+
+
+@dataclass(slots=True)
 class _TurnInFlight:
     """The turn this child is running, and what it has half-said so far."""
 
@@ -205,6 +217,7 @@ class _TurnInFlight:
     turn_id: str | None = None
     agent_message_texts: dict[str, list[str]] = field(default_factory=dict)
     parked_asks: dict[str, _ParkedPermissionAsk] = field(default_factory=dict)
+    parked_user_inputs: dict[str, _ParkedUserInput] = field(default_factory=dict)
     last_error_summary: str | None = None
     # Set once codex's own account of this turn ending has arrived and been worked through.
     # It is what a cancel waits on, so the turn after it is not written into the middle of
@@ -376,6 +389,27 @@ class CodexAppServerBackendChild:
             # The answer has not landed, so the ask is still waiting for one.
             turn.parked_asks[ask_id] = parked
             raise PermissionAnswerWriteFailed(str(did_not_reach)) from did_not_reach
+
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        """Return every answer to the Codex request that is still held open."""
+        turn = self._turn
+        parked = None if turn is None else turn.parked_user_inputs.pop(request_id, None)
+        if parked is None or turn is None:
+            raise UserInputAnswerWriteFailed(request_id)
+        try:
+            answer = _user_input_answer(answers)
+        except ValidationError as not_an_answer:
+            turn.parked_user_inputs[request_id] = parked
+            raise UserInputAnswerWriteFailed(
+                f"{request_id!r} has an answer Codex does not accept"
+            ) from not_an_answer
+        try:
+            await self._client.respond(parked.request_id, answer)
+        except CodexAppServerError as did_not_reach:
+            turn.parked_user_inputs[request_id] = parked
+            raise UserInputAnswerWriteFailed(str(did_not_reach)) from did_not_reach
 
     async def stop(self) -> None:
         """Shut the child down for good."""
@@ -609,11 +643,12 @@ class CodexAppServerBackendChild:
         turn.agent_message_texts.clear()
 
     async def _settle_parked_asks(self, turn: _TurnInFlight) -> None:
-        """A turn's asks die with it, and codex is told so rather than left waiting."""
-        for parked in list(turn.parked_asks.values()):
+        """A turn's pending human interactions die with it, and Codex is told so."""
+        for parked_ask in list(turn.parked_asks.values()):
             try:
                 await self._client.respond(
-                    parked.request_id, _approval_answer(parked.method, WITHDRAWN_ASK_DECISION)
+                    parked_ask.request_id,
+                    _approval_answer(parked_ask.method, WITHDRAWN_ASK_DECISION),
                 )
             except (CodexAppServerError, ValidationError) as could_not_settle:
                 LOGGER.debug(
@@ -622,6 +657,18 @@ class CodexAppServerBackendChild:
                     could_not_settle,
                 )
         turn.parked_asks.clear()
+        for parked_user_input in list(turn.parked_user_inputs.values()):
+            try:
+                await self._client.respond(
+                    parked_user_input.request_id, _user_input_answer(())
+                )
+            except (CodexAppServerError, ValidationError) as could_not_settle:
+                LOGGER.debug(
+                    "conversation %s: withdrawn Codex user input was not settled: %r",
+                    self._resolved_start.conversation_id,
+                    could_not_settle,
+                )
+        turn.parked_user_inputs.clear()
 
     def _forget(self, task: asyncio.Task[Any], what: str) -> None:
         """Read a task nobody is waiting on, so a failure is logged rather than swallowed."""
@@ -837,7 +884,10 @@ class CodexAppServerBackendChild:
         turn.last_error_summary = _error_summary(notification.error)
 
     async def _on_server_request(self, method: str, request_id: Any, params: BaseModel) -> None:
-        """Hold codex's ask open until a person answers it or its turn dies."""
+        """Hold Codex's permission or user-input request until its turn resolves it."""
+        if isinstance(params, bindings.ToolRequestUserInputParams):
+            await self._on_user_input_request(request_id, params)
+            return
         ask = _permission_ask_of(params)
         if ask is None:
             LOGGER.debug("codex asked %s, which nothing here reads", method)
@@ -862,6 +912,33 @@ class CodexAppServerBackendChild:
             ),
         )
 
+    async def _on_user_input_request(
+        self, wire_request_id: Any, params: bindings.ToolRequestUserInputParams
+    ) -> None:
+        """Raise a question request, never an execution approval."""
+        turn = self._turn_this_is_about(params.turnId)
+        if turn is None:
+            with suppress(CodexAppServerError, ValidationError):
+                await self._client.respond(wire_request_id, _user_input_answer(()))
+            return
+
+        request_id = f"{params.turnId}:{params.itemId}"
+        try:
+            questions = _user_input_questions(params.questions)
+        except ValueError as malformed:
+            await self._sink.user_input_failed(
+                turn.token, request_id=request_id, detail=str(malformed)
+            )
+            with suppress(CodexAppServerError, ValidationError):
+                await self._client.respond(wire_request_id, _user_input_answer(()))
+            return
+
+        turn.parked_user_inputs[request_id] = _ParkedUserInput(request_id=wire_request_id)
+        await self._sink.user_input_requested(
+            turn.token,
+            BackendUserInputRequest(request_id=request_id, questions=questions),
+        )
+
     async def _on_child_ended(self) -> None:
         """The process is gone: a turn it was running stopped, and it failed."""
         turn = self._turn
@@ -869,6 +946,7 @@ class CodexAppServerBackendChild:
             return
         self._turn = None
         turn.parked_asks.clear()
+        turn.parked_user_inputs.clear()
         await self._complete_agent_messages(turn)
         await self._sink.turn_ended(
             turn.token,
@@ -1056,6 +1134,63 @@ def _approval_answer(method: str, decision: str) -> dict[str, Any]:
     return _wire(model.model_validate({"decision": decision}))
 
 
+def _user_input_questions(
+    questions: list[bindings.ToolRequestUserInputQuestion],
+) -> tuple[UserInputQuestion, ...]:
+    """Translate one complete Codex request, rejecting shapes the UI cannot answer."""
+    if not questions:
+        raise ValueError("Codex requested user input without any questions")
+    translated: list[UserInputQuestion] = []
+    question_ids: set[str] = set()
+    for question in questions:
+        question_id = question.id.strip()
+        header = question.header.strip()
+        prompt = question.question.strip()
+        if not question_id or not header or not prompt:
+            raise ValueError("Codex requested user input with a blank id, header, or question")
+        if question_id in question_ids:
+            raise ValueError(f"Codex repeated user-input question id {question_id!r}")
+        if question.isSecret:
+            raise ValueError(f"Codex question {question_id!r} asks for unsupported secret input")
+        options = tuple(
+            UserInputOption(
+                label=option.label.strip(), description=option.description.strip()
+            )
+            for option in (question.options or [])
+        )
+        if any(not option.label or not option.description for option in options):
+            raise ValueError(
+                f"Codex question {question_id!r} has an option without a label or description"
+            )
+        allow_other = bool(question.isOther) or not options
+        question_ids.add(question_id)
+        translated.append(
+            UserInputQuestion(
+                question_id=question_id,
+                header=header,
+                question=prompt,
+                options=options,
+                multi_select=False,
+                allow_other=allow_other,
+            )
+        )
+    return tuple(translated)
+
+
+def _user_input_answer(answers: tuple[UserInputAnswer, ...]) -> dict[str, Any]:
+    """The complete answer map in Codex's exact response shape."""
+    return _wire(
+        bindings.ToolRequestUserInputResponse(
+            answers={
+                answer.question_id: bindings.ToolRequestUserInputAnswer(
+                    answers=list(answer.answers)
+                )
+                for answer in answers
+            }
+        )
+    )
+
+
 def _error_summary(error: bindings.TurnError | None) -> str | None:
     if error is None:
         return None
@@ -1087,5 +1222,3 @@ def _wire(parameters: BaseModel) -> dict[str, Any]:
         mode="json", exclude_none=True, exclude_unset=True, by_alias=True
     )
     return dumped
-
-

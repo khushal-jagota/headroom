@@ -38,6 +38,7 @@ const transpiledModules = [
   ["wire.ts", "wire.mjs"],
   ["feed.ts", "feed.mjs"],
   ["transcript.ts", "transcript.mjs"],
+  ["threadLayout/index.ts", "threadLayout.mjs"],
   ["conversationDetail.ts", "conversationDetail.mjs"],
   ["toolCallPresentation/index.ts", "toolCallPresentation.mjs"],
   ["restLine.ts", "restLine.mjs"]
@@ -50,6 +51,11 @@ for (const [sourcePath, outputName] of transpiledModules) {
     .replace(
       /from\s+["']\.\.\/conversationDetail["']/g,
       'from "./conversationDetail.mjs"'
+    )
+    .replace(/from\s+["']\.\.\/wire["']/g, 'from "./wire.mjs"')
+    .replace(
+      /from\s+["']\.\/threadLayout["']/g,
+      'from "./threadLayout.mjs"'
     )
     .replace(
       /from\s+["']\.\/toolCallPresentation["']/g,

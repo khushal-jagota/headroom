@@ -114,9 +114,17 @@ printed by inspection.
 
 ## Host status and maintenance
 
-`panels environment status --json` reads local filesystem and process evidence without
-contacting the Panels HTTP server. `GET /api/vps-status` provides the same sanitized
-snapshot to the browser Status popover.
+`panels environment status --json` reads the full local filesystem and process
+inventory without contacting the Panels HTTP server. `GET /api/vps-status` keeps that
+same response for compatibility and diagnostics.
+
+The browser uses the smaller `GET /api/vps-status-summary`. It contains only the
+deployed SHA, relevant deployment outcome and public-safe detail, CPU/RAM/disk use, and
+latest verified-backup age. Linux CPU use comes from two bounded `/proc/stat` samples;
+RAM uses `MemTotal` and `MemAvailable`; disk uses the filesystem holding runtime data.
+Every measure has a fixed healthy, warning, or critical threshold. Missing or malformed
+host evidence is returned as an explicit unavailable value and reason. Collection runs
+off the server event loop because the CPU sample waits briefly.
 
 `panels environment cleanup` is a dry run. `--apply` collects a fresh inventory and
 re-proves every target before changing it. It can rotate configured oversized logs,
@@ -138,4 +146,4 @@ path.
 
 ---
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-07-29._

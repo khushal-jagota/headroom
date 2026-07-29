@@ -490,7 +490,7 @@ async def create_ticket(
     priority = (
         parse_enum(Priority, body["priority"], "priority")
         if body["priority"] is not None
-        else Priority.P3
+        else None
     )
     project = projects_data.resolve_project(
         conn,
@@ -536,7 +536,7 @@ async def create_ticket_from_external_work(
     priority = (
         parse_enum(Priority, priority_raw, "priority")
         if priority_raw is not None
-        else Priority.P3
+        else None
     )
     project = projects_data.resolve_project(
         conn,
@@ -1537,12 +1537,12 @@ async def add_conversation_row_signals(
     """Add the three conversation-owned row signals to every card on the board.
 
     ``agent_working`` is whether the Ticket's conversation has a turn running right now,
-    and ``needs_me`` is whether that turn is waiting on a permission ask only the owner
-    can answer. ``latest_turn_ended_sequence`` is where that conversation last had a turn
-    end — the row's half of the reply mark, which the browser compares against how far
-    the reader has got. None of the three is a tickets-domain fact and all are awaited,
-    so ``board_view`` cannot answer them and they are added here instead. A Ticket with
-    no conversation has no conversation to ask about: the first two read false and the
+    and ``needs_me`` is whether that turn is waiting on a permission decision or answers
+    only the owner can give. ``latest_turn_ended_sequence`` is where that conversation
+    last had a turn end — the row's half of the reply mark, which the browser compares
+    against how far the reader has got. None of the three is a tickets-domain fact and
+    all are awaited, so ``board_view`` cannot answer them and they are added here instead.
+    A Ticket with no conversation has no conversation to ask about: the first two read false and the
     third reads 0, which is before every real position.
 
     The record is asked once for the whole board rather than once per row: it is one
@@ -1567,7 +1567,10 @@ async def add_conversation_row_signals(
             else False
         )
         card["needs_me"] = (
-            await conversation_system.has_pending_permission_ask(conversation_id)
+            (
+                await conversation_system.has_pending_permission_ask(conversation_id)
+                or await conversation_system.has_pending_user_input(conversation_id)
+            )
             if conversation_id is not None
             else False
         )
