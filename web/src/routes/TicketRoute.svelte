@@ -395,6 +395,12 @@
                 if (priority !== detail.priority) void patch({ priority });
               }}
             />
+            {#if lc}
+              <span class="ticket-identity-group">
+                <span class="ticket-identity-separator" aria-hidden="true">·</span>
+                <span class="ticket-identity-fact" data-ticket-worker-name>{lc.workerTypeLabel}</span>
+              </span>
+            {/if}
             <span class="ticket-identity-group">
               <span class="ticket-identity-separator" aria-hidden="true">·</span>
               <span
