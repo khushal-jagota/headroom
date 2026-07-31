@@ -4,6 +4,7 @@
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
+  import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import DayRoute from "./routes/DayRoute.svelte";
   import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
@@ -165,11 +166,11 @@
     if (route.name === "dev") {
       return route.params.sub === "conversation" || route.params.sub === "file-preview-gallery";
     }
-    return ["day", "review", "workspace", "board", "backlog", "ideas", "notifications", "preview"].includes(route.name);
+    return ["day", "review", "workspace", "board", "backlog", "ideas", "backends", "notifications", "preview"].includes(route.name);
   }
 
   function secondaryRouteActive(): boolean {
-    return ["day", "sprint", "backlog", "ideas", "config", "notifications"].includes(route.name);
+    return ["day", "sprint", "backlog", "ideas", "config", "backends", "notifications"].includes(route.name);
   }
 
   function screenTitle(): string {
@@ -268,6 +269,9 @@
             <a class:active={currentNav("config")} href="#/config" onclick={closeMore}>
               <span>Config</span>
             </a>
+            <a class:active={currentNav("backends")} href="#/backends" onclick={closeMore}>
+              <span>Backends</span>
+            </a>
             <a class:active={currentNav("notifications")} href="#/notifications" onclick={closeMore}>
               <span>Notifications</span>
             </a>
@@ -318,6 +322,8 @@
             />
           {:else if route.name === "notifications"}
             <NotificationsRoute />
+          {:else if route.name === "backends"}
+            <BackendsRoute />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
           {:else if route.name === "dev" && route.params.sub === "file-preview-gallery"}

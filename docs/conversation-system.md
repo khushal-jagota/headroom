@@ -301,6 +301,25 @@ change how the installation is managed. An authorized update runs as
 otherwise usable backend unavailable. Every attempted update refreshes the card,
 even when the command fails.
 
+Usage is a separate, explicit action beside these ordinary backend reads. Opening
+the Backends page, reading `GET /backends`, receiving a change signal, or refreshing
+some other query never acquires usage. A person presses Refresh usage for one backend,
+and only `POST /backends/{backend_key}/usage-refresh` crosses that boundary. Repeated
+refreshes for the same backend run one at a time; Codex and Claude do not hold each
+other up.
+
+Codex first reads the newest rate-limit event in its local rollout record. A reading
+no more than ten minutes old is returned without starting Codex. Otherwise Panels runs
+one minimal Luna request at low reasoning and reads the newly written event. Claude
+uses the CLI's existing OAuth login for one bounded request to its usage endpoint. The
+credential never appears in the result or logs. Both providers are translated into the
+same answer: the observed time and only the rolling windows the provider actually
+returned, with percentage used and reset time. Hermes has no usage source here.
+
+Unavailable, logged-out, transport, and changed-response cases are returned as calm,
+typed results for that backend. They do not erase its maintenance card, affect the other
+backend, invent missing windows, or turn ambient reads into retries.
+
 ## The commands an agent takes
 
 Each agent has its own commands — the things you type at it starting with a

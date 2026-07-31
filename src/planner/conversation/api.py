@@ -28,6 +28,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
+from planner.conversation.backend_usage import (
+    BackendUsageResult,
+    BackendUsageService,
+    production_backend_usage_service,
+)
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -94,6 +99,7 @@ class ConversationRuntime:
     system: SqliteProcessConversationSystem
     live_tail: ConversationLiveTail
     backend_snapshots: BackendSnapshotService
+    backend_usage: BackendUsageService
     message_files: ConversationMessageFiles
     sse_heartbeat_ms: int
 
@@ -130,6 +136,7 @@ def build_conversation_runtime(
         ),
         live_tail=live_tail,
         backend_snapshots=BackendSnapshotService(backend_lifecycle=backend_lifecycle),
+        backend_usage=production_backend_usage_service(),
         message_files=message_files,
         sse_heartbeat_ms=sse_heartbeat_ms,
     )
@@ -443,6 +450,14 @@ async def update_backend(
 ) -> dict[str, Any]:
     """Run this backend's update, then look again and say which of three things happened."""
     return _update_result_json(await runtime.backend_snapshots.update_backend(backend_key))
+
+
+@router.post("/backends/{backend_key}/usage-refresh")
+async def refresh_backend_usage(
+    backend_key: ConversationBackendKey, runtime: Runtime
+) -> dict[str, Any]:
+    """Acquire usage only because a person explicitly asked for it."""
+    return _usage_result_json(await runtime.backend_usage.refresh(backend_key))
 
 
 # --- turning values into JSON ---------------------------------------------------------------
@@ -765,6 +780,27 @@ def _update_result_json(result: BackendUpdateResult) -> dict[str, Any]:
         "outcome": str(result.outcome),
         "detail": result.detail,
         "output_tail": result.output_tail,
+    }
+
+
+def _usage_result_json(result: BackendUsageResult) -> dict[str, Any]:
+    return {
+        "backend_key": str(result.backend_key),
+        "outcome": str(result.outcome),
+        "detail": result.detail,
+        "observed_at": (
+            None
+            if result.observed_at is None
+            else result.observed_at.isoformat().replace("+00:00", "Z")
+        ),
+        "windows": [
+            {
+                "name": window.name,
+                "used_percent": window.used_percent,
+                "resets_at": window.resets_at.isoformat().replace("+00:00", "Z"),
+            }
+            for window in result.windows
+        ],
     }
 
 

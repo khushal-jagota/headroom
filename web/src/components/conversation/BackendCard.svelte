@@ -8,18 +8,30 @@
    * is which of three things happened — including the one that changed nothing.
    */
   import Button from "../Button.svelte";
-  import type { BackendSnapshot, BackendUpdateResult } from "../../lib/conversation/wire";
+  import type {
+    BackendSnapshot,
+    BackendUpdateResult,
+    BackendUsageResult
+  } from "../../lib/conversation/wire";
 
   let {
     snapshot,
     updating = false,
     result = null,
-    onUpdate
+    onUpdate,
+    usageRefreshing = false,
+    usageResult = null,
+    usageError = null,
+    onUsageRefresh
   }: {
     snapshot: BackendSnapshot;
     updating?: boolean;
     result?: BackendUpdateResult | null;
-    onUpdate: () => void;
+    onUpdate?: () => void;
+    usageRefreshing?: boolean;
+    usageResult?: BackendUsageResult | null;
+    usageError?: string | null;
+    onUsageRefresh?: () => void;
   } = $props();
 
   let identityLine = $derived.by(() => {
@@ -39,6 +51,17 @@
   });
 
   let advisory = $derived(snapshot.update_advisory);
+
+  function formatPercent(value: number): string {
+    return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}% used`;
+  }
+
+  function formatReset(value: string): string {
+    return new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short"
+    }).format(new Date(value));
+  }
 </script>
 
 <article class="c2-backend" data-conversation-backend={snapshot.backend_key}>
@@ -86,7 +109,7 @@
   {#if advisory}
     <div class="c2-backend-advisory">
       <span data-conversation-backend-advisory>{advisory.detail}</span>
-      {#if advisory.update_command}
+      {#if advisory.update_command && onUpdate}
         <Button
           variant="quiet"
           disabled={updating}
@@ -95,6 +118,47 @@
         >{updating ? "Updating…" : "Update"}</Button>
       {/if}
     </div>
+  {/if}
+
+  {#if snapshot.installed && snapshot.backend_key !== "hermes" && onUsageRefresh}
+    <section class="c2-backend-usage" aria-label="Usage limits">
+      <div class="c2-backend-usage-head">
+        <span>usage limits</span>
+        <Button
+          variant="quiet"
+          disabled={usageRefreshing}
+          onclick={onUsageRefresh}
+          data-conversation-backend-usage-refresh={snapshot.backend_key}
+        >{usageRefreshing ? "Refreshing…" : usageResult ? "Refresh" : "Check usage"}</Button>
+      </div>
+
+      {#if usageError}
+        <p class="c2-backend-usage-note is-failed" role="alert">{usageError}</p>
+      {:else if usageResult?.outcome === "succeeded"}
+        <div class="c2-backend-usage-windows" data-conversation-backend-usage="succeeded">
+          {#each usageResult.windows as window (window.name)}
+            <div class="c2-backend-usage-window">
+              <span>{window.name}</span>
+              <strong>{formatPercent(window.used_percent)}</strong>
+              <small>resets {formatReset(window.resets_at)}</small>
+            </div>
+          {/each}
+        </div>
+        {#if usageResult.observed_at}
+          <p class="c2-backend-usage-observed">
+            checked {formatReset(usageResult.observed_at)}
+          </p>
+        {/if}
+      {:else if usageResult}
+        <p
+          class="c2-backend-usage-note"
+          class:is-failed={usageResult.outcome === "failed"}
+          data-conversation-backend-usage={usageResult.outcome}
+        >{usageResult.detail ?? "Usage limits are not available."}</p>
+      {:else}
+        <p class="c2-backend-usage-note">Checked only when you press the button.</p>
+      {/if}
+    </section>
   {/if}
 
   {#if result}
@@ -178,6 +242,53 @@
     font-size: var(--type-xs);
     white-space: pre-wrap;
   }
+  .c2-backend-usage {
+    display: grid;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: var(--border-hairline) solid var(--border-color);
+  }
+  .c2-backend-usage-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    color: var(--text-faintest);
+    font-family: var(--font-mono);
+    font-size: var(--type-xs);
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+  }
+  .c2-backend-usage-windows { display: grid; gap: var(--space-2); }
+  .c2-backend-usage-window {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-1) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+  }
+  .c2-backend-usage-window strong {
+    color: var(--text-default);
+    font-family: var(--font-mono);
+    font-weight: 500;
+  }
+  .c2-backend-usage-window small {
+    grid-column: 1 / -1;
+    color: var(--text-faintest);
+    font-family: var(--font-mono);
+  }
+  .c2-backend-usage-note,
+  .c2-backend-usage-observed {
+    margin: 0;
+    color: var(--text-faint);
+    font-size: var(--type-xs);
+    overflow-wrap: anywhere;
+  }
+  .c2-backend-usage-observed {
+    color: var(--text-faintest);
+    font-family: var(--font-mono);
+  }
+  .c2-backend-usage-note.is-failed { color: var(--accent-error); }
   .c2-backend-diagnosis {
     margin: 0;
     color: var(--text-faint);

@@ -1107,11 +1107,24 @@ try {
       },
       diagnoses: ["`codex` is not signed in. Run `codex login` in a terminal."]
     },
+    usageResult: {
+      backend_key: "codex",
+      outcome: "succeeded",
+      detail: null,
+      observed_at: "2026-07-31T12:34:56Z",
+      windows: [
+        { name: "5 hours", used_percent: 12.5, resets_at: "2026-07-31T15:00:00Z" }
+      ]
+    },
+    onUsageRefresh() {},
     onUpdate() {}
   });
   assert.match(backendCard, /not signed in · run codex login in a terminal/);
   assert.match(backendCard, /Version 0\.146\.0 is available\./);
   assert.match(backendCard, /data-conversation-backend-update="codex"/);
+  assert.match(backendCard, /data-conversation-backend-usage-refresh="codex"/);
+  assert.match(backendCard, /data-conversation-backend-usage="succeeded"/);
+  assert.match(backendCard, /12\.5% used/);
   assert.match(backendCard, /is not signed in\. Run `codex login` in a terminal\./);
 
   const updatedCard = drawn(BackendCard, {
@@ -1133,6 +1146,7 @@ try {
       diagnoses: []
     },
     result: { outcome: "unchanged", detail: "still 0.18.2", output_tail: "" },
+    onUsageRefresh() {},
     onUpdate() {}
   });
   assert.match(updatedCard, /no account to sign in to/);
@@ -1142,6 +1156,11 @@ try {
     updatedCard,
     /data-conversation-backend-update/,
     "no button is offered for an update Panels cannot run"
+  );
+  assert.doesNotMatch(
+    updatedCard,
+    /data-conversation-backend-usage-refresh/,
+    "Hermes has no provider allowance to acquire"
   );
 
   // The command menu draws what the agent reported and nothing else: the name a person
