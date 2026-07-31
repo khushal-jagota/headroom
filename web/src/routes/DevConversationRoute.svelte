@@ -8,10 +8,10 @@
    *
    * What is left here is what only this page does: minting an id, keeping it in the
    * address, choosing what an unstarted conversation would be started as, and the backend
-   * cards. Being live is LiveConversation's job, and it is the same one a Ticket uses.
+   * catalogue used by those choices. Backend management has its own production page;
+   * being live is LiveConversation's job, and it is the same one a Ticket uses.
    */
   import { onMount } from "svelte";
-  import BackendCard from "../components/conversation/BackendCard.svelte";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import NewConversationForm from "../components/conversation/NewConversationForm.svelte";
   import {
@@ -19,10 +19,8 @@
     readBackends,
     sendPrompt,
     startConversation,
-    updateBackend,
     ConversationWireError,
     type BackendSnapshot,
-    type BackendUpdateResult,
     type ConversationBackendKey,
     type DeliveredMessage,
     type OwnerSendBody
@@ -37,8 +35,6 @@
   let liveConversationId = $state<string | null>(null);
   let runningBackendKey = $state<ConversationBackendKey | null>(null);
   let backends = $state<BackendSnapshot[]>([]);
-  let updatingBackend = $state<ConversationBackendKey | null>(null);
-  let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
   let errorNote = $state<string | null>(null);
 
   // What a conversation that has not been started yet would be started as. This page is
@@ -128,23 +124,11 @@
     writeIdToAddress(conversationId);
   }
 
-  async function loadBackends(refresh = false): Promise<void> {
+  async function loadBackends(): Promise<void> {
     try {
-      backends = await readBackends(refresh);
+      backends = await readBackends();
     } catch (error) {
       errorNote = sentenceFor(error);
-    }
-  }
-
-  async function runBackendUpdate(key: ConversationBackendKey): Promise<void> {
-    updatingBackend = key;
-    try {
-      updateResults = { ...updateResults, [key]: await updateBackend(key) };
-      await loadBackends();
-    } catch (error) {
-      errorNote = sentenceFor(error);
-    } finally {
-      updatingBackend = null;
     }
   }
 
@@ -158,6 +142,9 @@
 </script>
 
 <div class="c2-route" data-conversation-route>
+  {#if errorNote}
+    <div class="c2-route-error" role="alert">{errorNote}</div>
+  {/if}
   <div class="c2-route-pane">
     <LiveConversation
       conversationId={liveConversationId}
@@ -186,32 +173,13 @@
     </LiveConversation>
   </div>
 
-  <aside class="c2-route-backends" aria-label="Backends on this machine">
-    <div class="c2-route-backends-head">
-      <span>backends</span>
-      <button type="button" data-conversation-backends-refresh onclick={() => void loadBackends(true)}>
-        Look again
-      </button>
-    </div>
-    {#if errorNote}
-      <div class="c2-route-backends-error" role="alert">{errorNote}</div>
-    {/if}
-    {#each backends as snapshot (snapshot.backend_key)}
-      <BackendCard
-        {snapshot}
-        updating={updatingBackend === snapshot.backend_key}
-        result={updateResults[snapshot.backend_key] ?? null}
-        onUpdate={() => void runBackendUpdate(snapshot.backend_key)}
-      />
-    {/each}
-  </aside>
 </div>
 
 <style>
   .c2-route {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 20rem);
-    gap: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
     align-items: stretch;
     min-height: 0;
     /* The pane's thread is the thing that scrolls, so this route has to be as tall as the
@@ -221,41 +189,10 @@
        height is the viewport, less the shell's nav bar and the padding around a screen. */
     height: calc(100vh - var(--shell-nav-height) - var(--space-5) * 2);
   }
-  .c2-route-pane { display: flex; min-width: 0; min-height: 0; }
-  .c2-route-backends {
-    display: grid;
-    align-content: start;
-    gap: var(--space-3);
-    min-width: 0;
-    overflow-y: auto;
-  }
-  .c2-route-backends-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    color: var(--text-faintest);
+  .c2-route-pane { display: flex; flex: 1; min-width: 0; min-height: 0; }
+  .c2-route-error {
+    color: var(--accent-error);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
-    letter-spacing: var(--tracking-label);
-    text-transform: uppercase;
-  }
-  .c2-route-backends-head button {
-    background: transparent;
-    border: 0;
-    color: var(--text-faint);
-    cursor: pointer;
-    font: inherit;
-    letter-spacing: var(--tracking-mono);
-    text-transform: none;
-  }
-  .c2-route-backends-head button:hover { color: var(--text-strong); }
-  .c2-route-backends-error {
-    color: var(--text-faint);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-  }
-  @media (max-width: 60rem) {
-    .c2-route { grid-template-columns: minmax(0, 1fr); }
   }
 </style>

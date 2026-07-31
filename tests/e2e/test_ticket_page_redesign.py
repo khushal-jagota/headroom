@@ -60,6 +60,18 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
         "--title",
         "A title which owns its own row",
     )["id"]
+    api.direct_put(
+        server,
+        f"/api/tickets/{ticket_id}/recap",
+        {
+            "body": (
+                "| Surface | Phone behavior |\n"
+                "| --- | --- |\n"
+                "| Markdown table | Keep the columns readable inside a local scroll area |\n"
+                "| Ticket page | Never widen the document or viewport |"
+            )
+        },
+    )
     blocker_id = cli(
         server,
         "ticket",
@@ -205,6 +217,9 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     assert geometry["ticketDocOverflow"] <= 0
     assert geometry["blockerOverflow"] <= 0
     assert geometry["workerNameRight"] <= 320
+    table = page.locator(".ticket-recap .markdown table")
+    assert table.evaluate("element => getComputedStyle(element).overflowX") == "auto"
+    assert table.evaluate("element => element.scrollWidth > element.clientWidth")
 
 
 def test_current_stage_only_labels_ambiguous_user_and_approval_states(

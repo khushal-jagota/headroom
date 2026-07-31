@@ -36,6 +36,14 @@ const priorityTileSource = await readFile(
   "utf8",
 );
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
+const backendsRouteSource = await readFile(
+  new URL("../src/routes/BackendsRoute.svelte", import.meta.url),
+  "utf8",
+);
+const devConversationRouteSource = await readFile(
+  new URL("../src/routes/DevConversationRoute.svelte", import.meta.url),
+  "utf8",
+);
 
 // --- the app itself ------------------------------------------------------------------
 
@@ -45,6 +53,21 @@ assert.doesNotMatch(
   appSource,
   /capabilities|relay_chief_enabled|resolveRelayChiefFromMeta|markRelayChiefMetaError/,
 );
+
+// Backend management has one production home. Provider allowance acquisition exists
+// behind its explicit action only; mounting the page and the dev composer merely read the
+// ordinary backend catalogue.
+assert.match(appSource, /href="#\/backends"/);
+assert.match(appSource, /<BackendsRoute \/>/);
+assert.match(backendsRouteSource, /onUsageRefresh=\{\(\) => void runUsageRefresh/);
+assert.match(backendsRouteSource, /await refreshBackendUsage\(key\)/);
+const backendsOnMount = backendsRouteSource.slice(
+  backendsRouteSource.indexOf("onMount(() =>"),
+  backendsRouteSource.indexOf("</script>"),
+);
+assert.doesNotMatch(backendsOnMount, /refreshBackendUsage/);
+assert.match(devConversationRouteSource, /readBackends\(\)/);
+assert.doesNotMatch(devConversationRouteSource, /BackendCard|updateBackend|refreshBackendUsage/);
 
 // --- the Chief is one conversation, on the Agents runtime route -------------------------
 

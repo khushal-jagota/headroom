@@ -80,6 +80,7 @@ def mount(page, body, extra_style=""):
       <!doctype html>
       <html>
         <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
           <link rel="stylesheet" href="{BASE_URL}/assets/tokens.css">
           <link rel="stylesheet" href="{BASE_URL}/assets/app.css">
           <style>{extra_style}</style>
@@ -337,12 +338,71 @@ def assert_scrollbars(browser):
         forced.close()
 
 
+def assert_mobile_content_containment(browser):
+    context = browser.new_context(
+        has_touch=True, is_mobile=True, viewport={"width": 280, "height": 800}
+    )
+    try:
+        page = context.new_page()
+        mount(page, """
+          <section class="ticket-screen">
+            <div class="ticket-page">
+              <main class="ticket-doc">
+                <div class="ticket-col">
+                  <div class="markdown">
+                    <table>
+                      <thead><tr><th>Field</th><th>Long value</th><th>Another value</th></tr></thead>
+                      <tbody><tr><td>one</td><td>an intentionally wide table value</td><td>another intentionally wide value</td></tr></tbody>
+                    </table>
+                  </div>
+                  <details class="disclosure disclosure--stage" open>
+                    <summary class="disclosure-summary">
+                      <span class="stage-mark"></span>
+                      <span class="disclosure-stage-name">implementation</span>
+                      <span class="ticket-stage-run">awaiting approval <button class="ticket-stage-run-action">Release</button></span>
+                    </summary>
+                  </details>
+                </div>
+              </main>
+            </div>
+          </section>
+        """, """
+          body { margin: 0; overflow-x: hidden; }
+          .ticket-screen, .ticket-page { width: 100%; height: 240px; }
+          .ticket-doc { flex: none; width: 100%; height: 240px; }
+          .ticket-col { padding: 16px; }
+          .markdown table th, .markdown table td { white-space: nowrap; }
+        """)
+        geometry = page.evaluate("""() => {
+          const table = document.querySelector('.markdown table');
+          const doc = document.querySelector('.ticket-doc');
+          const run = document.querySelector('.ticket-stage-run');
+          const name = document.querySelector('.disclosure-stage-name');
+          return {
+            documentOverflow: document.documentElement.scrollWidth - innerWidth,
+            ticketOverflow: doc.scrollWidth - doc.clientWidth,
+            tableOverflow: table.scrollWidth - table.clientWidth,
+            tableOverflowX: getComputedStyle(table).overflowX,
+            stageRunTop: run.getBoundingClientRect().top,
+            stageNameBottom: name.getBoundingClientRect().bottom,
+          };
+        }""")
+        assert geometry["documentOverflow"] <= 0, geometry
+        assert geometry["ticketOverflow"] <= 0, geometry
+        assert geometry["tableOverflow"] > 0, geometry
+        assert geometry["tableOverflowX"] == "auto", geometry
+        assert geometry["stageRunTop"] >= geometry["stageNameBottom"], geometry
+    finally:
+        context.close()
+
+
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     try:
         assert_brand(browser, False)
         assert_brand(browser, True)
         assert_scrollbars(browser)
+        assert_mobile_content_containment(browser)
     finally:
         browser.close()
 

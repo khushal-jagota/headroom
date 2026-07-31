@@ -323,6 +323,26 @@ export type BackendUpdateResult = {
   output_tail: string;
 };
 
+export type BackendUsageWindow = {
+  name: string;
+  used_percent: number;
+  resets_at: string;
+};
+
+/** A provider allowance reading acquired only after a person explicitly asks for it.
+ *
+ * It deliberately does not live on BackendSnapshot: reading the ordinary backend
+ * catalogue is ambient application work, while some providers count usage checks
+ * against the allowance being inspected.
+ */
+export type BackendUsageResult = {
+  backend_key: ConversationBackendKey;
+  outcome: "succeeded" | "unavailable" | "unauthenticated" | "failed";
+  detail: string | null;
+  observed_at: string | null;
+  windows: BackendUsageWindow[];
+};
+
 export type StartConversationBody = {
   conversation_id: string;
   backend_key?: ConversationBackendKey;
@@ -538,7 +558,18 @@ export async function readBackends(refresh = false): Promise<BackendSnapshot[]> 
 export function updateBackend(
   backendKey: ConversationBackendKey
 ): Promise<BackendUpdateResult> {
-  return request<BackendUpdateResult>(`/backends/${backendKey}/update`, { method: "POST" });
+  return request<BackendUpdateResult>(`/backends/${encodeURIComponent(backendKey)}/update`, {
+    method: "POST"
+  });
+}
+
+export function refreshBackendUsage(
+  backendKey: ConversationBackendKey
+): Promise<BackendUsageResult> {
+  return request<BackendUsageResult>(
+    `/backends/${encodeURIComponent(backendKey)}/usage-refresh`,
+    { method: "POST" }
+  );
 }
 
 export type ConversationTailHandlers = {
