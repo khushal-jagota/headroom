@@ -8,6 +8,7 @@
   import { onMount } from "svelte";
   import Button from "../components/Button.svelte";
   import BackendCard from "../components/conversation/BackendCard.svelte";
+  import { createCoalescedAsyncCall } from "../lib/coalescedAsyncCall";
   import {
     ConversationWireError,
     readBackends,
@@ -22,9 +23,6 @@
   let backends = $state<BackendSnapshot[]>([]);
   let loading = $state(true);
   let refreshingCatalogue = $state(false);
-  let catalogueRead: Promise<void> | null = null;
-  let catalogueReadRequested = false;
-  let catalogueForceRefreshRequested = false;
   let catalogueError = $state<string | null>(null);
   let updatingBackends = $state<Partial<Record<ConversationBackendKey, boolean>>>({});
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
@@ -37,38 +35,25 @@
     return error instanceof Error ? error.message : "The request did not succeed.";
   }
 
-  async function loadBackends(refresh = false): Promise<void> {
-    catalogueReadRequested = true;
-    catalogueForceRefreshRequested ||= refresh;
-
-    if (catalogueRead === null) {
-      loading = backends.length === 0;
-      refreshingCatalogue = true;
-      catalogueRead = (async () => {
-        while (catalogueReadRequested) {
-          const forceRefresh = catalogueForceRefreshRequested;
-          catalogueReadRequested = false;
-          catalogueForceRefreshRequested = false;
-          catalogueError = null;
-          try {
-            backends = await readBackends(forceRefresh);
-          } catch (error) {
-            catalogueError = sentenceFor(error);
-          } finally {
-            loading = false;
-          }
-        }
-      })();
-      try {
-        await catalogueRead;
-      } finally {
-        catalogueRead = null;
-        refreshingCatalogue = false;
-      }
-      return;
+  const requestCatalogueRead = createCoalescedAsyncCall(async (forceRefresh) => {
+    catalogueError = null;
+    try {
+      backends = await readBackends(forceRefresh);
+    } catch (error) {
+      catalogueError = sentenceFor(error);
+    } finally {
+      loading = false;
     }
+  });
 
-    await catalogueRead;
+  async function loadBackends(refresh = false): Promise<void> {
+    loading = backends.length === 0;
+    refreshingCatalogue = true;
+    try {
+      await requestCatalogueRead(refresh);
+    } finally {
+      refreshingCatalogue = false;
+    }
   }
 
   async function runBackendUpdate(key: ConversationBackendKey): Promise<void> {
