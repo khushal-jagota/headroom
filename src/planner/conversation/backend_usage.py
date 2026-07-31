@@ -89,6 +89,8 @@ _CODEX_REFRESH_DISABLED_FEATURES: Final = (
     "browser_use",
     "browser_use_external",
     "browser_use_full_cdp_access",
+    "in_app_browser",
+    "standalone_web_search",
     "computer_use",
     "apps",
     "image_generation",

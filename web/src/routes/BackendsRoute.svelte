@@ -22,6 +22,9 @@
   let backends = $state<BackendSnapshot[]>([]);
   let loading = $state(true);
   let refreshingCatalogue = $state(false);
+  let catalogueRead: Promise<void> | null = null;
+  let catalogueReadRequested = false;
+  let catalogueForceRefreshRequested = false;
   let catalogueError = $state<string | null>(null);
   let updatingBackends = $state<Partial<Record<ConversationBackendKey, boolean>>>({});
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
@@ -35,18 +38,37 @@
   }
 
   async function loadBackends(refresh = false): Promise<void> {
-    if (refreshingCatalogue) return;
-    loading = backends.length === 0;
-    refreshingCatalogue = true;
-    catalogueError = null;
-    try {
-      backends = await readBackends(refresh);
-    } catch (error) {
-      catalogueError = sentenceFor(error);
-    } finally {
-      loading = false;
-      refreshingCatalogue = false;
+    catalogueReadRequested = true;
+    catalogueForceRefreshRequested ||= refresh;
+
+    if (catalogueRead === null) {
+      loading = backends.length === 0;
+      refreshingCatalogue = true;
+      catalogueRead = (async () => {
+        while (catalogueReadRequested) {
+          const forceRefresh = catalogueForceRefreshRequested;
+          catalogueReadRequested = false;
+          catalogueForceRefreshRequested = false;
+          catalogueError = null;
+          try {
+            backends = await readBackends(forceRefresh);
+          } catch (error) {
+            catalogueError = sentenceFor(error);
+          } finally {
+            loading = false;
+          }
+        }
+      })();
+      try {
+        await catalogueRead;
+      } finally {
+        catalogueRead = null;
+        refreshingCatalogue = false;
+      }
+      return;
     }
+
+    await catalogueRead;
   }
 
   async function runBackendUpdate(key: ConversationBackendKey): Promise<void> {

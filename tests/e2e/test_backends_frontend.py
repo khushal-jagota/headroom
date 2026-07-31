@@ -207,6 +207,86 @@ def test_ordinary_catalogue_refresh_cannot_be_started_twice(
     assert refresh.inner_text() == "Look again"
 
 
+def test_updates_during_a_catalogue_read_share_one_trailing_read(
+    server: ServerHandle, context_factory: Callable[[], BrowserContext]
+) -> None:
+    page = context_factory().new_page()
+    initial = copy.deepcopy(BACKENDS)
+    updated = copy.deepcopy(BACKENDS)
+    for answer, latest in ((initial, "pending"), (updated, "landed")):
+        for backend_key, version in (("codex", "2.1.0"), ("claude", "3.1.0")):
+            card = next(
+                card for card in answer["backends"] if card["backend_key"] == backend_key
+            )
+            if latest == "landed":
+                card["version"] = version
+            card["update_advisory"] = {
+                "install_method": "native",
+                "update_command": f"{backend_key} update",
+                "latest_version": version,
+                "update_available": latest == "pending",
+                "detail": f"Version {version} is available.",
+            }
+
+    catalogue_urls: list[str] = []
+    pending_manual: list[Route] = []
+    pending_updates: dict[str, Route] = {}
+
+    def backend_fixture(route: Route) -> None:
+        url = route.request.url
+        if route.request.method == "POST" and url.endswith("/update"):
+            backend_key = "codex" if "/codex/" in url else "claude"
+            pending_updates[backend_key] = route
+        elif url.endswith("/backends?refresh=true"):
+            catalogue_urls.append(url)
+            pending_manual.append(route)
+        elif url.endswith("/backends"):
+            catalogue_urls.append(url)
+            if len(catalogue_urls) == 1:
+                route.fulfill(json=initial)
+            else:
+                route.fulfill(json=updated)
+        else:
+            route.fulfill(json=initial)
+
+    page.route("**/api/conversation/backends**", backend_fixture)
+    page.goto(server.base + "/#/backends")
+    page.wait_for_selector('[data-conversation-backend="claude"]', timeout=WAIT_MS)
+
+    page.locator("[data-backends-refresh]").click()
+    page.locator('[data-conversation-backend-update="codex"]').click()
+    page.locator('[data-conversation-backend-update="claude"]').click()
+
+    pending_updates["codex"].fulfill(
+        json={"outcome": "succeeded", "detail": "Codex updated.", "output_tail": ""}
+    )
+    pending_updates["claude"].fulfill(
+        json={"outcome": "succeeded", "detail": "Claude updated.", "output_tail": ""}
+    )
+    assert page.locator('[data-conversation-backend-update="codex"]').is_disabled()
+    assert page.locator('[data-conversation-backend-update="claude"]').is_disabled()
+
+    with page.expect_request(
+        lambda request: request.method == "GET" and request.url.endswith("/backends"),
+        timeout=WAIT_MS,
+    ):
+        pending_manual.pop().fulfill(json=initial)
+
+    page.wait_for_function(
+        """() => document.querySelector('[data-conversation-backend="codex"]')
+          ?.textContent.includes('2.1.0')""",
+        timeout=WAIT_MS,
+    )
+
+    assert len(catalogue_urls) == 3
+    assert catalogue_urls[1].endswith("/backends?refresh=true")
+    assert catalogue_urls[2].endswith("/backends")
+    assert "2.1.0" in page.locator('[data-conversation-backend="codex"]').inner_text()
+    assert "3.1.0" in page.locator('[data-conversation-backend="claude"]').inner_text()
+    assert page.locator('[data-conversation-backend-update="codex"]').is_enabled()
+    assert page.locator('[data-conversation-backend-update="claude"]').is_enabled()
+
+
 def test_provider_usage_presses_are_serialized_and_results_stay_isolated(
     server: ServerHandle, context_factory: Callable[[], BrowserContext]
 ) -> None:
