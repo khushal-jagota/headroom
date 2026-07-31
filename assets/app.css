@@ -545,6 +545,7 @@ textarea {
 }
 
 .shell-content {
+  min-width: 0;
   padding: var(--space-5);
 }
 
@@ -1139,6 +1140,16 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Markdown is rendered in tickets, previews, and conversation turns. Keep the
+ * rendered surface itself shrinkable so an intrinsically wide child can never
+ * widen the route that contains it. The child decides whether it wraps or gets
+ * an intentional local scroll area below. */
+.markdown {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .markdown p {
   margin: 0 0 var(--space-3);
 }
@@ -1187,6 +1198,8 @@ textarea {
 }
 
 .markdown pre {
+  min-width: 0;
+  max-width: 100%;
   background: var(--surface-sunken);
   padding: var(--space-3);
   border-radius: var(--radius-md);
@@ -1228,10 +1241,23 @@ textarea {
 }
 
 .markdown table {
+  display: block;
+  max-width: 100%;
   width: 100%;
   margin: 0 0 var(--space-3);
   border-collapse: collapse;
   font-size: var(--type-sm);
+  overflow-x: auto;
+}
+
+/* Ticket tables remain readable by scrolling the table itself when their
+ * columns are intrinsically wide. The page and Ticket document stay bounded;
+ * chat tables keep their existing fixed-layout, wrapped treatment. */
+.ticket-doc .markdown table th,
+.ticket-doc .markdown table td {
+  min-width: max-content;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .chat-thread .markdown table {
@@ -1352,7 +1378,7 @@ textarea {
   padding: var(--space-2) var(--space-3);
   background: var(--surface-raised);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  overflow-y: auto;
+  overflow: auto;
 }
 
 .file-preview-frame {
@@ -3622,6 +3648,8 @@ select {
 }
 
 .disclosure--stage > .disclosure-summary {
+  min-width: 0;
+  flex-wrap: wrap;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-2);
   color: var(--text-muted);
@@ -3700,6 +3728,7 @@ select {
 
 .disclosure--stage .disclosure-stage-name {
   flex: 1;
+  min-width: 0;
   font-size: var(--type-sm);
   text-transform: capitalize;
   color: var(--text-faint);
@@ -3722,6 +3751,10 @@ select {
 
 .ticket-stage-run {
   margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 1;
+  flex-wrap: wrap;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -3847,6 +3880,8 @@ select {
  * in, which is what the positioning is for. */
 .ticket-screen {
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
   position: relative;
 }
 
@@ -3860,7 +3895,10 @@ select {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
+  overflow: hidden;
   /* The gap under the conversation, matching the one between the nav and the ticket's
    * title, so the page breathes the same at both ends. On a notched phone the
    * safe-area inset wins, so the composer clears the home indicator. */
@@ -3870,9 +3908,10 @@ select {
 /* The ticket takes what the conversation is not using, and scrolls inside it. */
 .ticket-doc {
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
 }
 
 /* --- The conversation, the section under the ticket ------------------------ */
@@ -3899,6 +3938,8 @@ select {
   flex: none;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
 }
 
@@ -4004,6 +4045,8 @@ select {
  * bottom hairline — the line diet keeps rules to the stage spine and the conversation
  * layer's seam only; space, not a line, separates the header from the body. */
 .ticket-head {
+  min-width: 0;
+  max-width: 100%;
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
   padding: var(--space-5) var(--space-5) 0;
@@ -4014,6 +4057,8 @@ select {
 .ticket-identity {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--type-xs);
@@ -4097,6 +4142,8 @@ select {
 .ticket-operating {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-3);
   font-size: var(--type-sm);
@@ -4128,6 +4175,9 @@ select {
 
 .ticket-operating-actions {
   display: inline-flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   gap: var(--space-2);
   margin-left: auto;
 }
@@ -4144,6 +4194,8 @@ select {
 .ticket-leash {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--type-sm);
@@ -4160,6 +4212,8 @@ select {
  * a plain gap: the conversation is the section after this one rather than a layer over it,
  * so there is nothing here to hold clear of. */
 .ticket-col {
+  min-width: 0;
+  width: 100%;
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
   padding: var(--space-4) var(--space-5) var(--space-6);
@@ -4181,6 +4235,39 @@ select {
   font-family: var(--font-serif);
   font-size: var(--type-serif-sm);
   line-height: 1.6;
+}
+
+/* The stage/status line is useful context, but at phone widths it is secondary
+ * to the stage name. Move it to a full-width second line before it can force a
+ * ticket document wider than the viewport. */
+@media (max-width: 360px) {
+  .disclosure--stage > .disclosure-summary {
+    align-items: flex-start;
+  }
+
+  .ticket-stage-run {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+
+  .ticket-operating-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+}
+
+/* Short landscape phones need a little more of the ticket above a peeked
+ * conversation. Opened remains an explicit full-height reading mode. */
+@media (max-width: 720px) and (max-height: 480px) {
+  .ticket-conversation-layer:has([data-conversation-state="peeked"]) {
+    height: 52%;
+  }
+
+  .ticket-conversation-column {
+    padding-inline: var(--space-3);
+  }
 }
 
 .ticket-blockers {
