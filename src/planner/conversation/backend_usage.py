@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import tempfile
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -82,6 +83,25 @@ CODEX_USAGE_FRESHNESS: Final = timedelta(minutes=10)
 CODEX_USAGE_REFRESH_TIMEOUT_SECONDS: Final = 120.0
 CODEX_USAGE_REFRESH_MODEL: Final = "gpt-5.6-luna"
 _CODEX_REFRESH_PROMPT: Final = "Do not use tools. Reply with OK."
+_CODEX_REFRESH_DISABLED_FEATURES: Final = (
+    "shell_tool",
+    "unified_exec",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "computer_use",
+    "apps",
+    "image_generation",
+    "skill_search",
+    "skill_mcp_dependency_install",
+    "plugins",
+    "remote_plugin",
+    "multi_agent",
+    "multi_agent_v2",
+    "code_mode",
+    "code_mode_host",
+    "code_mode_only",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,10 +128,7 @@ class CodexUsageAdapter:
     async def refresh(self) -> BackendUsageResult:
         now = _as_utc(self._now())
         before = newest_codex_rate_limit_snapshot(self._rollout_root)
-        if (
-            before is not None
-            and timedelta(0) <= now - before.observed_at <= CODEX_USAGE_FRESHNESS
-        ):
+        if before is not None and timedelta(0) <= now - before.observed_at <= CODEX_USAGE_FRESHNESS:
             return _codex_success(before)
 
         executable = self._environment.executable_path("codex")
@@ -121,10 +138,14 @@ class CodexUsageAdapter:
                 outcome=BackendUsageOutcome.unavailable,
                 detail="Codex is not installed or not on PATH.",
             )
-        outcome = await self._environment.run(
-            codex_usage_refresh_command(executable),
-            timeout_seconds=CODEX_USAGE_REFRESH_TIMEOUT_SECONDS,
-        )
+        # Keep the refresh away from the server's repository and instructions. The CLI
+        # still uses the real CODEX_HOME for its existing login and for the rollout that
+        # carries the new rate-limit event; --ephemeral would prevent that event.
+        with tempfile.TemporaryDirectory(prefix="panels-codex-usage-") as work_directory:
+            outcome = await self._environment.run(
+                codex_usage_refresh_command(executable, Path(work_directory)),
+                timeout_seconds=CODEX_USAGE_REFRESH_TIMEOUT_SECONDS,
+            )
         if not outcome.succeeded:
             said = f"{outcome.standard_output}\n{outcome.standard_error}".lower()
             unauthenticated = "not logged in" in said or "login" in said and "required" in said
@@ -151,17 +172,16 @@ class CodexUsageAdapter:
         return _codex_success(after)
 
 
-def codex_usage_refresh_command(executable: str) -> tuple[str, ...]:
-    """The approved minimal request: luna, low reasoning, read-only, and no tools.
+def codex_usage_refresh_command(executable: str, work_directory: Path) -> tuple[str, ...]:
+    """Build the isolated request that causes Codex to persist one rate-limit event."""
 
-    ``codex exec`` has no flag that removes its built-in tools. Read-only prevents file
-    mutation; the single imperative sentence is the backend's no-tools instruction and
-    asks for the shortest ordinary answer that causes Codex to write a rate-limit event.
-    """
-
-    return (
+    command = (
         executable,
         "exec",
+        "--cd",
+        str(work_directory),
+        "--ignore-user-config",
+        "--ignore-rules",
         "--model",
         CODEX_USAGE_REFRESH_MODEL,
         "--config",
@@ -169,8 +189,11 @@ def codex_usage_refresh_command(executable: str) -> tuple[str, ...]:
         "--sandbox",
         "read-only",
         "--skip-git-repo-check",
-        _CODEX_REFRESH_PROMPT,
     )
+    disabled_features = tuple(
+        part for feature in _CODEX_REFRESH_DISABLED_FEATURES for part in ("--disable", feature)
+    )
+    return (*command, *disabled_features, _CODEX_REFRESH_PROMPT)
 
 
 def newest_codex_rate_limit_snapshot(root: Path) -> _CodexRateLimitSnapshot | None:
@@ -190,9 +213,7 @@ def newest_codex_rate_limit_snapshot(root: Path) -> _CodexRateLimitSnapshot | No
             except ValueError:
                 continue
             parsed = _parse_codex_rate_limit_event(event)
-            if parsed is not None and (
-                newest is None or parsed.observed_at > newest.observed_at
-            ):
+            if parsed is not None and (newest is None or parsed.observed_at > newest.observed_at):
                 newest = parsed
     return newest
 
@@ -217,7 +238,13 @@ def _parse_codex_rate_limit_event(event: Any) -> _CodexRateLimitSnapshot | None:
         used_percent = _percentage(window.get("used_percent"))
         resets_at = _parse_datetime(window.get("resets_at"))
         minutes = window.get("window_minutes")
-        if used_percent is None or resets_at is None or not isinstance(minutes, (int, float)):
+        if (
+            used_percent is None
+            or resets_at is None
+            or isinstance(minutes, bool)
+            or not isinstance(minutes, int)
+            or minutes <= 0
+        ):
             continue
         windows.append(
             BackendUsageWindow(
@@ -254,9 +281,7 @@ class UsageHttpResponse:
     body: Any
 
 
-type UsageHttpGet = Callable[
-    [str, Mapping[str, str], float], Awaitable[UsageHttpResponse]
-]
+type UsageHttpGet = Callable[[str, Mapping[str, str], float], Awaitable[UsageHttpResponse]]
 
 
 async def _http_get_usage(

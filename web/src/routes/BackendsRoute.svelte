@@ -21,6 +21,7 @@
 
   let backends = $state<BackendSnapshot[]>([]);
   let loading = $state(true);
+  let refreshingCatalogue = $state(false);
   let catalogueError = $state<string | null>(null);
   let updatingBackends = $state<Partial<Record<ConversationBackendKey, boolean>>>({});
   let updateResults = $state<Partial<Record<ConversationBackendKey, BackendUpdateResult>>>({});
@@ -34,7 +35,9 @@
   }
 
   async function loadBackends(refresh = false): Promise<void> {
+    if (refreshingCatalogue) return;
     loading = backends.length === 0;
+    refreshingCatalogue = true;
     catalogueError = null;
     try {
       backends = await readBackends(refresh);
@@ -42,6 +45,7 @@
       catalogueError = sentenceFor(error);
     } finally {
       loading = false;
+      refreshingCatalogue = false;
     }
   }
 
@@ -49,7 +53,8 @@
     if (updatingBackends[key]) return;
     updatingBackends = { ...updatingBackends, [key]: true };
     try {
-      updateResults = { ...updateResults, [key]: await updateBackend(key) };
+      const result = await updateBackend(key);
+      updateResults = { ...updateResults, [key]: result };
       await loadBackends();
     } catch (error) {
       updateResults = {
@@ -66,7 +71,8 @@
     usageRefreshing = { ...usageRefreshing, [key]: true };
     usageErrors = { ...usageErrors, [key]: null };
     try {
-      usageResults = { ...usageResults, [key]: await refreshBackendUsage(key) };
+      const result = await refreshBackendUsage(key);
+      usageResults = { ...usageResults, [key]: result };
     } catch (error) {
       usageErrors = { ...usageErrors, [key]: sentenceFor(error) };
     } finally {
@@ -86,8 +92,12 @@
       <h1>Backends</h1>
       <p>What this machine can run, how it is signed in, and the limits providers report.</p>
     </div>
-    <Button disabled={loading} onclick={() => void loadBackends(true)} data-backends-refresh>
-      {loading ? "Looking…" : "Look again"}
+    <Button
+      disabled={refreshingCatalogue}
+      onclick={() => void loadBackends(true)}
+      data-backends-refresh
+    >
+      {refreshingCatalogue ? "Looking…" : "Look again"}
     </Button>
   </header>
 
