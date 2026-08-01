@@ -17,6 +17,7 @@ from planner.worker_types.contracts import (
 )
 from planner.worker_types.debugging import DEBUGGING_WORKER_TYPE_DEFINITION
 from planner.worker_types.exploration import EXPLORATION_WORKER_TYPE_DEFINITION
+from planner.worker_types.general import GENERAL_WORKER_TYPE_DEFINITION
 from planner.worker_types.initiative_planning import INITIATIVE_PLANNING_WORKER_TYPE_DEFINITION
 from planner.worker_types.new_worker import NEW_WORKER_TYPE_DEFINITION
 from planner.worker_types.planning_day import PLANNING_DAY_WORKER_TYPE_DEFINITION
@@ -66,6 +67,7 @@ PROBE_KNOWN_SKILLS: frozenset[str] = frozenset(
     {
         "panels-worker",
         "panels-worker-coding",
+        "panels-worker-general",
         "panels-worker-debugging",
         "panels-worker-new-worker",
         "panels-worker-exploration",
@@ -84,6 +86,7 @@ def build_probe_registry() -> WorkerTypeRegistry:
     return WorkerTypeRegistry(
         (
             CODING_WORKER_TYPE_DEFINITION,
+            GENERAL_WORKER_TYPE_DEFINITION,
             DEBUGGING_WORKER_TYPE_DEFINITION,
             NEW_WORKER_TYPE_DEFINITION,
             EXPLORATION_WORKER_TYPE_DEFINITION,

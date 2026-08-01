@@ -40,6 +40,7 @@ def test_desktop_more_reaches_grouped_destinations_and_marks_secondary_route(
         "Config",
         "Backends",
         "Notifications",
+        "Scheduled tasks",
     ]
 
     menu.locator('a[href="#/config"]').click()
@@ -76,6 +77,7 @@ def test_every_more_destination_has_its_canonical_screen(
         ("#/config", '[data-screen="config"] [data-workers-list]'),
         ("#/backends", '[data-screen="backends"]'),
         ("#/notifications", '[data-screen="notifications"]'),
+        ("#/scheduled-tasks", '[data-screen="scheduled-tasks"]'),
     ]
 
     page.goto(server.base + "/#/workspace")

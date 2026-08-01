@@ -189,6 +189,13 @@ class _FakeMachine:
     def real_path(self, path: str) -> str:
         return path
 
+    def user_local_npm_prefix(self) -> str:
+        return str(Path.home() / ".local")
+
+    def prefix_is_owned_and_writable(self, prefix: str) -> bool:
+        del prefix
+        return False
+
     async def run(
         self,
         argv: Any,
