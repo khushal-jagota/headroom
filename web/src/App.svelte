@@ -1,22 +1,24 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
+  import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
-  import ChiefOfStaffRoute from "./routes/ChiefOfStaffRoute.svelte";
   import DayRoute from "./routes/DayRoute.svelte";
   import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
+  import NotificationsRoute from "./routes/NotificationsRoute.svelte";
   import ReviewRoute from "./routes/ReviewRoute.svelte";
   import ScheduledTasksRoute from "./routes/ScheduledTasksRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
   import AgentsRoute from "./routes/AgentsRoute.svelte";
+  import ConfigRoute from "./routes/ConfigRoute.svelte";
   import DevConversationRoute from "./routes/DevConversationRoute.svelte";
   import DevFilePreviewGalleryRoute from "./routes/DevFilePreviewGalleryRoute.svelte";
-  import VpsStatusPopover from "./components/VpsStatusPopover.svelte";
+  import ShellStatus from "./components/ShellStatus.svelte";
 
   type Route = {
     name: string;
@@ -25,10 +27,10 @@
   };
 
   const review = createQuery(() => queries.review());
-  const navStatusClearancePx = 8;
-
   let route = $state<Route>(parseRoute());
-  let shellNavElement: HTMLElement | null = null;
+  let moreOpen = $state(false);
+  let moreMenuElement = $state<HTMLDivElement | null>(null);
+  let moreButtonElement = $state<HTMLButtonElement | null>(null);
 
   function decodeRouteSegment(segment: string): string {
     try {
@@ -52,6 +54,14 @@
     const segments = path.split("/").filter(Boolean);
     const name = segments[0] || "day";
     const params: Record<string, string> = {};
+    if (name === "chief") {
+      window.location.replace("#/agents/chief-of-staff");
+      return {
+        name: "agents",
+        params: { roleKind: "chief" },
+        key: "agents"
+      };
+    }
     if (name === "ticket" && segments[1]) {
       params.id = segments[1];
     }
@@ -62,16 +72,40 @@
       const legacyDetail = segments[1]
         ? `/workers/${encodeURIComponent(decodeRouteSegment(segments[1]))}`
         : "";
-      window.location.replace(`#/agents${legacyDetail}`);
+      window.location.replace(`#/config${legacyDetail}`);
       return {
-        name: "agents",
+        name: "config",
         params: segments[1]
           ? { roleKind: "worker", id: decodeRouteSegment(segments[1]) }
           : { roleKind: "index" },
-        key: segments[1] ? `agents/workers/${segments[1]}` : "agents"
+        key: segments[1] ? `config/workers/${segments[1]}` : "config"
       };
     }
     if (name === "agents") {
+      if (segments[1] === "chief-of-staff" && segments.length === 2) {
+        params.roleKind = "chief";
+      } else if (segments[1] === "worker-skill" && segments.length === 2) {
+        window.location.replace("#/config/worker-skill");
+        return {
+          name: "config",
+          params: { roleKind: "skill", id: "panels-worker" },
+          key: "config/worker-skill"
+        };
+      } else if (segments[1] === "workers" && segments[2] && segments.length === 3) {
+        const workerType = decodeRouteSegment(segments[2]);
+        window.location.replace(`#/config/workers/${encodeURIComponent(workerType)}`);
+        return {
+          name: "config",
+          params: { roleKind: "worker", id: workerType },
+          key: `config/workers/${segments[2]}`
+        };
+      } else if (segments.length === 1) {
+        params.roleKind = "index";
+      } else {
+        params.roleKind = "unknown";
+      }
+    }
+    if (name === "config") {
       if (segments[1] === "chief-of-staff" && segments.length === 2) {
         params.roleKind = "agent";
         params.id = "chief_of_staff";
@@ -108,7 +142,12 @@
     if (name === "sprint" && search.has("item")) {
       params.item = search.get("item") || "";
     }
-    const screenKey = name === "workspace" || name === "board" ? "workspace" : segments.join("/") || "day";
+    const screenKey =
+      name === "workspace" || name === "board"
+        ? "workspace"
+        : name === "agents"
+          ? "agents"
+          : segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
 
@@ -122,83 +161,85 @@
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "documents";
     }
-    if (route.name === "agents") return route.params.roleKind !== "unknown";
+    if (route.name === "agents" || route.name === "config") {
+      return route.params.roleKind !== "unknown";
+    }
     if (route.name === "dev") {
       return route.params.sub === "conversation" || route.params.sub === "file-preview-gallery";
     }
     return [
       "day",
       "review",
-      "chief",
       "workspace",
       "board",
       "backlog",
       "ideas",
       "scheduled-tasks",
+      "backends",
+      "notifications",
       "preview"
     ].includes(route.name);
   }
 
-  function scrollActiveNavLinkIntoStatusClearance(): void {
-    if (!shellNavElement) return;
-    const activeLink = shellNavElement.querySelector<HTMLElement>(".shell-links .nav-link.active");
-    const statuses = shellNavElement.querySelector<HTMLElement>(".shell-statuses");
-    if (!activeLink || !statuses) return;
+  function secondaryRouteActive(): boolean {
+    return ["day", "sprint", "backlog", "ideas", "scheduled-tasks", "config", "backends", "notifications"].includes(route.name);
+  }
 
-    const navRect = shellNavElement.getBoundingClientRect();
-    const activeRect = activeLink.getBoundingClientRect();
-    const statusRect = statuses.getBoundingClientRect();
-    const clearLeft = navRect.left + navStatusClearancePx;
-    const clearRight = Math.min(navRect.right, statusRect.left) - navStatusClearancePx;
-    const maxScrollLeft = Math.max(0, shellNavElement.scrollWidth - shellNavElement.clientWidth);
-    let nextScrollLeft = shellNavElement.scrollLeft;
+  function screenTitle(): string {
+    if (route.name === "board" || route.name === "workspace") return "Workspace";
+    if (route.name === "ticket") return "Ticket";
+    if (route.name === "agents" && route.params.roleKind === "chief") return "Chief of Staff";
+    return `${route.name.charAt(0).toUpperCase()}${route.name.slice(1)}`;
+  }
 
-    if (activeRect.right > clearRight) {
-      nextScrollLeft += activeRect.right - clearRight;
-    }
-    if (activeRect.left < clearLeft) {
-      nextScrollLeft -= clearLeft - activeRect.left;
-    }
+  function closeMore(): void {
+    moreOpen = false;
+  }
 
-    nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, nextScrollLeft));
-    if (Math.abs(nextScrollLeft - shellNavElement.scrollLeft) > 0.5) {
-      shellNavElement.scrollLeft = nextScrollLeft;
+  function toggleMore(): void {
+    moreOpen = !moreOpen;
+  }
+
+  function onWindowPointerDown(event: PointerEvent): void {
+    if (
+      moreOpen &&
+      moreMenuElement &&
+      !moreMenuElement.contains(event.target as Node) &&
+      !moreButtonElement?.contains(event.target as Node)
+    ) {
+      closeMore();
     }
   }
 
-  async function alignActiveNavLinkAfterDomUpdate(): Promise<void> {
-    await tick();
-    scrollActiveNavLinkIntoStatusClearance();
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && moreOpen) {
+      closeMore();
+      moreButtonElement?.focus();
+    }
   }
-
-  $effect(() => {
-    route.key;
-    review.data?.running_worker_count;
-    $connectionStatus;
-    void alignActiveNavLinkAfterDomUpdate();
-  });
 
   onMount(() => {
     const onHash = () => {
       route = parseRoute();
+      closeMore();
     };
-    const onResize = () => scrollActiveNavLinkIntoStatusClearance();
     window.addEventListener("hashchange", onHash);
-    window.addEventListener("resize", onResize);
-    void alignActiveNavLinkAfterDomUpdate();
     startChangeStream();
     return () => {
       window.removeEventListener("hashchange", onHash);
-      window.removeEventListener("resize", onResize);
       stopChangeStream();
     };
   });
 </script>
 
+<svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} />
+
 <div class="shell">
-  <header class="shell-nav" bind:this={shellNavElement}>
+  <header class="shell-mobile-head">
+    <span class="shell-mobile-title" data-shell-screen-title>{screenTitle()}</span>
+  </header>
+  <header class="shell-nav">
     <nav class="shell-links">
-      <a class:active={currentNav("day")} class="nav-link" data-screen="day" href="#/day">Day</a>
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
         Review
         {#if (review.data?.items || []).length > 0}
@@ -208,22 +249,71 @@
         {/if}
       </a>
       <a class:active={currentNav("workspace")} class="nav-link" data-screen="workspace" href="#/workspace">Workspace</a>
-      <a class:active={currentNav("sprint")} class="nav-link" data-screen="sprint" href="#/sprint">Sprint</a>
-      <a class:active={currentNav("backlog")} class="nav-link" data-screen="backlog" href="#/backlog">Backlog</a>
-      <a class:active={currentNav("ideas")} class="nav-link" data-screen="ideas" href="#/ideas">Ideas</a>
-      <a class:active={currentNav("scheduled-tasks")} class="nav-link" data-screen="scheduled-tasks" href="#/scheduled-tasks">Scheduled tasks</a>
-      <a class:active={currentNav("agents")} class="nav-link" data-screen="agents" href="#/agents">Agents</a>
+      <a class:active={currentNav("agents")} class="nav-link" data-screen="agents-nav" href="#/agents">Agents</a>
+      <div class="shell-more">
+        <button
+          type="button"
+          class="nav-link shell-more-trigger"
+          class:active={secondaryRouteActive()}
+          bind:this={moreButtonElement}
+          aria-expanded={moreOpen}
+          aria-controls="shell-more-panel"
+          data-screen="more"
+          onclick={toggleMore}
+        >
+          More <span class="shell-more-caret" aria-hidden="true">▾</span>
+        </button>
+        {#if moreOpen}
+          <div
+            class="shell-more-menu"
+            bind:this={moreMenuElement}
+            id="shell-more-panel"
+            data-shell-more-menu
+          >
+            <div class="shell-more-grab" aria-hidden="true"></div>
+            <div class="shell-more-group">Planning</div>
+            <a class:active={currentNav("day")} href="#/day" onclick={closeMore}>Day</a>
+            <a class:active={currentNav("sprint")} href="#/sprint" onclick={closeMore}>Sprint</a>
+            <a class:active={currentNav("backlog")} href="#/backlog" onclick={closeMore}>Backlog</a>
+            <a class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
+            <div class="shell-more-divider"></div>
+            <div class="shell-more-group">System</div>
+            <a class:active={currentNav("config")} href="#/config" onclick={closeMore}>
+              <span>Config</span>
+            </a>
+            <a class:active={currentNav("backends")} href="#/backends" onclick={closeMore}>
+              <span>Backends</span>
+            </a>
+             <a class:active={currentNav("notifications")} href="#/notifications" onclick={closeMore}>
+               <span>Notifications</span>
+             </a>
+             <a
+               class:active={currentNav("scheduled-tasks")}
+               data-screen="scheduled-tasks"
+               href="#/scheduled-tasks"
+               onclick={closeMore}
+             >
+               <span>Scheduled tasks</span>
+             </a>
+           </div>
+         {/if}
+       </div>
     </nav>
-    <div class="shell-statuses">
-      {#if (review.data?.running_worker_count || 0) > 0}
-        <span class="shell-presence" data-shell-presence>
-          <span class="shell-presence-spin" aria-hidden="true"></span>
-          {review.data?.running_worker_count} working
-        </span>
-      {/if}
-      <VpsStatusPopover connectionState={$connectionStatus} />
-    </div>
   </header>
+  <div class="shell-statuses">
+    <ShellStatus
+      connectionState={$connectionStatus}
+      runningWorkerCount={review.data?.running_worker_count || 0}
+    />
+  </div>
+  {#if moreOpen}
+    <button
+      type="button"
+      class="shell-more-scrim"
+      aria-label="Close navigation menu"
+      onclick={closeMore}
+    ></button>
+  {/if}
 
   <main class="shell-content">
     {#if isKnownRoute()}
@@ -231,8 +321,6 @@
         <div class="screen screen-enter">
           {#if route.name === "day"}
             <DayRoute />
-          {:else if route.name === "chief"}
-            <ChiefOfStaffRoute />
           {:else if route.name === "review"}
             <ReviewRoute />
           {:else if route.name === "workspace" || route.name === "board"}
@@ -248,10 +336,16 @@
           {:else if route.name === "scheduled-tasks"}
             <ScheduledTasksRoute />
           {:else if route.name === "agents"}
-            <AgentsRoute
+            <AgentsRoute selectedAgent={route.params.roleKind === "chief" ? "chief-of-staff" : null} />
+          {:else if route.name === "config"}
+            <ConfigRoute
               roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"}
               roleId={route.params.id}
             />
+          {:else if route.name === "notifications"}
+            <NotificationsRoute />
+          {:else if route.name === "backends"}
+            <BackendsRoute />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
           {:else if route.name === "dev" && route.params.sub === "file-preview-gallery"}

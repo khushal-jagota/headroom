@@ -41,6 +41,11 @@ The database and managed-file tree are independently verified recovery artifacts
 back-to-back at nightly granularity; they are not a single transactional point-in-time. This is
 recoverability to recent state, not point-in-time versioning.
 
+Notification choices, device subscriptions, delivery state, and the Web Push identity
+are all part of the SQLite record. The ordinary verified database snapshot therefore
+preserves them together. Restoring that database keeps installed devices usable; replacing
+only the application does not rotate the identity.
+
 The general repository command is:
 
 ```sh

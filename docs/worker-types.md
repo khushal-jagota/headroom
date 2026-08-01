@@ -9,12 +9,14 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Nine Worker types ship today:
+Eleven Worker types ship today:
 
 - **`coding`** handles product and repository work.
 - **`general`** is the catch-all, chosen when no specialist type fits. It runs a
   deliberately minimal lifecycle — agree the task with the user, do it, then land its
   consequences — for arbitrary work.
+- **`debugging`** understands a reported software bug, diagnoses its structural cause,
+  and defines the implementation handoff without implementing it.
 - **`new_worker`** designs and lands a new kind of worker.
 - **`exploration`** is a worker for exploring something undefined and making it clearer.
 - **`initiative_planning`** works out the shared top-level how for a confirmed direction,
@@ -27,6 +29,7 @@ Nine Worker types ship today:
   14:30, agrees any useful intervention, carries it out, and records the result.
 - **`planning-sprint`** reviews the current sprint and plans the next at the final-day
   boundary, with canonical writes deferred until Closeout.
+- **`personal`** represents user-owned work, with optional explicit agent support.
 
 Tests also register **`probe`**. It has deliberately unfamiliar Stage and field names so
 the test suite catches code that still assumes every Ticket is coding-shaped. It is not a
@@ -51,11 +54,13 @@ advance targets, identify gates and terminals, calculate the default ceiling and
 working Stage, validate a Ticket position, and provide the field order used for
 external-work reconciliation.
 
-The shipped `coding` definition defaults every non-terminal Stage to worker ownership.
+The shipped `coding` and `debugging` definitions default every non-terminal Stage to
+worker ownership.
 `general` pairs only for Understanding, where the task is agreed with the user; its
-Execution and Closeout are worker-owned. `new_worker` starts with worker-owned Kickoff, then uses paired ownership for Understanding
-before worker-owned Stages and Thinking, pairs again for Runtime Defaults, then returns to
-worker-owned Drafting and Closeout. `exploration`
+Execution and Closeout are worker-owned. `new_worker` starts with worker-owned Kickoff,
+then uses paired
+ownership for Understanding before worker-owned Stages and Thinking, pairs again for
+Runtime Defaults, then returns to worker-owned Drafting and Closeout. `exploration`
 uses paired ownership for Understanding and Answer, where the user and worker establish
 the frame and reach the decision together; its other non-terminal Stages default to worker
 ownership. `initiative_planning` uses paired ownership for Question Answers, where
@@ -77,13 +82,15 @@ ownership overrides, and scope, but they do not define a coding lifecycle.
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/coding.py`,
 `src/planner/worker_types/general.py`,
+`src/planner/worker_types/debugging.py`,
 `src/planner/worker_types/new_worker.py`,
 `src/planner/worker_types/exploration.py`,
 `src/planner/worker_types/initiative_planning.py`,
 `src/planner/worker_types/product_design.py`,
 `src/planner/worker_types/planning_day.py`,
 `src/planner/worker_types/planning_midday_check.py`, and
-`src/planner/worker_types/planning_sprint.py` contain the nine shipped definitions.
+`src/planner/worker_types/planning_sprint.py`, and
+`src/planner/worker_types/personal.py` contain the eleven shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -142,8 +149,9 @@ behavior is needed. Rules under `src/planner/tickets/logic/` receive
 Application composition lives in `src/planner/worker_types/configuration.py`. It owns the
 catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
 definitions, and the production registry built from them. The shipped tuple currently
-contains `coding`, `general`, `new_worker`, `exploration`, `initiative_planning`,
-`product_design`, `planning-day`, `planning-midday-check`, and `planning-sprint`; its
+contains `coding`, `general`, `debugging`, `new_worker`, `exploration`, `initiative_planning`,
+`product_design`, `planning-day`, `planning-midday-check`, and
+`planning-sprint`, and `personal`; its
 order is also the manifest order.
 
 Which agent backends exist is not this composition's business. It is the conversation
@@ -172,9 +180,13 @@ effort. Every Stage also carries its default ownership mode; terminal Stages car
 The Ticket response supplies the current Stage's default and effective ownership, so
 clients do not reconstruct the rule.
 
+`panels worker-type list` exposes this same response at the command line. Its normal
+output lists the registered identifiers in registry order, while `--json` preserves the
+complete manifest for automation. The CLI does not maintain its own Worker-type list.
+
 The frontend derives one lifecycle per Worker type from this served manifest. It renders a
-Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `new_worker`,
-`exploration`, `initiative_planning`, `product_design`, `planning-day`, and
+Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `debugging`,
+`new_worker`, `exploration`, `initiative_planning`, `product_design`, `planning-day`,
 `planning-midday-check`, and `planning-sprint` Tickets therefore show their own Stage
 spines without frontend type tables.
 
@@ -188,7 +200,7 @@ move into the header or become a display of the worker's current settings.
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
 
-## Managed settings and the Agents page
+## Managed settings and the Config page
 
 The registry remains the immutable workflow definition. A managed source beside the
 database owns the ownership default for each existing non-terminal Stage and every
@@ -197,28 +209,28 @@ The packaged `src/planner/skills` tree seeds a new home only; it is never change
 the product and does not replace a managed edit. Hermes contains symlinks to the
 managed home, never copied overlays.
 
-The browser navigation and settings page is **Agents** at `#/agents`. It has exactly two
+The browser navigation and settings page is **Config** at `#/config`. It has exactly two
 quiet, whitespace-separated sections. Every destination is a whole-row link showing
 only its human-readable name, its current managed skill description, and a restrained
 arrow. The index does not show structural ids, skill names, launch settings, Stage
 counts, or configuration labels, and it keeps the same one-column order on narrow
 screens.
 
-- **Agents** contains Chief of Staff and the shared Worker role skill. Chief
-  opens at `#/agents/chief-of-staff` with Backend, Model, and Reasoning launch defaults
+- **Config** contains Chief of Staff and the shared Worker role skill. Chief
+  opens at `#/config/chief-of-staff` with Backend, Model, and Reasoning launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
-  skill opens at `#/agents/worker-skill`. It is shown as an Agent-like configurable
+  skill opens at `#/config/worker-skill`. It is shown as an Agent-like configurable
   role because it guides every Ticket worker, although it is not an independent
   runtime. Its name is read-only; its description and Markdown body edit the canonical
   skill through the shared skills home. It has no independent launch, model, reasoning,
   or Stage controls.
 - **Workers** links the configured Worker types. Each supporting line comes from that
   Worker's managed specialist skill. A Worker opens at
-  `#/agents/workers/<worker-type>` with its launch defaults, Stage ownership table, and
+  `#/config/workers/<worker-type>` with its launch defaults, Stage ownership table, and
   specialist skill editor. Worker identity and lifecycle structure stay read-only.
 
-Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/agents` and
-`#/agents/workers/<worker-type>`.
+Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/config` and
+`#/config/workers/<worker-type>`.
 
 A Ticket captures the managed ownership default when it enters a Stage. Later global
 changes affect only future entries; the Ticket's explicit Stage override still wins.
@@ -232,16 +244,19 @@ direct edits that save, fail, and retry independently. Successful skill edits re
 the configured planner Hermes home without changing existing Employee session ids.
 Codex and Claude Code use the same managed home.
 
-`GET /api/workers` serves the Agents-page destinations and Chief settings.
+`GET /api/workers` serves the Config-page destinations and Chief settings. The Chief
+entry also carries its current `conversation_id`, whether it is working or needs the
+owner, and the sequence where its latest turn ended; the Agents roster uses those
+conversation-owned signals without turning them into managed settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for the Worker role and specialist
 descriptions on the index. Worker and Chief endpoints edit skill description and body
 or launch defaults; the shared
 `PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill. A saved change
-announces itself, and any Agents screen on display refetches what it is showing.
+announces itself, and any Config screen on display refetches what it is showing.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
-`src/planner/environments/hermes_home.py`, and `web/src/routes/AgentsRoute.svelte`.
+`src/planner/environments/hermes_home.py`, and `web/src/routes/ConfigRoute.svelte`.
 
 ## The Ticket owns its launch setup
 
@@ -316,6 +331,7 @@ process is started again under it when there is a reason to.
 
 - `panels-worker-coding` guides coding Tickets.
 - `panels-worker-general` guides `general` Tickets.
+- `panels-worker-debugging` guides `debugging` Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
 - `panels-worker-exploration` guides `exploration` Tickets.
 - `panels-worker-initiative-planning` guides `initiative_planning` Tickets.
@@ -391,4 +407,4 @@ prefix, and reconciliation support before changing state.
 
 ---
 
-_Last verified: 2026-07-26._
+_Last verified: 2026-07-29._

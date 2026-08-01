@@ -38,7 +38,10 @@ Propose `planning` as the concise agreement and intended changes, not a transcri
 
 Apply the complete agreement through ordinary Panels planning surfaces. Make the four Day
 overview fields and roster exact, perform other agreed Ticket changes, then read the Day
-and affected Tickets back. Resolve ambiguous creation by readback and never bypass gates.
+and affected Tickets back. Before creating an agreed Ticket, load and follow
+`panels-ticket-creation`; the user's Day agreement remains the authority for what may be
+created or reshaped, and this stage owns exact application of that agreement. Resolve
+ambiguity by readback and never bypass gates.
 
 Propose a short verified `closeout`, and set a recap that tomorrow's Gather can understand
 without reading the conversation.

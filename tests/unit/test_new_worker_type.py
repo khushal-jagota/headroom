@@ -79,6 +79,7 @@ def test_production_registry_carries_new_worker() -> None:
     assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
         "coding",
         "general",
+        "debugging",
         "new_worker",
         "exploration",
         "initiative_planning",
@@ -86,6 +87,7 @@ def test_production_registry_carries_new_worker() -> None:
         "planning-day",
         "planning-midday-check",
         "planning-sprint",
+        "personal",
     )
     assert PRODUCTION_WORKER_TYPE_REGISTRY.require("new_worker").worker_type == "new_worker"
 

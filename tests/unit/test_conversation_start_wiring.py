@@ -125,6 +125,9 @@ class _LinkWatchingConversationSystem:
     async def has_pending_permission_ask(self, conversation_id: str) -> bool:
         return await self._system.has_pending_permission_ask(conversation_id)
 
+    async def has_pending_user_input(self, conversation_id: str) -> bool:
+        return await self._system.has_pending_user_input(conversation_id)
+
 
 class _WhoseFirstWriteFails(_LinkWatchingConversationSystem):
     """The fake, with every conversation it makes unable to take a write.
@@ -262,6 +265,9 @@ def test_the_start_request_carries_every_resolved_value(
 
             async def has_pending_permission_ask(self, conversation_id: str) -> bool:
                 return await system.has_pending_permission_ask(conversation_id)
+
+            async def has_pending_user_input(self, conversation_id: str) -> bool:
+                return await system.has_pending_user_input(conversation_id)
 
         conversation_id = await _started(_Recording(), tmp_db, ticket, _values(ticket.id), now=10)
 
@@ -439,6 +445,9 @@ class _RelinkingConversationSystem:
 
     async def has_pending_permission_ask(self, conversation_id: str) -> bool:
         return await self._system.has_pending_permission_ask(conversation_id)
+
+    async def has_pending_user_input(self, conversation_id: str) -> bool:
+        return await self._system.has_pending_user_input(conversation_id)
 
 
 def test_a_change_is_not_recorded_on_a_ticket_that_moved_to_another_conversation(
@@ -675,7 +684,7 @@ def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_default
         system = InMemoryConversationSystem()
         moved = ConversationStartValues(
             backend_key=ConversationBackendKey.hermes,
-            model="hermes-model",
+            model="openai-codex:gpt-5.6-sol",
             reasoning_effort=None,
             role_materials=worker_conversation_role_materials(ticket.id),
             workspace_folder=_WORKSPACE,
@@ -688,7 +697,7 @@ def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_default
         )
 
         assert values.backend_key is ConversationBackendKey.hermes
-        assert values.model == "hermes-model"
+        assert values.model == "openai-codex:gpt-5.6-sol"
         assert values.reasoning_effort is None
 
     asyncio.run(exercise())
@@ -721,13 +730,14 @@ def test_worker_resolve_applies_an_override_over_what_it_read(
         tmp_db,
         ticket,
         ConversationStartOverrides(
-            backend_key=ConversationBackendKey.hermes, model="hermes-model"
+            backend_key=ConversationBackendKey.hermes,
+            model="openai-codex:gpt-5.6-sol",
         ),
         workspace_folder=_WORKSPACE,
     )
 
     assert values.backend_key is ConversationBackendKey.hermes
-    assert values.model == "hermes-model"
+    assert values.model == "openai-codex:gpt-5.6-sol"
     assert values.reasoning_effort is None
 
 

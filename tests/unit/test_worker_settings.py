@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import concurrent.futures
 import json
 import shutil
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -84,6 +88,20 @@ def test_workers_api_composes_registry_with_managed_settings_and_signals_the_cha
     client, db_path = _app(tmp_path)
     with _counting_change_signals() as signals, client:
         index = client.get("/api/workers").json()
+        assert {
+            key: index["chief_of_staff"][key]
+            for key in (
+                "conversation_id",
+                "agent_working",
+                "needs_me",
+                "latest_turn_ended_sequence",
+            )
+        } == {
+            "conversation_id": None,
+            "agent_working": False,
+            "needs_me": False,
+            "latest_turn_ended_sequence": 0,
+        }
         assert [worker["worker_type"] for worker in index["workers"]] == list(
             configured_worker_type_registry().registered_worker_types()
         )
@@ -113,6 +131,58 @@ def test_workers_api_composes_registry_with_managed_settings_and_signals_the_cha
     # Worker settings live in files, not the database, so the one accepted write says so
     # itself; the rejected terminal-stage write says nothing.
     assert signals.count == 1
+
+
+def test_workers_roster_projects_live_chief_conversation_signals(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "agent-roster.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    conn.execute(
+        "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?)",
+        ("chief_of_staff", "conv-chief"),
+    )
+    conn.commit()
+    conversations = InMemoryConversationSystem()
+
+    class _ConversationRecord:
+        async def latest_turn_ended_sequences(
+            self, conversation_ids: Collection[str]
+        ) -> dict[str, int]:
+            assert tuple(conversation_ids) == ("conv-chief",)
+            return {"conv-chief": 17}
+
+    async def project() -> dict[str, object]:
+        await conversations.start_conversation(
+            ConversationStartRequest(conversation_id="conv-chief", model="a-model")
+        )
+        await conversations.send(
+            "conv-chief",
+            text_message_content("plan the day"),
+            sender_label="owner",
+        )
+        conversations.raise_permission_ask("conv-chief")
+        agents = await worker_settings_api.add_agent_conversation_signals(
+            [{"employee_id": "chief_of_staff"}],
+            conn,
+            conversations,
+            _ConversationRecord(),  # type: ignore[arg-type]
+        )
+        return agents[0]
+
+    try:
+        chief = asyncio.run(project())
+    finally:
+        conn.close()
+
+    assert chief == {
+        "employee_id": "chief_of_staff",
+        "conversation_id": "conv-chief",
+        "agent_working": True,
+        "needs_me": True,
+        "latest_turn_ended_sequence": 17,
+    }
 
 
 def test_skills_home_api_lists_and_edits_any_packaged_skill(
@@ -166,9 +236,9 @@ def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
         changed = client.put(
             "/api/workers/coding/launch-defaults",
             json={
-                "employee_backend": "claude",
-                "employee_launch_model": "claude-sonnet",
-                "employee_launch_reasoning_effort": "high",
+                "employee_backend": "hermes",
+                "employee_launch_model": "openai-codex:gpt-5.6-sol",
+                "employee_launch_reasoning_effort": None,
             },
         )
         assert changed.status_code == 200
@@ -196,7 +266,7 @@ def test_launch_defaults_are_file_backed_and_only_future_tickets_change(
             after.employee_backend,
             after.employee_launch_model,
             after.employee_launch_reasoning_effort,
-        ) == ("claude", "claude-sonnet", "high")
+        ) == ("hermes", "openai-codex:gpt-5.6-sol", None)
     finally:
         conn.close()
 

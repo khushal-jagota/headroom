@@ -10,6 +10,7 @@
   --surface-raised: #24211b;
   --surface-overlay: #26221c;
   --surface-sunken: #141210;
+  --surface-scrim: rgb(10 9 8 / 55%);
 
   /* Text tokens — descending emphasis.
    *
@@ -42,6 +43,18 @@
   /* The one pure white in the palette: the row dot for a worker waiting on a permission
    * ask. Nothing else is this bright, so "only you can answer this" reads at a glance. */
   --accent-needs-me: #fff;
+
+  /* Priority is strategic importance, not workflow state. These earthy fills and
+   * their paired light inks stay distinct from the slate-blue human-attention
+   * accent, the white needs-you dot, and the green completion signal. */
+  --priority-p0-fill: #7d2c26;
+  --priority-p0-ink: #ffe0db;
+  --priority-p1-fill: #512725;
+  --priority-p1-ink: #ecccc7;
+  --priority-p2-fill: #54331f;
+  --priority-p2-ink: #ecd8c6;
+  --priority-p3-fill: #534323;
+  --priority-p3-ink: #e9e4c6;
 
   /* Radius scale — even 4/8/12 progression */
   --radius-sm: 4px;

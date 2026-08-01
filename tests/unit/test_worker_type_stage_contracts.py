@@ -115,13 +115,15 @@ def test_http_contract_uses_only_worker_type_and_stage(tmp_path: Path) -> None:
         assert [item["worker_type"] for item in manifest.json()["worker_types"]] == [
             "coding",
             "general",
+            "debugging",
             "new_worker",
             "exploration",
             "initiative_planning",
             "product_design",
             "planning-day",
-            "planning-midday-check",
-            "planning-sprint",
+                "planning-midday-check",
+                "planning-sprint",
+                "personal",
         ]
         assert client.get("/api/ticket-types").status_code == 404
 

@@ -11,6 +11,7 @@ import os
 import platform
 import shutil
 import subprocess
+import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,12 @@ class VpsStatusPolicy:
     backup_critical_age: timedelta = timedelta(hours=72)
     log_warning_bytes: int = 25 * 1024**2
     temporary_expiry: timedelta = timedelta(hours=24)
+    cpu_warning_percent: float = 80.0
+    cpu_critical_percent: float = 95.0
+    ram_warning_percent: float = 80.0
+    ram_critical_percent: float = 95.0
+    disk_warning_used_percent: float = 85.0
+    disk_critical_used_percent: float = 92.0
 
 
 DEFAULT_VPS_STATUS_POLICY = VpsStatusPolicy()
@@ -67,6 +74,31 @@ class VpsStatusDependencies:
     process_lines: Callable[[], Iterable[str]] | None = None
     git_worktree_output: Callable[[Path], str] | None = None
     live_reference_paths: Callable[[], Iterable[Path]] = lambda: ()
+    read_text: Callable[[Path], str] = lambda path: path.read_text(
+        encoding="utf-8", errors="strict"
+    )
+    sleep: Callable[[float], None] = time.sleep
+    cpu_sample_seconds: float = 0.1
+
+
+@dataclass(frozen=True)
+class VpsStatusSummary:
+    deployed_sha: str | None
+    deployment: dict[str, object]
+    cpu: dict[str, object]
+    ram: dict[str, object]
+    disk: dict[str, object]
+    backup: dict[str, object]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "deployed_sha": self.deployed_sha,
+            "deployment": self.deployment,
+            "cpu": self.cpu,
+            "ram": self.ram,
+            "disk": self.disk,
+            "backup": self.backup,
+        }
 
 
 @dataclass(frozen=True)
@@ -193,6 +225,33 @@ def collect_vps_status(
     )
 
 
+def collect_vps_status_summary(
+    config: Config,
+    *,
+    deployment_outcome: str | None = None,
+    deployment_detail: str | None = None,
+    dependencies: VpsStatusDependencies | None = None,
+    policy: VpsStatusPolicy = DEFAULT_VPS_STATUS_POLICY,
+) -> VpsStatusSummary:
+    """Collect the small on-demand status model shown in the navigation."""
+
+    dependencies = dependencies or VpsStatusDependencies()
+    now = _utc(dependencies.now())
+    runtime_root = Path(config.db_path).expanduser().resolve(strict=False).parent
+    backup_root = Path(config.backup_dir).expanduser()
+    return VpsStatusSummary(
+        deployed_sha=config.app_sha,
+        deployment={
+            "outcome": deployment_outcome,
+            "detail": deployment_detail,
+        },
+        cpu=_cpu_summary(dependencies, policy),
+        ram=_ram_summary(dependencies, policy),
+        disk=_disk_summary(runtime_root, dependencies, policy),
+        backup=_backup_summary(backup_root, now, policy),
+    )
+
+
 def collect_cleanup_inventory(
     config: Config,
     *,
@@ -307,7 +366,15 @@ def _backup_section(root: Path, now: datetime, policy: VpsStatusPolicy) -> dict[
             "verified_snapshot_count": 0,
             "latest_verified_at": None,
         }
-    snapshots = verified_snapshots(root)
+    try:
+        snapshots = verified_snapshots(root)
+    except (OSError, TypeError, ValueError):
+        return {
+            "state": "unavailable",
+            "summary": "verified backup evidence could not be inspected",
+            "verified_snapshot_count": 0,
+            "latest_verified_at": None,
+        }
     if not snapshots:
         return {
             "state": "critical",
@@ -322,6 +389,8 @@ def _backup_section(root: Path, now: datetime, policy: VpsStatusPolicy) -> dict[
         created = json.loads((latest / "metadata.json").read_text(encoding="utf-8"))["created_at"]
         created_at = datetime.fromisoformat(created)
         age = now - _utc(created_at)
+        if age.total_seconds() < 0:
+            raise ValueError("verified backup timestamp is in the future")
     except (OSError, ValueError, KeyError, TypeError):
         return {
             "state": "review_needed",
@@ -330,9 +399,9 @@ def _backup_section(root: Path, now: datetime, policy: VpsStatusPolicy) -> dict[
             "latest_verified_at": None,
         }
     state: StatusState = "healthy"
-    if age > policy.backup_critical_age:
+    if age >= policy.backup_critical_age:
         state = "critical"
-    elif age > policy.backup_warning_age:
+    elif age >= policy.backup_warning_age:
         state = "warning"
     return {
         "state": state,
@@ -481,6 +550,138 @@ def _logs_section(root: Path, policy: VpsStatusPolicy) -> dict[str, object]:
         "file_count": count,
         "total_bytes": total,
     }
+
+
+def _cpu_summary(
+    dependencies: VpsStatusDependencies, policy: VpsStatusPolicy
+) -> dict[str, object]:
+    if dependencies.platform_name() != "Linux":
+        return _unavailable_measure("used_percent", "CPU evidence requires Linux /proc")
+    try:
+        first = _parse_cpu_totals(dependencies.read_text(Path("/proc/stat")))
+        dependencies.sleep(dependencies.cpu_sample_seconds)
+        second = _parse_cpu_totals(dependencies.read_text(Path("/proc/stat")))
+    except (OSError, UnicodeError, ValueError):
+        return _unavailable_measure("used_percent", "CPU evidence is unavailable")
+    total_delta = second[0] - first[0]
+    idle_delta = second[1] - first[1]
+    counters_reset = len(first[2]) != len(second[2]) or any(
+        after < before for before, after in zip(first[2], second[2], strict=False)
+    )
+    if counters_reset or total_delta <= 0 or idle_delta < 0 or idle_delta > total_delta:
+        return _unavailable_measure("used_percent", "CPU counters did not advance safely")
+    used_percent = round((total_delta - idle_delta) / total_delta * 100, 1)
+    return {
+        "used_percent": used_percent,
+        "state": _percent_state(
+            used_percent, policy.cpu_warning_percent, policy.cpu_critical_percent
+        ),
+        "unavailable_reason": None,
+    }
+
+
+def _parse_cpu_totals(value: str) -> tuple[int, int, tuple[int, ...]]:
+    first_line = value.splitlines()[0] if value.splitlines() else ""
+    fields = first_line.split()
+    if not fields or fields[0] != "cpu" or len(fields) < 5:
+        raise ValueError("missing aggregate CPU counters")
+    # guest and guest_nice are already included in user and nice; the kernel's
+    # aggregate utilization convention therefore uses the first eight counters.
+    counters = tuple(int(field) for field in fields[1:9])
+    if any(counter < 0 for counter in counters):
+        raise ValueError("negative CPU counter")
+    idle = counters[3] + (counters[4] if len(counters) > 4 else 0)
+    return sum(counters), idle, counters
+
+
+def _ram_summary(
+    dependencies: VpsStatusDependencies, policy: VpsStatusPolicy
+) -> dict[str, object]:
+    if dependencies.platform_name() != "Linux":
+        return _unavailable_measure("used_percent", "RAM evidence requires Linux /proc")
+    try:
+        values: dict[str, int] = {}
+        for line in dependencies.read_text(Path("/proc/meminfo")).splitlines()[:256]:
+            key, separator, remainder = line.partition(":")
+            fields = remainder.strip().split()
+            if separator and fields and fields[0].isdecimal():
+                values[key] = int(fields[0])
+        total = values["MemTotal"]
+        available = values["MemAvailable"]
+        if total <= 0 or available < 0 or available > total:
+            raise ValueError("invalid RAM counters")
+    except (OSError, UnicodeError, KeyError, ValueError):
+        return _unavailable_measure("used_percent", "RAM evidence is unavailable")
+    used_percent = round((total - available) / total * 100, 1)
+    return {
+        "used_percent": used_percent,
+        "state": _percent_state(
+            used_percent, policy.ram_warning_percent, policy.ram_critical_percent
+        ),
+        "unavailable_reason": None,
+    }
+
+
+def _disk_summary(
+    root: Path, dependencies: VpsStatusDependencies, policy: VpsStatusPolicy
+) -> dict[str, object]:
+    if not root.is_dir():
+        return _unavailable_measure("used_percent", "runtime disk path is unavailable")
+    try:
+        stats = dependencies.statvfs(str(root))
+        total = stats.f_frsize * stats.f_blocks
+        available = stats.f_frsize * stats.f_bavail
+        if total <= 0 or available < 0 or available > total:
+            raise ValueError("invalid disk counters")
+    except (OSError, ValueError):
+        return _unavailable_measure("used_percent", "disk evidence is unavailable")
+    used_percent = round((total - available) / total * 100, 1)
+    return {
+        "used_percent": used_percent,
+        "state": _percent_state(
+            used_percent,
+            policy.disk_warning_used_percent,
+            policy.disk_critical_used_percent,
+        ),
+        "unavailable_reason": None,
+    }
+
+
+def _backup_summary(
+    root: Path, now: datetime, policy: VpsStatusPolicy
+) -> dict[str, object]:
+    section = _backup_section(root, now, policy)
+    age = section.get("age_seconds")
+    if not isinstance(age, int):
+        return _unavailable_measure(
+            "age_seconds",
+            str(section["summary"]),
+            state="critical" if section["state"] == "critical" else "unavailable",
+        )
+    return {
+        "age_seconds": age,
+        "state": section["state"],
+        "unavailable_reason": None,
+    }
+
+
+def _unavailable_measure(
+    value_key: Literal["used_percent", "age_seconds"],
+    reason: str,
+    *,
+    state: StatusState = "unavailable",
+) -> dict[str, object]:
+    return {value_key: None, "state": state, "unavailable_reason": reason}
+
+
+def _percent_state(
+    used_percent: float, warning_percent: float, critical_percent: float
+) -> StatusState:
+    if used_percent >= critical_percent:
+        return "critical"
+    if used_percent >= warning_percent:
+        return "warning"
+    return "healthy"
 
 
 def _resources_section(dependencies: VpsStatusDependencies) -> dict[str, object]:

@@ -167,6 +167,7 @@ function whatThisRowSays(row: TranscriptRow, ownSenderLabel: string): Happened |
     case "turn_stopped":
       return { who: null, text: TURN_STOPPED_SENTENCE };
     case "permission_ask":
+    case "user_input":
     case "plan_updated":
     case "model_changed":
     case "token_usage":

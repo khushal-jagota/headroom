@@ -1,10 +1,11 @@
-"""The process-wide "something was written" signal.
+"""The process-wide "canonical evidence changed" signal.
 
-One signal, no payload and no vocabulary: it says a transaction committed, not what
-changed. Whoever cares re-reads what they are holding. Subscribers are called on
-whichever thread committed, so a subscriber must be cheap and thread-safe — setting a
-``threading.Event`` or handing work to an event loop, never real work and never a
-database write.
+One signal, no payload and no vocabulary: it says a canonical source changed, not what
+changed. SQLite emits after a transaction commits; bounded observers emit after an
+externally owned evidence file changes. Whoever cares re-reads what they are holding.
+Subscribers are called on whichever thread noticed the change, so a subscriber must be
+cheap and thread-safe — setting a ``threading.Event`` or handing work to an event loop,
+never real work and never a database write.
 
 The signal is best-effort by design. A subscriber that raises is logged and skipped,
 because the database and the readiness loop's periodic timer remain the canonical
@@ -40,7 +41,7 @@ def subscribe(callback: Callable[[], None]) -> Callable[[], None]:
 
 
 def emit() -> None:
-    """Tell every subscriber that a transaction committed."""
+    """Tell every subscriber that canonical evidence changed."""
     with _lock:
         current = tuple(_subscribers)
     for callback in current:

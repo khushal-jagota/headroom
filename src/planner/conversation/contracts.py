@@ -466,3 +466,7 @@ class ConversationSystem(Protocol):
         conversation — or one that has never been started — has no pending ask.
         """
         ...
+
+    async def has_pending_user_input(self, conversation_id: str) -> bool:
+        """Whether the running turn is waiting for answers to an agent question request."""
+        ...

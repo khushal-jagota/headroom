@@ -27,6 +27,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
+from planner.conversation.backend_usage import (
+    BackendUsageResult,
+    BackendUsageService,
+    production_backend_usage_service,
+)
 from planner.conversation.backends.contracts import BackendChildFactory
 from planner.conversation.contracts import (
     ConversationAccess,
@@ -45,6 +51,8 @@ from planner.conversation.events import (
     ModelThinkingFrame,
     PermissionAskedEventPayload,
     ToolCallProgressFrame,
+    UserInputAnswer,
+    UserInputRequestedEventPayload,
     conversation_event_payload_to_canonical_json,
 )
 from planner.conversation.image_validation import (
@@ -91,6 +99,7 @@ class ConversationRuntime:
     system: SqliteProcessConversationSystem
     live_tail: ConversationLiveTail
     backend_snapshots: BackendSnapshotService
+    backend_usage: BackendUsageService
     message_files: ConversationMessageFiles
     sse_heartbeat_ms: int
 
@@ -115,6 +124,7 @@ def build_conversation_runtime(
     store = ConversationStore(db_path, busy_timeout_ms=db_busy_timeout_ms)
     live_tail = ConversationLiveTail()
     message_files = ConversationMessageFiles(db_path)
+    backend_lifecycle = BackendLifecycleCoordinator()
     return ConversationRuntime(
         store=store,
         system=SqliteProcessConversationSystem(
@@ -122,9 +132,11 @@ def build_conversation_runtime(
             backend_child_factories=backend_child_factories,
             message_files=message_files,
             live_tail=live_tail,
+            backend_lifecycle=backend_lifecycle,
         ),
         live_tail=live_tail,
-        backend_snapshots=BackendSnapshotService(),
+        backend_snapshots=BackendSnapshotService(backend_lifecycle=backend_lifecycle),
+        backend_usage=production_backend_usage_service(),
         message_files=message_files,
         sse_heartbeat_ms=sse_heartbeat_ms,
     )
@@ -236,6 +248,15 @@ class OwnerSendBody(BaseModel):
 class PermissionAnswerBody(BaseModel):
     ask_id: str
     option_id: str
+
+
+class UserInputQuestionAnswerBody(BaseModel):
+    answers: list[str]
+
+
+class UserInputAnswerBody(BaseModel):
+    request_id: str
+    answers: dict[str, UserInputQuestionAnswerBody]
 
 
 # --- starting, reading, writing -----------------------------------------------------------
@@ -397,6 +418,22 @@ async def answer_permission_ask(
     return {"landed": landed}
 
 
+@router.post("/conversations/{conversation_id}/user-input-answers")
+async def answer_user_input(
+    conversation_id: str, body: UserInputAnswerBody, runtime: Runtime
+) -> dict[str, bool]:
+    """Give the backend the complete answer map for one question request."""
+    landed = await runtime.system.answer_user_input(
+        conversation_id,
+        body.request_id,
+        tuple(
+            UserInputAnswer(question_id=question_id, answers=tuple(answer.answers))
+            for question_id, answer in body.answers.items()
+        ),
+    )
+    return {"landed": landed}
+
+
 # --- the backends on this machine ---------------------------------------------------------
 
 
@@ -413,6 +450,14 @@ async def update_backend(
 ) -> dict[str, Any]:
     """Run this backend's update, then look again and say which of three things happened."""
     return _update_result_json(await runtime.backend_snapshots.update_backend(backend_key))
+
+
+@router.post("/backends/{backend_key}/usage-refresh")
+async def refresh_backend_usage(
+    backend_key: ConversationBackendKey, runtime: Runtime
+) -> dict[str, Any]:
+    """Acquire usage only because a person explicitly asked for it."""
+    return _usage_result_json(await runtime.backend_usage.refresh(backend_key))
 
 
 # --- turning values into JSON ---------------------------------------------------------------
@@ -500,6 +545,7 @@ async def _conversation_view(
         "is_running": await runtime.system.is_running(conversation_id),
         "held_prompt_count": await runtime.system.held_prompt_count(conversation_id),
         "pending_permission_ask": await _pending_permission_ask(runtime, conversation_id),
+        "pending_user_input": await _pending_user_input(runtime, conversation_id),
     }
 
 
@@ -530,6 +576,43 @@ async def _pending_permission_ask(
                         "option_kind": option.option_kind,
                     }
                     for option in payload.options
+                ],
+            }
+    return None
+
+
+async def _pending_user_input(
+    runtime: ConversationRuntime, conversation_id: str
+) -> dict[str, Any] | None:
+    """The pending request, rebuilt from its durable row after a refresh."""
+    waiting = await runtime.system.pending_user_input_request_ids(conversation_id)
+    if not waiting:
+        return None
+    events = await runtime.store.read_events_after(conversation_id, 0)
+    for event in reversed(events):
+        payload = event.payload
+        if (
+            isinstance(payload, UserInputRequestedEventPayload)
+            and payload.request_id in waiting
+        ):
+            return {
+                "request_id": payload.request_id,
+                "questions": [
+                    {
+                        "question_id": question.question_id,
+                        "header": question.header,
+                        "question": question.question,
+                        "options": [
+                            {
+                                "label": option.label,
+                                "description": option.description,
+                            }
+                            for option in question.options
+                        ],
+                        "multi_select": question.multi_select,
+                        "allow_other": question.allow_other,
+                    }
+                    for question in payload.questions
                 ],
             }
     return None
@@ -697,6 +780,27 @@ def _update_result_json(result: BackendUpdateResult) -> dict[str, Any]:
         "outcome": str(result.outcome),
         "detail": result.detail,
         "output_tail": result.output_tail,
+    }
+
+
+def _usage_result_json(result: BackendUsageResult) -> dict[str, Any]:
+    return {
+        "backend_key": str(result.backend_key),
+        "outcome": str(result.outcome),
+        "detail": result.detail,
+        "observed_at": (
+            None
+            if result.observed_at is None
+            else result.observed_at.isoformat().replace("+00:00", "Z")
+        ),
+        "windows": [
+            {
+                "name": window.name,
+                "used_percent": window.used_percent,
+                "resets_at": window.resets_at.isoformat().replace("+00:00", "Z"),
+            }
+            for window in result.windows
+        ],
     }
 
 

@@ -178,10 +178,12 @@ textarea {
 /* --- Shell --------------------------------------------------------------- */
 
 .shell {
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .shell-nav {
+  position: relative;
+  z-index: 11;
   display: flex;
   align-items: center;
   gap: var(--space-5);
@@ -198,8 +200,11 @@ textarea {
 }
 
 .nav-link {
+  display: inline-flex;
+  align-items: center;
   color: var(--text-faint);
   font-size: var(--type-sm);
+  font-family: inherit;
   text-decoration: none;
   transition: color var(--motion-base) var(--motion-ease);
 }
@@ -211,6 +216,79 @@ textarea {
 .nav-link.active {
   color: var(--text-strong);
   font-weight: 500;
+}
+
+.shell-more {
+  position: relative;
+}
+
+.shell-more-trigger {
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.shell-more-caret {
+  color: var(--text-faintest);
+  font-size: 10px;
+}
+
+.shell-more-menu {
+  position: absolute;
+  z-index: 13;
+  top: calc(100% + var(--space-4));
+  left: 0;
+  min-width: 224px;
+  padding: var(--space-2);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-float);
+}
+
+.shell-more-group {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.shell-more-menu a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+  text-decoration: none;
+}
+
+.shell-more-menu a:hover,
+.shell-more-menu a.active {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+.shell-more-subtitle {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+}
+
+.shell-more-divider {
+  height: var(--border-hairline);
+  margin: var(--space-2) var(--space-1);
+  background: var(--border-color);
+}
+
+.shell-more-grab,
+.shell-more-scrim,
+.shell-mobile-head {
+  display: none;
 }
 
 .nav-link--review {
@@ -235,53 +313,53 @@ textarea {
 }
 
 .shell-statuses {
-  margin-left: auto;
+  position: fixed;
+  z-index: 12;
+  top: 0;
+  right: var(--space-5);
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  height: var(--shell-nav-height);
   min-width: 0;
 }
 
-.vps-status {
-  position: relative;
-}
-
-.vps-status-trigger,
-.vps-status-refresh {
-  border: 0;
-  background: transparent;
+.shell-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
   color: var(--text-faintest);
-  font: inherit;
   font-size: var(--type-xs);
-  cursor: pointer;
 }
 
-.vps-status-trigger {
+.shell-connection {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   white-space: nowrap;
 }
 
-.vps-status-trigger:hover,
-.vps-status-trigger:focus-visible,
-.vps-status-refresh:hover,
-.vps-status-refresh:focus-visible {
-  color: var(--text-strong);
-}
-
-.vps-status-mark {
+.shell-connection-mark {
   width: var(--space-2);
   height: var(--space-2);
   border-radius: var(--radius-pill);
   background: var(--accent-done);
 }
 
-.vps-status-trigger[data-state="reconnecting"] {
+.shell-status[data-status-state="preparing"] {
+  color: var(--accent-bright);
+}
+
+.shell-status[data-status-state="preparing"] .shell-connection-mark {
+  background: var(--accent-bright);
+}
+
+.shell-status[data-status-state="restarting"],
+.shell-status[data-status-state="reconnecting"] {
   color: var(--text-faint);
 }
 
-.vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
+.shell-status[data-status-state="restarting"] .shell-connection-mark,
+.shell-status[data-status-state="reconnecting"] .shell-connection-mark {
   background: transparent;
   border: var(--border-hairline) solid var(--text-faintest);
   border-top-color: var(--text-muted);
@@ -289,33 +367,22 @@ textarea {
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
 
-.vps-status-popover {
-  position: absolute;
-  z-index: 3;
-  top: calc(100% + var(--space-3));
-  right: 0;
-  width: min(340px, calc(100vw - var(--space-8)));
-  padding: var(--space-4);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-base);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-float);
+.shell-status[data-status-state="restarting"] .shell-connection-mark {
+  border-color: var(--accent-surface);
+  border-top-color: var(--accent-bright);
 }
 
-.vps-status-heading,
-.vps-status-list > div {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-4);
+.shell-status[data-status-state="back_up"] {
+  color: var(--accent-done);
 }
 
-.vps-status-list { margin: var(--space-3) 0 0; }
-.vps-status-list > div { padding: var(--space-2) 0; border-top: var(--border-hairline) solid var(--border-color); }
-.vps-status-list dt, .vps-status-list dd { margin: 0; font-size: var(--type-xs); }
-.vps-status-list dd { color: var(--text-faint); text-align: right; }
-.vps-status-list > div[data-state="warning"] dd { color: var(--accent-bright); }
-.vps-status-list > div[data-state="critical"] dd { color: var(--accent-error); }
-.vps-status-error { color: var(--accent-error); font-size: var(--type-xs); }
+.shell-status[data-status-state="problem"] {
+  color: var(--accent-error);
+}
+
+.shell-status[data-status-state="problem"] .shell-connection-mark {
+  background: var(--accent-error);
+}
 
 .shell-presence {
   display: flex;
@@ -340,34 +407,145 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
-  .vps-status-trigger[data-state="reconnecting"] .vps-status-mark {
+  .shell-status[data-status-state="reconnecting"] .shell-connection-mark,
+  .shell-status[data-status-state="restarting"] .shell-connection-mark {
     animation: none;
   }
 }
 
 @media (max-width: 720px) {
-  .shell-nav {
-    overflow-x: auto;
+  .shell {
+    padding-top: var(--shell-nav-height);
+    padding-bottom: calc(var(--shell-nav-height) + env(safe-area-inset-bottom));
   }
 
-  .shell-links {
-    gap: var(--space-4);
-  }
-
-  .shell-statuses {
-    flex: none;
-    position: sticky;
-    right: 0;
-    padding-left: var(--space-3);
+  .shell-mobile-head {
+    position: fixed;
+    z-index: 10;
+    inset: 0 0 auto;
+    display: flex;
+    align-items: center;
+    height: var(--shell-nav-height);
+    padding: 0 var(--space-4);
+    border-bottom: var(--border-hairline) solid var(--border-color);
     background: var(--surface-base);
   }
 
-  .shell-presence {
+  .shell-mobile-title {
+    overflow: hidden;
+    color: var(--text-strong);
+    font-size: var(--type-md);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .shell-nav {
+    position: fixed;
+    z-index: 12;
+    inset: auto 0 0;
+    height: auto;
+    min-height: var(--shell-nav-height);
+    padding: 0 0 env(safe-area-inset-bottom);
+    border-top: var(--border-hairline) solid var(--border-color);
+    border-bottom: 0;
+    background: var(--surface-raised);
+  }
+
+  .shell-links {
+    width: 100%;
+    gap: 0;
+  }
+
+  .shell-links > .nav-link,
+  .shell-more {
+    flex: 1;
+  }
+
+  .shell-links > .nav-link,
+  .shell-more-trigger {
+    justify-content: center;
+    width: 100%;
+    min-height: var(--shell-nav-height);
+    padding: var(--space-3) var(--space-2);
+    color: var(--text-faintest);
+    font-size: var(--type-sm);
+  }
+
+  .shell-links .nav-link.active {
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+
+  .shell-more-caret {
     display: none;
+  }
+
+  .nav-link--review {
+    position: relative;
+  }
+
+  .nav-link--review .nav-badge {
+    position: absolute;
+    top: var(--space-1);
+    left: calc(50% + var(--space-5));
+  }
+
+  .shell-statuses {
+    right: var(--space-4);
+  }
+
+  .shell-more-menu {
+    position: fixed;
+    z-index: 14;
+    inset: auto 0 0;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3)
+      calc(var(--space-5) + env(safe-area-inset-bottom));
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .shell-more-menu a {
+    padding: var(--space-3) var(--space-2);
+    font-size: var(--type-md);
+  }
+
+  .shell-more-grab {
+    display: block;
+    width: 34px;
+    height: 4px;
+    margin: var(--space-2) auto var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--border-color);
+  }
+
+  .shell-more-scrim {
+    position: fixed;
+    z-index: 11;
+    inset: 0;
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: var(--surface-scrim);
+  }
+}
+
+@media (max-width: 390px) {
+  .vps-status-popover {
+    position: fixed;
+    top: calc(var(--space-12) + var(--space-2));
+    right: var(--space-3);
+    left: var(--space-3);
+    width: auto;
   }
 }
 
 .shell-content {
+  min-width: 0;
   padding: var(--space-5);
 }
 
@@ -422,6 +600,117 @@ textarea {
 }
 
 /* --- Agents and Workers -------------------------------------------------- */
+
+.shell:has(.agents-screen) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell:has(.agents-screen) .shell-content {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+.shell:has(.agents-screen) .screen,
+.agents-screen {
+  height: 100%;
+  min-height: 0;
+}
+
+.agents-workspace-shell {
+  display: grid;
+  grid-template-columns: clamp(23rem, 38vw, 32rem) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.agents-workspace-roster {
+  min-width: 0;
+  overflow: auto;
+  padding: var(--space-5);
+  border-right: var(--border-hairline) solid var(--border-color);
+}
+
+.agents-roster-list {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.agents-roster-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  color: inherit;
+  text-decoration: none;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+
+.agents-roster-row:hover {
+  background: var(--surface-raised);
+}
+
+.agents-roster-row.active {
+  background: var(--surface-overlay);
+}
+
+.agents-roster-row:focus-visible,
+.agents-conversation-back:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
+.agents-roster-name {
+  min-width: 0;
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-roster-row .stage-mark {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.agents-workspace-conversation {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-5) var(--space-6);
+  background: var(--surface-sunken);
+}
+
+.agents-conversation-back {
+  display: none;
+}
+
+.agents-conversation-shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.chief-conversation-resource {
+  align-self: flex-start;
+}
+
+.chief-conversation-resource .button {
+  margin-top: var(--space-3);
+}
 
 .agents-page {
   max-width: var(--measure-index);
@@ -851,6 +1140,16 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Markdown is rendered in tickets, previews, and conversation turns. Keep the
+ * rendered surface itself shrinkable so an intrinsically wide child can never
+ * widen the route that contains it. The child decides whether it wraps or gets
+ * an intentional local scroll area below. */
+.markdown {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .markdown p {
   margin: 0 0 var(--space-3);
 }
@@ -899,6 +1198,8 @@ textarea {
 }
 
 .markdown pre {
+  min-width: 0;
+  max-width: 100%;
   background: var(--surface-sunken);
   padding: var(--space-3);
   border-radius: var(--radius-md);
@@ -940,10 +1241,23 @@ textarea {
 }
 
 .markdown table {
+  display: block;
+  max-width: 100%;
   width: 100%;
   margin: 0 0 var(--space-3);
   border-collapse: collapse;
   font-size: var(--type-sm);
+  overflow-x: auto;
+}
+
+/* Ticket tables remain readable by scrolling the table itself when their
+ * columns are intrinsically wide. The page and Ticket document stay bounded;
+ * chat tables keep their existing fixed-layout, wrapped treatment. */
+.ticket-doc .markdown table th,
+.ticket-doc .markdown table td {
+  min-width: max-content;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .chat-thread .markdown table {
@@ -1064,7 +1378,7 @@ textarea {
   padding: var(--space-2) var(--space-3);
   background: var(--surface-raised);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  overflow-y: auto;
+  overflow: auto;
 }
 
 .file-preview-frame {
@@ -1211,30 +1525,6 @@ textarea {
   color: var(--text-default);
   white-space: nowrap;
   line-height: 1.6;
-}
-
-.chip--p0 {
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border-color: var(--accent-bright);
-}
-
-.chip--p1 {
-  background: var(--surface-overlay);
-  color: var(--text-strong);
-  border-color: var(--text-muted);
-}
-
-.chip--p2 {
-  background: var(--surface-overlay);
-  color: var(--text-default);
-  border-color: var(--text-faint);
-}
-
-.chip--p3 {
-  background: transparent;
-  color: var(--text-muted);
-  border-color: var(--text-faint);
 }
 
 .chip--state {
@@ -2302,7 +2592,7 @@ select {
 }
 
 .review-empty-state {
-  min-height: calc(100vh - (var(--space-7) * 4));
+  min-height: calc(100dvh - (var(--space-7) * 4));
   max-width: calc(var(--space-7) * 8);
   margin: 0 auto;
   padding: var(--space-7) var(--space-4);
@@ -2375,6 +2665,27 @@ select {
 
 .review-ticket-title:hover {
   color: var(--accent-bright);
+}
+
+.review-ticket-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.review-ticket-heading .review-ticket-title {
+  min-width: 0;
+}
+
+.review-kickoff-priority {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: var(--type-sm);
+}
+
+.review-kickoff-priority [data-review-priority-error] {
+  margin-top: var(--space-2);
 }
 
 /* The context block: a sans RECAP label, then the serif recap, then the collapsed
@@ -2660,54 +2971,16 @@ select {
   background: var(--surface-base);
 }
 
-/* The chief pane centers its chat to a readable measure, like the mockup's desk. */
-.board-workspace-desk-inner {
+.board-workspace-empty-inspector {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   min-height: 0;
   min-width: 0;
   flex: 1;
-  width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
 }
-
-/* Chief of Staff is a top-level peer of the project headers: it carries the same
- * serif project-label weight and sits first in the rail, above the projects. It is a
- * navigation target (not a collapsing group), so its selected/hover state is a fill —
- * and it keeps the chief row's original --board-workspace-rail-pad-x horizontal inset,
- * so that fill sits inset exactly as before. */
-.board-workspace-chief-peer {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-strong);
-  cursor: pointer;
-  padding: var(--space-2) var(--board-workspace-rail-pad-x);
-  text-align: left;
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-chief-peer:hover,
-.board-workspace-chief-peer.active {
-  background: var(--surface-overlay);
-}
-
-.board-workspace-chief-peer-label {
-  min-width: 0;
-  font-family: var(--font-serif);
-  font-size: calc(var(--space-7) - var(--space-2));
-  font-weight: 500;
-  line-height: 1;
-}
-
-/* The project filter sits between Chief of Staff and the first bucket, and its
- * own margin-bottom carries the one top-level gap above the buckets — so Chief
- * of Staff reads as a sibling area above the filter and status buckets. */
 
 /* Status buckets — the rail's one level. Each bucket is a box (the worker-section
  * idiom), headed by the serif voice one scale below the project headers. A bucket
@@ -2773,7 +3046,8 @@ select {
   opacity: 1;
 }
 
-/* Ticket rows contain only the title and the existing condition mark. */
+/* Ticket rows keep priority in a fixed leading gutter, followed by the title and
+ * the existing condition mark. Priority never displaces the status signal. */
 .list-row--board {
   width: 100%;
   display: flex;
@@ -2807,6 +3081,7 @@ select {
 
 .list-row--board .list-row-title {
   display: block;
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
   color: inherit;
@@ -2815,6 +3090,46 @@ select {
 
 .board-workspace-stage-mark {
   flex: 0 0 auto;
+}
+
+/* --- Priority tile ------------------------------------------------------- */
+
+.priority-tile {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: var(--space-5);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.priority-tile--p0 {
+  color: var(--priority-p0-ink);
+  background: var(--priority-p0-fill);
+}
+
+.priority-tile--p1 {
+  color: var(--priority-p1-ink);
+  background: var(--priority-p1-fill);
+}
+
+.priority-tile--p2 {
+  color: var(--priority-p2-ink);
+  background: var(--priority-p2-fill);
+}
+
+.priority-tile--p3 {
+  color: var(--priority-p3-ink);
+  background: var(--priority-p3-fill);
 }
 
 /* --- Ticket screen (T16) ------------------------------------------------- */
@@ -3333,6 +3648,8 @@ select {
 }
 
 .disclosure--stage > .disclosure-summary {
+  min-width: 0;
+  flex-wrap: wrap;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-2);
   color: var(--text-muted);
@@ -3411,6 +3728,7 @@ select {
 
 .disclosure--stage .disclosure-stage-name {
   flex: 1;
+  min-width: 0;
   font-size: var(--type-sm);
   text-transform: capitalize;
   color: var(--text-faint);
@@ -3433,6 +3751,10 @@ select {
 
 .ticket-stage-run {
   margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 1;
+  flex-wrap: wrap;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -3558,6 +3880,8 @@ select {
  * in, which is what the positioning is for. */
 .ticket-screen {
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
   position: relative;
 }
 
@@ -3571,7 +3895,10 @@ select {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
+  overflow: hidden;
   /* The gap under the conversation, matching the one between the nav and the ticket's
    * title, so the page breathes the same at both ends. On a notched phone the
    * safe-area inset wins, so the composer clears the home indicator. */
@@ -3581,9 +3908,10 @@ select {
 /* The ticket takes what the conversation is not using, and scrolls inside it. */
 .ticket-doc {
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
 }
 
 /* --- The conversation, the section under the ticket ------------------------ */
@@ -3610,6 +3938,8 @@ select {
   flex: none;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
 }
 
@@ -3715,6 +4045,8 @@ select {
  * bottom hairline — the line diet keeps rules to the stage spine and the conversation
  * layer's seam only; space, not a line, separates the header from the body. */
 .ticket-head {
+  min-width: 0;
+  max-width: 100%;
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
   padding: var(--space-5) var(--space-5) 0;
@@ -3725,6 +4057,8 @@ select {
 .ticket-identity {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--type-xs);
@@ -3765,12 +4099,8 @@ select {
 }
 
 .ticket-identity-priority {
-  color: var(--text-default);
-  font-weight: 700;
-}
-
-.ticket-identity-priority--urgent {
-  color: var(--accent-error);
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .ticket-identity-key,
@@ -3812,6 +4142,8 @@ select {
 .ticket-operating {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-3);
   font-size: var(--type-sm);
@@ -3843,6 +4175,9 @@ select {
 
 .ticket-operating-actions {
   display: inline-flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   gap: var(--space-2);
   margin-left: auto;
 }
@@ -3859,6 +4194,8 @@ select {
 .ticket-leash {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--type-sm);
@@ -3875,6 +4212,8 @@ select {
  * a plain gap: the conversation is the section after this one rather than a layer over it,
  * so there is nothing here to hold clear of. */
 .ticket-col {
+  min-width: 0;
+  width: 100%;
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
   padding: var(--space-4) var(--space-5) var(--space-6);
@@ -3896,6 +4235,39 @@ select {
   font-family: var(--font-serif);
   font-size: var(--type-serif-sm);
   line-height: 1.6;
+}
+
+/* The stage/status line is useful context, but at phone widths it is secondary
+ * to the stage name. Move it to a full-width second line before it can force a
+ * ticket document wider than the viewport. */
+@media (max-width: 360px) {
+  .disclosure--stage > .disclosure-summary {
+    align-items: flex-start;
+  }
+
+  .ticket-stage-run {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+
+  .ticket-operating-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+}
+
+/* Short landscape phones need a little more of the ticket above a peeked
+ * conversation. Opened remains an explicit full-height reading mode. */
+@media (max-width: 720px) and (max-height: 480px) {
+  .ticket-conversation-layer:has([data-conversation-state="peeked"]) {
+    height: 52%;
+  }
+
+  .ticket-conversation-column {
+    padding-inline: var(--space-3);
+  }
 }
 
 .ticket-blockers {
@@ -3988,6 +4360,38 @@ select {
   }
   .board-workspace-right {
     display: none;
+  }
+
+  .agents-workspace-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .agents-workspace-roster {
+    border-right: 0;
+    padding: var(--space-5);
+  }
+
+  .agents-workspace-conversation {
+    display: none;
+  }
+
+  .agents-workspace-shell--focused .agents-workspace-roster {
+    display: none;
+  }
+
+  .agents-workspace-shell--focused .agents-workspace-conversation {
+    display: flex;
+    padding: var(--space-5);
+  }
+
+  .agents-conversation-back {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+    text-decoration: none;
+    margin-bottom: var(--space-3);
   }
 }
 
@@ -4318,13 +4722,6 @@ select {
   background: var(--surface-overlay);
 }
 
-[data-screen="sprint"] .trow .pr {
-  min-width: 20px;
-  white-space: nowrap;
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-}
-
 [data-screen="sprint"] .trow .t {
   flex: 1;
   min-width: 0;
@@ -4475,6 +4872,10 @@ select {
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
   color: var(--text-faintest);
+}
+
+[data-screen="backlog"] .grp > .section-heading .section-heading-label {
+  display: inline-flex;
 }
 
 [data-screen="backlog"] .grp > .section-heading .section-heading-count {
@@ -5009,4 +5410,101 @@ select {
 [data-screen="backlog"] [data-commit].button:hover:not(:disabled),
 [data-screen="ideas"] [data-commit].button:hover:not(:disabled) {
   filter: brightness(1.08);
+}
+
+/* Notifications — one quiet settings column; choices are content, not cards. */
+[data-screen="notifications"] {
+  width: min(100%, var(--measure-index));
+  margin: 0 auto;
+  padding: var(--space-7) var(--space-5) var(--space-page-tail);
+}
+
+.notifications-head .eyebrow,
+.notifications-section h2 {
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.notifications-head h1 {
+  margin: var(--space-2) 0 var(--space-7);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-display);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.notifications-section {
+  margin-bottom: var(--space-7);
+}
+
+.notifications-section h2 {
+  margin: 0 0 var(--space-3);
+}
+
+.notification-option {
+  display: flex;
+  gap: var(--space-5);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) 0;
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  cursor: pointer;
+}
+
+.notification-option strong,
+.notification-option small {
+  display: block;
+}
+
+.notification-option strong {
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
+.notification-option small,
+.notifications-section p {
+  margin-top: var(--space-1);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  color: var(--text-muted);
+}
+
+.notification-option input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  accent-color: var(--accent-bright);
+}
+
+.notification-action {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--text-default);
+  background: var(--surface-raised);
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.notification-action--primary {
+  color: var(--accent-ink);
+  background: var(--accent-bright);
+  font-weight: 600;
+}
+
+.notification-action:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+@media (max-width: 720px) {
+  [data-screen="notifications"] {
+    padding: var(--space-5) var(--space-4) var(--space-page-tail);
+  }
 }

@@ -11,8 +11,8 @@ The pin these models were generated under:
     from the dump's        codex_app_server_protocol.schemas.json
     dump digest (sha256)   5469280cfbdaa12f6d28e2206f942da808f8b699ce6c43b13f2439d843432f38
     pruned and vendored    schema/codex_app_server_protocol.subset.schema.json
-    subset digest (sha256) 4baa7cc1e44c69b08bed0ff7712e703e7e6154ffeb1a9b7e5dfc2ced099058aa
-    definitions generated  104
+    subset digest (sha256) f061a9b4655186c657b67babf6be001eff84ec9ce8375993d0daf2bc00d85176
+    definitions generated  109
 
 The digests are taken over the JSON's meaning — keys sorted — so they change
 when the protocol changes and not when the dump is printed differently.
@@ -71,6 +71,28 @@ class InitializeCapabilities(BaseModel):
 class InitializeParams(BaseModel):
     capabilities: InitializeCapabilities | None = None
     clientInfo: ClientInfo
+
+
+class ToolRequestUserInputAnswer(BaseModel):
+    answers: list[str]
+
+
+class ToolRequestUserInputOption(BaseModel):
+    description: str
+    label: str
+
+
+class ToolRequestUserInputQuestion(BaseModel):
+    header: str
+    id: str
+    isOther: bool | None = False
+    isSecret: bool | None = False
+    options: list[ToolRequestUserInputOption] | None = None
+    question: str
+
+
+class ToolRequestUserInputResponse(BaseModel):
+    answers: dict[str, ToolRequestUserInputAnswer]
 
 
 class ApiKeyAccount(BaseModel):
@@ -264,6 +286,7 @@ class ModelListParams(BaseModel):
 
 
 class ModelServiceTier(BaseModel):
+    description: str
     id: str
     name: str
 
@@ -293,6 +316,7 @@ class ReasoningEffort(RootModel[str]):
 
 
 class ReasoningEffortOption(BaseModel):
+    description: str
     reasoningEffort: Annotated[str, Field(min_length=1)]
 
 
@@ -479,12 +503,12 @@ class ThreadResumeParams(BaseModel):
     config: dict[str, Any] | None = None
     cwd: str | None = None
     developerInstructions: str | None = None
+    personality: Literal["none", "friendly", "pragmatic"] | None = None
     serviceTier: str | None = None
-    threadId: str
     sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
     model: str | None = None
     modelProvider: str | None = None
-    personality: Literal["none", "friendly", "pragmatic"] | None = None
+    threadId: str
 
 
 class NotLoadedThreadStatus(BaseModel):
@@ -600,6 +624,14 @@ class NetworkPolicyAmendment(BaseModel):
     host: str
 
 
+class ToolRequestUserInputParams(BaseModel):
+    autoResolutionMs: Annotated[int | None, Field(ge=0)] = None
+    itemId: str
+    questions: list[ToolRequestUserInputQuestion]
+    threadId: str
+    turnId: str
+
+
 class ChatgptAccount(BaseModel):
     email: str | None
     planType: Literal[
@@ -658,6 +690,7 @@ class Model1(BaseModel):
     availabilityNux: ModelAvailabilityNux | None = None
     defaultReasoningEffort: Annotated[str, Field(min_length=1)]
     defaultServiceTier: str | None = None
+    description: str
     displayName: str
     hidden: bool
     id: str
@@ -763,11 +796,11 @@ class ThreadStartParams(BaseModel):
     config: dict[str, Any] | None = None
     cwd: str | None = None
     developerInstructions: str | None = None
-    serviceTier: str | None = None
     personality: Literal["none", "friendly", "pragmatic"] | None = None
-    ephemeral: bool | None = None
-    threadSource: str | None = None
     sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
+    ephemeral: bool | None = None
+    serviceTier: str | None = None
+    threadSource: str | None = None
     sessionStartSource: Literal["startup", "clear"] | None = None
     model: str | None = None
     modelProvider: str | None = None
@@ -824,7 +857,7 @@ class TurnPlanUpdatedNotification(BaseModel):
 
 
 class TurnStartParams(BaseModel):
-    summary: Literal["auto", "concise", "detailed"] | Literal["none"] | None = None
+    threadId: str
     approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval | None = (
         None
     )
@@ -850,7 +883,7 @@ class TurnStartParams(BaseModel):
         | MentionUserInput
     ]
     model: str | None = None
-    threadId: str
+    summary: Literal["auto", "concise", "detailed"] | Literal["none"] | None = None
     outputSchema: Any | None = None
     personality: Literal["none", "friendly", "pragmatic"] | None = None
 
@@ -1020,10 +1053,10 @@ class Thread(BaseModel):
     createdAt: int
     cwd: str
     ephemeral: bool
-    turns: list[Turn]
+    updatedAt: int
     forkedFromId: str | None = None
     gitInfo: GitInfo | None = None
-    updatedAt: int
+    turns: list[Turn]
     id: str
     modelProvider: str
     name: str | None = None
@@ -1041,21 +1074,21 @@ class Thread(BaseModel):
 
 
 class ThreadResumeResponse(BaseModel):
-    thread: Thread
+    serviceTier: str | None = None
     approvalPolicy: Literal["untrusted", "on-request", "never"] | GranularAskForApproval
     approvalsReviewer: Literal["user", "auto_review", "guardian_subagent"]
     cwd: str
+    thread: Thread
+    instructionSources: list[str] | None = []
     sandbox: (
         DangerFullAccessSandboxPolicy
         | ReadOnlySandboxPolicy
         | ExternalSandboxSandboxPolicy
         | WorkspaceWriteSandboxPolicy
     )
-    instructionSources: list[str] | None = []
-    reasoningEffort: ReasoningEffort | None = None
     model: str
     modelProvider: str
-    serviceTier: str | None = None
+    reasoningEffort: ReasoningEffort | None = None
 
 
 class ThreadStartResponse(BaseModel):

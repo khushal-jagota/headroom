@@ -139,6 +139,15 @@ def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
         f'[data-card][data-ticket-id="{ticket_id}"]',
     )
     mark = f'[data-card][data-ticket-id="{ticket_id}"] .board-workspace-stage-mark'
+    row = page.locator(f'[data-card][data-ticket-id="{ticket_id}"]')
+    assert row.locator('[data-priority-tile="P3"]').count() == 1
+    assert row.evaluate(
+        """element => [...element.children].map(child =>
+          child.matches("[data-priority-tile]") ? "priority" :
+          child.matches(".list-row-title") ? "title" :
+          child.matches(".board-workspace-stage-mark") ? "stage" : "other"
+        )"""
+    ) == ["priority", "title", "stage"]
     # A conversation whose turns have never ended has nothing waiting for anybody.
     assert page.get_attribute(mark, "data-latest-turn-ended") == "0"
     assert page.get_attribute(mark, "data-stage-state") == "upcoming"
@@ -177,7 +186,8 @@ def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
 
     # A reply seen is a POSITION, not a flag: leave the Ticket, let a second turn end
     # past where this browser read, and the row is waiting again.
-    page.click("[data-chief-of-staff-button]")
+    page.goto(server.base + "/#/workspace")
+    page.wait_for_selector(mark, timeout=WAIT_MS)
     _append_rows(
         server,
         conversation_id,

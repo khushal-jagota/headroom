@@ -36,6 +36,18 @@ beforeEach(() => {
 
 describe("query catalogue", () => {
   it.each([
+    [
+      "deployment status",
+      () => queries.deploymentStatus(),
+      ["deployment-status"],
+      "/api/deployment-status"
+    ],
+    [
+      "VPS status summary",
+      () => queries.vpsStatusSummary(),
+      ["vps-status-summary"],
+      "/api/vps-status-summary"
+    ],
     ["board", () => queries.board(), ["board"], "/api/board"],
     ["review", () => queries.review(), ["review"], "/api/review"],
     ["today's day", () => queries.todayDay(), ["day", "today"], "/api/day/today"],
@@ -131,6 +143,8 @@ describe("query catalogue", () => {
   });
 
   it("exposes stable shared-resource keys", () => {
+    expect(queries.deploymentStatus().queryKey).toEqual(["deployment-status"]);
+    expect(queries.vpsStatusSummary().queryKey).toEqual(["vps-status-summary"]);
     expect(queries.projects().queryKey).toEqual(["projects"]);
     expect(queries.schedules().queryKey).toEqual(["schedules"]);
     expect(queries.workerTypeManifests().queryKey).toEqual(["worker-types"]);

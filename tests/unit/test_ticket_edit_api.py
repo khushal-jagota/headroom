@@ -456,9 +456,13 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
                 backend_key,
                 (
                     BackendModel(
-                        model_id="probe-a", reasoning_effort_options=("low", "high")
+                        model_id="openai-codex:gpt-5.6-sol",
+                        reasoning_effort_options=("low", "high"),
                     ),
-                    BackendModel(model_id="probe-b", reasoning_effort_options=("low",)),
+                    BackendModel(
+                        model_id="openai-codex:gpt-5.5",
+                        reasoning_effort_options=("low",),
+                    ),
                 ),
                 ("low", "high"),
             )
@@ -472,11 +476,15 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         app.state.conversation = SimpleNamespace(backend_snapshots=BackendSnapshots())
         selected = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "probe-a", "high"),
+            json=_employee_configuration_body(
+                "hermes", "openai-codex:gpt-5.6-sol", "high"
+            ),
         )
         model_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "probe-b", "high"),
+            json=_employee_configuration_body(
+                "hermes", "openai-codex:gpt-5.5", "high"
+            ),
         )
         backend_changed = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
@@ -484,21 +492,23 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         )
         switched_back = client.put(
             f"/api/tickets/{ticket_id}/employee-configuration",
-            json=_employee_configuration_body("hermes", "probe-a", "high"),
+            json=_employee_configuration_body(
+                "hermes", "openai-codex:gpt-5.6-sol", "high"
+            ),
         )
 
     assert selected.status_code == 200
     assert (
         selected.json()["employee_launch_model"],
         selected.json()["employee_launch_reasoning_effort"],
-    ) == ("probe-a", "high")
+    ) == ("openai-codex:gpt-5.6-sol", "high")
     assert model_changed.status_code == 200
     # probe-b takes only "low", and the model changed in the same write, so the effort
     # that no longer applies falls back to the new model's own rather than being refused.
     assert (
         model_changed.json()["employee_launch_model"],
         model_changed.json()["employee_launch_reasoning_effort"],
-    ) == ("probe-b", None)
+    ) == ("openai-codex:gpt-5.5", None)
     # A backend change is taken whole. Nothing carries over from the backend being left —
     # a model id belongs to the backend that named it — so the body is the whole answer,
     # and there is no catalog of the new backend's to weigh it against here.
@@ -513,7 +523,7 @@ def test_employee_configuration_writer_normalizes_worker_and_model_dependencies(
         switched_back.json()["employee_backend"],
         switched_back.json()["employee_launch_model"],
         switched_back.json()["employee_launch_reasoning_effort"],
-    ) == ("hermes", "probe-a", "high")
+    ) == ("hermes", "openai-codex:gpt-5.6-sol", "high")
 
 
 def test_employee_configuration_refuses_a_model_the_backend_does_not_offer(

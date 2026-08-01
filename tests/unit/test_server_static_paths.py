@@ -82,12 +82,22 @@ def test_static_assets_are_served_when_cwd_has_no_assets(
         root = client.get("/")
         css = client.get("/assets/app.css")
         favicon = client.get("/static/favicon.ico")
+        manifest = client.get("/static/manifest.webmanifest")
+        service_worker = client.get("/service-worker.js")
 
     assert root.status_code == 200
     assert "data-svelte-app" in root.text
     assert css.status_code == 200
     assert ".ticket-page" in css.text
     assert favicon.status_code == 200
+    assert manifest.status_code == 200
+    assert manifest.json()["display"] == "standalone"
+    assert {icon["sizes"] for icon in manifest.json()["icons"]} == {"192x192", "512x512"}
+    assert service_worker.status_code == 200
+    assert service_worker.headers["content-type"].startswith("application/javascript")
+    assert service_worker.headers["cache-control"] == "no-cache"
+    assert "notificationclick" in service_worker.text
+    assert "fetch" not in service_worker.text
 
 
 def test_static_asset_paths_remain_anchored_to_repository_root() -> None:

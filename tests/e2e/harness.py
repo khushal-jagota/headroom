@@ -69,3 +69,9 @@ class ApiHelper:
         assert resp.status_code < 300, f"PATCH {path} -> {resp.status_code}: {resp.text}"
         answer: JsonObject = resp.json()
         return answer
+
+    def direct_put(self, server: ServerHandle, path: str, json_body: JsonObject) -> JsonObject:
+        resp = httpx.put(server.base + path, json=json_body, timeout=10.0)
+        assert resp.status_code < 300, f"PUT {path} -> {resp.status_code}: {resp.text}"
+        answer: JsonObject = resp.json()
+        return answer

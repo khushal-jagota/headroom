@@ -37,6 +37,7 @@ from tests.support.conversation_system_under_test import (
 from planner.conversation.backends import hermes_acp
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
+    BackendUserInputRequest,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
@@ -94,6 +95,7 @@ def _message_files() -> ConversationMessageFiles:
 
 ROLE_TEXT = "You are the worker on ticket t-1."
 IDENTITY_VARIABLE = ("PANELS_IDENTITY_TICKET_ID", "t-1")
+HERMES_QUALIFIED_MODEL = "openai-codex:gpt-5.6-sol"
 
 REAL_HERMES_TESTS_ENVIRONMENT_NAME = "PANELS_REAL_HERMES_TESTS"
 HERMES_EXECUTABLE = Path.home() / ".hermes/hermes-agent/venv/bin/hermes"
@@ -135,7 +137,7 @@ def test_the_start_requests_values_reach_the_child_process(tmp_path: Path) -> No
             await subject.system.start_conversation(
                 ConversationStartRequest(
                     conversation_id="c",
-                    model="a-model",
+                    model=HERMES_QUALIFIED_MODEL,
                     backend_key=ConversationBackendKey.hermes,
                     role_materials=ConversationRoleMaterials(
                         role_text=ROLE_TEXT, identity_environment_variables=(IDENTITY_VARIABLE,)
@@ -441,28 +443,33 @@ def test_a_change_that_cannot_be_put_back_starts_the_child_again(tmp_path: Path)
         async with open_conversation_system_under_test() as subject:
             await subject.system.start_conversation(
                 ConversationStartRequest(
-                    conversation_id="c", model="first-model", workspace_folder=tmp_path
+                    conversation_id="c",
+                    model=HERMES_QUALIFIED_MODEL,
+                    workspace_folder=tmp_path,
                 )
             )
             await subject.system.send("c", text_message_content("one"), sender_label="owner")
             await subject.complete_running_turn("c")
-            assert await subject.backend_model("c") == "first-model"
+            assert await subject.backend_model("c") == HERMES_QUALIFIED_MODEL
 
             # The next thing this agent answers is the last thing it answers.
             await subject.tell_agent("c", {"command": "break_wire_at_next_answer"})
             fate = await subject.system.send(
-                "c", text_message_content("two"), sender_label="owner", model_change="second-model"
+                "c",
+                text_message_content("two"),
+                sender_label="owner",
+                model_change=HERMES_OTHER_MODEL,
             )
             assert fate == PromptDeliveryStarted()
 
             account = await subject.agent_account("c")
             assert account["sessions_loaded"] == 1
             assert account["loaded_from"] == "scripted-session-1"
-            assert account["model"] == "second-model"
+            assert account["model"] == HERMES_OTHER_MODEL
             # The account is the conversation's, not the process's: the child that was
             # started again is the same agent on the same session, and it was told both.
             assert [write["text"] for write in account["prompt_writes"]] == ["one", "two"]
-            assert await subject.backend_model("c") == "second-model"
+            assert await subject.backend_model("c") == HERMES_OTHER_MODEL
 
     _run(exercise, seconds=90.0)
 
@@ -1047,6 +1054,16 @@ class _RecordingSink:
     ) -> None:
         self.asks.append(ask)
         self._an_ask_arrived.set()
+
+    async def user_input_requested(
+        self, turn_token: TurnToken, request: BackendUserInputRequest
+    ) -> None:
+        del turn_token, request
+
+    async def user_input_failed(
+        self, turn_token: TurnToken, *, request_id: str, detail: str
+    ) -> None:
+        del turn_token, request_id, detail
 
     async def turn_ended(
         self,

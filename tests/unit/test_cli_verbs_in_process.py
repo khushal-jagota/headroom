@@ -12,6 +12,7 @@ import httpx
 import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
+from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
 from planner.cli.main import main as cli_main
 from planner.core.clock import build_clock
@@ -121,6 +122,66 @@ def api(
     cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper],
 ) -> ApiHelper:
     return cli_app[2]
+
+
+@pytest.fixture
+def probe_worker_type() -> Iterator[None]:
+    install_probe_registry()
+    try:
+        yield
+    finally:
+        uninstall_probe_registry()
+
+
+def test_worker_type_list_json_preserves_the_registry_manifest(
+    probe_worker_type: None,
+    server: ServerHandle,
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    expected = api.get(server, "/api/worker-types")
+
+    listed = cli(server, "worker-type", "list")
+
+    assert listed == expected
+    assert listed["worker_types"][-1]["worker_type"] == "probe"
+
+
+def test_worker_type_list_human_output_uses_registry_order(
+    probe_worker_type: None,
+    cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper],
+) -> None:
+    server, _, api = cli_app
+    expected = api.get(server, "/api/worker-types")
+
+    result = CliRunner().invoke(
+        cli_main,
+        ["worker-type", "list"],
+        env={"PLAN_SERVER_URL": server.base},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        item["worker_type"] for item in expected["worker_types"]
+    ]
+    assert result.stdout.splitlines()[-1] == "probe"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("schedule", "create"),
+        ("ticket", "create"),
+        ("chief", "create-ticket-from-external-work"),
+    ],
+)
+def test_worker_type_inputs_point_to_the_listing_command(
+    command: tuple[str, ...],
+) -> None:
+    result = CliRunner().invoke(cli_main, [*command, "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "panels worker-type list" in result.output
 
 
 def test_day_cli_round_trips_midday_reconciliation(

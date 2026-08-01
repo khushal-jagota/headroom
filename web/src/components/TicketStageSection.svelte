@@ -26,6 +26,7 @@
     showRecap = false,
     emptyText = "Not written yet.",
     editableValue = true,
+    approvalDisabled = false,
     runLabel = null,
     runLabelAttention = false,
     onRelease,
@@ -45,6 +46,7 @@
     showRecap?: boolean;
     emptyText?: string;
     editableValue?: boolean;
+    approvalDisabled?: boolean;
     runLabel?: string | null;
     runLabelAttention?: boolean;
     onRelease?: () => void;
@@ -106,6 +108,7 @@
       newStage={nextStage}
       {lifecycle}
       {contextRow}
+      disabled={approvalDisabled}
       onApprove={onAccept}
     />
   {:else}

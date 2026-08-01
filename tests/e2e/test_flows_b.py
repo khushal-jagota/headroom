@@ -480,6 +480,8 @@ def test_e32_sprint_live_status_and_fallback(
         E32_ITEM_PROJECT,
         "--sprint",
         sid,
+        "--priority",
+        "P2",
     )["id"]
     fallback_ticket_id = cli(
         server,
@@ -491,6 +493,8 @@ def test_e32_sprint_live_status_and_fallback(
         E32_FALLBACK_TITLE,
         "--project",
         E32_ITEM_PROJECT,
+        "--priority",
+        "P1",
     )["id"]
 
     # Status groups were replaced by project groups; the item's status now lives on
@@ -513,6 +517,13 @@ def test_e32_sprint_live_status_and_fallback(
     for p in (pa, pb):
         p.wait_for_selector(ready, timeout=WAIT_MS)
         assert p.locator(f'[data-item-id="{iid}"]').count() == 1
+        p.locator(f'[data-item-id="{iid}"]').evaluate(
+            "(element) => { element.open = true; }"
+        )
+        assert (
+            p.locator(f'[data-item-id="{iid}"] [data-priority-tile="P2"]').count()
+            == 1
+        )
         assert p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status") == "todo"
         assert (
             p.get_attribute(f'[data-item-id="{fallback_item_id}"]', "data-item-kind")
@@ -523,6 +534,16 @@ def test_e32_sprint_live_status_and_fallback(
                 f'[data-item-id="{fallback_item_id}"] [data-ticket-id="{fallback_ticket_id}"]'
             )
             is not None
+        )
+        p.locator(f'[data-item-id="{fallback_item_id}"]').evaluate(
+            "(element) => { element.open = true; }"
+        )
+        assert (
+            p.locator(
+                f'[data-item-id="{fallback_item_id}"] [data-ticket-id="{fallback_ticket_id}"] '
+                '[data-priority-tile="P1"]'
+            ).count()
+            == 1
         )
         assert "fallback" in p.inner_text(
             f'[data-item-id="{fallback_item_id}"] summary'

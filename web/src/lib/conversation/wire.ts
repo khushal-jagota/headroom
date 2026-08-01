@@ -116,6 +116,27 @@ export type PendingPermissionAsk = {
   options: PermissionAskOption[];
 };
 
+export type UserInputOption = {
+  label: string;
+  description: string;
+};
+
+export type UserInputQuestion = {
+  question_id: string;
+  header: string;
+  question: string;
+  options: UserInputOption[];
+  multi_select: boolean;
+  allow_other: boolean;
+};
+
+export type UserInputAnswers = Record<string, { answers: string[] }>;
+
+export type PendingUserInput = {
+  request_id: string;
+  questions: UserInputQuestion[];
+};
+
 /**
  * One command the agent says a person may type at it. The name carries no leading slash
  * — the slash is how a person writes a command, not part of what it is called.
@@ -140,6 +161,7 @@ export type ConversationView = {
   is_running: boolean;
   held_prompt_count: number;
   pending_permission_ask: PendingPermissionAsk | null;
+  pending_user_input: PendingUserInput | null;
   available_commands: AgentCommand[];
 };
 
@@ -200,6 +222,15 @@ export type ConversationEvent =
       { ask_id: string; title: string; detail: string | null; options: PermissionAskOption[] }
     >
   | Row<"permission_answered", { ask_id: string; option_id: string }>
+  | Row<
+      "user_input_requested",
+      { request_id: string; questions: UserInputQuestion[] }
+    >
+  | Row<
+      "user_input_answered",
+      { request_id: string; answers: UserInputAnswers }
+    >
+  | Row<"user_input_failed", { request_id: string; detail: string }>
   | Row<"model_changed", { model: string | null; reasoning_effort: string | null }>
   /** What a turn has cost, as its backend counts it. Every field is absent when the
    *  backend did not say — never zero, because a backend silent about cached tokens has
@@ -290,6 +321,26 @@ export type BackendUpdateResult = {
   outcome: "succeeded" | "unchanged" | "failed";
   detail: string;
   output_tail: string;
+};
+
+export type BackendUsageWindow = {
+  name: string;
+  used_percent: number;
+  resets_at: string;
+};
+
+/** A provider allowance reading acquired only after a person explicitly asks for it.
+ *
+ * It deliberately does not live on BackendSnapshot: reading the ordinary backend
+ * catalogue is ambient application work, while some providers count usage checks
+ * against the allowance being inspected.
+ */
+export type BackendUsageResult = {
+  backend_key: ConversationBackendKey;
+  outcome: "succeeded" | "unavailable" | "unauthenticated" | "failed";
+  detail: string | null;
+  observed_at: string | null;
+  windows: BackendUsageWindow[];
 };
 
 export type StartConversationBody = {
@@ -470,6 +521,17 @@ export function answerPermissionAsk(
   );
 }
 
+export function answerUserInput(
+  conversationId: string,
+  requestId: string,
+  answers: UserInputAnswers
+): Promise<{ landed: boolean }> {
+  return request<{ landed: boolean }>(
+    `/conversations/${encodeURIComponent(conversationId)}/user-input-answers`,
+    postJson({ request_id: requestId, answers })
+  );
+}
+
 /** Throw away one message that is waiting, by the name this browser gave it.
  *
  * A false is an ordinary answer: a held message runs the moment the agent frees up, so
@@ -496,7 +558,18 @@ export async function readBackends(refresh = false): Promise<BackendSnapshot[]> 
 export function updateBackend(
   backendKey: ConversationBackendKey
 ): Promise<BackendUpdateResult> {
-  return request<BackendUpdateResult>(`/backends/${backendKey}/update`, { method: "POST" });
+  return request<BackendUpdateResult>(`/backends/${encodeURIComponent(backendKey)}/update`, {
+    method: "POST"
+  });
+}
+
+export function refreshBackendUsage(
+  backendKey: ConversationBackendKey
+): Promise<BackendUsageResult> {
+  return request<BackendUsageResult>(
+    `/backends/${encodeURIComponent(backendKey)}/usage-refresh`,
+    { method: "POST" }
+  );
 }
 
 export type ConversationTailHandlers = {

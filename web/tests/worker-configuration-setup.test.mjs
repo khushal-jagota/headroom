@@ -230,8 +230,8 @@ def machine():
         "backends": [
             backend(
                 "hermes",
-                [model("hermes-native", "Hermes native")],
-                default_model="hermes-native",
+                [model("openai-codex:gpt-5.6-sol", "GPT-5.6 Sol")],
+                default_model="openai-codex:gpt-5.6-sol",
             ),
             backend(
                 "codex",
@@ -447,7 +447,7 @@ with sync_playwright() as playwright:
     page.wait_for_function("window.__launchDefaultsSaveCalls().length === 3")
     assert page.evaluate("window.__launchDefaultsSaveCalls()[2]") == {
         "employee_backend": "hermes",
-        "employee_launch_model": "hermes-native",
+        "employee_launch_model": "openai-codex:gpt-5.6-sol",
         "employee_launch_reasoning_effort": None,
     }
 

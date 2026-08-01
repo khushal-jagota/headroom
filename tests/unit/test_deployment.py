@@ -84,6 +84,7 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
     log = logs / "panels.log"
     log.write_text("log", encoding="utf-8")
     events: list[str] = []
+    lifecycle: list[tuple[str, dict[str, object]]] = []
     snapshot = tmp_path / "snapshot"
 
     result = deploy_app(
@@ -95,10 +96,19 @@ def test_app_deploy_stops_then_backups_and_hard_cuts_over(
         service=FakeService(events),
         health=FakeHealth(events, {SHA_B}),
         now=lambda: 10.0,
+        lifecycle_transition=lambda phase, **values: lifecycle.append((phase, values)),
     )
 
     assert result == DeploymentResult("succeeded", SHA_B, SHA_A, None)
     assert events == ["stop", f"backup:{SHA_A}", "restart", f"health:{SHA_B}"]
+    assert lifecycle == [
+        ("restarting", {"serving_sha": None, "detail": None, "code": None}),
+        ("verifying", {"serving_sha": None, "detail": None, "code": None}),
+        (
+            "app_healthy",
+            {"serving_sha": SHA_B, "detail": None, "code": None},
+        ),
+    ]
     assert (current / "app" / "new").is_file()
     assert not (current / "app" / "old").exists()
     assert database.read_text(encoding="utf-8") == "db"
@@ -115,6 +125,7 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
     database = _database(current)
     events: list[str] = []
     snapshot = tmp_path / "snapshot"
+    lifecycle: list[tuple[str, dict[str, object]]] = []
     result = deploy_app(
         candidate_app=candidate,
         current_root=current,
@@ -123,6 +134,7 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
         restore=lambda path: events.append(f"restore:{path.name}"),
         service=FakeService(events),
         health=FakeHealth(events, {SHA_A}),
+        lifecycle_transition=lambda phase, **values: lifecycle.append((phase, values)),
     )
     assert result.status == "rolled_back"
     assert (current / "app" / "old").is_file()
@@ -141,6 +153,21 @@ def test_candidate_health_failure_restores_and_proves_prior_app(tmp_path: Path) 
         f"health:{SHA_A}",
     ]
     assert list(current.glob(".app-*")) == []
+    assert [phase for phase, _ in lifecycle] == [
+        "restarting",
+        "verifying",
+        "restarting",
+        "verifying",
+        "rolled_back",
+    ]
+    assert lifecycle[-1] == (
+        "rolled_back",
+        {
+            "serving_sha": SHA_A,
+            "detail": "The requested app failed health proof; the prior app was restored.",
+            "code": "candidate_unhealthy",
+        },
+    )
 
 
 def test_recovery_failure_reports_every_existing_continuation_path(tmp_path: Path) -> None:
@@ -274,6 +301,30 @@ def test_existing_state_without_current_app_fails_without_baseline_model(tmp_pat
             health=FakeHealth([], {SHA_B}),
         )
     assert not (current / "app").exists()
+
+
+def test_runner_lifecycle_files_do_not_block_the_first_app_install(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "current"
+    data = current / "data"
+    data.mkdir(parents=True)
+    (data / "deployment-lifecycle.json").write_text("{}", encoding="utf-8")
+    (data / "deployment-lifecycle.json.lock").write_text("", encoding="utf-8")
+    candidate = _app(tmp_path / "candidate", SHA_B, "new")
+
+    result = deploy_app(
+        candidate_app=candidate,
+        current_root=current,
+        source_db=data / "planning.db",
+        backup=lambda _: tmp_path / "snapshot",
+        restore=lambda _: None,
+        service=FakeService([]),
+        health=FakeHealth([], {SHA_B}),
+    )
+
+    assert result.status == "succeeded"
+    assert (current / "app").is_dir()
 
 
 def test_symlinked_current_root_is_rejected(tmp_path: Path) -> None:

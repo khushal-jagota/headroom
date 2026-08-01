@@ -23,6 +23,7 @@ import struct
 import threading
 import zlib
 from collections.abc import Callable, Coroutine
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -39,6 +40,11 @@ from planner.conversation.events import (
     ToolCallStartedEventPayload,
     ToolCallStatus,
     TurnEndedEventPayload,
+    UserInputAnswer,
+    UserInputAnsweredEventPayload,
+    UserInputOption,
+    UserInputQuestion,
+    UserInputRequestedEventPayload,
 )
 from planner.conversation.message_content import (
     MessageImage,
@@ -357,6 +363,137 @@ def test_a_started_conversation_reloads_into_the_pane_surface(
     )
     page.wait_for_selector("[data-conversation-thread]", timeout=WAIT_MS)
     page.wait_for_selector("[data-conversation-workspace]", timeout=WAIT_MS)
+
+
+def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    tmp_path: Path,
+) -> None:
+    """The real pane consumes durable rows and sends the real user-input API body."""
+    conversation_id = "e2e-agent-questions"
+    _create_conversation(server, conversation_id)
+    questions = (
+        UserInputQuestion(
+            question_id="scope",
+            header="Scope",
+            question="Which surfaces should change?",
+            options=(
+                UserInputOption(label="Composer", description="The live composer"),
+                UserInputOption(label="Transcript", description="Durable history"),
+            ),
+            multi_select=True,
+            allow_other=True,
+        ),
+        UserInputQuestion(
+            question_id="proof",
+            header="Proof",
+            question="What proof should be required?",
+            options=(
+                UserInputOption(label="Browser test", description="Exercise the full flow"),
+            ),
+            multi_select=False,
+            allow_other=True,
+        ),
+    )
+    _append_rows(
+        server,
+        conversation_id,
+        PromptEventPayload(
+            content=text_message_content("ask me the implementation questions"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+        ),
+        UserInputRequestedEventPayload(request_id="input-1", questions=questions),
+    )
+
+    submitted: list[dict[str, Any]] = []
+    context = context_factory()
+
+    def running_view(route: Any) -> None:
+        response = route.fetch()
+        body = response.json()
+        body["is_running"] = True
+        body["pending_user_input"] = {
+            "request_id": "input-1",
+            "questions": [
+                {
+                    "question_id": question.question_id,
+                    "header": question.header,
+                    "question": question.question,
+                    "options": [
+                        {"label": option.label, "description": option.description}
+                        for option in question.options
+                    ],
+                    "multi_select": question.multi_select,
+                    "allow_other": question.allow_other,
+                }
+                for question in questions
+            ],
+        }
+        route.fulfill(response=response, json=body)
+
+    context.route(
+        f"**/api/conversation/conversations/{conversation_id}", running_view
+    )
+
+    def take_user_input_answer(route: Any) -> None:
+        submitted.append(route.request.post_data_json)
+        route.fulfill(status=200, json={"landed": True})
+
+    context.route(
+        f"**/api/conversation/conversations/{conversation_id}/user-input-answers",
+        take_user_input_answer,
+    )
+    page = open_page(
+        context,
+        server,
+        f"#/dev/conversation?id={conversation_id}",
+        "[data-user-input-panel]",
+    )
+    assert "Approve" not in page.locator("[data-user-input-panel]").inner_text()
+
+    page.reload()
+    page.wait_for_selector("[data-user-input-panel]", timeout=WAIT_MS)
+    screenshot = tmp_path / "agent-questions.png"
+    page.screenshot(path=str(screenshot))
+    assert screenshot.stat().st_size > 0
+
+    page.locator('[data-user-input-option="Composer"]').click()
+    page.locator('[data-user-input-option="Transcript"]').click()
+    page.locator("[data-user-input-continue]").click()
+    page.locator("[data-user-input-other]").fill("Recorded event replay")
+    page.locator("[data-user-input-continue]").click()
+    page.wait_for_function("() => document.querySelector('[data-user-input-panel]') !== null")
+    assert submitted == [
+        {
+            "request_id": "input-1",
+            "answers": {
+                "scope": {"answers": ["Composer", "Transcript"]},
+                "proof": {"answers": ["Recorded event replay"]},
+            },
+        }
+    ]
+
+    _append_rows(
+        server,
+        conversation_id,
+        UserInputAnsweredEventPayload(
+            request_id="input-1",
+            answers=(
+                UserInputAnswer("scope", ("Composer", "Transcript")),
+                UserInputAnswer("proof", ("Recorded event replay",)),
+            ),
+        ),
+    )
+    page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+    page.wait_for_selector(
+        '[data-conversation-user-input-state="answered"]', timeout=WAIT_MS
+    )
+    assert "Recorded event replay" in page.locator(
+        "[data-conversation-user-input-answers]"
+    ).inner_text()
 
 
 def test_a_sent_message_is_in_the_thread_before_the_server_answers(

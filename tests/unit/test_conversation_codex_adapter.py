@@ -35,6 +35,7 @@ from planner.conversation.backends.codex_app_server.adapter import (
 from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendUserInputRequest,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
@@ -46,7 +47,11 @@ from planner.conversation.contracts import (
     PromptDeliveryMode,
     ResolvedConversationStart,
 )
-from planner.conversation.events import ConversationTurnEnding, ToolCallStatus
+from planner.conversation.events import (
+    ConversationTurnEnding,
+    ToolCallStatus,
+    UserInputAnswer,
+)
 from planner.conversation.message_content import (
     MessageContent,
     MessageImage,
@@ -979,6 +984,176 @@ def test_a_request_codex_makes_that_this_does_not_answer_is_refused(tmp_path: Pa
     _run(exercise)
 
 
+# --- user input -------------------------------------------------------------------------------
+
+
+def test_codex_user_input_is_raised_separately_and_the_complete_answer_map_goes_back(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {
+                            "do": "request_user_input",
+                            "item_id": "input-7",
+                            "questions": [
+                                {
+                                    "id": "framework",
+                                    "header": "Framework",
+                                    "question": "Which framework?",
+                                    "options": [
+                                        {
+                                            "label": "Svelte",
+                                            "description": "Use Svelte components",
+                                        },
+                                        {
+                                            "label": "React",
+                                            "description": "Use React components",
+                                        },
+                                    ],
+                                    "isOther": True,
+                                    "isSecret": False,
+                                },
+                                {
+                                    "id": "notes",
+                                    "header": "Notes",
+                                    "question": "Anything else?",
+                                    "options": None,
+                                    "isOther": True,
+                                    "isSecret": False,
+                                },
+                            ],
+                        },
+                        {"do": "await_server_request_answer"},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("choose"))
+            request = await scripted.sink.wait_for_user_input()
+
+            assert request.request_id == "turn-1:input-7"
+            assert [question.question_id for question in request.questions] == [
+                "framework",
+                "notes",
+            ]
+            assert [option.label for option in request.questions[0].options] == [
+                "Svelte",
+                "React",
+            ]
+            assert request.questions[0].options[0].description == "Use Svelte components"
+            assert request.questions[0].multi_select is False
+            assert request.questions[0].allow_other is True
+            assert request.questions[1].options == ()
+            assert request.questions[1].allow_other is True
+            assert scripted.sink.asks == []
+
+            await scripted.child.answer_user_input(
+                request.request_id,
+                (
+                    UserInputAnswer(question_id="framework", answers=("Svelte",)),
+                    UserInputAnswer(question_id="notes", answers=("Keep it compact",)),
+                ),
+            )
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            answered = scripted.answers()[0]
+            assert answered["id"] == "server-item/tool/requestUserInput"
+            assert answered["result"] == {
+                "answers": {
+                    "framework": {"answers": ["Svelte"]},
+                    "notes": {"answers": ["Keep it compact"]},
+                }
+            }
+
+    _run(exercise)
+
+
+def test_codex_user_input_still_waiting_when_the_turn_dies_is_settled(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {
+                            "do": "request_user_input",
+                            "questions": [
+                                {
+                                    "id": "choice",
+                                    "header": "Choice",
+                                    "question": "Choose one",
+                                    "options": [
+                                        {"label": "A", "description": "First choice"},
+                                        {"label": "B", "description": "Second choice"},
+                                    ],
+                                }
+                            ],
+                        },
+                        {"do": "complete", "status": "interrupted"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("choose"))
+            await scripted.sink.wait_for_user_input()
+            await scripted.sink.wait_for_the_turn_to_end()
+            await scripted.wait_for_an_answer()
+
+            assert scripted.answers()[0]["result"] == {"answers": {}}
+
+    _run(exercise)
+
+
+def test_malformed_codex_user_input_fails_visibly_without_becoming_permission(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "turns": [
+                {
+                    "actions": [
+                        {
+                            "do": "request_user_input",
+                            "questions": [
+                                {
+                                    "id": "secret",
+                                    "header": "Secret",
+                                    "question": "What is the token?",
+                                    "options": None,
+                                    "isOther": True,
+                                    "isSecret": True,
+                                }
+                            ],
+                        },
+                        {"do": "await_server_request_answer"},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("ask"))
+            await scripted.sink.wait_for_user_input_failure()
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sink.user_inputs == []
+            assert scripted.sink.asks == []
+            assert "unsupported secret input" in scripted.sink.user_input_failures[0][1]
+            assert scripted.answers()[0]["result"] == {"answers": {}}
+
+    _run(exercise)
+
+
 # --- what this backend cannot do ---------------------------------------------------------------
 
 
@@ -1088,6 +1263,8 @@ class _RecordingSink:
         self.compactions: int = 0
         self.tool_calls_finished: list[tuple[str, ToolCallStatus]] = []
         self.asks: list[BackendPermissionAsk] = []
+        self.user_inputs: list[BackendUserInputRequest] = []
+        self.user_input_failures: list[tuple[str, str]] = []
         self.endings: list[ConversationTurnEnding] = []
         self.error_summaries: list[str | None] = []
         self.standard_error_tails: list[str | None] = []
@@ -1095,6 +1272,8 @@ class _RecordingSink:
         self.available_commands_reports: list[tuple[AgentCommand, ...]] = []
         self._turn_over = asyncio.Event()
         self._an_ask = asyncio.Event()
+        self._user_input = asyncio.Event()
+        self._user_input_failure = asyncio.Event()
 
     def expect_another_turn(self) -> None:
         self._turn_over.clear()
@@ -1106,6 +1285,16 @@ class _RecordingSink:
         await self._an_ask.wait()
         self._an_ask.clear()
         return self.asks[-1]
+
+    async def wait_for_user_input(self) -> BackendUserInputRequest:
+        await self._user_input.wait()
+        self._user_input.clear()
+        return self.user_inputs[-1]
+
+    async def wait_for_user_input_failure(self) -> tuple[str, str]:
+        await self._user_input_failure.wait()
+        self._user_input_failure.clear()
+        return self.user_input_failures[-1]
 
     async def agent_message_delta(self, turn_token: TurnToken, text_delta: str) -> None:
         self.deltas.append(text_delta)
@@ -1172,6 +1361,18 @@ class _RecordingSink:
     ) -> None:
         self.asks.append(ask)
         self._an_ask.set()
+
+    async def user_input_requested(
+        self, turn_token: TurnToken, request: BackendUserInputRequest
+    ) -> None:
+        self.user_inputs.append(request)
+        self._user_input.set()
+
+    async def user_input_failed(
+        self, turn_token: TurnToken, *, request_id: str, detail: str
+    ) -> None:
+        self.user_input_failures.append((request_id, detail))
+        self._user_input_failure.set()
 
     async def turn_ended(
         self,

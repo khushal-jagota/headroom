@@ -25,6 +25,7 @@ from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.engine import URL
 
 from planner.core import change_signal
+from planner.notifications import data as notifications_data
 from planner.projects import data as projects_data
 
 MIGRATIONS_DIRECTORY: Final = Path(__file__).resolve().parent / "migrations"
@@ -151,6 +152,14 @@ def create_schema(conn: sqlite3.Connection) -> None:
         )
     _upgrade_to_current_schema(_main_database_path(conn), _busy_timeout_ms(conn))
     projects_data.seed_default_projects(conn)
+    # Migration-unit fixtures deliberately replace the tree with a historical
+    # subset. Seed the current subsystem only when that tree actually installed it.
+    notification_schema_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'notification_web_push_identity'"
+    ).fetchone()
+    if notification_schema_exists is not None:
+        notifications_data.get_or_create_web_push_identity(conn, 0)
 
 
 def _main_database_path(conn: sqlite3.Connection) -> str:

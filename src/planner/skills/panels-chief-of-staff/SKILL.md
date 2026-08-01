@@ -20,6 +20,8 @@ Typical workflows include:
 - **Scheduled planning**: let the scheduled `planning-day`, `planning-midday-check`, and `planning-sprint` Tickets carry their conversations through their specialist Workers.
 - **Missed-run recovery**: create the intended planning Ticket through ordinary `panels ticket create`; do not draft its gated fields or restore a separate rollover or sprint-planning workflow.
 - **Creating new things**: create tickets, sprint items, and ideas for the user when that is the right object.
+- **Personal tasks**: use the `personal` Worker type for user-owned work that should
+  remain visible as a Ticket and only receive agent help after explicit engagement.
 - **Organizing and triaging**: help with priorities, deadlines, sprint placement, today's work list, backlog shape, and review queue.
 - **Preparing next actions and decisions**: identify what to approve, defer, split, clarify, drop, schedule, or start.
 - **General help within Panels boundaries**: use the available CLI/API surfaces to do useful planning work without bypassing authority boundaries.
@@ -46,6 +48,11 @@ verification.
 ## Work completed outside Panels
 
 Use `panels chief` only when the user reports that real work was already completed outside Panels and the record now needs to match that reality.
+
+Before creating a new external-work Ticket, load and follow
+`panels-ticket-creation`. The creation model applies, while this section remains
+authoritative for whether external-work import is allowed and for its settled prefix,
+provenance, and follow-through.
 
 Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI sends the required Chief identity. Without it, the server rejects the request as an unattributed actor.
 
@@ -84,7 +91,10 @@ Before running a `panels chief` command, export `PLAN_ACTOR=chief` so the CLI se
    External intake moves the ceiling to that Stage and preserves an explicit Stop;
    otherwise Continue remains. The entered Stage's effective ownership determines where
    the Ticket rests. The intake does not create proposals or imitate worker progress.
-5. Add the reconciled or newly created external-work ticket to **today** with `panels day add-ticket <ticket-id> --json`, unless the user explicitly says the work belongs in backlog/later or should not appear on today's board. Work the user is reporting now is presumed to belong on today's record.
+5. Ordinary creation atomically puts a new external-work Ticket on today. For a
+   reconciled existing Ticket, add it to today unless the user explicitly wants it off
+   the roster. If a newly created Ticket should be off today, remove it from the Day as
+   a separate follow-up; backlog placement is an independent choice.
 6. Read the resulting Ticket back with `panels ticket show <id> --json` and report the
    Ticket id, resulting Stage, and today placement.
 
@@ -152,30 +162,15 @@ Grounding an allusion is not permission to add new intentions, concerns, require
 questions, consequences, tradeoffs, methods, or scope. Clarify the referenced thing; do
 not enlarge the request.
 
-- Use a **Ticket** for a concrete unit of work. Choose its required Worker type; use
-  `coding` for product or repository work.
-- Use a **`general` ticket** as the catch-all when no specialist type fits — an arbitrary
-  unit of work to do with the user, run through a deliberately minimal lifecycle.
-- Use a **`new_worker` ticket** when the user wants a new *kind* of worker rather than a unit of work — it walks them through designing it.
-- Use an **`exploration` ticket** when something is undefined and you want to explore it —
-  turning a thought into a direction, or making a vague direction concrete.
-- Use an **`initiative_planning` ticket** when the direction is confirmed but several
-  downstream Tickets need shared cross-Ticket decisions and boundaries before creation.
-- Use a **`product_design` ticket** when a product flow needs holistic UX direction,
-  wireframing, and an implementation-ready interactive design before coding.
-- Use a **`planning-day` ticket** for the morning planning conversation that gathers
-  evidence, plans the Day with the user, and commits the agreement.
-- Use a **`planning-midday-check` ticket** for the 14:30 execution checkpoint that
-  compares the morning intent with current reality, agrees any intervention, and records
-  the result.
-- Use a **`planning-sprint` ticket** for the final-day boundary conversation that reviews
-  the current sprint, plans the next, and writes only the approved result at Closeout.
-- Use a **sprint item** for a broader goal or outcome.
-- Use an **idea** for a loose thought that should not yet become committed work.
-- When the user asks to create a concrete ticket during active planning, normally add it to **today** after creation so it appears in Workspace and can be picked up by the execution flow.
-- Do not add a ticket to today when the user explicitly frames it as backlog/sprint-only/later, when adding it would clearly distort a deliberately narrow day plan, or when it is only a low-commitment idea. If you leave a created ticket off today, say so clearly.
+Before any ordinary Ticket creation, load and follow `panels-ticket-creation`. It owns
+the shared object, Worker-type, context, placement, priority, deadline, blocker, default,
+and read-back judgment. Chief still owns authorization and faithful intake: do not
+invent a user decision, create extra records, or draft the Ticket's gated work. When
+missing intent prevents correct capture, ask briefly; when the thought is not yet
+committed work, capture an idea instead of over-structuring it.
 
-When unsure, ask a concise clarifying question or create a low-commitment idea instead of over-structuring.
+Use the `general` Worker type as the catch-all when no specialist type fits: an arbitrary
+unit of work with a deliberately minimal lifecycle.
 
 ## Response shape
 
