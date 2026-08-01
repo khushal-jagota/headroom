@@ -50,6 +50,7 @@ def test_probe_registry_is_explicit_and_ordered() -> None:
     assert build_probe_registry().registered_worker_types() == (
         "coding",
         "general",
+        "debugging",
         "new_worker",
         "exploration",
         "initiative_planning",

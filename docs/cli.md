@@ -15,6 +15,7 @@ The command tree matches the system model:
 
 - `day ...` — plan and inspect a day.
 - `project ...` — list and create project catalog rows.
+- `worker-type ...` — discover the Worker types registered on this Panels server.
 - `schedule ...` — configure exact-time creation of ordinary Tickets.
 - `ticket ...` — create, inspect, organize, and approve tickets.
 - `sprint ...` — create, inspect, edit, and populate sprints and sprint items.
@@ -37,6 +38,10 @@ generic Stage setter.
   data-backed, not enum-backed. `project create` requires
   `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
   have not yet been assessed.
+- **`worker-type list`** — list the registered Worker type identifiers in registry
+  order. Its normal output is one identifier per line; `--json` returns the complete
+  served Worker-type manifest for automation. Commands that require `--worker-type`
+  point to this list instead of embedding a second catalog.
 - **`schedule create / list / show / set`** — manage generic internal schedules that
   create and place an ordinary Ticket at an exact local time. A schedule uses either
   `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
@@ -121,7 +126,9 @@ generic Stage setter.
   transaction, and create a backup labeled from the validated deployed app. `app-build` requires
   `--source-root`, a lowercase full `--requested-sha`, and `--candidate-app`. `app-deploy` requires
   `--candidate-app`, `--current-root`, database and backup paths, a health URL, and the service
-  manager and name. Linux systemd control is user-scoped; launchctl remains supported.
+  manager and name. The deployment workflow also supplies its lifecycle path and deployment ID,
+  so restart, exact-SHA health, and rollback remain attached to the runner-started operation.
+  Linux systemd control is user-scoped; launchctl remains supported.
   `backup-current` requires `--current-app`; it does not inspect Git.
 - **`restart`** — ask that running `serve` command to load the current Panels code again.
   The command reports when the request is accepted. If `serve` is not running, it reports
@@ -173,4 +180,4 @@ one worker step at a time and writes the Ticket's status itself (see
 
 ---
 
-_Last verified: 2026-07-28._
+_Last verified: 2026-07-29._

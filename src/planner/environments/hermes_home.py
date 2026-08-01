@@ -25,8 +25,10 @@ DEFAULT_HERMES_PYTHON: Final = "~/.hermes/hermes-agent/venv/bin/python"
 DEFAULT_PLANNER_HOME: Final = "~/.hermes"
 PLANNER_SKILL_NAMES: Final = (
     "panels",
+    "panels-ticket-creation",
     "panels-worker",
     "panels-worker-coding",
+    "panels-worker-debugging",
     "panels-worker-new-worker",
     "panels-worker-exploration",
     "panels-worker-initiative-planning",
@@ -34,6 +36,7 @@ PLANNER_SKILL_NAMES: Final = (
     "panels-worker-planning-day",
     "panels-worker-planning-midday-check",
     "panels-worker-planning-sprint",
+    "panels-worker-personal-task",
     "probe-worker",
     "panels-chief-of-staff",
     "panels-update-chief-of-staff",

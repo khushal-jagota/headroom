@@ -53,6 +53,16 @@ SEMANTIC_TOKENS = {
     "--accent-done": "#7fa564",
     "--accent-error": "#d85d5d",
 }
+PRIORITY_TOKENS = {
+    "--priority-p0-fill": "#7d2c26",
+    "--priority-p0-ink": "#ffe0db",
+    "--priority-p1-fill": "#512725",
+    "--priority-p1-ink": "#ecccc7",
+    "--priority-p2-fill": "#54331f",
+    "--priority-p2-ink": "#ecd8c6",
+    "--priority-p3-fill": "#534323",
+    "--priority-p3-ink": "#e9e4c6",
+}
 SCROLL_SURFACES = {
     ".markdown pre": "x",
     ".file-preview-document-body": "y",
@@ -70,6 +80,7 @@ def mount(page, body, extra_style=""):
       <!doctype html>
       <html>
         <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1">
           <link rel="stylesheet" href="{BASE_URL}/assets/tokens.css">
           <link rel="stylesheet" href="{BASE_URL}/assets/app.css">
           <style>{extra_style}</style>
@@ -116,8 +127,12 @@ def assert_brand(browser, mobile):
           <span class="stage-mark stage-mark--current-waiting"></span>
           <span class="stage-mark stage-mark--completed"></span>
           <span class="stage-mark stage-mark--errored"></span>
+          <span class="priority-tile priority-tile--p0">P0</span>
+          <span class="priority-tile priority-tile--p1">P1</span>
+          <span class="priority-tile priority-tile--p2">P2</span>
+          <span class="priority-tile priority-tile--p3">P3</span>
         """)
-        names = [*BRAND_TOKENS, *SEMANTIC_TOKENS]
+        names = [*BRAND_TOKENS, *SEMANTIC_TOKENS, *PRIORITY_TOKENS]
         tokens = page.evaluate("""names => {
           const style = getComputedStyle(document.documentElement);
           return Object.fromEntries(names.map(name => [
@@ -126,6 +141,7 @@ def assert_brand(browser, mobile):
         }""", names)
         assert {name: tokens[name] for name in BRAND_TOKENS} == BRAND_TOKENS
         assert {name: tokens[name] for name in SEMANTIC_TOKENS} == SEMANTIC_TOKENS
+        assert {name: tokens[name] for name in PRIORITY_TOKENS} == PRIORITY_TOKENS
         assert colors(page, ".nav-badge") == {
             "color": "rgb(17, 19, 24)",
             "backgroundColor": "rgb(154, 173, 210)",
@@ -150,6 +166,14 @@ def assert_brand(browser, mobile):
         assert colors(page, ".stage-mark--current-waiting")["borderColor"] == "rgb(154, 173, 210)"
         assert colors(page, ".stage-mark--completed")["backgroundColor"] == "rgb(127, 165, 100)"
         assert colors(page, ".stage-mark--errored")["backgroundColor"] == "rgb(216, 93, 93)"
+        for priority, expected in {
+            "p0": ("rgb(125, 44, 38)", "rgb(255, 224, 219)"),
+            "p1": ("rgb(81, 39, 37)", "rgb(236, 204, 199)"),
+            "p2": ("rgb(84, 51, 31)", "rgb(236, 216, 198)"),
+            "p3": ("rgb(83, 67, 35)", "rgb(233, 228, 198)"),
+        }.items():
+            tile = colors(page, f".priority-tile--{priority}")
+            assert (tile["backgroundColor"], tile["color"]) == expected
         assert page.viewport_size == (
             {"width": 390, "height": 844} if mobile else {"width": 1280, "height": 800}
         )
@@ -314,12 +338,71 @@ def assert_scrollbars(browser):
         forced.close()
 
 
+def assert_mobile_content_containment(browser):
+    context = browser.new_context(
+        has_touch=True, is_mobile=True, viewport={"width": 280, "height": 800}
+    )
+    try:
+        page = context.new_page()
+        mount(page, """
+          <section class="ticket-screen">
+            <div class="ticket-page">
+              <main class="ticket-doc">
+                <div class="ticket-col">
+                  <div class="markdown">
+                    <table>
+                      <thead><tr><th>Field</th><th>Long value</th><th>Another value</th></tr></thead>
+                      <tbody><tr><td>one</td><td>an intentionally wide table value</td><td>another intentionally wide value</td></tr></tbody>
+                    </table>
+                  </div>
+                  <details class="disclosure disclosure--stage" open>
+                    <summary class="disclosure-summary">
+                      <span class="stage-mark"></span>
+                      <span class="disclosure-stage-name">implementation</span>
+                      <span class="ticket-stage-run">awaiting approval <button class="ticket-stage-run-action">Release</button></span>
+                    </summary>
+                  </details>
+                </div>
+              </main>
+            </div>
+          </section>
+        """, """
+          body { margin: 0; overflow-x: hidden; }
+          .ticket-screen, .ticket-page { width: 100%; height: 240px; }
+          .ticket-doc { flex: none; width: 100%; height: 240px; }
+          .ticket-col { padding: 16px; }
+          .markdown table th, .markdown table td { white-space: nowrap; }
+        """)
+        geometry = page.evaluate("""() => {
+          const table = document.querySelector('.markdown table');
+          const doc = document.querySelector('.ticket-doc');
+          const run = document.querySelector('.ticket-stage-run');
+          const name = document.querySelector('.disclosure-stage-name');
+          return {
+            documentOverflow: document.documentElement.scrollWidth - innerWidth,
+            ticketOverflow: doc.scrollWidth - doc.clientWidth,
+            tableOverflow: table.scrollWidth - table.clientWidth,
+            tableOverflowX: getComputedStyle(table).overflowX,
+            stageRunTop: run.getBoundingClientRect().top,
+            stageNameBottom: name.getBoundingClientRect().bottom,
+          };
+        }""")
+        assert geometry["documentOverflow"] <= 0, geometry
+        assert geometry["ticketOverflow"] <= 0, geometry
+        assert geometry["tableOverflow"] > 0, geometry
+        assert geometry["tableOverflowX"] == "auto", geometry
+        assert geometry["stageRunTop"] >= geometry["stageNameBottom"], geometry
+    finally:
+        context.close()
+
+
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     try:
         assert_brand(browser, False)
         assert_brand(browser, True)
         assert_scrollbars(browser)
+        assert_mobile_content_containment(browser)
     finally:
         browser.close()
 

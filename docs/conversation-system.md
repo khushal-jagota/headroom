@@ -4,8 +4,8 @@ This is how Panels talks to an AI agent. One conversation = one agent
 process (hermes, codex, or claude) working in a folder, plus a permanent notebook
 of everything that happened in it. The rest of the planner can do exactly five
 things to a conversation — start it, send a message into it, interrupt its running
-turn, kill its activity outright, and ask whether it is running — plus one more
-question: is a permission ask waiting. Nothing else crosses the boundary.
+turn, kill its activity outright, and ask whether it is running. It can also ask whether
+the agent is waiting for a permission decision or answers to its questions.
 
 It serves every screen that shows a conversation: a Ticket's, the Chief of
 Staff's, and the development pane at `#/dev/conversation`. There is no second
@@ -17,7 +17,7 @@ second database, relay, neutral protocol and history adapter that preceded it.
   caller (pane, loop)                the conversation system                agent CLIs
   ───────────────────                ───────────────────────                ──────────
   start / send / interrupt   ──▶   one core: queue, turns, asks,   ──▶   hermes (ACP)
-  kill / is-running / ask?          notebook, janitor                     codex (app-server)
+  kill / running / waiting?         notebook, janitor                     codex (app-server)
                                           │                               claude (Agent SDK)
   read: events after N  ◀──   conversations + conversation_events
         + live tail                 (SQLite, written once)
@@ -30,7 +30,7 @@ its notebook. A row is a finished thing: a prompt that was actually delivered
 (the message itself, who sent it, how, and — when the sender minted them — the
 name the sender gave the message and the moment it was sent), a completed agent
 message, a tool call
-starting, a tool call finishing, a permission ask, its answer, a model change, a
+starting, a tool call finishing, a permission ask or agent question request, its answer, a model change, a
 discarded held message, a turn ending (completed, failed, or interrupted). Rows
 are written once and never edited. Streaming output (the text growing word by word) is live
 decoration only — it is never stored, and the agent's private reasoning is
@@ -235,6 +235,18 @@ remembering — this system keeps no grant state at all. Ask and answer are both
 notebook rows; an answer only lands on an ask that is still waiting on the live
 turn, and an unanswered ask dies — visibly — when its turn ends.
 
+Agent questions use a separate path. A request keeps every question in order, including
+its short header, full text, choices, descriptions, whether several choices are allowed,
+and whether a typed answer is allowed. The composer presents one question at a time and
+sends the complete answer map only after all are answered. The answer row is written only
+after the backend accepts that map. Refreshing the page rebuilds a still-pending request
+from the notebook. Cancelling the turn withdraws it. A malformed question request is
+shown as a failure and refused; it never turns into an approval prompt.
+
+Claude receives answers under the full question text expected by `AskUserQuestion`.
+Codex receives the exact `requestUserInput` answer object expected by app-server. Hermes
+ACP has no agent-question request, so its existing permission flow is unchanged.
+
 ## Processes, honestly
 
 One child process per conversation, started only when a send needs it. The
@@ -246,6 +258,13 @@ already saved); the next send brings it back without anyone noticing. A resume
 that did not actually restore the agent's memory is refused out loud — never
 silently accepted as a fresh brain behind an old transcript. A failed turn
 writes one error-log line with the ids and the tail of the process's stderr.
+
+Hermes installation maintenance is exclusive with those child processes. Panels
+refuses an update while any Hermes child is starting or alive, including an idle
+child. Once an update has been accepted, a new Hermes child waits until the
+update command and the card refresh have both finished. The reservation is made
+before spawn, so a send and an update cannot both see an empty gap and race into
+it.
 
 Held messages live in memory only: a server restart loses whatever was still
 waiting in line (the notebook keeps what was delivered or discarded). Kill is
@@ -263,6 +282,43 @@ update whose command is inferred from how the CLI was installed, re-checked
 afterwards, and reported as succeeded, unchanged, or failed. All of it is
 advisory; nothing blocks on it. Logging in stays in the terminal, and the card
 names the command.
+
+Hermes is found from its configured Python environment, the same installation a
+conversation launches, even when its executable is not on `PATH`. A packaged
+Hermes-only inventory door asks `hermes_cli.inventory` for configured providers
+and returns opaque `provider:model` choices, their provider details, and the
+configured default. Normal first demand uses Hermes' cached inventory and probes
+only the active custom endpoint; an explicit backend refresh forwards Hermes'
+refresh and may probe every configured custom endpoint. The answer is kept in the
+Panels process until that explicit refresh. It is not polled or copied onto
+Tickets. Hermes still offers no Panels reasoning control.
+
+Hermes supplies its own update advice through `hermes update --check`. Panels
+withholds the updater when that command identifies an installation it cannot
+drive; a network or authentication failure remains advisory because it does not
+change how the installation is managed. An authorized update runs as
+`hermes update --yes` without force options. A failed check does not make an
+otherwise usable backend unavailable. Every attempted update refreshes the card,
+even when the command fails.
+
+Usage is a separate, explicit action beside these ordinary backend reads. Opening
+the Backends page, reading `GET /backends`, receiving a change signal, or refreshing
+some other query never acquires usage. A person presses Refresh usage for one backend,
+and only `POST /backends/{backend_key}/usage-refresh` crosses that boundary. Repeated
+refreshes for the same backend run one at a time; Codex and Claude do not hold each
+other up.
+
+Codex first reads the newest rate-limit event in its local rollout record. A reading
+no more than ten minutes old is returned without starting Codex. Otherwise Panels runs
+one minimal Luna request at low reasoning and reads the newly written event. Claude
+uses the CLI's existing OAuth login for one bounded request to its usage endpoint. The
+credential never appears in the result or logs. Both providers are translated into the
+same answer: the observed time and only the rolling windows the provider actually
+returned, with percentage used and reset time. Hermes has no usage source here.
+
+Unavailable, logged-out, transport, and changed-response cases are returned as calm,
+typed results for that backend. They do not erase its maintenance card, affect the other
+backend, invent missing windows, or turn ambient reads into retries.
 
 ## The commands an agent takes
 

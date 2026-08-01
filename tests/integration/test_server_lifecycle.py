@@ -48,6 +48,16 @@ def _process_is_zombie(pid: int) -> bool:
     return result.returncode == 0 and result.stdout.strip().startswith("Z")
 
 
+def _process_is_stopped(pid: int) -> bool:
+    result = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip().startswith("T")
+
+
 def _wait_until(predicate: Callable[[], bool], message: str, timeout: float = 10.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -304,6 +314,10 @@ def test_unexpected_child_exit_wins_over_a_queued_restart(
     supervisor_resumed = False
     try:
         os.kill(supervisor_pid, signal.SIGSTOP)
+        _wait_until(
+            lambda: _process_is_stopped(supervisor_pid),
+            "supervisor did not stop before the queued restart setup",
+        )
         client.connect(str(server.control_socket_path))
         request = json.dumps({"version": 1, "operation": "restart"}).encode() + b"\n"
         client.sendall(request)

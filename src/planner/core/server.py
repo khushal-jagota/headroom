@@ -12,23 +12,32 @@ from time import monotonic as _monotonic
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from planner.conversation.api import build_conversation_runtime
 from planner.conversation.api import router as conversation_router
 from planner.conversation.contracts import ConversationSystem
 from planner.conversation.production_backends import production_backend_child_factories
+from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import HOST, Config
 from planner.core.db import connect
 from planner.core.errors import ErrorCode, PlannerError
+from planner.core.path_observer import observe_path_changes
 from planner.core.sse import change_stream
 from planner.core.testmode import build_test_router
 from planner.core.trusted_ingress import TrustedIngressMiddleware, trusted_ingress_config
 from planner.days.api import router as days_router
-from planner.environments.vps_status import VpsStatusSnapshot, collect_vps_status
+from planner.environments.deployment_lifecycle import DeploymentLifecycleStore
+from planner.environments.vps_status import (
+    VpsStatusSnapshot,
+    VpsStatusSummary,
+    collect_vps_status,
+    collect_vps_status_summary,
+)
 from planner.files.api import router as files_router
+from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
 from planner.sprints.api import router as sprints_router
@@ -100,6 +109,9 @@ def create_app(
     *,
     conversation_system_for_test: ConversationSystem | None = None,
     vps_status_collector: Callable[[Config], VpsStatusSnapshot] | None = None,
+    vps_status_summary_collector: (
+        Callable[[Config, str | None, str | None], VpsStatusSummary] | None
+    ) = None,
 ) -> FastAPI:
     if conversation_system_for_test is not None and not config.test_mode:
         raise ValueError("conversation_system_for_test is accepted only in test mode")
@@ -141,6 +153,9 @@ def create_app(
         )
         await conversation.system.start_idle_child_janitor()
 
+        lifecycle_observer = asyncio.create_task(
+            observe_path_changes(deployment_lifecycle_path, change_signal.emit)
+        )
         loops: Any = None
         if not config.test_mode:
             from planner.core.loops import start_background_loops
@@ -160,8 +175,14 @@ def create_app(
                 if loops is not None:
                     await _stop_runtime_with_deadline(loops, deadline)
             finally:
-                app.state.conversation = None
-                await conversation.shutdown()
+                lifecycle_observer.cancel()
+                try:
+                    await lifecycle_observer
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    app.state.conversation = None
+                    await conversation.shutdown()
 
     app = FastAPI(title="planner", version="2.0.0", lifespan=_configured_lifespan)
     app.add_middleware(TrustedIngressMiddleware, config=trusted_ingress_config(config))
@@ -178,6 +199,18 @@ def create_app(
     configured_vps_status_collector = vps_status_collector or (
         lambda status_config: collect_vps_status(status_config, application_root=_REPO_ROOT)
     )
+    configured_vps_status_summary_collector = vps_status_summary_collector or (
+        lambda status_config, outcome, detail: collect_vps_status_summary(
+            status_config,
+            deployment_outcome=outcome,
+            deployment_detail=detail,
+        )
+    )
+    deployment_lifecycle_path = (
+        Path(config.db_path).expanduser().resolve(strict=False).parent
+        / "deployment-lifecycle.json"
+    )
+    deployment_lifecycle_store = DeploymentLifecycleStore(deployment_lifecycle_path)
 
     @app.exception_handler(PlannerError)
     async def handle_planner_error(request: Request, exc: PlannerError) -> JSONResponse:
@@ -189,6 +222,7 @@ def create_app(
         sprints_router,
         days_router,
         scheduled_tickets_router,
+        notifications_router,
         worker_settings_router,
     ):
         app.include_router(domain_router, prefix="/api")
@@ -219,7 +253,28 @@ def create_app(
 
     @app.get("/api/vps-status")
     async def vps_status() -> dict[str, object]:
-        return configured_vps_status_collector(config).as_dict()
+        snapshot = await asyncio.to_thread(configured_vps_status_collector, config)
+        return snapshot.as_dict()
+
+    @app.get("/api/deployment-status")
+    async def deployment_status() -> dict[str, object]:
+        projection = await asyncio.to_thread(
+            deployment_lifecycle_store.project, config.app_sha
+        )
+        return projection.to_public_dict()
+
+    @app.get("/api/vps-status-summary")
+    async def vps_status_summary() -> dict[str, object]:
+        projection = await asyncio.to_thread(
+            deployment_lifecycle_store.project, config.app_sha
+        )
+        summary = await asyncio.to_thread(
+            configured_vps_status_summary_collector,
+            config,
+            projection.outcome,
+            projection.detail,
+        )
+        return summary.as_dict()
 
     @app.get("/api/worker-types")
     async def worker_types() -> dict[str, Any]:
@@ -240,6 +295,14 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
         return svelte_index_html()
+
+    @app.get("/service-worker.js", response_class=FileResponse)
+    async def service_worker() -> FileResponse:
+        return FileResponse(
+            _STATIC_DIR / "service-worker.js",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     if config.test_mode:
         app.include_router(build_test_router(config, clock), prefix="/api")

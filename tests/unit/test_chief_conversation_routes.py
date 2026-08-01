@@ -251,16 +251,16 @@ def test_what_a_conversation_started_now_would_run_on_is_the_chiefs_own(
         moved = client.put(
             "/api/workers/chief-of-staff/launch-defaults",
             json={
-                "employee_backend": "claude",
-                "employee_launch_model": "sonnet",
+                "employee_backend": "hermes",
+                "employee_launch_model": "openai-codex:gpt-5.6-sol",
                 "employee_launch_reasoning_effort": None,
             },
         )
         assert moved.status_code == 200, moved.text
 
         assert client.get("/api/chief/conversation/start-values").json() == {
-            "backend_key": "claude",
-            "model": "sonnet",
+            "backend_key": "hermes",
+            "model": "openai-codex:gpt-5.6-sol",
             "reasoning_effort": None,
         }
 
@@ -288,9 +288,9 @@ def test_the_first_message_runs_on_what_the_panel_was_shown(tmp_path: Path) -> N
         client.put(
             "/api/workers/chief-of-staff/launch-defaults",
             json={
-                "employee_backend": "claude",
-                "employee_launch_model": "opus",
-                "employee_launch_reasoning_effort": "high",
+                "employee_backend": "hermes",
+                "employee_launch_model": "openai-codex:gpt-5.6-sol",
+                "employee_launch_reasoning_effort": None,
             },
         )
         shown = client.get("/api/chief/conversation/start-values").json()

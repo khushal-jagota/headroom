@@ -17,6 +17,7 @@ Stage, effective ownership, and scope. Invoke that skill.
 Worker skills:
 - `panels-worker-coding` — coding tickets.
 - `panels-worker-general` — general tickets (a catch-all worker for arbitrary work with a minimal lifecycle).
+- `panels-worker-debugging` — debugging tickets (understanding a reported bug, diagnosing its structural cause, and defining the implementation handoff).
 - `panels-worker-new-worker` — new_worker tickets (designing another worker).
 - `panels-worker-exploration` — exploration tickets.
 - `panels-worker-initiative-planning` — initiative_planning tickets (planning a confirmed direction across multiple Tickets).
@@ -24,6 +25,7 @@ Worker skills:
 - `panels-worker-planning-day` — planning-day tickets (planning the morning's Day with the user).
 - `panels-worker-planning-midday-check` — planning-midday-check tickets (checking execution against the morning intent and carrying out any agreed intervention).
 - `panels-worker-planning-sprint` — planning-sprint tickets (reviewing the current sprint and planning the next).
+- `panels-worker-personal-task` — personal task tickets owned by the user, with optional explicit agent support.
 - `probe-worker` — the probe fixture Worker type (test genericity proof).
 
 ### Who owns the current Stage
@@ -60,16 +62,21 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **`panels worker recap <id> --body-file -`** — update the running recap outside a proposal.
 - **`panels worker request-user-help [ticket-id]`** — use this only when you cannot responsibly continue without important user input. Put the free-form request in your ordinary Ticket Chat response, then call this no-payload command. The Ticket enters `needs_user`: automatic work stays paused and Chat remains available until the user explicitly releases it. Do not use this for ordinary discussion, proposals or approvals, permission prompts, Stop, or confirmed Worker errors.
 - **`panels worker note <id> <field> --body-file -`** — preserve user guidance next to a field without touching its value.
-- **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket, when a
-  step spins off a new one. Worker type is required; choose it for the work being created.
-  When creating a Ticket that relies on existing Tickets being complete, pass each
-  prerequisite Ticket id with repeatable `--blocked-by <ticket-id>`.
+- **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the
+  current approved step spins off a new one. Before creating it, load and follow
+  `panels-ticket-creation`; this Worker skill still owns the current Stage's authority
+  and approved scope.
 
 
 ## How to complete this effectively
 
 ### Cross-cutting disciplines
 
+- **Treat deployed apps as immutable.** Repository work must happen in a Git checkout
+  under the assigned workspace, normally in an isolated worktree. Never edit or run
+  tests from `~/Deployments/Panels/current/app` or another deployed app artifact. If
+  the source checkout cannot be found, request user help instead of changing the
+  running installation.
 - **Do not over-specify fields.** 
 - **Explain your proposal judgment in chat.** After you propose a gated field, your chat reply should very briefly explain why you shaped the proposal that way. Do not merely announce that the field is ready, repeat which field you proposed, or restate approval/status details, the UI already shows this. 
 - **Use recap as cold-user orientation.** The recap is not a work log. Keep it short and scannable, so a cold user can read it alongside the title and understand what the ticket is and what was done before this proposal to refresh their mind before reviewing this proposal.

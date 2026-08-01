@@ -256,6 +256,7 @@ def test_gate_invalid_inputs_return_exact_codes(
             "worker_types": [
                 "coding",
                 "general",
+                "debugging",
                 "new_worker",
                 "exploration",
                 "initiative_planning",
@@ -276,6 +277,7 @@ def test_gate_invalid_inputs_return_exact_codes(
             "worker_types": [
                 "coding",
                 "general",
+                "debugging",
                 "new_worker",
                 "exploration",
                 "initiative_planning",

@@ -7,22 +7,28 @@ import type {
   BoardResponse,
   CurrentSprintResponse,
   DayResponse,
+  DeploymentStatus,
   IdeasResponse,
+  NotificationSettingsResponse,
   ProjectsResponse,
   ReviewResponse,
   SkillsHomeResponse,
   SprintsResponse,
   SprintItemsResponse,
   TicketDetail,
+  VpsStatusSummary,
   WorkerManagementDetail,
   WorkersResponse
 } from "./types";
 
+type ChiefConversationReference = {
+  conversation_id: string | null;
+};
+
 // Every server resource that follows the change stream, in one place: its query
 // key and the API path it comes from. A screen names the resource it needs and
 // gets both. One-shot reads that nothing invalidates — the employee
-// configuration catalog, the VPS status snapshot — stay imperative fetches
-// where they are used.
+// configuration catalog — stay imperative fetches where they are used.
 function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
   return queryOptions<T>({
     queryKey,
@@ -31,6 +37,10 @@ function jsonQuery<T>(queryKey: readonly unknown[], path: string) {
 }
 
 export const queries = {
+  deploymentStatus: () =>
+    jsonQuery<DeploymentStatus>(["deployment-status"], "/api/deployment-status"),
+  vpsStatusSummary: () =>
+    jsonQuery<VpsStatusSummary>(["vps-status-summary"], "/api/vps-status-summary"),
   board: () => jsonQuery<BoardResponse>(["board"], "/api/board"),
   review: () => jsonQuery<ReviewResponse>(["review"], "/api/review"),
   todayDay: () => jsonQuery<DayResponse>(["day", "today"], "/api/day/today"),
@@ -45,8 +55,8 @@ export const queries = {
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets/${encodeURIComponent(ticketId)}`),
   // What a conversation started right now would run on, for each owner that starts one.
-  // It follows the change stream because the owner can change it: the Agents screen sets
-  // the Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
+  // It follows the change stream because the owner can change it: Config sets the
+  // Chief's, and a Ticket's own last-chosen values move when its worker is talked to.
   ticketConversationStartValues: (ticketId: string) =>
     jsonQuery<ConversationStartValues>(
       ["ticket", ticketId, "conversation-start-values"],
@@ -57,6 +67,15 @@ export const queries = {
       ["chief", "conversation-start-values"],
       "/api/chief/conversation/start-values"
     ),
+  chiefConversation: () =>
+    queryOptions<ChiefConversationReference>({
+      queryKey: ["chief", "conversation"],
+      queryFn: ({ signal }) =>
+        fetchJson<ChiefConversationReference>("/api/chief/conversation", { signal }),
+      // A failed owner lookup is a screen state with an explicit user-controlled retry.
+      // Hiding it behind automatic attempts makes a blank/new thread appear authoritative.
+      retry: false
+    }),
   workerTypeManifests: () => jsonQuery<WorkerTypesResponse>(["worker-types"], "/api/worker-types"),
   workers: () => jsonQuery<WorkersResponse>(["workers"], "/api/workers"),
   worker: (workerType: string) =>
@@ -64,5 +83,10 @@ export const queries = {
       ["worker", workerType],
       `/api/workers/${encodeURIComponent(workerType)}`
     ),
-  skillsHome: () => jsonQuery<SkillsHomeResponse>(["skills-home"], "/api/skills")
+  skillsHome: () => jsonQuery<SkillsHomeResponse>(["skills-home"], "/api/skills"),
+  notificationSettings: () =>
+    jsonQuery<NotificationSettingsResponse>(
+      ["notification-settings"],
+      "/api/notifications/settings"
+    )
 };

@@ -49,7 +49,7 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     empty_ready = f'section[data-screen="ticket"][data-ticket-id="{empty_ticket_id}"]'
     page = open_page(context_factory(), server, f"#/ticket/{empty_ticket_id}", empty_ready)
     assert page.locator("[data-ticket-identity] .ticket-identity-add").count() == 3
-    assert page.locator("[data-priority-alert]").count() == 0
+    assert page.locator('[data-priority-control] [data-priority-tile="P3"]').count() == 1
 
     ticket_id = cli(
         server,
@@ -60,6 +60,18 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
         "--title",
         "A title which owns its own row",
     )["id"]
+    api.direct_put(
+        server,
+        f"/api/tickets/{ticket_id}/recap",
+        {
+            "body": (
+                "| Surface | Phone behavior |\n"
+                "| --- | --- |\n"
+                "| Markdown table | Keep the columns readable inside a local scroll area |\n"
+                "| Ticket page | Never widen the document or viewport |"
+            )
+        },
+    )
     blocker_id = cli(
         server,
         "ticket",
@@ -83,6 +95,18 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
 
     identity = page.locator("[data-ticket-identity]")
     assert "P0" in identity.inner_text()
+    worker_label = next(
+        worker_type["label"]
+        for worker_type in api.get(server, "/api/worker-types")["worker_types"]
+        if worker_type["worker_type"] == "coding"
+    )
+    worker_name = identity.locator("[data-ticket-worker-name]")
+    assert worker_name.evaluate("element => element.textContent") == worker_label
+    assert worker_name.locator(".ticket-identity-key").count() == 0
+    worker_name_after_priority = page.locator(
+        "[data-priority-control] + .ticket-identity-group [data-ticket-worker-name]"
+    )
+    assert worker_name_after_priority.count() == 1
     assert "sprint" in identity.inner_text().lower()
     assert "A DELIBERATELY DESCRIPTIVE LATER SPRINT" in identity.inner_text()
     assert "due" in identity.inner_text().lower()
@@ -92,20 +116,27 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     assert page.locator(".ticket-status-display, [data-ticket-status]").count() == 0
     assert page.locator(".ticket-planning").count() == 0
 
-    urgent_colour = page.locator("[data-priority-control]").evaluate(
+    priority_colours = page.locator('[data-priority-tile="P0"]').evaluate(
         """element => {
           const style = getComputedStyle(element);
-          const expected = getComputedStyle(document.documentElement)
-            .getPropertyValue("--accent-error").trim();
+          const tokens = getComputedStyle(document.documentElement);
           const probe = document.createElement("span");
-          probe.style.color = expected;
+          probe.style.color = tokens.getPropertyValue("--priority-p0-ink").trim();
+          probe.style.backgroundColor = tokens.getPropertyValue("--priority-p0-fill").trim();
           document.body.appendChild(probe);
-          const expectedRgb = getComputedStyle(probe).color;
+          const expected = getComputedStyle(probe);
+          const result = {
+            color: style.color,
+            background: style.backgroundColor,
+            expectedColor: expected.color,
+            expectedBackground: expected.backgroundColor,
+          };
           probe.remove();
-          return { actual: style.color, expected: expectedRgb };
+          return result;
         }"""
     )
-    assert urgent_colour["actual"] == urgent_colour["expected"]
+    assert priority_colours["color"] == priority_colours["expectedColor"]
+    assert priority_colours["background"] == priority_colours["expectedBackground"]
 
     order = page.evaluate(
         """() => {
@@ -160,6 +191,7 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
           const leash = document.querySelector(".ticket-leash");
           const ticketDoc = document.querySelector(".ticket-doc");
           const blockers = document.querySelector("[data-blocker-summary]");
+          const workerName = document.querySelector("[data-ticket-worker-name]");
           const tops = element => [...element.children].map(child =>
             Math.round(child.getBoundingClientRect().top)
           );
@@ -173,6 +205,7 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
             overflow: document.documentElement.scrollWidth - window.innerWidth,
             ticketDocOverflow: ticketDoc.scrollWidth - ticketDoc.clientWidth,
             blockerOverflow: blockers.scrollWidth - blockers.clientWidth,
+            workerNameRight: workerName.getBoundingClientRect().right,
           };
         }"""
     )
@@ -183,6 +216,10 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     assert geometry["overflow"] <= 0
     assert geometry["ticketDocOverflow"] <= 0
     assert geometry["blockerOverflow"] <= 0
+    assert geometry["workerNameRight"] <= 320
+    table = page.locator(".ticket-recap .markdown table")
+    assert table.evaluate("element => getComputedStyle(element).overflowX") == "auto"
+    assert table.evaluate("element => element.scrollWidth > element.clientWidth")
 
 
 def test_current_stage_only_labels_ambiguous_user_and_approval_states(

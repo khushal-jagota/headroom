@@ -20,9 +20,7 @@
 
   let classes = $derived.by(() => {
     const out = ["chip"];
-    if (variant === "priority") {
-      out.push("chip--priority", `chip--${String(value).toLowerCase()}`);
-    } else if (variant === "state") {
+    if (variant === "state") {
       out.push("chip--state");
     } else if (variant === "project") {
       out.push("chip--project");

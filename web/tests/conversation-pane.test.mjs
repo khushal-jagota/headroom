@@ -45,6 +45,7 @@ const expectedInventory = [
   "RunValuePicker.svelte",
   "ToolCallRow.svelte",
   "TurnAnchor.svelte",
+  "UserInputQuestionPanel.svelte",
   "WorkGroup.svelte"
 ];
 const inventory = (await readdir(componentDirectory))
@@ -52,7 +53,11 @@ const inventory = (await readdir(componentDirectory))
   .sort();
 assert.deepEqual(inventory, expectedInventory);
 
-const sourceFiles = [...inventory, "viewport/ConversationViewport.svelte"];
+const sourceFiles = [
+  ...inventory,
+  "viewport/ConversationViewport.svelte",
+  "composer/ComposerRunControls.svelte"
+];
 const sources = {};
 for (const fileName of sourceFiles) {
   const source = await readFile(new URL(fileName, componentDirectory), "utf8");
@@ -105,7 +110,7 @@ assert.match(sources["ConversationTranscript.svelte"], /chat-u|chat-a/);
 // one of them.
 assert.match(sources["MessagePieces.svelte"], /MarkdownBlock/);
 assert.match(sources["ConversationTranscript.svelte"], /MessagePieces/);
-assert.match(sources["ConversationComposer.svelte"], /chat-seg/);
+assert.match(sources["composer/ComposerRunControls.svelte"], /chat-seg/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
 // The pane that came before this one is gone, and nothing may reach for it.
@@ -226,6 +231,7 @@ try {
       'export { default as PlanStrip } from "../src/components/conversation/PlanStrip.svelte";',
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
       'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
+      'export { default as RestBar } from "../src/components/conversation/ConversationRestBar.svelte";',
       'export { default as CommandMenu } from "../src/components/conversation/AgentCommandMenu.svelte";',
       ""
     ].join("\n"),
@@ -243,7 +249,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, BackendRail, CommandMenu, Composer, NewForm, Pane, PlanStrip, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, BackendCard, BackendRail, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -281,6 +287,13 @@ try {
       knownFate
     };
   }
+
+  // The band is card structure, not an activity row. Before a conversation read has
+  // answered — and for a conversation where nothing has happened — it occupies the same
+  // place without inventing a status for a screen reader or a person.
+  const emptyRestBar = drawn(RestBar, { line: null });
+  assert.match(emptyRestBar, /data-conversation-rest-bar/);
+  assert.doesNotMatch(emptyRestBar, /data-conversation-rest-line/);
 
   const waiting = drawn(Pane, {
     conversationId: "c1",
@@ -1094,11 +1107,24 @@ try {
       },
       diagnoses: ["`codex` is not signed in. Run `codex login` in a terminal."]
     },
+    usageResult: {
+      backend_key: "codex",
+      outcome: "succeeded",
+      detail: null,
+      observed_at: "2026-07-31T12:34:56Z",
+      windows: [
+        { name: "5 hours", used_percent: 12.5, resets_at: "2026-07-31T15:00:00Z" }
+      ]
+    },
+    onUsageRefresh() {},
     onUpdate() {}
   });
   assert.match(backendCard, /not signed in · run codex login in a terminal/);
   assert.match(backendCard, /Version 0\.146\.0 is available\./);
   assert.match(backendCard, /data-conversation-backend-update="codex"/);
+  assert.match(backendCard, /data-conversation-backend-usage-refresh="codex"/);
+  assert.match(backendCard, /data-conversation-backend-usage="succeeded"/);
+  assert.match(backendCard, /12\.5% used/);
   assert.match(backendCard, /is not signed in\. Run `codex login` in a terminal\./);
 
   const updatedCard = drawn(BackendCard, {
@@ -1120,6 +1146,7 @@ try {
       diagnoses: []
     },
     result: { outcome: "unchanged", detail: "still 0.18.2", output_tail: "" },
+    onUsageRefresh() {},
     onUpdate() {}
   });
   assert.match(updatedCard, /no account to sign in to/);
@@ -1129,6 +1156,11 @@ try {
     updatedCard,
     /data-conversation-backend-update/,
     "no button is offered for an update Panels cannot run"
+  );
+  assert.doesNotMatch(
+    updatedCard,
+    /data-conversation-backend-usage-refresh/,
+    "Hermes has no provider allowance to acquire"
   );
 
   // The command menu draws what the agent reported and nothing else: the name a person
@@ -1199,15 +1231,18 @@ try {
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
   import ConversationTranscript from "../src/components/conversation/ConversationTranscript.svelte";
   import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
+  import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
 
   const sends: unknown[] = [];
   const answers: string[] = [];
+  const userInputAnswers: unknown[] = [];
   let sendAccepted = true;
   let holdNextSend = false;
   let heldSend: ((accepted: boolean) => void) | null = null;
   let showComposer = $state(true);
   (window as any).__sends = () => sends;
   (window as any).__answers = () => answers;
+  (window as any).__userInputAnswers = () => userInputAnswers;
   (window as any).__setSendAccepted = (accepted: boolean) => {
     sendAccepted = accepted;
   };
@@ -1406,6 +1441,33 @@ try {
       { option_id: "q-b", label: "Leave it", option_kind: "choice" }
     ]
   };
+
+  const userInputRequest = {
+    requestId: "input-1",
+    questions: [
+      {
+        question_id: "scope",
+        header: "Scope",
+        question: "Which surfaces should change?",
+        options: [
+          { label: "Composer", description: "The live composer" },
+          { label: "Transcript", description: "Durable history" }
+        ],
+        multi_select: true,
+        allow_other: true
+      },
+      {
+        question_id: "proof",
+        header: "Proof",
+        question: "What proof should be required?",
+        options: [
+          { label: "Browser test", description: "Exercise the whole interaction" }
+        ],
+        multi_select: false,
+        allow_other: true
+      }
+    ]
+  };
 </script>
 
 {#if showComposer}
@@ -1435,6 +1497,12 @@ try {
 </div>
 
 <PermissionAskCard ask={question} onAnswer={(optionId) => answers.push(optionId)} />
+<div data-user-input-fixture>
+  <UserInputQuestionPanel
+    request={userInputRequest}
+    onSubmit={(given) => userInputAnswers.push(given)}
+  />
+</div>
 `,
     "utf8"
   );
@@ -1517,6 +1585,34 @@ with sync_playwright() as playwright:
         open_the_panel(picker)
         picker.locator('[data-conversation-picker-choice="' + value + '"]').click()
         the_panel_is_gone()
+
+    def footer_child_roles():
+        return page.locator(".chat-foot > *").evaluate_all(
+            """nodes => nodes.map((node) => {
+              for (const attribute of [
+                "data-conversation-slash",
+                "data-conversation-image",
+                "data-conversation-image-input",
+                "data-conversation-picker-model",
+                "data-conversation-picker-effort",
+                "data-conversation-delivery",
+                "data-conversation-send",
+                "data-conversation-stop"
+              ]) {
+                if (node.hasAttribute(attribute)) return attribute;
+              }
+              return node.tagName.toLowerCase();
+            })"""
+        )
+
+    assert footer_child_roles() == [
+        "data-conversation-slash",
+        "data-conversation-image",
+        "data-conversation-image-input",
+        "data-conversation-picker-model",
+        "data-conversation-picker-effort",
+        "data-conversation-send",
+    ], footer_child_roles()
 
     assert face(model) == "Opus", face(model)
     # Claude names no default effort, so the control is there but bare — never empty-wide.
@@ -1815,8 +1911,11 @@ with sync_playwright() as playwright:
         {"piece": "image", "data": "Cw==", "media_type": "image/png", "file_name": "only.png"}
     ]
 
-    # A definite refusal puts the exact text and image back.
-    page.evaluate("window.__setSendAccepted(false)")
+    # A definite refusal puts the exact text, image, model and effort back. Hold the
+    # ordinary send open so the cleared controls are visible before the refusal lands:
+    # this proves the public component mapping on both sides of the draft transaction.
+    pick(model, "gpt-5.5-codex-mini")
+    pick(effort, "low")
     image_input.set_input_files(
         {"name": "return.png", "mimeType": "image/png", "buffer": bytes([9, 10])}
     )
@@ -1824,11 +1923,23 @@ with sync_playwright() as playwright:
         "document.querySelectorAll('[data-chat-image-preview]').length === 1"
     )
     the_box.fill("please return")
+    page.evaluate("window.__holdNextSend()")
     page.locator("[data-conversation-send]").click()
     page.wait_for_function("window.__sends().length === 7")
+    refused = page.evaluate("window.__sends()[6]")
+    assert refused["picked"]["model"] == "gpt-5.5-codex-mini", refused
+    assert refused["picked"]["reasoningEffort"] == "low", refused
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-input]').value === ''"
+    )
+    assert face(model) == "GPT-5.5 Codex", face(model)
+    assert face(effort) == "high", face(effort)
+    page.evaluate("window.__finishSend(false)")
     page.wait_for_function(
         "document.querySelector('[data-conversation-input]').value === 'please return'"
     )
+    assert face(model) == "GPT-5.5 Codex mini", face(model)
+    assert face(effort) == "low", face(effort)
     assert page.locator("[data-chat-image-preview]").get_attribute(
         "data-chat-image-name"
     ) == "return.png"
@@ -1976,6 +2087,26 @@ with sync_playwright() as playwright:
     page.locator('[data-conversation-ask-choice="q-a"]').click()
     page.wait_for_function("window.__answers().length === 2")
     assert page.evaluate("window.__answers()[1]") == "q-a"
+
+    # Structured agent questions keep their own multi-step answer map and never acquire
+    # permission language or approval buttons.
+    questions = page.locator("[data-user-input-fixture]")
+    assert "1 of 2" in questions.inner_text()
+    assert "Approve" not in questions.inner_text()
+    questions.locator('[data-user-input-option="Composer"]').click()
+    questions.locator('[data-user-input-option="Transcript"]').click()
+    questions.locator("[data-user-input-continue]").click()
+    assert "2 of 2" in questions.inner_text()
+    questions.locator("[data-user-input-other]").fill("Recorded event replay")
+    questions.locator("[data-user-input-back]").click()
+    assert "1 of 2" in questions.inner_text()
+    questions.locator("[data-user-input-continue]").click()
+    questions.locator("[data-user-input-continue]").click()
+    page.wait_for_function("window.__userInputAnswers().length === 1")
+    assert page.evaluate("window.__userInputAnswers()[0]") == {
+        "scope": {"answers": ["Composer", "Transcript"]},
+        "proof": {"answers": ["Recorded event replay"]}
+    }
 
     # A number typed into a field is the number, not the answer.
     page.locator("[data-conversation-input]").fill("")
@@ -2180,6 +2311,15 @@ with sync_playwright() as playwright:
     page.evaluate("window.__setExists(true)")
     page.evaluate("window.__setComposerRunState('hermes', true)")
     page.wait_for_selector('[data-conversation-delivery-mode="steer"]')
+    assert footer_child_roles() == [
+        "data-conversation-slash",
+        "data-conversation-image",
+        "data-conversation-image-input",
+        "data-conversation-picker-model",
+        "data-conversation-picker-effort",
+        "data-conversation-delivery",
+        "data-conversation-stop",
+    ], footer_child_roles()
     pick(model, "sonnet")
     pick(effort, "low")
     page.locator('[data-conversation-delivery-mode="steer"]').click()

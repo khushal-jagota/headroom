@@ -38,16 +38,19 @@ from enum import StrEnum
 from functools import partial
 from typing import Any
 
+from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backends.contracts import (
     BackendChild,
     BackendChildFactory,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
+    UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
     AgentCommand,
@@ -84,6 +87,11 @@ from planner.conversation.events import (
     ToolCallStartedEventPayload,
     ToolCallStatus,
     TurnEndedEventPayload,
+    UserInputAnswer,
+    UserInputAnsweredEventPayload,
+    UserInputFailedEventPayload,
+    UserInputQuestion,
+    UserInputRequestedEventPayload,
 )
 from planner.conversation.live_tail import ConversationLiveTail
 from planner.conversation.logic.conversation_start_resolution import (
@@ -157,6 +165,9 @@ class _ReservedTurn:
 class _RunningTurn:
     token: TurnToken
     pending_permission_ask_ids: set[str] = field(default_factory=set)
+    pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
+        default_factory=dict
+    )
     ended: bool = False
     # Set when the core is part-way through ending this turn itself — an interrupt, or a
     # send-now killing the incumbent. The cancel goes out with the lock let go, and the
@@ -236,6 +247,7 @@ class SqliteProcessConversationSystem:
         monotonic_now: Callable[[], float] = time.monotonic,
         idle_child_stop_after_seconds: float = IDLE_CHILD_STOP_AFTER_SECONDS,
         idle_child_sweep_interval_seconds: float = IDLE_CHILD_SWEEP_INTERVAL_SECONDS,
+        backend_lifecycle: BackendLifecycleCoordinator | None = None,
     ) -> None:
         missing = sorted(set(ConversationBackendKey) - set(backend_child_factories))
         if missing:
@@ -246,6 +258,7 @@ class SqliteProcessConversationSystem:
         # is written exactly the same way, and there is simply nowhere to show it.
         self._live_tail = live_tail
         self._backend_child_factories = dict(backend_child_factories)
+        self._backend_lifecycle = backend_lifecycle
         self._monotonic_now = monotonic_now
         self._idle_child_stop_after_seconds = idle_child_stop_after_seconds
         self._idle_child_sweep_interval_seconds = idle_child_sweep_interval_seconds
@@ -417,6 +430,18 @@ class SqliteProcessConversationSystem:
             return frozenset()
         return frozenset(state.running_turn.pending_permission_ask_ids)
 
+    async def has_pending_user_input(self, conversation_id: str) -> bool:
+        state = await self._conversation_state(conversation_id)
+        if state is None or state.running_turn is None:
+            return False
+        return bool(state.running_turn.pending_user_input_questions)
+
+    async def pending_user_input_request_ids(self, conversation_id: str) -> frozenset[str]:
+        state = await self._conversation_state(conversation_id)
+        if state is None or state.running_turn is None:
+            return frozenset()
+        return frozenset(state.running_turn.pending_user_input_questions)
+
     async def held_prompt_count(self, conversation_id: str) -> int:
         """How many messages are waiting for the agent to free up.
 
@@ -512,6 +537,73 @@ class SqliteProcessConversationSystem:
                 return False
             await self._append_event(
                 state, PermissionAnsweredEventPayload(ask_id=ask_id, option_id=option_id)
+            )
+            return True
+
+    async def answer_user_input(
+        self,
+        conversation_id: str,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+    ) -> bool:
+        """Deliver one complete answer map and record it only after the backend takes it."""
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return False
+        state.last_touched_monotonic = self._monotonic_now()
+
+        async with state.lock:
+            running = state.running_turn
+            child = state.child
+            if running is None or child is None:
+                return False
+            questions = running.pending_user_input_questions.get(request_id)
+            if questions is None:
+                return False
+            question_ids = tuple(question.question_id for question in questions)
+            answers_by_question_id = {answer.question_id: answer for answer in answers}
+            if len(answers_by_question_id) != len(answers) or set(
+                answers_by_question_id
+            ) != set(question_ids):
+                return False
+            ordered_answers = tuple(
+                answers_by_question_id[question_id] for question_id in question_ids
+            )
+            if any(
+                not answer.answers
+                or any(not value for value in answer.answers)
+                or (not question.multi_select and len(answer.answers) != 1)
+                or (
+                    not question.allow_other
+                    and any(
+                        value not in {option.label for option in question.options}
+                        for value in answer.answers
+                    )
+                )
+                for question, answer in zip(questions, ordered_answers, strict=True)
+            ):
+                return False
+            del running.pending_user_input_questions[request_id]
+            answered_turn_token = running.token
+
+        reached_the_backend = True
+        try:
+            await child.answer_user_input(request_id, ordered_answers)
+        except UserInputAnswerWriteFailed:
+            reached_the_backend = False
+
+        async with state.lock:
+            running = state.running_turn
+            if running is None or running.token != answered_turn_token:
+                return False
+            if not reached_the_backend:
+                running.pending_user_input_questions[request_id] = questions
+                return False
+            await self._append_event(
+                state,
+                UserInputAnsweredEventPayload(
+                    request_id=request_id, answers=ordered_answers
+                ),
             )
             return True
 
@@ -1077,6 +1169,7 @@ class SqliteProcessConversationSystem:
             return None
         running.ended = True
         running.pending_permission_ask_ids.clear()
+        running.pending_user_input_questions.clear()
         state.running_turn = None
         return await self._append_event(
             state, TurnEndedEventPayload(ending=ending, error_summary=error_summary)
@@ -1121,9 +1214,15 @@ class SqliteProcessConversationSystem:
         # The pump is running before the child is, so news the child makes while it starts
         # up — the session cursor it mints — has somewhere to go.
         self._ensure_backend_event_pump(state)
-        await child.start(
-            resolved_start, vendor_session_cursor=state.record.vendor_session_cursor
-        )
+        if self._backend_lifecycle is None:
+            await child.start(
+                resolved_start, vendor_session_cursor=state.record.vendor_session_cursor
+            )
+        else:
+            async with self._backend_lifecycle.child_start(state.record.backend_key):
+                await child.start(
+                    resolved_start, vendor_session_cursor=state.record.vendor_session_cursor
+                )
         state.child = child
         return child
 
@@ -1145,6 +1244,11 @@ class SqliteProcessConversationSystem:
                 "conversation %s could not stop its backend child cleanly",
                 state.record.conversation_id,
             )
+            # The process may still be alive. Keep it counted so installation maintenance
+            # remains conservatively refused rather than mutating underneath it.
+            return
+        if self._backend_lifecycle is not None:
+            await self._backend_lifecycle.child_stopped(state.record.backend_key)
 
     async def _cancel_child_turn(self, state: _ConversationState, child: BackendChild) -> None:
         """Tell the child to stop its turn, and deal honestly with a cancel that failed.
@@ -1339,6 +1443,42 @@ class SqliteProcessConversationSystem:
                 ),
             )
             running.pending_permission_ask_ids.add(ask.ask_id)
+        finally:
+            state.lock.release()
+
+    async def _on_user_input_requested(
+        self,
+        state: _ConversationState,
+        turn_token: TurnToken,
+        request: BackendUserInputRequest,
+    ) -> None:
+        running = await self._hold_for_the_live_turn(state, turn_token)
+        if running is None:
+            return
+        try:
+            await self._append_event(
+                state,
+                UserInputRequestedEventPayload(
+                    request_id=request.request_id, questions=request.questions
+                ),
+            )
+            running.pending_user_input_questions[request.request_id] = request.questions
+        finally:
+            state.lock.release()
+
+    async def _on_user_input_failed(
+        self,
+        state: _ConversationState,
+        turn_token: TurnToken,
+        request_id: str,
+        detail: str,
+    ) -> None:
+        if await self._hold_for_the_live_turn(state, turn_token) is None:
+            return
+        try:
+            await self._append_event(
+                state, UserInputFailedEventPayload(request_id=request_id, detail=detail)
+            )
         finally:
             state.lock.release()
 
@@ -1751,6 +1891,26 @@ class _CoreBackendEventSink:
     ) -> None:
         self._enqueue(
             partial(self._system._on_permission_ask_raised, self._state, turn_token, ask)
+        )
+
+    async def user_input_requested(
+        self, turn_token: TurnToken, request: BackendUserInputRequest
+    ) -> None:
+        self._enqueue(
+            partial(self._system._on_user_input_requested, self._state, turn_token, request)
+        )
+
+    async def user_input_failed(
+        self, turn_token: TurnToken, *, request_id: str, detail: str
+    ) -> None:
+        self._enqueue(
+            partial(
+                self._system._on_user_input_failed,
+                self._state,
+                turn_token,
+                request_id,
+                detail,
+            )
         )
 
     async def turn_ended(

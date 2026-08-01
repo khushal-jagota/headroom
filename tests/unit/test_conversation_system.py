@@ -20,15 +20,18 @@ from typing import Any
 
 import pytest
 
+from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backends.contracts import (
     BackendEventSink,
     BackendPermissionAsk,
     BackendSpawnFailed,
+    BackendUserInputRequest,
     NeedsRebind,
     PermissionAnswerWriteFailed,
     PromptWriteFailed,
     SessionLoadFailed,
     TurnToken,
+    UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
     AgentCommand,
@@ -56,6 +59,11 @@ from planner.conversation.events import (
     PromptDiscardedEventPayload,
     PromptEventPayload,
     TurnEndedEventPayload,
+    UserInputAnswer,
+    UserInputAnsweredEventPayload,
+    UserInputOption,
+    UserInputQuestion,
+    UserInputRequestedEventPayload,
 )
 from planner.conversation.live_tail import (
     ConversationLiveTail,
@@ -114,6 +122,7 @@ class _FakeBackend:
     conversation_id: str
     writes: list[_FakeBackendWrite] = field(default_factory=list)
     permission_answers: dict[str, str] = field(default_factory=dict)
+    user_input_answers: dict[str, tuple[UserInputAnswer, ...]] = field(default_factory=dict)
     cancellations: int = 0
     session_starts: int = 0
     stops: int = 0
@@ -129,6 +138,7 @@ class _FakeBackend:
     session_load_fails: bool = False
     write_fails: bool = False
     permission_answer_write_fails: bool = False
+    user_input_answer_write_fails: bool = False
     needs_rebind_once: bool = False
     ends_the_turn_while_writing: bool = False
     writes_raise_something_unnamed: bool = False
@@ -263,6 +273,13 @@ class _FakeBackendChild:
             raise PermissionAnswerWriteFailed(ask_id)
         self._backend.permission_answers[ask_id] = option_id
 
+    async def answer_user_input(
+        self, request_id: str, answers: tuple[UserInputAnswer, ...]
+    ) -> None:
+        if self._backend.user_input_answer_write_fails:
+            raise UserInputAnswerWriteFailed(request_id)
+        self._backend.user_input_answers[request_id] = answers
+
     async def stop(self) -> None:
         if self._backend.stop_has_begun is not None:
             self._backend.stop_has_begun.set()
@@ -299,6 +316,7 @@ class _Harness:
         self.spawned_conversation_ids: list[str] = []
         self.clock = _FakeMonotonicClock()
         self.live_tail = ConversationLiveTail()
+        self.backend_lifecycle = BackendLifecycleCoordinator()
         self.message_files = ConversationMessageFiles(str(db_path))
         self.system = SqliteProcessConversationSystem(
             store=self.store,
@@ -310,6 +328,7 @@ class _Harness:
             monotonic_now=self.clock,
             idle_child_stop_after_seconds=idle_child_stop_after_seconds,
             idle_child_sweep_interval_seconds=idle_child_sweep_interval_seconds,
+            backend_lifecycle=self.backend_lifecycle,
         )
 
     def _make_child(
@@ -392,6 +411,38 @@ class _Harness:
         )
         await self.settle()
         return ask_id
+
+    async def request_user_input(self, conversation_id: str) -> BackendUserInputRequest:
+        backend = self.backend(conversation_id)
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        request = BackendUserInputRequest(
+            request_id="input-1",
+            questions=(
+                UserInputQuestion(
+                    question_id="scope",
+                    header="Scope",
+                    question="Which parts?",
+                    options=(
+                        UserInputOption(label="Backend", description="Python"),
+                        UserInputOption(label="Frontend", description="Svelte"),
+                    ),
+                    multi_select=True,
+                    allow_other=True,
+                ),
+                UserInputQuestion(
+                    question_id="timing",
+                    header="Timing",
+                    question="When?",
+                    options=(UserInputOption(label="Now", description="Immediately"),),
+                    multi_select=False,
+                    allow_other=True,
+                ),
+            ),
+        )
+        await backend.sink.user_input_requested(token, request)
+        await self.settle()
+        return request
 
     async def agent_message(self, conversation_id: str, content: MessageContent) -> None:
         backend = self.backend(conversation_id)
@@ -598,6 +649,82 @@ def test_run_when_free_starts_the_turn_when_the_agent_is_idle(harness: _Harness)
         assert await harness.system.is_running("c") is True
         assert harness.backend("c").written_texts() == ("first",)
         assert await harness.recorded_prompts("c") == (("first", "owner", "run_when_free"),)
+
+    _run(exercise)
+
+
+def test_an_idle_hermes_child_remains_visible_to_backend_maintenance(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.hermes)
+        await harness.system.send(
+            "c", text_message_content("first"), sender_label="owner"
+        )
+        await harness.complete_turn("c")
+
+        assert (
+            await harness.backend_lifecycle.try_begin_maintenance(
+                ConversationBackendKey.hermes
+            )
+            is None
+        )
+
+        await harness.system.kill("c")
+        lease = await harness.backend_lifecycle.try_begin_maintenance(
+            ConversationBackendKey.hermes
+        )
+        assert lease is not None
+        await harness.backend_lifecycle.end_maintenance(lease)
+
+    _run(exercise)
+
+
+def test_an_accepted_hermes_update_holds_a_real_system_child_before_spawn(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.hermes)
+        lease = await harness.backend_lifecycle.try_begin_maintenance(
+            ConversationBackendKey.hermes
+        )
+        assert lease is not None
+
+        sending = asyncio.create_task(
+            harness.system.send(
+                "c", text_message_content("after maintenance"), sender_label="owner"
+            )
+        )
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert harness.backend("c").session_starts == 0
+
+        await harness.backend_lifecycle.end_maintenance(lease)
+        assert await sending == PromptDeliveryStarted()
+        assert harness.backend("c").session_starts == 1
+        await harness.system.kill("c")
+
+    _run(exercise)
+
+
+def test_a_failed_hermes_start_releases_its_maintenance_reservation(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.hermes)
+        harness.backend("c").session_load_fails = True
+
+        assert await harness.system.send(
+            "c", text_message_content("will not start"), sender_label="owner"
+        ) == PromptDeliveryRefused(
+            refusal_reason=PromptDeliveryRefusalReason.session_did_not_load
+        )
+
+        lease = await harness.backend_lifecycle.try_begin_maintenance(
+            ConversationBackendKey.hermes
+        )
+        assert lease is not None
+        await harness.backend_lifecycle.end_maintenance(lease)
 
     _run(exercise)
 
@@ -1466,6 +1593,83 @@ def test_the_pending_ask_read_tracks_an_ask_through_its_whole_life(harness: _Har
     _run(exercise)
 
 
+def test_user_input_is_distinct_durable_and_recorded_only_after_delivery(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        request = await harness.request_user_input("c")
+
+        requested = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, UserInputRequestedEventPayload)
+        ]
+        assert requested[0].questions == request.questions
+        assert await harness.system.has_pending_user_input("c") is True
+        assert await harness.system.has_pending_permission_ask("c") is False
+
+        answers = (
+            UserInputAnswer(question_id="scope", answers=("Backend", "Frontend")),
+            UserInputAnswer(question_id="timing", answers=("Tomorrow",)),
+        )
+        harness.backend("c").user_input_answer_write_fails = True
+        assert await harness.system.answer_user_input("c", request.request_id, answers) is False
+        assert await harness.system.has_pending_user_input("c") is True
+        assert not any(
+            isinstance(event.payload, UserInputAnsweredEventPayload)
+            for event in await harness.events("c")
+        )
+
+        harness.backend("c").user_input_answer_write_fails = False
+        assert await harness.system.answer_user_input("c", request.request_id, answers) is True
+        assert harness.backend("c").user_input_answers == {request.request_id: answers}
+        assert await harness.system.has_pending_user_input("c") is False
+        answered = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, UserInputAnsweredEventPayload)
+        ]
+        assert answered == [
+            UserInputAnsweredEventPayload(request_id=request.request_id, answers=answers)
+        ]
+
+    _run(exercise)
+
+
+def test_user_input_requires_the_complete_ordered_answer_map_and_dies_with_turn(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("work"), sender_label="owner")
+        request = await harness.request_user_input("c")
+
+        incomplete = (UserInputAnswer(question_id="scope", answers=("Backend",)),)
+        assert (
+            await harness.system.answer_user_input("c", request.request_id, incomplete)
+            is False
+        )
+        assert await harness.system.has_pending_user_input("c") is True
+
+        await harness.system.interrupt("c")
+        assert await harness.system.has_pending_user_input("c") is False
+        assert (
+            await harness.system.answer_user_input(
+                "c",
+                request.request_id,
+                (
+                    *incomplete,
+                    UserInputAnswer(question_id="timing", answers=("Now",)),
+                ),
+            )
+            is False
+        )
+
+    _run(exercise)
+
+
 # --- is_running through the lifecycle -----------------------------------------------------
 
 
@@ -1758,7 +1962,8 @@ def test_a_child_that_sat_idle_is_stopped_and_the_next_message_resumes_it(
     harness: _Harness,
 ) -> None:
     async def exercise() -> None:
-        await _start(harness, "c")
+        qualified_model = "openai-codex:gpt-5.6-sol"
+        await _start(harness, "c", model=qualified_model)
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
         await harness.complete_turn("c")
         backend = harness.backend("c")
@@ -1773,6 +1978,7 @@ def test_a_child_that_sat_idle_is_stopped_and_the_next_message_resumes_it(
 
         assert backend.session_starts == 2
         assert backend.started_from_cursor == VENDOR_SESSION_CURSOR
+        assert backend.model == qualified_model
         assert backend.written_texts() == ("first", "after the gap")
         # Silent: the record says nothing about the child having gone away.
         assert await harness.recorded_kinds("c") == (
@@ -1854,7 +2060,8 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
     """No re-attach on boot: the record is all there and the session is picked up lazily."""
 
     async def exercise() -> None:
-        await _start(harness, "c")
+        qualified_model = "openai-codex:gpt-5.6-sol"
+        await _start(harness, "c", model=qualified_model)
         await harness.system.send(
             "c",
             text_message_content("before the restart"),
@@ -1877,10 +2084,45 @@ def test_after_a_restart_nothing_is_running_and_the_next_message_resumes(
 
             assert fate == PromptDeliveryStarted()
             assert restarted.backend("c").started_from_cursor == VENDOR_SESSION_CURSOR
+            assert restarted.backend("c").model == qualified_model
             assert await restarted.system.is_running("c") is True
             assert [
                 str(event.kind) for event in await restarted.events("c")
             ] == ["prompt", "prompt"]
+        finally:
+            await restarted.system.shutdown()
+
+    _run(exercise)
+
+
+def test_a_stored_legacy_bare_hermes_model_is_passed_through_on_restart(
+    harness: _Harness, tmp_path: Path
+) -> None:
+    """Catalog qualification changes new choices, not existing conversation records."""
+
+    async def exercise() -> None:
+        legacy_model = "legacy-hermes-model"
+        await _start(harness, "legacy", model=legacy_model)
+        await harness.system.send(
+            "legacy",
+            text_message_content("before the restart"),
+            sender_label="owner",
+        )
+        await harness.settle()
+        await harness.system.shutdown()
+
+        restarted = _Harness(tmp_path / "conversations.db")
+        restarted.backends = harness.backends
+        try:
+            fate = await restarted.system.send(
+                "legacy",
+                text_message_content("after the restart"),
+                sender_label="owner",
+            )
+
+            assert fate == PromptDeliveryStarted()
+            assert restarted.backend("legacy").started_from_cursor == VENDOR_SESSION_CURSOR
+            assert restarted.backend("legacy").model == legacy_model
         finally:
             await restarted.system.shutdown()
 

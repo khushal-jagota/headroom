@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
+from planner.conversation.contracts import ConversationSystem
+from planner.conversation.storage import ConversationStore
 from planner.core import change_signal
 from planner.core.authctx import RequestContext, request_context, require_direct_write
 from planner.core.config import Config
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.environments.hermes_home import resolve_planner_home
-from planner.tickets.api import body_str, get_config, parse_enum
+from planner.runtime import conversation_start
+from planner.tickets.api import (
+    ConversationRecord,
+    Conversations,
+    DbConn,
+    body_str,
+    get_config,
+    parse_enum,
+)
 from planner.tickets.contracts import StageOwnershipMode
 from planner.worker_settings import service
 from planner.worker_settings.contracts import (
@@ -98,6 +109,48 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
     }
 
 
+async def add_agent_conversation_signals(
+    agents: list[JsonDict],
+    conn: sqlite3.Connection,
+    conversation_system: ConversationSystem,
+    conversation_record: ConversationStore,
+) -> list[JsonDict]:
+    """Add conversation-owned roster signals to each non-Ticket agent.
+
+    The settings index knows which agents exist; the agents table links each one to its
+    current conversation. Liveness and asks belong to the live conversation system,
+    while the last completed-turn position belongs to its durable record. Keeping this
+    projection here gives any future small roster the same four facts without adding a
+    second route or state vocabulary.
+    """
+    conversation_ids = conversation_start.read_agent_conversations(
+        conn, [str(agent["employee_id"]) for agent in agents]
+    )
+    latest_turn_ended = await conversation_record.latest_turn_ended_sequences(
+        conversation_ids.values()
+    )
+    for agent in agents:
+        conversation_id = conversation_ids.get(str(agent["employee_id"]))
+        agent["conversation_id"] = conversation_id
+        agent["agent_working"] = (
+            await conversation_system.is_running(conversation_id)
+            if conversation_id is not None
+            else False
+        )
+        agent["needs_me"] = (
+            (
+                await conversation_system.has_pending_permission_ask(conversation_id)
+                or await conversation_system.has_pending_user_input(conversation_id)
+            )
+            if conversation_id is not None
+            else False
+        )
+        agent["latest_turn_ended_sequence"] = (
+            latest_turn_ended.get(conversation_id, 0) if conversation_id is not None else 0
+        )
+    return agents
+
+
 def _detail_json(detail: WorkerManagementDetail) -> JsonDict:
     return {
         "manifest": detail.manifest,
@@ -112,14 +165,25 @@ _announce_worker_settings_change = change_signal.emit
 
 
 @router.get("/workers")
-async def list_workers(config: Cfg) -> JsonDict:
+async def list_workers(
+    config: Cfg,
+    conn: DbConn,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
     registry = configured_worker_runtime_definitions().worker_type_registry
+    agents = await add_agent_conversation_signals(
+        [_chief_json(service.read_chief_settings(_database_parent(config)))],
+        conn,
+        conversations,
+        conversation_record,
+    )
     return {
         "workers": [
             _summary_json(summary)
             for summary in service.read_worker_management_index(_database_parent(config), registry)
         ],
-        "chief_of_staff": _chief_json(service.read_chief_settings(_database_parent(config))),
+        "chief_of_staff": agents[0],
     }
 
 

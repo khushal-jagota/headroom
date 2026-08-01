@@ -15,11 +15,35 @@ const boardRouteSource = await readFile(
   new URL("../src/routes/BoardRoute.svelte", import.meta.url),
   "utf8",
 );
+const conversationSignalPresentationSource = await readFile(
+  new URL("../src/lib/conversationSignalPresentation.ts", import.meta.url),
+  "utf8",
+);
 const sprintRouteSource = await readFile(
   new URL("../src/routes/SprintRoute.svelte", import.meta.url),
   "utf8",
 );
+const backlogRouteSource = await readFile(
+  new URL("../src/routes/BacklogRoute.svelte", import.meta.url),
+  "utf8",
+);
+const ticketPriorityControlSource = await readFile(
+  new URL("../src/components/TicketPriorityControl.svelte", import.meta.url),
+  "utf8",
+);
+const priorityTileSource = await readFile(
+  new URL("../src/components/PriorityTile.svelte", import.meta.url),
+  "utf8",
+);
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
+const backendsRouteSource = await readFile(
+  new URL("../src/routes/BackendsRoute.svelte", import.meta.url),
+  "utf8",
+);
+const devConversationRouteSource = await readFile(
+  new URL("../src/routes/DevConversationRoute.svelte", import.meta.url),
+  "utf8",
+);
 
 // --- the app itself ------------------------------------------------------------------
 
@@ -30,23 +54,33 @@ assert.doesNotMatch(
   /capabilities|relay_chief_enabled|resolveRelayChiefFromMeta|markRelayChiefMetaError/,
 );
 
-// --- the Chief is one conversation, in both the places it appears ---------------------
+// Backend management has one production home. Provider allowance acquisition exists
+// behind its explicit action only; mounting the page and the dev composer merely read the
+// ordinary backend catalogue.
+assert.match(appSource, /href="#\/backends"/);
+assert.match(appSource, /<BackendsRoute \/>/);
+assert.match(backendsRouteSource, /onUsageRefresh=\{\(\) => void runUsageRefresh/);
+assert.match(backendsRouteSource, /await refreshBackendUsage\(key\)/);
+const backendsOnMount = backendsRouteSource.slice(
+  backendsRouteSource.indexOf("onMount(() =>"),
+  backendsRouteSource.indexOf("</script>"),
+);
+assert.doesNotMatch(backendsOnMount, /refreshBackendUsage/);
+assert.match(devConversationRouteSource, /readBackends\(\)/);
+assert.doesNotMatch(devConversationRouteSource, /BackendCard|updateBackend|refreshBackendUsage/);
 
-const chiefOfStaffRouteSource = await readFile(
-  new URL("../src/routes/ChiefOfStaffRoute.svelte", import.meta.url),
+// --- the Chief is one conversation, on the Agents runtime route -------------------------
+
+const agentsRouteSource = await readFile(
+  new URL("../src/routes/AgentsRoute.svelte", import.meta.url),
   "utf8",
 );
-for (const [name, source] of [
-  ["BoardRoute.svelte", boardRouteSource],
-  ["ChiefOfStaffRoute.svelte", chiefOfStaffRouteSource],
-]) {
-  assert.match(source, /<ChiefConversation \/>/, name);
-  assert.doesNotMatch(
-    source,
-    /ChatPanel|ChiefNeutralPane|relayChief|retryRelayChiefMeta|chatGatewayStatus|\/api\/chat|\/api\/relay/,
-    name,
-  );
-}
+assert.match(agentsRouteSource, /<ChiefConversation \/>/);
+assert.doesNotMatch(boardRouteSource, /ChiefConversation|Chief of Staff/);
+assert.doesNotMatch(
+  agentsRouteSource,
+  /ChatPanel|ChiefNeutralPane|relayChief|retryRelayChiefMeta|chatGatewayStatus|\/api\/chat|\/api\/relay/,
+);
 
 // --- the Ticket screen -----------------------------------------------------------------
 
@@ -85,16 +119,41 @@ assert.match(sprintRouteSource, /data-item-kind=\{item\.kind\}/);
 assert.match(sprintRouteSource, /item\.kind === "other"/);
 assert.doesNotMatch(sprintRouteSource, /loose_tickets|Loose tickets|data-loose/);
 
+// --- the one priority tile ---------------------------------------------------------------
+
+assert.match(priorityTileSource, /aria-label=\{decorative \? undefined : `Priority \$\{priority\}`\}/);
+assert.match(ticketPriorityControlSource, /<PriorityTile \{priority\} decorative \/>[\s\S]*<select/);
+assert.match(
+  boardRouteSource,
+  /<PriorityTile priority=\{card\.priority\} \/>[\s\S]*<span class="list-row-title">\{card\.title\}<\/span>[\s\S]*<StageMark/,
+);
+assert.equal((sprintRouteSource.match(/<PriorityTile priority=/g) || []).length, 2);
+assert.match(backlogRouteSource, /labelContent\(\)}<PriorityTile priority=\{p\} \/>/);
+assert.doesNotMatch(
+  backlogRouteSource.slice(backlogRouteSource.indexOf("{#each groups[p] as item}")),
+  /<PriorityTile/,
+);
+
 // --- the Workspace row mark -------------------------------------------------------------
 
-assert.match(boardRouteSource, /state: "needs-me", ariaLabel: "Needs you"/);
-assert.match(boardRouteSource, /state: "current-running", ariaLabel: "Agent working"/);
-assert.match(boardRouteSource, /state: "reply-seen", ariaLabel: "Agent reply seen"/);
+assert.match(conversationSignalPresentationSource, /state: "needs-me", ariaLabel: "Needs you"/);
+assert.match(
+  conversationSignalPresentationSource,
+  /state: "current-running", ariaLabel: "Agent working"/,
+);
+assert.match(
+  conversationSignalPresentationSource,
+  /state: "reply-seen", ariaLabel: "Agent reply seen"/,
+);
 // The mark is drawn from the record's last turn ending and this browser's own watermark.
 // Nothing on the card says whether a reply was seen, because seen is not a fact about the
 // Ticket.
-assert.match(boardRouteSource, /howFarThisBrowserHasRead\[card\.conversation_id\]/);
-assert.match(boardRouteSource, /latest_turn_ended_sequence/);
+assert.match(boardRouteSource, /conversationSignalPresentation/);
+assert.match(
+  conversationSignalPresentationSource,
+  /replyWatermarks\[signals\.conversation_id\]/,
+);
+assert.match(conversationSignalPresentationSource, /latest_turn_ended_sequence/);
 assert.doesNotMatch(boardRouteSource, /agent_reply_state/);
 // How far this browser has read is held in state and the mark reads it from there.
 // Reading a conversation writes nothing a server can announce, so no refetch is coming
@@ -104,7 +163,7 @@ assert.match(boardRouteSource, /onReplyWatermarkMoved\(rereadWhereThisBrowserHas
 // The mark must not read storage while it draws: a plain call has nothing reactive
 // about it, so a row would keep its old dot until something unrelated refetched.
 assert.doesNotMatch(
-  boardRouteSource.slice(boardRouteSource.indexOf("function signalPresentation")),
+  conversationSignalPresentationSource,
   /readReplyWatermark\(/,
   "the row mark reads the positions it was given, never storage"
 );
@@ -134,11 +193,11 @@ const groupOrder = [...groupOrderMatch[1].matchAll(/"([^"]+)"/g)].map(
 assert.deepEqual(groupOrder, [
   "errored",
   "needs_user",
-  "waiting_to_closeout",
+  "waiting_for_kickoff",
   "user",
   "paired",
   "agent",
-  "waiting_for_kickoff",
+  "waiting_to_closeout",
   "awaiting_approval",
   "empty",
   "blocked",

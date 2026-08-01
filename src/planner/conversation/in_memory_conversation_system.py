@@ -29,6 +29,7 @@ from planner.conversation.contracts import (
     ResolvedConversationStart,
     backend_supports_steer,
 )
+from planner.conversation.events import UserInputAnswer, UserInputQuestion
 from planner.conversation.logic.conversation_start_resolution import (
     resolve_conversation_start_request,
 )
@@ -48,6 +49,8 @@ class InMemoryConversationObservationKind(StrEnum):
     turn_ended = "turn_ended"
     permission_asked = "permission_asked"
     permission_answered = "permission_answered"
+    user_input_requested = "user_input_requested"
+    user_input_answered = "user_input_answered"
     model_changed = "model_changed"
 
 
@@ -77,6 +80,9 @@ class InMemoryConversationObservation:
     turn_ending: InMemoryConversationTurnEnding | None = None
     refusal_reason: PromptDeliveryRefusalReason | None = None
     permission_ask_id: str | None = None
+    user_input_request_id: str | None = None
+    user_input_questions: tuple[UserInputQuestion, ...] | None = None
+    user_input_answers: tuple[UserInputAnswer, ...] | None = None
     model: str | None = None
     reasoning_effort: str | None = None
     sender_message_id: str | None = None
@@ -116,6 +122,10 @@ class TurnCannotEndWhilePermissionAskIsPending(Exception):
     """
 
 
+class TurnCannotEndWhileUserInputIsPending(Exception):
+    """The backend stand-in is still waiting for the owner to answer questions."""
+
+
 @dataclass
 class _InMemoryBackendSession:
     """Stands in for a live backend child process under a bound session.
@@ -128,6 +138,9 @@ class _InMemoryBackendSession:
 
     prompt_writes: list[InMemoryBackendPromptWrite] = field(default_factory=list)
     pending_permission_answers: dict[str, str | None] = field(default_factory=dict)
+    pending_user_input_answers: dict[str, tuple[UserInputAnswer, ...] | None] = field(
+        default_factory=dict
+    )
     cancellations: int = 0
     model: str | None = None
     reasoning_effort: str | None = None
@@ -136,6 +149,9 @@ class _InMemoryBackendSession:
 @dataclass
 class _RunningTurn:
     pending_permission_ask_ids: set[str] = field(default_factory=set)
+    pending_user_input_questions: dict[str, tuple[UserInputQuestion, ...]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +174,7 @@ class _ConversationState:
     held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
     observations: list[InMemoryConversationObservation] = field(default_factory=list)
     permission_asks_raised: int = 0
+    user_input_requests_raised: int = 0
     armed_backend_start_failure: bool = False
     armed_session_load_failure: bool = False
     armed_backend_write_failure: bool = False
@@ -298,6 +315,12 @@ class InMemoryConversationSystem:
             return False
         return bool(state.running_turn.pending_permission_ask_ids)
 
+    async def has_pending_user_input(self, conversation_id: str) -> bool:
+        state = self._conversations.get(conversation_id)
+        if state is None or state.running_turn is None:
+            return False
+        return bool(state.running_turn.pending_user_input_questions)
+
     # --- driving the backend stand-in ---
 
     def complete_running_turn(self, conversation_id: str) -> None:
@@ -308,6 +331,8 @@ class InMemoryConversationSystem:
             return
         if running_turn.pending_permission_ask_ids:
             raise TurnCannotEndWhilePermissionAskIsPending(conversation_id)
+        if running_turn.pending_user_input_questions:
+            raise TurnCannotEndWhileUserInputIsPending(conversation_id)
         self._end_running_turn(state, InMemoryConversationTurnEnding.completed)
         self._drain(state)
 
@@ -360,6 +385,74 @@ class InMemoryConversationSystem:
         )
         return True
 
+    def raise_user_input(
+        self, conversation_id: str, questions: tuple[UserInputQuestion, ...]
+    ) -> str:
+        """The agent asked an ordered group of questions and waits for all answers."""
+        state = self._conversations[conversation_id]
+        running_turn = state.running_turn
+        session = state.backend_session
+        if running_turn is None or session is None:
+            raise RuntimeError(f"conversation {conversation_id} has no running turn")
+        state.user_input_requests_raised += 1
+        request_id = f"user-input-{state.user_input_requests_raised}"
+        running_turn.pending_user_input_questions[request_id] = questions
+        session.pending_user_input_answers[request_id] = None
+        state.observations.append(
+            InMemoryConversationObservation(
+                kind=InMemoryConversationObservationKind.user_input_requested,
+                user_input_request_id=request_id,
+                user_input_questions=questions,
+            )
+        )
+        return request_id
+
+    def answer_user_input(
+        self,
+        conversation_id: str,
+        request_id: str,
+        answers: tuple[UserInputAnswer, ...],
+    ) -> bool:
+        state = self._conversations.get(conversation_id)
+        if state is None or state.running_turn is None or state.backend_session is None:
+            return False
+        questions = state.running_turn.pending_user_input_questions.get(request_id)
+        answers_by_question_id = {answer.question_id: answer for answer in answers}
+        if (
+            questions is None
+            or len(answers_by_question_id) != len(answers)
+            or set(answers_by_question_id)
+            != {question.question_id for question in questions}
+        ):
+            return False
+        ordered_answers = tuple(
+            answers_by_question_id[question.question_id] for question in questions
+        )
+        if any(
+            not answer.answers
+            or any(not value for value in answer.answers)
+            or (not question.multi_select and len(answer.answers) != 1)
+            or (
+                not question.allow_other
+                and any(
+                    value not in {option.label for option in question.options}
+                    for value in answer.answers
+                )
+            )
+            for question, answer in zip(questions, ordered_answers, strict=True)
+        ):
+            return False
+        del state.running_turn.pending_user_input_questions[request_id]
+        state.backend_session.pending_user_input_answers[request_id] = ordered_answers
+        state.observations.append(
+            InMemoryConversationObservation(
+                kind=InMemoryConversationObservationKind.user_input_answered,
+                user_input_request_id=request_id,
+                user_input_answers=ordered_answers,
+            )
+        )
+        return True
+
     def arm_backend_start_failure(self, conversation_id: str) -> None:
         """The backend process will not spawn when this conversation next needs it."""
         self._conversations[conversation_id].armed_backend_start_failure = True
@@ -385,6 +478,14 @@ class InMemoryConversationSystem:
         if state is None or state.backend_session is None:
             return None
         return state.backend_session.pending_permission_answers.get(ask_id)
+
+    def backend_user_input_answers(
+        self, conversation_id: str, request_id: str
+    ) -> tuple[UserInputAnswer, ...] | None:
+        state = self._conversations.get(conversation_id)
+        if state is None or state.backend_session is None:
+            return None
+        return state.backend_session.pending_user_input_answers.get(request_id)
 
     def backend_cancellations(self, conversation_id: str) -> int:
         """How many times the backend stand-in was told to cancel its running turn."""
