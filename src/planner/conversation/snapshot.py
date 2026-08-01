@@ -238,6 +238,10 @@ class BackendProbeEnvironment(Protocol):
 
     def real_path(self, path: str) -> str: ...
 
+    def user_local_npm_prefix(self) -> str: ...
+
+    def prefix_is_owned_and_writable(self, prefix: str) -> bool: ...
+
     async def run(
         self,
         argv: Sequence[str],
@@ -267,6 +271,35 @@ class SubprocessBackendProbeEnvironment:
 
     def real_path(self, path: str) -> str:
         return os.path.realpath(path)
+
+    def user_local_npm_prefix(self) -> str:
+        return str(Path.home() / ".local")
+
+    def prefix_is_owned_and_writable(self, prefix: str) -> bool:
+        """Whether an npm prefix can be changed by this service identity.
+
+        The prefix and the existing npm directories are checked as the effective user.
+        This deliberately does not try to repair ownership or ask for privilege: an
+        install that does not already belong to the service is manual-only.
+        """
+        try:
+            effective_uid = os.geteuid()
+        except AttributeError:
+            return False
+        prefix_path = Path(prefix)
+        candidates = (prefix_path, prefix_path / "lib", prefix_path / "lib" / "node_modules")
+        try:
+            for candidate in candidates:
+                if not candidate.is_dir():
+                    return False
+                metadata = candidate.stat()
+                if metadata.st_uid != effective_uid or not os.access(
+                    candidate, os.W_OK | os.X_OK
+                ):
+                    return False
+        except OSError:
+            return False
+        return True
 
     async def run(
         self,
@@ -403,6 +436,52 @@ def classify_install_method(
         if any(marker in path for path in normalized for marker in markers):
             return install_method
     return BackendInstallMethod.manual_only
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedInstall:
+    install_method: BackendInstallMethod
+    package_prefix: str | None = None
+
+
+def _npm_prefix_from_path(path: str) -> str | None:
+    """Find the global npm prefix from a resolved package binary path."""
+    normalized = path.replace("\\", "/")
+    lowered = normalized.lower()
+    for marker in ("/lib/node_modules/", "/npm/node_modules/", "/node_modules/"):
+        position = lowered.find(marker)
+        if position >= 0:
+            return normalized[:position] or "/"
+    return None
+
+
+def _same_path(left: str, right: str) -> bool:
+    return _normalized_path(os.path.realpath(left)) == _normalized_path(os.path.realpath(right))
+
+
+def _resolve_install(
+    recipe: _BackendProbeRecipe,
+    executable_path: str,
+    environment: BackendProbeEnvironment,
+) -> _ResolvedInstall:
+    real_path = environment.real_path(executable_path)
+    classified = classify_install_method(
+        (executable_path, real_path), native_path_marker=recipe.native_path_marker
+    )
+    if classified is BackendInstallMethod.native:
+        return _ResolvedInstall(classified)
+    if classified is not BackendInstallMethod.npm_global:
+        return _ResolvedInstall(BackendInstallMethod.manual_only)
+
+    package_prefix = _npm_prefix_from_path(real_path)
+    expected_prefix = environment.user_local_npm_prefix()
+    if (
+        package_prefix is None
+        or not _same_path(package_prefix, expected_prefix)
+        or not environment.prefix_is_owned_and_writable(package_prefix)
+    ):
+        return _ResolvedInstall(BackendInstallMethod.manual_only)
+    return _ResolvedInstall(classified, package_prefix)
 
 
 def parse_version(output: str) -> str | None:
@@ -778,7 +857,8 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         native_update_command=None,
         native_update_check_arguments=None,
         manual_only_detail=(
-            "Panels cannot tell how `claude` was installed, so it offers no update here."
+            "Panels only updates `claude` from the configured vps-owned user-local npm "
+            "prefix; update this installation manually."
         ),
         read_catalog=_claude_catalog,
     ),
@@ -794,7 +874,8 @@ _BACKEND_PROBE_RECIPES: Final[Mapping[ConversationBackendKey, _BackendProbeRecip
         native_update_command=("codex", "update"),
         native_update_check_arguments=None,
         manual_only_detail=(
-            "Panels cannot tell how `codex` was installed, so it offers no update here."
+            "Panels only updates `codex` from the configured vps-owned user-local npm "
+            "prefix; update this installation manually."
         ),
         read_catalog=_codex_catalog,
     ),
@@ -929,11 +1010,9 @@ async def _update_advisory(
     version: str | None,
     environment: BackendProbeEnvironment,
 ) -> BackendUpdateAdvisory:
-    install_method = classify_install_method(
-        (executable_path, environment.real_path(executable_path)),
-        native_path_marker=recipe.native_path_marker,
-    )
-    update_command = _update_command(recipe, install_method)
+    resolved_install = _resolve_install(recipe, executable_path, environment)
+    install_method = resolved_install.install_method
+    update_command = _update_command(recipe, install_method, resolved_install.package_prefix)
     latest_version: str | None = None
     hermes_detail: str | None = None
     hermes_update_available = False
@@ -1005,20 +1084,25 @@ _REGISTRY_INSTALL_METHODS: Final = frozenset(
 
 
 def _update_command(
-    recipe: _BackendProbeRecipe, install_method: BackendInstallMethod
+    recipe: _BackendProbeRecipe,
+    install_method: BackendInstallMethod,
+    package_prefix: str | None = None,
 ) -> tuple[str, ...] | None:
     package_name = recipe.registry_package_name
     match install_method:
         case BackendInstallMethod.native:
             return recipe.native_update_command
         case BackendInstallMethod.npm_global if package_name is not None:
-            return ("npm", "install", "-g", f"{package_name}@latest")
-        case BackendInstallMethod.bun_global if package_name is not None:
-            return ("bun", "install", "-g", f"{package_name}@latest")
-        case BackendInstallMethod.pnpm_global if package_name is not None:
-            return ("pnpm", "add", "-g", f"{package_name}@latest")
-        case BackendInstallMethod.homebrew if recipe.homebrew_formula is not None:
-            return ("brew", "upgrade", recipe.homebrew_formula)
+            if package_prefix is None:
+                return None
+            return (
+                "npm",
+                "install",
+                "--global",
+                "--prefix",
+                package_prefix,
+                f"{package_name}@latest",
+            )
         case _:
             return None
 
