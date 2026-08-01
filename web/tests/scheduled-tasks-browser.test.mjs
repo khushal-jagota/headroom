@@ -188,7 +188,11 @@ with sync_playwright() as playwright:
     page = browser.new_page()
     page.goto(sys.argv[1] + "#/scheduled-tasks", wait_until="networkidle")
     page.locator('section[data-screen="scheduled-tasks"]').wait_for()
-    assert page.locator('a[data-screen="scheduled-tasks"].active').inner_text() == "Scheduled tasks"
+    page.locator('[data-screen="more"]').click()
+    scheduled_tasks_link = page.locator('a[data-screen="scheduled-tasks"].active')
+    scheduled_tasks_link.wait_for()
+    assert scheduled_tasks_link.inner_text() == "Scheduled tasks"
+    page.keyboard.press("Escape")
     card = page.locator('[data-schedule-id="schedule_demo"]')
     card.wait_for()
     assert "Existing planning task" in card.inner_text()
