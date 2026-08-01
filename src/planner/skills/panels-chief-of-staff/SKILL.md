@@ -169,6 +169,9 @@ invent a user decision, create extra records, or draft the Ticket's gated work. 
 missing intent prevents correct capture, ask briefly; when the thought is not yet
 committed work, capture an idea instead of over-structuring it.
 
+Use the `general` Worker type as the catch-all when no specialist type fits: an arbitrary
+unit of work with a deliberately minimal lifecycle.
+
 ## Response shape
 
 Be concise. Prefer concrete next actions over long analysis.

@@ -127,7 +127,7 @@ One screen per part of the system:
   Home Screen.
 
 The shell has three primary destinations in order: Review, Workspace, and Agents. More
-groups Day, Sprint, Backlog, and Ideas under Planning, and Config and Notifications
+groups Day, Sprint, Backlog, and Ideas under Planning, and Config, Backends, and Notifications
 under System. On
 desktop the four direct controls live in the top bar and More opens a dropdown. On
 mobile those same four text-only controls form a fixed, full-width bottom bar and More
@@ -149,6 +149,15 @@ horizontally.
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
 share.
+
+**Backends** at `#/backends` shows the conversation backends installed on this machine,
+their account and model facts, and any update Panels can run. Codex and Claude cards also
+offer a manual usage-limit check. Opening the page, refreshing its ordinary backend facts,
+and application change events never acquire usage: only pressing that backend's usage
+button calls the provider-facing check. A successful check shows each provider window,
+its used percentage, reset time, and when it was observed. Unavailable, signed-out, and
+failed checks stay visible as their own truthful states. Hermes has no provider allowance
+to acquire, so its card offers no usage action.
 
 ## The two rules that shape it
 

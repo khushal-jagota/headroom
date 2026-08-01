@@ -38,6 +38,7 @@ def test_desktop_more_reaches_grouped_destinations_and_marks_secondary_route(
         "Backlog",
         "Ideas",
         "Config",
+        "Backends",
         "Notifications",
     ]
 
@@ -61,12 +62,19 @@ def test_every_more_destination_has_its_canonical_screen(
     server: ServerHandle, context_factory: Callable[[], BrowserContext]
 ) -> None:
     page = context_factory().new_page()
+    # Navigation owns reachability, not live provider discovery. Keep this route entirely
+    # browser-fixtured so visiting Backends cannot probe a developer's installed tools.
+    page.route(
+        "**/api/conversation/backends**",
+        lambda route: route.fulfill(json={"backends": []}),
+    )
     destinations = [
         ("#/day", '[data-screen="day"]'),
         ("#/sprint", '[data-screen="sprint"]'),
         ("#/backlog", '[data-screen="backlog"]'),
         ("#/ideas", '[data-screen="ideas"]'),
         ("#/config", '[data-screen="config"] [data-workers-list]'),
+        ("#/backends", '[data-screen="backends"]'),
         ("#/notifications", '[data-screen="notifications"]'),
     ]
 
@@ -148,6 +156,7 @@ def test_mobile_tabs_and_short_agents_page_fit_the_dynamic_viewport(
     sheet = page.locator("[data-shell-more-menu]")
     assert sheet.is_visible()
     assert sheet.locator('a[href="#/config"]').is_visible()
+    assert sheet.locator('a[href="#/backends"]').is_visible()
 
 
 def test_shell_status_is_one_quiet_cluster_outside_navigation(

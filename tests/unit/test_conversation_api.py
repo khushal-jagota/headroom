@@ -31,6 +31,11 @@ from planner.conversation.api import (
     ConversationRuntime,
     router,
 )
+from planner.conversation.backend_usage import (
+    BackendUsageOutcome,
+    BackendUsageResult,
+    BackendUsageService,
+)
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
     ClaudeModelCatalog,
@@ -184,6 +189,13 @@ class _FakeMachine:
     def real_path(self, path: str) -> str:
         return path
 
+    def user_local_npm_prefix(self) -> str:
+        return str(Path.home() / ".local")
+
+    def prefix_is_owned_and_writable(self, prefix: str) -> bool:
+        del prefix
+        return False
+
     async def run(
         self,
         argv: Any,
@@ -265,6 +277,7 @@ class _Harness:
                 codex_model_catalog_probe=_no_codex_to_ask,
                 claude_model_catalog_probe=_claude_from_the_handshake,
             ),
+            backend_usage=BackendUsageService({}),
             sse_heartbeat_ms=HEARTBEAT_MILLISECONDS,
         )
         self.app = FastAPI()
@@ -1650,6 +1663,43 @@ def test_an_unknown_backend_is_not_a_backend(harness: _Harness) -> None:
             assert (
                 await client.post("/api/conversation/backends/gemini/update")
             ).status_code == 422
+
+    _run(exercise)
+
+
+def test_usage_refresh_is_explicit_and_has_one_stable_wire_shape(harness: _Harness) -> None:
+    class CountingUsage:
+        calls = 0
+
+        async def refresh(self) -> BackendUsageResult:
+            self.calls += 1
+            return BackendUsageResult(
+                ConversationBackendKey.codex, BackendUsageOutcome.succeeded
+            )
+
+    async def exercise() -> None:
+        usage = CountingUsage()
+        object.__setattr__(
+            harness.runtime,
+            "backend_usage",
+            BackendUsageService({ConversationBackendKey.codex: usage}),
+        )
+        async with harness.client() as client:
+            ordinary_read = await client.get("/api/conversation/backends")
+            response = await client.post(
+                "/api/conversation/backends/codex/usage-refresh"
+            )
+
+        assert ordinary_read.status_code == 200
+        assert usage.calls == 1
+        assert response.status_code == 200
+        assert response.json() == {
+            "backend_key": "codex",
+            "outcome": "succeeded",
+            "detail": None,
+            "observed_at": None,
+            "windows": [],
+        }
 
     _run(exercise)
 

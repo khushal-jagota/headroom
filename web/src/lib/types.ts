@@ -90,6 +90,34 @@ export type ProjectsResponse = {
   projects: ProjectSummary[];
 };
 
+export type ScheduleCadence = "every_planning_day" | "current_sprint_final_day";
+
+export type SchedulePlacementMode = "current_sprint" | "backlog" | "sprint_item";
+
+export type ScheduledTask = {
+  id: string;
+  enabled: boolean;
+  cadence: ScheduleCadence;
+  local_time: string;
+  title: string;
+  worker_type: string;
+  kickoff_note: string;
+  priority: Priority;
+  deadline: string | null;
+  project_id: string | null;
+  placement_mode: SchedulePlacementMode;
+  sprint_item_id: string | null;
+  employee_backend: string | null;
+  employee_launch_model: string | null;
+  blocked_by_ticket_ids: string[];
+  created_at: number;
+  updated_at: number;
+};
+
+export type SchedulesResponse = {
+  schedules: ScheduledTask[];
+};
+
 export type TicketField = {
   value?: string | null;
   user_note?: string | null;

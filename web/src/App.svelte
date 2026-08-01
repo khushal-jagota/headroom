@@ -4,12 +4,14 @@
   import { queries } from "./lib/queryCatalogue";
   import { connectionStatus, startChangeStream, stopChangeStream } from "./lib/changeStream";
   import BacklogRoute from "./routes/BacklogRoute.svelte";
+  import BackendsRoute from "./routes/BackendsRoute.svelte";
   import BoardRoute from "./routes/BoardRoute.svelte";
   import DayRoute from "./routes/DayRoute.svelte";
   import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
   import NotificationsRoute from "./routes/NotificationsRoute.svelte";
   import ReviewRoute from "./routes/ReviewRoute.svelte";
+  import ScheduledTasksRoute from "./routes/ScheduledTasksRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
   import AgentsRoute from "./routes/AgentsRoute.svelte";
@@ -165,11 +167,22 @@
     if (route.name === "dev") {
       return route.params.sub === "conversation" || route.params.sub === "file-preview-gallery";
     }
-    return ["day", "review", "workspace", "board", "backlog", "ideas", "notifications", "preview"].includes(route.name);
+    return [
+      "day",
+      "review",
+      "workspace",
+      "board",
+      "backlog",
+      "ideas",
+      "scheduled-tasks",
+      "backends",
+      "notifications",
+      "preview"
+    ].includes(route.name);
   }
 
   function secondaryRouteActive(): boolean {
-    return ["day", "sprint", "backlog", "ideas", "config", "notifications"].includes(route.name);
+    return ["day", "sprint", "backlog", "ideas", "scheduled-tasks", "config", "backends", "notifications"].includes(route.name);
   }
 
   function screenTitle(): string {
@@ -268,12 +281,23 @@
             <a class:active={currentNav("config")} href="#/config" onclick={closeMore}>
               <span>Config</span>
             </a>
-            <a class:active={currentNav("notifications")} href="#/notifications" onclick={closeMore}>
-              <span>Notifications</span>
+            <a class:active={currentNav("backends")} href="#/backends" onclick={closeMore}>
+              <span>Backends</span>
             </a>
-          </div>
-        {/if}
-      </div>
+             <a class:active={currentNav("notifications")} href="#/notifications" onclick={closeMore}>
+               <span>Notifications</span>
+             </a>
+             <a
+               class:active={currentNav("scheduled-tasks")}
+               data-screen="scheduled-tasks"
+               href="#/scheduled-tasks"
+               onclick={closeMore}
+             >
+               <span>Scheduled tasks</span>
+             </a>
+           </div>
+         {/if}
+       </div>
     </nav>
   </header>
   <div class="shell-statuses">
@@ -309,6 +333,8 @@
             <BacklogRoute />
           {:else if route.name === "ideas"}
             <IdeasRoute />
+          {:else if route.name === "scheduled-tasks"}
+            <ScheduledTasksRoute />
           {:else if route.name === "agents"}
             <AgentsRoute selectedAgent={route.params.roleKind === "chief" ? "chief-of-staff" : null} />
           {:else if route.name === "config"}
@@ -318,6 +344,8 @@
             />
           {:else if route.name === "notifications"}
             <NotificationsRoute />
+          {:else if route.name === "backends"}
+            <BackendsRoute />
           {:else if route.name === "preview"}
             <FilePreviewRoute />
           {:else if route.name === "dev" && route.params.sub === "file-preview-gallery"}

@@ -545,6 +545,7 @@ textarea {
 }
 
 .shell-content {
+  min-width: 0;
   padding: var(--space-5);
 }
 
@@ -1142,6 +1143,16 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* Markdown is rendered in tickets, previews, and conversation turns. Keep the
+ * rendered surface itself shrinkable so an intrinsically wide child can never
+ * widen the route that contains it. The child decides whether it wraps or gets
+ * an intentional local scroll area below. */
+.markdown {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .markdown p {
   margin: 0 0 var(--space-3);
 }
@@ -1190,6 +1201,8 @@ textarea {
 }
 
 .markdown pre {
+  min-width: 0;
+  max-width: 100%;
   background: var(--surface-sunken);
   padding: var(--space-3);
   border-radius: var(--radius-md);
@@ -1231,10 +1244,23 @@ textarea {
 }
 
 .markdown table {
+  display: block;
+  max-width: 100%;
   width: 100%;
   margin: 0 0 var(--space-3);
   border-collapse: collapse;
   font-size: var(--type-sm);
+  overflow-x: auto;
+}
+
+/* Ticket tables remain readable by scrolling the table itself when their
+ * columns are intrinsically wide. The page and Ticket document stay bounded;
+ * chat tables keep their existing fixed-layout, wrapped treatment. */
+.ticket-doc .markdown table th,
+.ticket-doc .markdown table td {
+  min-width: max-content;
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .chat-thread .markdown table {
@@ -1355,7 +1381,7 @@ textarea {
   padding: var(--space-2) var(--space-3);
   background: var(--surface-raised);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
-  overflow-y: auto;
+  overflow: auto;
 }
 
 .file-preview-frame {
@@ -3625,6 +3651,8 @@ select {
 }
 
 .disclosure--stage > .disclosure-summary {
+  min-width: 0;
+  flex-wrap: wrap;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-2);
   color: var(--text-muted);
@@ -3703,6 +3731,7 @@ select {
 
 .disclosure--stage .disclosure-stage-name {
   flex: 1;
+  min-width: 0;
   font-size: var(--type-sm);
   text-transform: capitalize;
   color: var(--text-faint);
@@ -3725,6 +3754,10 @@ select {
 
 .ticket-stage-run {
   margin-left: auto;
+  min-width: 0;
+  max-width: 100%;
+  flex-shrink: 1;
+  flex-wrap: wrap;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
@@ -3850,6 +3883,8 @@ select {
  * in, which is what the positioning is for. */
 .ticket-screen {
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
   position: relative;
 }
 
@@ -3863,7 +3898,10 @@ select {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
+  overflow: hidden;
   /* The gap under the conversation, matching the one between the nav and the ticket's
    * title, so the page breathes the same at both ends. On a notched phone the
    * safe-area inset wins, so the composer clears the home indicator. */
@@ -3873,9 +3911,10 @@ select {
 /* The ticket takes what the conversation is not using, and scrolls inside it. */
 .ticket-doc {
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
 }
 
 /* --- The conversation, the section under the ticket ------------------------ */
@@ -3902,6 +3941,8 @@ select {
   flex: none;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
 }
 
@@ -4007,6 +4048,8 @@ select {
  * bottom hairline — the line diet keeps rules to the stage spine and the conversation
  * layer's seam only; space, not a line, separates the header from the body. */
 .ticket-head {
+  min-width: 0;
+  max-width: 100%;
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
   padding: var(--space-5) var(--space-5) 0;
@@ -4017,6 +4060,8 @@ select {
 .ticket-identity {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--type-xs);
@@ -4100,6 +4145,8 @@ select {
 .ticket-operating {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-3);
   font-size: var(--type-sm);
@@ -4131,6 +4178,9 @@ select {
 
 .ticket-operating-actions {
   display: inline-flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   gap: var(--space-2);
   margin-left: auto;
 }
@@ -4147,6 +4197,8 @@ select {
 .ticket-leash {
   display: flex;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--type-sm);
@@ -4163,6 +4215,8 @@ select {
  * a plain gap: the conversation is the section after this one rather than a layer over it,
  * so there is nothing here to hold clear of. */
 .ticket-col {
+  min-width: 0;
+  width: 100%;
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
   padding: var(--space-4) var(--space-5) var(--space-6);
@@ -4184,6 +4238,39 @@ select {
   font-family: var(--font-serif);
   font-size: var(--type-serif-sm);
   line-height: 1.6;
+}
+
+/* The stage/status line is useful context, but at phone widths it is secondary
+ * to the stage name. Move it to a full-width second line before it can force a
+ * ticket document wider than the viewport. */
+@media (max-width: 360px) {
+  .disclosure--stage > .disclosure-summary {
+    align-items: flex-start;
+  }
+
+  .ticket-stage-run {
+    flex-basis: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+
+  .ticket-operating-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+}
+
+/* Short landscape phones need a little more of the ticket above a peeked
+ * conversation. Opened remains an explicit full-height reading mode. */
+@media (max-width: 720px) and (max-height: 480px) {
+  .ticket-conversation-layer:has([data-conversation-state="peeked"]) {
+    height: 52%;
+  }
+
+  .ticket-conversation-column {
+    padding-inline: var(--space-3);
+  }
 }
 
 .ticket-blockers {
@@ -4992,6 +5079,270 @@ select {
 .in::placeholder {
   color: var(--text-faintest);
   font-style: italic;
+}
+
+/* --- Scheduled tasks ----------------------------------------------------- */
+
+[data-screen="scheduled-tasks"] .scheduled-tasks-page {
+  max-width: var(--measure-index);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-page-tail);
+}
+
+[data-screen="scheduled-tasks"] .screen-header-meta {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.scheduled-tasks-intro {
+  max-width: var(--measure-read);
+  margin: var(--space-3) 0 var(--space-6);
+  color: var(--text-faint);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.58;
+}
+
+.scheduled-task-editor {
+  display: grid;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+  padding: var(--space-4);
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.scheduled-task-editor-head,
+.scheduled-task-card-head,
+.scheduled-task-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.scheduled-task-editor-head h2,
+.scheduled-task-card-head h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: var(--type-lg);
+  line-height: 1.2;
+}
+
+.scheduled-task-eyebrow {
+  margin-bottom: var(--space-1);
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.scheduled-task-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.scheduled-task-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.scheduled-field {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+}
+
+.scheduled-field > span:first-child {
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.scheduled-field--wide {
+  grid-column: 1 / -1;
+}
+
+.scheduled-control {
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-default);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+}
+
+.scheduled-control:focus {
+  border-color: var(--accent-bright);
+  outline: none;
+}
+
+.scheduled-control--textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.scheduled-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--type-sm) * 1.5 + var(--space-4));
+  color: var(--text-default);
+  font-size: var(--type-sm);
+}
+
+.scheduled-toggle input {
+  accent-color: var(--accent-bright);
+}
+
+.scheduled-task-advanced {
+  border-top: var(--border-hairline) solid var(--border-color);
+  padding-top: var(--space-3);
+}
+
+.scheduled-task-advanced > summary {
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: var(--type-sm);
+}
+
+.scheduled-task-advanced > .scheduled-task-form-grid {
+  margin-top: var(--space-4);
+}
+
+.scheduled-form-error {
+  margin: 0;
+  color: var(--accent-error);
+  font-size: var(--type-sm);
+}
+
+.scheduled-task-form-actions {
+  justify-content: flex-end;
+}
+
+.scheduled-task-list {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.scheduled-task-card {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  background: var(--surface-raised);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.scheduled-task-card-title {
+  min-width: 0;
+}
+
+.scheduled-task-card-title h2 {
+  overflow-wrap: anywhere;
+}
+
+.scheduled-task-card-meta,
+.scheduled-task-timing,
+.scheduled-task-template-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.scheduled-task-card-meta {
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+}
+
+.scheduled-task-status {
+  color: var(--text-faint);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.scheduled-task-status[data-enabled="true"] {
+  color: var(--accent-done);
+}
+
+.scheduled-task-timing {
+  padding: var(--space-2) 0;
+  border-top: var(--border-hairline) solid var(--border-color);
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+}
+
+.scheduled-task-timing > span + span::before {
+  content: "·";
+  margin-right: var(--space-2);
+  color: var(--text-faintest);
+}
+
+.scheduled-task-time {
+  color: var(--text-strong);
+  font-size: var(--type-sm);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.scheduled-task-template {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.scheduled-task-template-facts {
+  min-width: 0;
+}
+
+.scheduled-task-template p {
+  max-width: var(--measure-read);
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  [data-screen="scheduled-tasks"] .scheduled-tasks-page {
+    padding-inline: var(--space-3);
+  }
+
+  .scheduled-task-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scheduled-field--wide {
+    grid-column: auto;
+  }
+
+  .scheduled-task-editor-head,
+  .scheduled-task-card-head {
+    align-items: flex-start;
+  }
+
+  .scheduled-task-card-head {
+    flex-direction: column;
+  }
+
+  .scheduled-task-card-head .button {
+    align-self: flex-start;
+  }
 }
 
 [data-screen="backlog"] .in.title-in {

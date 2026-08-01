@@ -71,7 +71,7 @@ def test_debugging_is_current_in_worker_type_docs() -> None:
     root = Path(__file__).resolve().parents[2]
     docs = (root / "docs/worker-types.md").read_text(encoding="utf-8")
 
-    assert "Nine Worker types ship today:" in docs
+    assert "Eleven Worker types ship today:" in docs
     assert "- **`debugging`**" in docs
     assert "`src/planner/worker_types/debugging.py`" in docs
     assert "`panels-worker-debugging` guides `debugging` Tickets." in docs
