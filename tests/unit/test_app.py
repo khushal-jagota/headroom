@@ -73,6 +73,44 @@ def test_runtime_python_caches_do_not_invalidate_app_manifest(tmp_path: Path) ->
     assert validate_app_manifest(manifest).app_sha == SHA
 
 
+def test_pytest_cache_does_not_invalidate_current_or_legacy_app_manifest(
+    tmp_path: Path,
+) -> None:
+    current = _runtime_app(tmp_path / "current")
+    legacy_manifest, _ = _legacy_cached_app(tmp_path / "legacy")
+    for app in (current, legacy_manifest.parent):
+        cache = app / "package" / "nested" / ".pytest_cache" / "v" / "cache" / "nodeids"
+        cache.parent.mkdir(parents=True)
+        cache.write_text("test state", encoding="utf-8")
+
+    assert validate_app_manifest(current / "manifest.json").app_sha == SHA
+    assert validate_app_manifest(legacy_manifest).app_sha == SHA
+
+
+def test_pytest_cache_changes_source_digest_but_not_artifact_manifest(tmp_path: Path) -> None:
+    app = _runtime_app(tmp_path / "app")
+    source_digest = digest_app_source(app)
+    artifact_digest = digest_app_artifact(app)
+    cache = app / "package" / "nested" / ".pytest_cache" / "v" / "cache" / "nodeids"
+    cache.parent.mkdir(parents=True)
+    cache.write_text("test state", encoding="utf-8")
+
+    assert digest_app_source(app) != source_digest
+    assert digest_app_artifact(app) == artifact_digest
+    assert validate_app_manifest(app / "manifest.json").app_sha == SHA
+
+
+def test_real_file_mutation_still_invalidates_manifest_with_pytest_cache(tmp_path: Path) -> None:
+    app = _runtime_app(tmp_path / "app")
+    cache = app / ".pytest_cache" / "v" / "cache" / "lastfailed"
+    cache.parent.mkdir(parents=True)
+    cache.write_text("test state", encoding="utf-8")
+    (app / "web" / "dist" / "index.html").write_text("tampered", encoding="utf-8")
+
+    with pytest.raises(AppValidationError, match="artifact digest"):
+        validate_app_manifest(app / "manifest.json")
+
+
 def test_disappearing_runtime_cache_does_not_break_legacy_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
