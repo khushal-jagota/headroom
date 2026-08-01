@@ -10,6 +10,7 @@
   import FilePreviewRoute from "./routes/FilePreviewRoute.svelte";
   import IdeasRoute from "./routes/IdeasRoute.svelte";
   import ReviewRoute from "./routes/ReviewRoute.svelte";
+  import ScheduledTasksRoute from "./routes/ScheduledTasksRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
   import AgentsRoute from "./routes/AgentsRoute.svelte";
@@ -125,7 +126,17 @@
     if (route.name === "dev") {
       return route.params.sub === "conversation" || route.params.sub === "file-preview-gallery";
     }
-    return ["day", "review", "chief", "workspace", "board", "backlog", "ideas", "preview"].includes(route.name);
+    return [
+      "day",
+      "review",
+      "chief",
+      "workspace",
+      "board",
+      "backlog",
+      "ideas",
+      "scheduled-tasks",
+      "preview"
+    ].includes(route.name);
   }
 
   function scrollActiveNavLinkIntoStatusClearance(): void {
@@ -200,6 +211,7 @@
       <a class:active={currentNav("sprint")} class="nav-link" data-screen="sprint" href="#/sprint">Sprint</a>
       <a class:active={currentNav("backlog")} class="nav-link" data-screen="backlog" href="#/backlog">Backlog</a>
       <a class:active={currentNav("ideas")} class="nav-link" data-screen="ideas" href="#/ideas">Ideas</a>
+      <a class:active={currentNav("scheduled-tasks")} class="nav-link" data-screen="scheduled-tasks" href="#/scheduled-tasks">Scheduled tasks</a>
       <a class:active={currentNav("agents")} class="nav-link" data-screen="agents" href="#/agents">Agents</a>
     </nav>
     <div class="shell-statuses">
@@ -233,6 +245,8 @@
             <BacklogRoute />
           {:else if route.name === "ideas"}
             <IdeasRoute />
+          {:else if route.name === "scheduled-tasks"}
+            <ScheduledTasksRoute />
           {:else if route.name === "agents"}
             <AgentsRoute
               roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"}

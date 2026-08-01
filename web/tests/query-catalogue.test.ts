@@ -47,6 +47,7 @@ describe("query catalogue", () => {
     ],
     ["ideas", () => queries.ideas(), ["ideas"], "/api/ideas"],
     ["projects", () => queries.projects(), ["projects"], "/api/projects"],
+    ["schedules", () => queries.schedules(), ["schedules"], "/api/schedules"],
     ["sprint summaries", () => queries.sprintSummaries(), ["sprints"], "/api/sprints"],
     ["sprint items", () => queries.sprintItems(), ["items"], "/api/items"],
     [
@@ -131,6 +132,7 @@ describe("query catalogue", () => {
 
   it("exposes stable shared-resource keys", () => {
     expect(queries.projects().queryKey).toEqual(["projects"]);
+    expect(queries.schedules().queryKey).toEqual(["schedules"]);
     expect(queries.workerTypeManifests().queryKey).toEqual(["worker-types"]);
     expect(queries.skillsHome().queryKey).toEqual(["skills-home"]);
     expect(queries.chiefConversationStartValues().queryKey).toEqual([
