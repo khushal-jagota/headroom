@@ -49,6 +49,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
+    AgentMessageEventPayload,
     ConversationEventKind,
     ConversationTurnEnding,
     ModelThinkingFrame,
@@ -1230,13 +1231,21 @@ def test_a_turn_ends_once_and_a_dead_turns_ending_never_kills_its_successor(
     _run(exercise)
 
 
-def test_news_from_a_turn_that_is_over_is_dropped(harness: _Harness) -> None:
+def test_a_finished_agent_message_from_the_most_recent_ended_turn_is_kept(
+    harness: _Harness,
+) -> None:
+    """A finished message is durable content, even when its backend turn ended first."""
+
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
         backend = harness.backend("c")
         stale_token = backend.live_turn_token
         assert stale_token is not None and backend.sink is not None
+        await backend.sink.agent_message_completed(
+            stale_token, text_message_content("before the ending")
+        )
+        await harness.settle()
         await harness.complete_turn("c")
         await harness.system.send("c", text_message_content("second"), sender_label="owner")
 
@@ -1246,7 +1255,37 @@ def test_news_from_a_turn_that_is_over_is_dropped(harness: _Harness) -> None:
         )
         await harness.settle()
 
-        assert ConversationEventKind.agent_message not in await harness.recorded_kinds("c")
+        messages = [
+            message_content_text(event.payload.content)
+            for event in await harness.events("c")
+            if isinstance(event.payload, AgentMessageEventPayload)
+        ]
+        assert messages == ["before the ending", "from the turn before"]
+
+    _run(exercise)
+
+
+def test_non_message_news_from_a_turn_that_is_over_is_still_dropped(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        backend = harness.backend("c")
+        stale_token = backend.live_turn_token
+        assert stale_token is not None and backend.sink is not None
+        await harness.complete_turn("c")
+
+        await backend.sink.tool_call_started(
+            stale_token,
+            tool_call_id="stale-tool",
+            title="Bash",
+            tool_kind="Bash",
+            detail=None,
+        )
+        await harness.settle()
+
+        assert ConversationEventKind.tool_call_started not in await harness.recorded_kinds("c")
 
     _run(exercise)
 

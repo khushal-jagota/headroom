@@ -216,6 +216,7 @@ class _ConversationState:
     backend_event_pump: asyncio.Task[None] | None = None
     reserved_turn: _ReservedTurn | None = None
     running_turn: _RunningTurn | None = None
+    last_ended_turn_token: TurnToken | None = None
     child: BackendChild | None = None
     next_turn_number: int = 1
     has_delivered_prompt: bool = False
@@ -1170,6 +1171,7 @@ class SqliteProcessConversationSystem:
         running.ended = True
         running.pending_permission_ask_ids.clear()
         running.pending_user_input_questions.clear()
+        state.last_ended_turn_token = running.token
         state.running_turn = None
         return await self._append_event(
             state, TurnEndedEventPayload(ending=ending, error_summary=error_summary)
@@ -1342,6 +1344,34 @@ class SqliteProcessConversationSystem:
         state.last_touched_monotonic = self._monotonic_now()
         return running
 
+    async def _hold_for_the_live_or_most_recent_ended_turn(
+        self, state: _ConversationState, turn_token: TurnToken
+    ) -> bool:
+        """Take the lock when a finished message still belongs to this conversation.
+
+        Most backend news is meaningful only while its turn is live. A completed agent
+        message is different: it is durable conversation content, and some persistent
+        backends report a turn ending before delivering the parent's follow-up message.
+        The most recently ended token remains valid for that one kind of news. Keeping the
+        allowance to one token prevents arbitrarily old child output from reappearing.
+        """
+        while True:
+            reserved = state.reserved_turn
+            if reserved is None or reserved.token != turn_token:
+                break
+            await reserved.resolved.wait()
+
+        await state.lock.acquire()
+        running = state.running_turn
+        if not (
+            (running is not None and running.token == turn_token)
+            or state.last_ended_turn_token == turn_token
+        ):
+            state.lock.release()
+            return False
+        state.last_touched_monotonic = self._monotonic_now()
+        return True
+
     async def _on_token_usage_reported(
         self,
         state: _ConversationState,
@@ -1368,7 +1398,7 @@ class SqliteProcessConversationSystem:
     async def _on_agent_message_completed(
         self, state: _ConversationState, turn_token: TurnToken, content: MessageContent
     ) -> None:
-        if await self._hold_for_the_live_turn(state, turn_token) is None:
+        if not await self._hold_for_the_live_or_most_recent_ended_turn(state, turn_token):
             return
         try:
             await self._append_event(state, AgentMessageEventPayload(content=content))
