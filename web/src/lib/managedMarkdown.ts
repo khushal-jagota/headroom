@@ -2,12 +2,14 @@ import { mount, unmount } from "svelte";
 import FilePreview from "../components/FilePreview.svelte";
 import { resolvePreview, targetFromHref } from "./filePreview";
 import { renderMarkdownToElement, serializeMarkdownDomToSource } from "./markdownPipeline";
+import { ticketDevServerHref } from "./ticketDevServerLink";
 
 export type ReadOnlyManagedMarkdownInput = Readonly<{
   source: unknown;
   emptyText: string;
   depth: number;
   visited: readonly string[];
+  ticketId?: string | null;
 }>;
 
 export interface ReadOnlyManagedMarkdownSurface {
@@ -36,6 +38,7 @@ type ReadOnlyRenderInput = {
   emptyText: string;
   depth: number;
   visited: string[];
+  ticketId: string | null;
 };
 
 type ManagedMarkdownMode = "read-only" | "editable";
@@ -170,9 +173,24 @@ export function createManagedMarkdownSurface(
     }
   }
 
+  function rewriteTicketDevServerLinks(root: HTMLElement, ticketId: string | null): void {
+    if (ticketId === null) return;
+    for (const anchor of Array.from(root.querySelectorAll("a[href]"))) {
+      const href = anchor.getAttribute("href");
+      if (href === null) continue;
+      const rewritten = ticketDevServerHref(href, ticketId);
+      if (rewritten !== href) anchor.setAttribute("href", rewritten);
+    }
+  }
+
   function repaint(
     source: string,
-    presentation: { emptyText: string; depth: number; visited: readonly string[] } | null
+    presentation: {
+      emptyText: string;
+      depth: number;
+      visited: readonly string[];
+      ticketId?: string | null;
+    } | null
   ): void {
     disconnectObserver();
     unmountAllPreviews();
@@ -192,6 +210,9 @@ export function createManagedMarkdownSurface(
 
     const rendered = renderMarkdownToElement(source);
     rendered.classList.add("markdown-block");
+    if (mode === "read-only") {
+      rewriteTicketDevServerLinks(rendered, presentation?.ticketId ?? null);
+    }
     mountRenderedPreviews(
       rendered,
       presentation?.depth || 0,
@@ -226,7 +247,8 @@ export function createManagedMarkdownSurface(
           source: normalizeSource(input.source),
           emptyText: input.emptyText,
           depth: input.depth,
-          visited: [...input.visited]
+          visited: [...input.visited],
+          ticketId: input.ticketId ?? null
         };
         if (sameReadOnlyInput(lastReadOnlyInput, next)) return;
         repaint(next.source, next);
@@ -274,6 +296,7 @@ function sameReadOnlyInput(
     previous.source === next.source &&
     previous.emptyText === next.emptyText &&
     previous.depth === next.depth &&
+    previous.ticketId === next.ticketId &&
     previous.visited.length === next.visited.length &&
     previous.visited.every((value, index) => value === next.visited[index])
   );
