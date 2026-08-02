@@ -331,11 +331,36 @@ textarea {
   font-size: var(--type-xs);
 }
 
+.vps-status {
+  position: relative;
+}
+
 .shell-connection {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   white-space: nowrap;
+}
+
+.shell-connection-trigger,
+.vps-status-refresh {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.shell-connection-trigger {
+  padding: 0;
+}
+
+.shell-connection-trigger:hover,
+.shell-connection-trigger:focus-visible,
+.vps-status-refresh:hover,
+.vps-status-refresh:focus-visible {
+  color: var(--text-strong);
 }
 
 .shell-connection-mark {
@@ -345,21 +370,83 @@ textarea {
   background: var(--accent-done);
 }
 
-.shell-status[data-status-state="preparing"] {
+.vps-status-popover {
+  position: absolute;
+  z-index: 14;
+  top: calc(100% + var(--space-3));
+  right: 0;
+  width: min(340px, calc(100vw - var(--space-8)));
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-base);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+}
+
+.vps-status-heading,
+.vps-status-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.vps-status-list {
+  margin: var(--space-3) 0 0;
+}
+
+.vps-status-list > div {
+  padding: var(--space-2) 0;
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.vps-status-list dt,
+.vps-status-list dd {
+  margin: 0;
+  font-size: var(--type-xs);
+}
+
+.vps-status-list dd {
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.vps-status-list > div[data-state="warning"] dd {
   color: var(--accent-bright);
 }
 
-.shell-status[data-status-state="preparing"] .shell-connection-mark {
+.vps-status-list > div[data-state="critical"] dd {
+  color: var(--accent-error);
+}
+
+.vps-status-list > div[data-state="unavailable"] dd {
+  color: var(--text-faintest);
+}
+
+.vps-status-error,
+.vps-status-loading {
+  color: var(--text-faint);
+  font-size: var(--type-xs);
+}
+
+.vps-status-error {
+  color: var(--accent-error);
+}
+
+.shell-status .shell-connection-trigger[data-status-state="preparing"] {
+  color: var(--accent-bright);
+}
+
+.shell-status .shell-connection-trigger[data-status-state="preparing"] .shell-connection-mark {
   background: var(--accent-bright);
 }
 
-.shell-status[data-status-state="restarting"],
-.shell-status[data-status-state="reconnecting"] {
+.shell-status .shell-connection-trigger[data-status-state="restarting"],
+.shell-status .shell-connection-trigger[data-status-state="reconnecting"] {
   color: var(--text-faint);
 }
 
-.shell-status[data-status-state="restarting"] .shell-connection-mark,
-.shell-status[data-status-state="reconnecting"] .shell-connection-mark {
+.shell-status .shell-connection-trigger[data-status-state="restarting"] .shell-connection-mark,
+.shell-status .shell-connection-trigger[data-status-state="reconnecting"] .shell-connection-mark {
   background: transparent;
   border: var(--border-hairline) solid var(--text-faintest);
   border-top-color: var(--text-muted);
@@ -367,20 +454,20 @@ textarea {
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
 
-.shell-status[data-status-state="restarting"] .shell-connection-mark {
+.shell-status .shell-connection-trigger[data-status-state="restarting"] .shell-connection-mark {
   border-color: var(--accent-surface);
   border-top-color: var(--accent-bright);
 }
 
-.shell-status[data-status-state="back_up"] {
+.shell-status .shell-connection-trigger[data-status-state="back_up"] {
   color: var(--accent-done);
 }
 
-.shell-status[data-status-state="problem"] {
+.shell-status .shell-connection-trigger[data-status-state="problem"] {
   color: var(--accent-error);
 }
 
-.shell-status[data-status-state="problem"] .shell-connection-mark {
+.shell-status .shell-connection-trigger[data-status-state="problem"] .shell-connection-mark {
   background: var(--accent-error);
 }
 
@@ -407,8 +494,8 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
-  .shell-status[data-status-state="reconnecting"] .shell-connection-mark,
-  .shell-status[data-status-state="restarting"] .shell-connection-mark {
+  .shell-status .shell-connection-trigger[data-status-state="reconnecting"] .shell-connection-mark,
+  .shell-status .shell-connection-trigger[data-status-state="restarting"] .shell-connection-mark {
     animation: none;
   }
 }

@@ -140,7 +140,8 @@ def test_mobile_tabs_and_short_agents_page_fit_the_dynamic_viewport(
     assert status.count() == 1
     assert status.get_attribute("role") == "status"
     assert status.get_attribute("aria-label") == "Connected. 0 working."
-    assert status.locator("button").count() == 0
+    assert status.locator("button").count() == 1
+    assert status.locator("[data-connection-status]").get_attribute("aria-expanded") == "false"
 
     geometry = page.evaluate("""() => ({
           horizontal: document.documentElement.scrollWidth - innerWidth,
@@ -168,7 +169,7 @@ def test_shell_status_is_one_quiet_cluster_outside_navigation(
 
     assert page.locator("[data-connection-status]").count() == 1
     status = page.locator("[data-shell-status]")
-    assert status.locator("button, a, input, select").count() == 0
+    assert status.locator("button, a, input, select").count() == 1
     placement = page.evaluate("""() => {
       const status = document.querySelector('[data-shell-status]').getBoundingClientRect();
       const nav = document.querySelector('.shell-nav').getBoundingClientRect();
