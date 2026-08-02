@@ -345,6 +345,12 @@ class ClaudeUsageAdapter:
                 outcome=BackendUsageOutcome.unauthenticated,
                 detail="Claude's login is no longer valid. Run `claude auth login` and try again.",
             )
+        if response.status_code == 429:
+            return BackendUsageResult(
+                backend_key=ConversationBackendKey.claude,
+                outcome=BackendUsageOutcome.failed,
+                detail="Claude usage is rate-limited. Try again later.",
+            )
         if response.status_code < 200 or response.status_code >= 300:
             return BackendUsageResult(
                 backend_key=ConversationBackendKey.claude,
@@ -383,26 +389,93 @@ def _read_claude_access_token(path: Path) -> str | None:
 def _parse_claude_windows(body: Any) -> tuple[BackendUsageWindow, ...] | None:
     if not isinstance(body, dict):
         return None
+
+    scoped_windows = _parse_claude_limits(body.get("limits"))
+    if scoped_windows:
+        return tuple(scoped_windows)
+
     windows: list[BackendUsageWindow] = []
     for key, value in body.items():
         if key not in ("five_hour", "seven_day") and not key.startswith("seven_day_"):
             continue
-        if value is None:
-            continue
-        if not isinstance(value, dict):
-            return None
+        window = _parse_claude_window(key, value)
+        if window is not None:
+            windows.append(window)
+    return tuple(windows) if windows else None
+
+
+def _parse_claude_limits(value: Any) -> list[BackendUsageWindow]:
+    if not isinstance(value, list):
+        return []
+    windows: list[BackendUsageWindow] = []
+    for entry in value:
+        window = _parse_claude_limit_entry(entry)
+        if window is not None:
+            windows.append(window)
+    return windows
+
+
+def _parse_claude_limit_entry(value: Any) -> BackendUsageWindow | None:
+    if not isinstance(value, dict):
+        return None
+    used_percent = _percentage(value.get("percent"))
+    if used_percent is None:
         used_percent = _percentage(value.get("utilization"))
-        resets_at = _parse_datetime(value.get("resets_at"))
-        if used_percent is None or resets_at is None:
-            return None
-        windows.append(
-            BackendUsageWindow(
-                name=_claude_window_name(key),
-                used_percent=used_percent,
-                resets_at=resets_at,
+    resets_at = _claude_reset_time(value)
+    if used_percent is None or resets_at is None:
+        return None
+
+    scope = value.get("scope")
+    model = scope.get("model") if isinstance(scope, dict) else None
+    model_name = (
+        model.get("display_name")
+        if isinstance(model, dict)
+        else None
+    )
+    if not isinstance(model_name, str) or not model_name:
+        model_name = model.get("displayName") if isinstance(model, dict) else None
+    if isinstance(model_name, str) and model_name:
+        name = f"7 days · {model_name}"
+    else:
+        group = value.get("group")
+        if group == "session":
+            name = "5 hours"
+        elif group in ("weekly", "week", "seven_day"):
+            name = "7 days"
+        else:
+            kind = value.get("kind")
+            name = (
+                kind.replace("_", " ").title()
+                if isinstance(kind, str) and kind
+                else "Usage limit"
             )
-        )
-    return tuple(windows)
+    return BackendUsageWindow(
+        name=name,
+        used_percent=used_percent,
+        resets_at=resets_at,
+    )
+
+
+def _parse_claude_window(key: str, value: Any) -> BackendUsageWindow | None:
+    if not isinstance(value, dict):
+        return None
+    used_percent = _percentage(value.get("utilization"))
+    resets_at = _claude_reset_time(value)
+    if used_percent is None or resets_at is None:
+        return None
+    return BackendUsageWindow(
+        name=_claude_window_name(key),
+        used_percent=used_percent,
+        resets_at=resets_at,
+    )
+
+
+def _claude_reset_time(value: Mapping[str, Any]) -> datetime | None:
+    for field in ("resets_at", "reset_at"):
+        parsed = _parse_datetime(value.get(field))
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _claude_window_name(key: str) -> str:

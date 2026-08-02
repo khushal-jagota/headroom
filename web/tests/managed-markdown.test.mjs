@@ -9,6 +9,10 @@ const srcRoot = new URL("../src/", import.meta.url);
 const libRoot = new URL("../src/lib/", import.meta.url);
 const componentRoot = new URL("../src/components/", import.meta.url);
 const ownerUrl = new URL("../src/lib/managedMarkdown.ts", import.meta.url);
+const ticketDevServerLinkUrl = new URL(
+  "../src/lib/ticketDevServerLink.ts",
+  import.meta.url
+);
 
 async function productionFiles(directory, suffixes) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -23,6 +27,7 @@ async function productionFiles(directory, suffixes) {
 
 // Static ownership and deletion contract.
 const ownerSource = await readFile(ownerUrl, "utf8");
+const ticketDevServerLinkSource = await readFile(ticketDevServerLinkUrl, "utf8");
 const pipelineSource = await readFile(new URL("../src/lib/markdownPipeline.ts", import.meta.url), "utf8");
 for (const declaration of [
   "export type ReadOnlyManagedMarkdownInput",
@@ -70,6 +75,7 @@ for (const token of ["data-markdown-source-token"]) {
   );
 }
 assert.ok(ownerSource.includes('from "./markdownPipeline"'));
+assert.ok(ownerSource.includes('from "./ticketDevServerLink"'));
 assert.ok(pipelineSource.includes("remarkGfm"));
 assert.ok(pipelineSource.includes("rehypeSanitize"));
 assert.ok(pipelineSource.includes("rehypeToRemark"));
@@ -117,6 +123,19 @@ await assert.rejects(readFile(new URL("../../assets/markdown.js", import.meta.ur
 assert.ok(!(await readFile(new URL("../index.html", import.meta.url), "utf8")).includes(
   "/assets/markdown.js"
 ));
+
+for (const conversationComponent of [
+  "LiveConversation.svelte",
+  "ConversationPane.svelte",
+  "ConversationViewport.svelte",
+  "ConversationTranscript.svelte",
+  "MessagePieces.svelte"
+]) {
+  assert.match(sourceByName.get(conversationComponent), /ticketId/, conversationComponent);
+}
+assert.match(sourceByName.get("TicketRoute.svelte"), /ticketId=\{detail\.id\}/);
+assert.doesNotMatch(sourceByName.get("ChiefConversation.svelte"), /ticketId=/);
+assert.doesNotMatch(sourceByName.get("DevConversationRoute.svelte"), /ticketId=/);
 assert.ok(!(await readFile(new URL("../src/vite-env.d.ts", import.meta.url), "utf8")).includes(
   "Planner?:"
 ));
@@ -453,6 +472,14 @@ function renderedMarkdown(source) {
         })
       ])
     );
+  } else if (source.includes("[Dev]")) {
+    rendered.appendChild(
+      element("p", [element("a", [text("Dev")], {
+        href: "http://localhost:4173/nested/page?theme=dark#result",
+        "data-markdown-source-token":
+          "[Dev](http://localhost:4173/nested/page?theme=dark#result)"
+      })])
+    );
   } else if (source.includes("[Doc]")) {
     rendered.appendChild(
       element("p", [text("Before "), element("a", [text("Doc")], {
@@ -547,6 +574,44 @@ globalThis.window = {
   location: { origin: "https://panels.test" }
 };
 
+const ticketDevServerLinkCompiled = ts.transpileModule(ticketDevServerLinkSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ES2022,
+    target: ts.ScriptTarget.ES2022,
+    verbatimModuleSyntax: true
+  }
+}).outputText;
+const helperTempDir = await mkdtemp(join(tmpdir(), "planner-ticket-dev-server-link-"));
+const helperModulePath = join(helperTempDir, "ticketDevServerLink.mjs");
+await writeFile(helperModulePath, ticketDevServerLinkCompiled, "utf8");
+const { ticketDevServerHref } = await import(helperModulePath);
+await rm(helperTempDir, { recursive: true, force: true });
+globalThis.__managedMarkdownTicketDevServerLink = { ticketDevServerHref };
+
+assert.equal(
+  ticketDevServerHref(
+    "http://localhost:4173/nested/page?theme=dark#result",
+    "t_demo"
+  ),
+  "/dev/tickets/t_demo/4173/nested/page?theme=dark#result"
+);
+assert.equal(
+  ticketDevServerHref("http://127.0.0.1:80?ready=yes#top", "ticket / one"),
+  "/dev/tickets/ticket%20%2F%20one/80/?ready=yes#top"
+);
+for (const unchanged of [
+  "http://localhost/path",
+  "https://localhost:4173/path",
+  "http://localhost.example:4173/path",
+  "http://[::1]:4173/path",
+  "http://user@localhost:4173/path",
+  "http://127.0.0.1:0/path",
+  "http://127.0.0.1:65536/path",
+  "/already/local"
+]) {
+  assert.equal(ticketDevServerHref(unchanged, "t_demo"), unchanged);
+}
+
 const executableSource = ownerSource
   .replace(
     'import { mount, unmount } from "svelte";',
@@ -563,6 +628,10 @@ const executableSource = ownerSource
   .replace(
     'import { renderMarkdownToElement, serializeMarkdownDomToSource } from "./markdownPipeline";',
     "const { renderMarkdownToElement, serializeMarkdownDomToSource } = globalThis.__managedMarkdownPipeline;"
+  )
+  .replace(
+    'import { ticketDevServerHref } from "./ticketDevServerLink";',
+    "const { ticketDevServerHref } = globalThis.__managedMarkdownTicketDevServerLink;"
   );
 const compiled = ts.transpileModule(executableSource, {
   compilerOptions: {
@@ -594,6 +663,33 @@ assert.equal(readOnlyHost.children[0].textContent, "(none)");
 readOnly.update({ source: "safe <text>", emptyText: "(none)", depth: 0, visited: [] });
 assert.ok(readOnlyHost.children[0].classList.contains("markdown-block"));
 assert.equal(readOnlyHost.children[0].textContent, "safe <text>");
+
+const ordinaryLinkHost = host();
+const ordinaryLinks = createManagedMarkdownSurface(ordinaryLinkHost, { mode: "read-only" });
+ordinaryLinks.update({
+  source: "[Dev](http://localhost:4173/nested/page?theme=dark#result)",
+  emptyText: "",
+  depth: 0,
+  visited: []
+});
+assert.equal(
+  ordinaryLinkHost.querySelector("a[href]").getAttribute("href"),
+  "http://localhost:4173/nested/page?theme=dark#result"
+);
+
+const ticketLinkHost = host();
+const ticketLinks = createManagedMarkdownSurface(ticketLinkHost, { mode: "read-only" });
+ticketLinks.update({
+  source: "[Dev](http://localhost:4173/nested/page?theme=dark#result)",
+  emptyText: "",
+  depth: 0,
+  visited: [],
+  ticketId: "t_demo"
+});
+assert.equal(
+  ticketLinkHost.querySelector("a[href]").getAttribute("href"),
+  "/dev/tickets/t_demo/4173/nested/page?theme=dark#result"
+);
 
 readOnly.update({
   source: "[Doc](ignored)",

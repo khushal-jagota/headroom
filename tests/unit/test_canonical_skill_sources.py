@@ -49,6 +49,25 @@ def test_hermes_skill_is_symlink_to_managed_source(tmp_path: Path) -> None:
     assert target.resolve() == source.resolve()
 
 
+def test_debugging_worker_runtime_app_boundary_is_packaged_for_new_homes(tmp_path: Path) -> None:
+    source = panels_skill_root() / "panels-worker-debugging" / "SKILL.md"
+    guidance = source.read_text(encoding="utf-8")
+
+    assert "/home/vps/Deployments/Panels/current/app" in guidance
+    assert (
+        "Never use it as the current working directory, a test root, or a source tree."
+        in guidance
+    )
+    assert "logs or service state" in guidance
+    assert "assigned checkout or an isolated deployed-revision copy" in guidance
+    assert "suitable checkout when one is not available" in guidance
+
+    managed = ensure_managed_panels_skills(tmp_path / "data")
+    assert (managed / "panels-worker-debugging" / "SKILL.md").read_text(
+        encoding="utf-8"
+    ) == guidance
+
+
 def test_seed_prefers_legacy_live_edit_and_never_clobbers_managed_file(tmp_path: Path) -> None:
     legacy = tmp_path / "worker-settings" / "coding" / "SKILL.md"
     legacy.parent.mkdir(parents=True)

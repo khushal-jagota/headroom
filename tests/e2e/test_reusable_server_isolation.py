@@ -1,8 +1,9 @@
-"""Proof that the ordinary e2e server is reusable without cross-test state leakage.
+"""Proof that the ordinary e2e fixture resets without cross-test state leakage.
 
 These checks are deliberately consecutive. The first test in each pair contaminates the
 ordinary fixture; the next test observes the fixture boundary that every other e2e test
-receives.
+receives. Database-only state can reuse the process, while process-owned managed state and
+conversation runtime require a fresh process.
 """
 
 from __future__ import annotations
@@ -67,14 +68,14 @@ def test_01_ordinary_server_state_is_contaminated(
     page.evaluate("() => localStorage.setItem('cross-test-state', 'must not leak')")
 
 
-def test_02_ordinary_server_reuses_process_but_resets_canonical_state(
+def test_02_process_owned_managed_state_gets_fresh_process_and_clean_state(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
 ) -> None:
     assert _ordinary_process_id is not None
     assert _ordinary_ticket_id is not None
-    assert server.proc.pid == _ordinary_process_id
+    assert server.proc.pid != _ordinary_process_id
 
     missing_ticket = httpx.get(
         f"{server.base}/api/tickets/{_ordinary_ticket_id}",

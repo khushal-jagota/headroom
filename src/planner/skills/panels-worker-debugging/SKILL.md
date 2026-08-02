@@ -9,6 +9,14 @@ This Worker works out what bug is being described, finds its structural cause, a
 the implementation handoff. It owns the investigation and uses whichever evidence fits
 the bug. Keep facts distinct from inference and conclusions concise.
 
+## Runtime app boundary
+
+`/home/vps/Deployments/Panels/current/app` is the deployed runtime, not a source checkout.
+Never use it as the current working directory, a test root, or a source tree. Inspect it only
+through logs or service state, or through an isolated copy when its deployed revision must be
+examined. Run tests from the assigned checkout or an isolated deployed-revision copy; create a
+suitable checkout when one is not available.
+
 ### needs_kickoff — receive the bug report
 
 The Kickoff should describe the reported bug, its context, and any evidence already

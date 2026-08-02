@@ -9,9 +9,12 @@ Panels stores that choice on the Ticket for its whole life. A read returns the T
 stored Stage and Worker type as they are; it does not substitute coding behavior or ask a
 registry to reinterpret them.
 
-Nine Worker types ship today:
+Eleven Worker types ship today:
 
 - **`coding`** handles product and repository work.
+- **`general`** is the catch-all, chosen when no specialist type fits. It runs a
+  deliberately minimal lifecycle — agree the task with the user, do it, then land its
+  consequences — for arbitrary work.
 - **`debugging`** understands a reported software bug, diagnoses its structural cause,
   and defines the implementation handoff without implementing it.
 - **`new_worker`** designs and lands a new kind of worker.
@@ -26,6 +29,7 @@ Nine Worker types ship today:
   14:30, agrees any useful intervention, carries it out, and records the result.
 - **`planning-sprint`** reviews the current sprint and plans the next at the final-day
   boundary, with canonical writes deferred until Closeout.
+- **`personal`** represents user-owned work, with optional explicit agent support.
 
 Tests also register **`probe`**. It has deliberately unfamiliar Stage and field names so
 the test suite catches code that still assumes every Ticket is coding-shaped. It is not a
@@ -51,7 +55,10 @@ working Stage, validate a Ticket position, and provide the field order used for
 external-work reconciliation.
 
 The shipped `coding` and `debugging` definitions default every non-terminal Stage to
-worker ownership. `new_worker` starts with worker-owned Kickoff, then uses paired
+worker ownership.
+`general` pairs only for Understanding, where the task is agreed with the user; its
+Execution and Closeout are worker-owned. `new_worker` starts with worker-owned Kickoff,
+then uses paired
 ownership for Understanding before worker-owned Stages and Thinking, pairs again for
 Runtime Defaults, then returns to worker-owned Drafting and Closeout. `exploration`
 uses paired ownership for Understanding and Answer, where the user and worker establish
@@ -74,6 +81,7 @@ ownership overrides, and scope, but they do not define a coding lifecycle.
 
 _Code paths:_ `src/planner/worker_types/contracts.py` contains the immutable declaration
 types and behavior. `src/planner/worker_types/coding.py`,
+`src/planner/worker_types/general.py`,
 `src/planner/worker_types/debugging.py`,
 `src/planner/worker_types/new_worker.py`,
 `src/planner/worker_types/exploration.py`,
@@ -81,7 +89,8 @@ types and behavior. `src/planner/worker_types/coding.py`,
 `src/planner/worker_types/product_design.py`,
 `src/planner/worker_types/planning_day.py`,
 `src/planner/worker_types/planning_midday_check.py`, and
-`src/planner/worker_types/planning_sprint.py` contain the nine shipped definitions.
+`src/planner/worker_types/planning_sprint.py`, and
+`src/planner/worker_types/personal.py` contain the eleven shipped definitions.
 
 ## Validation and the narrow registry
 
@@ -140,9 +149,9 @@ behavior is needed. Rules under `src/planner/tickets/logic/` receive
 Application composition lives in `src/planner/worker_types/configuration.py`. It owns the
 catalogs of known specialist skills and toolset profiles, the ordered tuple of shipped
 definitions, and the production registry built from them. The shipped tuple currently
-contains `coding`, `debugging`, `new_worker`, `exploration`, `initiative_planning`,
+contains `coding`, `general`, `debugging`, `new_worker`, `exploration`, `initiative_planning`,
 `product_design`, `planning-day`, `planning-midday-check`, and
-`planning-sprint`; its
+`planning-sprint`, and `personal`; its
 order is also the manifest order.
 
 Which agent backends exist is not this composition's business. It is the conversation
@@ -321,6 +330,7 @@ owns that name. A restart changes nothing: the conversation is the record, and t
 process is started again under it when there is a reason to.
 
 - `panels-worker-coding` guides coding Tickets.
+- `panels-worker-general` guides `general` Tickets.
 - `panels-worker-debugging` guides `debugging` Tickets.
 - `panels-worker-new-worker` guides `new_worker` Tickets.
 - `panels-worker-exploration` guides `exploration` Tickets.

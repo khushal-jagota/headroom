@@ -611,6 +611,7 @@
           <LiveConversation
             bind:conversationState
             conversationId={detail.conversation_id}
+            ticketId={detail.id}
             label={conversationEmployeeLabel(detail)}
             backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}

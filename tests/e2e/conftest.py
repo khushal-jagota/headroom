@@ -285,6 +285,14 @@ def _reset_managed_directories(database_parent: Path) -> None:
             path.unlink()
 
 
+def _has_process_owned_managed_state(database_parent: Path) -> bool:
+    """Whether resetting managed state requires stopping the process that may rewrite it."""
+    return any(
+        (database_parent / name).exists() or (database_parent / name).is_symlink()
+        for name in ("worker-settings", "skills")
+    )
+
+
 class _ReusableServer:
     def __init__(self, root: Path) -> None:
         self._root = root
@@ -304,10 +312,13 @@ class _ReusableServer:
             self._used = True
             return self.handle
 
-        if _database_has_conversation_runtime(self.handle.db_path):
-            # The running conversation system intentionally holds live state in memory.
-            # Replacing the process is the only honest reset boundary for tests that
-            # touched it; ordinary row-only tests retain the fast shared process.
+        if _database_has_conversation_runtime(
+            self.handle.db_path
+        ) or _has_process_owned_managed_state(self.handle.db_path.parent):
+            # Conversation runtime lives in memory, while worker settings and managed
+            # skills may be read and recreated by the running process. Replacing the
+            # process is the only honest reset boundary for tests that touched either;
+            # ordinary row-only tests retain the fast shared process.
             _stop_server(self.handle)
             self.handle = self._start()
             return self.handle

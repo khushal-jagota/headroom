@@ -51,6 +51,7 @@ CODEX_PATH = "/Users/someone/.local/bin/codex"
 CODEX_REAL_PATH = "/Users/someone/.codex/packages/standalone/releases/0.145.0-arm64/bin/codex"
 HERMES_PATH = "/Users/someone/.local/bin/hermes"
 FHS_HERMES_PATH = "/usr/local/bin/hermes"
+USER_LOCAL_NPM_PREFIX = "/Users/someone/.local"
 
 
 @dataclass
@@ -60,6 +61,10 @@ class _FakeMachine:
     executables: dict[str, str] = field(default_factory=dict)
     configured_executables: dict[str, str] = field(default_factory=dict)
     real_paths: dict[str, str] = field(default_factory=dict)
+    managed_npm_prefix: str = USER_LOCAL_NPM_PREFIX
+    writable_prefixes: set[str] = field(
+        default_factory=lambda: {USER_LOCAL_NPM_PREFIX}
+    )
     outcomes: dict[tuple[str, ...], CommandOutcome] = field(default_factory=dict)
     registry_versions: dict[str, str] = field(default_factory=dict)
     after_run: dict[tuple[str, ...], Callable[[], None]] = field(default_factory=dict)
@@ -86,6 +91,12 @@ class _FakeMachine:
 
     def real_path(self, path: str) -> str:
         return self.real_paths.get(path, path)
+
+    def user_local_npm_prefix(self) -> str:
+        return self.managed_npm_prefix
+
+    def prefix_is_owned_and_writable(self, prefix: str) -> bool:
+        return prefix in self.writable_prefixes
 
     async def run(
         self,
@@ -1117,12 +1128,94 @@ def test_a_newer_published_version_is_offered_with_the_command_that_installs_it(
         assert card.update_advisory.update_command == (
             "npm",
             "install",
-            "-g",
+            "--global",
+            "--prefix",
+            USER_LOCAL_NPM_PREFIX,
             "@anthropic-ai/claude-code@latest",
         )
         assert card.update_advisory.latest_version == "2.1.230"
         assert card.update_advisory.update_available is True
         assert card.update_advisory.detail == "Version 2.1.230 is available."
+
+    _run(exercise)
+
+
+def test_a_system_npm_install_is_manual_only_and_never_queries_or_runs_npm() -> None:
+    async def exercise() -> None:
+        machine = _installed_claude()
+        machine.real_paths[CLAUDE_PATH] = (
+            "/usr/lib/node_modules/@anthropic-ai/claude-code/bin/claude"
+        )
+        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
+
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
+
+        assert card.update_advisory is not None
+        assert card.update_advisory.install_method is BackendInstallMethod.manual_only
+        assert card.update_advisory.update_command is None
+        assert card.update_advisory.update_available is False
+        assert machine.registry_lookups == []
+        assert "manually" in card.update_advisory.detail
+
+    _run(exercise)
+
+
+def test_a_non_writable_user_local_npm_prefix_is_manual_only() -> None:
+    async def exercise() -> None:
+        machine = _installed_claude()
+        machine.writable_prefixes.clear()
+        machine.registry_versions["@anthropic-ai/claude-code"] = "2.1.230"
+
+        card = await probe_backend(
+            ConversationBackendKey.claude,
+            machine,
+            claude_model_catalog_probe=_claude_that_answers(),
+        )
+
+        assert card.update_advisory is not None
+        assert card.update_advisory.install_method is BackendInstallMethod.manual_only
+        assert card.update_advisory.update_command is None
+        assert machine.registry_lookups == []
+
+    _run(exercise)
+
+
+def test_codex_user_local_npm_install_targets_the_same_resolved_prefix() -> None:
+    async def exercise() -> None:
+        machine = _FakeMachine(
+            executables={"codex": CODEX_PATH},
+            real_paths={
+                CODEX_PATH: "/Users/someone/.local/lib/node_modules/@openai/codex/bin/codex.js"
+            },
+        )
+        machine.outcomes[(CODEX_PATH, "--version")] = CommandOutcome(
+            exit_code=0, standard_output="codex-cli 0.145.0\n", standard_error=""
+        )
+        machine.outcomes[(CODEX_PATH, "login", "status")] = CommandOutcome(
+            exit_code=0, standard_output="Logged in using ChatGPT\n", standard_error=""
+        )
+        machine.registry_versions["@openai/codex"] = "0.146.0"
+
+        card = await probe_backend(
+            ConversationBackendKey.codex,
+            machine,
+            codex_model_catalog_probe=_codex_that_answers(),
+        )
+
+        assert card.update_advisory is not None
+        assert card.update_advisory.install_method is BackendInstallMethod.npm_global
+        assert card.update_advisory.update_command == (
+            "npm",
+            "install",
+            "--global",
+            "--prefix",
+            USER_LOCAL_NPM_PREFIX,
+            "@openai/codex@latest",
+        )
 
     _run(exercise)
 
@@ -1191,7 +1284,14 @@ def test_a_backend_that_installed_itself_is_updated_by_its_own_command() -> None
 
 
 def _claude_update_command() -> tuple[str, ...]:
-    return ("npm", "install", "-g", "@anthropic-ai/claude-code@latest")
+    return (
+        "npm",
+        "install",
+        "--global",
+        "--prefix",
+        USER_LOCAL_NPM_PREFIX,
+        "@anthropic-ai/claude-code@latest",
+    )
 
 
 def _installed_updatable_hermes() -> _FakeMachine:

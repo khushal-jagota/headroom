@@ -114,6 +114,7 @@ EXPLORATION_MANIFEST: WorkerTypeManifest = {
 def test_production_registry_carries_complete_exploration_manifest() -> None:
     assert PRODUCTION_WORKER_TYPE_REGISTRY.registered_worker_types() == (
         "coding",
+        "general",
         "debugging",
         "new_worker",
         "exploration",
@@ -175,12 +176,12 @@ def test_live_worker_type_docs_include_shipped_exploration_paths_and_guidance() 
     root = Path(__file__).resolve().parents[2]
     docs = (root / "docs/worker-types.md").read_text(encoding="utf-8")
 
-    assert "Nine Worker types ship today:" in docs
+    assert "Eleven Worker types ship today:" in docs
     assert "- **`exploration`**" in docs
     assert "`src/planner/worker_types/exploration.py`" in docs
     assert (
-        "contains `coding`, `debugging`, `new_worker`, `exploration`, "
+        "contains `coding`, `general`, `debugging`, `new_worker`, `exploration`, "
         "`initiative_planning`, `product_design`, `planning-day`, "
-        "`planning-midday-check`, and `planning-sprint`"
+        "`planning-midday-check`, and `planning-sprint`, and `personal`"
     ) in " ".join(docs.split())
     assert "- `panels-worker-exploration` guides `exploration` Tickets." in docs

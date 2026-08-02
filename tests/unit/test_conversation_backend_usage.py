@@ -50,6 +50,13 @@ class _Machine:
     def real_path(self, path: str) -> str:
         return path
 
+    def user_local_npm_prefix(self) -> str:
+        return str(Path.home() / ".local")
+
+    def prefix_is_owned_and_writable(self, prefix: str) -> bool:
+        del prefix
+        return False
+
     async def run(
         self,
         argv: Sequence[str],
@@ -210,7 +217,15 @@ def test_claude_config_dir_is_the_default_credential_home(
 
         async def get(url: str, headers: Mapping[str, str], timeout: float) -> UsageHttpResponse:
             del url, headers, timeout
-            return UsageHttpResponse(200, {})
+            return UsageHttpResponse(
+                200,
+                {
+                    "five_hour": {
+                        "utilization": 1,
+                        "reset_at": "2026-07-31T15:00:00Z",
+                    }
+                },
+            )
 
         result = await ClaudeUsageAdapter(http_get=get, now=lambda: NOW).refresh()
         assert result.outcome is BackendUsageOutcome.succeeded
@@ -366,7 +381,7 @@ def test_claude_oauth_translates_only_present_windows(tmp_path: Path) -> None:
                     "seven_day_sonnet": None,
                     "seven_day_oauth_apps": {
                         "utilization": 3,
-                        "resets_at": "2026-08-07T12:00:00Z",
+                        "reset_at": "2026-08-07T12:00:00Z",
                     },
                     "extra_usage": {"used_credits": 99},
                 },
@@ -386,6 +401,114 @@ def test_claude_oauth_translates_only_present_windows(tmp_path: Path) -> None:
             "authorization": "Bearer fixture-secret",
             "anthropic-beta": CLAUDE_USAGE_BETA,
         }
+        assert "fixture-secret" not in repr(result)
+
+    asyncio.run(exercise())
+
+
+def test_claude_current_scoped_limits_are_preferred_and_partial_entries_are_skipped(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        credentials = tmp_path / "credentials"
+        credentials.write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "fixture-secret"}}),
+            encoding="utf-8",
+        )
+
+        async def get(url: str, headers: Mapping[str, str], timeout: float) -> UsageHttpResponse:
+            del url, headers, timeout
+            return UsageHttpResponse(
+                200,
+                {
+                    "five_hour": "legacy-invalid-but-ignored",
+                    "limits": [
+                        {
+                            "group": "session",
+                            "percent": 42.25,
+                            "reset_at": "2026-07-31T15:00:00Z",
+                        },
+                        {
+                            "group": "weekly",
+                            "percent": 11,
+                            "resets_at": "2026-08-07T12:00:00Z",
+                        },
+                        {
+                            "kind": "model",
+                            "percent": 3,
+                            "resets_at": "2026-08-07T12:00:00Z",
+                            "scope": {"model": {"display_name": "Opus"}},
+                        },
+                        {"group": "weekly", "percent": "malformed"},
+                    ],
+                },
+            )
+
+        result = await ClaudeUsageAdapter(
+            credential_path=credentials, http_get=get, now=lambda: NOW
+        ).refresh()
+
+        assert result.outcome is BackendUsageOutcome.succeeded
+        assert [(window.name, window.used_percent) for window in result.windows] == [
+            ("5 hours", 42.25),
+            ("7 days", 11.0),
+            ("7 days · Opus", 3.0),
+        ]
+        assert "fixture-secret" not in repr(result)
+
+    asyncio.run(exercise())
+
+
+def test_claude_partial_legacy_windows_keep_the_usable_reading(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        credentials = tmp_path / "credentials"
+        credentials.write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "fixture-secret"}}),
+            encoding="utf-8",
+        )
+
+        async def get(url: str, headers: Mapping[str, str], timeout: float) -> UsageHttpResponse:
+            del url, headers, timeout
+            return UsageHttpResponse(
+                200,
+                {
+                    "five_hour": {
+                        "utilization": 7,
+                        "resets_at": "2026-07-31T15:00:00Z",
+                    },
+                    "seven_day": {"utilization": "not-a-number"},
+                    "seven_day_sonnet": None,
+                },
+            )
+
+        result = await ClaudeUsageAdapter(credential_path=credentials, http_get=get).refresh()
+
+        assert result.outcome is BackendUsageOutcome.succeeded
+        assert [window.name for window in result.windows] == ["5 hours"]
+
+    asyncio.run(exercise())
+
+
+def test_claude_rate_limit_is_typed_without_echoing_provider_body(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        credentials = tmp_path / "credentials"
+        credentials.write_text(
+            json.dumps({"claudeAiOauth": {"accessToken": "fixture-secret"}}),
+            encoding="utf-8",
+        )
+
+        async def rate_limited(
+            url: str, headers: Mapping[str, str], timeout: float
+        ) -> UsageHttpResponse:
+            del url, headers, timeout
+            return UsageHttpResponse(429, {"error": "fixture-secret provider detail"})
+
+        result = await ClaudeUsageAdapter(
+            credential_path=credentials, http_get=rate_limited
+        ).refresh()
+
+        assert result.outcome is BackendUsageOutcome.failed
+        assert result.detail == "Claude usage is rate-limited. Try again later."
         assert "fixture-secret" not in repr(result)
 
     asyncio.run(exercise())

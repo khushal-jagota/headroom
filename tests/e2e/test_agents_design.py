@@ -173,7 +173,7 @@ def test_agents_roster_states_design_and_compact_read_watermark(
     page.wait_for_url("**/#/agents", timeout=WAIT_MS)
     page.wait_for_selector('[data-stage-state="reply-seen"]', timeout=WAIT_MS)
 
-    page.set_viewport_size({"width": 1200, "height": 800})
+    page.set_viewport_size({"width": 1920, "height": 800})
     expect(page.locator(".agents-workspace-roster")).to_be_visible()
     expect(page.locator(".agents-workspace-conversation")).to_be_visible()
     expect(row).to_have_attribute("aria-current", "page")
@@ -186,3 +186,33 @@ def test_agents_roster_states_design_and_compact_read_watermark(
     )
     assert selected_background == resolved_background("--surface-overlay")
     assert selected_background not in {resting_background, hover_background}
+
+    conversation_geometry = page.locator(".agents-conversation-shell").evaluate(
+        """shell => {
+            const workspace = shell.closest(".agents-workspace-conversation");
+            if (workspace === null) throw new Error("missing Agents conversation workspace");
+            const ticketReference = document.createElement("div");
+            ticketReference.className = "ticket-conversation-column";
+            ticketReference.style.position = "fixed";
+            ticketReference.style.visibility = "hidden";
+            document.body.append(ticketReference);
+            const shellBox = shell.getBoundingClientRect();
+            const workspaceBox = workspace.getBoundingClientRect();
+            const ticketMaxWidth = parseFloat(
+              getComputedStyle(ticketReference).maxWidth
+            );
+            ticketReference.remove();
+            return {
+              shellWidth: shellBox.width,
+              ticketMaxWidth,
+              leftRoom: shellBox.left - workspaceBox.left,
+              rightRoom: workspaceBox.right - shellBox.right,
+            };
+        }"""
+    )
+    assert abs(
+        conversation_geometry["shellWidth"] - conversation_geometry["ticketMaxWidth"]
+    ) < 1
+    assert abs(
+        conversation_geometry["leftRoom"] - conversation_geometry["rightRoom"]
+    ) < 1

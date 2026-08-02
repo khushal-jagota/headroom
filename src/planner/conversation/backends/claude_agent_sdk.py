@@ -12,8 +12,11 @@ it looks the way it does.
 keeps one CLI child and one session alive across turns, so a follow-up prompt continues the
 conversation with no respawn. ``client.query`` writes the user message and returns; the
 turn's news arrives on the message stream a background reader consumes, and the turn's
-ending is the ``result`` message. That is why the write and the ending are separate here,
-exactly as they are for a protocol whose prompt response is the ending.
+ending is the ``result`` message. A persistent run can then deliver another ordinary
+parent message after that result when delegated work returns. That finished message is
+still conversation content and is kept under the turn that just ended; late tool activity
+and live decoration remain turn-bound. That is why the write, ending, and durable message
+are handled separately here.
 
 **Claude mints its session id, unless we mint it first.** A fresh session is started under
 a uuid of our own, passed as ``session_id``, so the cursor this conversation resumes from
@@ -345,6 +348,7 @@ class ClaudeAgentSdkBackendChild:
         self._session_model: str | None = None
         self._session_reasoning_effort: str | None = None
         self._turn: _TurnInFlight | None = None
+        self._last_ended_turn: _TurnInFlight | None = None
         self._reader: asyncio.Task[None] | None = None
         self._wire_broken = False
         self._standard_error: deque[str] = deque()
@@ -554,6 +558,7 @@ class ClaudeAgentSdkBackendChild:
         """Shut the child down: stop reading, settle its asks, close the client."""
         turn = self._turn
         self._turn = None
+        self._last_ended_turn = None
         if turn is not None:
             self._settle_parked_asks(turn)
         reader = self._reader
@@ -684,6 +689,7 @@ class ClaudeAgentSdkBackendChild:
         if self._turn is not turn:
             return
         self._turn = None
+        self._last_ended_turn = turn
         self._settle_parked_asks(turn)
         await self._sink.turn_ended(
             turn.token,
@@ -735,10 +741,16 @@ class ClaudeAgentSdkBackendChild:
         session_id = _durable_session_id(message)
         if session_id is not None:
             await self._note_the_session_id(session_id)
+        if self._wire_broken:
+            return
         turn = self._turn
         if turn is None:
-            # News with no turn to belong to names nothing the core can place. The session
-            # id above is not one of those: it is the conversation's, not the turn's.
+            # Claude's persistent run may deliver the parent's next ordinary message after
+            # a result ended the backend turn. It is still a message in this conversation,
+            # so preserve it under the turn that just ended. Every other late event remains
+            # turn-bound and is dropped. The session id above is conversation-bound too.
+            if isinstance(message, AssistantMessage) and self._last_ended_turn is not None:
+                await self._on_assistant_message_after_turn(self._last_ended_turn, message)
             return
         match message:
             case StreamEvent():
@@ -865,6 +877,27 @@ class ClaudeAgentSdkBackendChild:
                     continue
                 case _:
                     continue
+        await self._complete_agent_message(turn, said)
+
+    async def _on_assistant_message_after_turn(
+        self, turn: _TurnInFlight, message: AssistantMessage
+    ) -> None:
+        """Keep a plain parent message that Claude delivered after its result.
+
+        Tool activity, subagent speech, thinking pulses and streaming decoration remain
+        facts of a live turn. Only a completed ordinary top-level message crosses this
+        boundary; it is already whole and belongs in the durable conversation record.
+        """
+        if message.parent_tool_use_id is not None:
+            return
+        said: list[str] = []
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                said.append(block.text)
+            elif isinstance(block, ThinkingBlock):
+                continue
+            else:
+                return
         await self._complete_agent_message(turn, said)
 
     async def _complete_agent_message(self, turn: _TurnInFlight, said: list[str]) -> None:

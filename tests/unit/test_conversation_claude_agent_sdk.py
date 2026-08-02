@@ -100,6 +100,7 @@ CONVERSATION_ID = "c-claude-1"
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 ANOTHER_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 TURN = TurnToken(conversation_id=CONVERSATION_ID, turn_number=1)
+TURN_2 = TurnToken(conversation_id=CONVERSATION_ID, turn_number=2)
 
 REAL_CLAUDE_TESTS_ENVIRONMENT_NAME = "PANELS_REAL_CLAUDE_TESTS"
 CLAUDE_EXECUTABLE = shutil.which("claude")
@@ -417,9 +418,13 @@ async def _connected_bench(
     return child, sink, clients
 
 
-async def _write(child: ClaudeAgentSdkBackendChild, text: str = "hello") -> None:
+async def _write(
+    child: ClaudeAgentSdkBackendChild,
+    text: str = "hello",
+    turn_token: TurnToken = TURN,
+) -> None:
     await child.write_prompt(
-        TURN,
+        turn_token,
         text_message_content(text),
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
@@ -613,6 +618,7 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         assert len(sink.endings) == 1
         assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
         assert ANOTHER_SESSION_ID in str(sink.endings[0]["error_summary"])
+        assert sink.message_texts == []
         # Nothing more is written to a child that is not this conversation's session.
         with pytest.raises(PromptWriteFailed):
             await _write(child, "again")
@@ -1330,6 +1336,63 @@ def test_news_this_adapter_has_no_use_for_never_stops_the_stream(tmp_path: Path)
 
 
 # --- how a turn ends ---------------------------------------------------------------------------
+
+
+def test_an_ordinary_parent_message_after_a_result_is_still_reported(tmp_path: Path) -> None:
+    """Claude may continue its persistent run after saying that one turn completed."""
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+        clients[0].say(
+            _assistant(TextBlock(text="the first parent message"), session_id=session_id),
+            _result(session_id=session_id),
+            _assistant(TextBlock(text="the delayed parent message"), session_id=session_id),
+            _result(session_id=session_id),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.message_texts == [
+            (TURN, "the first parent message"),
+            (TURN, "the delayed parent message"),
+        ]
+        assert len(sink.endings) == 1
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_parent_messages_are_not_lost_when_a_successor_prompt_interleaves(
+    tmp_path: Path,
+) -> None:
+    """Claude gives no turn id here; the durable conversation still keeps every message."""
+
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child, "first")
+        clients[0].say(_result(session_id=session_id))
+        await clients[0].until_taken_in()
+
+        await _write(child, "second", TURN_2)
+        clients[0].say(
+            _assistant(TextBlock(text="late first reply"), session_id=session_id),
+            _result(session_id=session_id),
+            _assistant(TextBlock(text="second reply"), session_id=session_id),
+            _result(session_id=session_id),
+        )
+        await clients[0].until_taken_in()
+
+        assert [text for _, text in sink.message_texts] == ["late first reply", "second reply"]
+        assert [ending["turn"] for ending in sink.endings] == [TURN, TURN_2]
+        await child.stop()
+
+    _run(exercise)
 
 
 def test_a_turn_that_finished_is_recorded_as_completed(tmp_path: Path) -> None:
