@@ -209,6 +209,17 @@ to acquire, so its card offers no usage action.
   code, block quotes, thematic breaks, and nested mixed lists. Raw HTML stays visible
   as text. A strict sanitizer removes scripts, event handlers, unsafe URLs, ids,
   styles, and DOM-clobbering attributes before any DOM node is created.
+- **Ticket conversations expose loopback dev servers through Panels.** A Markdown link
+  in a Ticket conversation whose address is `http://localhost:<port>/...` or
+  `http://127.0.0.1:<port>/...` is rendered as
+  `/dev/tickets/<ticket-id>/<port>/...`. The link keeps its path, query, and fragment;
+  the port stays in the link rather than becoming Ticket state. This context belongs
+  only to the Ticket conversation, so the same Markdown on another surface remains an
+  ordinary loopback link. The first proxy contract carries pages and relative resource
+  or navigation paths under that prefix. Applications that hard-code root-origin URLs
+  must be configured with a compatible base path. Panels credentials and cookies do not
+  cross into the dev server, and dev-server cookies or authentication challenges do not
+  become state on the Panels origin.
 - **Shared scroll areas keep their place.** Panels reserves stable scrollbar space on
   its shared vertical and horizontal scroll areas, so content does not move when a
   scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
@@ -387,5 +398,5 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-29 (including the shared priority tile across Workspace,
+_Last verified: 2026-08-02 (including the shared priority tile across Workspace,
 Ticket/Review, Sprint, and Backlog)._

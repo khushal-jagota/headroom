@@ -77,10 +77,13 @@
     emptyState,
     sendMessage,
     onNewConversation,
-    onMessageAccepted
+    onMessageAccepted,
+    ticketId = null
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
     conversationId?: string | null;
+    /** Present only when this is the conversation owned by a Ticket. */
+    ticketId?: string | null;
     label: string;
     backends?: readonly BackendSnapshot[];
     /** Who the messages sent from here are from. Recorded on the row, display-only. */
@@ -520,6 +523,7 @@
 
 <ConversationPane
   conversationId={openedId ?? ""}
+  {ticketId}
   {label}
   {backendKey}
   conversationExists={started}

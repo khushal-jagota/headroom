@@ -11,6 +11,7 @@ from pathlib import Path
 from time import monotonic as _monotonic
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,6 +24,7 @@ from planner.core import change_signal
 from planner.core.clock import Clock
 from planner.core.config import HOST, Config
 from planner.core.db import connect
+from planner.core.dev_server_proxy import build_dev_server_proxy_router
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.path_observer import observe_path_changes
 from planner.core.sse import change_stream
@@ -112,6 +114,7 @@ def create_app(
     vps_status_summary_collector: (
         Callable[[Config, str | None, str | None], VpsStatusSummary] | None
     ) = None,
+    dev_server_proxy_transport_for_test: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     if conversation_system_for_test is not None and not config.test_mode:
         raise ValueError("conversation_system_for_test is accepted only in test mode")
@@ -228,6 +231,9 @@ def create_app(
         app.include_router(domain_router, prefix="/api")
     app.include_router(files_router)
     app.include_router(conversation_router, prefix="/api/conversation")
+    app.include_router(
+        build_dev_server_proxy_router(transport=dev_server_proxy_transport_for_test)
+    )
 
     @app.get("/api/meta")
     async def meta() -> dict[str, Any]:
