@@ -2939,9 +2939,9 @@ select {
 }
 
 .board-workspace-agent-profile {
-  flex: 0 0 var(--space-7);
-  width: var(--space-7);
-  height: var(--space-7);
+  flex: 0 0 var(--space-6);
+  width: var(--space-6);
+  height: var(--space-6);
   object-fit: cover;
   border-radius: var(--radius-md);
 }

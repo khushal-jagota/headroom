@@ -60,7 +60,7 @@ assert.equal(chiefProfile.subarray(8, 12).toString("ascii"), "WEBP");
 assert.ok(chiefProfile.byteLength < 64 * 1024);
 assert.match(
   css,
-  /\.board-workspace-agent-profile\s*\{[^}]*width: var\(--space-7\)[^}]*height: var\(--space-7\)[^}]*object-fit: cover[^}]*\}/s,
+  /\.board-workspace-agent-profile\s*\{[^}]*width: var\(--space-6\)[^}]*height: var\(--space-6\)[^}]*object-fit: cover[^}]*\}/s,
 );
 
 // The Chief wrapper owns the canonical owner API and exposes lookup failure recovery.

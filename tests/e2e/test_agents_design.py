@@ -103,8 +103,8 @@ def test_chief_of_staff_lives_above_workspace_projects(
     assert profile.evaluate("image => image.complete && image.naturalWidth === 256")
     profile_box = profile.bounding_box()
     assert profile_box is not None
-    assert abs(profile_box["width"] - 48) < 0.01
-    assert abs(profile_box["height"] - 48) < 0.01
+    assert abs(profile_box["width"] - 32) < 0.01
+    assert abs(profile_box["height"] - 32) < 0.01
     assert row.evaluate(
         "node => node.nextElementSibling?.classList.contains('board-workspace-project-filter')"
     )
