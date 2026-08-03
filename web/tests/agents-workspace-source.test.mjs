@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const app = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
 const route = await readFile(
-  new URL("../src/routes/AgentsRoute.svelte", import.meta.url),
+  new URL("../src/routes/BoardRoute.svelte", import.meta.url),
   "utf8",
 );
 const chief = await readFile(
@@ -15,11 +15,11 @@ const queries = await readFile(
   "utf8",
 );
 
-// The direct shell controls have one stable order, and Agents is not duplicated in More.
+// The direct shell controls have one stable order, and Home is not duplicated in More.
 const directNavigation = [
+  app.indexOf('data-screen="home"'),
   app.indexOf('data-screen="review"'),
   app.indexOf('data-screen="workspace"'),
-  app.indexOf('data-screen="agents-nav"'),
   app.indexOf('data-screen="more"'),
 ];
 assert.ok(directNavigation.every((position) => position >= 0));
@@ -33,15 +33,13 @@ assert.match(moreMenu, /href="#\/config"/);
 
 // Both runtime addresses mount one component; selection is a route input, not another
 // conversation implementation.
-assert.match(app, /selectedAgent=\{route\.params\.roleKind === "chief"/);
-assert.match(app, /name === "agents"\s*\?\s*"agents"/);
+assert.doesNotMatch(app, /AgentsRoute|data-screen="agents-nav"/);
 assert.match(route, /ChiefConversation/);
-assert.doesNotMatch(route, /fetchJson|mutateJson|\/api\/chief\/conversation/);
+assert.match(route, /data-chief-destination/);
 assert.match(route, /conversationSignalPresentation/);
 assert.match(route, /onReplyWatermarkMoved/);
 assert.match(route, /<StageMark/);
-assert.doesNotMatch(route, /agents-workspace-roster-head/);
-assert.doesNotMatch(route, /agents-roster-description|agents-roster-arrow/);
+assert.doesNotMatch(route, /agents-workspace|agents-roster/);
 
 // The Chief wrapper owns the canonical owner API and exposes lookup failure recovery.
 for (const endpoint of [

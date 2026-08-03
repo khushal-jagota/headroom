@@ -8,6 +8,7 @@ could not hear anything is on the screen once the stream is back, with no reload
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -226,26 +227,144 @@ def test_planned_phase_survives_transport_loss_then_terminal_state_reconciles(
     assert len(attempts) >= 2
 
 
-def test_shell_status_is_non_interactive_and_does_not_probe_vps_summary(
+def test_shell_status_opens_vps_summary_with_keyboard_and_explicit_states(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
+    cli: Callable[..., JsonObject],
 ) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Shell status worker presence",
+    )["id"]
+    _set_running_worker(server, ticket_id)
+
+    def metric(state: str, value: float | None) -> dict[str, object]:
+        return {
+            "used_percent": value,
+            "state": state,
+            "unavailable_reason": "probe failed" if value is None else None,
+        }
+
+    responses: list[dict[str, object] | None] = [
+        {
+            "deployed_sha": "0123456789abcdef",
+            "deployment": {"outcome": "succeeded", "detail": None},
+            "cpu": metric("healthy", 71.6),
+            "ram": metric("healthy", 63.2),
+            "disk": metric("healthy", 48.9),
+            "backup": {
+                "age_seconds": 3660,
+                "state": "healthy",
+                "unavailable_reason": None,
+            },
+        },
+        {
+            "deployed_sha": "0123456789abcdef",
+            "deployment": {"outcome": "succeeded", "detail": None},
+            "cpu": metric("warning", 82.4),
+            "ram": metric("healthy", 63.2),
+            "disk": metric("healthy", 48.9),
+            "backup": {
+                "age_seconds": 3660,
+                "state": "healthy",
+                "unavailable_reason": None,
+            },
+        },
+        None,
+        {
+            "deployed_sha": None,
+            "deployment": {"outcome": None, "detail": None},
+            "cpu": metric("unavailable", None),
+            "ram": metric("unavailable", None),
+            "disk": metric("unavailable", None),
+            "backup": {
+                "age_seconds": None,
+                "state": "unavailable",
+                "unavailable_reason": "no verified backup",
+            },
+        },
+    ]
+
     page = context_factory().new_page()
     summary_requests: list[str] = []
-    page.on(
-        "request",
-        lambda request: (
-            summary_requests.append(request.url)
-            if request.url.endswith("/api/vps-status-summary")
-            else None
-        ),
-    )
+
+    def vps_summary(route: Route) -> None:
+        summary_requests.append(route.request.url)
+        response = responses[min(len(summary_requests) - 1, len(responses) - 1)]
+        if response is None:
+            route.abort()
+            return
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(response),
+        )
+
+    page.route("**/api/changes", lambda route: route.abort())
+    page.route("**/api/vps-status-summary", vps_summary)
     page.goto(server.base + "/#/day")
     status = page.locator("[data-connection-status]")
     status.wait_for(state="visible", timeout=WAIT_MS)
+    presence = page.locator("[data-shell-presence]")
+    presence.wait_for(state="visible", timeout=WAIT_MS)
+    assert "1 working" in presence.inner_text()
     assert summary_requests == []
-    assert status.locator("button, a, input, select").count() == 0
-    assert status.get_attribute("role") == "status"
+
+    assert status.evaluate("(element) => element.tagName") == "BUTTON"
+    assert status.get_attribute("aria-expanded") == "false"
+    status.focus()
+    status.press("Enter")
+
+    content = page.locator("[data-vps-status-content]")
+    content.wait_for(state="visible", timeout=WAIT_MS)
+    assert len(summary_requests) == 1
+    assert "01234567" in content.inner_text()
+    assert "Succeeded" in content.inner_text()
+    assert "72% · Healthy" in content.inner_text()
+    assert "1h ago · Healthy" in content.inner_text()
+    assert page.locator("[data-shell-presence]").inner_text() == "1 working"
+    assert page.url.endswith("/#/day")
+
+    desktop_box = page.locator("[data-vps-status] .vps-status-popover").bounding_box()
+    assert desktop_box is not None
+    assert desktop_box["x"] >= 0
+    assert desktop_box["x"] + desktop_box["width"] <= 1280
+
+    refresh = page.get_by_role("button", name="Refresh")
+    refresh.click()
+    page.wait_for_function(
+        "() => document.querySelector('[data-vps-status-content]')?.textContent"
+        ".includes('Warning')",
+        timeout=WAIT_MS,
+    )
+    assert len(summary_requests) == 2
+    assert "Warning" in content.inner_text()
+
+    refresh.click()
+    page.locator("[data-vps-status-error]").wait_for(state="visible", timeout=WAIT_MS)
+    assert len(summary_requests) == 3
+    assert page.locator("[data-vps-status-error]").inner_text() == "VPS status is unavailable"
+
+    refresh.click()
+    page.wait_for_function(
+        "() => document.querySelector('[data-vps-status-content]')?.textContent"
+        ".includes('Unavailable')",
+        timeout=WAIT_MS,
+    )
+    assert len(summary_requests) == 4
+    assert content.inner_text().count("Unavailable") == 6
+
+    page.set_viewport_size({"width": 390, "height": 720})
+    mobile_box = page.locator("[data-vps-status] .vps-status-popover").bounding_box()
+    assert mobile_box is not None
+    assert mobile_box["x"] >= 0
+    assert mobile_box["x"] + mobile_box["width"] <= 390
+    assert page.evaluate("() => document.documentElement.scrollWidth <= innerWidth")
 
 
 def test_real_process_restart_reconciles_terminal_lifecycle_in_the_same_document(

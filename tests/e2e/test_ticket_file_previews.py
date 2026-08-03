@@ -35,6 +35,7 @@ def _write_ticket_files(server: ServerHandle, ticket_id: str) -> None:
     (root / "notes").mkdir(parents=True)
     (root / "images").mkdir(parents=True)
     (root / "video").mkdir(parents=True)
+    (root / "audio").mkdir(parents=True)
     (root / "notes" / "space name.md").write_text(
         "# File Notes\n\nRendered **here**.\n\n"
         f"[Nested](/files/tickets/{ticket_id}/notes/other.md)\n\n"
@@ -57,6 +58,7 @@ def _write_ticket_files(server: ServerHandle, ticket_id: str) -> None:
         )
     )
     (root / "video" / "demo.mp4").write_bytes(b"not a real mp4")
+    (root / "audio" / "demo.mp3").write_bytes(b"not a real mp3")
     (root / "archive.bin").write_bytes(b"download me")
 
 
@@ -104,6 +106,7 @@ def _expected_hrefs(ticket_id: str) -> dict[str, str]:
         "Markdown": f"/files/tickets/{ticket_id}/notes/space%20name.md",
         "Image": f"/files/tickets/{ticket_id}/images/pic.png",
         "Video": f"/files/tickets/{ticket_id}/video/demo.mp4",
+        "Audio": f"/files/tickets/{ticket_id}/audio/demo.mp3",
         "HTML": f"/files/tickets/{ticket_id}/page.html",
         "Binary": f"/files/tickets/{ticket_id}/archive.bin",
         "External": "https://example.com/outside",
@@ -296,7 +299,10 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     embedded_markdown.locator("h1", has_text="File Notes").wait_for(
         state="visible", timeout=WAIT_MS
     )
-    markdown_action = embedded_markdown.locator("a.file-preview-link").first
+    assert embedded_markdown.locator(".file-preview-document-body").first.evaluate(
+        "node => getComputedStyle(node).backgroundColor"
+    ) == "rgb(20, 18, 16)"
+    markdown_action = embedded_markdown.locator("a.file-preview-link:visible").first
     expected_markdown_url = (
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}"
         "&path=notes%2Fspace%20name.md"
@@ -324,7 +330,7 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     )
     self_link_line = page.locator(
         "[data-file-preview-markdown] "
-        '.file-preview--inline[data-file-preview-kind="markdown"] a.file-preview-link'
+        '.file-preview--inline[data-file-preview-kind="markdown"] a.file-preview-link:visible'
     )
     assert self_link_line.count() == 1
     assert self_link_line.inner_text() == "Open space name.md"
@@ -360,7 +366,9 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     _open_ticket_field(ticket_page, "success")
     embedded_preview = ticket_page.locator('[data-file-preview-kind="html"]').first
     embedded_preview.locator("iframe").wait_for(state="visible", timeout=WAIT_MS)
-    html_action = embedded_preview.locator("a.file-preview-link", has_text="Open page.html")
+    html_action = embedded_preview.locator(
+        "a.file-preview-link:visible", has_text="Open page.html"
+    )
     expected_html_url = f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=page.html"
     html_action.click()
     ticket_page.wait_for_function(
@@ -415,6 +423,65 @@ def test_preview_hash_route_renders_markdown_and_sandboxes_html(
     assert ticket_page.evaluate("window.__htmlPreviewNavigationMarker") == "kept"
 
 
+def test_mobile_embedded_managed_files_use_preview_links(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Mobile file preview links",
+    )["id"]
+    _write_ticket_files(server, ticket_id)
+    _set_fields(
+        server,
+        ticket_id,
+        {
+            "success": {"value": _links(ticket_id), "proposal": None, "user_note": None},
+            "approach": {"value": None, "proposal": None, "user_note": None},
+            "plan": {"value": None, "proposal": None, "user_note": None},
+            "implementation": {"value": None, "proposal": None, "user_note": None},
+            "closeout": {"value": None, "proposal": None, "user_note": None},
+        },
+    )
+
+    context = context_factory()
+    page = open_page(
+        context,
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]',
+    )
+    page.set_viewport_size({"width": 390, "height": 844})
+    _open_ticket_field(page, "success")
+
+    for kind in ("markdown", "html", "image", "video", "audio"):
+        preview = page.locator(f'[data-file-preview-kind="{kind}"]').first
+        mobile_link = preview.locator("a.file-preview-mobile-link:visible").first
+        mobile_link.wait_for(state="visible", timeout=WAIT_MS)
+        assert mobile_link.get_attribute("href") == (
+            f"#/preview?source=ticket&ticket={ticket_id}&path="
+            + {
+                "markdown": "notes%2Fspace%20name.md",
+                "html": "page.html",
+                "image": "images%2Fpic.png",
+                "video": "video%2Fdemo.mp4",
+                "audio": "audio%2Fdemo.mp3",
+            }[kind]
+        )
+
+    download = page.locator('[data-file-preview-kind="download"]').first
+    assert download.locator("a.file-preview-mobile-link").count() == 0
+    download.locator('a.file-preview-link[download]').wait_for(state="visible", timeout=WAIT_MS)
+    assert page.locator("body").evaluate("node => node.scrollWidth <= window.innerWidth")
+
+
 def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
@@ -467,7 +534,9 @@ def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(
     )
 
     # The second surface is the preview route, which opens here rather than in a new tab.
-    embedded_preview.locator("a.file-preview-link", has_text="Open interactive.html").click()
+    embedded_preview.locator(
+        "a.file-preview-link:visible", has_text="Open interactive.html"
+    ).click()
     expected_preview_url = (
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=interactive.html"
     )
@@ -534,7 +603,7 @@ def test_managed_html_preview_loads_sibling_stylesheets_and_images_in_both_surfa
     )
 
     # The second surface is the preview route, which opens here rather than in a new tab.
-    embedded_preview.locator("a.file-preview-link", has_text="Open index.html").click()
+    embedded_preview.locator("a.file-preview-link:visible", has_text="Open index.html").click()
     expected_preview_url = (
         f"{server.base}/#/preview?source=ticket&ticket={ticket_id}&path=previews%2Findex.html"
     )

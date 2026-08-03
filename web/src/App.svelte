@@ -14,7 +14,6 @@
   import ScheduledTasksRoute from "./routes/ScheduledTasksRoute.svelte";
   import SprintRoute from "./routes/SprintRoute.svelte";
   import TicketRoute from "./routes/TicketRoute.svelte";
-  import AgentsRoute from "./routes/AgentsRoute.svelte";
   import ConfigRoute from "./routes/ConfigRoute.svelte";
   import DevConversationRoute from "./routes/DevConversationRoute.svelte";
   import DevFilePreviewGalleryRoute from "./routes/DevFilePreviewGalleryRoute.svelte";
@@ -55,11 +54,11 @@
     const name = segments[0] || "day";
     const params: Record<string, string> = {};
     if (name === "chief") {
-      window.location.replace("#/agents/chief-of-staff");
+      window.location.replace("#/workspace/chief-of-staff");
       return {
-        name: "agents",
-        params: { roleKind: "chief" },
-        key: "agents"
+        name: "workspace",
+        params: { id: "chief-of-staff" },
+        key: "workspace/chief-of-staff"
       };
     }
     if (name === "ticket" && segments[1]) {
@@ -83,7 +82,12 @@
     }
     if (name === "agents") {
       if (segments[1] === "chief-of-staff" && segments.length === 2) {
-        params.roleKind = "chief";
+        window.location.replace("#/workspace/chief-of-staff");
+        return {
+          name: "workspace",
+          params: { id: "chief-of-staff" },
+          key: "workspace/chief-of-staff"
+        };
       } else if (segments[1] === "worker-skill" && segments.length === 2) {
         window.location.replace("#/config/worker-skill");
         return {
@@ -100,9 +104,10 @@
           key: `config/workers/${segments[2]}`
         };
       } else if (segments.length === 1) {
-        params.roleKind = "index";
+        window.location.replace("#/workspace");
+        return { name: "workspace", params: {}, key: "workspace" };
       } else {
-        params.roleKind = "unknown";
+        return { name: "unknown", params: {}, key: "unknown" };
       }
     }
     if (name === "config") {
@@ -145,9 +150,7 @@
     const screenKey =
       name === "workspace" || name === "board"
         ? "workspace"
-        : name === "agents"
-          ? "agents"
-          : segments.join("/") || "day";
+        : segments.join("/") || "day";
     return { name, params, key: query ? `${screenKey}${query}` : screenKey };
   }
 
@@ -161,7 +164,7 @@
     if (route.name === "sprint") {
       return !route.params.sub || route.params.sub === "documents";
     }
-    if (route.name === "agents" || route.name === "config") {
+    if (route.name === "config") {
       return route.params.roleKind !== "unknown";
     }
     if (route.name === "dev") {
@@ -182,13 +185,13 @@
   }
 
   function secondaryRouteActive(): boolean {
-    return ["day", "sprint", "backlog", "ideas", "scheduled-tasks", "config", "backends", "notifications"].includes(route.name);
+    return ["sprint", "backlog", "ideas", "scheduled-tasks", "config", "backends", "notifications"].includes(route.name);
   }
 
   function screenTitle(): string {
     if (route.name === "board" || route.name === "workspace") return "Workspace";
+    if (route.name === "day") return "Home";
     if (route.name === "ticket") return "Ticket";
-    if (route.name === "agents" && route.params.roleKind === "chief") return "Chief of Staff";
     return `${route.name.charAt(0).toUpperCase()}${route.name.slice(1)}`;
   }
 
@@ -240,6 +243,7 @@
   </header>
   <header class="shell-nav">
     <nav class="shell-links">
+      <a class:active={currentNav("day")} class="nav-link" data-screen="home" href="#/day">Home</a>
       <a class:active={currentNav("review")} class="nav-link nav-link--review" data-screen="review" href="#/review">
         Review
         {#if (review.data?.items || []).length > 0}
@@ -249,7 +253,6 @@
         {/if}
       </a>
       <a class:active={currentNav("workspace")} class="nav-link" data-screen="workspace" href="#/workspace">Workspace</a>
-      <a class:active={currentNav("agents")} class="nav-link" data-screen="agents-nav" href="#/agents">Agents</a>
       <div class="shell-more">
         <button
           type="button"
@@ -272,7 +275,6 @@
           >
             <div class="shell-more-grab" aria-hidden="true"></div>
             <div class="shell-more-group">Planning</div>
-            <a class:active={currentNav("day")} href="#/day" onclick={closeMore}>Day</a>
             <a class:active={currentNav("sprint")} href="#/sprint" onclick={closeMore}>Sprint</a>
             <a class:active={currentNav("backlog")} href="#/backlog" onclick={closeMore}>Backlog</a>
             <a class:active={currentNav("ideas")} href="#/ideas" onclick={closeMore}>Ideas</a>
@@ -335,8 +337,6 @@
             <IdeasRoute />
           {:else if route.name === "scheduled-tasks"}
             <ScheduledTasksRoute />
-          {:else if route.name === "agents"}
-            <AgentsRoute selectedAgent={route.params.roleKind === "chief" ? "chief-of-staff" : null} />
           {:else if route.name === "config"}
             <ConfigRoute
               roleKind={route.params.roleKind as "index" | "agent" | "skill" | "worker"}

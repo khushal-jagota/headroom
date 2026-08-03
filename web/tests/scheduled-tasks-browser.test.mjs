@@ -181,11 +181,13 @@ mount(Host, { target: document.getElementById("app")! });
 
   const browserScript = String.raw`
 from playwright.sync_api import sync_playwright
+import os
 import sys
 
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     page = browser.new_page()
+    screenshot_dir = os.environ.get("SCHEDULED_TASKS_SCREENSHOT_DIR")
     page.goto(sys.argv[1] + "#/scheduled-tasks", wait_until="networkidle")
     page.locator('section[data-screen="scheduled-tasks"]').wait_for()
     page.locator('[data-screen="more"]').click()
@@ -193,47 +195,69 @@ with sync_playwright() as playwright:
     scheduled_tasks_link.wait_for()
     assert scheduled_tasks_link.inner_text() == "Scheduled tasks"
     page.keyboard.press("Escape")
+    if screenshot_dir:
+        page.screenshot(path=os.path.join(screenshot_dir, "scheduled-tasks-list-desktop.png"), full_page=True)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.screenshot(path=os.path.join(screenshot_dir, "scheduled-tasks-list-phone.png"), full_page=True)
+        page.set_viewport_size({"width": 1280, "height": 900})
     card = page.locator('[data-schedule-id="schedule_demo"]')
     card.wait_for()
     assert "Existing planning task" in card.inner_text()
-    assert "09:00" in card.inner_text()
-    assert "Every planning day" in card.inner_text()
+    assert card.locator('[data-schedule-title]').inner_text() == "Existing planning task"
+    assert card.locator('[data-schedule-toggle]').get_attribute("aria-checked") == "true"
 
-    page.get_by_role("button", name="Add schedule").click()
+    page.get_by_role("button", name="Add").click()
     editor = page.locator("[data-schedule-editor]")
     editor.wait_for()
+    if screenshot_dir:
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.screenshot(path=os.path.join(screenshot_dir, "scheduled-tasks-editor-phone.png"), full_page=True)
+        page.set_viewport_size({"width": 1280, "height": 900})
     submit = editor.locator("[data-commit-schedule]")
     submit.click()
-    page.locator(".scheduled-form-error").wait_for()
-    assert "title" in page.locator(".scheduled-form-error").inner_text().lower()
+    page.locator("[data-schedule-error]").wait_for()
+    assert "title" in page.locator("[data-schedule-error]").inner_text().lower()
     assert submit.is_enabled()
 
-    editor.locator('[data-input="title"]').fill("Reject me")
+    title = editor.locator('[data-schedule-title] .ed')
+    title.fill("Reject me")
     submit.click()
     page.locator(".error-line").wait_for()
     assert "schedule was rejected" in page.locator(".error-line").inner_text()
 
-    editor.locator('[data-input="title"]').fill("Created browser schedule")
+    title.fill("Created browser schedule")
     editor.locator('[data-input="local-time"]').fill("11:30")
+    editor.locator('[data-input="placement"]').select_option("sprint_item")
+    editor.locator('[data-input="sprint-item"]').select_option("si_demo")
     submit.click()
     created = page.locator('[data-schedule-id="schedule_created"]')
     created.wait_for()
     assert "Created browser schedule" in created.inner_text()
-    assert "11:30" in created.inner_text()
+    created.locator('[data-schedule-title]').click()
+    editor.locator('[data-input="local-time"]').wait_for()
+    assert editor.locator('[data-input="local-time"]').input_value() == "11:30"
+    assert editor.locator('[data-input="sprint-item"]').input_value() == "si_demo"
+    page.locator('[data-back-to-schedules]').click()
 
-    card.locator("button", has_text="Edit").click()
-    editor.locator('[data-input="title"]').fill("Edited existing schedule")
+    card.locator('[data-schedule-toggle]').click()
+    page.wait_for_function("document.querySelector('[data-schedule-id=\\\"schedule_demo\\\"] [data-schedule-toggle]')?.getAttribute('aria-checked') === 'false'")
+    assert card.locator('[data-schedule-toggle]').get_attribute("aria-checked") == "false"
+    card.locator('[data-schedule-title]').click()
+    editor.locator('[data-schedule-title] .ed').fill("Edited existing schedule")
     editor.locator('[data-input="local-time"]').fill("09:50")
+    editor.get_by_text("Advanced Ticket settings").click()
+    editor.locator('[data-input="employee-backend"]').fill("codex")
     editor.get_by_role("button", name="Save changes").click()
     card = page.locator('[data-schedule-id="schedule_demo"]')
-    card.get_by_role("heading", name="Edited existing schedule").wait_for()
+    card.locator('[data-schedule-title]').filter(has_text="Edited existing schedule").wait_for()
     assert "Edited existing schedule" in card.inner_text()
-    assert "09:50" in card.inner_text()
     assert page.locator('[data-schedule-id]').count() == 2
 
     requests = page.evaluate("window.__requests()")
     assert any(request["path"] == "/api/schedules" and request["method"] == "POST" for request in requests)
     assert any(request["path"] == "/api/schedules/schedule_demo" and request["method"] == "PATCH" for request in requests)
+    assert any(request["method"] == "PATCH" and request["body"]["enabled"] is False for request in requests)
+    assert any(request["path"] == "/api/schedules/schedule_demo" and request["method"] == "PATCH" and request["body"].get("title") == "Edited existing schedule" for request in requests)
     browser.close()
 
 print("scheduled tasks browser assertions passed")

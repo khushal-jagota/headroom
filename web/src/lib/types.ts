@@ -278,6 +278,20 @@ export type BoardResponse = {
   }>;
 };
 
+export type DayTicket = AnyRecord & {
+  id: string;
+  title: string;
+  stage: string;
+  ticket_status: string;
+  conversation_id: string | null;
+  is_done?: boolean;
+  waiting_to_closeout?: boolean;
+  gating_field?: string | null;
+  agent_working?: boolean;
+  needs_me?: boolean;
+  latest_turn_ended_sequence?: number;
+};
+
 export type DayResponse = {
   id: string;
   focus?: string | null;
@@ -285,6 +299,7 @@ export type DayResponse = {
   watchout?: string | null;
   if_today_lands?: string | null;
   midday_reconciliation?: string | null;
+  tickets: DayTicket[];
 };
 
 export type BacklogResponse = SprintItemsResponse;
