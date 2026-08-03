@@ -1422,6 +1422,10 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.file-preview-mobile-link {
+  display: none;
+}
+
 .file-preview-image,
 .file-preview-video {
   display: block;
@@ -1469,6 +1473,23 @@ textarea {
   background: var(--surface-raised);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   overflow: auto;
+}
+
+.file-preview--embedded[data-file-preview-kind="markdown"] .file-preview-document-body {
+  background: var(--surface-sunken);
+}
+
+@media (max-width: 40rem) {
+  .file-preview--embedded.file-preview--managed .file-preview-mobile-link {
+    display: inline;
+  }
+
+  .file-preview--embedded.file-preview--managed > .file-preview-document,
+  .file-preview--embedded.file-preview--managed > .file-preview-image,
+  .file-preview--embedded.file-preview--managed > .file-preview-video,
+  .file-preview--embedded.file-preview--managed > .file-preview-audio {
+    display: none;
+  }
 }
 
 .file-preview-frame {
