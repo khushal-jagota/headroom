@@ -21,14 +21,17 @@ from planner.days.logic import dates
 from planner.tickets.api import (
     Cfg,
     Clk,
+    ConversationRecord,
+    Conversations,
     Ctx,
     DbConn,
+    add_conversation_row_signals,
     body_opt_str,
     body_str,
     txn,
 )
 from planner.tickets.data import read_ticket
-from planner.tickets.views import ticket_json
+from planner.tickets.views import board_view, ticket_json
 
 router = APIRouter()
 
@@ -43,12 +46,34 @@ def resolve_day_id(date_seg: str, clock: Clock, config: Config) -> str:
     return dates.resolve_day_id(date_seg, clock.now(), config.boundary_hour)
 
 
-def _day_view(conn: sqlite3.Connection, did: str, now: int) -> JsonDict:
+async def _day_view(
+    conn: sqlite3.Connection,
+    did: str,
+    now: int,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
     # A2: read_day materializes an absent day (INSERT + event, multi-statement) on an
     # autocommit connection, so this one read is wrapped; the rest run bare.
     with txn(conn):
         day = days_data.read_day(conn, did, now)
     dts = days_data.list_day_tickets(conn, did)
+    board = await add_conversation_row_signals(
+        board_view(conn, day_id=did), conversations, conversation_record
+    )
+    cards_by_id = {
+        str(card["id"]): card
+        for column in board["columns"]
+        for card in column["cards"]
+    }
+    tickets = []
+    for dt in dts:
+        card = cards_by_id.get(dt.ticket_id)
+        if card is None:
+            continue
+        ticket = ticket_json(read_ticket(conn, dt.ticket_id), now)
+        ticket.update(card)
+        tickets.append(ticket)
     return {
         "id": day.id,
         "focus": day.focus,
@@ -59,7 +84,7 @@ def _day_view(conn: sqlite3.Connection, did: str, now: int) -> JsonDict:
         "notes": day.notes,
         "created_at": day.created_at,
         "updated_at": day.updated_at,
-        "tickets": [ticket_json(read_ticket(conn, dt.ticket_id), now) for dt in dts],
+        "tickets": tickets,
     }
 
 
@@ -67,14 +92,28 @@ def _day_view(conn: sqlite3.Connection, did: str, now: int) -> JsonDict:
 
 
 @router.get("/day/{date}")
-async def get_day(date: str, conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
+async def get_day(
+    date: str,
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
+) -> JsonDict:
     did = resolve_day_id(date, clk, cfg)
-    return _day_view(conn, did, clk.now_unix())
+    return await _day_view(conn, did, clk.now_unix(), conversations, conversation_record)
 
 
 @router.patch("/day/{date}")
 async def patch_day(
-    date: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+    date: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
 ) -> JsonDict:
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
@@ -102,7 +141,7 @@ async def patch_day(
             require_direct_write(ctx)
         for field, value in edits.items():
             days_data.set_day_field(conn, did, field, value, now)
-    return _day_view(conn, did, now)
+    return await _day_view(conn, did, now, conversations, conversation_record)
 
 
 @router.post("/day/{date}/tickets")
@@ -112,6 +151,8 @@ async def add_day_ticket(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
 ) -> JsonDict:
     body = AddDayTicketBody(ticket_id=body_str(raw, "ticket_id"))
     did = resolve_day_id(date, clk, cfg)
@@ -122,7 +163,7 @@ async def add_day_ticket(
         body["ticket_id"],
         now=now,
     )
-    return _day_view(conn, did, now)
+    return await _day_view(conn, did, now, conversations, conversation_record)
 
 
 @router.delete("/day/{date}/tickets/{ticket_id}")
@@ -132,6 +173,8 @@ async def remove_day_ticket(
     conn: DbConn,
     cfg: Cfg,
     clk: Clk,
+    conversations: Conversations,
+    conversation_record: ConversationRecord,
 ) -> JsonDict:
     did = resolve_day_id(date, clk, cfg)
     now = clk.now_unix()
@@ -141,4 +184,4 @@ async def remove_day_ticket(
         ticket_id,
         now=now,
     )
-    return _day_view(conn, did, now)
+    return await _day_view(conn, did, now, conversations, conversation_record)
