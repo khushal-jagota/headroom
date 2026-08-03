@@ -2938,6 +2938,14 @@ select {
   outline-offset: var(--space-1);
 }
 
+.board-workspace-agent-profile {
+  flex: 0 0 var(--space-7);
+  width: var(--space-7);
+  height: var(--space-7);
+  object-fit: cover;
+  border-radius: var(--radius-md);
+}
+
 .board-workspace-chief-name {
   min-width: 0;
   flex: 1;

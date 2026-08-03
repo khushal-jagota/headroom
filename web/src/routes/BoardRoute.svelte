@@ -11,6 +11,7 @@
   import PriorityTile from "../components/PriorityTile.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
+  import chiefOfStaffProfile from "../assets/chief-of-staff-profile.webp";
 
   let { ticketId }: { ticketId?: string } = $props();
 
@@ -269,6 +270,12 @@
               data-chief-destination
               aria-current={chiefSelected ? "page" : undefined}
             >
+              <img
+                class="board-workspace-agent-profile"
+                src={chiefOfStaffProfile}
+                alt=""
+                aria-hidden="true"
+              />
               <span class="board-workspace-chief-name">
                 {workers.data.chief_of_staff.label}
               </span>

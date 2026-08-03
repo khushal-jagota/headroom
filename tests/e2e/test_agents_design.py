@@ -96,11 +96,24 @@ def test_chief_of_staff_lives_above_workspace_projects(
 
     row = page.locator('[data-chief-destination]')
     row.wait_for(state="visible", timeout=WAIT_MS)
+    profile = row.locator(".board-workspace-agent-profile")
     assert row.locator(".board-workspace-chief-name").inner_text() == "Chief of Staff"
+    assert profile.get_attribute("alt") == ""
+    assert profile.get_attribute("aria-hidden") == "true"
+    assert profile.evaluate("image => image.complete && image.naturalWidth === 256")
+    profile_box = profile.bounding_box()
+    assert profile_box is not None
+    assert abs(profile_box["width"] - 48) < 0.01
+    assert abs(profile_box["height"] - 48) < 0.01
     assert row.evaluate(
         "node => node.nextElementSibling?.classList.contains('board-workspace-project-filter')"
     )
     assert page.locator('[data-project-filter]').inner_text().startswith("All projects")
+    assert row.locator('[data-stage-state="upcoming"]').count() == 1
+
+    page.set_viewport_size({"width": 390, "height": 568})
+    assert profile.is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
     assert row.locator('[data-stage-state="upcoming"]').count() == 1
 
     row.click()
