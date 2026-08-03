@@ -69,16 +69,12 @@ assert.doesNotMatch(backendsOnMount, /refreshBackendUsage/);
 assert.match(devConversationRouteSource, /readBackends\(\)/);
 assert.doesNotMatch(devConversationRouteSource, /BackendCard|updateBackend|refreshBackendUsage/);
 
-// --- the Chief is one conversation, on the Agents runtime route -------------------------
+// --- the Chief is one conversation, in the Workspace inspector -------------------------
 
-const agentsRouteSource = await readFile(
-  new URL("../src/routes/AgentsRoute.svelte", import.meta.url),
-  "utf8",
-);
-assert.match(agentsRouteSource, /<ChiefConversation \/>/);
-assert.doesNotMatch(boardRouteSource, /ChiefConversation|Chief of Staff/);
+assert.match(boardRouteSource, /<ChiefConversation \/>/);
+assert.match(boardRouteSource, /data-chief-destination/);
 assert.doesNotMatch(
-  agentsRouteSource,
+  boardRouteSource,
   /ChatPanel|ChiefNeutralPane|relayChief|retryRelayChiefMeta|chatGatewayStatus|\/api\/chat|\/api\/relay/,
 );
 

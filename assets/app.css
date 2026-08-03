@@ -686,113 +686,7 @@ textarea {
   display: flex;
 }
 
-/* --- Agents and Workers -------------------------------------------------- */
-
-.shell:has(.agents-screen) {
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-}
-
-.shell:has(.agents-screen) .shell-content {
-  flex: 1;
-  min-height: 0;
-  padding: 0;
-}
-
-.shell:has(.agents-screen) .screen,
-.agents-screen {
-  height: 100%;
-  min-height: 0;
-}
-
-.agents-workspace-shell {
-  display: grid;
-  grid-template-columns: clamp(23rem, 38vw, 32rem) minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.agents-workspace-roster {
-  min-width: 0;
-  overflow: auto;
-  padding: var(--space-5);
-  border-right: var(--border-hairline) solid var(--border-color);
-}
-
-.agents-roster-list {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.agents-roster-row {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  color: inherit;
-  text-decoration: none;
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-
-.agents-roster-row:hover {
-  background: var(--surface-raised);
-}
-
-.agents-roster-row.active {
-  background: var(--surface-overlay);
-}
-
-.agents-roster-row:focus-visible,
-.agents-conversation-back:focus-visible {
-  outline: 2px solid var(--accent-bright);
-  outline-offset: var(--space-1);
-}
-
-.agents-roster-name {
-  min-width: 0;
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 1.1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agents-roster-row .stage-mark {
-  width: 0.9rem;
-  height: 0.9rem;
-}
-
-.agents-workspace-conversation {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-5) var(--space-6);
-  background: var(--surface-sunken);
-}
-
-.agents-conversation-back {
-  display: none;
-}
-
-.agents-conversation-shell {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
-  display: flex;
-}
+/* --- Chief conversation ----------------------------------------------- */
 
 .chief-conversation-resource {
   align-self: flex-start;
@@ -3018,6 +2912,49 @@ select {
   --board-workspace-rail-pad-x: var(--space-3);
 }
 
+.board-workspace-chief-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--board-workspace-rail-pad-x);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-chief-row:hover,
+.board-workspace-chief-row.active {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+}
+
+.board-workspace-chief-row:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
+.board-workspace-chief-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.board-workspace-chief-row .stage-mark {
+  flex: none;
+}
+
 /* The project filter is a mini header in the rail, not a form control: at rest
  * it is the active project in the serif header voice (one step below the bucket
  * titles), with a small caret as the only affordance. Clicking it opens a
@@ -3140,6 +3077,21 @@ select {
 .board-workspace-right--ticket {
   padding: 0;
   background: var(--surface-base);
+}
+
+.board-workspace-right--chief {
+  padding: var(--space-5) var(--space-6);
+  background: var(--surface-sunken);
+}
+
+.board-workspace-chief-conversation {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  max-width: calc(var(--space-7) * 16);
+  margin: 0 auto;
 }
 
 .board-workspace-empty-inspector {
@@ -4533,37 +4485,15 @@ select {
     display: none;
   }
 
-  .agents-workspace-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .agents-workspace-roster {
-    border-right: 0;
-    padding: var(--space-5);
-  }
-
-  .agents-workspace-conversation {
+  .board-workspace-shell--chief .board-workspace-left {
     display: none;
   }
 
-  .agents-workspace-shell--focused .agents-workspace-roster {
-    display: none;
-  }
-
-  .agents-workspace-shell--focused .agents-workspace-conversation {
+  .board-workspace-right.board-workspace-right--chief {
     display: flex;
     padding: var(--space-5);
   }
 
-  .agents-conversation-back {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--text-muted);
-    font-size: var(--type-sm);
-    text-decoration: none;
-    margin-bottom: var(--space-3);
-  }
 }
 
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */

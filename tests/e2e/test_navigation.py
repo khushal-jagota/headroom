@@ -18,9 +18,9 @@ def test_desktop_more_reaches_grouped_destinations_and_marks_secondary_route(
 
     direct = page.locator(".shell-links > .nav-link")
     assert direct.count() == 3
-    assert direct.nth(0).inner_text().startswith("Review")
-    assert direct.nth(1).inner_text() == "Workspace"
-    assert direct.nth(2).inner_text() == "Agents"
+    assert direct.nth(0).inner_text() == "Home"
+    assert direct.nth(1).inner_text().startswith("Review")
+    assert direct.nth(2).inner_text() == "Workspace"
 
     more = page.locator('[data-screen="more"]')
     assert more.get_attribute("aria-controls") == "shell-more-panel"
@@ -33,7 +33,6 @@ def test_desktop_more_reaches_grouped_destinations_and_marks_secondary_route(
     assert menu.locator('[role="menuitem"]').count() == 0
     assert menu.locator(".shell-more-group").all_inner_texts() == ["PLANNING", "SYSTEM"]
     assert menu.locator("a").all_inner_texts() == [
-        "Day",
         "Sprint",
         "Backlog",
         "Ideas",
@@ -70,7 +69,6 @@ def test_every_more_destination_has_its_canonical_screen(
         lambda route: route.fulfill(json={"backends": []}),
     )
     destinations = [
-        ("#/day", '[data-screen="day"]'),
         ("#/sprint", '[data-screen="sprint"]'),
         ("#/backlog", '[data-screen="backlog"]'),
         ("#/ideas", '[data-screen="ideas"]'),
@@ -97,7 +95,13 @@ def test_agent_and_config_compatibility_routes_have_canonical_homes(
     page = context_factory().new_page()
 
     redirects = [
-        ("#/chief", "#/agents/chief-of-staff", '[data-screen="agents"]'),
+        ("#/chief", "#/workspace/chief-of-staff", '[data-chief-destination]'),
+        ("#/agents", "#/workspace", '[data-screen="workspace"]'),
+        (
+            "#/agents/chief-of-staff",
+            "#/workspace/chief-of-staff",
+            '[data-chief-destination]',
+        ),
         ("#/workers", "#/config", '[data-screen="config"] [data-workers-list]'),
         (
             "#/workers/coding",
@@ -122,22 +126,22 @@ def test_agent_and_config_compatibility_routes_have_canonical_homes(
         page.wait_for_selector(selector, timeout=WAIT_MS)
 
 
-def test_mobile_tabs_and_short_agents_page_fit_the_dynamic_viewport(
+def test_mobile_tabs_and_workspace_chief_fit_the_dynamic_viewport(
     server: ServerHandle, context_factory: Callable[[], BrowserContext]
 ) -> None:
     page = context_factory().new_page()
     page.set_viewport_size({"width": 390, "height": 568})
-    page.goto(server.base + "/#/agents")
+    page.goto(server.base + "/#/workspace")
     page.wait_for_selector(
-        '[data-screen="agents"] [data-agent-destination]', timeout=WAIT_MS
+        '[data-screen="workspace"] [data-chief-destination]', timeout=WAIT_MS
     )
 
     tabs = page.locator(".shell-links")
+    assert tabs.locator('[data-screen="home"]').is_visible()
     assert tabs.locator('[data-screen="review"]').is_visible()
     assert tabs.locator('[data-screen="workspace"]').is_visible()
-    assert tabs.locator('[data-screen="agents-nav"]').is_visible()
     assert tabs.locator('[data-screen="more"]').is_visible()
-    assert page.locator("[data-shell-screen-title]").inner_text() == "Agents"
+    assert page.locator("[data-shell-screen-title]").inner_text() == "Workspace"
     status = page.locator("[data-shell-status]")
     assert status.count() == 1
     assert status.get_attribute("role") == "status"
@@ -154,6 +158,11 @@ def test_mobile_tabs_and_short_agents_page_fit_the_dynamic_viewport(
     assert geometry["horizontal"] <= 0
     assert geometry["vertical"] <= 0
     assert abs(geometry["navBottom"] - geometry["viewportBottom"]) <= 1
+
+    page.locator('[data-chief-destination]').click()
+    page.wait_for_url("**/#/workspace/chief-of-staff", timeout=WAIT_MS)
+    page.wait_for_selector("[data-conversation-pane]", timeout=WAIT_MS)
+    assert page.locator('[data-screen="workspace"] [data-chief-destination]').is_hidden()
 
     page.locator('[data-screen="more"]').click()
     sheet = page.locator("[data-shell-more-menu]")
