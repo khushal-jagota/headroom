@@ -7,6 +7,14 @@ actually stand without replacing or rewriting the morning plan. The day
 has a deliberate quirk — it flips at **5am, not midnight** — so a late night still
 belongs to the day it felt like.
 
+The four morning fields steer attention, motivation, and behavior. They do not act as
+literal summaries of the Tickets on the Day:
+
+- **Focus** (`focus`) tells the user what to keep their mind and attention on.
+- **Brief take** (`brief_take`) gives the shortest useful framing for a clear, intentional, and manageable day.
+- **Watchout** (`watchout`) names the likely psychological or behavioral trap and the response that defeats it.
+- **What makes the day land** (`if_today_lands`) states the user's personal gain from completing the day, not the work completed or a system state.
+
 ```
    5am   05:05                                      14:30
    boundary + planning-day Ticket                   midday-check Ticket
