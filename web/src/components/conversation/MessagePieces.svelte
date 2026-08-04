@@ -20,18 +20,21 @@
 
   let {
     content,
-    conversationId
+    conversationId,
+    ticketId = null
   }: {
     content: readonly (MessagePiece | SentMessagePiece)[];
     /** Which conversation's files these pieces name. A file is fetched under the
      *  conversation that kept it, so a piece can never reach another one's. */
     conversationId: string;
+    /** Present only when this message belongs to a Ticket conversation. */
+    ticketId?: string | null;
   } = $props();
 </script>
 
 {#each content as piece, at (at)}
   {#if piece.piece === "text"}
-    <MarkdownBlock text={piece.text} />
+    <MarkdownBlock text={piece.text} {ticketId} />
   {:else if piece.piece === "image"}
     <img
       class="c2-piece-image"

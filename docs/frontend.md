@@ -31,6 +31,8 @@ One screen per part of the system:
   first: Errored, Needs user, Waiting for Kickoff, User, Paired, Agent, Waiting to
   Closeout, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
   rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group.
+  The Chief of Staff row starts with its bundled portrait. The portrait is an agent
+  identity on this row only; ticket rows and Worker types do not use it.
   A done ticket goes to Done. A ticket resting at Closeout with an `empty` status goes
   to Waiting to Closeout when its current Closeout step is still runnable; Stop at its
   current Closeout ceiling keeps it under Empty, while Stop at a later ceiling does
@@ -209,6 +211,17 @@ to acquire, so its card offers no usage action.
   code, block quotes, thematic breaks, and nested mixed lists. Raw HTML stays visible
   as text. A strict sanitizer removes scripts, event handlers, unsafe URLs, ids,
   styles, and DOM-clobbering attributes before any DOM node is created.
+- **Ticket conversations expose loopback dev servers through Panels.** A Markdown link
+  in a Ticket conversation whose address is `http://localhost:<port>/...` or
+  `http://127.0.0.1:<port>/...` is rendered as
+  `/dev/tickets/<ticket-id>/<port>/...`. The link keeps its path, query, and fragment;
+  the port stays in the link rather than becoming Ticket state. This context belongs
+  only to the Ticket conversation, so the same Markdown on another surface remains an
+  ordinary loopback link. The first proxy contract carries pages and relative resource
+  or navigation paths under that prefix. Applications that hard-code root-origin URLs
+  must be configured with a compatible base path. Panels credentials and cookies do not
+  cross into the dev server, and dev-server cookies or authentication challenges do not
+  become state on the Panels origin.
 - **Shared scroll areas keep their place.** Panels reserves stable scrollbar space on
   its shared vertical and horizontal scroll areas, so content does not move when a
   scrollbar appears. On a mouse or trackpad the thumb stays quiet until hover, focus,
@@ -387,5 +400,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-07-29 (including the shared priority tile across Workspace,
-Ticket/Review, Sprint, and Backlog)._
+_Last verified: 2026-08-03 (including the Chief of Staff portrait in Workspace)._

@@ -94,16 +94,15 @@
     if (status === "paired") conversationState = "opened";
   });
 
-  /** A click on the ticket drops the conversation back one state.
+  /** A click outside the conversation dismisses it to rest.
    *
    * The conversation is the section under the ticket, not a mode it puts the page into,
    * so touching the ticket is how you put it away. Read while the click is still on its
    * way down and neither stopped nor prevented: whatever that click was going to do to
    * the ticket still happens.
    */
-  function dropConversationBackOneState(): void {
-    if (conversationState === "opened") conversationState = "peeked";
-    else if (conversationState === "peeked") conversationState = "rest";
+  function dismissConversationToRest(): void {
+    if (conversationState !== "rest") conversationState = "rest";
   }
 
   /** A press in the space either side of the card puts it away, the same as the ticket does.
@@ -112,11 +111,11 @@
    * left is page, not conversation. Pressing page is how you put the conversation away, and
    * where on the page it was is not the point.
    */
-  function dropConversationOnAPressBesideTheCard(event: MouseEvent): void {
+  function dismissConversationOnAPressBesideTheCard(event: MouseEvent): void {
     const pressed = event.target;
     if (!(pressed instanceof Element)) return;
     if (pressed.closest("[data-conversation-pane]") !== null) return;
-    dropConversationBackOneState();
+    dismissConversationToRest();
   }
 
   let projectOptions = $derived([
@@ -386,7 +385,7 @@
            in the capture phase so nothing inside can have gone yet. There is no keyboard
            twin here because Escape does the same thing from anywhere on the page, and it
            belongs to the conversation rather than to the document above it. -->
-      <main class="ticket-doc" onclickcapture={dropConversationBackOneState}>
+      <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
         <header class="ticket-head">
           <div class="ticket-identity" data-ticket-identity>
             <TicketPriorityControl
@@ -605,12 +604,13 @@
       <div
         class="ticket-conversation-layer"
         data-conversation-layer-host
-        onclickcapture={dropConversationOnAPressBesideTheCard}
+        onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
         <div class="ticket-conversation-column">
           <LiveConversation
             bind:conversationState
             conversationId={detail.conversation_id}
+            ticketId={detail.id}
             label={conversationEmployeeLabel(detail)}
             backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}

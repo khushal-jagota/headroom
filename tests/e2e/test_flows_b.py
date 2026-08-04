@@ -27,18 +27,13 @@ DAY_CUR = "2026-07-05"
 # item 28 — without the future rollover agent, the new day's overview is unauthored:
 # each structured slot renders empty/placeholder, and no deterministic tick fills it.
 
-# item 29 — the four overview fields, seeded per-field through the human PATCH, then
-# amended in place. Each body is a single line so its slot's inner_text is exactly the
-# source text.
+# item 29 — the four overview fields, seeded through the human PATCH and rendered as a
+# read-only Day summary. Each body is a single line for exact browser assertions.
 E29_FOCUS = "E29 ship the waitlist funnel to real traffic."
 E29_TAKE = "E29 yesterday closed at sixty-two percent completion."
 E29_WATCH = "E29 the hero still does not say what Vylo is in one line."
 E29_LANDS = "E29 real visitors are in the waitlist table by tonight."
 E29_MIDDAY = "E29 signups are live; the remaining risk is activation."
-E29_FOCUS_EDIT = "E29 signal today, not polish."
-E29_WATCH_EDIT = "E29 watch the funnel drop-off after signup."
-E29_MIDDAY_EDIT = "E29 activation is holding; keep the afternoon bet."
-
 # item 30 (ceiling needs_implementation so each of implementation/closeout PARKS
 # pending in turn, requiring its own Review approval)
 E30_TITLE = "E30 dispatch ticket"
@@ -143,21 +138,22 @@ def _snap_board(p: Page, mid: str) -> dict[str, Any]:
 
 
 def _snap_day(p: Page) -> dict[str, str]:
-    # The Day overview renders each structured field in its own slot; the Brief Take
-    # body is the state that must survive a reload unchanged.
-    return {"take": p.inner_text("[data-day-take-body]")}
+    return {
+        "focus": p.inner_text("[data-day-focus]"),
+        "take": p.inner_text("[data-day-brief-take]"),
+        "watch": p.inner_text("[data-day-watch] .v"),
+        "lands": p.inner_text("[data-day-lands]"),
+    }
 
 
-def test_e29_day_overview_structured_and_edit(
+def test_e29_day_overview_structured_and_read_only(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
-    # Seed the four overview fields on the current planning day (baseline 2026-07-04)
-    # in one PATCH, then amend two of them in place — a scalar (focus) and a markdown
-    # body (watchout) — each editing on its own, no whole-blob re-serialize.
+    # Seed the four overview fields on the current planning day (baseline 2026-07-04).
     api.direct_patch(
         server,
         f"/api/day/{DAY_PREV}",
@@ -169,66 +165,52 @@ def test_e29_day_overview_structured_and_edit(
             "midday_reconciliation": E29_MIDDAY,
         },
     )
+    day_ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "E29 Day overview ticket",
+    )["id"]
+    api.direct_post(server, "/api/day/today/tickets", {"ticket_id": day_ticket})
 
     page = open_page(context_factory(), server, "#/day", "[data-day-overview]")
-    page.wait_for_selector("[data-day-take-body]", timeout=WAIT_MS)
+    page.wait_for_selector("[data-day-brief-take]", timeout=WAIT_MS)
 
     assert page.inner_text("[data-day-focus]") == E29_FOCUS
-    assert page.inner_text("[data-day-take-body]") == E29_TAKE
-    assert page.inner_text("[data-day-watch-body]") == E29_WATCH
-    assert page.inner_text("[data-day-lands-body]") == E29_LANDS
-    assert page.inner_text("[data-day-midday-body]") == E29_MIDDAY
+    assert page.inner_text("[data-day-brief-take]") == E29_TAKE
+    assert page.inner_text("[data-day-watch] .v") == E29_WATCH
+    assert page.inner_text("[data-day-lands]") == f"If today lands — {E29_LANDS}"
+    assert page.locator("[data-day-midday-body]").count() == 0
+    assert "Midday reconciliation" not in page.locator('[data-screen="day"]').inner_text()
     e29_date_text = page.text_content("[data-day-date]")  # raw DOM (label uppercases)
     assert e29_date_text is not None
     assert "Jul 4" in e29_date_text
 
-    # InlineEdit remains one contenteditable surface and commits real edits on blur.
-    def edit_field(selector: str, text: str) -> None:
-        f0 = page.evaluate("window.__plannerDebug.flushes")
-        page.evaluate(
-            "(a) => { const el = document.querySelector(a.sel);"
-            " el.focus(); el.textContent = a.text;"
-            " el.dispatchEvent(new InputEvent('input', "
-            "{ bubbles: true, inputType: 'insertText', data: a.text }));"
-            " el.blur(); }",
-            {"sel": selector, "text": text},
-        )
-        page.wait_for_function(
-            "(f0) => window.__plannerDebug.flushes > f0", arg=f0, timeout=WAIT_MS
-        )
-        page.wait_for_function(
-            "(a) => { const el = document.querySelector(a.sel);"
-            " return !!el && el.innerText.trim() === a.text; }",
-            arg={"sel": selector, "text": text},
-            timeout=WAIT_MS,
-        )
-
-    edit_field("[data-day-focus]", E29_FOCUS_EDIT)  # scalar
-    edit_field("[data-day-watch-body]", E29_WATCH_EDIT)  # markdown body
-    edit_field("[data-day-midday-body]", E29_MIDDAY_EDIT)
-
-    # Both edits landed; the fields nobody touched are unchanged (no re-serialize).
-    assert page.inner_text("[data-day-focus]") == E29_FOCUS_EDIT
-    assert page.inner_text("[data-day-watch-body]") == E29_WATCH_EDIT
-    assert page.inner_text("[data-day-take-body]") == E29_TAKE
-    assert page.inner_text("[data-day-lands-body]") == E29_LANDS
-    assert page.inner_text("[data-day-midday-body]") == E29_MIDDAY_EDIT
+    # A server update remains visible after a reload. Day itself offers no inline edit.
+    api.direct_patch(
+        server,
+        f"/api/day/{DAY_PREV}",
+        {
+            "focus": "E29 signal today, not polish.",
+            "watchout": "E29 watch the funnel drop-off after signup.",
+        },
+    )
+    _reload_settle(page, "[data-day-overview]")
+    page.wait_for_selector("[data-day-brief-take]", timeout=WAIT_MS)
+    assert page.inner_text("[data-day-focus]") == "E29 signal today, not polish."
+    assert page.inner_text("[data-day-watch] .v") == "E29 watch the funnel drop-off after signup."
+    assert page.inner_text("[data-day-brief-take]") == E29_TAKE
+    assert page.inner_text("[data-day-lands]") == f"If today lands — {E29_LANDS}"
 
     d = api.get(server, "/api/day/today")
-    assert d["focus"] == E29_FOCUS_EDIT, d
-    assert d["watchout"] == E29_WATCH_EDIT, d
+    assert d["focus"] == "E29 signal today, not polish.", d
+    assert d["watchout"] == "E29 watch the funnel drop-off after signup.", d
     assert d["brief_take"] == E29_TAKE, d
     assert d["if_today_lands"] == E29_LANDS, d
-    assert d["midday_reconciliation"] == E29_MIDDAY_EDIT, d
-
-    # The same headed surface has the standard editable empty state.
-    api.direct_patch(server, f"/api/day/{DAY_PREV}", {"midday_reconciliation": ""})
-    page.wait_for_function(
-        "() => document.querySelector('[data-day-midday-body]')?.getAttribute('data-empty')"
-        " === 'true'",
-        timeout=WAIT_MS,
-    )
-    assert page.get_attribute("[data-day-midday-body]", "data-ph") == "(none)"
+    assert d["midday_reconciliation"] == E29_MIDDAY, d
 
 
 def test_e30_review_approve_to_done(
@@ -441,7 +423,7 @@ def test_e31_refresh_restores_state(
     assert before_b == after_b == expected_b, (before_b, after_b)
 
     # Day surface — the overview renders structured fields; a reload restores.
-    ready_d = "[data-day-take-body]"
+    ready_d = "[data-day-brief-take]"
     page_d = open_page(context_factory(), server, "#/day", ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
     e31_date_text = page_d.text_content("[data-day-date]")  # raw DOM (label uppercases)
@@ -451,7 +433,12 @@ def test_e31_refresh_restores_state(
     _reload_settle(page_d, ready_d)
     page_d.wait_for_selector(ready_d, timeout=WAIT_MS)
     after_d = _snap_day(page_d)
-    expected_d = {"take": E31_DAY_TAKE}
+    expected_d = {
+        "focus": E31_DAY_FOCUS,
+        "take": E31_DAY_TAKE,
+        "watch": E31_DAY_WATCH,
+        "lands": f"If today lands — {E31_DAY_LANDS}",
+    }
     assert before_d == after_d == expected_d, (before_d, after_d)
 
 

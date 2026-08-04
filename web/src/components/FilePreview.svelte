@@ -76,11 +76,20 @@
   <a class="file-preview-link" {href} rel="noopener noreferrer">Open {resolved.label}</a>
 {/snippet}
 
+{#snippet mobilePreviewLink(href: string | undefined)}
+  <a class="file-preview-link file-preview-mobile-link" {href} rel="noopener noreferrer">
+    Open {resolved.label}
+  </a>
+{/snippet}
+
 <div
-  class={`file-preview file-preview--${mode}${inline ? " file-preview--inline" : ""}`}
+  class={`file-preview file-preview--${mode}${inline ? " file-preview--inline" : ""}${resolved.target.kind === "ticket-file" ? " file-preview--managed" : ""}`}
   data-file-preview
   data-file-preview-kind={resolved.kind}
 >
+  {#if mode === "embedded" && resolved.kind !== "download" && resolved.target.kind === "ticket-file" && resolved.previewHref}
+    {@render mobilePreviewLink(resolved.previewHref)}
+  {/if}
   {#if resolved.kind === "image"}
     <img class="file-preview-image" src={resolved.href} alt={resolved.label} loading="lazy" />
   {:else if resolved.kind === "video"}

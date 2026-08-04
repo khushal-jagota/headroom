@@ -5,15 +5,18 @@
   import { labelize } from "../lib/ui";
   import { conversationSignalPresentation } from "../lib/conversationSignalPresentation";
   import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
+  import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import PriorityTile from "../components/PriorityTile.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
+  import chiefOfStaffProfile from "../assets/chief-of-staff-profile.webp";
 
   let { ticketId }: { ticketId?: string } = $props();
 
   const board = createQuery(() => queries.board());
+  const workers = createQuery(() => queries.workers());
   let columns = $derived(board.data?.columns || []);
   let allCards = $derived(
     columns.flatMap((column) =>
@@ -23,6 +26,7 @@
     )
   );
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
+  let chiefSelected = $derived(ticketId === "chief-of-staff");
   const ALL_PROJECTS = "__all_projects__";
   const NO_PROJECT = "__no_project__";
   let selectedProjectId = $state(ALL_PROJECTS);
@@ -66,7 +70,14 @@
   // stale: fall back to the board. A failed refetch leaves the previous board in
   // place, which is not evidence the ticket is gone, so it holds instead.
   $effect(() => {
-    if (ticketId && board.data && !board.isFetching && !board.isError && !selectedCard) {
+    if (
+      ticketId &&
+      !chiefSelected &&
+      board.data &&
+      !board.isFetching &&
+      !board.isError &&
+      !selectedCard
+    ) {
       window.location.replace("#/workspace");
     }
   });
@@ -137,14 +148,28 @@
         }
       }
     }
+    const chiefConversationId = workers.data?.chief_of_staff.conversation_id;
+    if (typeof chiefConversationId === "string") {
+      positions[chiefConversationId] = readReplyWatermark(chiefConversationId);
+    }
     howFarThisBrowserHasRead = positions;
   }
+
+  let chiefPresentation = $derived(
+    workers.data
+      ? conversationSignalPresentation(
+          workers.data.chief_of_staff,
+          howFarThisBrowserHasRead
+        )
+      : null
+  );
 
   // Two things move a position: this browser reading a conversation, and a board arriving
   // with conversations it has not seen before.
   onMount(() => onReplyWatermarkMoved(rereadWhereThisBrowserHasGot));
   $effect(() => {
     board.data;
+    workers.data;
     rereadWhereThisBrowserHasGot();
   });
 
@@ -235,8 +260,38 @@
     loadingText="Loading workspace..."
   >
     <div class="board-workspace-wrap">
-      <div class="board-workspace-shell">
+      <div class="board-workspace-shell" class:board-workspace-shell--chief={chiefSelected}>
         <section class="board-workspace-left" aria-label="Workspace tickets by status">
+          {#if workers.data}
+            <a
+              class="board-workspace-chief-row"
+              class:active={chiefSelected}
+              href="#/workspace/chief-of-staff"
+              data-chief-destination
+              aria-current={chiefSelected ? "page" : undefined}
+            >
+              <img
+                class="board-workspace-agent-profile"
+                src={chiefOfStaffProfile}
+                alt=""
+                aria-hidden="true"
+              />
+              <span class="board-workspace-chief-name">
+                {workers.data.chief_of_staff.label}
+              </span>
+              {#if chiefPresentation}
+                <StageMark
+                  state={chiefPresentation.state}
+                  data-stage-state={chiefPresentation.state}
+                  data-needs-me={workers.data.chief_of_staff.needs_me ? "true" : "false"}
+                  data-agent-working={workers.data.chief_of_staff.agent_working ? "true" : "false"}
+                  data-latest-turn-ended={workers.data.chief_of_staff.latest_turn_ended_sequence}
+                  aria-label={chiefPresentation.ariaLabel}
+                />
+              {/if}
+            </a>
+          {/if}
+
           <div class="board-workspace-project-filter" bind:this={projectMenuElement}>
             <button
               type="button"
@@ -350,10 +405,15 @@
 
         <section
           class:board-workspace-right--ticket={Boolean(selectedCard)}
+          class:board-workspace-right--chief={chiefSelected}
           class="board-workspace-right"
-          aria-label="Workspace inspector"
+          aria-label={chiefSelected ? "Chief of Staff conversation" : "Workspace inspector"}
         >
-          {#if selectedCard}
+          {#if chiefSelected}
+            <div class="board-workspace-chief-conversation">
+              <ChiefConversation />
+            </div>
+          {:else if selectedCard}
             {#key selectedCard.id}
               <TicketRoute id={selectedCard.id} />
             {/key}

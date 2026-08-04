@@ -3,23 +3,27 @@ import { readFile } from "node:fs/promises";
 
 const app = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
 const route = await readFile(
-  new URL("../src/routes/AgentsRoute.svelte", import.meta.url),
+  new URL("../src/routes/BoardRoute.svelte", import.meta.url),
   "utf8",
 );
 const chief = await readFile(
   new URL("../src/components/ChiefConversation.svelte", import.meta.url),
   "utf8",
 );
+const css = await readFile(new URL("../../assets/app.css", import.meta.url), "utf8");
 const queries = await readFile(
   new URL("../src/lib/queryCatalogue.ts", import.meta.url),
   "utf8",
 );
+const chiefProfile = await readFile(
+  new URL("../src/assets/chief-of-staff-profile.webp", import.meta.url),
+);
 
-// The direct shell controls have one stable order, and Agents is not duplicated in More.
+// The direct shell controls have one stable order, and Home is not duplicated in More.
 const directNavigation = [
+  app.indexOf('data-screen="home"'),
   app.indexOf('data-screen="review"'),
   app.indexOf('data-screen="workspace"'),
-  app.indexOf('data-screen="agents-nav"'),
   app.indexOf('data-screen="more"'),
 ];
 assert.ok(directNavigation.every((position) => position >= 0));
@@ -33,15 +37,31 @@ assert.match(moreMenu, /href="#\/config"/);
 
 // Both runtime addresses mount one component; selection is a route input, not another
 // conversation implementation.
-assert.match(app, /selectedAgent=\{route\.params\.roleKind === "chief"/);
-assert.match(app, /name === "agents"\s*\?\s*"agents"/);
+assert.doesNotMatch(app, /AgentsRoute|data-screen="agents-nav"/);
 assert.match(route, /ChiefConversation/);
-assert.doesNotMatch(route, /fetchJson|mutateJson|\/api\/chief\/conversation/);
+assert.match(route, /data-chief-destination/);
 assert.match(route, /conversationSignalPresentation/);
 assert.match(route, /onReplyWatermarkMoved/);
 assert.match(route, /<StageMark/);
-assert.doesNotMatch(route, /agents-workspace-roster-head/);
-assert.doesNotMatch(route, /agents-roster-description|agents-roster-arrow/);
+assert.doesNotMatch(route, /agents-workspace|agents-roster/);
+
+// The one agent identity in Workspace owns one compact, bundled portrait. It is
+// decorative beside the visible name, and ticket rows retain their existing shape.
+assert.match(
+  route,
+  /import chiefOfStaffProfile from "\.\.\/assets\/chief-of-staff-profile\.webp"/,
+);
+assert.equal(route.match(/class="board-workspace-agent-profile"/g)?.length, 1);
+assert.match(route, /src=\{chiefOfStaffProfile\}/);
+assert.match(route, /alt=""/);
+assert.match(route, /aria-hidden="true"/);
+assert.equal(chiefProfile.subarray(0, 4).toString("ascii"), "RIFF");
+assert.equal(chiefProfile.subarray(8, 12).toString("ascii"), "WEBP");
+assert.ok(chiefProfile.byteLength < 64 * 1024);
+assert.match(
+  css,
+  /\.board-workspace-agent-profile\s*\{[^}]*width: var\(--space-6\)[^}]*height: var\(--space-6\)[^}]*object-fit: cover[^}]*\}/s,
+);
 
 // The Chief wrapper owns the canonical owner API and exposes lookup failure recovery.
 for (const endpoint of [

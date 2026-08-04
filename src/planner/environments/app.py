@@ -85,6 +85,7 @@ def validate_app_manifest(
         # created after that manifest so existing deployments remain verifiable.
         artifact_matches = artifact_digest == _digest_tree(
             app_root,
+            exclude_pytest_cache=True,
             include_python_cache_before_ns=manifest_path.stat().st_mtime_ns,
         )
     if not artifact_matches:
@@ -100,11 +101,14 @@ def digest_app_source(app_root: Path) -> str:
 
 
 def digest_app_artifact(app_root: Path) -> str:
-    return _digest_tree(app_root)
+    return _digest_tree(app_root, exclude_pytest_cache=True)
 
 
 def _digest_tree(
-    app_root: Path, *, include_python_cache_before_ns: int | None = None
+    app_root: Path,
+    *,
+    exclude_pytest_cache: bool = False,
+    include_python_cache_before_ns: int | None = None,
 ) -> str:
     digest = hashlib.sha256()
     root = app_root.resolve()
@@ -112,6 +116,8 @@ def _digest_tree(
         if path == root / "manifest.json":
             continue
         relative_path = path.relative_to(root)
+        if exclude_pytest_cache and ".pytest_cache" in relative_path.parts:
+            continue
         is_python_cache = "__pycache__" in relative_path.parts or path.suffix in {
             ".pyc",
             ".pyo",

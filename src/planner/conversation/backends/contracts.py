@@ -94,8 +94,9 @@ class TurnToken:
     The core mints it, hands it to the adapter with the prompt that starts the turn, and
     the adapter puts it on everything it later reports about that turn. It is what lets
     the core tell this turn's news from the news of a turn that has already been ended and
-    replaced — a cancelled turn's late-arriving events name a turn that is over, and are
-    dropped.
+    replaced. A cancelled turn's late-arriving live and operational events are dropped.
+    One finished agent message may still be kept from the most recently ended turn: it is
+    durable conversation content even when the backend reported its ending first.
     """
 
     conversation_id: str
@@ -128,9 +129,11 @@ class BackendEventSink(Protocol):
     """How an adapter tells the core what its backend just did.
 
     Every turn fact carries the turn token it belongs to, because the core alone decides
-    whether that turn is still the one running. Calls return as soon as the core has taken
-    the fact: they are handed to one queue per conversation and worked through in order,
-    so an adapter's reporting is never blocked by whatever the core does about it.
+    whether that turn is still the one running. Finished agent messages are the narrow
+    exception to live-only acceptance: the most recently ended turn may still deliver one
+    as durable conversation content. Calls return as soon as the core has taken the fact:
+    they are handed to one queue per conversation and worked through in order, so an
+    adapter's reporting is never blocked by whatever the core does about it.
 
     The one call that carries no turn token is the session cursor. It is not a fact about a
     turn — it is the conversation's durable session identity, and it has to be kept
