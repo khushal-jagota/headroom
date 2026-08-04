@@ -164,6 +164,10 @@ ABORTED_TERMINAL_REASONS: Final[frozenset[str]] = frozenset({"aborted_streaming"
 # and in the failure that names why a session would not load.
 STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS: Final = 8192
 
+# Tool results can include the contents of a file Claude read. Keep the SDK's line buffer
+# bounded while allowing results larger than its 1 MiB default to reach the conversation.
+CLAUDE_SDK_MAX_BUFFER_SIZE: Final[int] = 4 * 1024 * 1024
+
 # The three answers this adapter offers for a permission ask, which are the three the SDK's
 # callback can give back: allow it this once, allow it and take the SDK's own suggested
 # permission updates so it is not asked again this session, or refuse it.
@@ -597,6 +601,7 @@ class ClaudeAgentSdkBackendChild:
                 **dict(self._launch.environment_overrides),
                 **dict(_identity_environment(resolved_start)),
             },
+            max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE,
             include_partial_messages=True,
             can_use_tool=self._can_use_tool,
             stderr=self._note_standard_error,
