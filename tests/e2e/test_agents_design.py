@@ -1,28 +1,22 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import cast
 
-from playwright.sync_api import BrowserContext, Route, expect
+from playwright.sync_api import BrowserContext, Route
 from tests.e2e.harness import ServerHandle
 
 WAIT_MS = 10_000
 
 
-def test_agents_roster_states_design_and_compact_read_watermark(
+def test_chief_of_staff_leads_the_workspace_rail(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
 ) -> None:
     page = context_factory().new_page()
-    signals: dict[str, object] = {
-        "conversation_id": "conv-chief-design",
-        "needs_me": False,
-        "agent_working": False,
-        "latest_turn_ended_sequence": 0,
-    }
 
-    def workers_response(route: Route) -> None:
-        route.fulfill(
+    page.route(
+        "**/api/workers",
+        lambda route: route.fulfill(
             status=200,
             content_type="application/json",
             json={
@@ -40,17 +34,22 @@ def test_agents_roster_states_design_and_compact_read_watermark(
                         "employee_launch_model": None,
                         "employee_launch_reasoning_effort": None,
                     },
-                    **signals,
+                    "conversation_id": "conv-chief-workspace",
+                    "needs_me": False,
+                    "agent_working": False,
+                    "latest_turn_ended_sequence": 0,
                 },
             },
-        )
-
-    def chief_reference(route: Route) -> None:
-        route.fulfill(
+        ),
+    )
+    page.route(
+        "**/api/chief/conversation",
+        lambda route: route.fulfill(
             status=200,
             content_type="application/json",
-            json={"conversation_id": "conv-chief-design"},
-        )
+            json={"conversation_id": "conv-chief-workspace"},
+        ),
+    )
 
     def conversation_response(route: Route) -> None:
         if "/events?" in route.request.url:
@@ -71,7 +70,7 @@ def test_agents_roster_states_design_and_compact_read_watermark(
             status=200,
             content_type="application/json",
             json={
-                "conversation_id": "conv-chief-design",
+                "conversation_id": "conv-chief-workspace",
                 "backend_key": "codex",
                 "model": "gpt-5.6-sol",
                 "reasoning_effort": "medium",
@@ -88,101 +87,34 @@ def test_agents_roster_states_design_and_compact_read_watermark(
             },
         )
 
-    page.route("**/api/workers", workers_response)
-    page.route("**/api/chief/conversation", chief_reference)
     page.route(
-        "**/api/conversation/conversations/conv-chief-design**",
+        "**/api/conversation/conversations/conv-chief-workspace**",
         conversation_response,
     )
-    page.set_viewport_size({"width": 390, "height": 700})
-    page.goto(server.base + "/#/agents")
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.goto(server.base + "/#/workspace")
 
-    row = page.locator('[data-agent-id="chief-of-staff"]')
-    mark = row.locator(".stage-mark")
-    page.wait_for_selector('[data-stage-state="upcoming"]', timeout=WAIT_MS)
+    row = page.locator('[data-chief-destination]')
+    row.wait_for(state="visible", timeout=WAIT_MS)
+    profile = row.locator(".board-workspace-agent-profile")
+    assert row.locator(".board-workspace-chief-name").inner_text() == "Chief of Staff"
+    assert profile.get_attribute("alt") == ""
+    assert profile.get_attribute("aria-hidden") == "true"
+    assert profile.evaluate("image => image.complete && image.naturalWidth === 256")
+    profile_box = profile.bounding_box()
+    assert profile_box is not None
+    assert abs(profile_box["width"] - 32) < 0.01
+    assert abs(profile_box["height"] - 32) < 0.01
+    assert page.locator("[data-project-filter]").count() == 0
+    assert row.locator('[data-stage-state="upcoming"]').count() == 1
 
-    def resolved_background(token: str) -> str:
-        return cast(
-            str,
-            page.evaluate(
-                """token => {
-                    const probe = document.createElement("span");
-                    probe.style.background = `var(${token})`;
-                    document.body.append(probe);
-                    const color = getComputedStyle(probe).backgroundColor;
-                    probe.remove();
-                    return color;
-                }""",
-                token,
-            ),
-        )
-
-    assert page.locator(".agents-workspace-roster-head").count() == 0
-    assert page.locator(".agents-roster-description").count() == 0
-    assert page.locator(".agents-roster-arrow").count() == 0
-    resting_background = row.evaluate(
-        "(node) => getComputedStyle(node).backgroundColor"
-    )
-    row.hover()
-    expect(row).to_have_css(
-        "background-color",
-        resolved_background("--surface-raised"),
-    )
-    hover_background = row.evaluate(
-        "(node) => getComputedStyle(node).backgroundColor"
-    )
-    assert hover_background == resolved_background("--surface-raised")
-    name_style = row.locator(".agents-roster-name").evaluate(
-        "(node) => { const style = getComputedStyle(node);"
-        " return [style.fontFamily, style.fontSize, style.fontWeight]; }"
-    )
-    assert "Newsreader" in name_style[0]
-    assert name_style[1:] == ["24px", "500"]
-    mark_width = float(
-        mark.evaluate("(node) => getComputedStyle(node).width").removesuffix("px")
-    )
-    assert 14.3 < mark_width < 14.5
-
-    state_updates: list[tuple[str, dict[str, object]]] = [
-        ("current-running", {"agent_working": True}),
-        ("needs-me", {"needs_me": True}),
-        (
-            "current-awaiting-approval",
-            {
-                "needs_me": False,
-                "agent_working": False,
-                "latest_turn_ended_sequence": 9,
-            },
-        ),
-    ]
-    for expected_state, update in state_updates:
-        signals.update(update)
-        page.reload()
-        page.wait_for_selector(
-            f'[data-stage-state="{expected_state}"]',
-            timeout=WAIT_MS,
-        )
+    page.set_viewport_size({"width": 390, "height": 568})
+    assert profile.is_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert row.locator('[data-stage-state="upcoming"]').count() == 1
 
     row.click()
-    page.wait_for_url("**/#/agents/chief-of-staff", timeout=WAIT_MS)
+    page.wait_for_url("**/#/workspace/chief-of-staff", timeout=WAIT_MS)
     page.wait_for_selector("[data-conversation-pane]", timeout=WAIT_MS)
-    back = page.locator(".agents-conversation-back")
-    assert back.is_visible()
-    assert page.locator(".agents-workspace-roster").is_hidden()
-    back.click()
-    page.wait_for_url("**/#/agents", timeout=WAIT_MS)
-    page.wait_for_selector('[data-stage-state="reply-seen"]', timeout=WAIT_MS)
-
-    page.set_viewport_size({"width": 1200, "height": 800})
-    expect(page.locator(".agents-workspace-roster")).to_be_visible()
-    expect(page.locator(".agents-workspace-conversation")).to_be_visible()
-    expect(row).to_have_attribute("aria-current", "page")
-    expect(row).to_have_css(
-        "background-color",
-        resolved_background("--surface-overlay"),
-    )
-    selected_background = row.evaluate(
-        "(node) => getComputedStyle(node).backgroundColor"
-    )
-    assert selected_background == resolved_background("--surface-overlay")
-    assert selected_background not in {resting_background, hover_background}
+    assert row.get_attribute("aria-current") == "page"
+    assert page.locator(".board-workspace-right--chief").is_visible()

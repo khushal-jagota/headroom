@@ -5,6 +5,7 @@ import type {
   ConversationBackendKey,
   PromptDeliveryMode
 } from "../wire";
+import type { ModelPickerView } from "../modelPicker";
 
 export type ComposerRunSelection = Readonly<{
   deliveryMode: PromptDeliveryMode;
@@ -31,35 +32,21 @@ export type ComposerRunControlsInput = Readonly<{
 
 export type ComposerRunSelectionIntent =
   | { intent: "choose_backend"; backendKey: ConversationBackendKey }
-  | { intent: "choose_model"; model: string }
+  | { intent: "choose_model"; model: string; reasoningEffort: string | null }
   | { intent: "choose_reasoning_effort"; reasoningEffort: string }
   | { intent: "choose_delivery_mode"; deliveryMode: PromptDeliveryMode };
-
-export type ComposerRunControlChoice = Readonly<{
-  value: string;
-  name: string;
-  detail: string | null;
-}>;
 
 export type ComposerRunControlsView = Readonly<{
   normalizedSelection: ComposerRunSelection;
   carriedRunValues: RunValues;
   effectiveDeliveryMode: PromptDeliveryMode;
   disabled: boolean;
-  backend: Readonly<{
-    showing: ConversationBackendKey | null;
-    locked: boolean;
+  picker: ModelPickerView;
+  pickerSource: Readonly<{
+    backends: readonly BackendSnapshot[];
+    models: readonly BackendModel[];
+    backendEffortOptions: readonly string[];
   }>;
-  model: Readonly<{
-    value: string;
-    choices: readonly ComposerRunControlChoice[];
-    title: string;
-  }>;
-  effort: Readonly<{
-    value: string;
-    choices: readonly ComposerRunControlChoice[];
-    bare: boolean;
-  }> | null;
   delivery: Readonly<{
     selected: PromptDeliveryMode;
     options: readonly DeliveryOption[];
@@ -76,7 +63,7 @@ export type ComposerRunControlsView = Readonly<{
 
 export type ComposerRunControlIntents = Readonly<{
   chooseBackend: (backendKey: ConversationBackendKey) => void;
-  chooseModel: (model: string) => void;
+  chooseModel: (model: string, reasoningEffort: string | null) => void;
   chooseReasoningEffort: (reasoningEffort: string) => void;
   chooseDeliveryMode: (deliveryMode: PromptDeliveryMode) => void;
   send: () => void;

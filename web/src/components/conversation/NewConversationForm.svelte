@@ -6,9 +6,9 @@
    * The backend picker only exists here for the same reason: once a conversation has a
    * backend it has a live process behind it, and that is not a dropdown any more.
    */
-  import { effortOptionsFor } from "../../lib/conversation/composer";
-  import { CONVERSATION_BACKEND_KEYS } from "../../lib/conversation/wire";
+  import { resolveModelPicker } from "../../lib/conversation/modelPicker";
   import type { BackendSnapshot, ConversationBackendKey } from "../../lib/conversation/wire";
+  import UnifiedModelPicker from "./UnifiedModelPicker.svelte";
 
   let {
     conversationId,
@@ -27,25 +27,15 @@
   } = $props();
 
   let chosen = $derived(backends.find((snapshot) => snapshot.backend_key === backendKey) ?? null);
-  let models = $derived(chosen?.available_models ?? []);
-  let backendEffortOptions = $derived(chosen?.reasoning_effort_options ?? []);
-  // Nothing picked shows the concrete value this backend already runs. "Default" is a
-  // word for which value is in force, never a value you can choose.
-  let shownModel = $derived(model ?? chosen?.default_model_id ?? "");
-  let shownEffort = $derived(reasoningEffort ?? chosen?.default_reasoning_effort ?? "");
-  // Effort belongs to the model that will run, and a model that takes none gets no
-  // control at all rather than an empty one.
-  let effortOptions = $derived(
-    effortOptionsFor(models, shownModel === "" ? null : shownModel, backendEffortOptions)
-  );
-  let effortIsBare = $derived(shownEffort === "");
+  let picker = $derived(resolveModelPicker({
+    backendKey,
+    model,
+    reasoningEffort,
+    backends
+  }));
 
-  function chooseBackend(key: ConversationBackendKey): void {
-    if (key === backendKey) return;
-    backendKey = key;
-    // The old choices belonged to the old backend and mean nothing to this one.
-    model = null;
-    reasoningEffort = null;
+  function focusMessageBox(): void {
+    document.querySelector<HTMLElement>("[data-conversation-input]")?.focus();
   }
 </script>
 
@@ -57,55 +47,28 @@
   </p>
 
   <div class="c2-new-field">
-    <span class="c2-new-label">backend</span>
-    <div class="chat-seg" role="group" aria-label="Backend">
-      {#each CONVERSATION_BACKEND_KEYS as key (key)}
-        <button
-          type="button"
-          class:on={backendKey === key}
-          aria-pressed={backendKey === key}
-          data-conversation-new-backend={key}
-          onclick={() => chooseBackend(key)}
-        >{key}</button>
-      {/each}
-    </div>
-  </div>
-
-  <div class="c2-new-field">
-    <select
-      data-conversation-new-model
-      aria-label="Model"
-      value={shownModel}
-      onchange={(event) => (model = event.currentTarget.value || null)}
-    >
-      {#if shownModel === ""}
-        <option value=""></option>
-      {/if}
-      {#each models as candidate (candidate.model_id)}
-        <option value={candidate.model_id} title={candidate.detail ?? undefined}>
-          {candidate.display_name ?? candidate.model_id}
-        </option>
-      {/each}
-    </select>
-
-    {#if effortOptions.length > 0}
-      <select
-        class:is-bare={effortIsBare}
-        data-conversation-new-effort
-        data-conversation-new-effort-bare={effortIsBare ? "true" : undefined}
-        aria-label="Reasoning effort"
-        title="Reasoning effort"
-        value={shownEffort}
-        onchange={(event) => (reasoningEffort = event.currentTarget.value || null)}
-      >
-        {#if shownEffort === ""}
-          <option value=""></option>
-        {/if}
-        {#each effortOptions as effort (effort)}
-          <option value={effort}>{effort}</option>
-        {/each}
-      </select>
-    {/if}
+    <UnifiedModelPicker
+      view={picker}
+      snapshots={backends}
+      models={chosen?.available_models ?? []}
+      backendEffortOptions={chosen?.reasoning_effort_options ?? []}
+      below
+      attributes={{ "data-conversation-new-model-picker": "" }}
+      afterChoose={focusMessageBox}
+      onChooseBackend={(backend, defaults) => {
+        backendKey = backend;
+        model = defaults.model;
+        reasoningEffort = defaults.reasoningEffort;
+      }}
+      onChooseModel={(nextModel, nextReasoningEffort) => {
+        model = nextModel;
+        reasoningEffort = nextReasoningEffort;
+      }}
+      onChooseReasoningEffort={(nextReasoningEffort) => {
+        model = model ?? picker.defaultModel;
+        reasoningEffort = nextReasoningEffort;
+      }}
+    />
   </div>
 
   <label class="c2-new-field">
@@ -154,7 +117,6 @@
     line-height: 1.6;
   }
   .c2-new-field { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-  .c2-new-field select,
   .c2-new-field input {
     flex: 1;
     min-width: 0;
@@ -166,14 +128,6 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
     padding: var(--space-2);
-  }
-  /* Nothing to show means nothing wide: the control keeps its capability and gives up
-     its width, down to the arrow that says there is something here to pick. */
-  .c2-new-field select.is-bare {
-    flex: none;
-    width: var(--space-5);
-    min-width: var(--space-5);
-    padding-inline: 0;
   }
   .c2-new-warning { margin: 0; color: var(--accent-error); font-size: var(--type-xs); }
   .c2-new-id {

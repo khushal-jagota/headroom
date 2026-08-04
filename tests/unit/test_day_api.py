@@ -89,6 +89,28 @@ def test_day_add_and_removal_are_idempotent_and_land_on_the_day(
     assert absent.json()["tickets"] == []
 
 
+def test_day_ticket_view_includes_board_status_and_conversation_signals(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path)
+
+    with TestClient(app) as client:
+        added = client.post("/api/day/today/tickets", json={"ticket_id": ticket_id})
+
+    assert added.status_code == 200, added.json()
+    ticket = added.json()["tickets"][0]
+    assert ticket["id"] == ticket_id
+    assert ticket["stage"] == "needs_kickoff"
+    assert ticket["ticket_status"] in {"empty", "awaiting_approval"}
+    assert ticket["is_done"] is False
+    assert ticket["waiting_to_closeout"] is False
+    assert ticket["conversation_id"] is None
+    assert ticket["agent_working"] is False
+    assert ticket["needs_me"] is False
+    assert ticket["latest_turn_ended_sequence"] == 0
+
+
 def test_day_planning_workers_receive_only_their_exact_fields(
     tmp_path: Path,
     planning_worker_registry: None,

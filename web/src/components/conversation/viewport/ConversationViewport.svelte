@@ -31,9 +31,11 @@
     livenessPulse,
     conversationState,
     emptyState,
-    onDiscardHeldPrompt
+    onDiscardHeldPrompt,
+    ticketId = null
   }: {
     conversationId: string;
+    ticketId?: string | null;
     rows: readonly TranscriptRow[];
     outgoingMessages: readonly OutgoingMessage[];
     models: readonly BackendModel[];
@@ -361,6 +363,7 @@
       {ownSenderLabel}
       {livenessPulse}
       {conversationId}
+      {ticketId}
     />
     {#each outgoingMessages as message (message.messageId)}
       {@const chip = modeChip(message.mode)}
@@ -381,7 +384,7 @@
             {/if}
           </div>
         {/if}
-        <MessagePieces content={message.content} {conversationId} />
+        <MessagePieces content={message.content} {conversationId} {ticketId} />
       </article>
     {/each}
     {#if reservedSpacePixels > 0}

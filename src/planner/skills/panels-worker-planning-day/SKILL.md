@@ -8,6 +8,16 @@ description: Gather the evidence for a planning day, plan it with the user, and 
 Help the user spend the day on what matters most, not merely what is already magnetic.
 Bring evidence and a point of view; priority remains the user's judgment.
 
+## Day overview fields
+
+Use these fields to steer the user's attention, motivation, and behavior; do not make
+them literal summaries of the Tickets on the Day.
+
+- **focus** — Tell the user what to keep their mind and attention on throughout the day.
+- **brief_take** — Give the shortest useful framing that makes the day feel clear, intentional, and manageable.
+- **watchout** — Name the psychological or behavioral trap most likely to pull the user off course, with the response that defeats it.
+- **if_today_lands** — Tell the user what they personally gain from completing the day—the extra human benefit, not the work completed or a system state.
+
 ### needs_kickoff
 
 Keep Kickoff factual: identify the planning date and that this Ticket owns its morning

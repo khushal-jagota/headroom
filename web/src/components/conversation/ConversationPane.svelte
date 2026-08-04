@@ -54,6 +54,7 @@
     connectionTrouble = false,
     composerPlaceholder = "Message the agent...",
     composerDisabled = false,
+    showRunPicker = true,
     conversationState = $bindable(null),
     emptyState,
     onSend,
@@ -62,11 +63,13 @@
     onSubmitUserInput,
     onCancelTurn,
     onDiscardHeldPrompt,
-    onNewConversation
+    onNewConversation,
+    ticketId = null
   }: {
     /** Which conversation is on the screen. A message's files are fetched under it, so a
      *  piece can only ever reach a file kept for the conversation it belongs to. */
     conversationId: string;
+    ticketId?: string | null;
     label: string;
     backendKey?: ConversationBackendKey | null;
     /** Whether there is a conversation yet, which is what fixes its backend. Holding an id
@@ -110,6 +113,7 @@
     connectionTrouble?: boolean;
     composerPlaceholder?: string;
     composerDisabled?: boolean;
+    showRunPicker?: boolean;
     /** How far open the conversation is, or null for a page that is not making a layer of
      *  it. The page sets what it opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
@@ -277,6 +281,7 @@
 
   <ConversationViewport
     {conversationId}
+    {ticketId}
     {rows}
     {outgoingMessages}
     {models}
@@ -310,6 +315,7 @@
     {errorNote}
     placeholder={composerPlaceholder}
     disabled={composerDisabled}
+    {showRunPicker}
     {onSend}
     {onStop}
     {onAnswer}

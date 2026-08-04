@@ -15,6 +15,10 @@ const boardRouteSource = await readFile(
   new URL("../src/routes/BoardRoute.svelte", import.meta.url),
   "utf8",
 );
+const appCssSource = await readFile(
+  new URL("../../assets/app.css", import.meta.url),
+  "utf8",
+);
 const conversationSignalPresentationSource = await readFile(
   new URL("../src/lib/conversationSignalPresentation.ts", import.meta.url),
   "utf8",
@@ -69,16 +73,12 @@ assert.doesNotMatch(backendsOnMount, /refreshBackendUsage/);
 assert.match(devConversationRouteSource, /readBackends\(\)/);
 assert.doesNotMatch(devConversationRouteSource, /BackendCard|updateBackend|refreshBackendUsage/);
 
-// --- the Chief is one conversation, on the Agents runtime route -------------------------
+// --- the Chief is one conversation, in the Workspace inspector -------------------------
 
-const agentsRouteSource = await readFile(
-  new URL("../src/routes/AgentsRoute.svelte", import.meta.url),
-  "utf8",
-);
-assert.match(agentsRouteSource, /<ChiefConversation \/>/);
-assert.doesNotMatch(boardRouteSource, /ChiefConversation|Chief of Staff/);
+assert.match(boardRouteSource, /<ChiefConversation \/>/);
+assert.match(boardRouteSource, /data-chief-destination/);
 assert.doesNotMatch(
-  agentsRouteSource,
+  boardRouteSource,
   /ChatPanel|ChiefNeutralPane|relayChief|retryRelayChiefMeta|chatGatewayStatus|\/api\/chat|\/api\/relay/,
 );
 
@@ -169,6 +169,12 @@ assert.doesNotMatch(
 );
 
 // --- the Workspace groups --------------------------------------------------------------
+
+// Workspace has one board projection. It does not keep a client-side project selector
+// or filter styles that can hide cards or restore the old top gap.
+assert.match(boardRouteSource, /let groups = \$derived\(buildGroups\(allCards\)\);/);
+assert.doesNotMatch(boardRouteSource, /project-filter|projectMenu|selectedProject|rosterCards|All projects/);
+assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
 
 // Kickoff approval is the one approval subtype Workspace can classify entirely from the
 // existing board card. Done and the server-projected Closeout exception keep precedence,

@@ -331,11 +331,36 @@ textarea {
   font-size: var(--type-xs);
 }
 
+.vps-status {
+  position: relative;
+}
+
 .shell-connection {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   white-space: nowrap;
+}
+
+.shell-connection-trigger,
+.vps-status-refresh {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.shell-connection-trigger {
+  padding: 0;
+}
+
+.shell-connection-trigger:hover,
+.shell-connection-trigger:focus-visible,
+.vps-status-refresh:hover,
+.vps-status-refresh:focus-visible {
+  color: var(--text-strong);
 }
 
 .shell-connection-mark {
@@ -345,21 +370,83 @@ textarea {
   background: var(--accent-done);
 }
 
-.shell-status[data-status-state="preparing"] {
+.vps-status-popover {
+  position: absolute;
+  z-index: 14;
+  top: calc(100% + var(--space-3));
+  right: 0;
+  width: min(340px, calc(100vw - var(--space-8)));
+  padding: var(--space-4);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-base);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-float);
+}
+
+.vps-status-heading,
+.vps-status-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.vps-status-list {
+  margin: var(--space-3) 0 0;
+}
+
+.vps-status-list > div {
+  padding: var(--space-2) 0;
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.vps-status-list dt,
+.vps-status-list dd {
+  margin: 0;
+  font-size: var(--type-xs);
+}
+
+.vps-status-list dd {
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.vps-status-list > div[data-state="warning"] dd {
   color: var(--accent-bright);
 }
 
-.shell-status[data-status-state="preparing"] .shell-connection-mark {
+.vps-status-list > div[data-state="critical"] dd {
+  color: var(--accent-error);
+}
+
+.vps-status-list > div[data-state="unavailable"] dd {
+  color: var(--text-faintest);
+}
+
+.vps-status-error,
+.vps-status-loading {
+  color: var(--text-faint);
+  font-size: var(--type-xs);
+}
+
+.vps-status-error {
+  color: var(--accent-error);
+}
+
+.shell-status .shell-connection-trigger[data-status-state="preparing"] {
+  color: var(--accent-bright);
+}
+
+.shell-status .shell-connection-trigger[data-status-state="preparing"] .shell-connection-mark {
   background: var(--accent-bright);
 }
 
-.shell-status[data-status-state="restarting"],
-.shell-status[data-status-state="reconnecting"] {
+.shell-status .shell-connection-trigger[data-status-state="restarting"],
+.shell-status .shell-connection-trigger[data-status-state="reconnecting"] {
   color: var(--text-faint);
 }
 
-.shell-status[data-status-state="restarting"] .shell-connection-mark,
-.shell-status[data-status-state="reconnecting"] .shell-connection-mark {
+.shell-status .shell-connection-trigger[data-status-state="restarting"] .shell-connection-mark,
+.shell-status .shell-connection-trigger[data-status-state="reconnecting"] .shell-connection-mark {
   background: transparent;
   border: var(--border-hairline) solid var(--text-faintest);
   border-top-color: var(--text-muted);
@@ -367,20 +454,20 @@ textarea {
   animation: stage-mark-spin var(--motion-loop-spin) linear infinite;
 }
 
-.shell-status[data-status-state="restarting"] .shell-connection-mark {
+.shell-status .shell-connection-trigger[data-status-state="restarting"] .shell-connection-mark {
   border-color: var(--accent-surface);
   border-top-color: var(--accent-bright);
 }
 
-.shell-status[data-status-state="back_up"] {
+.shell-status .shell-connection-trigger[data-status-state="back_up"] {
   color: var(--accent-done);
 }
 
-.shell-status[data-status-state="problem"] {
+.shell-status .shell-connection-trigger[data-status-state="problem"] {
   color: var(--accent-error);
 }
 
-.shell-status[data-status-state="problem"] .shell-connection-mark {
+.shell-status .shell-connection-trigger[data-status-state="problem"] .shell-connection-mark {
   background: var(--accent-error);
 }
 
@@ -407,8 +494,8 @@ textarea {
 
 @media (prefers-reduced-motion: reduce) {
   .shell-presence-spin,
-  .shell-status[data-status-state="reconnecting"] .shell-connection-mark,
-  .shell-status[data-status-state="restarting"] .shell-connection-mark {
+  .shell-status .shell-connection-trigger[data-status-state="reconnecting"] .shell-connection-mark,
+  .shell-status .shell-connection-trigger[data-status-state="restarting"] .shell-connection-mark {
     animation: none;
   }
 }
@@ -599,110 +686,7 @@ textarea {
   display: flex;
 }
 
-/* --- Agents and Workers -------------------------------------------------- */
-
-.shell:has(.agents-screen) {
-  height: 100dvh;
-  display: flex;
-  flex-direction: column;
-}
-
-.shell:has(.agents-screen) .shell-content {
-  flex: 1;
-  min-height: 0;
-  padding: 0;
-}
-
-.shell:has(.agents-screen) .screen,
-.agents-screen {
-  height: 100%;
-  min-height: 0;
-}
-
-.agents-workspace-shell {
-  display: grid;
-  grid-template-columns: clamp(23rem, 38vw, 32rem) minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.agents-workspace-roster {
-  min-width: 0;
-  overflow: auto;
-  padding: var(--space-5);
-  border-right: var(--border-hairline) solid var(--border-color);
-}
-
-.agents-roster-list {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.agents-roster-row {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  color: inherit;
-  text-decoration: none;
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-
-.agents-roster-row:hover {
-  background: var(--surface-raised);
-}
-
-.agents-roster-row.active {
-  background: var(--surface-overlay);
-}
-
-.agents-roster-row:focus-visible,
-.agents-conversation-back:focus-visible {
-  outline: 2px solid var(--accent-bright);
-  outline-offset: var(--space-1);
-}
-
-.agents-roster-name {
-  min-width: 0;
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 1.1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.agents-roster-row .stage-mark {
-  width: 0.9rem;
-  height: 0.9rem;
-}
-
-.agents-workspace-conversation {
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-5) var(--space-6);
-  background: var(--surface-sunken);
-}
-
-.agents-conversation-back {
-  display: none;
-}
-
-.agents-conversation-shell {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-}
+/* --- Chief conversation ----------------------------------------------- */
 
 .chief-conversation-resource {
   align-self: flex-start;
@@ -1332,6 +1316,10 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.file-preview-mobile-link {
+  display: none;
+}
+
 .file-preview-image,
 .file-preview-video {
   display: block;
@@ -1379,6 +1367,23 @@ textarea {
   background: var(--surface-raised);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   overflow: auto;
+}
+
+.file-preview--embedded[data-file-preview-kind="markdown"] .file-preview-document-body {
+  background: var(--surface-sunken);
+}
+
+@media (max-width: 40rem) {
+  .file-preview--embedded.file-preview--managed .file-preview-mobile-link {
+    display: inline;
+  }
+
+  .file-preview--embedded.file-preview--managed > .file-preview-document,
+  .file-preview--embedded.file-preview--managed > .file-preview-image,
+  .file-preview--embedded.file-preview--managed > .file-preview-video,
+  .file-preview--embedded.file-preview--managed > .file-preview-audio {
+    display: none;
+  }
 }
 
 .file-preview-frame {
@@ -1694,137 +1699,197 @@ button.list-row:hover .list-row-title {
   font-size: var(--type-serif-sm);
 }
 
-/* --- Day = Overview (redesign) ------------------------------------------- */
-/* Today is a calm strategic READ: one centered document column — date → focus
-   hero → Brief Take / Watchout / If Today Lands. No rail, no boxes, no seams;
-   hierarchy is spacing + the tint ladder + two colored labels. Scoped to the day
-   screen; the .ed inline-edit surface (above) is reused. Values via tokens.css,
-   except the reading measure (680px) and the read's generous bottom rhythm. */
+/* --- Day = daily hub ----------------------------------------------------- */
+/* The Day screen is a quiet read: focus, live dots, a short take, action tiles,
+   and one watch line. The route owns the state composition. This block owns only
+   its responsive presentation and uses the closed token scales. */
 
 [data-screen="day"] .doc {
   width: 100%;
 }
 
 [data-screen="day"] .col {
-  max-width: var(--measure-read);                 /* a tight reading measure — this is a read */
+  max-width: var(--measure-read);
   margin: 0 auto;
-  padding: var(--space-7) var(--space-4) var(--space-page-tail);
+  padding: var(--space-7) var(--space-5) var(--space-page-tail);
 }
 
 [data-screen="day"] .date {
+  color: var(--text-faint);
   font-size: var(--type-xs);
   font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
-  color: var(--text-faint);
 }
 
 [data-screen="day"] .date .dim {
   color: var(--text-faintest);
 }
 
-[data-screen="day"] .focus {
-  margin-top: var(--space-4);
+[data-screen="day"] .focus,
+[data-screen="day"] .empty-focus {
+  max-width: 18ch;
+  margin: var(--space-4) 0 0;
+  color: var(--text-strong);
   font-family: var(--font-serif);
   font-size: var(--type-serif-hero);
   font-weight: 500;
   letter-spacing: var(--tracking-title);
-  line-height: 1.32;
-  color: var(--text-strong);
+  line-height: 1.16;
 }
 
-[data-screen="day"] .label {
+[data-screen="day"] .lands {
+  max-width: 46ch;
+  margin: var(--space-4) 0 0;
+  color: var(--text-muted);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  line-height: 1.5;
+}
+
+[data-screen="day"] .lands .pre {
+  color: var(--text-faint);
+}
+
+[data-screen="day"] .dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-7) 0 0;
+}
+
+[data-screen="day"] .take {
+  max-width: 46ch;
+  margin: var(--space-4) 0 0;
+  color: var(--text-faint);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-md);
+  line-height: 1.5;
+}
+
+[data-screen="day"] .acts {
+  display: flex;
+  gap: var(--space-4);
+  margin: var(--space-7) 0 0;
+}
+
+[data-screen="day"] .act {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--accent-ink);
+  color: var(--text-strong);
+  text-decoration: none;
+  transition: background var(--motion-base) var(--motion-ease),
+    transform var(--motion-base) var(--motion-ease);
+}
+
+[data-screen="day"] .act:hover {
+  background: var(--accent-surface);
+  transform: translateY(-2px);
+}
+
+[data-screen="day"] .act .n {
+  color: var(--text-strong);
+  font-size: var(--type-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+[data-screen="day"] .act .k {
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+}
+
+[data-screen="day"] .act--you {
+  background: var(--accent-bright);
+}
+
+[data-screen="day"] .act--you:hover {
+  background: var(--accent-bright);
+}
+
+[data-screen="day"] .act--you .n,
+[data-screen="day"] .act--you .k {
+  color: var(--accent-ink);
+}
+
+[data-screen="day"] .act--you .k {
+  font-weight: 600;
+}
+
+[data-screen="day"] .watch {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  margin: var(--space-6) 0 0;
+  padding-top: var(--space-5);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+[data-screen="day"] .watch .lbl {
+  flex: none;
+  color: var(--accent-bright);
   font-size: var(--type-xs);
   font-weight: 600;
   letter-spacing: var(--tracking-label);
   text-transform: uppercase;
+}
+
+[data-screen="day"] .watch .v {
+  color: var(--text-muted);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-md);
+  line-height: 1.5;
+}
+
+[data-screen="day"] .empty-focus {
   color: var(--text-faintest);
-  margin-bottom: var(--space-3);
 }
 
-[data-screen="day"] .take {
-  margin-top: var(--space-6);
-}
-
-[data-screen="day"] .take .body {
+[data-screen="day"] .empty-line {
+  margin: var(--space-5) 0 0;
+  color: var(--text-faint);
   font-family: var(--font-serif);
   font-size: var(--type-serif-lg);
-  line-height: 1.7;
-  color: var(--text-default);
 }
 
-[data-screen="day"] .block {
-  margin-top: var(--space-7);
-}
-
-[data-screen="day"] .watch .label {
-  color: var(--accent-bright);
-}
-
-[data-screen="day"] .watch .body {
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-md);
-  line-height: 1.66;
-  color: var(--text-muted);
-}
-
-[data-screen="day"] .lands .label {
-  color: var(--accent-done);
-}
-
-[data-screen="day"] .lands .body,
-[data-screen="day"] .midday .body {
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-md);
-  line-height: 1.66;
-  color: var(--text-default);
-}
-
-[data-screen="day"] .body .markdown-block p + p {
-  margin-top: var(--space-3);
-}
-
-/* --- Day screen — legacy surfaces (today-list, review-count) ----
-   Dropped from the Day UI in the Overview redesign; kept pending the owner's
-   call to re-home them (Board) or retire. */
-
-.day-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: var(--space-5);
-  align-items: start;
-}
-
-.review-entry {
-  display: flex;
+[data-screen="day"] .plan {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  background: var(--surface-raised);
-  border: var(--border-hairline) solid var(--surface-overlay);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-4);
+  gap: var(--space-2);
+  margin: var(--space-6) 0 0;
+  color: var(--accent-bright);
+  font-size: var(--type-sm);
   text-decoration: none;
+}
+
+[data-screen="day"] .plan:hover {
   color: var(--text-strong);
 }
 
-.review-entry:hover {
-  background: var(--surface-overlay);
-}
+@media (max-width: 560px) {
+  [data-screen="day"] .col {
+    padding: var(--space-6) var(--space-4) var(--space-page-tail);
+  }
 
-.review-entry-count {
-  font-size: var(--type-xs);
-  background: var(--accent-surface);
-  color: var(--accent-text);
-  border: var(--border-hairline) solid var(--accent-bright);
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-2);
-}
+  [data-screen="day"] .acts {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+  }
 
-.review-entry-count.zero {
-  background: transparent;
-  color: var(--text-faint);
-  border-color: var(--text-faint);
+  [data-screen="day"] .act {
+    flex: 1 1 calc(50% - var(--space-2));
+  }
+
+  [data-screen="day"] .act--you {
+    flex-basis: 100%;
+  }
 }
 
 /* Wide step output (code wells, markdown pre) must scroll inside its own box, never
@@ -2836,7 +2901,7 @@ select {
 }
 
 /* The rail's structure: the section padding sets the outer frame; every row-like
- * element inside (chief button, filters, group headings, ticket rows) carries the
+ * element inside (chief button, group headings, ticket rows) carries the
  * same --board-workspace-rail-pad-x inner inset, so all rail text shares one left
  * edge. Vertical rhythm follows the mockup's roster: rows touch, groups separate. */
 .board-workspace-left {
@@ -2847,113 +2912,55 @@ select {
   --board-workspace-rail-pad-x: var(--space-3);
 }
 
-/* The project filter is a mini header in the rail, not a form control: at rest
- * it is the active project in the serif header voice (one step below the bucket
- * titles), with a small caret as the only affordance. Clicking it opens a
- * dropdown menu — the popover idiom the app already uses elsewhere. */
-.board-workspace-project-filter {
-  position: relative;
-  padding: 0 var(--board-workspace-rail-pad-x);
-  margin: var(--space-2) 0 calc(var(--space-7) - var(--space-1));
-}
-
-.board-workspace-project-filter-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-  border: 0;
-  background: transparent;
-  padding: var(--space-1) 0;
-  margin: 0;
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
-  font-weight: 500;
-  line-height: 1.1;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-project-filter-trigger:hover {
-  color: var(--accent-bright);
-}
-
-.board-workspace-project-filter-value {
+.board-workspace-chief-row {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The caret is a small chevron drawn from two borders; it flips when open. */
-.board-workspace-project-filter-caret {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  margin-top: -3px;
-  border-right: 1.5px solid var(--text-muted);
-  border-bottom: 1.5px solid var(--text-muted);
-  transform: rotate(45deg);
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-project-filter-trigger[aria-expanded="true"] .board-workspace-project-filter-caret {
-  margin-top: 2px;
-  transform: rotate(-135deg);
-}
-
-.board-workspace-project-filter-menu {
-  position: absolute;
-  left: var(--board-workspace-rail-pad-x);
-  top: 100%;
-  z-index: 20;
-  min-width: 190px;
-  max-width: calc(100% - var(--board-workspace-rail-pad-x));
-  margin-top: var(--space-2);
-  padding: var(--space-1);
   display: flex;
-  flex-direction: column;
-  background: var(--surface-raised);
-  border: var(--border-hairline) solid var(--border-color);
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--board-workspace-rail-pad-x);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+.board-workspace-chief-row:hover,
+.board-workspace-chief-row.active {
+  background: var(--surface-overlay);
+  color: var(--text-strong);
+}
+
+.board-workspace-chief-row:focus-visible {
+  outline: 2px solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
+.board-workspace-agent-profile {
+  flex: 0 0 var(--space-6);
+  width: var(--space-6);
+  height: var(--space-6);
+  object-fit: cover;
   border-radius: var(--radius-md);
 }
 
-.board-workspace-project-filter-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  border: 0;
-  background: transparent;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--text-strong);
-  font-size: var(--type-sm);
-  text-align: left;
+.board-workspace-chief-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--motion-ease);
+  color: inherit;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  font-weight: 500;
+  line-height: 1.2;
 }
 
-.board-workspace-project-filter-item:hover {
-  background: var(--surface-overlay);
-}
-
-.board-workspace-project-filter-item[aria-checked="true"] {
-  color: var(--accent-text);
-}
-
-/* The tick reserves fixed width so labels align whether or not they are active. */
-.board-workspace-project-filter-tick {
+.board-workspace-chief-row .stage-mark {
   flex: none;
-  width: 14px;
-  color: var(--accent-bright);
-}
-
-.board-workspace-project-filter-item[aria-checked="true"] .board-workspace-project-filter-tick::before {
-  content: "✓";
 }
 
 .board-workspace-right {
@@ -2971,6 +2978,21 @@ select {
   background: var(--surface-base);
 }
 
+.board-workspace-right--chief {
+  padding: var(--space-5) var(--space-6);
+  background: var(--surface-sunken);
+}
+
+.board-workspace-chief-conversation {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  max-width: calc(var(--space-7) * 16);
+  margin: 0 auto;
+}
+
 .board-workspace-empty-inspector {
   display: flex;
   align-items: center;
@@ -2983,8 +3005,7 @@ select {
 }
 
 /* Status buckets — the rail's one level. Each bucket is a box (the worker-section
- * idiom), headed by the serif voice one scale below the project headers. A bucket
- * with no tickets is not rendered at all. */
+ * idiom), headed by the serif voice. A bucket with no tickets is not rendered. */
 .disclosure--workspace-bucket {
   min-width: 0;
   padding: var(--space-4);
@@ -4362,37 +4383,15 @@ select {
     display: none;
   }
 
-  .agents-workspace-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .agents-workspace-roster {
-    border-right: 0;
-    padding: var(--space-5);
-  }
-
-  .agents-workspace-conversation {
+  .board-workspace-shell--chief .board-workspace-left {
     display: none;
   }
 
-  .agents-workspace-shell--focused .agents-workspace-roster {
-    display: none;
-  }
-
-  .agents-workspace-shell--focused .agents-workspace-conversation {
+  .board-workspace-right.board-workspace-right--chief {
     display: flex;
     padding: var(--space-5);
   }
 
-  .agents-conversation-back {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--text-muted);
-    font-size: var(--type-sm);
-    text-decoration: none;
-    margin-bottom: var(--space-3);
-  }
 }
 
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */
@@ -5076,6 +5075,350 @@ select {
 .in::placeholder {
   color: var(--text-faintest);
   font-style: italic;
+}
+
+/* --- Scheduled tasks ----------------------------------------------------- */
+
+[data-screen="scheduled-tasks"] .scheduled-tasks-page {
+  max-width: var(--measure-index);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-page-tail);
+}
+
+[data-screen="scheduled-tasks"] .screen-header-meta {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+[data-screen="scheduled-tasks"] .screen-header-title {
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-display);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.26;
+}
+
+.scheduled-task-back {
+  display: inline-flex;
+  align-items: center;
+  margin: var(--space-2) 0 var(--space-3);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--type-sm);
+}
+
+.scheduled-task-back:hover {
+  color: var(--text-strong);
+}
+
+.scheduled-task-editor {
+  max-width: var(--measure-index);
+  margin: 0 auto;
+  padding: 0 0 var(--space-page-tail);
+}
+
+.scheduled-task-detail-head,
+.scheduled-task-form-actions,
+.scheduled-task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.scheduled-task-detail-head {
+  margin: var(--space-3) 0 var(--space-2);
+}
+
+.scheduled-task-title-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+.scheduled-task-title-edit .scheduled-task-title {
+  display: block;
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-display);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.26;
+  overflow-wrap: anywhere;
+}
+
+.scheduled-task-title-edit .scheduled-task-title:focus {
+  outline-offset: var(--space-1);
+}
+
+.scheduled-task-form {
+  display: grid;
+  gap: 0;
+}
+
+.scheduled-task-group {
+  margin-top: var(--space-6);
+}
+
+.scheduled-task-group h2 {
+  margin: 0 0 var(--space-3);
+  color: var(--text-strong);
+  font-size: var(--type-sm);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.scheduled-task-values {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+  line-height: 1.9;
+}
+
+.scheduled-task-quiet-control {
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 14px 2px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: var(--border-hairline) dashed transparent;
+  border-radius: 0;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+}
+
+.scheduled-task-quiet-control:hover {
+  color: var(--text-muted);
+  border-bottom-color: var(--border-color);
+}
+
+.scheduled-task-quiet-control:focus {
+  color: var(--text-default);
+  border-bottom-color: var(--accent-bright);
+  outline: none;
+}
+
+.scheduled-task-separator {
+  color: var(--text-faintest);
+}
+
+.scheduled-task-switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  background: var(--surface-overlay);
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background var(--motion-base) var(--motion-ease);
+}
+
+.scheduled-task-switch::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  content: "";
+  transition: left var(--motion-base) var(--motion-ease), background var(--motion-base);
+}
+
+.scheduled-task-switch--on {
+  background: var(--accent-bright);
+}
+
+.scheduled-task-switch--on::after {
+  left: 17px;
+  background: var(--accent-text);
+}
+
+.scheduled-task-switch:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
+.scheduled-task-switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.scheduled-task-kickoff {
+  min-height: calc(var(--type-serif-sm) * 1.6 + var(--space-6));
+  padding: var(--space-3) var(--space-4);
+}
+
+.scheduled-task-kickoff-edit {
+  display: block;
+  min-height: calc(var(--type-serif-sm) * 1.6);
+  color: var(--text-muted);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.6;
+}
+
+.scheduled-task-kickoff-edit .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.scheduled-task-advanced {
+  margin-top: var(--space-6);
+}
+
+.scheduled-task-advanced > .disclosure-summary {
+  display: inline-flex;
+  color: var(--text-faint);
+  font-size: var(--type-sm);
+}
+
+.scheduled-task-advanced > .disclosure-summary:hover,
+.scheduled-task-advanced[open] > .disclosure-summary {
+  color: var(--text-default);
+}
+
+.scheduled-task-advanced > .disclosure-body {
+  margin-top: var(--space-4);
+}
+
+.scheduled-task-advanced-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.scheduled-task-advanced-grid label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+
+.scheduled-task-advanced-grid label > span {
+  color: var(--text-faint);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+.scheduled-task-advanced-control {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-default);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+}
+
+.scheduled-task-advanced-control:focus {
+  border-color: var(--accent-bright);
+  outline: none;
+}
+
+.scheduled-form-error {
+  margin: var(--space-3) 0 0;
+  color: var(--accent-error);
+  font-size: var(--type-sm);
+}
+
+.scheduled-task-form-actions {
+  justify-content: flex-end;
+  margin-top: var(--space-7);
+}
+
+.scheduled-task-form-actions .button--primary,
+[data-screen="scheduled-tasks"] .button--primary {
+  border: 0;
+}
+
+.scheduled-task-list {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-page-tail);
+}
+
+.scheduled-task-row {
+  min-width: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+
+.scheduled-task-row:hover {
+  background: var(--surface-raised);
+}
+
+.scheduled-task-row-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-strong);
+  cursor: pointer;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  font-weight: 500;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.scheduled-task-row--off .scheduled-task-row-title {
+  color: var(--text-faint);
+}
+
+.scheduled-task-row-title:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
+.scheduled-task-empty {
+  padding: var(--space-7) var(--space-4);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: 1.6;
+  text-align: center;
+}
+
+@media (max-width: 720px) {
+  [data-screen="scheduled-tasks"] .scheduled-tasks-page {
+    padding-inline: var(--space-3);
+  }
+
+  .scheduled-task-list {
+    padding-inline: 0;
+  }
+
+  .scheduled-task-values {
+    align-items: flex-start;
+  }
+
+  .scheduled-task-quiet-control {
+    max-width: 100%;
+  }
+
+  .scheduled-task-detail-head {
+    align-items: flex-start;
+  }
+}
+
+/* Keep long schedule values inside the single reading column. */
+.scheduled-task-quiet-control,
+.scheduled-task-advanced-control {
+  overflow-wrap: anywhere;
 }
 
 [data-screen="backlog"] .in.title-in {

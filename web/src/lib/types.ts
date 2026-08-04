@@ -90,6 +90,34 @@ export type ProjectsResponse = {
   projects: ProjectSummary[];
 };
 
+export type ScheduleCadence = "every_planning_day" | "current_sprint_final_day";
+
+export type SchedulePlacementMode = "current_sprint" | "backlog" | "sprint_item";
+
+export type ScheduledTask = {
+  id: string;
+  enabled: boolean;
+  cadence: ScheduleCadence;
+  local_time: string;
+  title: string;
+  worker_type: string;
+  kickoff_note: string;
+  priority: Priority;
+  deadline: string | null;
+  project_id: string | null;
+  placement_mode: SchedulePlacementMode;
+  sprint_item_id: string | null;
+  employee_backend: string | null;
+  employee_launch_model: string | null;
+  blocked_by_ticket_ids: string[];
+  created_at: number;
+  updated_at: number;
+};
+
+export type SchedulesResponse = {
+  schedules: ScheduledTask[];
+};
+
 export type TicketField = {
   value?: string | null;
   user_note?: string | null;
@@ -250,6 +278,20 @@ export type BoardResponse = {
   }>;
 };
 
+export type DayTicket = AnyRecord & {
+  id: string;
+  title: string;
+  stage: string;
+  ticket_status: string;
+  conversation_id: string | null;
+  is_done?: boolean;
+  waiting_to_closeout?: boolean;
+  gating_field?: string | null;
+  agent_working?: boolean;
+  needs_me?: boolean;
+  latest_turn_ended_sequence?: number;
+};
+
 export type DayResponse = {
   id: string;
   focus?: string | null;
@@ -257,6 +299,7 @@ export type DayResponse = {
   watchout?: string | null;
   if_today_lands?: string | null;
   midday_reconciliation?: string | null;
+  tickets: DayTicket[];
 };
 
 export type BacklogResponse = SprintItemsResponse;

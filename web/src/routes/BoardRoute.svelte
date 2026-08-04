@@ -5,15 +5,18 @@
   import { labelize } from "../lib/ui";
   import { conversationSignalPresentation } from "../lib/conversationSignalPresentation";
   import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
+  import ChiefConversation from "../components/ChiefConversation.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import PriorityTile from "../components/PriorityTile.svelte";
   import StageMark from "../components/StageMark.svelte";
   import TicketRoute from "./TicketRoute.svelte";
+  import chiefOfStaffProfile from "../assets/chief-of-staff-profile.webp";
 
   let { ticketId }: { ticketId?: string } = $props();
 
   const board = createQuery(() => queries.board());
+  const workers = createQuery(() => queries.workers());
   let columns = $derived(board.data?.columns || []);
   let allCards = $derived(
     columns.flatMap((column) =>
@@ -23,50 +26,22 @@
     )
   );
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
-  const ALL_PROJECTS = "__all_projects__";
-  const NO_PROJECT = "__no_project__";
-  let selectedProjectId = $state(ALL_PROJECTS);
-  let projectOptions = $derived(
-    Array.from(
-      new Map(
-        allCards
-          .filter((card) => card.group_project_id)
-          .map((card) => [String(card.group_project_id), String(card.group_project)])
-      )
-    )
-      .map(([id, name]) => ({ id, name }))
-      .sort((left, right) => left.name.localeCompare(right.name))
-  );
-  let rosterCards = $derived(
-    selectedProjectId === ALL_PROJECTS
-      ? allCards
-      : allCards.filter((card) =>
-          selectedProjectId === NO_PROJECT
-            ? !card.group_project_id
-            : card.group_project_id === selectedProjectId
-        )
-  );
-  let groups = $derived(buildGroups(rosterCards));
-
-  $effect(() => {
-    const selectedProjectStillExists = projectOptions.some(
-      (project) => project.id === selectedProjectId
-    );
-    if (
-      selectedProjectId !== ALL_PROJECTS &&
-      selectedProjectId !== NO_PROJECT &&
-      !selectedProjectStillExists
-    ) {
-      selectedProjectId = ALL_PROJECTS;
-    }
-  });
+  let chiefSelected = $derived(ticketId === "chief-of-staff");
+  let groups = $derived(buildGroups(allCards));
 
   // The board is settled — loaded, no fetch in flight, and the last read
   // succeeded — and the ticket in the address is not on it, so the address is
   // stale: fall back to the board. A failed refetch leaves the previous board in
   // place, which is not evidence the ticket is gone, so it holds instead.
   $effect(() => {
-    if (ticketId && board.data && !board.isFetching && !board.isError && !selectedCard) {
+    if (
+      ticketId &&
+      !chiefSelected &&
+      board.data &&
+      !board.isFetching &&
+      !board.isError &&
+      !selectedCard
+    ) {
       window.location.replace("#/workspace");
     }
   });
@@ -75,47 +50,6 @@
     window.location.hash = window.matchMedia("(max-width: 960px)").matches
       ? `#/ticket/${encodeURIComponent(ticketId)}`
       : `#/workspace/${encodeURIComponent(ticketId)}`;
-  }
-
-  // The project filter is a mini header that opens a dropdown menu, not a form
-  // control. The trigger shows the active project; the menu picks a new one.
-  let projectMenuOpen = $state(false);
-  let projectMenuElement = $state<HTMLDivElement | null>(null);
-  let projectMenuButton = $state<HTMLButtonElement | null>(null);
-  let activeProjectLabel = $derived(
-    selectedProjectId === ALL_PROJECTS
-      ? "All projects"
-      : selectedProjectId === NO_PROJECT
-        ? "No project"
-        : projectOptions.find((project) => project.id === selectedProjectId)?.name ??
-          "All projects"
-  );
-
-  function closeProjectMenu(): void {
-    projectMenuOpen = false;
-  }
-
-  function chooseProject(projectId: string): void {
-    selectedProjectId = projectId;
-    closeProjectMenu();
-    projectMenuButton?.focus();
-  }
-
-  function onProjectMenuWindowPointerDown(event: PointerEvent): void {
-    if (
-      projectMenuOpen &&
-      projectMenuElement &&
-      !projectMenuElement.contains(event.target as Node)
-    ) {
-      closeProjectMenu();
-    }
-  }
-
-  function onProjectMenuWindowKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && projectMenuOpen) {
-      closeProjectMenu();
-      projectMenuButton?.focus();
-    }
   }
 
   // How far this browser has read each conversation on the board.
@@ -137,14 +71,28 @@
         }
       }
     }
+    const chiefConversationId = workers.data?.chief_of_staff.conversation_id;
+    if (typeof chiefConversationId === "string") {
+      positions[chiefConversationId] = readReplyWatermark(chiefConversationId);
+    }
     howFarThisBrowserHasRead = positions;
   }
+
+  let chiefPresentation = $derived(
+    workers.data
+      ? conversationSignalPresentation(
+          workers.data.chief_of_staff,
+          howFarThisBrowserHasRead
+        )
+      : null
+  );
 
   // Two things move a position: this browser reading a conversation, and a board arriving
   // with conversations it has not seen before.
   onMount(() => onReplyWatermarkMoved(rereadWhereThisBrowserHasGot));
   $effect(() => {
     board.data;
+    workers.data;
     rereadWhereThisBrowserHasGot();
   });
 
@@ -222,11 +170,6 @@
 
 </script>
 
-<svelte:window
-  onpointerdown={onProjectMenuWindowPointerDown}
-  onkeydown={onProjectMenuWindowKeydown}
-/>
-
 <section class="board-screen" data-screen="workspace">
   <ResourceState
     error={board.error}
@@ -235,64 +178,37 @@
     loadingText="Loading workspace..."
   >
     <div class="board-workspace-wrap">
-      <div class="board-workspace-shell">
+      <div class="board-workspace-shell" class:board-workspace-shell--chief={chiefSelected}>
         <section class="board-workspace-left" aria-label="Workspace tickets by status">
-          <div class="board-workspace-project-filter" bind:this={projectMenuElement}>
-            <button
-              type="button"
-              class="board-workspace-project-filter-trigger"
-              bind:this={projectMenuButton}
-              aria-haspopup="menu"
-              aria-expanded={projectMenuOpen}
-              data-project-filter
-              data-active-project-id={selectedProjectId}
-              onclick={() =>
-                projectMenuOpen ? closeProjectMenu() : (projectMenuOpen = true)}
+          {#if workers.data}
+            <a
+              class="board-workspace-chief-row"
+              class:active={chiefSelected}
+              href="#/workspace/chief-of-staff"
+              data-chief-destination
+              aria-current={chiefSelected ? "page" : undefined}
             >
-              <span class="board-workspace-project-filter-value">{activeProjectLabel}</span>
-              <span class="board-workspace-project-filter-caret" aria-hidden="true"></span>
-            </button>
-
-            {#if projectMenuOpen}
-              <div class="board-workspace-project-filter-menu" role="menu" data-project-menu>
-                <button
-                  type="button"
-                  class="board-workspace-project-filter-item"
-                  role="menuitemradio"
-                  aria-checked={selectedProjectId === ALL_PROJECTS}
-                  data-project-option={ALL_PROJECTS}
-                  onclick={() => chooseProject(ALL_PROJECTS)}
-                >
-                  <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
-                  All projects
-                </button>
-                {#each projectOptions as project (project.id)}
-                  <button
-                    type="button"
-                    class="board-workspace-project-filter-item"
-                    role="menuitemradio"
-                    aria-checked={selectedProjectId === project.id}
-                    data-project-option={project.id}
-                    onclick={() => chooseProject(project.id)}
-                  >
-                    <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
-                    {project.name}
-                  </button>
-                {/each}
-                <button
-                  type="button"
-                  class="board-workspace-project-filter-item"
-                  role="menuitemradio"
-                  aria-checked={selectedProjectId === NO_PROJECT}
-                  data-project-option={NO_PROJECT}
-                  onclick={() => chooseProject(NO_PROJECT)}
-                >
-                  <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
-                  No project
-                </button>
-              </div>
-            {/if}
-          </div>
+              <img
+                class="board-workspace-agent-profile"
+                src={chiefOfStaffProfile}
+                alt=""
+                aria-hidden="true"
+              />
+              <span class="board-workspace-chief-name">
+                {workers.data.chief_of_staff.label}
+              </span>
+              {#if chiefPresentation}
+                <StageMark
+                  state={chiefPresentation.state}
+                  data-stage-state={chiefPresentation.state}
+                  data-needs-me={workers.data.chief_of_staff.needs_me ? "true" : "false"}
+                  data-agent-working={workers.data.chief_of_staff.agent_working ? "true" : "false"}
+                  data-latest-turn-ended={workers.data.chief_of_staff.latest_turn_ended_sequence}
+                  aria-label={chiefPresentation.ariaLabel}
+                />
+              {/if}
+            </a>
+          {/if}
 
           {#each groups as group (group.key)}
             <Disclosure
@@ -350,10 +266,15 @@
 
         <section
           class:board-workspace-right--ticket={Boolean(selectedCard)}
+          class:board-workspace-right--chief={chiefSelected}
           class="board-workspace-right"
-          aria-label="Workspace inspector"
+          aria-label={chiefSelected ? "Chief of Staff conversation" : "Workspace inspector"}
         >
-          {#if selectedCard}
+          {#if chiefSelected}
+            <div class="board-workspace-chief-conversation">
+              <ChiefConversation />
+            </div>
+          {:else if selectedCard}
             {#key selectedCard.id}
               <TicketRoute id={selectedCard.id} />
             {/key}

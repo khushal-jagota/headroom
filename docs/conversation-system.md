@@ -36,6 +36,12 @@ are written once and never edited. Streaming output (the text growing word by wo
 decoration only — it is never stored, and the agent's private reasoning is
 dropped entirely, not stored and not shown.
 
+A finished agent message remains recordable when it arrives just after its backend turn
+ending. This matters for persistent runs such as Claude's: delegated work can wake the
+parent after an earlier result. The whole parent message is durable conversation content,
+so Panels keeps it under the most recently ended turn. Late deltas, tool activity, asks,
+usage and extra endings remain live-turn facts and are still discarded.
+
 Reading is one rule everywhere: fetch the rows after the last one you hold, then
 listen for new ones. Opening a conversation, reconnecting after a dropped
 connection, and a second device are all that same fetch. Nothing re-downloads
