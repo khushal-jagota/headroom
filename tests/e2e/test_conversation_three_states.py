@@ -299,8 +299,28 @@ def _bring_it_back(page: Page) -> None:
 
 
 def _click_the_ticket_behind(page: Page, lands_on: str) -> None:
-    """A click on the ticket itself, which drops the conversation one state back."""
+    """A click on the ticket itself, which dismisses the conversation to the requested state."""
     page.click(THE_TICKET_BEHIND, timeout=WAIT_MS)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="{lands_on}"]', timeout=WAIT_MS)
+
+
+def _click_beside_the_conversation(page: Page, lands_on: str) -> None:
+    """A click in the layer beside its centered pane dismisses the conversation."""
+    point = page.evaluate(
+        """
+        () => {
+          const host = document
+            .querySelector('[data-conversation-layer-host]')
+            .getBoundingClientRect();
+          const pane = document
+            .querySelector('[data-conversation-pane]')
+            .getBoundingClientRect();
+          const x = pane.left - host.left > 4 ? host.left + 2 : host.right - 2;
+          return { x, y: host.top + host.height / 2 };
+        }
+        """
+    )
+    page.mouse.click(point["x"], point["y"])
     page.wait_for_selector(f'{PANE}[data-conversation-state="{lands_on}"]', timeout=WAIT_MS)
 
 
@@ -397,6 +417,28 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert back["expand"] is True
     assert back["restBarMounted"] is False
     assert back["paneHeight"] == peeked["paneHeight"], (peeked, back)
+
+
+def test_clicking_outside_dismisses_peeked_and_opened_to_rest(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """A Ticket click dismisses either visible layer state in one step."""
+    ticket_id, conversation_id = _a_ticket_with_a_conversation(server, cli, "Outside click")
+    _append_rows(server, conversation_id, *_a_settled_conversation_worth_reading(THE_LAST_THING))
+    page = _the_ticket_page(server, context_factory(), open_page, ticket_id, ROWS_IN_THE_SEED)
+
+    _click_the_composers_input(page)
+    _click_the_ticket_behind(page, lands_on="rest")
+
+    _click_the_composers_input(page)
+    _take_it_full(page)
+    _click_beside_the_conversation(page, lands_on="rest")
+
+    # The Ticket remains usable after either dismissal.
+    _click_the_composers_input(page)
 
 
 def test_the_rest_band_is_present_before_activity_and_keeps_its_geometry_through_loading(
