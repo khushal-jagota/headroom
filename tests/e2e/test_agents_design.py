@@ -8,7 +8,7 @@ from tests.e2e.harness import ServerHandle
 WAIT_MS = 10_000
 
 
-def test_chief_of_staff_lives_above_workspace_projects(
+def test_chief_of_staff_leads_the_workspace_rail(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
 ) -> None:
@@ -105,10 +105,7 @@ def test_chief_of_staff_lives_above_workspace_projects(
     assert profile_box is not None
     assert abs(profile_box["width"] - 32) < 0.01
     assert abs(profile_box["height"] - 32) < 0.01
-    assert row.evaluate(
-        "node => node.nextElementSibling?.classList.contains('board-workspace-project-filter')"
-    )
-    assert page.locator('[data-project-filter]').inner_text().startswith("All projects")
+    assert page.locator("[data-project-filter]").count() == 0
     assert row.locator('[data-stage-state="upcoming"]').count() == 1
 
     page.set_viewport_size({"width": 390, "height": 568})

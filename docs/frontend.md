@@ -22,12 +22,10 @@ One screen per part of the system:
   go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
-  appear. One project selector narrows the roster by each ticket's effective project,
-  including **All projects** and **No project**. It reads as a small header showing the
-  active project; clicking it opens a menu of the projects. A Ticket on a Sprint Item uses
-  that item's project; an unparented backlog Ticket uses its own project. The selector does not
-  close or replace an already-open ticket inspector. The rail groups the visible
-  tickets into collapsible boxed groups in a fixed order that puts what needs the user
+  appear. The rail shows all visible tickets across their effective projects. A Ticket on a
+  Sprint Item uses that item's project; an unparented backlog Ticket uses its own project.
+  The Chief of Staff row leads the ticket groups. The rail groups the visible tickets into
+  collapsible boxed groups in a fixed order that puts what needs the user
   first: Errored, Needs user, Waiting for Kickoff, User, Paired, Agent, Waiting to
   Closeout, Awaiting approval, Empty, Blocked, Done. A group with no tickets is not
   rendered; Blocked and Done start collapsed. Every ticket sits in exactly one group.
@@ -400,4 +398,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-03 (including the Chief of Staff portrait in Workspace)._
+_Last verified: 2026-08-04 (including the Chief of Staff portrait in Workspace)._
