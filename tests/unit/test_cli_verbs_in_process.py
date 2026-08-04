@@ -601,8 +601,35 @@ def test_ticket_approval_copy_and_worker_note_shape(
         "-",
         stdin="approach note",
     )
+    cli(
+        server,
+        "worker",
+        "note",
+        tid,
+        "approach",
+        "--append",
+        "--body-file",
+        "-",
+        stdin="additional approach note",
+    )
+    appended_detail = api.get(server, f"/api/tickets/{tid}")
+    assert (
+        appended_detail["fields"]["approach"]["user_note"]
+        == "approach note\n\nadditional approach note"
+    )
+    cli(
+        server,
+        "worker",
+        "note",
+        tid,
+        "approach",
+        "--replace",
+        "--body-file",
+        "-",
+        stdin="replaced approach note",
+    )
     detail = api.get(server, f"/api/tickets/{tid}")
-    assert detail["fields"]["approach"]["user_note"] == "approach note"
+    assert detail["fields"]["approach"]["user_note"] == "replaced approach note"
 
     new_worker_id = cli(
         server,
@@ -629,7 +656,7 @@ def test_ticket_approval_copy_and_worker_note_shape(
     copied = cli(server, "ticket", "copy", tid)
     assert "CLI approve ticket" in copied["text"]
     assert "updated intake" in copied["text"]
-    assert "approach note" in copied["text"]
+    assert "replaced approach note" in copied["text"]
 
 
 def test_sprint_item_ticket_commands_move_atomically_and_to_backlog(

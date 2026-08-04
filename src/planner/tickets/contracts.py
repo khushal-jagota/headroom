@@ -184,6 +184,11 @@ class NoteBody(TypedDict, total=False):  # PUT /tickets/{id}/notes/{field}
     user_note: str | None  # preferred key; null clears the user note
 
 
+class AppendNoteBody(TypedDict, total=False):  # POST /tickets/{id}/notes/{field}/append
+    note: str  # legacy key; absent means an empty append
+    user_note: str  # preferred key; absent means an empty append
+
+
 class RecapBody(TypedDict, total=False):  # PUT /tickets/{id}/recap
     body: str  # default ""
 

@@ -32,7 +32,7 @@
     onRelease,
     contextRow,
     onAccept,
-    onSaveNote,
+    onReplaceNote,
     onSaveValue
   }: {
     name: string;
@@ -52,7 +52,7 @@
     onRelease?: () => void;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
-    onSaveNote?: (raw: string) => Promise<unknown>;
+    onReplaceNote?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
   } = $props();
 
@@ -133,9 +133,9 @@
     {/if}
   {/if}
 
-  {#if !reviewVariant && onSaveNote}
+  {#if !reviewVariant && onReplaceNote}
     <Disclosure title="Notes" variant="support" defaultOpen={hasNotes} data-content-section="note">
-      <InlineEdit value={slot.user_note} markdown multiline placeholder="Note..." onSave={onSaveNote} />
+      <InlineEdit value={slot.user_note} markdown multiline placeholder="Note..." onSave={onReplaceNote} />
     </Disclosure>
   {/if}
 {/snippet}

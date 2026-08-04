@@ -1997,7 +1997,7 @@ def change_scope(
         return updated
 
 
-def set_field_user_note(
+def replace_field_user_note(
     conn: sqlite3.Connection,
     ticket_id: str,
     *,
@@ -2027,7 +2027,93 @@ def set_field_user_note(
         return _load_ticket_for_write(conn, ticket_id)
 
 
-# Backwards-compatible name for the legacy /notes route and worker note command.
+def append_field_user_note(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    field: str,
+    user_note: str,
+    actor: str,
+    now: int,
+) -> Ticket:
+    """Append field user guidance without replacing the existing note.
+
+    Empty appends are no-ops. Non-empty notes use one blank line as the separator.
+    The read and write stay in one transaction so concurrent append callers do not
+    lose a note that they read before their own write.
+    """
+    with _txn(conn):
+        ticket, worker_type_definition = (
+            _load_ticket_and_worker_type_definition_for_write(conn, ticket_id)
+        )
+        if not worker_type_definition.has_field(field):
+            raise PlannerError(
+                ErrorCode.validation, "unknown ticket field", {"field": str(field)}
+            )
+        slot = fields_codec.get_slot(ticket.fields, str(field))
+        if not user_note:
+            return ticket
+        existing_note = slot.user_note
+        combined_note = (
+            user_note
+            if not existing_note
+            else f"{existing_note}\n\n{user_note}"
+        )
+        new_slot = FieldSlot(
+            value=slot.value, proposal=slot.proposal, user_note=combined_note
+        )
+        new_fields = fields_codec.with_slot(ticket.fields, str(field), new_slot)
+        conn.execute(
+            "UPDATE tickets SET fields = ?, updated_at = ? WHERE id = ?",
+            (fields_codec.fields_to_json(new_fields), now, ticket_id),
+        )
+        ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
+        return _load_ticket_for_write(conn, ticket_id)
+
+
+def replace_note(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    field: str,
+    note: str | None,
+    actor: str,
+    now: int,
+) -> Ticket:
+    return replace_field_user_note(
+        conn, ticket_id, field=field, user_note=note, actor=actor, now=now
+    )
+
+
+def append_note(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    field: str,
+    note: str,
+    actor: str,
+    now: int,
+) -> Ticket:
+    return append_field_user_note(
+        conn, ticket_id, field=field, user_note=note, actor=actor, now=now
+    )
+
+
+# Backwards-compatible names for existing data-layer callers.
+def set_field_user_note(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    field: str,
+    user_note: str | None,
+    actor: str,
+    now: int,
+) -> Ticket:
+    return replace_field_user_note(
+        conn, ticket_id, field=field, user_note=user_note, actor=actor, now=now
+    )
+
+
 def set_note(
     conn: sqlite3.Connection,
     ticket_id: str,
@@ -2037,8 +2123,8 @@ def set_note(
     actor: str,
     now: int,
 ) -> Ticket:
-    return set_field_user_note(
-        conn, ticket_id, field=field, user_note=note, actor=actor, now=now
+    return replace_note(
+        conn, ticket_id, field=field, note=note, actor=actor, now=now
     )
 
 

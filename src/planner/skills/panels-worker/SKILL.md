@@ -61,7 +61,7 @@ Everything runs through the `panels` command — `panels --help` for full usage.
 - **`panels worker propose <id> --body-file - --recap "…"`** — propose the ticket's current gated field; body arrives on stdin or via `--body-file`, and every proposal must also set a recap.
 - **`panels worker recap <id> --body-file -`** — update the running recap outside a proposal.
 - **`panels worker request-user-help [ticket-id]`** — use this only when you cannot responsibly continue without important user input. Put the free-form request in your ordinary Ticket Chat response, then call this no-payload command. The Ticket enters `needs_user`: automatic work stays paused and Chat remains available until the user explicitly releases it. Do not use this for ordinary discussion, proposals or approvals, permission prompts, Stop, or confirmed Worker errors.
-- **`panels worker note <id> <field> --body-file -`** — preserve user guidance next to a field without touching its value.
+- **`panels worker note <id> <field> --body-file -`** — replace user guidance next to a field without touching its value. Add `--append` to preserve the existing guidance and add new text.
 - **`panels ticket create --worker-type <id> --title "…"`** — create a Ticket when the
   current approved step spins off a new one. Before creating it, load and follow
   `panels-ticket-creation`; this Worker skill still owns the current Stage's authority

@@ -243,7 +243,7 @@
     );
   }
 
-  function saveNote(field: string, note: string): Promise<unknown> {
+  function replaceNote(field: string, note: string): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/notes/${field}`, {
       method: "PUT",
       body: { user_note: note }
@@ -595,7 +595,7 @@
                   ? kickoffContextRow
                   : undefined}
                 onAccept={(payload) => acceptField(name, payload)}
-                onSaveNote={(raw) => saveNote(name, raw)}
+                onReplaceNote={(raw) => replaceNote(name, raw)}
                 onSaveValue={(raw) => saveValue(name, raw)}
               />
             {/each}
