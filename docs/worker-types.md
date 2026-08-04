@@ -190,12 +190,11 @@ Ticket against the entry matching the Ticket's stored `worker_type`. Coding, `de
 `planning-midday-check`, and `planning-sprint` Tickets therefore show their own Stage
 spines without frontend type tables.
 
-During pristine Kickoff, the Kickoff section shows the Ticket's launch setup beside its
-approval flow: Worker, Model, and Reasoning when that Worker and model support it. The
-controls start with the values already copied onto the Ticket. Their model and reasoning
-choices come from the selected backend, not from a frontend list. Once a session or
-binding exists, or the Ticket moves beyond Kickoff, the controls disappear. They do not
-move into the header or become a display of the worker's current settings.
+During pristine Kickoff, one launch picker shows the Ticket's backend, model, and Reasoning
+choice beside its approval flow. The picker starts with the values already copied onto the
+Ticket. Its model and reasoning choices come from the backend catalogue, not from a frontend
+list. Once a session or binding exists, or the Ticket moves beyond Kickoff, the control
+disappears. It does not move into the header or become a display of current worker settings.
 
 _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 `web/src/lib/lifecycle.ts` derives the frontend lifecycle.
@@ -217,7 +216,7 @@ counts, or configuration labels, and it keeps the same one-column order on narro
 screens.
 
 - **Config** contains Chief of Staff and the shared Worker role skill. Chief
-  opens at `#/config/chief-of-staff` with Backend, Model, and Reasoning launch defaults
+  opens at `#/config/chief-of-staff` with one picker for its launch defaults
   and its canonical editable skill. It has no Ticket lifecycle or Stage table. Worker
   skill opens at `#/config/worker-skill`. It is shown as an Agent-like configurable
   role because it guides every Ticket worker, although it is not an independent
@@ -292,11 +291,10 @@ Leaving Reasoning at its native value means the backend chooses its own default,
 a real answer because some models take none. A missing or unavailable explicit value fails
 visibly instead of silently selecting something else.
 
-The Backend, Model, and Reasoning menus use a durable catalog for that backend and candidate
-model. A catalog stays fresh for 24 hours across a server restart. The user can choose
-**Refresh** in either shared setup surface to rediscover it immediately. A failed rediscovery
-keeps the last catalog in the database but reports the failure instead of presenting stale
-choices as a successful refresh.
+The unified launch picker uses a durable catalog for the backend and candidate model. A
+catalog stays fresh for 24 hours across a server restart. Catalogue refresh belongs on the
+Backends screen with the rest of the machine state. A failed ordinary read keeps the saved
+picker value visible and offers a retry.
 
 The stored backend, model and reasoning are the Ticket's last-chosen values. They start
 as the Worker type's defaults and are kept up to date with what its conversation

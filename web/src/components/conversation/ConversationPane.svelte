@@ -54,6 +54,7 @@
     connectionTrouble = false,
     composerPlaceholder = "Message the agent...",
     composerDisabled = false,
+    showRunPicker = true,
     conversationState = $bindable(null),
     emptyState,
     onSend,
@@ -112,6 +113,7 @@
     connectionTrouble?: boolean;
     composerPlaceholder?: string;
     composerDisabled?: boolean;
+    showRunPicker?: boolean;
     /** How far open the conversation is, or null for a page that is not making a layer of
      *  it. The page sets what it opens in; this writes back when the person moves it. */
     conversationState?: ConversationState | null;
@@ -313,6 +315,7 @@
     {errorNote}
     placeholder={composerPlaceholder}
     disabled={composerDisabled}
+    {showRunPicker}
     {onSend}
     {onStop}
     {onAnswer}

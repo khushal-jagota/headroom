@@ -50,10 +50,12 @@ def test_the_chief_panel_opens_on_the_backend_it_is_configured_on(
     # person goes to see or change what the next message would start.
     page.click(f"{MODEL_PICKER} [data-conversation-picker-trigger]")
     page.wait_for_selector("[data-conversation-backend-showing]", timeout=WAIT_MS)
-    assert page.inner_text("[data-conversation-backend-showing]") == "claude"
+    assert page.inner_text("[data-conversation-backend-showing]") == "Claude"
     # And the model beside it is the Chief's own, whether or not this machine has claude
     # installed to name it more prettily than the value itself.
-    assert "sonnet" in page.inner_text(f"{MODEL_PICKER} .c2-pick-face").lower()
+    assert "sonnet" in page.inner_text(
+        f"{MODEL_PICKER} [data-conversation-picker-trigger]"
+    ).lower()
 
 
 def test_chief_workspace_route_keeps_conversation_and_navigation_active(

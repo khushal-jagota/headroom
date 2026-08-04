@@ -1,6 +1,5 @@
 <script lang="ts">
-  import BackendRail from "../BackendRail.svelte";
-  import RunValuePicker from "../RunValuePicker.svelte";
+  import UnifiedModelPicker from "../UnifiedModelPicker.svelte";
   import type {
     ComposerRunControlIntents,
     ComposerRunControlsView
@@ -15,43 +14,18 @@
   } = $props();
 </script>
 
-<!-- Which backend is a question about the conversation rather than about this
-     message, so it is drawn beside the models it decides rather than as a third
-     pill in the footer. -->
-{#snippet backendRail()}
-  <BackendRail
-    showing={view.backend.showing}
-    locked={view.backend.locked}
-    onChoose={intents.chooseBackend}
-  />
-{/snippet}
-
-<RunValuePicker
-  label="Model"
-  choices={view.model.choices}
-  value={view.model.value}
-  searchable
+<UnifiedModelPicker
+  view={view.picker}
+  snapshots={view.pickerSource.backends}
+  models={view.pickerSource.models}
+  backendEffortOptions={view.pickerSource.backendEffortOptions}
   disabled={view.disabled}
-  title={view.model.title}
   attributes={{ "data-conversation-picker-model": "" }}
-  rail={view.backend.showing === null ? undefined : backendRail}
-  onChoose={intents.chooseModel}
+  afterChoose={() => {}}
+  onChooseBackend={(backend) => intents.chooseBackend(backend)}
+  onChooseModel={intents.chooseModel}
+  onChooseReasoningEffort={intents.chooseReasoningEffort}
 />
-
-{#if view.effort}
-  <RunValuePicker
-    label="Reasoning effort"
-    choices={view.effort.choices}
-    value={view.effort.value}
-    disabled={view.disabled}
-    title="Reasoning effort"
-    attributes={{
-      "data-conversation-picker-effort": "",
-      "data-conversation-picker-effort-bare": view.effort.bare ? "true" : undefined
-    }}
-    onChoose={intents.chooseReasoningEffort}
-  />
-{/if}
 
 {#if view.delivery}
   <div class="chat-seg" data-conversation-delivery role="group" aria-label="Delivery">

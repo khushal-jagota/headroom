@@ -44,6 +44,68 @@ def _put_stage_owner(
 DESCRIPTION_EDIT = '[data-skill-description] [contenteditable="true"]'
 BODY_EDIT = '[data-skill-body] [contenteditable="true"]'
 
+PICKER_BACKENDS = {
+    "backends": [
+        {
+            "backend_key": "claude",
+            "installed": True,
+            "executable_path": "/fixture/claude",
+            "version": "1",
+            "identity": None,
+            "available_models": [
+                {
+                    "model_id": "claude-fixture",
+                    "display_name": "Claude fixture",
+                    "reasoning_effort_options": [],
+                }
+            ],
+            "reasoning_effort_options": [],
+            "default_model_id": "claude-fixture",
+            "default_reasoning_effort": None,
+            "update_advisory": None,
+            "diagnoses": [],
+        },
+        {
+            "backend_key": "codex",
+            "installed": True,
+            "executable_path": "/fixture/codex",
+            "version": "1",
+            "identity": None,
+            "available_models": [
+                {
+                    "model_id": "codex-fixture",
+                    "display_name": "Codex fixture",
+                    "reasoning_effort_options": ["low", "high"],
+                }
+            ],
+            "reasoning_effort_options": ["low", "high"],
+            "default_model_id": "codex-fixture",
+            "default_reasoning_effort": "high",
+            "update_advisory": None,
+            "diagnoses": [],
+        },
+        {
+            "backend_key": "hermes",
+            "installed": True,
+            "executable_path": "/fixture/hermes",
+            "version": "1",
+            "identity": None,
+            "available_models": [
+                {
+                    "model_id": "hermes-fixture",
+                    "display_name": "Hermes fixture",
+                    "reasoning_effort_options": [],
+                }
+            ],
+            "reasoning_effort_options": [],
+            "default_model_id": "hermes-fixture",
+            "default_reasoning_effort": None,
+            "update_advisory": None,
+            "diagnoses": [],
+        },
+    ]
+}
+
 
 def _replace_inline_edit_text(page: Page, selector: str, text: str) -> None:
     page.locator(selector).click()
@@ -326,28 +388,57 @@ def test_worker_selection_persists_from_kickoff_card_context_row(
         "Choose the worker",
     )["id"]
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket}"]'
-    page = open_page(context_factory(), server, f"#/ticket/{ticket}", ready)
+    context = context_factory()
+    context.route(
+        "**/api/conversation/backends**",
+        lambda route: route.fulfill(json=PICKER_BACKENDS),
+    )
+    page = open_page(context, server, f"#/ticket/{ticket}", ready)
 
-    # The worker pills live inside the Kickoff approval card's context row.
+    # The unified picker lives inside the Kickoff approval card's context row.
     row = '[data-approval-block][data-field="kickoff"] [data-approval-context-row]'
-    selector = f"{row} [data-employee-configuration-worker] select"
-    page.wait_for_selector(selector, timeout=WAIT_MS)
+    picker = page.locator(f"{row} [data-employee-configuration-picker]")
+    trigger = picker.locator("[data-conversation-picker-trigger]")
+    trigger.wait_for(state="visible", timeout=WAIT_MS)
     current = page.get_attribute(
         f"{row} [data-employee-configuration-setup]", "data-employee-configuration-backend"
     )
     target = "codex" if current != "codex" else "claude"
+    expected = (
+        {
+            "employee_backend": "codex",
+            "employee_launch_model": "codex-fixture",
+            "employee_launch_reasoning_effort": "high",
+        }
+        if target == "codex"
+        else {
+            "employee_backend": "claude",
+            "employee_launch_model": "claude-fixture",
+            "employee_launch_reasoning_effort": None,
+        }
+    )
+
+    trigger.click()
     with page.expect_response(
         lambda response: response.request.method == "PUT"
         and response.url.endswith(f"/api/tickets/{ticket}/employee-configuration")
         and response.status < 300
-    ):
-        page.select_option(selector, target)
+    ) as saved_response:
+        picker.locator(f'[data-conversation-backend="{target}"]').click()
+    assert saved_response.value.request.post_data_json == expected
     page.wait_for_selector(
         f"{row} [data-employee-configuration-setup]"
         f'[data-employee-configuration-backend="{target}"]',
         timeout=WAIT_MS,
     )
-    assert api.get(server, f"/api/tickets/{ticket}")["employee_backend"] == target
+    saved = api.get(server, f"/api/tickets/{ticket}")
+    assert {
+        "employee_backend": saved["employee_backend"],
+        "employee_launch_model": saved["employee_launch_model"],
+        "employee_launch_reasoning_effort": saved[
+            "employee_launch_reasoning_effort"
+        ],
+    } == expected
 
 
 def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_defaults_hold(

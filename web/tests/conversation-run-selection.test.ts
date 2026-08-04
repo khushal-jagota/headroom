@@ -13,6 +13,10 @@ import type {
   BackendSnapshot,
   ConversationBackendKey
 } from "../src/lib/conversation/wire";
+import {
+  backendSelectionDefaults,
+  resolveModelPicker
+} from "../src/lib/conversation/modelPicker";
 
 function snapshot(
   backendKey: ConversationBackendKey,
@@ -89,21 +93,18 @@ describe("composer run selection", () => {
     const view = resolveComposerRunControls(supplied);
 
     expect(view.normalizedSelection).toEqual(selection());
-    expect(view.backend).toEqual({ showing: "claude", locked: false });
+    expect(view.picker.backendKey).toBe("claude");
     expect(view.carriedRunValues).toEqual({
       model: "sonnet",
       reasoningEffort: null,
       backendKey: null
     });
-    expect(view.model).toEqual({
-      value: "sonnet",
-      choices: [
-        { value: "opus", name: "Opus", detail: "opus → claude-opus-5" },
-        { value: "sonnet", name: "Sonnet", detail: "sonnet" }
-      ],
-      title: "Sonnet"
-    });
-    expect(view.effort?.value).toBe("high");
+    expect(view.picker.modelValue).toBe("sonnet");
+    expect(view.picker.models).toEqual([
+      { value: "opus", name: "Opus" },
+      { value: "sonnet", name: "Sonnet" }
+    ]);
+    expect(view.picker.reasoningEffort).toBe("high");
   });
 
   it("switches only an unlocked backend and clears values belonging to the old catalog", () => {
@@ -154,13 +155,13 @@ describe("composer run selection", () => {
       })
     );
 
-    expect(view.backend).toEqual({ showing: "codex", locked: false });
-    expect(view.model.value).toBe("gpt-5.5-codex");
-    expect(view.model.choices.map((choice) => choice.value)).toEqual([
+    expect(view.picker.backendKey).toBe("codex");
+    expect(view.picker.modelValue).toBe("gpt-5.5-codex");
+    expect(view.picker.models.map((choice) => choice.value)).toEqual([
       "gpt-5.5-codex",
       "gpt-5.5-codex-mini"
     ]);
-    expect(view.effort?.value).toBe("medium");
+    expect(view.picker.reasoningEffort).toBe("medium");
     expect(view.carriedRunValues).toEqual({
       model: "gpt-5.5-codex",
       reasoningEffort: null,
@@ -182,7 +183,9 @@ describe("composer run selection", () => {
       })
     );
 
-    expect(view.backend).toEqual({ showing: "claude", locked: true });
+    expect(view.picker.backendKey).toBe("claude");
+    expect(view.picker.backends.find((backend) => backend.key === "codex")?.unavailableReason)
+      .toBe("This conversation runs on Claude.");
     expect(view.carriedRunValues).toEqual({
       model: "opus",
       reasoningEffort: "low",
@@ -206,13 +209,13 @@ describe("composer run selection", () => {
       ...selected,
       pickedModel: null
     });
-    expect(resolved.model.value).toBe("sonnet");
+    expect(resolved.picker.modelValue).toBe("sonnet");
     expect(unresolved.normalizedSelection.pickedModel).toBe("missing");
-    expect(unresolved.model.value).toBe("missing");
+    expect(unresolved.picker.modelValue).toBe("missing");
     expect(supplied.selection).toEqual(selected);
   });
 
-  it("prepends a current model missing from the catalog so the shown value remains pickable", () => {
+  it("keeps a stale current model on the face without synthesizing a selectable row", () => {
     const view = resolveComposerRunControls(
       input({
         conversationExists: true,
@@ -220,12 +223,11 @@ describe("composer run selection", () => {
       })
     );
 
-    expect(view.model.value).toBe("legacy");
-    expect(view.model.choices[0]).toEqual({
-      value: "legacy",
-      name: "legacy",
-      detail: null
-    });
+    expect(view.picker.modelValue).toBe("legacy");
+    expect(view.picker.models.map((choice) => choice.value)).toEqual(["opus", "sonnet"]);
+    expect(view.picker.face).toBe("legacy high");
+    expect(view.picker.models.some((choice) => choice.value === "legacy")).toBe(false);
+    expect(view.picker.staleModelReason).toBe("Claude no longer offers legacy.");
   });
 
   it("uses the normalized shown model for effort options in the same resolved view", () => {
@@ -250,15 +252,9 @@ describe("composer run selection", () => {
       pickedModel: null,
       pickedReasoningEffort: null
     });
-    expect(view.model.value).toBe("sonnet");
-    expect(view.effort).toEqual({
-      value: "high",
-      choices: [
-        { value: "high", name: "high", detail: null },
-        { value: "low", name: "low", detail: null }
-      ],
-      bare: false
-    });
+    expect(view.picker.modelValue).toBe("sonnet");
+    expect(view.picker.reasoningEffort).toBe("high");
+    expect(view.picker.efforts).toEqual([{ value: "low", name: "low" }]);
   });
 
   it("treats a model's explicit empty effort list as authoritative", () => {
@@ -274,7 +270,8 @@ describe("composer run selection", () => {
       })
     );
 
-    expect(view.effort).toBeNull();
+    expect(view.picker.efforts).toEqual([]);
+    expect(view.picker.reasoningUnavailableReason).toBe("Haiku takes no reasoning effort.");
   });
 
   it("keeps an absent current effort visible and renders an unvalued offered effort bare", () => {
@@ -293,26 +290,13 @@ describe("composer run selection", () => {
       })
     );
 
-    expect(currentEffort.effort).toEqual({
-      value: "legacy",
-      choices: [
-        { value: "legacy", name: "legacy", detail: null },
-        { value: "low", name: "low", detail: null },
-        { value: "high", name: "high", detail: null }
-      ],
-      bare: false
-    });
-    expect(bareEffort.effort).toEqual({
-      value: "",
-      choices: [
-        { value: "low", name: "low", detail: null },
-        { value: "high", name: "high", detail: null }
-      ],
-      bare: true
-    });
+    expect(currentEffort.picker.reasoningEffort).toBe("legacy");
+    expect(currentEffort.picker.efforts.map((choice) => choice.value)).toEqual(["low", "high"]);
+    expect(bareEffort.picker.reasoningEffort).toBe("");
+    expect(bareEffort.picker.efforts.map((choice) => choice.value)).toEqual(["low", "high"]);
   });
 
-  it("preserves model names, second lines, and the shown alias title", () => {
+  it("keeps only model names in the unified list", () => {
     const view = resolveComposerRunControls(
       input({
         current: { model: "opus", reasoningEffort: null },
@@ -325,15 +309,12 @@ describe("composer run selection", () => {
       })
     );
 
-    expect(view.model).toEqual({
-      value: "opus",
-      choices: [
-        { value: "opus", name: "Opus 5", detail: "opus → claude-opus-5" },
-        { value: "sonnet", name: "Sonnet 5", detail: "sonnet" },
-        { value: "haiku", name: "haiku", detail: null }
-      ],
-      title: "Opus 5 — opus → claude-opus-5"
-    });
+    expect(view.picker.modelValue).toBe("opus");
+    expect(view.picker.models).toEqual([
+      { value: "opus", name: "Opus 5" },
+      { value: "sonnet", name: "Sonnet 5" },
+      { value: "haiku", name: "haiku" }
+    ]);
   });
 
   it("projects actual-backend delivery and effective mode only while running", () => {
@@ -439,8 +420,8 @@ describe("composer run selection", () => {
 
     expect(applyComposerRunSelectionIntent(
       supplied,
-      { intent: "choose_model", model: "two" }
-    )).toEqual({ ...selected, pickedModel: "two" });
+      { intent: "choose_model", model: "two", reasoningEffort: "high" }
+    )).toEqual({ ...selected, pickedModel: "two", pickedReasoningEffort: "high" });
     expect(applyComposerRunSelectionIntent(
       supplied,
       { intent: "choose_reasoning_effort", reasoningEffort: "high" }
@@ -450,5 +431,67 @@ describe("composer run selection", () => {
       { intent: "choose_delivery_mode", deliveryMode: "steer" }
     )).toEqual({ ...selected, deliveryMode: "steer" });
     expect(supplied.selection).toEqual(selected);
+  });
+
+  it("dims an installed but unauthenticated backend and keeps it focusable with a reason", () => {
+    const codex = snapshot("codex", {
+      identity: {
+        status: "unauthenticated",
+        account_label: null,
+        detail: null,
+        login_command: "codex login"
+      }
+    });
+    const view = resolveModelPicker({
+      backendKey: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      backends: [snapshot("claude"), codex],
+      models: [model("opus", "Opus")],
+      backendEffortOptions: ["high"]
+    });
+
+    expect(view.backends.find((backend) => backend.key === "codex")?.unavailableReason)
+      .toBe("Codex is not signed in.");
+  });
+
+  it("dims an installed backend that reports no runnable model", () => {
+    const hermes = snapshot("hermes", {
+      diagnoses: ["Hermes has no configured model."],
+      available_models: [],
+      default_model_id: null
+    });
+    const view = resolveModelPicker({
+      backendKey: "claude",
+      model: "opus",
+      reasoningEffort: "high",
+      backends: [snapshot("claude"), hermes],
+      models: [model("opus", "Opus")],
+      backendEffortOptions: ["high"]
+    });
+
+    expect(view.backends.find((backend) => backend.key === "hermes")?.unavailableReason)
+      .toBe("Hermes has no configured model.");
+    expect(backendSelectionDefaults([hermes], "hermes")).toEqual({
+      model: null,
+      reasoningEffort: null
+    });
+  });
+
+  it("selects a backend's valid defaults and clears an invalid default effort", () => {
+    const codex = snapshot("codex", {
+      available_models: [
+        model("small", "Small", { reasoning_effort_options: [] }),
+        model("large", "Large", { reasoning_effort_options: ["low", "high"] })
+      ],
+      reasoning_effort_options: ["low", "high"],
+      default_model_id: "small",
+      default_reasoning_effort: "high"
+    });
+
+    expect(backendSelectionDefaults([codex], "codex")).toEqual({
+      model: "small",
+      reasoningEffort: null
+    });
   });
 });

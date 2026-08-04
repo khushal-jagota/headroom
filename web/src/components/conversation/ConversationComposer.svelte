@@ -80,6 +80,7 @@
     errorNote = null,
     placeholder = "Message the agent...",
     disabled = false,
+    showRunPicker = true,
     onSend,
     onStop,
     onAnswer,
@@ -128,6 +129,8 @@
     errorNote?: string | null;
     placeholder?: string;
     disabled?: boolean;
+    /** False when an empty-state form owns the same start values on this screen. */
+    showRunPicker?: boolean;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -323,8 +326,8 @@
   const runControlIntents: ComposerRunControlIntents = {
     chooseBackend: (backendKey) =>
       applyRunSelectionIntent({ intent: "choose_backend", backendKey }),
-    chooseModel: (model) =>
-      applyRunSelectionIntent({ intent: "choose_model", model }),
+    chooseModel: (model, reasoningEffort) =>
+      applyRunSelectionIntent({ intent: "choose_model", model, reasoningEffort }),
     chooseReasoningEffort: (reasoningEffort) => applyRunSelectionIntent({
       intent: "choose_reasoning_effort",
       reasoningEffort
@@ -741,7 +744,9 @@
             onchange={() => void intakeFiles(imageInput?.files)}
           />
 
-          <ComposerRunControls view={runControlsView} intents={runControlIntents} />
+          {#if showRunPicker}
+            <ComposerRunControls view={runControlsView} intents={runControlIntents} />
+          {/if}
         {/if}
       </div>
       {/if}

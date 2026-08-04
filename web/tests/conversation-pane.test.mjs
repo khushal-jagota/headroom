@@ -31,7 +31,7 @@ const componentDirectory = new URL("../src/components/conversation/", import.met
 const expectedInventory = [
   "AgentCommandMenu.svelte",
   "BackendCard.svelte",
-  "BackendRail.svelte",
+  "BackendMark.svelte",
   "ConversationComposer.svelte",
   "ConversationPane.svelte",
   "ConversationRestBar.svelte",
@@ -42,9 +42,9 @@ const expectedInventory = [
   "PermissionAskActions.svelte",
   "PermissionAskCard.svelte",
   "PlanStrip.svelte",
-  "RunValuePicker.svelte",
   "ToolCallRow.svelte",
   "TurnAnchor.svelte",
+  "UnifiedModelPicker.svelte",
   "UserInputQuestionPanel.svelte",
   "WorkGroup.svelte"
 ];
@@ -224,7 +224,6 @@ try {
       'export { default as Composer } from "../src/components/conversation/ConversationComposer.svelte";',
       'export { default as AskCard } from "../src/components/conversation/PermissionAskCard.svelte";',
       'export { default as BackendCard } from "../src/components/conversation/BackendCard.svelte";',
-      'export { default as BackendRail } from "../src/components/conversation/BackendRail.svelte";',
       'export { default as AskActions } from "../src/components/conversation/PermissionAskActions.svelte";',
       'export { default as TurnAnchor } from "../src/components/conversation/TurnAnchor.svelte";',
       'export { default as WorkGroup } from "../src/components/conversation/WorkGroup.svelte";',
@@ -249,7 +248,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, BackendRail, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, BackendCard, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -895,7 +894,7 @@ try {
     "a question offers no approving language, only the escape hatch"
   );
 
-  // The effort picker exists only where the backend has such a setting.
+  // Backend, model, and reasoning now share one face and one panel in every mount.
   const hermesPicker = drawn(Composer, {
     backendKey: "hermes",
     running: false,
@@ -903,12 +902,8 @@ try {
     models: [{ model_id: "m1", display_name: "One" }],
     onSend: async () => true
   });
-  assert.doesNotMatch(
-    hermesPicker,
-    /data-conversation-picker-effort/,
-    "no effort options at all means no effort control, zero pixels"
-  );
-  assert.match(hermesPicker, /data-conversation-picker-model/, "hermes still picks a model");
+  assert.equal((hermesPicker.match(/data-conversation-model-picker/g) ?? []).length, 1);
+  assert.match(hermesPicker, /aria-label="Model: Hermes"/);
 
   // A model that takes no effort gets no effort control either, even where the backend
   // has a list of its own.
@@ -923,24 +918,8 @@ try {
     current: { model: "haiku", reasoningEffort: null },
     onSend: async () => true
   });
-  assert.doesNotMatch(haikuPicker, /data-conversation-picker-effort/);
-  assert.match(haikuPicker, /data-conversation-picker-model/);
-
-  // Options exist but nothing to show: the control keeps its capability and gives up
-  // its width rather than sitting there empty and wide.
-  const bareEffort = drawn(Composer, {
-    backendKey: "claude",
-    running: false,
-    effortOptions: ["low", "high"],
-    models: [{ model_id: "opus", display_name: "Opus" }],
-    current: { model: "opus", reasoningEffort: null },
-    onSend: async () => true
-  });
-  assert.match(bareEffort, /data-conversation-picker-effort-bare="true"/);
-  assert.match(bareEffort, /class="[^"]*is-bare/);
-  assert.match(bareEffort, /aria-label="Reasoning effort"/, "and it still says what it is");
-  // What it offers is behind opening it now, so what it offers is asserted in a browser.
-  assert.doesNotMatch(bareEffort, /data-conversation-picker-panel/);
+  assert.match(haikuPicker, /aria-label="Model: Claude Haiku"/);
+  assert.doesNotMatch(haikuPicker, /aria-label="[^"]*Haiku (?:low|high)/);
 
   // The empty state obeys the same rule: never a wide empty select.
   function newForm(snapshot) {
@@ -955,8 +934,8 @@ try {
     default_reasoning_effort: null,
     diagnoses: []
   });
-  assert.match(claudeFresh, /data-conversation-new-effort-bare="true"/);
-  assert.match(claudeFresh, /is-bare/);
+  assert.match(claudeFresh, /data-conversation-new-model-picker/);
+  assert.match(claudeFresh, /aria-label="Model: Claude Opus"/);
   const hermesFresh = newForm({
     backend_key: "hermes",
     installed: true,
@@ -966,11 +945,7 @@ try {
     default_reasoning_effort: null,
     diagnoses: []
   });
-  assert.doesNotMatch(
-    hermesFresh,
-    /data-conversation-new-effort/,
-    "a backend with no efforts gets no effort control in the empty state either"
-  );
+  assert.match(hermesFresh, /aria-label="Model: Hermes GPT-5.5"/);
 
   // Once there is a value, the value is the label again.
   const valuedEffort = drawn(Composer, {
@@ -981,10 +956,7 @@ try {
     current: { model: "opus", reasoningEffort: "high" },
     onSend: async () => true
   });
-  assert.doesNotMatch(valuedEffort, /data-conversation-picker-effort-bare/);
-  assert.doesNotMatch(valuedEffort, /is-bare/);
-  assert.match(valuedEffort, /aria-label="Reasoning effort: high"/);
-  assert.match(valuedEffort, />high</, "and the value is on the face of the pill");
+  assert.match(valuedEffort, /aria-label="Model: Claude Opus high"/);
 
   // FINDING 4: the pickers are in the footer, in place. There is nowhere to navigate to —
   // what each of them offers opens above the box it belongs to, when it is asked for.
@@ -997,7 +969,6 @@ try {
     onSend: async () => true
   });
   assert.match(claudePicker, /data-conversation-picker-model/);
-  assert.match(claudePicker, /data-conversation-picker-effort/);
   assert.doesNotMatch(claudePicker, /data-conversation-picker-abandon/);
   assert.doesNotMatch(
     claudePicker,
@@ -1006,15 +977,13 @@ try {
   );
   // They show what the conversation runs on now, on the face of the pill and in what the
   // pill is announced as.
-  assert.match(claudePicker, /aria-label="Model: Opus 5"/);
-  assert.match(claudePicker, />Opus 5</);
-  assert.match(claudePicker, /aria-label="Reasoning effort: high"/);
+  assert.match(claudePicker, /aria-label="Model: Claude Opus 5 high"/);
+  assert.match(claudePicker, />Opus 5 high</);
   // A picked value applies to the next message, and saying so is noise nobody asked for.
   assert.doesNotMatch(claudePicker, /data-conversation-picker-armed/);
   assert.doesNotMatch(claudePicker, /next message/);
-  // FINDING 3: what an alias reaches is on the pill, which is only as wide as the name.
-  // On the row it is a line rather than a tooltip, which the browser pass reads.
-  assert.match(claudePicker, /title="Opus 5 — opus → claude-opus-5"/);
+  // The approved list is model names only. Alias detail is not on the face or a row.
+  assert.doesNotMatch(claudePicker, /opus → claude-opus-5/);
 
   // Before there is a conversation the pickers open on what starting one here would run —
   // the owner's own answer, which the caller resolved — rather than on the backend's own.
@@ -1032,8 +1001,7 @@ try {
     startsOnReasoningEffort: "high",
     onSend: async () => true
   });
-  assert.match(beforeThereIsOne, /aria-label="Model: Sonnet 5"/);
-  assert.match(beforeThereIsOne, /aria-label="Reasoning effort: high"/);
+  assert.match(beforeThereIsOne, /aria-label="Model: Claude Sonnet 5 high"/);
 
   // And once there is one, the conversation's own values are still what it shows: what a
   // start would have used has nothing to say about a conversation that is already running.
@@ -1051,8 +1019,7 @@ try {
     startsOnReasoningEffort: "high",
     onSend: async () => true
   });
-  assert.match(onceThereIsOne, /aria-label="Model: Opus 5"/);
-  assert.match(onceThereIsOne, /aria-label="Reasoning effort: low"/);
+  assert.match(onceThereIsOne, /aria-label="Model: Claude Opus 5 low"/);
 
   // Nobody has answered yet — the read has not come back, or there is no owner to ask.
   // Then the pickers show nothing, rather than a value picked out of the air.
@@ -1065,23 +1032,7 @@ try {
     current: { model: null, reasoningEffort: null },
     onSend: async () => true
   });
-  assert.doesNotMatch(beforeAnybodyAnswers, /aria-label="Model: /);
-  assert.match(beforeAnybodyAnswers, /aria-label="Model"/);
-
-  // The rail has two states and they are different things. Before a conversation exists it
-  // is the choice, over the contract's own closed set rather than whatever this machine
-  // reported. Once one exists it is a label that says why there is nothing to press.
-  const railChoosing = drawn(BackendRail, { showing: "claude", onChoose() {} });
-  assert.deepEqual(
-    [...railChoosing.matchAll(/data-conversation-backend="([^"]+)"/g)].map((found) => found[1]),
-    ["hermes", "codex", "claude"]
-  );
-  assert.match(railChoosing, /data-conversation-backend-showing="true"/);
-  assert.doesNotMatch(railChoosing, /cannot move/, "nothing is locked until there is one");
-  const railLocked = drawn(BackendRail, { showing: "claude", locked: true, onChoose() {} });
-  assert.doesNotMatch(railLocked, /data-conversation-backend="/, "the others are not offered");
-  assert.match(railLocked, /data-conversation-backend-locked="claude"/);
-  assert.match(railLocked, /A conversation cannot move to another backend\./);
+  assert.match(beforeAnybodyAnswers, /aria-label="Model: Claude"/);
 
   // A backend card says what is known and names the terminal command when signing in is due.
   const backendCard = drawn(BackendCard, {
@@ -1563,12 +1514,12 @@ with sync_playwright() as playwright:
     # FINDING 11 — the pickers show the concrete value already in force, unlabelled, and
     # the word "default" appears nowhere in them.
     model = page.locator("[data-conversation-picker-model]")
-    effort = page.locator("[data-conversation-picker-effort]")
+    effort = model
     model_pill = model.locator("[data-conversation-picker-trigger]")
     the_box = page.locator("[data-conversation-input]")
 
     def face(picker):
-        showing = picker.locator(".c2-pick-face")
+        showing = picker.locator(".model-picker-face")
         return showing.inner_text() if showing.count() == 1 else ""
 
     def open_the_panel(picker):
@@ -1579,10 +1530,12 @@ with sync_playwright() as playwright:
         page.wait_for_selector("[data-conversation-picker-panel]", state="detached")
 
     def highlighted():
-        return model.locator("[data-conversation-picker-active] .c2-pick-name").inner_text()
+        return model.locator("[data-conversation-picker-active] .model-picker-choice-name").inner_text()
 
     def pick(picker, value):
         open_the_panel(picker)
+        if picker.locator('[data-conversation-picker-choice="' + value + '"]').count() == 0:
+            picker.locator("[data-conversation-picker-reasoning]").click()
         picker.locator('[data-conversation-picker-choice="' + value + '"]').click()
         the_panel_is_gone()
 
@@ -1594,7 +1547,6 @@ with sync_playwright() as playwright:
                 "data-conversation-image",
                 "data-conversation-image-input",
                 "data-conversation-picker-model",
-                "data-conversation-picker-effort",
                 "data-conversation-delivery",
                 "data-conversation-send",
                 "data-conversation-stop"
@@ -1610,20 +1562,11 @@ with sync_playwright() as playwright:
         "data-conversation-image",
         "data-conversation-image-input",
         "data-conversation-picker-model",
-        "data-conversation-picker-effort",
         "data-conversation-send",
     ], footer_child_roles()
 
     assert face(model) == "Opus", face(model)
-    # Claude names no default effort, so the control is there but bare — never empty-wide.
-    assert face(effort) == "", face(effort)
-    assert effort.get_attribute("data-conversation-picker-effort-bare") == "true"
-    bare_width = effort.bounding_box()["width"]
     model_width = model.bounding_box()["width"]
-    assert bare_width < model_width, (bare_width, model_width)
-    # The owner's rule, in pixels: nothing empty and wide sits in the footer. What is
-    # left is the affordance that says there is something here to pick, and nothing more.
-    assert bare_width <= 56, bare_width
     body = page.inner_text("body").lower()
     assert "default" not in body, "the word default must never appear in a picker"
     # A picked value applying to the next message is what a picked value is. The footer
@@ -1648,39 +1591,27 @@ with sync_playwright() as playwright:
     # names none is created on whatever the record already says this owner runs.
     assert first["picked"]["backendKey"] is None, first
 
-    # What a panel offers: the catalog, each model under its own name, with the quieter
-    # line the catalog gives — what an alias reaches where it says so, and the value
-    # itself where it does not.
+    # The right side is model names only.
     the_box.fill("half a thought")
     open_the_panel(model)
-    names = model.locator("[data-conversation-picker-choice] .c2-pick-name").all_inner_texts()
+    names = model.locator("[data-conversation-picker-choice] .model-picker-choice-name").all_inner_texts()
     assert names == ["Opus", "Sonnet", "Haiku"], names
-    details = model.locator("[data-conversation-picker-choice] .c2-pick-detail").all_inner_texts()
-    assert details == ["opus → claude-opus-5", "sonnet", "haiku"], details
+    assert model.locator(".c2-pick-detail").count() == 0
     # The value in force wears the mark, and the highlight starts on it.
     assert model.locator("[data-conversation-picker-chosen]").count() == 1
-    assert model.locator("[data-conversation-picker-chosen] .c2-pick-name").inner_text() == "Opus"
+    assert model.locator("[data-conversation-picker-chosen] .model-picker-choice-name").inner_text() == "Opus"
     assert highlighted() == "Opus", highlighted()
 
-    # The keyboard lands in the filter, typing narrows the list, and what was already
-    # written in the box is still there when it does.
-    page.wait_for_function(
-        "document.activeElement.matches('[data-conversation-picker-search]')"
-    )
-    page.keyboard.type("son")
-    page.wait_for_function(
-        "document.querySelectorAll('[data-conversation-picker-choice]').length === 1"
-    )
-    assert model.locator("[data-conversation-picker-choice]").get_attribute(
-        "data-conversation-picker-choice"
-    ) == "sonnet"
+    # The keyboard lands in the list. One arrow moves to Sonnet.
+    page.wait_for_function("document.activeElement.matches('.model-picker-list')")
+    page.keyboard.press("ArrowDown")
     assert the_box.input_value() == "half a thought"
 
     # Enter takes the highlighted row, and the keyboard goes back to the box — which is
     # where the person was, and what they do next.
     page.keyboard.press("Enter")
     the_panel_is_gone()
-    assert face(model) == "Sonnet", face(model)
+    assert face(model) == "Sonnet low", face(model)
     assert page.evaluate(
         "document.activeElement === document.querySelector('[data-conversation-input]')"
     )
@@ -1695,7 +1626,7 @@ with sync_playwright() as playwright:
     assert highlighted() == "Haiku", highlighted()
     page.keyboard.press("Escape")
     the_panel_is_gone()
-    assert face(model) == "Sonnet", face(model)
+    assert face(model) == "Sonnet low", face(model)
     assert page.evaluate(
         "document.activeElement === document.querySelector("
         "'[data-conversation-picker-model] [data-conversation-picker-trigger]')"
@@ -1705,18 +1636,13 @@ with sync_playwright() as playwright:
     open_the_panel(model)
     the_box.click()
     the_panel_is_gone()
-    assert face(model) == "Sonnet", face(model)
+    assert face(model) == "Sonnet low", face(model)
 
-    # A pick arms commit-on-send exactly as before, and rides the next message —
-    # including a pick made from the bare effort control, which then shows its value.
+    # A reasoning pick uses the rail and rides the next message.
     pick(effort, "low")
     assert page.evaluate("window.__sends().length") == 1
     assert page.locator("[data-conversation-picker-armed]").count() == 0
-    assert effort.get_attribute("data-conversation-picker-effort-bare") is None, (
-        "once it has a value the value is the label again"
-    )
-    assert face(effort) == "low", face(effort)
-    assert effort.bounding_box()["width"] >= bare_width
+    assert face(model) == "Sonnet low", face(model)
     the_box.fill("again")
     page.locator("[data-conversation-send]").click()
     page.wait_for_function("window.__sends().length === 2")
@@ -1725,26 +1651,16 @@ with sync_playwright() as playwright:
     assert second["picked"]["reasoningEffort"] == "low", second
     page.wait_for_function("document.querySelector('[data-conversation-input]').value === ''")
     assert face(model) == "Opus", "and it falls back to the value in force"
-    assert effort.get_attribute("data-conversation-picker-effort-bare") == "true", (
-        "the effort has nothing to show again, so it is bare again"
-    )
 
     # A model that takes no effort takes the effort control with it — and the pick that
     # the new catalog cannot honor goes too, rather than riding out as a value nothing
     # would accept.
     pick(effort, "low")
-    assert page.locator("[data-conversation-picker-effort]").count() == 1
     pick(model, "haiku")
-    page.wait_for_function(
-        "document.querySelectorAll('[data-conversation-picker-effort]').length === 0"
-    )
+    open_the_panel(model)
+    assert model.locator("[data-conversation-picker-reasoning]").get_attribute("aria-disabled") == "true"
+    page.keyboard.press("Escape")
     pick(model, "opus")
-    page.wait_for_function(
-        "document.querySelectorAll('[data-conversation-picker-effort]').length === 1"
-    )
-    assert page.locator("[data-conversation-picker-effort]").get_attribute(
-        "data-conversation-picker-effort-bare"
-    ) == "true", "the dropped pick did not come back"
 
     # --- which backend a conversation would be created on -------------------------------------
 
@@ -1754,33 +1670,23 @@ with sync_playwright() as playwright:
     rail = page.locator("[data-conversation-backend-rail]")
     assert rail.count() == 1
     offered = page.locator("[data-conversation-backend]").all_inner_texts()
-    assert offered == ["hermes", "codex", "claude"], offered
-    assert page.locator("[data-conversation-backend-showing]").inner_text() == "claude"
+    assert offered == ["Claude", "Codex", "Hermes"], offered
+    assert page.locator("[data-conversation-backend-showing]").inner_text() == "Claude"
 
-    # Taking one switches the catalog under it — and the model picked out of the old one
-    # goes with it, because a model id belongs to the backend that named it. What was
-    # typed into the filter goes too: it was this list's words, not the next one's.
-    page.wait_for_function(
-        "document.activeElement.matches('[data-conversation-picker-search]')"
-    )
-    page.keyboard.type("opus")
-    page.wait_for_function(
-        "document.querySelectorAll('[data-conversation-picker-choice]').length === 1"
-    )
-    page.locator('[data-conversation-backend="codex"]').click()
+    # Taking one switches the catalog and keeps the panel open.
+    page.locator('[data-conversation-backend="codex"]').click(force=True)
     page.wait_for_function(
         "document.querySelectorAll('[data-conversation-picker-choice]').length === 2"
     )
-    switched = model.locator("[data-conversation-picker-choice] .c2-pick-name").all_inner_texts()
+    switched = model.locator("[data-conversation-picker-choice] .model-picker-choice-name").all_inner_texts()
     assert switched == ["GPT-5.5 Codex", "GPT-5.5 Codex mini"], switched
-    assert page.locator("[data-conversation-backend-showing]").inner_text() == "codex"
-    assert page.locator("[data-conversation-picker-search]").input_value() == ""
+    assert page.locator("[data-conversation-backend-showing]").inner_text() == "Codex"
     # The panel stays open, because switching is how a person reaches the list they came
     # to read.
     assert page.locator("[data-conversation-picker-panel]").count() == 1
     page.keyboard.press("Escape")
     the_panel_is_gone()
-    assert face(model) == "GPT-5.5 Codex", face(model)
+    assert face(model) == "GPT-5.5 Codex high", face(model)
 
     # And that is what the next message would create the conversation on. Nobody picked a
     # model out of this catalog, so the name that goes with it is the one the face is
@@ -1793,15 +1699,14 @@ with sync_playwright() as playwright:
     assert creating["picked"]["backendKey"] == "codex", creating
     assert creating["picked"]["model"] == "gpt-5.5-codex", creating
 
-    # Once there is a conversation the backend is fixed. The rail says which and why, and
-    # offers nothing — including the choice that was made before there was one.
+    # Once there is a conversation, all three remain visible. The other two explain a press.
     page.evaluate("window.__setExists(true)")
     open_the_panel(model)
-    assert page.locator("[data-conversation-backend]").count() == 0
-    assert page.locator("[data-conversation-backend-locked]").inner_text() == "claude"
-    assert "cannot move to another backend" in rail.inner_text(), rail.inner_text()
+    assert page.locator("[data-conversation-backend]").count() == 3
+    page.locator('[data-conversation-backend="codex"]').click(force=True)
+    assert page.locator("[data-conversation-picker-feedback]").inner_text() == "This conversation runs on Claude."
     # Its own models are still its own to change: only the backend is fixed.
-    fixed = model.locator("[data-conversation-picker-choice] .c2-pick-name").all_inner_texts()
+    fixed = model.locator("[data-conversation-picker-choice] .model-picker-choice-name").all_inner_texts()
     assert fixed == ["Opus", "Sonnet", "Haiku"], fixed
     page.keyboard.press("Escape")
     the_panel_is_gone()
@@ -1932,14 +1837,12 @@ with sync_playwright() as playwright:
     page.wait_for_function(
         "document.querySelector('[data-conversation-input]').value === ''"
     )
-    assert face(model) == "GPT-5.5 Codex", face(model)
-    assert face(effort) == "high", face(effort)
+    assert face(model) == "GPT-5.5 Codex high", face(model)
     page.evaluate("window.__finishSend(false)")
     page.wait_for_function(
         "document.querySelector('[data-conversation-input]').value === 'please return'"
     )
-    assert face(model) == "GPT-5.5 Codex mini", face(model)
-    assert face(effort) == "low", face(effort)
+    assert face(model) == "GPT-5.5 Codex mini low", face(model)
     assert page.locator("[data-chat-image-preview]").get_attribute(
         "data-chat-image-name"
     ) == "return.png"
@@ -2316,7 +2219,6 @@ with sync_playwright() as playwright:
         "data-conversation-image",
         "data-conversation-image-input",
         "data-conversation-picker-model",
-        "data-conversation-picker-effort",
         "data-conversation-delivery",
         "data-conversation-stop",
     ], footer_child_roles()
@@ -2333,8 +2235,7 @@ with sync_playwright() as playwright:
     assert steered["mode"] == "steer", steered
     assert steered["picked"]["model"] == "sonnet", steered
     assert steered["picked"]["reasoningEffort"] == "low", steered
-    assert face(model) == "Sonnet", face(model)
-    assert face(effort) == "low", face(effort)
+    assert face(model) == "Sonnet low", face(model)
 
     page.evaluate("window.__setComposerRunState('hermes', false)")
     page.wait_for_selector("[data-conversation-delivery]", state="detached")
@@ -2348,7 +2249,6 @@ with sync_playwright() as playwright:
     assert ordinary["picked"]["model"] == "sonnet", ordinary
     assert ordinary["picked"]["reasoningEffort"] == "low", ordinary
     assert face(model) == "Opus", face(model)
-    assert face(effort) == "", face(effort)
 
     # If navigation destroys the composer while a file is still being read, the batch
     # releases the preview it creates on completion instead of assigning it to the dead
