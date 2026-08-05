@@ -2609,6 +2609,8 @@ select {
 /* The scope pair reads as two quiet pills between the leash words — the same
  * boxed vocabulary as the ticket header's leash (mockup: .scope .sel). */
 .scope-picker {
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -2626,6 +2628,8 @@ select {
   position: relative;
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   color: var(--text-strong);
 }
 
@@ -2639,6 +2643,8 @@ select {
   font: inherit;
   font-weight: 500;
   outline: none;
+  min-width: 0;
+  max-width: 100%;
   padding: var(--space-1) var(--space-2);
   white-space: nowrap;
   transition: background var(--motion-fast) var(--motion-ease);
@@ -3438,6 +3444,8 @@ select {
  * per-screen variants (--stage, --phase, --item, --settled, --idea, --make, --project)
  * override spacing/typography below. */
 .disclosure {
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
 }
 
@@ -3518,6 +3526,8 @@ select {
 }
 
 .ticket-stage-section {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -3556,6 +3566,8 @@ select {
 
 /* THE APPROVAL — a raised surface (background, no border). */
 .approval {
+  min-width: 0;
+  max-width: 100%;
   background: var(--surface-raised);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
@@ -3601,6 +3613,8 @@ select {
 }
 
 .approval-draft {
+  min-width: 0;
+  max-width: 100%;
   position: relative;
   font-size: var(--type-md);
   line-height: 1.6;
@@ -3616,6 +3630,8 @@ select {
 }
 
 .approval-actions {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3636,6 +3652,8 @@ select {
 
 .approval-actions-left,
 .approval-control-group {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3662,6 +3680,8 @@ select {
  * ticket document and the Review chamber — both render .approval-proposal-shell
  * (the only surfaces that do; the workspace ticket-in-pane is a ticket screen). */
 .approval-proposal-shell {
+  min-width: 0;
+  max-width: 100%;
   background: linear-gradient(180deg, var(--surface-overlay), var(--surface-raised));
   border-radius: var(--radius-lg);
   padding: var(--space-5) var(--space-6) var(--space-5);
@@ -3913,6 +3933,8 @@ select {
 }
 
 .disclosure--stage > .disclosure-body {
+  min-width: 0;
+  max-width: 100%;
   padding: 0 var(--space-2) var(--space-4);
   font-size: var(--type-md);
   line-height: 1.6;
@@ -4197,12 +4219,16 @@ select {
 }
 
 .ticket-identity-group {
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
 }
 
 .ticket-identity-fact {
+  min-width: 0;
+  max-width: 100%;
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -4258,12 +4284,18 @@ select {
 }
 
 .ticket-title {
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
+}
+
+.ticket-title .ed {
+  overflow-wrap: anywhere;
 }
 
 /* The leash and quiet actions share one operating line. The action group moves as a
