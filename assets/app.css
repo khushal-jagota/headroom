@@ -2446,6 +2446,9 @@ button.list-row:hover .list-row-title {
 /* --- Voice input (t_0pgfmbsr) -------------------------------------------- */
 /* Every voice state keeps the composer's two-zone shape: a centred line where the
  * textarea rests (same min-height, so the box never jumps) and actions in the foot. */
+/* The textarea declares display: block, which beats the hidden attribute the
+ * component sets while a voice face owns the main area. */
+.chat-ta[hidden] { display: none; }
 .chat-voice-idle {
   display: flex;
   align-items: center;
