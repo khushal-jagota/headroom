@@ -48,6 +48,7 @@ from claude_agent_sdk import (
 from planner.conversation.backends.claude_agent_sdk import (
     ALWAYS_ALLOW_THIS_SESSION_OPTION_ID,
     APPROVE_ONCE_OPTION_ID,
+    CLAUDE_SDK_MAX_BUFFER_SIZE,
     DECLINE_OPTION_ID,
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
@@ -516,6 +517,22 @@ def test_a_resume_names_the_session_it_wants_and_mints_nothing(tmp_path: Path) -
         assert clients[0].options.session_id is None
         # Nothing was rebound: the conversation already knows the session it is in.
         assert sink.cursors == []
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_fresh_and_resumed_sessions_use_the_explicit_message_buffer_limit(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        resolved_start = _start_request(workspace_folder=tmp_path)
+        child, _, clients = _bench(resolved_start)
+
+        await child.start(resolved_start, vendor_session_cursor=None)
+        assert clients[0].options.max_buffer_size == CLAUDE_SDK_MAX_BUFFER_SIZE
+        await child.stop()
+
+        await child.start(resolved_start, vendor_session_cursor=SESSION_ID)
+        assert clients[1].options.max_buffer_size == CLAUDE_SDK_MAX_BUFFER_SIZE
         await child.stop()
 
     _run(exercise)
@@ -1135,6 +1152,31 @@ def test_a_message_around_a_tool_call_is_recorded_in_the_order_it_happened(
                 "detail": "a.txt",
             }
         ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_valid_tool_result_just_over_one_megabyte_reaches_panels(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+
+        result = "x" * (1024 * 1024 + 1)
+        clients[0].say(
+            _assistant(ToolUseBlock(id="tool-1", name="Read", input={}), session_id=session_id),
+            UserMessage(
+                content=[ToolResultBlock(tool_use_id="tool-1", content=result, is_error=False)]
+            ),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.tools_finished[0]["tool_call_id"] == "tool-1"
+        assert sink.tools_finished[0]["tool_call_status"] is ToolCallStatus.completed
+        assert sink.tools_finished[0]["detail"] == result
         await child.stop()
 
     _run(exercise)
