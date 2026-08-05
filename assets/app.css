@@ -633,7 +633,7 @@ textarea {
 
 .shell-content {
   min-width: 0;
-  padding: var(--space-5);
+  padding: var(--page-gutter);
 }
 
 /* The chief chat is a chat surface, not a flowing page: the shell hands it the same
@@ -1045,8 +1045,7 @@ textarea {
   .agents-back,
   .worker-skill,
   .worker-launch-defaults {
-    padding-left: var(--space-3);
-    padding-right: var(--space-3);
+    padding-inline: 0;
   }
 
   .agents-detail-head {
@@ -2158,6 +2157,12 @@ button.list-row:hover .list-row-title {
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
 }
 
+@media (max-width: 720px) {
+  .chat-thread {
+    padding-inline: 0;
+  }
+}
+
 .chat-thread > *,
 .chat-u,
 .chat-a,
@@ -2584,9 +2589,9 @@ select {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: calc(var(--space-7) * 14);
+  max-width: calc(var(--space-7) * 13);
   margin: 0 auto;
-  padding: 0 var(--space-5) var(--space-7);
+  padding: 0 0 var(--space-7);
 }
 
 /* Skip / Open ticket sit top-right as quiet text with chevrons — the whole
@@ -2907,7 +2912,7 @@ select {
 .board-workspace-left {
   min-width: 0;
   overflow: auto;
-  padding: var(--space-4) var(--space-5) var(--space-7);
+  padding: var(--space-4) var(--page-gutter) var(--space-7);
   border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-3);
 }
@@ -3107,6 +3112,12 @@ select {
   overflow-wrap: anywhere;
   color: inherit;
   font-size: inherit;
+}
+
+@media (max-width: 720px) {
+  .list-row--board {
+    gap: var(--space-2);
+  }
 }
 
 .board-workspace-stage-mark {
@@ -3563,6 +3574,12 @@ select {
     0 18px 44px -22px rgba(0, 0, 0, 0.55);
 }
 
+@media (max-width: 720px) {
+  .approval-proposal-shell {
+    padding: var(--surface-pad);
+  }
+}
+
 .approval-proposal-shell .approval-draft {
   font-family: var(--font-serif);
   font-size: var(--type-serif-md);
@@ -3812,6 +3829,12 @@ select {
   color: var(--text-default);
 }
 
+@media (max-width: 720px) {
+  .disclosure--stage > .disclosure-body {
+    padding-inline: 0;
+  }
+}
+
 .disclosure--stage > .disclosure-body > .disclosure--content,
 .disclosure--stage > .disclosure-body > .disclosure--support {
   margin-top: var(--space-3);
@@ -4040,7 +4063,16 @@ select {
  * into a one-letter-per-line column. */
 @media (max-width: 720px) {
   .ticket-conversation-column {
-    padding: 0 var(--space-4);
+    padding-inline: var(--page-gutter);
+  }
+
+  .ticket-conversation-layer [data-conversation-pane] {
+    padding-inline: var(--surface-pad);
+  }
+
+  .ticket-conversation-layer .chat-box {
+    margin-inline: calc(var(--surface-pad) * -1);
+    padding-inline: var(--surface-pad);
   }
 
   .chat-head-right {
@@ -4070,7 +4102,7 @@ select {
   max-width: 100%;
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
-  padding: var(--space-5) var(--space-5) 0;
+  padding: var(--space-5) var(--page-gutter) 0;
 }
 
 /* Identity is a tracked eyebrow, not a row of pills. Each fact keeps its native
@@ -4203,13 +4235,6 @@ select {
   margin-left: auto;
 }
 
-@media (max-width: 720px) {
-  .ticket-head,
-  .ticket-col {
-    padding-inline: var(--space-4);
-  }
-}
-
 /* The leash as one sentence: "approved until [stage] then [stop/propose]", the
  * connecting words in quiet prose, the two live pickers inline. */
 .ticket-leash {
@@ -4237,7 +4262,13 @@ select {
   width: 100%;
   max-width: calc(var(--space-7) * 16);
   margin: 0 auto;
-  padding: var(--space-4) var(--space-5) var(--space-6);
+  padding: var(--space-4) var(--page-gutter) var(--space-6);
+}
+
+@media (max-width: 720px) {
+  .ticket-identity {
+    row-gap: var(--space-1);
+  }
 }
 
 /* --- Ticket serif voice (t_ui02) ----------------------------------------- */
@@ -4287,7 +4318,7 @@ select {
   }
 
   .ticket-conversation-column {
-    padding-inline: var(--space-3);
+    padding-inline: var(--page-gutter);
   }
 }
 
@@ -4352,6 +4383,12 @@ select {
   color: var(--text-muted);
 }
 
+@media (max-width: 720px) {
+  .ticket-recap-inner {
+    padding-inline: var(--surface-pad);
+  }
+}
+
 .ticket-recap-inner .markdown > :last-child {
   margin-bottom: 0;
 }
@@ -4392,6 +4429,12 @@ select {
     padding: var(--space-5);
   }
 
+}
+
+@media (max-width: 720px) {
+  .board-workspace-left {
+    padding: var(--space-4) var(--page-gutter) var(--space-7);
+  }
 }
 
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */
@@ -5584,6 +5627,6 @@ select {
 
 @media (max-width: 720px) {
   [data-screen="notifications"] {
-    padding: var(--space-5) var(--space-4) var(--space-page-tail);
+    padding: var(--space-5) 0 var(--space-page-tail);
   }
 }

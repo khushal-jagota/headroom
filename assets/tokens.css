@@ -81,6 +81,10 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  /* The frame gutter and the single inset a surface owns. Both use existing spacing
+     steps so the responsive system adds no new category. */
+  --page-gutter: var(--space-5);
+  --surface-pad: var(--space-5);
   /* Reading measures + the read's generous bottom tail (layout, not the space grid) */
   --measure-read: 680px;
   --measure-index: 760px;
@@ -133,5 +137,18 @@
   :root {
     --type-input: 16px;
     --type-input-compact: 16px;
+  }
+}
+
+@media (max-width: 720px) {
+  :root {
+    --page-gutter: var(--space-4);
+    --surface-pad: var(--space-4);
+  }
+}
+
+@media (max-width: 360px) {
+  :root {
+    --page-gutter: var(--space-3);
   }
 }
