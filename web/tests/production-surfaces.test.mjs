@@ -15,6 +15,10 @@ const boardRouteSource = await readFile(
   new URL("../src/routes/BoardRoute.svelte", import.meta.url),
   "utf8",
 );
+const appCssSource = await readFile(
+  new URL("../../assets/app.css", import.meta.url),
+  "utf8",
+);
 const conversationSignalPresentationSource = await readFile(
   new URL("../src/lib/conversationSignalPresentation.ts", import.meta.url),
   "utf8",
@@ -104,9 +108,9 @@ assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/human-reply/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
-assert.match(ticketRouteSource, /data-sprint-item-control/);
-assert.match(ticketRouteSource, /\/api\/items\/\$\{encodeURIComponent\(sprintItemId\)\}\/tickets/);
-assert.match(ticketRouteSource, /method: "DELETE"/);
+// Sprint placement belongs to the Sprint surface; the redesigned Ticket identity keeps
+// only priority, project, and Worker identity.
+assert.doesNotMatch(ticketRouteSource, /data-sprint-item-control|\/api\/items\//);
 assert.doesNotMatch(ticketRouteSource, /detail\.sprint_id|body: \{ sprint_id/);
 
 // Sprint tracking has only Sprint Item groups. Machine-recognized Other items remain
@@ -165,6 +169,12 @@ assert.doesNotMatch(
 );
 
 // --- the Workspace groups --------------------------------------------------------------
+
+// Workspace has one board projection. It does not keep a client-side project selector
+// or filter styles that can hide cards or restore the old top gap.
+assert.match(boardRouteSource, /let groups = \$derived\(buildGroups\(allCards\)\);/);
+assert.doesNotMatch(boardRouteSource, /project-filter|projectMenu|selectedProject|rosterCards|All projects/);
+assert.doesNotMatch(appCssSource, /board-workspace-project-filter/);
 
 // Kickoff approval is the one approval subtype Workspace can classify entirely from the
 // existing board card. Done and the server-projected Closeout exception keep precedence,

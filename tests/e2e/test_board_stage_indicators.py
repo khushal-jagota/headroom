@@ -45,7 +45,12 @@ def _set_ticket_stage(server: ServerHandle, ticket_id: str, stage: str) -> None:
 
 
 def _create_ticket(
-    cli: Callable[..., JsonObject], server: ServerHandle, title: str, *, worker_type: str = "coding"
+    cli: Callable[..., JsonObject],
+    server: ServerHandle,
+    title: str,
+    *,
+    worker_type: str = "coding",
+    project_id: str = "project_vylo",
 ) -> str:
     ticket_id: str = cli(
         server,
@@ -56,7 +61,7 @@ def _create_ticket(
         "--title",
         title,
         "--project-id",
-        "project_vylo",
+        project_id,
     )["id"]
     return ticket_id
 
@@ -115,6 +120,58 @@ def _link_conversation(server: ServerHandle, ticket_id: str, conversation_id: st
             "UPDATE tickets SET conversation_id = ? WHERE id = ?",
             (conversation_id, ticket_id),
         )
+
+
+def test_workspace_shows_all_projects_and_matches_the_top_bucket_gap(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    second_project = cli(
+        server,
+        "project",
+        "create",
+        "--name",
+        "Workspace second project",
+        "--priority",
+        "P3",
+    )["id"]
+    first_ticket = _create_ticket(cli, server, "Workspace first bucket ticket")
+    second_ticket = _create_ticket(
+        cli,
+        server,
+        "Workspace second project ticket",
+        project_id=str(second_project),
+    )
+    _add_today(api, server, first_ticket)
+    _add_today(api, server, second_ticket)
+    _set_ticket_status(server, first_ticket, "empty")
+    _set_ticket_status(server, second_ticket, "user")
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace",
+        f'[data-card][data-ticket-id="{first_ticket}"]',
+    )
+    page.wait_for_selector(f'[data-card][data-ticket-id="{second_ticket}"]', timeout=WAIT_MS)
+
+    assert page.locator("[data-project-filter]").count() == 0
+    assert page.locator(f'[data-card][data-ticket-id="{first_ticket}"]').count() == 1
+    assert page.locator(f'[data-card][data-ticket-id="{second_ticket}"]').count() == 1
+
+    chief = page.locator("[data-chief-destination]").bounding_box()
+    buckets = page.locator("[data-bucket-section]")
+    first_bucket = buckets.nth(0).bounding_box()
+    second_bucket = buckets.nth(1).bounding_box()
+    assert chief is not None
+    assert first_bucket is not None
+    assert second_bucket is not None
+    gap_after_chief = first_bucket["y"] - (chief["y"] + chief["height"])
+    gap_between_buckets = second_bucket["y"] - (first_bucket["y"] + first_bucket["height"])
+    assert abs(gap_after_chief - gap_between_buckets) < 1
 
 
 def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(

@@ -1882,8 +1882,28 @@ def worker_recap(ticket_id: str | None, body_file: str | None, as_json: bool) ->
     default=None,
     help="Read field user guidance text from this file, or -.",
 )
+@click.option(
+    "--append",
+    "append_note",
+    is_flag=True,
+    help="Append the body to the existing field user note.",
+)
+@click.option(
+    "--replace",
+    "replace_note",
+    is_flag=True,
+    help="Replace the complete field user note. This is the default.",
+)
 @json_option
-def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> None:
+def worker_note(
+    args: tuple[str, ...],
+    body_file: str | None,
+    append_note: bool,
+    replace_note: bool,
+    as_json: bool,
+) -> None:
+    if append_note and replace_note:
+        http.fail_validation("use --append or --replace, not both", as_json)
     if len(args) == 1:
         ticket_id: str | None = None
         field = args[0]
@@ -1920,9 +1940,15 @@ def worker_note(args: tuple[str, ...], body_file: str | None, as_json: bool) -> 
             as_json,
         )
     body = read_body(ticket_id, body_file, as_json)
+    method = "POST" if append_note else "PUT"
+    path = (
+        f"/api/tickets/{tid}/notes/{field}/append"
+        if append_note
+        else f"/api/tickets/{tid}/notes/{field}"
+    )
     data = http.send(
-        "PUT",
-        f"/api/tickets/{tid}/notes/{field}",
+        method,
+        path,
         as_json=as_json,
         json_body={"user_note": body},
     )

@@ -39,6 +39,12 @@ new values, from the same session cursor, under the same conversation. A change 
 therefore in force before the prompt that carried it is written, and a prompt that never
 reaches the wire leaves a child the core discards.
 
+**A terminal stream failure leaves a resumable session behind a broken wire.** The turn
+that was running fails. A later prompt meets the broken wire before it writes any bytes,
+so the adapter says ``NeedsRebind`` and the core resumes one replacement child. A failure
+during the current query remains ``PromptWriteFailed`` because delivery is then uncertain
+and the prompt must not be retried.
+
 **Permission asks are a callback the SDK waits on.** ``can_use_tool`` is called with the
 tool and its input and does not return until a person has answered or the turn it belongs
 to has died, which is exactly how an ask is meant to wait.
@@ -163,6 +169,10 @@ ABORTED_TERMINAL_REASONS: Final[frozenset[str]] = frozenset({"aborted_streaming"
 # Enough of a dead child's standard error to say what happened, in the failed turn's line
 # and in the failure that names why a session would not load.
 STANDARD_ERROR_TAIL_MAXIMUM_CHARACTERS: Final = 8192
+
+# Tool results can include the contents of a file Claude read. Keep the SDK's line buffer
+# bounded while allowing results larger than its 1 MiB default to reach the conversation.
+CLAUDE_SDK_MAX_BUFFER_SIZE: Final[int] = 4 * 1024 * 1024
 
 # The three answers this adapter offers for a permission ask, which are the three the SDK's
 # callback can give back: allow it this once, allow it and take the SDK's own suggested
@@ -597,6 +607,7 @@ class ClaudeAgentSdkBackendChild:
                 **dict(self._launch.environment_overrides),
                 **dict(_identity_environment(resolved_start)),
             },
+            max_buffer_size=CLAUDE_SDK_MAX_BUFFER_SIZE,
             include_partial_messages=True,
             can_use_tool=self._can_use_tool,
             stderr=self._note_standard_error,
@@ -674,9 +685,11 @@ class ClaudeAgentSdkBackendChild:
         return client
 
     def _require_a_live_wire(self) -> None:
-        """Refuse to touch a child that has already failed or been taken from us."""
+        """Replace a known-broken wire before a new prompt writes any bytes."""
         if self._wire_broken:
-            raise PromptWriteFailed("this child's wire has already failed")
+            raise NeedsRebind(
+                "this child's wire has already failed", failed_child_recovery=True
+            )
 
     # --- the turn -----------------------------------------------------------------------
 

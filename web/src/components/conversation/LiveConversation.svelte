@@ -559,6 +559,7 @@
   onDiscardHeldPrompt={(messageId) => void discard(messageId)}
   onNewConversation={() => void newConversation()}
   emptyState={emptyState === undefined ? undefined : beforeThereIsAConversation}
+  showRunPicker={started || emptyState === undefined}
 />
 
 <!-- Named apart from the prop it renders: a snippet takes the name it is declared with,

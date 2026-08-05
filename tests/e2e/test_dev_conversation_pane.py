@@ -55,8 +55,36 @@ from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.storage import ConversationStore
 
 WAIT_MS = 10_000
-BACKEND_CARD_WAIT_MS = 30_000  # backend cards probe real CLIs with subprocess calls
 JUMP_BUTTON = "[aria-label='Jump to latest message']"
+
+COLD_START_BACKENDS = {
+    "backends": [
+        {
+            "backend_key": "codex",
+            "installed": True,
+            "executable_path": "/fixture/codex",
+            "version": "1",
+            "identity": None,
+            "available_models": [
+                {
+                    "model_id": "codex-quick",
+                    "display_name": "Codex quick",
+                    "reasoning_effort_options": ["low"],
+                },
+                {
+                    "model_id": "codex-deep",
+                    "display_name": "Codex deep",
+                    "reasoning_effort_options": ["medium", "high"],
+                },
+            ],
+            "reasoning_effort_options": ["low", "medium", "high"],
+            "default_model_id": "codex-quick",
+            "default_reasoning_effort": "low",
+            "update_advisory": None,
+            "diagnoses": [],
+        }
+    ]
+}
 
 # The send, held in the page until the test lets it go. Nothing else is touched: every
 # other request is the browser's own fetch, and the body handed over is the one the app
@@ -604,21 +632,39 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
     """
     context = context_factory()
     context.add_init_script(HOLD_THE_SEND)
+    context.route(
+        "**/api/conversation/backends**",
+        lambda route: route.fulfill(json=COLD_START_BACKENDS),
+    )
     page = open_page(
         context, server, "#/dev/conversation?id=e2e-first-send", "[data-conversation-pane]"
     )
     # Nothing has been started yet: this is the empty state, not a conversation.
     page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
-    # And a conversation is created on a model somebody can name, so the first message can
-    # only make one once this page has read what the backend it is on runs. That read is a
-    # real probe of a real CLI, so it is waited for the way the backend cards are.
-    page.wait_for_function(
-        "() => document.querySelector('[data-conversation-new-model]').value !== ''",
-        timeout=BACKEND_CARD_WAIT_MS,
-    )
+
+    # Pick the model and its effort through the same control used by every conversation
+    # surface. The model switch replaces the now-invalid low effort before high is chosen.
+    picker = page.locator("[data-conversation-new-model-picker]")
+    trigger = picker.locator("[data-conversation-picker-trigger]")
+    trigger.click()
+    picker.locator('[data-conversation-picker-choice="codex-deep"]').click()
+    trigger.click()
+    picker.locator("[data-conversation-picker-reasoning]").click()
+    picker.locator('[data-conversation-picker-choice="high"]').click()
+    assert "Codex deep high" in trigger.inner_text()
 
     page.fill("[data-conversation-input]", "the very first thing")
-    page.press("[data-conversation-input]", "Enter")
+    with page.expect_request(
+        lambda request: request.method == "POST"
+        and request.url.endswith("/api/conversation/conversations")
+    ) as start_request:
+        page.press("[data-conversation-input]", "Enter")
+    assert start_request.value.post_data_json == {
+        "conversation_id": "e2e-first-send",
+        "backend_key": "codex",
+        "model": "codex-deep",
+        "reasoning_effort": "high",
+    }
     page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
 
     drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
@@ -632,10 +678,13 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
     assert httpx.get(
         f"{server.base}/api/conversation/conversations/e2e-first-send", timeout=10.0
     ).status_code == 200
-    page.wait_for_selector("[data-conversation-sending]", timeout=WAIT_MS)
-
     page.evaluate("() => window.__heldSends[0].answer({ fate: 'started' })")
-    page.wait_for_selector("[data-conversation-sending]", state="detached", timeout=WAIT_MS)
+    # Once the send lands, the composer takes over the same selected run values.
+    composer_picker = page.locator("[data-conversation-picker-model]")
+    composer_picker.wait_for(state="visible", timeout=WAIT_MS)
+    assert "Codex deep high" in composer_picker.locator(
+        "[data-conversation-picker-trigger]"
+    ).inner_text()
     assert page.query_selector("[data-conversation-outgoing-label]") is None
 
 

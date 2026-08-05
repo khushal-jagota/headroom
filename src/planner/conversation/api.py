@@ -78,6 +78,11 @@ from planner.conversation.snapshot import (
 )
 from planner.conversation.storage import ConversationStore, StoredConversationEvent
 from planner.conversation.system import SqliteProcessConversationSystem
+from planner.conversation.voice_transcription import (
+    VoiceTranscriptionFailed,
+    VoiceTranscriptionUnconfigured,
+    transcribe_conversation_audio,
+)
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
 # The two things a tail carries, told apart by name so a browser never has to guess which
@@ -245,6 +250,31 @@ class OwnerSendBody(BaseModel):
     sent_at_unix_milliseconds: int | None = None
 
 
+# The audio a voice note may arrive as. WebM/Opus is what a recording browser produces;
+# the rest are what other recorders on the allowed platforms hand over.
+VOICE_AUDIO_MEDIA_TYPES = frozenset(
+    {"audio/webm", "audio/mp4", "audio/ogg", "audio/wav"}
+)
+
+# The provider's own ceiling on one clip (Groq refuses larger files), applied to the
+# decoded bytes before anything is kept or sent.
+MAX_VOICE_AUDIO_BYTES = 25 * 1024 * 1024
+
+
+class VoiceTranscriptionBody(BaseModel):
+    """One voice clip to turn into words, as JSON.
+
+    Exactly one of ``audio`` and ``stored_file_id`` is given. Fresh audio arrives as
+    base64 bytes and is kept as a conversation file before the provider is spoken to, so
+    a recording is never lost to a transcription failure; a retry names the file that
+    first attempt kept instead of carrying the bytes again.
+    """
+
+    audio: str | None = None
+    media_type: str = "audio/webm"
+    stored_file_id: str | None = None
+
+
 class PermissionAnswerBody(BaseModel):
     ask_id: str
     option_id: str
@@ -368,6 +398,60 @@ async def read_conversation_message_file(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.post("/conversations/{conversation_id}/voice-transcriptions")
+async def transcribe_voice_note(
+    conversation_id: str, body: VoiceTranscriptionBody, runtime: Runtime, request: Request
+) -> dict[str, Any]:
+    """Turn one voice clip into words, keeping the audio before anything can fail.
+
+    Fresh audio is kept as a conversation file first, so a provider that is down cannot
+    lose a recording. When the provider then fails, the 502's detail carries the
+    ``stored_file_id`` the clip was kept under, and the client retries with that id
+    instead of re-uploading the bytes.
+    """
+    await _require_conversation(runtime, conversation_id)
+    if (body.audio is None) == (body.stored_file_id is None):
+        raise HTTPException(
+            status_code=422,
+            detail="exactly one of audio and stored_file_id must be given",
+        )
+    if body.media_type not in VOICE_AUDIO_MEDIA_TYPES:
+        raise HTTPException(
+            status_code=422, detail=f"unsupported voice media type {body.media_type}"
+        )
+    if body.audio is not None:
+        contents = _decoded_voice_audio(body.audio)
+        kept = await runtime.message_files.keep(
+            conversation_id, contents, media_type=body.media_type
+        )
+        stored_file_id = kept.stored_file_id
+    else:
+        assert body.stored_file_id is not None
+        try:
+            contents = await runtime.message_files.read(
+                conversation_id, body.stored_file_id
+            )
+        except (MessageFileMissing, OSError) as gone:
+            raise HTTPException(status_code=404, detail="no such file") from gone
+        stored_file_id = body.stored_file_id
+    config = request.app.state.config
+    try:
+        transcript = await transcribe_conversation_audio(
+            contents,
+            base_url=config.voice_transcription_base_url,
+            model=config.voice_transcription_model,
+            api_key=config.voice_transcription_api_key,
+        )
+    except VoiceTranscriptionUnconfigured as unconfigured:
+        raise HTTPException(status_code=503, detail=str(unconfigured)) from unconfigured
+    except VoiceTranscriptionFailed as failed:
+        raise HTTPException(
+            status_code=502,
+            detail={"message": str(failed), "stored_file_id": stored_file_id},
+        ) from failed
+    return {"transcript": transcript, "stored_file_id": stored_file_id}
 
 
 @router.post("/conversations/{conversation_id}/interrupt", status_code=204)
@@ -700,6 +784,17 @@ def _decoded_image(data: str) -> bytes:
     if len(data) > maximum_encoded_length:
         raise HTTPException(status_code=422, detail="a conversation image is too large")
     return _decoded(data)
+
+
+def _decoded_voice_audio(data: str) -> bytes:
+    """Decode one bounded voice clip, refusing anything past the provider's ceiling."""
+    maximum_encoded_length = 4 * ((MAX_VOICE_AUDIO_BYTES + 2) // 3)
+    if len(data) > maximum_encoded_length:
+        raise HTTPException(status_code=422, detail="a voice clip is too large")
+    contents = _decoded(data)
+    if len(contents) > MAX_VOICE_AUDIO_BYTES:
+        raise HTTPException(status_code=422, detail="a voice clip is too large")
+    return contents
 
 
 def _event_json(event: StoredConversationEvent) -> dict[str, Any]:

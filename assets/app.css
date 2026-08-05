@@ -633,7 +633,7 @@ textarea {
 
 .shell-content {
   min-width: 0;
-  padding: var(--space-5);
+  padding: var(--page-gutter);
 }
 
 /* The chief chat is a chat surface, not a flowing page: the shell hands it the same
@@ -1045,8 +1045,7 @@ textarea {
   .agents-back,
   .worker-skill,
   .worker-launch-defaults {
-    padding-left: var(--space-3);
-    padding-right: var(--space-3);
+    padding-inline: 0;
   }
 
   .agents-detail-head {
@@ -1345,6 +1344,9 @@ textarea {
   min-width: 0;
   max-width: 100%;
   margin: 0;
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 /* The header curves over the top of the document and stays put; the document
@@ -2158,6 +2160,12 @@ button.list-row:hover .list-row-title {
           mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 16px), transparent 100%);
 }
 
+@media (max-width: 720px) {
+  .chat-thread {
+    padding-inline: 0;
+  }
+}
+
 .chat-thread > *,
 .chat-u,
 .chat-a,
@@ -2443,6 +2451,83 @@ button.list-row:hover .list-row-title {
 }
 .chat-send:disabled { opacity: 0.5; cursor: default; }
 
+/* --- Voice input (t_0pgfmbsr) -------------------------------------------- */
+/* Every voice state keeps the composer's two-zone shape: a centred line where the
+ * textarea rests (same min-height, so the box never jumps) and actions in the foot. */
+/* The textarea declares display: block, which beats the hidden attribute the
+ * component sets while a voice face owns the main area. */
+.chat-ta[hidden] { display: none; }
+.chat-voice-idle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 40px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text-faint);
+}
+.chat-voice-idle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+.chat-voice-idle span { font-size: var(--type-sm); color: var(--text-faintest); }
+.chat-voice-idle:disabled { opacity: 0.5; cursor: default; }
+.chat-voice-mid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  font-size: var(--type-md);
+}
+.chat-voice-time {
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-mono);
+  color: var(--text-strong);
+}
+.chat-voice-fail { font-size: var(--type-sm); color: var(--text-muted); }
+.chat-voice-fail .chat-voice-time { font-size: var(--type-sm); color: var(--text-faint); }
+/* The X undoes; drawn in the stop idiom (.chat-send.stop): red hairline, transparent. */
+.chat-voice-cancel {
+  width: var(--space-5);
+  height: var(--space-5);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: var(--border-hairline) solid var(--accent-error);
+  border-radius: var(--radius-md);
+  color: var(--accent-error);
+  cursor: pointer;
+}
+.chat-voice-cancel svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+/* The going-forward action sits where the send arrow does: filled accent, far right. */
+.chat-voice-stop,
+.chat-voice-retry {
+  margin-left: auto;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-bright);
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.chat-voice-stop {
+  width: var(--space-5);
+  height: var(--space-5);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.chat-voice-square { width: 9px; height: 9px; border-radius: 2px; background: var(--accent-ink); }
+.chat-voice-retry {
+  height: var(--space-5);
+  padding: 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: 1;
+}
+
 /* Delivery segment: compact segmented pill in the footer, present only mid-turn */
 .chat-seg {
   display: inline-flex;
@@ -2529,6 +2614,8 @@ select {
 /* The scope pair reads as two quiet pills between the leash words — the same
  * boxed vocabulary as the ticket header's leash (mockup: .scope .sel). */
 .scope-picker {
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
@@ -2546,6 +2633,8 @@ select {
   position: relative;
   display: inline-flex;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   color: var(--text-strong);
 }
 
@@ -2559,6 +2648,8 @@ select {
   font: inherit;
   font-weight: 500;
   outline: none;
+  min-width: 0;
+  max-width: 100%;
   padding: var(--space-1) var(--space-2);
   white-space: nowrap;
   transition: background var(--motion-fast) var(--motion-ease);
@@ -2584,9 +2675,9 @@ select {
   display: flex;
   flex-direction: column;
   width: 100%;
-  max-width: calc(var(--space-7) * 14);
+  max-width: calc(var(--space-7) * 13);
   margin: 0 auto;
-  padding: 0 var(--space-5) var(--space-7);
+  padding: 0 0 var(--space-7);
 }
 
 /* Skip / Open ticket sit top-right as quiet text with chevrons — the whole
@@ -2743,6 +2834,24 @@ select {
   min-width: 0;
 }
 
+.review-ticket-heading-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.review-recap {
+  max-width: 60ch;
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.5;
+}
+
+.review-recap .markdown > :last-child {
+  margin-bottom: 0;
+}
+
 .review-kickoff-priority {
   flex: none;
   font-family: var(--font-sans);
@@ -2842,6 +2951,33 @@ select {
   color: var(--text-strong);
 }
 
+/* Voice on the revision box (t_0pgfmbsr): the mic is only an affordance beside the
+ * textarea — Approve stays this screen's primary action. The live states reuse the
+ * composer's .chat-voice-* language; these rules just seat them in this row. */
+.review-voice-mic {
+  flex: none;
+  align-self: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-faintest);
+  cursor: pointer;
+}
+.review-voice-mic:hover { color: var(--text-muted); background: var(--surface-overlay); }
+.review-voice-mic:disabled { opacity: 0.5; cursor: default; }
+.review-voice-mic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+/* The centred line stands where the textarea rests, at its height, so nothing jumps. */
+.review-voice-mid {
+  flex: 1;
+  min-height: 2.75rem;
+}
+.review-revision-box .review-voice-action { align-self: center; }
+
 /* Entrance rhythm: each decision's parts fade up in a short stagger. Keyed to the
  * current entry in the markup so advancing to the next decision re-runs it. */
 @keyframes review-arrive {
@@ -2901,13 +3037,13 @@ select {
 }
 
 /* The rail's structure: the section padding sets the outer frame; every row-like
- * element inside (chief button, filters, group headings, ticket rows) carries the
+ * element inside (chief button, group headings, ticket rows) carries the
  * same --board-workspace-rail-pad-x inner inset, so all rail text shares one left
  * edge. Vertical rhythm follows the mockup's roster: rows touch, groups separate. */
 .board-workspace-left {
   min-width: 0;
   overflow: auto;
-  padding: var(--space-4) var(--space-5) var(--space-7);
+  padding: var(--space-4) var(--page-gutter) var(--space-7);
   border-right: var(--border-hairline) solid var(--border-color);
   --board-workspace-rail-pad-x: var(--space-3);
 }
@@ -2963,115 +3099,6 @@ select {
   flex: none;
 }
 
-/* The project filter is a mini header in the rail, not a form control: at rest
- * it is the active project in the serif header voice (one step below the bucket
- * titles), with a small caret as the only affordance. Clicking it opens a
- * dropdown menu — the popover idiom the app already uses elsewhere. */
-.board-workspace-project-filter {
-  position: relative;
-  padding: 0 var(--board-workspace-rail-pad-x);
-  margin: var(--space-2) 0 calc(var(--space-7) - var(--space-1));
-}
-
-.board-workspace-project-filter-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-  border: 0;
-  background: transparent;
-  padding: var(--space-1) 0;
-  margin: 0;
-  color: var(--text-strong);
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
-  font-weight: 500;
-  line-height: 1.1;
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-project-filter-trigger:hover {
-  color: var(--accent-bright);
-}
-
-.board-workspace-project-filter-value {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The caret is a small chevron drawn from two borders; it flips when open. */
-.board-workspace-project-filter-caret {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  margin-top: -3px;
-  border-right: 1.5px solid var(--text-muted);
-  border-bottom: 1.5px solid var(--text-muted);
-  transform: rotate(45deg);
-  transition: transform var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-project-filter-trigger[aria-expanded="true"] .board-workspace-project-filter-caret {
-  margin-top: 2px;
-  transform: rotate(-135deg);
-}
-
-.board-workspace-project-filter-menu {
-  position: absolute;
-  left: var(--board-workspace-rail-pad-x);
-  top: 100%;
-  z-index: 20;
-  min-width: 190px;
-  max-width: calc(100% - var(--board-workspace-rail-pad-x));
-  margin-top: var(--space-2);
-  padding: var(--space-1);
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-raised);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-md);
-}
-
-.board-workspace-project-filter-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  border: 0;
-  background: transparent;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--text-strong);
-  font-size: var(--type-sm);
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--motion-ease);
-}
-
-.board-workspace-project-filter-item:hover {
-  background: var(--surface-overlay);
-}
-
-.board-workspace-project-filter-item[aria-checked="true"] {
-  color: var(--accent-text);
-}
-
-/* The tick reserves fixed width so labels align whether or not they are active. */
-.board-workspace-project-filter-tick {
-  flex: none;
-  width: 14px;
-  color: var(--accent-bright);
-}
-
-.board-workspace-project-filter-item[aria-checked="true"] .board-workspace-project-filter-tick::before {
-  content: "✓";
-}
-
 .board-workspace-right {
   min-width: 0;
   min-height: 0;
@@ -3114,8 +3141,7 @@ select {
 }
 
 /* Status buckets — the rail's one level. Each bucket is a box (the worker-section
- * idiom), headed by the serif voice one scale below the project headers. A bucket
- * with no tickets is not rendered at all. */
+ * idiom), headed by the serif voice. A bucket with no tickets is not rendered. */
 .disclosure--workspace-bucket {
   min-width: 0;
   padding: var(--space-4);
@@ -3217,6 +3243,12 @@ select {
   overflow-wrap: anywhere;
   color: inherit;
   font-size: inherit;
+}
+
+@media (max-width: 720px) {
+  .list-row--board {
+    gap: var(--space-2);
+  }
 }
 
 .board-workspace-stage-mark {
@@ -3441,6 +3473,8 @@ select {
  * per-screen variants (--stage, --phase, --item, --settled, --idea, --make, --project)
  * override spacing/typography below. */
 .disclosure {
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
 }
 
@@ -3521,6 +3555,8 @@ select {
 }
 
 .ticket-stage-section {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -3559,6 +3595,8 @@ select {
 
 /* THE APPROVAL — a raised surface (background, no border). */
 .approval {
+  min-width: 0;
+  max-width: 100%;
   background: var(--surface-raised);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
@@ -3604,6 +3642,8 @@ select {
 }
 
 .approval-draft {
+  min-width: 0;
+  max-width: 100%;
   position: relative;
   font-size: var(--type-md);
   line-height: 1.6;
@@ -3619,6 +3659,8 @@ select {
 }
 
 .approval-actions {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3639,6 +3681,8 @@ select {
 
 .approval-actions-left,
 .approval-control-group {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -3665,12 +3709,20 @@ select {
  * ticket document and the Review chamber — both render .approval-proposal-shell
  * (the only surfaces that do; the workspace ticket-in-pane is a ticket screen). */
 .approval-proposal-shell {
+  min-width: 0;
+  max-width: 100%;
   background: linear-gradient(180deg, var(--surface-overlay), var(--surface-raised));
   border-radius: var(--radius-lg);
   padding: var(--space-5) var(--space-6) var(--space-5);
   box-shadow:
     inset 0 var(--border-hairline) 0 color-mix(in srgb, var(--text-strong) 5%, transparent),
     0 18px 44px -22px rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 720px) {
+  .approval-proposal-shell {
+    padding: var(--surface-pad);
+  }
 }
 
 .approval-proposal-shell .approval-draft {
@@ -3916,10 +3968,18 @@ select {
 }
 
 .disclosure--stage > .disclosure-body {
+  min-width: 0;
+  max-width: 100%;
   padding: 0 var(--space-2) var(--space-4);
   font-size: var(--type-md);
   line-height: 1.6;
   color: var(--text-default);
+}
+
+@media (max-width: 720px) {
+  .disclosure--stage > .disclosure-body {
+    padding-inline: 0;
+  }
 }
 
 .disclosure--stage > .disclosure-body > .disclosure--content,
@@ -4014,6 +4074,12 @@ select {
   min-width: 0;
   max-width: 100%;
   position: relative;
+  /* The pane is what the column is measured against, so it is a size container. The
+   * window is the wrong ruler: this same route also renders in the Workspace right
+   * pane, which is around 500px narrower than the window it sits in. Inline-size only,
+   * so the height chain from the shell down to the page is untouched. */
+  container-type: inline-size;
+  container-name: ticket-pane;
 }
 
 /* The page is a column of two: the ticket, then the conversation, with the page's own gap
@@ -4074,17 +4140,15 @@ select {
   min-height: 0;
 }
 
-/* The conversation keeps the document's reading measure and its inset, so it stays in the
- * same column the ticket is written in instead of stretching across the whole screen. */
+/* The conversation stands in the page's one column, with its inset, so it stays in the
+ * same column the ticket is written in instead of stretching across the whole screen.
+ * The column itself is set once, further down, for all three of its users. */
 .ticket-conversation-column {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   min-width: 0;
-  width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
   padding: 0 var(--space-7);
 }
 
@@ -4150,7 +4214,16 @@ select {
  * into a one-letter-per-line column. */
 @media (max-width: 720px) {
   .ticket-conversation-column {
-    padding: 0 var(--space-4);
+    padding-inline: var(--page-gutter);
+  }
+
+  .ticket-conversation-layer [data-conversation-pane] {
+    padding-inline: var(--surface-pad);
+  }
+
+  .ticket-conversation-layer .chat-box {
+    margin-inline: calc(var(--surface-pad) * -1);
+    padding-inline: var(--surface-pad);
   }
 
   .chat-head-right {
@@ -4172,15 +4245,12 @@ select {
   background: var(--accent-ink);
 }
 
-/* Header and body share one centered readable measure (~768px). The header has no
+/* Header and body stand in the page's one column, set once further down. The header has no
  * bottom hairline — the line diet keeps rules to the stage spine and the conversation
  * layer's seam only; space, not a line, separates the header from the body. */
 .ticket-head {
   min-width: 0;
-  max-width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
-  padding: var(--space-5) var(--space-5) 0;
+  padding: var(--space-5) var(--page-gutter) 0;
 }
 
 /* Identity is a tracked eyebrow, not a row of pills. Each fact keeps its native
@@ -4199,12 +4269,16 @@ select {
 }
 
 .ticket-identity-group {
+  min-width: 0;
+  max-width: 100%;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
 }
 
 .ticket-identity-fact {
+  min-width: 0;
+  max-width: 100%;
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -4256,16 +4330,76 @@ select {
 }
 
 .ticket-title-row {
-  margin: var(--space-3) 0;
+  margin: var(--space-3) 0 0;
 }
 
 .ticket-title {
+  min-width: 0;
+  max-width: 100%;
   font-family: var(--font-serif);
   font-size: var(--type-serif-display);
   font-weight: 500;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
+}
+
+.ticket-title .ed {
+  overflow-wrap: anywhere;
+}
+
+/* The recap is the title's quiet, editable second line. It has no surface of its own. */
+.ticket-recap {
+  display: block;
+  max-width: 62ch;
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  line-height: 1.5;
+  cursor: text;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-recap:hover {
+  color: var(--text-muted);
+}
+
+.ticket-recap:focus-within {
+  color: var(--text-default);
+}
+
+.ticket-recap--clamped {
+  max-height: calc(var(--type-serif-lg) * 4.5);
+  overflow: hidden;
+}
+
+.ticket-recap--clamped:focus-within {
+  max-height: none;
+  overflow: visible;
+}
+
+.ticket-recap-more {
+  display: block;
+  margin-top: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.ticket-recap-more:hover {
+  color: var(--text-default);
+}
+
+.ticket-recap-inner {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
 }
 
 /* The leash and quiet actions share one operating line. The action group moves as a
@@ -4280,6 +4414,20 @@ select {
   font-size: var(--type-sm);
 }
 
+.ticket-operating-copy {
+  padding: var(--space-1) var(--space-1);
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.ticket-operating-copy:hover {
+  color: var(--text-default);
+}
+
 .ticket-backend-error {
   margin-top: var(--space-3);
   color: var(--accent-error);
@@ -4288,53 +4436,133 @@ select {
   white-space: pre-wrap;
 }
 
-/* Take over / Release and Copy are quiet text actions, not facts or pills. */
-.ticket-act {
-  background: none;
-  border: 0;
-  color: var(--text-faintest);
-  font-family: var(--font-ui);
-  font-size: var(--type-xs);
-  cursor: pointer;
-  padding: var(--space-1) var(--space-1);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-.ticket-act:hover {
-  color: var(--text-default);
-}
-
-.ticket-operating-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  min-width: 0;
-  max-width: 100%;
-  gap: var(--space-2);
-  margin-left: auto;
-}
-
-@media (max-width: 720px) {
-  .ticket-head,
-  .ticket-col {
-    padding-inline: var(--space-4);
-  }
-}
-
-/* The leash as one sentence: "approved until [stage] then [stop/propose]", the
- * connecting words in quiet prose, the two live pickers inline. */
+/* The leash is one disclosure that holds scope, takeover, and copy. */
 .ticket-leash {
-  display: flex;
-  flex-wrap: wrap;
+  position: relative;
+  display: block;
   min-width: 0;
   max-width: 100%;
-  align-items: center;
-  gap: var(--space-2);
   font-size: var(--type-sm);
   color: var(--text-faintest);
 }
 
-.ticket-leash-sel {
-  display: inline-flex;
+.ticket-leash > summary {
+  list-style: none;
+}
+
+.ticket-leash > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ticket-leash-face {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-leash-face:hover,
+.ticket-leash-face:focus-visible {
+  color: var(--text-default);
+}
+
+.ticket-leash-face:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
+.ticket-leash-value {
+  color: var(--text-muted);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-leash-face--held .ticket-leash-value {
+  color: var(--accent-bright);
+}
+
+.ticket-leash-menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - var(--space-6)));
+  padding: var(--space-1) 0;
+  background: var(--surface-overlay);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 var(--space-2) var(--space-5) var(--surface-scrim);
+}
+
+.ticket-leash-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--type-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-leash-option:hover,
+.ticket-leash-option:focus-visible,
+.ticket-leash-option--selected {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+.ticket-leash-option:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: calc(-1 * var(--border-hairline));
+}
+
+.ticket-leash-option-mark {
+  flex: none;
+  width: var(--space-3);
+  color: var(--accent-bright);
+  font-size: var(--type-xs);
+}
+
+.ticket-leash-rule {
+  height: var(--border-hairline);
+  margin: var(--space-1) 0;
+  background: var(--border-color);
+}
+
+.ticket-leash-select {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--type-sm);
+  cursor: pointer;
+}
+
+.ticket-leash-select:hover,
+.ticket-leash-select:focus-visible {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+.ticket-leash-select:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: calc(-1 * var(--border-hairline));
 }
 
 /* The read's own generous tail, and under it the room the conversation layer stands in at
@@ -4344,10 +4572,58 @@ select {
  * so there is nothing here to hold clear of. */
 .ticket-col {
   min-width: 0;
-  width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
-  padding: var(--space-4) var(--space-5) var(--space-6);
+  padding: var(--space-4) var(--page-gutter) var(--space-6);
+}
+
+@media (max-width: 720px) {
+  .ticket-identity {
+    row-gap: var(--space-1);
+  }
+}
+
+/* --- The page's one column ------------------------------------------------ */
+/* Header, body and conversation are the same column, so it is stated once here, after
+ * all three, and they cannot drift apart again.
+ *
+ * The column is measured against the ticket pane and never the window, because this
+ * route also renders in the Workspace right pane, which is around 500px narrower than
+ * the window around it. That is what `cqi` reads and what `.ticket-screen` declares.
+ *
+ * On a pane wide enough for them the column is the pane less a 192px gutter each side.
+ * Below that it keeps the fixed measure it has today. The two arms cross at a 1152px
+ * pane, so the column grows continuously and this needs no breakpoint. The outer min()
+ * is the document's own scrollbar: inside it 100% is a little less than the pane, and
+ * the column is never wider than what draws it. */
+.ticket-head,
+.ticket-col,
+.ticket-conversation-column {
+  width: min(
+    100%,
+    max(
+      min(100cqi, var(--ticket-column-measure)),
+      calc(100cqi - 2 * var(--ticket-column-gutter))
+    )
+  );
+  margin-inline: auto;
+}
+
+/* Once the column is fluid, the header and body take the conversation's inset, so all
+ * three read against one edge. Below the crossover they keep the tighter inset they have
+ * today, and t_crmfy66x still owns the narrow gutters.
+ *
+ * The document reserves its scrollbar on both edges here too, so its centre line is the
+ * pane's centre line and the ticket column sits exactly above the conversation column.
+ * At 768px that offset was half a scrollbar and invisible; against a column this wide and
+ * this far out it is a visible step between the two. */
+@container ticket-pane (min-width: 1152px) {
+  .ticket-head,
+  .ticket-col {
+    padding-inline: var(--space-7);
+  }
+
+  .ticket-doc {
+    scrollbar-gutter: stable both-edges;
+  }
 }
 
 /* --- Ticket serif voice (t_ui02) ----------------------------------------- */
@@ -4382,10 +4658,8 @@ select {
     margin-left: 0;
   }
 
-  .ticket-operating-actions {
-    flex-basis: 100%;
-    justify-content: flex-start;
-    margin-left: 0;
+  .ticket-leash-menu {
+    max-width: calc(100vw - var(--space-5));
   }
 }
 
@@ -4397,7 +4671,7 @@ select {
   }
 
   .ticket-conversation-column {
-    padding-inline: var(--space-3);
+    padding-inline: var(--page-gutter);
   }
 }
 
@@ -4455,15 +4729,77 @@ select {
   color: var(--accent-error);
 }
 
-.ticket-recap-inner {
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface-sunken);
-  border-radius: var(--radius-md);
+.ticket-recap-inner .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* Settled stages share one quiet row until the user opens them. */
+.stage-fold {
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.stage-fold-summary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-sm);
+  text-align: left;
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.stage-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.stage-fold-summary:hover,
+.stage-fold-summary:focus-visible {
   color: var(--text-muted);
 }
 
-.ticket-recap-inner .markdown > :last-child {
-  margin-bottom: 0;
+.stage-fold-summary:focus-visible,
+.stage-fold-close:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: calc(-1 * var(--border-hairline));
+}
+
+.stage-fold-names {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.stage-fold-rows {
+  display: block;
+}
+
+.stage-fold-close {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.stage-fold-close:hover {
+  color: var(--text-muted);
 }
 
 /* The blank spacer where the user-note row would carry a stage mark — it keeps the
@@ -4502,6 +4838,12 @@ select {
     padding: var(--space-5);
   }
 
+}
+
+@media (max-width: 720px) {
+  .board-workspace-left {
+    padding: var(--space-4) var(--page-gutter) var(--space-7);
+  }
 }
 
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */
@@ -5694,6 +6036,6 @@ select {
 
 @media (max-width: 720px) {
   [data-screen="notifications"] {
-    padding: var(--space-5) var(--space-4) var(--space-page-tail);
+    padding: var(--space-5) 0 var(--space-page-tail);
   }
 }

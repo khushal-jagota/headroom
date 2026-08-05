@@ -13,3 +13,5 @@ logs_dir: data/logs                # per-run log files (§7.4)
 backup_dir: data/backups           # verified database snapshots
 db_busy_timeout_ms: 5000           # SQLite busy timeout on connect
 shutdown_grace_seconds: 30         # one monotonic budget for runtime/gateway shutdown
+voice_transcription_base_url: https://api.groq.com/openai/v1   # OpenAI-compatible speech-to-text provider
+voice_transcription_model: whisper-large-v3-turbo              # transcription model at that provider

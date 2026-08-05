@@ -1,11 +1,15 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { labelize } from "../lib/ui";
-  import { effortOptionsFor } from "../lib/conversation/composer";
-  import { readBackends, type BackendSnapshot } from "../lib/conversation/wire";
+  import { resolveModelPicker } from "../lib/conversation/modelPicker";
+  import {
+    readBackends,
+    type BackendSnapshot,
+    type ConversationBackendKey
+  } from "../lib/conversation/wire";
   import type { EmployeeConfigurationSnapshot, TicketDetail } from "../lib/types";
   import Button from "./Button.svelte";
   import ErrorLine from "./ErrorLine.svelte";
+  import UnifiedModelPicker from "./conversation/UnifiedModelPicker.svelte";
 
   let {
     ticketId,
@@ -21,7 +25,7 @@
     onSave: (configuration: EmployeeConfigurationSnapshot) => Promise<TicketDetail>;
   } = $props();
 
-  let selectedBackend = $state("");
+  let selectedBackend = $state("claude" as ConversationBackendKey);
   let selectedModel = $state<string | null>(null);
   let selectedReasoning = $state<string | null>(null);
   let lastIncomingSignature = $state("");
@@ -32,39 +36,56 @@
   let saving = $state(false);
   let requestGeneration = 0;
 
-  // The backend the ticket will launch on, as the machine reports it: which models it
-  // offers, which efforts each of those takes, and what it runs when nobody names one.
   let snapshot = $derived(
     backends.find((candidate) => candidate.backend_key === selectedBackend) ?? null
   );
-  // Before the machine has answered, the only worker this pill knows of is the one the
-  // Ticket already names — so that is what it shows, and there is nothing else to pick.
-  let workerOptions = $derived(
-    backends.length > 0
-      ? backends.map((candidate) => ({
-          value: candidate.backend_key as string,
-          label: labelize(candidate.backend_key)
-        }))
-      : selectedBackend === ""
-        ? []
-        : [{ value: selectedBackend, label: labelize(selectedBackend) }]
-  );
-  let modelOptions = $derived(
-    (snapshot?.available_models ?? []).map((model) => ({
-      value: model.model_id,
-      label: model.display_name ?? model.model_id
-    }))
-  );
-  // Effort belongs to the model that will actually run. Nothing pinned means the backend's
-  // own model runs, so the backend's own list is the one on offer — the same rule the
-  // server applies when it saves the choice.
-  let reasoningOptions = $derived(
-    effortOptionsFor(
-      snapshot?.available_models ?? [],
-      selectedModel,
-      snapshot?.reasoning_effort_options ?? []
-    ).map((effort) => ({ value: effort, label: effort }))
-  );
+  let picker = $derived(resolveModelPicker({
+    backendKey: selectedBackend,
+    model: selectedModel,
+    reasoningEffort: selectedReasoning,
+    backends
+  }));
+
+  async function loadBackends(): Promise<void> {
+    const generation = ++requestGeneration;
+    backendsError = null;
+    backendsLoading = true;
+    try {
+      const answer = await readBackends();
+      if (generation === requestGeneration) backends = answer;
+    } catch (error) {
+      if (generation === requestGeneration) backendsError = error;
+    } finally {
+      if (generation === requestGeneration) backendsLoading = false;
+    }
+  }
+
+  async function persist(configuration: EmployeeConfigurationSnapshot): Promise<void> {
+    if (saving) return;
+    const previous = {
+      employee_backend: selectedBackend,
+      employee_launch_model: selectedModel,
+      employee_launch_reasoning_effort: selectedReasoning
+    };
+    selectedBackend = configuration.employee_backend as ConversationBackendKey;
+    selectedModel = configuration.employee_launch_model;
+    selectedReasoning = configuration.employee_launch_reasoning_effort;
+    saving = true;
+    saveError = null;
+    try {
+      const saved = await onSave(configuration);
+      selectedBackend = saved.employee_backend as ConversationBackendKey;
+      selectedModel = saved.employee_launch_model;
+      selectedReasoning = saved.employee_launch_reasoning_effort;
+    } catch (error) {
+      selectedBackend = previous.employee_backend;
+      selectedModel = previous.employee_launch_model;
+      selectedReasoning = previous.employee_launch_reasoning_effort;
+      saveError = error;
+    } finally {
+      saving = false;
+    }
+  }
 
   function incomingSignature(): string {
     return JSON.stringify([
@@ -74,133 +95,17 @@
     ]);
   }
 
-  function displayLabel(
-    options: Array<{ value: string; label: string }>,
-    value: string | null,
-    fallback: string
-  ): string {
-    const encoded = value ?? "";
-    return options.find((option) => option.value === encoded)?.label ?? value ?? fallback;
-  }
-
-  // When nothing is pinned (value null) the control shows the backend's concrete
-  // native value — the real name, never the word "default". No native value → empty.
-  function displayValue(
-    options: Array<{ value: string; label: string }>,
-    value: string | null,
-    nativeValue: string | null
-  ): string {
-    const effective = value ?? nativeValue;
-    if (effective === null) return "";
-    return options.find((option) => option.value === effective)?.label ?? effective;
-  }
-
-  function withSavedUnavailable(
-    options: Array<{ value: string; label: string; unavailable?: boolean }>,
-    savedValue: string | null
-  ): Array<{ value: string; label: string; unavailable?: boolean }> {
-    if (savedValue === null || options.some((option) => option.value === savedValue)) return options;
-    return [
-      ...options,
-      { value: savedValue, label: `${savedValue} · unavailable`, unavailable: true }
-    ];
-  }
-
-  async function loadBackends(refresh = false): Promise<void> {
-    const generation = ++requestGeneration;
-    backends = [];
-    backendsError = null;
-    backendsLoading = true;
-    try {
-      const answer = await readBackends(refresh);
-      if (generation !== requestGeneration) return;
-      backends = answer;
-    } catch (error) {
-      if (generation !== requestGeneration) return;
-      backendsError = error;
-    } finally {
-      if (generation === requestGeneration) backendsLoading = false;
-    }
-  }
-
-  async function persist(configuration: EmployeeConfigurationSnapshot): Promise<void> {
-    if (saving) return;
-    saving = true;
-    saveError = null;
-    try {
-      const saved = await onSave(configuration);
-      selectedBackend = saved.employee_backend;
-      selectedModel = saved.employee_launch_model;
-      selectedReasoning = saved.employee_launch_reasoning_effort;
-    } catch (error) {
-      saveError = error;
-    } finally {
-      saving = false;
-    }
-  }
-
-  // Changing the worker changes the model with it: the one showing was picked out of the
-  // old backend's catalog and means nothing to this one, and a Ticket saved with no model
-  // launches its worker on whatever the backend picked for itself. What replaces it is
-  // what this machine says the new backend runs. One that reported no model has none to
-  // give, and then the save names none and the server refuses it in the open.
-  function selectWorker(event: Event): void {
-    const target = event.currentTarget as HTMLSelectElement;
-    const nextBackend = target.value;
-    target.value = selectedBackend;
-    if (nextBackend === selectedBackend || saving) return;
-    const itsOwn = backends.find((candidate) => candidate.backend_key === nextBackend);
-    void persist({
-      employee_backend: nextBackend,
-      employee_launch_model: itsOwn?.default_model_id ?? null,
-      employee_launch_reasoning_effort: null
-    });
-  }
-
-  function selectModel(event: Event): void {
-    const target = event.currentTarget as HTMLSelectElement;
-    const nextModel = target.value;
-    target.value = selectedModel ?? snapshot?.default_model_id ?? "";
-    if (nextModel === selectedModel || saving) return;
-    void persist({
-      employee_backend: selectedBackend,
-      employee_launch_model: nextModel,
-      employee_launch_reasoning_effort: selectedReasoning
-    });
-  }
-
-  function selectReasoning(event: Event): void {
-    const target = event.currentTarget as HTMLSelectElement;
-    const nextReasoning =
-      target.value === (snapshot?.default_reasoning_effort ?? "") ? null : target.value || null;
-    target.value = selectedReasoning ?? snapshot?.default_reasoning_effort ?? "";
-    if (nextReasoning === selectedReasoning || saving) return;
-    void persist({
-      employee_backend: selectedBackend,
-      // The complete configuration goes out, so the model goes with the effort — the one
-      // this control is already showing, which for a Ticket old enough to name none is
-      // what its backend runs. Sending the value on the face is what names it.
-      employee_launch_model: selectedModel ?? snapshot?.default_model_id ?? null,
-      employee_launch_reasoning_effort: nextReasoning
-    });
-  }
-
   $effect(() => {
     const signature = incomingSignature();
-    if (signature === lastIncomingSignature) return;
+    if (signature === lastIncomingSignature || saving) return;
     lastIncomingSignature = signature;
-    selectedBackend = employeeBackend;
+    selectedBackend = employeeBackend as ConversationBackendKey;
     selectedModel = employeeLaunchModel;
     selectedReasoning = employeeLaunchReasoningEffort;
   });
 
-  onMount(() => {
-    void loadBackends();
-  });
-
-  onDestroy(() => {
-    requestGeneration += 1;
-  });
+  onMount(() => void loadBackends());
+  onDestroy(() => { requestGeneration += 1; });
 </script>
 
 <div
@@ -211,61 +116,35 @@
   data-employee-configuration-model={selectedModel ?? ""}
   data-employee-configuration-reasoning={selectedReasoning ?? ""}
 >
-  <span class="pill" data-employee-configuration-worker>
-    <span class="pill-key">worker</span>
-    {displayLabel(workerOptions, selectedBackend, selectedBackend)}
-    <select value={selectedBackend} disabled={saving} onchange={selectWorker} aria-label="Worker">
-      {#each workerOptions as option}
-        <option value={option.value}>{option.label}</option>
-      {/each}
-    </select>
-  </span>
+  <span class="employee-configuration-key">runs on</span>
+  <UnifiedModelPicker
+    view={picker}
+    snapshots={backends}
+    models={snapshot?.available_models ?? []}
+    backendEffortOptions={snapshot?.reasoning_effort_options ?? []}
+    below
+    disabled={saving}
+    keepOpenWhenDisabled
+    attributes={{ "data-employee-configuration-picker": "" }}
+    onChooseBackend={(backend, defaults) => void persist({
+      employee_backend: backend,
+      employee_launch_model: defaults.model,
+      employee_launch_reasoning_effort: defaults.reasoningEffort
+    })}
+    onChooseModel={(model, reasoningEffort) => void persist({
+      employee_backend: selectedBackend,
+      employee_launch_model: model,
+      employee_launch_reasoning_effort: reasoningEffort
+    })}
+    onChooseReasoningEffort={(reasoningEffort) => void persist({
+      employee_backend: selectedBackend,
+      employee_launch_model: selectedModel ?? picker.defaultModel,
+      employee_launch_reasoning_effort: reasoningEffort
+    })}
+  />
 
   {#if backendsLoading}
-    <span class="employee-configuration-state" data-employee-configuration-loading>
-      loading models…
-    </span>
-  {:else if snapshot}
-    <span class="pill" data-employee-configuration-model-control>
-      <span class="pill-key">model</span>
-      {displayValue(modelOptions, selectedModel, snapshot.default_model_id ?? null)}
-      <select
-        value={selectedModel ?? snapshot.default_model_id ?? ""}
-        disabled={saving}
-        onchange={selectModel}
-        aria-label="Model"
-      >
-        {#each withSavedUnavailable(modelOptions, selectedModel) as option}
-          <option value={option.value} disabled={option.unavailable}>{option.label}</option>
-        {/each}
-      </select>
-    </span>
-
-    {#if reasoningOptions.length > 0}
-      <span class="pill" data-employee-configuration-reasoning-control>
-        <span class="pill-key">reasoning</span>
-        {displayValue(reasoningOptions, selectedReasoning, snapshot.default_reasoning_effort ?? null)}
-        <select
-          value={selectedReasoning ?? snapshot.default_reasoning_effort ?? ""}
-          disabled={saving}
-          onchange={selectReasoning}
-          aria-label="Reasoning"
-        >
-          {#each withSavedUnavailable(reasoningOptions, selectedReasoning) as option}
-            <option value={option.value} disabled={option.unavailable}>{option.label}</option>
-          {/each}
-        </select>
-      </span>
-    {/if}
-  {:else if backendsError}
-    <span class="pill" data-employee-configuration-saved-model>
-      <span class="pill-key">model</span>{selectedModel ?? ""}
-    </span>
-    {#if selectedReasoning !== null}
-      <span class="pill" data-employee-configuration-saved-reasoning>
-        <span class="pill-key">reasoning</span>{selectedReasoning}
-      </span>
-    {/if}
+    <span class="employee-configuration-state" data-employee-configuration-loading>loading models…</span>
   {/if}
 
   {#if backendsError}
@@ -275,18 +154,9 @@
         variant="quiet"
         data-employee-configuration-retry
         disabled={backendsLoading}
-        onclick={() => void loadBackends(true)}
+        onclick={() => void loadBackends()}
       >Retry</Button>
     </div>
-  {/if}
-
-  {#if snapshot}
-    <Button
-      variant="quiet"
-      data-employee-configuration-refresh
-      disabled={backendsLoading}
-      onclick={() => void loadBackends(true)}
-    >Refresh</Button>
   {/if}
 
   {#if saveError}
@@ -295,3 +165,11 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .employee-configuration-setup { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .employee-configuration-key, .employee-configuration-state {
+    color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs);
+  }
+  .employee-configuration-problem { flex-basis: 100%; display: flex; align-items: center; gap: var(--space-2); }
+</style>

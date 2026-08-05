@@ -8,8 +8,6 @@
 import {
   deliveryOptionsFor,
   effortOptionsFor,
-  modelDetail,
-  modelDisplayName,
   preselectedValue
 } from "../../composer";
 import type {
@@ -17,12 +15,12 @@ import type {
   ConversationBackendKey
 } from "../../wire";
 import type {
-  ComposerRunControlChoice,
   ComposerRunControlsInput,
   ComposerRunControlsView,
   ComposerRunSelection,
   ComposerRunSelectionIntent
 } from "../contracts";
+import { resolveModelPicker } from "../../modelPicker";
 
 type ActiveCatalog = Readonly<{
   models: readonly BackendModel[];
@@ -61,14 +59,6 @@ function shownBackend(
     : (input.selection.pickedBackend ?? input.backendKey);
 }
 
-function modelSecondLine(model: BackendModel): string | null {
-  const detail = model.detail ?? null;
-  if (detail !== null && detail !== "") return detail;
-  return model.display_name === null || model.display_name === model.model_id
-    ? null
-    : model.model_id;
-}
-
 function normalizedModel(
   pickedModel: string | null,
   models: readonly BackendModel[]
@@ -90,43 +80,6 @@ function normalizedEffort(
   return pickedEffort !== null && !offeredEfforts.includes(pickedEffort)
     ? null
     : pickedEffort;
-}
-
-function choicesForModels(
-  models: readonly BackendModel[],
-  shownModel: string
-): ComposerRunControlChoice[] {
-  const options =
-    shownModel !== "" && !models.some((model) => model.model_id === shownModel)
-      ? [{ model_id: shownModel, display_name: null }, ...models]
-      : models;
-  return options.map((model) => ({
-    value: model.model_id,
-    name: model.display_name ?? model.model_id,
-    detail: modelSecondLine(model)
-  }));
-}
-
-function choicesForEfforts(
-  offeredEfforts: readonly string[],
-  shownEffort: string
-): ComposerRunControlChoice[] {
-  const choices =
-    shownEffort !== "" && !offeredEfforts.includes(shownEffort)
-      ? [shownEffort, ...offeredEfforts]
-      : offeredEfforts;
-  return choices.map((effort) => ({
-    value: effort,
-    name: effort,
-    detail: null
-  }));
-}
-
-function modelTitle(models: readonly BackendModel[], shownModel: string): string {
-  const value = shownModel === "" ? null : shownModel;
-  const name = modelDisplayName(models, value) ?? "the backend's own model";
-  const detail = modelDetail(models, value);
-  return detail === null ? name : `${name} — ${detail}`;
 }
 
 function submitProjection(
@@ -181,7 +134,6 @@ export function resolveComposerRunControls(
       catalog.startsOnReasoningEffort
     )
     ?? "";
-  const effortChoices = choicesForEfforts(offeredEfforts, shownEffort);
   const normalizedSelection: ComposerRunSelection = {
     ...input.selection,
     pickedModel,
@@ -203,22 +155,22 @@ export function resolveComposerRunControls(
       ? input.selection.deliveryMode
       : "run_when_free",
     disabled: input.inputDisabled,
-    backend: {
-      showing: shownBackend(input),
-      locked: input.conversationExists
+    picker: resolveModelPicker({
+      backendKey: shownBackend(input),
+      model: shownModel || null,
+      reasoningEffort: shownEffort || null,
+      backends: input.backends,
+      backendLocked: input.conversationExists,
+      models: catalog.models,
+      backendEffortOptions: catalog.effortOptions,
+      defaultModel: catalog.startsOnModel,
+      defaultReasoningEffort: catalog.startsOnReasoningEffort
+    }),
+    pickerSource: {
+      backends: input.backends,
+      models: catalog.models,
+      backendEffortOptions: catalog.effortOptions
     },
-    model: {
-      value: shownModel,
-      choices: choicesForModels(catalog.models, shownModel),
-      title: modelTitle(catalog.models, shownModel)
-    },
-    effort: effortChoices.length === 0
-      ? null
-      : {
-          value: shownEffort,
-          choices: effortChoices,
-          bare: shownEffort === ""
-        },
     delivery: input.running
       ? {
           selected: input.selection.deliveryMode,
@@ -248,7 +200,11 @@ export function applyComposerRunSelectionIntent(
         pickedReasoningEffort: null
       };
     case "choose_model":
-      return { ...input.selection, pickedModel: intent.model };
+      return {
+        ...input.selection,
+        pickedModel: intent.model,
+        pickedReasoningEffort: intent.reasoningEffort
+      };
     case "choose_reasoning_effort":
       return {
         ...input.selection,

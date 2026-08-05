@@ -168,6 +168,70 @@ def test_ticket_and_field_user_notes_round_trip_with_legacy_field_notes(
     }
 
 
+def test_ticket_user_note_replace_and_append_are_explicit(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    t = _create(tmp_db, cfg, fake_clock, kickoff_note="keep this value")
+
+    replaced = data.replace_field_user_note(
+        tmp_db,
+        t.id,
+        field="approach",
+        user_note="first guidance",
+        actor="human",
+        now=fake_clock.now_unix(),
+    )
+    appended = data.append_field_user_note(
+        tmp_db,
+        t.id,
+        field="approach",
+        user_note="second guidance",
+        actor="agent",
+        now=fake_clock.now_unix(),
+    )
+    empty_append = data.append_field_user_note(
+        tmp_db,
+        t.id,
+        field="approach",
+        user_note="",
+        actor="agent",
+        now=fake_clock.now_unix(),
+    )
+
+    assert fields_codec.get_slot(replaced.fields, "approach").user_note == "first guidance"
+    assert (
+        fields_codec.get_slot(appended.fields, "approach").user_note
+        == "first guidance\n\nsecond guidance"
+    )
+    assert fields_codec.get_slot(empty_append.fields, "approach").user_note == (
+        "first guidance\n\nsecond guidance"
+    )
+    assert fields_codec.get_slot(empty_append.fields, "kickoff").value == "keep this value"
+
+    cleared = data.replace_field_user_note(
+        tmp_db,
+        t.id,
+        field="approach",
+        user_note=None,
+        actor="human",
+        now=fake_clock.now_unix(),
+    )
+    appended_after_clear = data.append_field_user_note(
+        tmp_db,
+        t.id,
+        field="approach",
+        user_note="new guidance",
+        actor="agent",
+        now=fake_clock.now_unix(),
+    )
+
+    assert fields_codec.get_slot(cleared.fields, "approach").user_note is None
+    assert (
+        fields_codec.get_slot(appended_after_clear.fields, "approach").user_note
+        == "new guidance"
+    )
+
+
 def test_ordinary_create_parks_ordinary_kickoff_field_proposal(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:

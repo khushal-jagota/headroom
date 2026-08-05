@@ -169,11 +169,11 @@ class PromptEventPayload:
 
 @dataclass(frozen=True, slots=True)
 class PromptDeliveryRefusedEventPayload:
-    """A held message that could not be delivered when its turn came.
+    """A message whose delivery refusal must remain in the record.
 
-    Only a dequeued delivery is recorded this way. A refusal a caller is still waiting on
-    is returned as its fate; there is nobody left to tell about a held one, so it goes in
-    the record instead.
+    A dequeued delivery is recorded because its caller is gone. A direct delivery is also
+    recorded when replacement of a failed child cannot resume or accept the follow-up.
+    Other direct refusals are returned as their fate and do not create an event.
 
     ``sender_message_id`` is the id the sender minted for this message. A sent message
     becomes exactly one of three rows — delivered, refused, or discarded — and a sender

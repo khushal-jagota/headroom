@@ -22,8 +22,6 @@
     lifecycle = null,
     stageState = "upcoming",
     variant = "ticket",
-    recap = null,
-    showRecap = false,
     emptyText = "Not written yet.",
     editableValue = true,
     approvalDisabled = false,
@@ -32,7 +30,7 @@
     onRelease,
     contextRow,
     onAccept,
-    onSaveNote,
+    onReplaceNote,
     onSaveValue
   }: {
     name: string;
@@ -42,8 +40,6 @@
     lifecycle?: Lifecycle | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
-    recap?: string | null;
-    showRecap?: boolean;
     emptyText?: string;
     editableValue?: boolean;
     approvalDisabled?: boolean;
@@ -52,7 +48,7 @@
     onRelease?: () => void;
     contextRow?: Snippet;
     onAccept: (payload: Record<string, unknown>) => Promise<unknown>;
-    onSaveNote?: (raw: string) => Promise<unknown>;
+    onReplaceNote?: (raw: string) => Promise<unknown>;
     onSaveValue?: (raw: string) => Promise<unknown>;
   } = $props();
 
@@ -73,13 +69,6 @@
 </script>
 
 {#snippet stageBody()}
-  {#if showRecap && recap}
-    <div class="review-context" data-content-section="recap">
-      <div class="review-context-label">Recap</div>
-      <div class="review-context-recap"><MarkdownBlock text={recap} /></div>
-    </div>
-  {/if}
-
   {#if reviewVariant && hasNotes}
     <Disclosure title="Notes" variant="support" defaultOpen={false} data-content-section="notes">
       <MarkdownBlock text={slot.user_note} />
@@ -133,9 +122,9 @@
     {/if}
   {/if}
 
-  {#if !reviewVariant && onSaveNote}
+  {#if !reviewVariant && onReplaceNote}
     <Disclosure title="Notes" variant="support" defaultOpen={hasNotes} data-content-section="note">
-      <InlineEdit value={slot.user_note} markdown multiline placeholder="Note..." onSave={onSaveNote} />
+      <InlineEdit value={slot.user_note} markdown multiline placeholder="Note..." onSave={onReplaceNote} />
     </Disclosure>
   {/if}
 {/snippet}

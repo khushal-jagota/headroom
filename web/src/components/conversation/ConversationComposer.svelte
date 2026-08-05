@@ -44,6 +44,13 @@
   import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
   import {
+    createVoiceCapture,
+    formatVoiceTime,
+    voiceCaptureSupported,
+    type VoiceCapture,
+    type VoiceCaptureState
+  } from "../../lib/conversation/voiceCapture";
+  import {
     createPendingConversationImages,
     pendingConversationImageBytes,
     releasePendingImages,
@@ -62,6 +69,7 @@
   } from "../../lib/conversation/wire";
 
   let {
+    conversationId = null,
     backendKey = null,
     conversationExists = false,
     running = false,
@@ -80,12 +88,16 @@
     errorNote = null,
     placeholder = "Message the agent...",
     disabled = false,
+    showRunPicker = true,
     onSend,
     onStop,
     onAnswer,
     onSubmitUserInput,
     onCancelTurn
   }: {
+    /** The conversation a voice recording would be transcribed against. Voice needs a
+     *  conversation to send audio to, so without one there is no voice UI. */
+    conversationId?: string | null;
     /** The backend this conversation runs on — or, before there is one, the backend a
      *  message sent from here would create it on. */
     backendKey?: ConversationBackendKey | null;
@@ -128,6 +140,8 @@
     errorNote?: string | null;
     placeholder?: string;
     disabled?: boolean;
+    /** False when an empty-state form owns the same start values on this screen. */
+    showRunPicker?: boolean;
     onSend: (
       content: SentMessagePiece[],
       mode: PromptDeliveryMode,
@@ -175,8 +189,35 @@
   let compositionRevision = 0;
   let destroyed = false;
 
+  // --- speaking instead of typing ----------------------------------------------------------
+  /** Whether the person asked for the keyboard instead of voice-first, kept for the
+   *  session so the composer does not snap back to the mic while they type. */
+  const KEYBOARD_PREFERRED = "panels.composer.voiceKeyboardPreferred";
+  let coarsePointer = $state(false);
+  let voiceSupported = $state(false);
+  let keyboardPreferred = $state(false);
+  let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
+  let voice: VoiceCapture | null = null;
+
   let takenOver = $derived(ask !== null || userInput !== null);
   let inputDisabled = $derived(disabled || takenOver || imageIntakesInFlight > 0);
+  /** Voice is offered at all only where a finger is the pointer, the browser can record,
+   *  nothing has taken the composer over, and there is a conversation to transcribe
+   *  against. The question panel and permission ask always outrank it. */
+  let voiceAvailable = $derived(
+    coarsePointer && voiceSupported && !takenOver && conversationId !== null && conversationId !== ""
+  );
+  let voiceTakeover = $derived(voiceState.phase !== "idle");
+  /** The empty composer on a phone leads with the mic. Anything composed, disabled, or
+   *  remembered as keyboard-preferred yields to the normal composer. */
+  let voiceFirstIdle = $derived(
+    voiceAvailable
+    && !voiceTakeover
+    && !keyboardPreferred
+    && !inputDisabled
+    && text === ""
+    && pendingImages.length === 0
+  );
   let livePlaceholder = $derived(ask !== null ? askPlaceholder(ask) : placeholder);
   let runControlsInput = $derived<ComposerRunControlsInput>({
     selection: runSelection,
@@ -323,8 +364,8 @@
   const runControlIntents: ComposerRunControlIntents = {
     chooseBackend: (backendKey) =>
       applyRunSelectionIntent({ intent: "choose_backend", backendKey }),
-    chooseModel: (model) =>
-      applyRunSelectionIntent({ intent: "choose_model", model }),
+    chooseModel: (model, reasoningEffort) =>
+      applyRunSelectionIntent({ intent: "choose_model", model, reasoningEffort }),
     chooseReasoningEffort: (reasoningEffort) => applyRunSelectionIntent({
       intent: "choose_reasoning_effort",
       reasoningEffort
@@ -591,10 +632,57 @@
     cursorAt = 1;
   }
 
+  /** A transcription landed. The words join the draft the way typing them would have, and
+   *  the composer settles as the normal one with the cursor at the end — never back to the
+   *  voice-first face over text that was just spoken. An empty transcript is a no-op. */
+  async function landTranscript(transcript: string): Promise<void> {
+    if (transcript === "") return;
+    recordDraftChange();
+    const settled = text.trim();
+    text = settled === "" ? transcript : `${settled}\n\n${transcript}`;
+    await tick();
+    const input = inputElement;
+    if (input === null) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    cursorAt = input.value.length;
+  }
+
+  async function preferKeyboard(): Promise<void> {
+    keyboardPreferred = true;
+    try {
+      window.sessionStorage.setItem(KEYBOARD_PREFERRED, "1");
+    } catch {
+      // A browser that keeps nothing for the tab still switches faces for now.
+    }
+    await tick();
+    inputElement?.focus();
+  }
+
+  // A question panel or permission ask arriving mid-voice takes the composer: whatever
+  // voice was doing is cancelled rather than left running under a surface it cannot show.
+  $effect(() => {
+    if (takenOver && voiceState.phase !== "idle") voice?.cancel();
+  });
+
   onMount(() => {
+    coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    voiceSupported = voiceCaptureSupported();
+    try {
+      keyboardPreferred = window.sessionStorage.getItem(KEYBOARD_PREFERRED) === "1";
+    } catch {
+      keyboardPreferred = false;
+    }
+    voice = createVoiceCapture({
+      conversationId: () => (conversationId === "" ? null : conversationId),
+      onState: (state) => (voiceState = state),
+      onTranscript: (transcript) => void landTranscript(transcript)
+    });
     return () => {
       destroyed = true;
       releasePendingImages(pendingImages);
+      voice?.dispose();
+      voice = null;
     };
   });
 </script>
@@ -673,6 +761,40 @@
         </div>
       {/if}
 
+      {#if userInput === null && voiceState.phase !== "idle"}
+        <!-- Every voice state keeps the composer's shape: this centred line is the main
+             area, and the actions stay down in the foot bar. -->
+        <div class="chat-voice-mid" data-conversation-voice={voiceState.phase}>
+          {#if voiceState.phase === "recording"}
+            <span class="live-text-shimmer">recording</span>
+            <span class="chat-voice-time">{formatVoiceTime(voiceState.elapsedMs)}</span>
+          {:else if voiceState.phase === "transcribing"}
+            <span class="live-text-shimmer">transcribing</span>
+          {:else}
+            <span class="chat-voice-fail">
+              transcription failed · kept
+              <span class="chat-voice-time">{formatVoiceTime(voiceState.keptMs)}</span>
+            </span>
+          {/if}
+        </div>
+      {:else if userInput === null && voiceFirstIdle}
+        <button
+          type="button"
+          class="chat-voice-idle"
+          data-conversation-voice="idle"
+          data-voice-record
+          aria-label="Tap to speak"
+          disabled={inputDisabled}
+          onclick={() => void voice?.startRecording()}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+          </svg>
+          <span>tap to speak</span>
+        </button>
+      {/if}
+
       <textarea
         class="chat-ta"
         data-conversation-input
@@ -681,7 +803,7 @@
         bind:this={inputElement}
         bind:value={text}
         disabled={inputDisabled}
-        hidden={userInput !== null}
+        hidden={userInput !== null || voiceState.phase !== "idle" || voiceFirstIdle}
         onkeydown={onKeydown}
         oninput={textChanged}
         onkeyup={readWhereTheCursorIs}
@@ -700,6 +822,52 @@
             onAnswer={(optionId) => onAnswer?.(optionId)}
             onCancelTurn={() => onCancelTurn?.()}
           />
+        {:else if voiceState.phase !== "idle"}
+          <!-- The X on the left undoes whatever voice is doing; the right-hand slot is the
+               one going-forward action of the state: stop, or retry. -->
+          <button
+            type="button"
+            class="chat-voice-cancel"
+            data-voice-cancel
+            aria-label={voiceState.phase === "recording"
+              ? "Cancel recording"
+              : voiceState.phase === "transcribing"
+                ? "Cancel transcription"
+                : "Discard recording"}
+            onclick={() => voice?.cancel()}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
+          </button>
+          {#if voiceState.phase === "recording"}
+            <button
+              type="button"
+              class="chat-voice-stop"
+              data-voice-stop
+              aria-label="Stop recording and transcribe"
+              onclick={() => voice?.stopRecording()}
+            ><span class="chat-voice-square"></span></button>
+          {:else if voiceState.phase === "failed"}
+            <button
+              type="button"
+              class="chat-voice-retry"
+              data-voice-retry
+              onclick={() => voice?.retry()}
+            >retry</button>
+          {/if}
+        {:else if voiceFirstIdle}
+          <button
+            type="button"
+            class="chat-image chat-voice-kb"
+            data-voice-keyboard
+            aria-label="Type instead"
+            title="Type instead"
+            onclick={() => void preferKeyboard()}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="2.5" y="6" width="19" height="12" rx="2" />
+              <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" />
+            </svg>
+          </button>
         {:else}
           <!-- Pressing this leaves the cursor in the box rather than taking it, because
                everything it does is done to what is being written there. -->
@@ -731,6 +899,23 @@
               <path d="M2.5 3.5h11v9h-11zM4 10l2.5-2.5 2 2 1.5-1.5 2 2M10.5 6h.01" />
             </svg>
           </button>
+          {#if voiceAvailable}
+            <!-- Recording from a composer with words already in it appends to them. -->
+            <button
+              type="button"
+              class="chat-image chat-voice-mic"
+              data-voice-record
+              aria-label="Record a voice message"
+              title="Record a voice message"
+              disabled={inputDisabled}
+              onclick={() => void voice?.startRecording()}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3" />
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+              </svg>
+            </button>
+          {/if}
           <input
             bind:this={imageInput}
             class="chat-image-input"
@@ -741,7 +926,9 @@
             onchange={() => void intakeFiles(imageInput?.files)}
           />
 
-          <ComposerRunControls view={runControlsView} intents={runControlIntents} />
+          {#if showRunPicker}
+            <ComposerRunControls view={runControlsView} intents={runControlIntents} />
+          {/if}
         {/if}
       </div>
       {/if}

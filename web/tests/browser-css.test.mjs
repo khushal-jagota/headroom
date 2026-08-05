@@ -338,6 +338,55 @@ def assert_scrollbars(browser):
         forced.close()
 
 
+def assert_document_boundaries(browser):
+    context = browser.new_context(viewport={"width": 1280, "height": 800})
+    try:
+        page = context.new_page()
+        mount(page, """
+          <article class="file-preview--embedded" data-file-preview-kind="html">
+            <div class="file-preview-document">
+              <header class="file-preview-document-header">HTML preview</header>
+              <div class="file-preview-document-body">HTML body</div>
+            </div>
+          </article>
+          <article class="file-preview--embedded" data-file-preview-kind="markdown">
+            <div class="file-preview-document">
+              <header class="file-preview-document-header">Markdown preview</header>
+              <div class="file-preview-document-body">Markdown body</div>
+            </div>
+          </article>
+        """)
+        state = page.evaluate("""() => {
+          const html = document.querySelector('[data-file-preview-kind="html"] .file-preview-document');
+          const markdown = document.querySelector('[data-file-preview-kind="markdown"] .file-preview-document');
+          const header = html.querySelector('.file-preview-document-header');
+          const body = html.querySelector('.file-preview-document-body');
+          const markdownBody = markdown.querySelector('.file-preview-document-body');
+          const htmlStyle = getComputedStyle(html);
+          const headerStyle = getComputedStyle(header);
+          const bodyStyle = getComputedStyle(body);
+          const markdownBodyStyle = getComputedStyle(markdownBody);
+          return {
+            borderTopWidth: htmlStyle.borderTopWidth,
+            borderColor: htmlStyle.borderColor,
+            borderRadius: htmlStyle.borderRadius,
+            overflow: htmlStyle.overflow,
+            divider: headerStyle.borderBottomWidth,
+            htmlSurface: bodyStyle.backgroundColor,
+            markdownSurface: markdownBodyStyle.backgroundColor,
+          };
+        }""")
+        assert state["borderTopWidth"] == "1px", state
+        assert state["borderColor"] == "rgba(230, 210, 175, 0.11)", state
+        assert state["borderRadius"] == "8px", state
+        assert state["overflow"] == "hidden", state
+        assert state["divider"] == "1px", state
+        assert state["htmlSurface"] == "rgb(36, 33, 27)", state
+        assert state["markdownSurface"] == "rgb(20, 18, 16)", state
+    finally:
+        context.close()
+
+
 def assert_mobile_content_containment(browser):
     context = browser.new_context(
         has_touch=True, is_mobile=True, viewport={"width": 280, "height": 800}
@@ -402,6 +451,7 @@ with sync_playwright() as playwright:
         assert_brand(browser, False)
         assert_brand(browser, True)
         assert_scrollbars(browser)
+        assert_document_boundaries(browser)
         assert_mobile_content_containment(browser)
     finally:
         browser.close()

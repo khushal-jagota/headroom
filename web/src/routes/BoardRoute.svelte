@@ -27,43 +27,7 @@
   );
   let selectedCard = $derived(allCards.find((card) => card.id === ticketId) || null);
   let chiefSelected = $derived(ticketId === "chief-of-staff");
-  const ALL_PROJECTS = "__all_projects__";
-  const NO_PROJECT = "__no_project__";
-  let selectedProjectId = $state(ALL_PROJECTS);
-  let projectOptions = $derived(
-    Array.from(
-      new Map(
-        allCards
-          .filter((card) => card.group_project_id)
-          .map((card) => [String(card.group_project_id), String(card.group_project)])
-      )
-    )
-      .map(([id, name]) => ({ id, name }))
-      .sort((left, right) => left.name.localeCompare(right.name))
-  );
-  let rosterCards = $derived(
-    selectedProjectId === ALL_PROJECTS
-      ? allCards
-      : allCards.filter((card) =>
-          selectedProjectId === NO_PROJECT
-            ? !card.group_project_id
-            : card.group_project_id === selectedProjectId
-        )
-  );
-  let groups = $derived(buildGroups(rosterCards));
-
-  $effect(() => {
-    const selectedProjectStillExists = projectOptions.some(
-      (project) => project.id === selectedProjectId
-    );
-    if (
-      selectedProjectId !== ALL_PROJECTS &&
-      selectedProjectId !== NO_PROJECT &&
-      !selectedProjectStillExists
-    ) {
-      selectedProjectId = ALL_PROJECTS;
-    }
-  });
+  let groups = $derived(buildGroups(allCards));
 
   // The board is settled — loaded, no fetch in flight, and the last read
   // succeeded — and the ticket in the address is not on it, so the address is
@@ -86,47 +50,6 @@
     window.location.hash = window.matchMedia("(max-width: 960px)").matches
       ? `#/ticket/${encodeURIComponent(ticketId)}`
       : `#/workspace/${encodeURIComponent(ticketId)}`;
-  }
-
-  // The project filter is a mini header that opens a dropdown menu, not a form
-  // control. The trigger shows the active project; the menu picks a new one.
-  let projectMenuOpen = $state(false);
-  let projectMenuElement = $state<HTMLDivElement | null>(null);
-  let projectMenuButton = $state<HTMLButtonElement | null>(null);
-  let activeProjectLabel = $derived(
-    selectedProjectId === ALL_PROJECTS
-      ? "All projects"
-      : selectedProjectId === NO_PROJECT
-        ? "No project"
-        : projectOptions.find((project) => project.id === selectedProjectId)?.name ??
-          "All projects"
-  );
-
-  function closeProjectMenu(): void {
-    projectMenuOpen = false;
-  }
-
-  function chooseProject(projectId: string): void {
-    selectedProjectId = projectId;
-    closeProjectMenu();
-    projectMenuButton?.focus();
-  }
-
-  function onProjectMenuWindowPointerDown(event: PointerEvent): void {
-    if (
-      projectMenuOpen &&
-      projectMenuElement &&
-      !projectMenuElement.contains(event.target as Node)
-    ) {
-      closeProjectMenu();
-    }
-  }
-
-  function onProjectMenuWindowKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape" && projectMenuOpen) {
-      closeProjectMenu();
-      projectMenuButton?.focus();
-    }
   }
 
   // How far this browser has read each conversation on the board.
@@ -247,11 +170,6 @@
 
 </script>
 
-<svelte:window
-  onpointerdown={onProjectMenuWindowPointerDown}
-  onkeydown={onProjectMenuWindowKeydown}
-/>
-
 <section class="board-screen" data-screen="workspace">
   <ResourceState
     error={board.error}
@@ -291,63 +209,6 @@
               {/if}
             </a>
           {/if}
-
-          <div class="board-workspace-project-filter" bind:this={projectMenuElement}>
-            <button
-              type="button"
-              class="board-workspace-project-filter-trigger"
-              bind:this={projectMenuButton}
-              aria-haspopup="menu"
-              aria-expanded={projectMenuOpen}
-              data-project-filter
-              data-active-project-id={selectedProjectId}
-              onclick={() =>
-                projectMenuOpen ? closeProjectMenu() : (projectMenuOpen = true)}
-            >
-              <span class="board-workspace-project-filter-value">{activeProjectLabel}</span>
-              <span class="board-workspace-project-filter-caret" aria-hidden="true"></span>
-            </button>
-
-            {#if projectMenuOpen}
-              <div class="board-workspace-project-filter-menu" role="menu" data-project-menu>
-                <button
-                  type="button"
-                  class="board-workspace-project-filter-item"
-                  role="menuitemradio"
-                  aria-checked={selectedProjectId === ALL_PROJECTS}
-                  data-project-option={ALL_PROJECTS}
-                  onclick={() => chooseProject(ALL_PROJECTS)}
-                >
-                  <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
-                  All projects
-                </button>
-                {#each projectOptions as project (project.id)}
-                  <button
-                    type="button"
-                    class="board-workspace-project-filter-item"
-                    role="menuitemradio"
-                    aria-checked={selectedProjectId === project.id}
-                    data-project-option={project.id}
-                    onclick={() => chooseProject(project.id)}
-                  >
-                    <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
-                    {project.name}
-                  </button>
-                {/each}
-                <button
-                  type="button"
-                  class="board-workspace-project-filter-item"
-                  role="menuitemradio"
-                  aria-checked={selectedProjectId === NO_PROJECT}
-                  data-project-option={NO_PROJECT}
-                  onclick={() => chooseProject(NO_PROJECT)}
-                >
-                  <span class="board-workspace-project-filter-tick" aria-hidden="true"></span>
-                  No project
-                </button>
-              </div>
-            {/if}
-          </div>
 
           {#each groups as group (group.key)}
             <Disclosure

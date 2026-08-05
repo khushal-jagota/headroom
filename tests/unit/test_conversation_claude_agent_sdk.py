@@ -48,6 +48,7 @@ from claude_agent_sdk import (
 from planner.conversation.backends.claude_agent_sdk import (
     ALWAYS_ALLOW_THIS_SESSION_OPTION_ID,
     APPROVE_ONCE_OPTION_ID,
+    CLAUDE_SDK_MAX_BUFFER_SIZE,
     DECLINE_OPTION_ID,
     ClaudeAgentSdkBackendChild,
     ClaudeAgentSdkBackendChildFactory,
@@ -521,6 +522,22 @@ def test_a_resume_names_the_session_it_wants_and_mints_nothing(tmp_path: Path) -
     _run(exercise)
 
 
+def test_fresh_and_resumed_sessions_use_the_explicit_message_buffer_limit(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        resolved_start = _start_request(workspace_folder=tmp_path)
+        child, _, clients = _bench(resolved_start)
+
+        await child.start(resolved_start, vendor_session_cursor=None)
+        assert clients[0].options.max_buffer_size == CLAUDE_SDK_MAX_BUFFER_SIZE
+        await child.stop()
+
+        await child.start(resolved_start, vendor_session_cursor=SESSION_ID)
+        assert clients[1].options.max_buffer_size == CLAUDE_SDK_MAX_BUFFER_SIZE
+        await child.stop()
+
+    _run(exercise)
+
+
 def test_a_session_that_will_not_load_is_never_replaced_by_a_fresh_one(tmp_path: Path) -> None:
     """Claude refuses to come up at all when it does not have the session that was named.
 
@@ -620,7 +637,8 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         assert ANOTHER_SESSION_ID in str(sink.endings[0]["error_summary"])
         assert sink.message_texts == []
         # Nothing more is written to a child that is not this conversation's session.
-        with pytest.raises(PromptWriteFailed):
+        # The stored cursor remains safe to try on one replacement child.
+        with pytest.raises(NeedsRebind):
             await _write(child, "again")
         await child.stop()
 
@@ -1008,10 +1026,12 @@ def test_a_prompt_that_does_not_reach_the_wire_says_so(tmp_path: Path) -> None:
         clients[0].query_failure = BrokenPipeError("the child has gone")
         with pytest.raises(PromptWriteFailed):
             await _write(child)
-        # A wire that has failed once fails the same way afterwards rather than hanging.
+        # The failed current write is never retried. A later prompt can safely replace the
+        # child because the adapter refuses it before another query starts.
         clients[0].query_failure = None
-        with pytest.raises(PromptWriteFailed):
+        with pytest.raises(NeedsRebind):
             await _write(child)
+        assert clients[0].prompts == []
         await child.stop()
 
     _run(exercise)
@@ -1132,6 +1152,31 @@ def test_a_message_around_a_tool_call_is_recorded_in_the_order_it_happened(
                 "detail": "a.txt",
             }
         ]
+        await child.stop()
+
+    _run(exercise)
+
+
+def test_a_valid_tool_result_just_over_one_megabyte_reaches_panels(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        session_id = clients[0].options.session_id
+        assert session_id is not None
+        await _write(child)
+
+        result = "x" * (1024 * 1024 + 1)
+        clients[0].say(
+            _assistant(ToolUseBlock(id="tool-1", name="Read", input={}), session_id=session_id),
+            UserMessage(
+                content=[ToolResultBlock(tool_use_id="tool-1", content=result, is_error=False)]
+            ),
+        )
+        await clients[0].until_taken_in()
+
+        assert sink.tools_finished[0]["tool_call_id"] == "tool-1"
+        assert sink.tools_finished[0]["tool_call_status"] is ToolCallStatus.completed
+        assert sink.tools_finished[0]["detail"] == result
         await child.stop()
 
     _run(exercise)
@@ -1506,6 +1551,10 @@ def test_a_child_whose_stream_ends_mid_turn_fails_the_turn(tmp_path: Path) -> No
         await clients[0].until_taken_in()
 
         assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
+        with pytest.raises(NeedsRebind):
+            await _write(child, "follow-up")
+        assert clients[0].prompts == ["hello"]
+        assert sink.message_texts == []
         await child.stop()
 
     _run(exercise)

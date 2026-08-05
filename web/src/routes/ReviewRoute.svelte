@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
@@ -11,9 +12,17 @@
   import Button from "../components/Button.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
+  import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
+  import {
+    createVoiceCapture,
+    formatVoiceTime,
+    voiceCaptureSupported,
+    type VoiceCapture,
+    type VoiceCaptureState
+  } from "../lib/conversation/voiceCapture";
 
   const review = createQuery(() => queries.review());
   const manifest = createQuery(() => queries.workerTypeManifests());
@@ -26,6 +35,14 @@
   let priorityError = $state<unknown>(null);
   let priorityBusy = $state(false);
   const staleRefreshRequests = new Set<string>();
+
+  // --- speaking a revision -----------------------------------------------------------------
+  // Same machine as the composer's, worn lighter: no voice-first face — Approve is this
+  // screen's primary action, so the mic is only an affordance on the revision box.
+  let coarsePointer = $state(false);
+  let voiceSupported = $state(false);
+  let voiceState = $state<VoiceCaptureState>({ phase: "idle" });
+  let voice: VoiceCapture | null = null;
 
   function itemKey(item: ReviewItem): string {
     return item.review_item_type === "proposal"
@@ -58,6 +75,32 @@
     typeof detail.data?.worker_type === "string" ? (detail.data.worker_type as string) : null
   );
   let lc = $derived(lifecycleFor(manifest.data, detailWorkerType));
+  let voiceAvailable = $derived(
+    coarsePointer && voiceSupported && Boolean(detail.data?.conversation_id)
+  );
+
+  /** The spoken words join the revision draft the way typing them would have. An empty
+   *  transcript is a no-op. */
+  function landRevisionTranscript(transcript: string): void {
+    if (transcript === "") return;
+    const settled = revisionDraft.trim();
+    revisionDraft = settled === "" ? transcript : `${settled}\n\n${transcript}`;
+  }
+
+  onMount(() => {
+    coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    voiceSupported = voiceCaptureSupported();
+    voice = createVoiceCapture({
+      conversationId: () => detail.data?.conversation_id ?? null,
+      onState: (state) => (voiceState = state),
+      onTranscript: landRevisionTranscript
+    });
+    return () => {
+      voice?.dispose();
+      voice = null;
+    };
+  });
+
   let manifestMissingWorkerType = $derived(
     Boolean(
       detailWorkerType &&
@@ -103,6 +146,8 @@
       revisionBusy = false;
       priorityError = null;
       priorityBusy = false;
+      // The box — and anything being spoken into it — belongs to one proposal.
+      voice?.cancel();
     }
   });
 
@@ -308,12 +353,19 @@
                 </div>
 
                 <div class="review-ticket-heading review-arrive review-arrive--2">
-                  <div class="review-ticket-title">
-                    <InlineEdit
-                      value={ticketDetail.title}
-                      placeholder="Untitled"
-                      onSave={(raw) => saveTitle(proposal, raw)}
-                    />
+                  <div class="review-ticket-heading-main">
+                    <div class="review-ticket-title">
+                      <InlineEdit
+                        value={ticketDetail.title}
+                        placeholder="Untitled"
+                        onSave={(raw) => saveTitle(proposal, raw)}
+                      />
+                    </div>
+                    {#if ticketDetail.recap}
+                      <div class="review-recap" data-recap>
+                        <MarkdownBlock text={ticketDetail.recap} />
+                      </div>
+                    {/if}
                   </div>
                   {#if field === "kickoff"}
                     <div class="review-kickoff-priority">
@@ -351,8 +403,6 @@
                       ticketStage={ticketDetail.stage}
                       ceiling={ticketDetail.ceiling}
                       stageState={fieldStageVisualStateFor(lc, ticketDetail, field)}
-                      recap={ticketDetail.recap}
-                      showRecap
                       approvalDisabled={field === "kickoff" && priorityBusy}
                       onAccept={(payload) => accept(proposal, payload)}
                     />
@@ -361,29 +411,93 @@
 
                 {#if field !== "kickoff"}
                   <div class="review-revise review-arrive review-arrive--4" data-review-revision>
-                    <div class="review-revision-box">
-                      <textarea
-                        class="review-revision-input"
-                        data-review-revision-input
-                        rows="1"
-                        placeholder="Or tell the worker what to change..."
-                        bind:value={revisionDraft}
-                        disabled={revisionBusy}
-                        onkeydown={(event) => {
-                          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                            event.preventDefault();
-                            void returnForRevision(proposal);
-                          }
-                        }}
-                      ></textarea>
-                      <Button
-                        variant="quiet"
-                        data-review-revision-send=""
-                        disabled={revisionBusy || !revisionDraft.trim()}
-                        onclick={() => void returnForRevision(proposal)}
-                      >
-                        Send back
-                      </Button>
+                    <div class="review-revision-box" data-review-voice={voiceState.phase}>
+                      {#if voiceState.phase !== "idle"}
+                        <!-- The same voice language as the composer: the centred shimmered
+                             word where the words would go, actions where "Send back" sits. -->
+                        <div class="chat-voice-mid review-voice-mid">
+                          {#if voiceState.phase === "recording"}
+                            <span class="live-text-shimmer">recording</span>
+                            <span class="chat-voice-time">{formatVoiceTime(voiceState.elapsedMs)}</span>
+                          {:else if voiceState.phase === "transcribing"}
+                            <span class="live-text-shimmer">transcribing</span>
+                          {:else}
+                            <span class="chat-voice-fail">
+                              transcription failed · kept
+                              <span class="chat-voice-time">{formatVoiceTime(voiceState.keptMs)}</span>
+                            </span>
+                          {/if}
+                        </div>
+                        <button
+                          type="button"
+                          class="chat-voice-cancel review-voice-action"
+                          data-voice-cancel
+                          aria-label={voiceState.phase === "recording"
+                            ? "Cancel recording"
+                            : voiceState.phase === "transcribing"
+                              ? "Cancel transcription"
+                              : "Discard recording"}
+                          onclick={() => voice?.cancel()}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19" /></svg>
+                        </button>
+                        {#if voiceState.phase === "recording"}
+                          <button
+                            type="button"
+                            class="chat-voice-stop review-voice-action"
+                            data-voice-stop
+                            aria-label="Stop recording and transcribe"
+                            onclick={() => voice?.stopRecording()}
+                          ><span class="chat-voice-square"></span></button>
+                        {:else if voiceState.phase === "failed"}
+                          <button
+                            type="button"
+                            class="chat-voice-retry review-voice-action"
+                            data-voice-retry
+                            onclick={() => voice?.retry()}
+                          >retry</button>
+                        {/if}
+                      {:else}
+                        <textarea
+                          class="review-revision-input"
+                          data-review-revision-input
+                          rows="1"
+                          placeholder="Or tell the worker what to change..."
+                          bind:value={revisionDraft}
+                          disabled={revisionBusy}
+                          onkeydown={(event) => {
+                            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                              event.preventDefault();
+                              void returnForRevision(proposal);
+                            }
+                          }}
+                        ></textarea>
+                        {#if voiceAvailable}
+                          <!-- Speaking with words already in the box appends to them. -->
+                          <button
+                            type="button"
+                            class="review-voice-mic"
+                            data-voice-record
+                            aria-label="Speak a revision"
+                            title="Speak a revision"
+                            disabled={revisionBusy}
+                            onclick={() => void voice?.startRecording()}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <rect x="9" y="3" width="6" height="11" rx="3" />
+                              <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                            </svg>
+                          </button>
+                        {/if}
+                        <Button
+                          variant="quiet"
+                          data-review-revision-send=""
+                          disabled={revisionBusy || !revisionDraft.trim()}
+                          onclick={() => void returnForRevision(proposal)}
+                        >
+                          Send back
+                        </Button>
+                      {/if}
                     </div>
                     {#if revisionError}
                       <ErrorLine error={revisionError} />
