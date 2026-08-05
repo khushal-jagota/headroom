@@ -150,6 +150,16 @@
     return null;
   });
 
+  // A layered card still identifies the employee. Full height uses the plain worker type
+  // that its route supplies, while a non-layer conversation uses its label unchanged.
+  let headerLabel = $derived(
+    conversationState === "rest" || conversationState === "peeked"
+      ? /worker$/i.test(label)
+        ? label
+        : `${label} worker`
+      : label
+  );
+
   // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
   let restLine = $derived(
     conversationState === "rest" ? restLineFrom(rows, ownSenderLabel ?? "") : null
@@ -228,14 +238,14 @@
     {#if connectionTrouble}
       <span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>
     {/if}
-    <span class="chat-lbl">{label}</span>
-    {#if headerException}
+    <span class="chat-lbl">{headerLabel}</span>
+    {#if headerException && conversationState !== "opened"}
       <span class={`chat-state ${headerException.accent ? "chat-state--attn" : ""}`}>
         {headerException.text}
       </span>
     {/if}
     <div class="chat-head-right">
-      {#if workspaceFolder}
+      {#if workspaceFolder && conversationState !== "opened"}
         <span class="chat-usage" data-conversation-workspace>{workspaceFolder}</span>
       {/if}
       <!-- One state control survives as its meaning changes, preserving keyboard focus. -->
@@ -261,23 +271,28 @@
           onclick={() => (menuOpen ? closeMenu() : (menuOpen = true))}
         >⋯</button>
         {#if menuOpen}
-          <div class="chat-overflow-menu" role="menu">
-            {#if confirmArmed}
-              <button
-                type="button"
-                class="chat-overflow-item chat-overflow-item--confirm"
-                role="menuitem"
-                data-conversation-new-confirm
-                onclick={confirmNewConversation}
-              >Confirm — this kills the old one</button>
-            {:else}
-              <button
-                type="button"
-                class="chat-overflow-item"
-                role="menuitem"
-                data-conversation-new-arm
-                onclick={() => (confirmArmed = true)}
-              >New conversation</button>
+          <div class="chat-overflow-menu">
+            <div class="chat-overflow-actions" role="menu">
+              {#if confirmArmed}
+                <button
+                  type="button"
+                  class="chat-overflow-item chat-overflow-item--confirm"
+                  role="menuitem"
+                  data-conversation-new-confirm
+                  onclick={confirmNewConversation}
+                >Confirm — this kills the old one</button>
+              {:else}
+                <button
+                  type="button"
+                  class="chat-overflow-item"
+                  role="menuitem"
+                  data-conversation-new-arm
+                  onclick={() => (confirmArmed = true)}
+                >New conversation</button>
+              {/if}
+            </div>
+            {#if conversationState === "opened" && workspaceFolder}
+              <div class="chat-overflow-path" data-conversation-workspace>{workspaceFolder}</div>
             {/if}
           </div>
         {/if}
