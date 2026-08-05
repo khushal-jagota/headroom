@@ -70,17 +70,45 @@
 
   /** How far open this page's conversation is.
    *
-   * The Ticket status owns the opening state. A paired Ticket opens full. Every other
-   * status opens at rest. The person can still move the conversation within that state
-   * until the Ticket status changes again.
+   * The state a conversation opens in belongs to the page that shows it. A paired Ticket
+   * opens full, and every other Ticket opens at rest. The person moves it from there and
+   * the conversation writes back here when they do.
    */
   let conversationState = $state<ConversationState>("rest");
 
+  /** Seed the conversation once from the status at the start of this Ticket visit.
+   *
+   * A live status change is not a new visit. After the seed, only the person's expand,
+   * collapse, and dismissal actions change this state. The route remounts this component
+   * for another Ticket, so that Ticket receives its own seed.
+   */
+  let seededConversationStateFromStatus = false;
   $effect(() => {
     const status = ticket.data?.ticket_status;
-    if (status === undefined) return;
+    if (
+      !ticket.isFetchedAfterMount ||
+      !ticket.isSuccess ||
+      status === undefined ||
+      seededConversationStateFromStatus
+    ) {
+      return;
+    }
+    seededConversationStateFromStatus = true;
     conversationState = status === "paired" ? "opened" : "rest";
   });
+
+  /** A click outside the conversation dismisses it to rest. */
+  function dismissConversationToRest(): void {
+    if (conversationState !== "rest") conversationState = "rest";
+  }
+
+  /** A press beside the centered conversation card dismisses it to rest. */
+  function dismissConversationOnAPressBesideTheCard(event: MouseEvent): void {
+    const pressed = event.target;
+    if (!(pressed instanceof Element)) return;
+    if (pressed.closest("[data-conversation-pane]") !== null) return;
+    dismissConversationToRest();
+  }
 
   let projectOptions = $derived([
     { value: "", label: "No project" },
@@ -340,7 +368,7 @@
     {:else if ticket.data}
       {@const detail = ticket.data}
       <div class="ticket-page">
-      <main class="ticket-doc">
+      <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
         <header class="ticket-head">
           <div class="ticket-identity" data-ticket-identity>
             <TicketPriorityControl
@@ -606,6 +634,7 @@
       <div
         class="ticket-conversation-layer"
         data-conversation-layer-host
+        onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
         <div class="ticket-conversation-column">
           <LiveConversation
