@@ -1,8 +1,8 @@
-"""A Ticket conversation follows the current status, on arrival and in a browser.
+"""Ticket status selects conversation presentation only when a visit starts.
 
 Paired is work the person is doing with the worker right now, so a paired Ticket opens
-the conversation full. Every other status opens at rest. A live status change updates
-the same mounted Ticket page without a new visit.
+the conversation full. Every other status opens at rest. After arrival, the person owns
+the state until navigation starts a visit to another Ticket.
 
 Nothing here needs an agent. A Ticket is parked on a filed proposal, a reply is reported
 straight to the reply door the way the ticket screen reports one, and that is what moves it
@@ -19,6 +19,10 @@ from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 TICKET_SCREEN = '[data-screen="ticket"]'
 PANE = f"{TICKET_SCREEN} [data-conversation-pane]"
+INPUT = f"{TICKET_SCREEN} [data-conversation-input]"
+COLLAPSE = f"{TICKET_SCREEN} [data-conversation-collapse]"
+EXPAND = f"{TICKET_SCREEN} [data-conversation-expand]"
+TITLE = f"{TICKET_SCREEN} .ticket-title"
 PROPOSAL = "# Success criteria\n\nThe suite goes green.\n"
 APPROACH = "# Approach\n\nThe page follows the current Ticket status.\n"
 
@@ -51,9 +55,7 @@ def _a_ticket_on_a_proposal(
     return ticket_id
 
 
-def _a_paired_ticket(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
-) -> str:
+def _a_paired_ticket(server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper) -> str:
     """A Ticket parked on a proposal that its owner has since replied to, which pairs it."""
     ticket_id = _a_ticket_on_a_proposal(server, cli, api, "Paired work")
     # A reply is what pairs it. The server owns that move; the reply door is how it is told.
@@ -76,6 +78,18 @@ def _the_ticket_page(
     )
     page.wait_for_selector("[data-conversation-layer-host]", timeout=WAIT_MS)
     return page
+
+
+def _wait_for_ticket_refresh(
+    server: ServerHandle, api: ApiHelper, page: Page, ticket_id: str, title: str
+) -> None:
+    """Land a visible write after a status change, then wait until the page receives it."""
+    api.direct_patch(server, f"/api/tickets/{ticket_id}", {"title": title})
+    page.wait_for_function(
+        "([selector, text]) => document.querySelector(selector)?.textContent.includes(text)",
+        arg=[TITLE, title],
+        timeout=WAIT_MS,
+    )
 
 
 def test_a_paired_ticket_opens_full_on_arrival(
@@ -106,14 +120,14 @@ def test_an_awaiting_approval_ticket_opens_at_rest_on_arrival(
     page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
 
 
-def test_a_live_status_change_resets_the_mounted_ticket_conversation(
+def test_a_paired_visit_stays_open_when_status_changes_to_awaiting_approval(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
-    """A mounted Ticket follows a live change from paired to awaiting approval."""
+    """A live change away from paired does not close the mounted conversation."""
     ticket_id = _a_paired_ticket(server, cli, api)
     page = _the_ticket_page(server, context_factory(), open_page, ticket_id)
     page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
@@ -131,4 +145,107 @@ def test_a_live_status_change_resets_the_mounted_ticket_conversation(
     )
     assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
 
+    _wait_for_ticket_refresh(server, api, page, ticket_id, "Still open after proposal")
+    page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
+
+
+def test_a_non_paired_visit_stays_at_rest_when_status_changes_to_paired(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    """A live change to paired does not open the mounted conversation."""
+    ticket_id = _a_ticket_on_a_proposal(server, cli, api, "Pair after arrival")
+    page = _the_ticket_page(server, context_factory(), open_page, ticket_id)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
+
+    paired = api.direct_post(server, f"/api/tickets/{ticket_id}/human-reply", {})
+    assert paired["ticket_status"] == "paired", paired
+
+    _wait_for_ticket_refresh(server, api, page, ticket_id, "Still at rest after pairing")
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
+
+
+def test_manual_conversation_state_survives_status_changes_in_both_directions(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    """Status refreshes retain the state that the person selected."""
+    paired_ticket_id = _a_paired_ticket(server, cli, api)
+    page = _the_ticket_page(server, context_factory(), open_page, paired_ticket_id)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
+
+    page.click(COLLAPSE, timeout=WAIT_MS)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Approach proposed.",
+        ticket_id=paired_ticket_id,
+        stdin=APPROACH,
+    )
+    current = api.get(server, f"/api/tickets/{paired_ticket_id}")
+    assert current["ticket_status"] == "awaiting_approval"
+    _wait_for_ticket_refresh(server, api, page, paired_ticket_id, "At rest after proposal")
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
+
+    page.click(INPUT, timeout=WAIT_MS)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
+    page.click(EXPAND, timeout=WAIT_MS)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
+    paired = api.direct_post(server, f"/api/tickets/{paired_ticket_id}/human-reply", {})
+    assert paired["ticket_status"] == "paired", paired
+    _wait_for_ticket_refresh(server, api, page, paired_ticket_id, "Opened after pairing")
+    page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
+
+
+def test_navigation_to_another_ticket_applies_that_tickets_opening_state(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    """Each Ticket visit receives a fresh opening state from its current status."""
+    paired_ticket_id = _a_paired_ticket(server, cli, api)
+    resting_ticket_id = _a_ticket_on_a_proposal(server, cli, api, "Rest after navigation")
+    page = _the_ticket_page(server, context_factory(), open_page, paired_ticket_id)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
+
+    navigate = "ticketId => { window.location.hash = `#/ticket/${ticketId}`; }"
+    page.evaluate(navigate, resting_ticket_id)
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{resting_ticket_id}"]', timeout=WAIT_MS
+    )
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
+
+    # Change the first Ticket while it is unmounted. Its cached paired snapshot must not
+    # seed the new visit before the entry refetch returns the current status.
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Approach proposed.",
+        ticket_id=paired_ticket_id,
+        stdin=APPROACH,
+    )
+    current = api.get(server, f"/api/tickets/{paired_ticket_id}")
+    assert current["ticket_status"] == "awaiting_approval"
+
+    page.evaluate(navigate, paired_ticket_id)
+    page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{paired_ticket_id}"]', timeout=WAIT_MS
+    )
     page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)

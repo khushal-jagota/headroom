@@ -295,7 +295,7 @@ def _take_it_full(page: Page) -> None:
 
 def _bring_it_back(page: Page) -> None:
     page.click(COLLAPSE, timeout=WAIT_MS)
-    page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
 
 
 def _click_the_ticket_behind(page: Page, lands_on: str) -> None:
@@ -410,13 +410,17 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     # seen; a tolerance tight enough to tell those two apart would answer it here instead.
     assert opened["paneHeight"] >= opened["ticketHeight"] * 0.8, (opened, "full height")
 
-    # --- and back, by the control that says so ----------------------------------------------
+    # --- and back to rest, by the control that says so ---------------------------------------
     _bring_it_back(page)
     back = page.evaluate(WHERE_THE_LAYER_IS)
-    assert back["state"] == "peeked"
-    assert back["expand"] is True
-    assert back["restBarMounted"] is False
-    assert back["paneHeight"] == peeked["paneHeight"], (peeked, back)
+    assert back["state"] == "rest"
+    assert back["transcriptOnScreen"] is False
+    assert back["restBarOnScreen"] is True
+    assert back["restBarAboveTheComposer"] is True
+    assert back["expand"] is False
+    assert back["collapse"] is False
+    assert back["paneHeight"] == at_rest["paneHeight"], (at_rest, back)
+    page.wait_for_selector(f"{INPUT}:not([disabled])", timeout=WAIT_MS)
 
 
 def test_clicking_outside_dismisses_peeked_and_opened_to_rest(
@@ -578,9 +582,10 @@ def test_the_reader_stays_on_the_line_they_were_reading_through_every_transition
     still_on_their_line("opened")
 
     _bring_it_back(page)
-    still_on_their_line("back at peeked")
+    at_rest = page.evaluate(THE_LINE_THE_READER_IS_ON, None)
+    assert at_rest["line"] is None, at_rest
+    assert at_rest["clientHeight"] == 0, at_rest
 
-    _click_the_ticket_behind(page, lands_on="rest")
     _click_the_composers_input(page)
     still_on_their_line("peeked again, after rest")
 
@@ -645,8 +650,17 @@ def test_the_draft_survives_every_transition(
     )
 
     _bring_it_back(page)
-    peeked = _the_draft_is_still_there(page, "back at peeked", carried_on, clicked_to)
-    assert peeked["focusedInTheConversation"] is True, peeked
+    at_rest_by_control = _the_draft_is_still_there(
+        page, "back at rest", carried_on, clicked_to
+    )
+    assert at_rest_by_control["focusedInTheConversation"] is False, at_rest_by_control
+
+    # The rest composer remains usable after the collapse control returns the pane to rest.
+    _click_the_composers_input(page)
+    reopened = page.evaluate(THE_DRAFT_IN_THE_BOX)
+    assert reopened["stillAttached"] is True, reopened
+    assert reopened["text"] == carried_on, reopened
+    assert reopened["focusedInTheBox"] is True, reopened
 
     # And out again by the ticket behind, which changes what is on screen under the draft
     # and must not change the draft.

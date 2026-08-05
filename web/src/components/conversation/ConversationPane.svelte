@@ -198,7 +198,7 @@
   /** The control was pressed: forward from peeked, back from opened. */
   function moveThroughTheStates(): void {
     if (conversationState === "peeked") conversationState = "opened";
-    else if (conversationState === "opened") conversationState = "peeked";
+    else if (conversationState === "opened") conversationState = "rest";
   }
 
   function confirmNewConversation(): void {

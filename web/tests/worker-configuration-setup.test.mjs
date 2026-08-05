@@ -192,10 +192,15 @@ with sync_playwright() as p:
     page.wait_for_function("window.__ticketSaves().length === 1")
     page.wait_for_selector("[data-employee-configuration-save-error]")
     assert "codex-gone extreme" in trigger.inner_text()
+    assert picker.locator("[data-conversation-picker-panel]").count() == 1
+    page.keyboard.press("Escape")
 
     trigger.click()
     picker.locator('[data-conversation-picker-choice="codex-native"]').click()
     page.wait_for_function("window.__ticketSaves().length === 2")
+    assert picker.locator('[data-conversation-picker-choice="low"]').count() == 1
+    picker.locator('[data-conversation-picker-choice="low"]').click()
+    page.wait_for_function("window.__ticketSaves().length === 3")
     assert page.evaluate("window.__ticketSaves()[0]") == {
         "employee_backend": "codex", "employee_launch_model": "codex-native",
         "employee_launch_reasoning_effort": "low"
@@ -206,7 +211,7 @@ with sync_playwright() as p:
         "rows => rows.map(row => row.getAttribute('data-conversation-backend'))"
     ) == ["claude", "codex", "hermes"]
     picker.locator('[data-conversation-backend="codex"]').click()
-    assert page.evaluate("window.__ticketSaves().length") == 2
+    assert page.evaluate("window.__ticketSaves().length") == 3
     assert picker.locator("[data-conversation-picker-panel]").count() == 1
     hermes = picker.locator('[data-conversation-backend="hermes"]')
     assert hermes.get_attribute("aria-disabled") == "true"
@@ -214,8 +219,8 @@ with sync_playwright() as p:
     assert picker.locator("[data-conversation-picker-feedback]").inner_text() == "Hermes has no configured model."
     page.evaluate("window.__holdNextTicketSave()")
     picker.locator('[data-conversation-backend="claude"]').click()
-    page.wait_for_function("window.__ticketSaves().length === 3")
-    assert page.evaluate("window.__ticketSaves()[2]") == {
+    page.wait_for_function("window.__ticketSaves().length === 4")
+    assert page.evaluate("window.__ticketSaves()[3]") == {
         "employee_backend": "claude", "employee_launch_model": "claude-a",
         "employee_launch_reasoning_effort": None
     }

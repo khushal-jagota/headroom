@@ -98,7 +98,6 @@
 
   function take(choice: ModelPickerChoice): void {
     if (disabled) return;
-    open = false;
     if (showing === "models") {
       const effort = modelSelectionEffort(
         models,
@@ -108,9 +107,25 @@
         view.defaultReasoningEffort
       );
       onChooseModel(choice.value, effort);
+
+      if (effort !== null) {
+        showing = "efforts";
+        open = true;
+        void tick()
+          .then(() => {
+            activeIndex = Math.max(
+              0,
+              view.efforts.findIndex((option) => option.value === effort)
+            );
+            return tick();
+          })
+          .then(() => list?.focus());
+        return;
+      }
     } else {
       onChooseReasoningEffort(choice.value);
     }
+    open = false;
     void tick().then(() => (afterChoose ? afterChoose() : trigger?.focus()));
   }
 

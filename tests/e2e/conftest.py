@@ -386,14 +386,14 @@ def open_page() -> Callable[..., Page]:
         page = ctx.new_page()
         page.goto(server.base + "/" + route)
         page.wait_for_selector(ready_selector, timeout=WAIT_MS)
-        # Change-stream gate: never fire an observed change before the stream is live,
-        # or the browser has no way to hear about it. What the screen already shows is
-        # current by construction — the first read happens at page open — so there is
-        # nothing to let settle beyond this.
+        # Change-stream gate: wait until the on-open invalidation finishes, so the
+        # requested target comes from the reconciled DOM rather than the first read.
         page.wait_for_function(
-            "() => window.__plannerDebug && window.__plannerDebug.sseOpens >= 1",
+            "() => window.__plannerDebug "
+            "&& window.__plannerDebug.sseReconciliations >= 1",
             timeout=WAIT_MS,
         )
+        page.wait_for_selector(ready_selector, timeout=WAIT_MS)
         return page
 
     return _open
