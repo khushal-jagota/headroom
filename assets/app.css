@@ -568,16 +568,6 @@ textarea {
     display: none;
   }
 
-  .nav-link--review {
-    position: relative;
-  }
-
-  .nav-link--review .nav-badge {
-    position: absolute;
-    top: var(--space-1);
-    left: calc(50% + var(--space-5));
-  }
-
   .shell-statuses {
     right: var(--space-4);
   }
