@@ -3,6 +3,7 @@
 
 interface PlannerDebug {
   sseOpens: number;
+  sseReconciliations: number;
   flushes: number;
 }
 
