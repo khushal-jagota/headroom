@@ -166,6 +166,42 @@ def test_probe_rejects_coding_field_value_edit(app_db: AppDb, probe_installed: N
         assert r.json()["error"]["detail"] == {"field": "success", "worker_type": "probe"}
 
 
+def test_ticket_note_routes_make_replace_and_append_explicit(app_db: AppDb) -> None:
+    app, _db = app_db
+    with TestClient(app) as client:
+        tid = _create(client, "coding")
+
+        replaced = client.put(
+            f"/api/tickets/{tid}/notes/plan", json={"user_note": "first guidance"}
+        )
+        assert replaced.status_code == 200, replaced.json()
+
+        appended = client.post(
+            f"/api/tickets/{tid}/notes/plan/append",
+            json={"user_note": "second guidance"},
+        )
+        assert appended.status_code == 200, appended.json()
+        assert (
+            appended.json()["fields"]["plan"]["user_note"]
+            == "first guidance\n\nsecond guidance"
+        )
+
+        cleared = client.put(
+            f"/api/tickets/{tid}/notes/plan", json={"user_note": None}
+        )
+        assert cleared.status_code == 200, cleared.json()
+
+        appended_after_clear = client.post(
+            f"/api/tickets/{tid}/notes/plan/append",
+            json={"user_note": "new guidance"},
+        )
+        assert appended_after_clear.status_code == 200, appended_after_clear.json()
+        assert (
+            appended_after_clear.json()["fields"]["plan"]["user_note"]
+            == "new guidance"
+        )
+
+
 def test_probe_rejects_coding_state_and_note_field(app_db: AppDb, probe_installed: None) -> None:
     app, _db = app_db
     with TestClient(app) as client:

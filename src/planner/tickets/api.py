@@ -62,6 +62,7 @@ from planner.tickets.contracts import (
     NO_FURTHER,
     TITLE_MAX_CHARS,
     AcceptBody,
+    AppendNoteBody,
     AtCap,
     CreateTicketBody,
     CreateTicketFromExternalWorkBody,
@@ -1246,7 +1247,32 @@ async def put_notes(
     )
     _validate_field(worker_type_definition, field)
     now = clk.now_unix()
-    ticket = tickets_data.set_note(
+    ticket = tickets_data.replace_note(
+        conn,
+        ticket_id,
+        field=field,
+        note=body["user_note"] if "user_note" in raw else body["note"],
+        actor=ctx.actor,
+        now=now,
+    )
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/tickets/{ticket_id}/notes/{field}/append")
+async def append_notes(
+    ticket_id: str, field: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
+    body = AppendNoteBody(
+        note=body_str(raw, "note"), user_note=body_str(raw, "user_note")
+    )
+    if "note" in raw and "user_note" in raw:
+        raise PlannerError(ErrorCode.validation, "use note or user_note, not both", {})
+    _ticket, worker_type_definition = _ticket_and_worker_type_definition(
+        conn, ticket_id
+    )
+    _validate_field(worker_type_definition, field)
+    now = clk.now_unix()
+    ticket = tickets_data.append_note(
         conn,
         ticket_id,
         field=field,

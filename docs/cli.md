@@ -93,8 +93,10 @@ generic Stage setter.
   with child tickets must have that work explicitly moved or removed first.
 - **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
-  (`--recap` or `--recap-file`) in the same request. `worker note` preserves
-  field-specific user guidance without changing the field's value. `worker my-ticket`
+  (`--recap` or `--recap-file`) in the same request. `worker note` replaces field
+  guidance by default and accepts `--append` for additive guidance without changing
+  the field's value. `--replace` names the default operation when an explicit flag helps
+  a caller. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
   `worker-types.md`).
