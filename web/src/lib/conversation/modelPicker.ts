@@ -52,6 +52,12 @@ export type ModelPickerInput = Readonly<{
   defaultReasoningEffort?: string | null;
 }>;
 
+/** Older cached/test snapshots predate model enablement. Absence preserves the
+ * server-side default-on rule; only an explicit false removes a choice. */
+export function modelIsEnabled(model: BackendModel): boolean {
+  return model.enabled !== false;
+}
+
 function backendName(key: ConversationBackendKey | null): string {
   if (key === null) return "";
   return key[0].toUpperCase() + key.slice(1);
@@ -68,7 +74,7 @@ function snapshotUnavailableReason(snapshot: BackendSnapshot | undefined): strin
   }
   if (
     (snapshot.default_model_id === null || snapshot.default_model_id === undefined)
-    && snapshot.available_models.length === 0
+    && !snapshot.available_models.some(modelIsEnabled)
   ) {
     return snapshot.diagnoses[0]
       ?? `${backendName(snapshot.backend_key)} offers no models on this machine.`;
@@ -80,14 +86,15 @@ export function resolveModelPicker(input: ModelPickerInput): ModelPickerView {
   const snapshot = input.backends.find(
     (candidate) => candidate.backend_key === input.backendKey
   );
-  const models = input.models ?? snapshot?.available_models ?? [];
+  const catalogModels = input.models ?? snapshot?.available_models ?? [];
+  const models = catalogModels.filter(modelIsEnabled);
   const backendEffortOptions =
     input.backendEffortOptions ?? snapshot?.reasoning_effort_options ?? [];
   const defaultModel = input.defaultModel ?? snapshot?.default_model_id ?? null;
   const modelValue = input.model ?? defaultModel ?? "";
-  const modelName = modelDisplayName(models, modelValue === "" ? null : modelValue) ?? "";
+  const modelName = modelDisplayName(catalogModels, modelValue === "" ? null : modelValue) ?? "";
   const efforts = effortOptionsFor(
-    models,
+    catalogModels,
     modelValue === "" ? null : modelValue,
     backendEffortOptions
   );
@@ -145,9 +152,13 @@ export function backendSelectionDefaults(
   if (snapshot === undefined || snapshotUnavailableReason(snapshot) !== null) {
     return { model: null, reasoningEffort: null };
   }
-  const model = snapshot.default_model_id ?? snapshot.available_models[0]?.model_id ?? null;
+  const enabledModels = snapshot.available_models.filter(modelIsEnabled);
+  const enabledDefault = enabledModels.some(
+    (candidate) => candidate.model_id === snapshot.default_model_id
+  ) ? snapshot.default_model_id ?? null : null;
+  const model = enabledDefault ?? enabledModels[0]?.model_id ?? null;
   const efforts = effortOptionsFor(
-    snapshot.available_models,
+    enabledModels,
     model,
     snapshot.reasoning_effort_options
   );

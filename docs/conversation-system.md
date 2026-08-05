@@ -322,24 +322,34 @@ change how the installation is managed. An authorized update runs as
 otherwise usable backend unavailable. Every attempted update refreshes the card,
 even when the command fails.
 
-Usage is a separate, explicit action beside these ordinary backend reads. Opening
-the Backends page, reading `GET /backends`, receiving a change signal, or refreshing
-some other query never acquires usage. A person presses Refresh usage for one backend,
-and only `POST /backends/{backend_key}/usage-refresh` crosses that boundary. Repeated
-refreshes for the same backend run one at a time; Codex and Claude do not hold each
-other up.
+Panels keeps the last successful usage reading for each backend in its database.
+Opening the Backends page, reading `GET /backends`, receiving a change signal, or
+refreshing another query only reads that stored answer. None of those actions contacts
+a provider. The one Refresh on the Backends page re-reads every catalogue and usage
+source through `POST /backends/refresh`. Codex and Claude refresh independently, so one
+failure does not discard the other provider's new answer. A failed refresh also leaves
+that backend's prior reading in place.
 
 Codex first reads the newest rate-limit event in its local rollout record. A reading
 no more than ten minutes old is returned without starting Codex. Otherwise Panels runs
 one minimal Luna request at low reasoning and reads the newly written event. Claude
 uses the CLI's existing OAuth login for one bounded request to its usage endpoint. The
 credential never appears in the result or logs. Both providers are translated into the
-same answer: the observed time and only the rolling windows the provider actually
-returned, with percentage used and reset time. Hermes has no usage source here.
+same answer: the observed time and only the rolling windows the provider returned, with
+percentage used and reset time. A window also says whether it is five hours or seven
+days. A model-scoped Claude window names the stable model id from Claude's current
+catalogue. Hermes has no usage source here.
 
-Unavailable, logged-out, transport, and changed-response cases are returned as calm,
-typed results for that backend. They do not erase its maintenance card, affect the other
-backend, invent missing windows, or turn ambient reads into retries.
+Unavailable, logged-out, transport, and changed-response cases are calm typed refresh
+results. They do not affect another backend, invent missing windows, or turn ordinary
+reads into retries. A logged-out backend keeps its stored reading but shows its login
+command instead of old rings.
+
+Panels also keeps one on or off choice for each backend model. A model is on until a
+person turns it off on the Backends page. An off model remains in the full backend
+catalogue, but no model picker offers it. Existing saved selections remain historical
+facts and can still appear as the current value until a person chooses another model.
+New Ticket, Chief, and Worker default saves refuse an off model.
 
 ## The commands an agent takes
 

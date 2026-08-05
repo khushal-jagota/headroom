@@ -141,14 +141,15 @@ from playwright.sync_api import sync_playwright
 import sys
 
 def model(model_id, name, efforts):
-    return {"model_id": model_id, "display_name": name, "reasoning_effort_options": efforts}
+    return {"model_id": model_id, "display_name": name, "enabled": True, "reasoning_effort_options": efforts}
 
 def backend(key, models, default_model, default_effort=None, efforts=[], diagnoses=[]):
     return {
         "backend_key": key, "installed": True, "executable_path": "/probe/" + key,
         "version": "1", "identity": None, "available_models": models,
         "reasoning_effort_options": efforts, "default_model_id": default_model,
-        "default_reasoning_effort": default_effort, "update_advisory": None, "diagnoses": diagnoses
+        "default_reasoning_effort": default_effort, "cached_usage": None,
+        "update_advisory": None, "diagnoses": diagnoses
     }
 
 machine = {"backends": [

@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.backend_state import write_model_enablement
+from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
@@ -287,6 +288,39 @@ def test_launch_defaults_naming_no_model_are_refused(tmp_path: Path) -> None:
                 },
             )
             assert refused.status_code == 400
+
+
+def test_disabled_models_are_refused_before_worker_or_chief_settings_change(
+    tmp_path: Path,
+) -> None:
+    client, db_path = _app(tmp_path, raise_server_exceptions=False)
+    conn = connect(str(db_path))
+    write_model_enablement(conn, ConversationBackendKey.codex, "disabled-model", False)
+    conn.close()
+    root = worker_settings_service.managed_worker_settings_root(db_path.parent)
+
+    with client:
+        worker_before = client.get("/api/workers/coding").json()["settings"]["launch_defaults"]
+        chief_before = client.get("/api/workers/chief-of-staff/settings").json()[
+            "launch_defaults"
+        ]
+        body = {
+            "employee_backend": "codex",
+            "employee_launch_model": "disabled-model",
+            "employee_launch_reasoning_effort": "medium",
+        }
+        worker = client.put("/api/workers/coding/launch-defaults", json=body)
+        chief = client.put("/api/workers/chief-of-staff/launch-defaults", json=body)
+        worker_after = client.get("/api/workers/coding").json()["settings"]["launch_defaults"]
+        chief_after = client.get("/api/workers/chief-of-staff/settings").json()[
+            "launch_defaults"
+        ]
+
+    assert worker.status_code == chief.status_code == 400
+    assert worker.json()["error"]["message"] == "employee launch model is disabled"
+    assert worker_after == worker_before
+    assert chief_after == chief_before
+    assert (root / "coding" / "settings.json").is_file()
 
 
 def test_stored_launch_defaults_naming_no_model_are_repaired_to_the_shipped_ones(

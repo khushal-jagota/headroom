@@ -30,7 +30,6 @@ const componentDirectory = new URL("../src/components/conversation/", import.met
 
 const expectedInventory = [
   "AgentCommandMenu.svelte",
-  "BackendCard.svelte",
   "BackendMark.svelte",
   "ConversationComposer.svelte",
   "ConversationPane.svelte",
@@ -45,6 +44,7 @@ const expectedInventory = [
   "ToolCallRow.svelte",
   "TurnAnchor.svelte",
   "UnifiedModelPicker.svelte",
+  "UsageRings.svelte",
   "UserInputQuestionPanel.svelte",
   "WorkGroup.svelte"
 ];
@@ -235,7 +235,6 @@ try {
       'export { default as Transcript } from "../src/components/conversation/ConversationTranscript.svelte";',
       'export { default as Composer } from "../src/components/conversation/ConversationComposer.svelte";',
       'export { default as AskCard } from "../src/components/conversation/PermissionAskCard.svelte";',
-      'export { default as BackendCard } from "../src/components/conversation/BackendCard.svelte";',
       'export { default as AskActions } from "../src/components/conversation/PermissionAskActions.svelte";',
       'export { default as TurnAnchor } from "../src/components/conversation/TurnAnchor.svelte";',
       'export { default as WorkGroup } from "../src/components/conversation/WorkGroup.svelte";',
@@ -260,7 +259,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -948,7 +947,7 @@ try {
     backendKey: "hermes",
     running: false,
     effortOptions: [],
-    models: [{ model_id: "m1", display_name: "One" }],
+    models: [{ model_id: "m1", display_name: "One", enabled: true }],
     onSend: async () => true
   });
   assert.equal((hermesPicker.match(/data-conversation-model-picker/g) ?? []).length, 1);
@@ -961,8 +960,8 @@ try {
     running: false,
     effortOptions: ["low", "high"],
     models: [
-      { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] },
-      { model_id: "opus", display_name: "Opus" }
+      { model_id: "haiku", display_name: "Haiku", enabled: true, reasoning_effort_options: [] },
+      { model_id: "opus", display_name: "Opus", enabled: true }
     ],
     current: { model: "haiku", reasoningEffort: null },
     onSend: async () => true
@@ -977,7 +976,7 @@ try {
   const claudeFresh = newForm({
     backend_key: "claude",
     installed: true,
-    available_models: [{ model_id: "opus", display_name: "Opus" }],
+    available_models: [{ model_id: "opus", display_name: "Opus", enabled: true }],
     reasoning_effort_options: ["low", "high"],
     default_model_id: "opus",
     default_reasoning_effort: null,
@@ -988,7 +987,7 @@ try {
   const hermesFresh = newForm({
     backend_key: "hermes",
     installed: true,
-    available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5" }],
+    available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5", enabled: true }],
     reasoning_effort_options: [],
     default_model_id: "gpt-5.5",
     default_reasoning_effort: null,
@@ -1001,7 +1000,7 @@ try {
     backendKey: "claude",
     running: false,
     effortOptions: ["low", "high"],
-    models: [{ model_id: "opus", display_name: "Opus" }],
+    models: [{ model_id: "opus", display_name: "Opus", enabled: true }],
     current: { model: "opus", reasoningEffort: "high" },
     onSend: async () => true
   });
@@ -1013,7 +1012,7 @@ try {
     backendKey: "claude",
     running: false,
     effortOptions: ["low", "high"],
-    models: [{ model_id: "opus", display_name: "Opus 5", detail: "opus → claude-opus-5" }],
+    models: [{ model_id: "opus", display_name: "Opus 5", enabled: true, detail: "opus → claude-opus-5" }],
     current: { model: "opus", reasoningEffort: "high" },
     onSend: async () => true
   });
@@ -1041,8 +1040,8 @@ try {
     conversationExists: false,
     running: false,
     models: [
-      { model_id: "opus", display_name: "Opus 5" },
-      { model_id: "sonnet", display_name: "Sonnet 5" }
+      { model_id: "opus", display_name: "Opus 5", enabled: true },
+      { model_id: "sonnet", display_name: "Sonnet 5", enabled: true }
     ],
     effortOptions: ["low", "high"],
     current: { model: null, reasoningEffort: null },
@@ -1059,8 +1058,8 @@ try {
     conversationExists: true,
     running: false,
     models: [
-      { model_id: "opus", display_name: "Opus 5" },
-      { model_id: "sonnet", display_name: "Sonnet 5" }
+      { model_id: "opus", display_name: "Opus 5", enabled: true },
+      { model_id: "sonnet", display_name: "Sonnet 5", enabled: true }
     ],
     effortOptions: ["low", "high"],
     current: { model: "opus", reasoningEffort: "low" },
@@ -1076,92 +1075,12 @@ try {
     backendKey: "claude",
     conversationExists: false,
     running: false,
-    models: [{ model_id: "opus", display_name: "Opus 5" }],
+    models: [{ model_id: "opus", display_name: "Opus 5", enabled: true }],
     effortOptions: ["low", "high"],
     current: { model: null, reasoningEffort: null },
     onSend: async () => true
   });
   assert.match(beforeAnybodyAnswers, /aria-label="Model: Claude"/);
-
-  // A backend card says what is known and names the terminal command when signing in is due.
-  const backendCard = drawn(BackendCard, {
-    snapshot: {
-      backend_key: "codex",
-      installed: true,
-      executable_path: "/usr/local/bin/codex",
-      version: "0.145.0",
-      identity: {
-        status: "unauthenticated",
-        account_label: null,
-        detail: null,
-        login_command: "codex login"
-      },
-      available_models: [],
-      reasoning_effort_options: [],
-      update_advisory: {
-        install_method: "npm_global",
-        update_command: "npm install -g @openai/codex@latest",
-        latest_version: "0.146.0",
-        update_available: true,
-        detail: "Version 0.146.0 is available."
-      },
-      diagnoses: ["`codex` is not signed in. Run `codex login` in a terminal."]
-    },
-    usageResult: {
-      backend_key: "codex",
-      outcome: "succeeded",
-      detail: null,
-      observed_at: "2026-07-31T12:34:56Z",
-      windows: [
-        { name: "5 hours", used_percent: 12.5, resets_at: "2026-07-31T15:00:00Z" }
-      ]
-    },
-    onUsageRefresh() {},
-    onUpdate() {}
-  });
-  assert.match(backendCard, /not signed in · run codex login in a terminal/);
-  assert.match(backendCard, /Version 0\.146\.0 is available\./);
-  assert.match(backendCard, /data-conversation-backend-update="codex"/);
-  assert.match(backendCard, /data-conversation-backend-usage-refresh="codex"/);
-  assert.match(backendCard, /data-conversation-backend-usage="succeeded"/);
-  assert.match(backendCard, /12\.5% used/);
-  assert.match(backendCard, /is not signed in\. Run `codex login` in a terminal\./);
-
-  const updatedCard = drawn(BackendCard, {
-    snapshot: {
-      backend_key: "hermes",
-      installed: true,
-      executable_path: "/opt/hermes",
-      version: "0.18.2",
-      identity: null,
-      available_models: [{ model_id: "m1", display_name: "One" }],
-      reasoning_effort_options: [],
-      update_advisory: {
-        install_method: "manual_only",
-        update_command: null,
-        latest_version: null,
-        update_available: false,
-        detail: "Hermes is installed from its own checkout."
-      },
-      diagnoses: []
-    },
-    result: { outcome: "unchanged", detail: "still 0.18.2", output_tail: "" },
-    onUsageRefresh() {},
-    onUpdate() {}
-  });
-  assert.match(updatedCard, /no account to sign in to/);
-  assert.match(updatedCard, /this backend has no such setting/);
-  assert.match(updatedCard, /data-conversation-backend-result="unchanged"/);
-  assert.doesNotMatch(
-    updatedCard,
-    /data-conversation-backend-update/,
-    "no button is offered for an update Panels cannot run"
-  );
-  assert.doesNotMatch(
-    updatedCard,
-    /data-conversation-backend-usage-refresh/,
-    "Hermes has no provider allowance to acquire"
-  );
 
   // The command menu draws what the agent reported and nothing else: the name a person
   // types, what the backend said it does, and the argument where it named one.
@@ -1300,7 +1219,7 @@ try {
     {
       backend_key: "hermes",
       installed: true,
-      available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5" }],
+      available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5", enabled: true }],
       reasoning_effort_options: [],
       default_model_id: "gpt-5.5",
       diagnoses: []
@@ -1309,8 +1228,8 @@ try {
       backend_key: "codex",
       installed: true,
       available_models: [
-        { model_id: "gpt-5.5-codex", display_name: "GPT-5.5 Codex" },
-        { model_id: "gpt-5.5-codex-mini", display_name: "GPT-5.5 Codex mini" }
+        { model_id: "gpt-5.5-codex", display_name: "GPT-5.5 Codex", enabled: true },
+        { model_id: "gpt-5.5-codex-mini", display_name: "GPT-5.5 Codex mini", enabled: true }
       ],
       reasoning_effort_options: ["low", "high"],
       default_model_id: "gpt-5.5-codex",
@@ -1321,9 +1240,9 @@ try {
       backend_key: "claude",
       installed: true,
       available_models: [
-        { model_id: "opus", display_name: "Opus", detail: "opus → claude-opus-5" },
-        { model_id: "sonnet", display_name: "Sonnet" },
-        { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] }
+        { model_id: "opus", display_name: "Opus", enabled: true, detail: "opus → claude-opus-5" },
+        { model_id: "sonnet", display_name: "Sonnet", enabled: true },
+        { model_id: "haiku", display_name: "Haiku", enabled: true, reasoning_effort_options: [] }
       ],
       reasoning_effort_options: ["low", "high"],
       default_model_id: "opus",
@@ -1478,9 +1397,9 @@ try {
     current={{ model: null, reasoningEffort: null }}
     startsOnModel="opus"
     models={[
-      { model_id: "opus", display_name: "Opus", detail: "opus → claude-opus-5" },
-      { model_id: "sonnet", display_name: "Sonnet" },
-      { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] }
+      { model_id: "opus", display_name: "Opus", enabled: true, detail: "opus → claude-opus-5" },
+      { model_id: "sonnet", display_name: "Sonnet", enabled: true },
+      { model_id: "haiku", display_name: "Haiku", enabled: true, reasoning_effort_options: [] }
     ]}
     effortOptions={["low", "high"]}
     {availableCommands}

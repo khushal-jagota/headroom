@@ -29,6 +29,7 @@ from planner.conversation.api import (
     conversation_message_content,
     delivery_fate_json,
 )
+from planner.conversation.backend_state import model_is_enabled
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationSystem,
@@ -802,6 +803,15 @@ async def put_ticket_employee_configuration(
         employee_launch_model=body["employee_launch_model"],
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
+    if not model_is_enabled(conn, registered_backend, body["employee_launch_model"]):
+        raise PlannerError(
+            ErrorCode.validation,
+            "Employee model is disabled",
+            {
+                "employee_backend": str(registered_backend),
+                "employee_launch_model": body["employee_launch_model"],
+            },
+        )
     if registered_backend == expected.employee_backend and candidate != expected:
         advertised_models, advertised_reasoning_efforts = (
             await _advertised_launch_options(

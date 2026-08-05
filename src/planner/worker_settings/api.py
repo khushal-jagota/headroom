@@ -8,7 +8,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
-from planner.conversation.contracts import ConversationSystem
+from planner.conversation.backend_state import model_is_enabled
+from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
 from planner.conversation.storage import ConversationStore
 from planner.core import change_signal
 from planner.core.authctx import RequestContext, request_context, require_direct_write
@@ -107,6 +108,26 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
         "skill": _skill_json(settings.skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
+
+
+def _reject_disabled_launch_model(conn: sqlite3.Connection, raw: dict[str, Any]) -> None:
+    if set(raw) != {
+        "employee_backend",
+        "employee_launch_model",
+        "employee_launch_reasoning_effort",
+    }:
+        return
+    backend = raw.get("employee_backend")
+    model = raw.get("employee_launch_model")
+    if not isinstance(backend, str) or not isinstance(model, str):
+        return
+    backend_key = require_conversation_backend_key(backend)
+    if not model_is_enabled(conn, backend_key, model):
+        raise PlannerError(
+            ErrorCode.validation,
+            "employee launch model is disabled",
+            {"employee_backend": backend, "employee_launch_model": model},
+        )
 
 
 async def add_agent_conversation_signals(
@@ -222,9 +243,10 @@ async def get_chief_settings(config: Cfg) -> JsonDict:
 
 @router.put("/workers/chief-of-staff/launch-defaults")
 async def put_chief_launch_defaults(
-    raw: dict[str, Any], ctx: Ctx, config: Cfg
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
+    _reject_disabled_launch_model(conn, raw)
     settings = service.update_chief_launch_defaults(
         _database_parent(config),
         raw,
@@ -264,10 +286,12 @@ async def patch_chief_skill(
 async def put_worker_launch_defaults(
     worker_type: str,
     raw: dict[str, Any],
+    conn: DbConn,
     ctx: Ctx,
     config: Cfg,
 ) -> JsonDict:
     require_direct_write(ctx)
+    _reject_disabled_launch_model(conn, raw)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
         _database_parent(config),

@@ -16,7 +16,7 @@ import type {
   ComposerRunSelection,
   ComposerRunSelectionIntent
 } from "../contracts";
-import { resolveModelPicker } from "../../modelPicker";
+import { modelIsEnabled, resolveModelPicker } from "../../modelPicker";
 
 type ActiveCatalog = Readonly<{
   models: readonly BackendModel[];
@@ -62,7 +62,7 @@ function normalizedModel(
   if (
     pickedModel !== null
     && models.length > 0
-    && !models.some((model) => model.model_id === pickedModel)
+    && !models.some((model) => model.model_id === pickedModel && modelIsEnabled(model))
   ) {
     return null;
   }
