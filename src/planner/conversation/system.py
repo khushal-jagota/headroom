@@ -194,6 +194,18 @@ class _HeldPrompt:
     sent_at_unix_milliseconds: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class _PromptDeliveryAttempt:
+    """The wire result and whether a refusal must remain after its caller leaves.
+
+    A normal direct refusal is returned to the caller. A refusal after replacement of an
+    already-failed child is also recorded because recovery is the durable outcome.
+    """
+
+    refusal_reason: PromptDeliveryRefusalReason | None = None
+    record_refusal: bool = False
+
+
 type _BackendEventHandler = Callable[[], Coroutine[Any, Any, None]]
 
 
@@ -796,7 +808,7 @@ class SqliteProcessConversationSystem:
         sent_at_unix_milliseconds: int | None,
     ) -> PromptDeliveryFate:
         try:
-            refusal = await self._deliver_prompt(
+            delivery = await self._deliver_prompt(
                 state,
                 reservation.token,
                 content=content,
@@ -808,7 +820,7 @@ class SqliteProcessConversationSystem:
             started = await self._finalize_delivery(
                 state,
                 reservation,
-                refusal,
+                delivery.refusal_reason,
                 content=content,
                 sender_label=sender_label,
                 mode=mode,
@@ -816,7 +828,7 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change=reasoning_effort_change,
                 sender_message_id=sender_message_id,
                 sent_at_unix_milliseconds=sent_at_unix_milliseconds,
-                record_refusal=False,
+                record_refusal=delivery.record_refusal,
                 phase_when_not_started=_ConversationPhase.idle,
             )
         except BaseException:
@@ -824,6 +836,7 @@ class SqliteProcessConversationSystem:
             raise
         if started:
             return PromptDeliveryStarted()
+        refusal = delivery.refusal_reason
         assert refusal is not None
         # The agent is free and this message is not going anywhere, so whatever was waiting
         # for it is owed its run. A send-now has already killed the incumbent to get here.
@@ -840,7 +853,7 @@ class SqliteProcessConversationSystem:
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
-    ) -> PromptDeliveryRefusalReason | None:
+    ) -> _PromptDeliveryAttempt:
         """Get the message onto a live child's wire, or name why that was impossible.
 
         No lock is held here: spawning a process and loading a session take as long as they
@@ -849,9 +862,9 @@ class SqliteProcessConversationSystem:
         try:
             child = await self._ensure_child(state)
         except BackendSpawnFailed:
-            return PromptDeliveryRefusalReason.backend_did_not_start
+            return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.backend_did_not_start)
         except SessionLoadFailed:
-            return PromptDeliveryRefusalReason.session_did_not_load
+            return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.session_did_not_load)
 
         composed = await self._compose_prompt_content(state, content)
         try:
@@ -864,9 +877,9 @@ class SqliteProcessConversationSystem:
                 reasoning_effort_change=reasoning_effort_change,
             )
         except PromptWriteFailed:
-            return PromptDeliveryRefusalReason.write_to_backend_failed
-        except NeedsRebind:
-            return await self._rebind_and_write_prompt(
+            return _PromptDeliveryAttempt(PromptDeliveryRefusalReason.write_to_backend_failed)
+        except NeedsRebind as rebind:
+            refusal = await self._rebind_and_write_prompt(
                 state,
                 turn_token,
                 content=composed,
@@ -875,7 +888,11 @@ class SqliteProcessConversationSystem:
                 model_change=model_change,
                 reasoning_effort_change=reasoning_effort_change,
             )
-        return None
+            return _PromptDeliveryAttempt(
+                refusal,
+                record_refusal=refusal is not None and rebind.failed_child_recovery,
+            )
+        return _PromptDeliveryAttempt()
 
     async def _rebind_and_write_prompt(
         self,
@@ -1041,7 +1058,7 @@ class SqliteProcessConversationSystem:
                 reservation = self._reserve_turn(state)
 
             try:
-                refusal = await self._deliver_prompt(
+                delivery = await self._deliver_prompt(
                     state,
                     reservation.token,
                     content=held.content,
@@ -1053,7 +1070,7 @@ class SqliteProcessConversationSystem:
                 started = await self._finalize_delivery(
                     state,
                     reservation,
-                    refusal,
+                    delivery.refusal_reason,
                     content=held.content,
                     sender_label=held.sender_label,
                     mode=PromptDeliveryMode.run_when_free,

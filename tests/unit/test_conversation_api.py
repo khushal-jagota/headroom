@@ -49,7 +49,9 @@ from planner.conversation.backends.contracts import (
     BackendPermissionAsk,
     BackendSpawnFailed,
     BackendUserInputRequest,
+    NeedsRebind,
     PromptWriteFailed,
+    SessionLoadFailed,
     TurnToken,
 )
 from planner.conversation.contracts import (
@@ -117,6 +119,8 @@ class _FakeBackend:
     asks_raised: int = 0
     spawn_fails: bool = False
     write_fails: bool = False
+    needs_failed_child_recovery_once: bool = False
+    session_load_fails: bool = False
 
 
 class _FakeBackendChild:
@@ -128,6 +132,8 @@ class _FakeBackendChild:
         self, resolved_start: ResolvedConversationStart, *, vendor_session_cursor: str | None
     ) -> None:
         del resolved_start
+        if self._backend.session_load_fails:
+            raise SessionLoadFailed(self._backend.conversation_id)
         self._backend.sink = self._sink
         if vendor_session_cursor is None:
             await self._sink.vendor_session_cursor_rebound(VENDOR_SESSION_CURSOR)
@@ -143,6 +149,11 @@ class _FakeBackendChild:
         reasoning_effort_change: str | None,
     ) -> None:
         del sender_label, mode, model_change, reasoning_effort_change
+        if self._backend.needs_failed_child_recovery_once:
+            self._backend.needs_failed_child_recovery_once = False
+            raise NeedsRebind(
+                self._backend.conversation_id, failed_child_recovery=True
+            )
         if self._backend.write_fails:
             raise PromptWriteFailed(self._backend.conversation_id)
         self._backend.written_contents.append(content)
@@ -316,6 +327,19 @@ class _Harness:
             token,
             ending=ConversationTurnEnding.completed,
             error_summary=None,
+            standard_error_tail=None,
+        )
+        await self.settle()
+
+    async def fail_turn(self, conversation_id: str) -> None:
+        backend = self.backend(conversation_id)
+        token = backend.live_turn_token
+        assert token is not None and backend.sink is not None
+        backend.live_turn_token = None
+        await backend.sink.turn_ended(
+            token,
+            ending=ConversationTurnEnding.failed,
+            error_summary="the terminal stream failed",
             standard_error_tail=None,
         )
         await self.settle()
@@ -782,6 +806,61 @@ def test_every_fate_a_send_can_have_comes_back_tagged(harness: _Harness) -> None
                 "fate": "refused",
                 "refusal_reason": "no_such_conversation",
             }
+
+    _run(exercise)
+
+
+def test_a_failed_claude_recovery_refusal_remains_after_an_api_reread(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c", backend_key="claude")
+            first = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "first"}],
+                    "sender_label": "owner",
+                },
+            )
+            assert first.json() == {"fate": "started"}
+            await harness.fail_turn("c")
+            backend = harness.backend("c")
+            backend.needs_failed_child_recovery_once = True
+            backend.session_load_fails = True
+
+            follow_up = await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "follow-up"}],
+                    "sender_label": "owner",
+                    "sender_message_id": "follow-up-id",
+                },
+            )
+            assert follow_up.json() == {
+                "fate": "refused",
+                "refusal_reason": "session_did_not_load",
+            }
+
+        async with harness.client() as refreshed_client:
+            events = (
+                await refreshed_client.get("/api/conversation/conversations/c/events")
+            ).json()["events"]
+
+        assert [row["kind"] for row in events] == [
+            "prompt",
+            "turn_ended",
+            "prompt_delivery_refused",
+        ]
+        assert events[-1]["payload"] == {
+            "text": "follow-up",
+            "sender_label": "owner",
+            "mode": "run_when_free",
+            "refusal_reason": "session_did_not_load",
+            "sender_message_id": "follow-up-id",
+        }
+        assert backend.written_texts == ["first"]
+        assert not any(row["kind"] == "agent_message" for row in events)
 
     _run(exercise)
 
