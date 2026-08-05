@@ -86,7 +86,17 @@ const routeSource = await readFile(
   new URL("../src/routes/DevConversationRoute.svelte", import.meta.url),
   "utf8"
 );
+const ticketRouteSource = await readFile(
+  new URL("../src/routes/TicketRoute.svelte", import.meta.url),
+  "utf8"
+);
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
+
+assert.match(ticketRouteSource, /label=\{conversationWorkerTypeLabel\(detail\)\}/);
+assert.match(
+  ticketRouteSource,
+  /composerPlaceholder=\{`Message \$\{conversationEmployeeLabel\(detail\)\}\.\.\.`\}/
+);
 
 // The pane is an adaptation of the conversation styles the app already has, not a second set.
 for (const className of [
@@ -355,6 +365,32 @@ try {
   assert.match(optimisticPicture, /data-conversation-piece-outgoing="true"/);
   assert.match(optimisticPicture, /src="data:image\/png;base64,AQID"/);
   assert.match(optimisticPicture, /alt="optimistic.png"/);
+
+  const openedPane = drawn(Pane, {
+    conversationId: "c1",
+    label: "Product Design",
+    workspaceFolder: "/home/vps/Coding/a-long-workspace-name",
+    conversationState: "opened",
+    composerPlaceholder: "Message Product Design worker...",
+    running: true,
+    onSend: async () => true
+  });
+  assert.match(openedPane, /class="chat-lbl">Product Design</);
+  assert.doesNotMatch(openedPane, /class="chat-state/);
+  assert.doesNotMatch(openedPane, /class="chat-usage"/);
+  assert.match(openedPane, /Message Product Design worker/);
+
+  const peekedPane = drawn(Pane, {
+    conversationId: "c1",
+    label: "Product Design",
+    workspaceFolder: "/home/vps/Coding",
+    conversationState: "peeked",
+    running: true,
+    onSend: async () => true
+  });
+  assert.match(peekedPane, /class="chat-lbl">Product Design worker/);
+  assert.match(peekedPane, /class="chat-state[^>]*>working/);
+  assert.match(peekedPane, /class="chat-usage" data-conversation-workspace/);
 
   // A message that holds a picture draws the picture, on both sides of the thread, and
   // fetches it from the conversation that kept it. A transcript that drew only the words
@@ -1193,6 +1229,7 @@ try {
     `
 <script lang="ts">
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
+  import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import ConversationTranscript from "../src/components/conversation/ConversationTranscript.svelte";
   import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
   import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
@@ -1454,6 +1491,23 @@ try {
   />
 {/if}
 
+<div data-top-bar-fixture style="width: 100%; max-width: 700px; height: 360px;">
+  <div class="ticket-conversation-layer" style="height: 100%;">
+    <div class="ticket-conversation-column">
+      <ConversationPane
+        conversationId="top-bar"
+        label="Product Design"
+        workspaceFolder="/home/vps/Coding/a-long-workspace-name-that-wraps"
+        conversationExists={true}
+        conversationState="opened"
+        composerPlaceholder="Message Product Design worker..."
+        running={true}
+        {onSend}
+      />
+    </div>
+  </div>
+</div>
+
 <ConversationTranscript rows={settledRows} ownSenderLabel="owner" />
 
 <div data-running-thread>
@@ -1523,6 +1577,74 @@ with sync_playwright() as playwright:
     page = browser.new_page()
     page.set_default_timeout(5_000)
     page.goto(sys.argv[1], wait_until="domcontentloaded")
+    page.add_style_tag(path="assets/tokens.css")
+    page.add_style_tag(path="assets/app.css")
+
+    # The opened top bar matches the approved desktop geometry. Its content keeps the
+    # complete worker phrase only where that phrase tells the person who receives a message.
+    top_bar_fixture = page.locator("[data-top-bar-fixture]")
+    top_bar = top_bar_fixture.locator(".chat-head")
+    top_bar_label = top_bar.locator(".chat-lbl")
+    top_bar_buttons = top_bar.locator(".chat-overflow-btn")
+    assert top_bar.bounding_box()["height"] == 44, top_bar.bounding_box()
+    assert top_bar_label.inner_text() == "Product Design", top_bar_label.inner_text()
+    assert top_bar.locator(".chat-state").count() == 0
+    assert top_bar.locator(".chat-usage").count() == 0
+    assert top_bar_buttons.count() == 2
+    for button_index in range(2):
+        box = top_bar_buttons.nth(button_index).bounding_box()
+        assert box["width"] == 32 and box["height"] == 32, box
+        assert top_bar_buttons.nth(button_index).evaluate(
+            "element => getComputedStyle(element).fontSize"
+        ) == "17px"
+    assert top_bar.locator(".chat-head-right").evaluate(
+        "element => getComputedStyle(element).columnGap"
+    ) == "4px"
+    assert top_bar.locator(".chat-head-right").evaluate(
+        "element => getComputedStyle(element).marginRight"
+    ) == "-8px"
+    assert top_bar_fixture.locator("[data-conversation-input]").get_attribute(
+        "placeholder"
+    ) == "Message Product Design worker..."
+
+    options = top_bar_fixture.get_by_role("button", name="Conversation options")
+    options.click()
+    popup = top_bar_fixture.locator(".chat-overflow-menu")
+    menu = popup.get_by_role("menu")
+    path = popup.locator("[data-conversation-workspace]")
+    assert menu.get_by_role("menuitem").count() == 1
+    assert menu.locator("[data-conversation-workspace]").count() == 0
+    assert path.inner_text() == "/home/vps/Coding/a-long-workspace-name-that-wraps"
+    assert path.get_attribute("role") is None
+    assert path.evaluate("element => element.tabIndex") == -1
+    options.press("Escape")
+    page.wait_for_selector("[data-top-bar-fixture] [role=menu]", state="detached")
+
+    # Phone width keeps the row and both targets. The label, not the controls, yields.
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert top_bar.bounding_box()["height"] == 44, top_bar.bounding_box()
+    assert [
+        (top_bar_buttons.nth(index).bounding_box()["width"],
+         top_bar_buttons.nth(index).bounding_box()["height"])
+        for index in range(2)
+    ] == [(32, 32), (32, 32)]
+    assert top_bar.locator(".chat-head-right").evaluate(
+        "element => getComputedStyle(element).columnGap"
+    ) == "4px"
+    assert top_bar.locator(".chat-head-right").evaluate(
+        "element => getComputedStyle(element).marginRight"
+    ) == "-8px"
+    assert top_bar.bounding_box()["x"] >= 0
+    assert top_bar.bounding_box()["x"] + top_bar.bounding_box()["width"] <= 390
+    options.click()
+    path = top_bar_fixture.locator(".chat-overflow-menu [data-conversation-workspace]")
+    path_box = path.bounding_box()
+    line_height = float(path.evaluate("element => getComputedStyle(element).lineHeight").replace("px", ""))
+    assert path_box["height"] > line_height, path_box
+    options.press("Escape")
+    page.reload(wait_until="domcontentloaded")
+    page.locator("[data-top-bar-fixture]").evaluate("element => element.remove()")
+    page.set_viewport_size({"width": 1280, "height": 720})
 
     # FINDING 11 — the pickers show the concrete value already in force, unlabelled, and
     # the word "default" appears nowhere in them.
