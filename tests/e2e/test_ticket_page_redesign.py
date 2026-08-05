@@ -48,7 +48,9 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     )["id"]
     empty_ready = f'section[data-screen="ticket"][data-ticket-id="{empty_ticket_id}"]'
     page = open_page(context_factory(), server, f"#/ticket/{empty_ticket_id}", empty_ready)
-    assert page.locator("[data-ticket-identity] .ticket-identity-add").count() == 3
+    assert page.locator("[data-ticket-identity] .ticket-identity-add").count() == 1
+    assert "NO PROJECT" in page.locator("[data-project-control]").inner_text()
+    assert page.locator('[data-project-control] select option:checked').inner_text() == "No project"
     assert page.locator('[data-priority-control] [data-priority-tile="P3"]').count() == 1
 
     ticket_id = cli(
@@ -104,14 +106,15 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     assert worker_name.evaluate("element => element.textContent") == worker_label
     assert worker_name.locator(".ticket-identity-key").count() == 0
     worker_name_after_priority = page.locator(
-        "[data-priority-control] + .ticket-identity-group [data-ticket-worker-name]"
+        "[data-ticket-identity] [data-ticket-worker-name]"
     )
     assert worker_name_after_priority.count() == 1
-    assert "sprint" in identity.inner_text().lower()
-    assert "A DELIBERATELY DESCRIPTIVE LATER SPRINT" in identity.inner_text()
-    assert "due" in identity.inner_text().lower()
-    assert "AUG 12" in identity.inner_text()
-    assert page.locator("[data-project-control]").count() == 0
+    assert "sprint" not in identity.inner_text().lower()
+    assert "A DELIBERATELY DESCRIPTIVE LATER SPRINT" not in identity.inner_text()
+    assert "due" not in identity.inner_text().lower()
+    assert "AUG 12" not in identity.inner_text()
+    assert page.locator("[data-project-control]").count() == 1
+    assert page.locator("[data-project-control] select").count() == 0
     assert page.locator(".ticket-priority-alert").count() == 0
     assert page.locator(".ticket-status-display, [data-ticket-status]").count() == 0
     assert page.locator(".ticket-planning").count() == 0
@@ -168,16 +171,19 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
     assert recap.locator("details").count() == 0
     assert recap.locator("[data-markdown-inline-edit]").count() == 1
     assert "Recap" not in recap.inner_text()
-    assert recap.locator(".ticket-recap-inner").evaluate(
+    assert page.locator(".ticket-title-row [data-recap]").count() == 1
+    assert recap.locator(".ticket-recap-inner").count() == 0
+    assert recap.evaluate(
         """element => {
           const expected = getComputedStyle(document.documentElement)
-            .getPropertyValue("--surface-sunken").trim();
+            .getPropertyValue("--surface-base").trim();
           const probe = document.createElement("span");
           probe.style.backgroundColor = expected;
           document.body.appendChild(probe);
           const expectedRgb = getComputedStyle(probe).backgroundColor;
           probe.remove();
-          return getComputedStyle(element).backgroundColor === expectedRgb;
+          return getComputedStyle(element).backgroundColor === "rgba(0, 0, 0, 0)"
+            || getComputedStyle(element).backgroundColor === expectedRgb;
         }"""
     )
 
@@ -187,7 +193,6 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
           const identity = document.querySelector("[data-ticket-identity]");
           const operating = document.querySelector(".ticket-operating");
           const title = document.querySelector(".ticket-title-row");
-          const actionGroup = document.querySelector(".ticket-operating-actions");
           const leash = document.querySelector(".ticket-leash");
           const ticketDoc = document.querySelector(".ticket-doc");
           const blockers = document.querySelector("[data-blocker-summary]");
@@ -197,10 +202,9 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
           );
           return {
             identityLines: new Set(tops(identity)).size,
-            operatingLines: new Set(tops(operating)).size,
+            leashHeight: leash.getBoundingClientRect().height,
             titleBottom: title.getBoundingClientRect().bottom,
             operatingTop: operating.getBoundingClientRect().top,
-            actionTop: actionGroup.getBoundingClientRect().top,
             leashTop: leash.getBoundingClientRect().top,
             overflow: document.documentElement.scrollWidth - window.innerWidth,
             ticketDocOverflow: ticketDoc.scrollWidth - ticketDoc.clientWidth,
@@ -209,10 +213,10 @@ def test_ticket_masthead_identity_recap_and_real_wrapping(
           };
         }"""
     )
-    assert geometry["identityLines"] > 1
-    assert geometry["operatingLines"] > 1
+    assert geometry["identityLines"] == 1
+    assert geometry["leashHeight"] > 0
     assert geometry["titleBottom"] <= geometry["operatingTop"]
-    assert geometry["actionTop"] > geometry["leashTop"]
+    assert geometry["operatingTop"] >= geometry["titleBottom"]
     assert geometry["overflow"] <= 0
     assert geometry["ticketDocOverflow"] <= 0
     assert geometry["blockerOverflow"] <= 0
@@ -241,6 +245,7 @@ def test_current_stage_only_labels_ambiguous_user_and_approval_states(
     page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready)
 
     assert page.locator("[data-stage-run-label]").count() == 0
+    page.click("[data-leash-face]")
     page.click("[data-ticket-takeover-toggle]")
     page.wait_for_selector(
         '[data-stage-run-label="you\'re on it"] [data-stage-release]',
@@ -285,3 +290,70 @@ def test_current_stage_only_labels_ambiguous_user_and_approval_states(
     )
     assert approval_release.count() == 0
     assert page.locator("[data-stage-run-label]").count() == 1
+
+
+def test_settled_stages_fold_and_review_recap_sits_with_title(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Fold settled stages",
+    )["id"]
+    api.direct_put(
+        server,
+        f"/api/tickets/{ticket_id}/recap",
+        {"body": "The recap stays beside the title."},
+    )
+    api.direct_post(server, f"/api/tickets/{ticket_id}/stage", {"to_stage": "needs_implementation"})
+    ticket_page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"][data-stage="needs_implementation"]',
+    )
+
+    fold = ticket_page.locator("[data-stage-fold]")
+    assert fold.count() == 1
+    assert fold.get_attribute("open") is None
+    assert not fold.locator(".stage-fold-rows").is_visible()
+    assert "Kickoff · Success · Approach · Plan" in fold.inner_text()
+
+    ticket_page.click("[data-stage-fold-open]")
+    ticket_page.wait_for_selector("[data-stage-fold][open]", timeout=WAIT_MS)
+    assert fold.locator(".stage-fold-rows").is_visible()
+    assert fold.locator("[data-field]").count() == 4
+    ticket_page.click("[data-stage-fold-close]")
+    ticket_page.wait_for_function(
+        "() => document.querySelector('[data-stage-fold]')?.open === false",
+        timeout=WAIT_MS,
+    )
+
+    api.direct_post(
+        server,
+        f"/api/tickets/{ticket_id}/scope",
+        {"ceiling": "needs_implementation", "at_cap": "propose"},
+    )
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Implementation is ready.",
+        ticket_id=ticket_id,
+        stdin="Implementation proposal.",
+    )
+    card = f'[data-review-card][data-ticket-id="{ticket_id}"][data-field="implementation"]'
+    review_page = open_page(context_factory(), server, "#/review", card)
+    assert review_page.locator(f"{card} [data-recap]").count() == 1
+    assert review_page.locator(f"{card} [data-content-section=recap]").count() == 0

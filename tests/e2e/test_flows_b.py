@@ -537,34 +537,15 @@ def test_e32_sprint_live_status_and_fallback(
         )
         assert p.query_selector("[data-loose]") is None
 
-    # The Ticket screen exposes the sole placement control: move atomically to another
-    # Sprint Item, then compare-clear that current item to the explicit backlog.
+    # The Ticket header now keeps only priority, project, and worker identity.
     ticket_page = open_page(
         context_factory(),
         server,
         f"#/ticket/{fallback_ticket_id}",
-        "[data-sprint-item-control] select",
+        "[data-ticket-identity]",
     )
-    placement = ticket_page.locator("[data-sprint-item-control] select")
-    assert placement.input_value() == fallback_item_id
-    placement.select_option(iid)
-    pa.locator(f'[data-item-id="{iid}"]').evaluate(
-        "(element) => { element.open = true; }"
-    )
-    pa.wait_for_selector(
-        f'[data-item-id="{iid}"] [data-ticket-id="{fallback_ticket_id}"]',
-        timeout=WAIT_MS,
-    )
-    placement.select_option("")
-    pa.wait_for_function(
-        '(ticketId) => !document.querySelector(`[data-ticket-id="${ticketId}"]`)',
-        arg=fallback_ticket_id,
-        timeout=WAIT_MS,
-    )
-    backlog_ticket = api.get(server, f"/api/tickets/{fallback_ticket_id}")
-    assert backlog_ticket["sprint_item_id"] is None, backlog_ticket
-    assert backlog_ticket["effective_sprint_id"] is None, backlog_ticket
-    assert "sprint_id" not in backlog_ticket, backlog_ticket
+    assert ticket_page.locator("[data-sprint-item-control]").count() == 0
+    assert ticket_page.locator("[data-deadline-control]").count() == 0
 
     fa = pa.evaluate("window.__plannerDebug.flushes")
     fb = pb.evaluate("window.__plannerDebug.flushes")

@@ -4,7 +4,7 @@
   import { fetchText } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import { fieldSlot, labelize } from "../lib/ui";
+  import { fieldSlot, labelize, stageLabel } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -25,10 +25,10 @@
     type OwnerSendBody
   } from "../lib/conversation/wire";
   import WorkerConfigurationSetup from "../components/WorkerConfigurationSetup.svelte";
-  import EnumPill from "../components/EnumPill.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
 
@@ -42,10 +42,7 @@
   const conversationStartValues = createQuery(() =>
     queries.ticketConversationStartValues(stableId)
   );
-  const sprints = createQuery(() => queries.sprintSummaries());
-  const sprintItems = createQuery(() => queries.sprintItems());
   const projects = createQuery(() => queries.projects());
-  const currentSprint = createQuery(() => queries.currentSprint());
   const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
@@ -66,6 +63,10 @@
   let headerError = $state<unknown>(null);
   let copied = $state(false);
   let conversationBackends = $state<readonly BackendSnapshot[]>([]);
+  let leashMenu = $state<HTMLDetailsElement | null>(null);
+  let recapElement = $state<HTMLElement | null>(null);
+  let recapExpanded = $state(false);
+  let recapCanExpand = $state(false);
 
   /** How far open this page's conversation is.
    *
@@ -82,20 +83,28 @@
   });
 
   let projectOptions = $derived([
-    { value: "", label: "+ project" },
+    { value: "", label: "No project" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
-  let sprintItemOptions = $derived([
-    { value: "", label: "Backlog" },
-    ...(sprintItems.data?.items || []).map((item) => {
-      const sprint = item.sprint_id ? sprintLabel(item.sprint_id) : "Unscheduled";
-      const fallback = item.kind === "other" ? " · fallback" : "";
-      return {
-        value: item.id,
-        label: `${sprint} · ${item.project} · ${item.title}${fallback}`
-      };
-    })
-  ]);
+
+  $effect(() => {
+    const recap = ticket.data?.recap;
+    const node = recapElement;
+    if (!node) return;
+    void recap;
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight);
+      const maxHeight = Number.isFinite(lineHeight) ? lineHeight * 3 : node.clientHeight;
+      recapCanExpand = node.scrollHeight > maxHeight + 1;
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    const frame = requestAnimationFrame(measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  });
 
   onMount(() => {
     // What the conversation's model and effort pickers offer. Read once on arrival rather
@@ -129,28 +138,6 @@
     }
   }
 
-  async function saveSprintItemPlacement(
-    detail: TicketDetail,
-    sprintItemId: string
-  ): Promise<void> {
-    try {
-      headerError = null;
-      if (sprintItemId) {
-        await mutateJson(`/api/items/${encodeURIComponent(sprintItemId)}/tickets`, {
-          method: "POST",
-          body: { ticket_id: stableId }
-        });
-      } else if (detail.sprint_item_id) {
-        await mutateJson(
-          `/api/items/${encodeURIComponent(detail.sprint_item_id)}/tickets/${encodeURIComponent(stableId)}`,
-          { method: "DELETE" }
-        );
-      }
-    } catch (err) {
-      headerError = err;
-    }
-  }
-
   /** Start this Ticket's conversation, so the first message has somewhere to go.
    *
    * The readiness loop starts one when it has a step to send; this is what happens when a
@@ -176,6 +163,20 @@
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}/scope`, { method: "POST", body });
+  }
+
+  function closeLeash(): void {
+    if (leashMenu) leashMenu.open = false;
+  }
+
+  async function updateScope(body: Record<string, unknown>): Promise<void> {
+    headerError = null;
+    try {
+      await saveScope(body);
+      closeLeash();
+    } catch (err) {
+      headerError = err;
+    }
   }
 
   function currentStageOwnershipOverride(detail: TicketDetail): StageOwnershipMode | null {
@@ -258,6 +259,16 @@
     }
   }
 
+  async function copyFromLeash(): Promise<void> {
+    await copyTicket();
+    closeLeash();
+  }
+
+  async function takeoverFromLeash(detail: TicketDetail): Promise<void> {
+    await takeover(detail);
+    closeLeash();
+  }
+
   async function takeover(detail: TicketDetail): Promise<void> {
     try {
       if (
@@ -273,21 +284,6 @@
     } catch (err) {
       headerError = err;
     }
-  }
-
-  function sprintLabel(sprintId: string | null | undefined): string {
-    if (!sprintId) return "";
-    if (sprintId === currentSprint.data?.sprint?.id) return "current";
-    return sprints.data?.sprints?.find((sprint) => sprint.id === sprintId)?.name || sprintId;
-  }
-
-  function formatDeadline(deadline: string | null | undefined): string {
-    if (!deadline) return "";
-    const [year, month, day] = deadline.split("-").map(Number);
-    if (!year || !month || !day) return deadline;
-    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(
-      new Date(year, month - 1, day)
-    );
   }
 
   function currentStageRunLabel(detail: TicketDetail): string | null {
@@ -353,78 +349,19 @@
                 if (priority !== detail.priority) void patch({ priority });
               }}
             />
-            {#if lc}
-              <span class="ticket-identity-group">
-                <span class="ticket-identity-separator" aria-hidden="true">·</span>
-                <span class="ticket-identity-fact" data-ticket-worker-name>{lc.workerTypeLabel}</span>
-              </span>
-            {/if}
             <span class="ticket-identity-group">
               <span class="ticket-identity-separator" aria-hidden="true">·</span>
               <span
                 class="ticket-identity-fact"
-                class:ticket-identity-add={!detail.sprint_item_id}
-                data-sprint-item-control
+                class:ticket-identity-add={!detail.project_id}
+                data-project-control
               >
-                {#if detail.sprint_item_id}
-                  <span class="ticket-identity-key">sprint</span>
-                  {sprintLabel(detail.effective_sprint_id)}
+                {#if detail.project_id}
+                  {detail.project}
                 {:else}
-                  + add
+                  No project
                 {/if}
-                <select
-                  aria-label={detail.sprint_item_id ? "Ticket sprint placement" : "Add ticket sprint placement"}
-                  value={detail.sprint_item_id || ""}
-                  onchange={(event) => {
-                    const sprintItemId = event.currentTarget.value;
-                    if (sprintItemId !== (detail.sprint_item_id || "")) {
-                      void saveSprintItemPlacement(detail, sprintItemId);
-                    }
-                  }}
-                >
-                  {#each sprintItemOptions as option}
-                    <option value={option.value}>{option.label}</option>
-                  {/each}
-                </select>
-              </span>
-            </span>
-            <span class="ticket-identity-group">
-              <span class="ticket-identity-separator" aria-hidden="true">·</span>
-              <span
-                class="ticket-identity-fact"
-                class:ticket-identity-add={!detail.deadline}
-                data-deadline-control
-              >
-                {#if detail.deadline}
-                  <span class="ticket-identity-key">due</span>
-                  {formatDeadline(detail.deadline)}
-                {:else}
-                  + add
-                {/if}
-                <input
-                  class="ticket-identity-input"
-                  type="date"
-                  aria-label={detail.deadline ? "Ticket due date" : "Add ticket due date"}
-                  data-deadline
-                  value={detail.deadline || ""}
-                  onchange={(event) => void patch({ deadline: event.currentTarget.value || null })}
-                />
-              </span>
-            </span>
-            {#if detail.sprint_item_id === null || detail.sprint_item_id === undefined}
-              <span class="ticket-identity-group">
-                <span class="ticket-identity-separator" aria-hidden="true">·</span>
-                <span
-                  class="ticket-identity-fact"
-                  class:ticket-identity-add={!detail.project_id}
-                  data-project-control
-                >
-                  {#if detail.project_id}
-                    <span class="ticket-identity-key">project</span>
-                    {detail.project}
-                  {:else}
-                    + add
-                  {/if}
+                {#if !detail.sprint_item_id}
                   <select
                     aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
                     value={detail.project_id || ""}
@@ -434,7 +371,13 @@
                       <option value={option.value}>{option.label}</option>
                     {/each}
                   </select>
-                </span>
+                {/if}
+              </span>
+            </span>
+            {#if lc}
+              <span class="ticket-identity-group">
+                <span class="ticket-identity-separator" aria-hidden="true">·</span>
+                <span class="ticket-identity-fact" data-ticket-worker-name>{lc.workerTypeLabel}</span>
               </span>
             {/if}
           </div>
@@ -446,38 +389,105 @@
                 onSave={(raw) => patch({ title: raw })}
               />
             </div>
+            <div
+              bind:this={recapElement}
+              class="ticket-recap"
+              class:ticket-recap--clamped={recapCanExpand && !recapExpanded}
+              data-recap
+            >
+              <InlineEdit
+                value={detail.recap}
+                markdown
+                multiline
+                placeholder="+ add orientation"
+                onSave={(raw) =>
+                  mutateJson(`/api/tickets/${stableId}/recap`, {
+                    method: "PUT",
+                    body: { body: raw }
+                  })}
+              />
+            </div>
+            {#if recapCanExpand}
+              <button
+                type="button"
+                class="ticket-recap-more"
+                data-recap-toggle
+                onclick={() => (recapExpanded = !recapExpanded)}
+              >{recapExpanded ? "Show less" : "Show more"}</button>
+            {/if}
           </div>
           <div class="ticket-operating">
             {#if detail.stage !== "done" && detail.stage !== "needs_kickoff"}
-              <div class="ticket-leash">
-                approved until
-                <span class="ticket-leash-sel" data-scope-ceiling>
-                  <EnumPill
+              <details class="ticket-leash" bind:this={leashMenu} data-leash>
+                <summary
+                  class="ticket-leash-face"
+                  class:ticket-leash-face--held={userOwnsCurrentStage(detail)}
+                  data-leash-face
+                >
+                  {#if userOwnsCurrentStage(detail)}
+                    <span class="ticket-leash-value">you hold {stageLabel(detail.stage)}</span>,
+                  {/if}
+                  approved until
+                  <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>,
+                  then <span class="ticket-leash-value" data-leash-cap>{detail.at_cap === "propose" ? "continue" : "stop"}</span>
+                  <span class="disclosure-chev" aria-hidden="true"></span>
+                </summary>
+                <div class="ticket-leash-menu" role="menu">
+                  <select
+                    class="ticket-leash-select"
+                    data-scope-ceiling
+                    aria-label="Approved until stage"
                     value={detail.ceiling}
-                    options={ceilingOptionsFor(lc, detail.stage)}
-                    onChange={(ceiling) => void saveScope({ ceiling, at_cap: detail.at_cap })}
-                  />
-                </span>
-                then
-                <span class="ticket-leash-sel" data-scope-atcap>
-                  <EnumPill
-                    value={detail.at_cap}
-                    options={[{ value: "stop", label: "stop" }, { value: "propose", label: "Continue" }]}
-                    onChange={(at_cap) => void saveScope({ ceiling: detail.ceiling, at_cap })}
-                  />
-                </span>
-              </div>
+                    onchange={(event) => void updateScope({ ceiling: event.currentTarget.value, at_cap: detail.at_cap })}
+                  >
+                    {#each ceilingOptionsFor(lc, detail.stage) as option}
+                      <option value={option.value}>{option.label}</option>
+                    {/each}
+                  </select>
+                  <div class="ticket-leash-rule"></div>
+                  <div data-scope-atcap>
+                    <select
+                      class="ticket-leash-select"
+                      aria-label="At the ceiling"
+                      value={detail.at_cap}
+                      onchange={(event) => void updateScope({ ceiling: detail.ceiling, at_cap: event.currentTarget.value })}
+                    >
+                      <option value="stop">then stop</option>
+                      <option value="propose">then continue</option>
+                    </select>
+                  </div>
+                  <div class="ticket-leash-rule"></div>
+                  {#if detail.stage !== "needs_kickoff" && detail.stage !== "done"}
+                    <button
+                      type="button"
+                      class="ticket-leash-option"
+                      data-ticket-takeover-toggle=""
+                      onclick={() => void takeoverFromLeash(detail)}
+                    >
+                      <span class="ticket-leash-option-mark"></span>
+                      {userOwnsCurrentStage(detail) ? "Release" : "Take over"}
+                    </button>
+                  {/if}
+                  <button
+                    type="button"
+                    class="ticket-leash-option"
+                    data-copy=""
+                    onclick={() => void copyFromLeash()}
+                  >
+                    <span class="ticket-leash-option-mark"></span>
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                </div>
+              </details>
             {/if}
-            <span class="ticket-operating-actions">
-              {#if detail.stage !== "needs_kickoff" && detail.stage !== "done"}
-                <button class="ticket-act" data-ticket-takeover-toggle="" onclick={() => void takeover(detail)}>
-                  {userOwnsCurrentStage(detail) ? "Release" : "Take over"}
-                </button>
-              {/if}
-              <button class="ticket-act ticket-copy" data-copy="" onclick={() => void copyTicket()}>
-                {copied ? "Copied" : "Copy"}
-              </button>
-            </span>
+            {#if detail.stage === "needs_kickoff" || detail.stage === "done"}
+              <button
+                type="button"
+                class="ticket-operating-copy"
+                data-copy=""
+                onclick={() => void copyTicket()}
+              >{copied ? "Copied" : "Copy"}</button>
+            {/if}
           </div>
           {#if detail.blocker_summary?.blocked_by.length}
             <div class="ticket-blockers" data-blocker-summary>
@@ -505,22 +515,6 @@
         </header>
 
         <div class="ticket-col">
-          <div class="ticket-recap" data-recap>
-            <div class="ticket-recap-inner" data-content-section="recap">
-              <InlineEdit
-                value={detail.recap}
-                markdown
-                multiline
-                placeholder="Short orientation for a cold reader..."
-                onSave={(raw) =>
-                  mutateJson(`/api/tickets/${stableId}/recap`, {
-                    method: "PUT",
-                    body: { body: raw }
-                  })}
-              />
-            </div>
-          </div>
-
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
@@ -533,30 +527,79 @@
                 />
               {/if}
             {/snippet}
-            {#each lc?.fieldIds ?? [] as name}
-              {@const slot = fieldSlot(detail, name)}
-              {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
-              <TicketStageSection
-                {name}
-                {slot}
-                {stageState}
-                lifecycle={lc}
-                ticketStage={detail.stage}
-                ceiling={detail.ceiling}
-                emptyText={emptyTicketFieldText}
-                runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
-                runLabelAttention={stageState === "current-awaiting-approval"}
-                onRelease={currentStageRunLabel(detail) === "you're on it"
-                  ? () => takeover(detail)
-                  : undefined}
-                contextRow={name === "kickoff" && kickoffCardShowsContextRow
-                  ? kickoffContextRow
-                  : undefined}
-                onAccept={(payload) => acceptField(name, payload)}
-                onReplaceNote={(raw) => replaceNote(name, raw)}
-                onSaveValue={(raw) => saveValue(name, raw)}
-              />
-            {/each}
+            {#if lc}
+              {@const settledFields = lc.fieldIds.filter(
+                (name) => fieldStageVisualStateFor(lc, detail, name) === "completed"
+              )}
+              {#if settledFields.length}
+                <details class="stage-fold" data-stage-fold>
+                  <summary class="stage-fold-summary" data-stage-fold-open>
+                    <StageMark state="completed" />
+                    <span class="stage-fold-names">{settledFields.join(" · ")}</span>
+                    <span class="disclosure-chev" aria-hidden="true"></span>
+                  </summary>
+                  <div class="stage-fold-rows">
+                    {#each settledFields as name}
+                      {@const slot = fieldSlot(detail, name)}
+                      {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
+                      <TicketStageSection
+                        {name}
+                        {slot}
+                        {stageState}
+                        lifecycle={lc}
+                        ticketStage={detail.stage}
+                        ceiling={detail.ceiling}
+                        emptyText={emptyTicketFieldText}
+                        runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
+                        runLabelAttention={stageState === "current-awaiting-approval"}
+                        onRelease={currentStageRunLabel(detail) === "you're on it"
+                          ? () => takeover(detail)
+                          : undefined}
+                        contextRow={name === "kickoff" && kickoffCardShowsContextRow
+                          ? kickoffContextRow
+                          : undefined}
+                        onAccept={(payload) => acceptField(name, payload)}
+                        onReplaceNote={(raw) => replaceNote(name, raw)}
+                        onSaveValue={(raw) => saveValue(name, raw)}
+                      />
+                    {/each}
+                    <button
+                      type="button"
+                      class="stage-fold-close"
+                      data-stage-fold-close
+                      onclick={(event) => {
+                        const fold = event.currentTarget.closest("details");
+                        if (fold) fold.open = false;
+                      }}
+                    >Fold settled stages</button>
+                  </div>
+                </details>
+              {/if}
+              {#each lc.fieldIds.filter((name) => !settledFields.includes(name)) as name}
+                {@const slot = fieldSlot(detail, name)}
+                {@const stageState = fieldStageVisualStateFor(lc, detail, name)}
+                <TicketStageSection
+                  {name}
+                  {slot}
+                  {stageState}
+                  lifecycle={lc}
+                  ticketStage={detail.stage}
+                  ceiling={detail.ceiling}
+                  emptyText={emptyTicketFieldText}
+                  runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
+                  runLabelAttention={stageState === "current-awaiting-approval"}
+                  onRelease={currentStageRunLabel(detail) === "you're on it"
+                    ? () => takeover(detail)
+                    : undefined}
+                  contextRow={name === "kickoff" && kickoffCardShowsContextRow
+                    ? kickoffContextRow
+                    : undefined}
+                  onAccept={(payload) => acceptField(name, payload)}
+                  onReplaceNote={(raw) => replaceNote(name, raw)}
+                  onSaveValue={(raw) => saveValue(name, raw)}
+                />
+              {/each}
+            {/if}
           </div>
         </div>
       </main>

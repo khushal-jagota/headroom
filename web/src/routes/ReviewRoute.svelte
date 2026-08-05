@@ -12,6 +12,7 @@
   import Button from "../components/Button.svelte";
   import ErrorLine from "../components/ErrorLine.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
+  import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import ResourceState from "../components/ResourceState.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
@@ -352,12 +353,19 @@
                 </div>
 
                 <div class="review-ticket-heading review-arrive review-arrive--2">
-                  <div class="review-ticket-title">
-                    <InlineEdit
-                      value={ticketDetail.title}
-                      placeholder="Untitled"
-                      onSave={(raw) => saveTitle(proposal, raw)}
-                    />
+                  <div class="review-ticket-heading-main">
+                    <div class="review-ticket-title">
+                      <InlineEdit
+                        value={ticketDetail.title}
+                        placeholder="Untitled"
+                        onSave={(raw) => saveTitle(proposal, raw)}
+                      />
+                    </div>
+                    {#if ticketDetail.recap}
+                      <div class="review-recap" data-recap>
+                        <MarkdownBlock text={ticketDetail.recap} />
+                      </div>
+                    {/if}
                   </div>
                   {#if field === "kickoff"}
                     <div class="review-kickoff-priority">
@@ -395,8 +403,6 @@
                       ticketStage={ticketDetail.stage}
                       ceiling={ticketDetail.ceiling}
                       stageState={fieldStageVisualStateFor(lc, ticketDetail, field)}
-                      recap={ticketDetail.recap}
-                      showRecap
                       approvalDisabled={field === "kickoff" && priorityBusy}
                       onAccept={(payload) => accept(proposal, payload)}
                     />
