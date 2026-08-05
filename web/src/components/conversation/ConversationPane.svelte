@@ -9,12 +9,14 @@
   import type { Snippet } from "svelte";
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
+  import TaskProgress from "./TaskProgress.svelte";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
   import type { RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import { restLineFrom } from "../../lib/conversation/restLine";
+  import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
     AgentCommand,
@@ -161,8 +163,11 @@
   );
 
   // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
+  let taskProgress = $derived(taskProgressFrom(rows));
   let restLine = $derived(
-    conversationState === "rest" ? restLineFrom(rows, ownSenderLabel ?? "") : null
+    conversationState === "rest"
+      ? restLineFrom(rows, ownSenderLabel ?? "", { ...taskProgress, turnRunning: running })
+      : null
   );
 
   /** The one control through the states, and what it means where it is standing. */
@@ -190,6 +195,7 @@
     const pressed = event.target;
     if (!(pressed instanceof Element) || paneElement === null) return;
     if (!paneElement.contains(pressed)) return;
+    if (pressed.closest("[data-conversation-task-control], [data-conversation-task-list]")) return;
     if (
       pressed.closest("[data-conversation-input]") === null
       && pressed.closest("[data-conversation-rest-bar]") === null
@@ -311,6 +317,15 @@
     {conversationState}
     {emptyState}
   />
+
+  {#if conversationState === "peeked" || conversationState === "opened"}
+    <TaskProgress
+      progress={taskProgress}
+      variant="strip"
+      {running}
+      moving={running && ask === null && userInput === null}
+    />
+  {/if}
 
   <!-- At rest this one line is the whole conversation visible above the composer. -->
   {#if conversationState === "rest"}

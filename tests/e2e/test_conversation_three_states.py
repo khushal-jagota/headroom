@@ -23,6 +23,7 @@ answer is changed on the way past and nothing else is.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -35,9 +36,14 @@ from tests.e2e.test_dev_conversation_pane import (
     _append_rows,
 )
 
+from planner.conversation.contracts import PromptDeliveryMode
 from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationEventPayload,
+    PlanEntry,
+    PlanEntryStatus,
+    PlanUpdatedEventPayload,
+    PromptEventPayload,
 )
 from planner.conversation.message_content import text_message_content
 
@@ -65,6 +71,96 @@ THE_LAST_THING = (
     "The one line the bar shows\n\nand the second paragraph nobody reads at rest."
 )
 THE_ASK_TITLE = "Delete the whole of the build directory"
+
+
+def test_the_current_plan_is_status_in_all_three_states(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+) -> None:
+    """The current step stays on the status surface and never becomes thread history."""
+    ticket_id, conversation_id = _a_ticket_with_a_conversation(server, cli, "Current plan")
+    current_step = (
+        "Implement the deliberately long current step that must truncate before its neighbors"
+    )
+    _append_rows(
+        server,
+        conversation_id,
+        PromptEventPayload(
+            content=text_message_content("continue"),
+            sender_label="owner",
+            mode=PromptDeliveryMode.run_when_free,
+            sent_at_unix_milliseconds=int(time.time() * 1000) - 4_000,
+        ),
+        PlanUpdatedEventPayload(
+            entries=(
+                PlanEntry(text="Inspect", status=PlanEntryStatus.completed),
+                PlanEntry(text=current_step, status=PlanEntryStatus.in_progress),
+                PlanEntry(text="Verify", status=PlanEntryStatus.pending),
+            )
+        ),
+    )
+    context = context_factory()
+    context.add_init_script(THE_SYSTEM_SAYS_A_TURN_IS_RUNNING)
+    page = _the_ticket_page(server, context, open_page, ticket_id, 2)
+
+    progress = page.locator("[data-conversation-task-progress]")
+    assert progress.inner_text() == "2/3"
+    assert page.locator(REST_LINE).inner_text() == current_step
+    assert page.locator(REST_ASIDE).inner_text().endswith("s")
+    assert page.locator("[data-conversation-rest-who]").count() == 0
+
+    # The task control and its checklist do not turn rest into peeked.
+    progress.dispatch_event("pointerdown")
+    assert page.locator(PANE).get_attribute("data-conversation-state") == "rest"
+    progress.focus()
+    checklist = page.locator("[data-conversation-task-list]")
+    page.wait_for_function(
+        "getComputedStyle(document.querySelector('[data-conversation-task-list]'))"
+        ".display === 'grid'"
+    )
+    page.set_viewport_size({"width": 320, "height": 640})
+    box = checklist.bounding_box()
+    assert box is not None
+    assert box["x"] >= 0 and box["x"] + box["width"] <= 320
+    truncation = page.locator(REST_LINE).evaluate(
+        """
+        (line) => {
+          const style = getComputedStyle(line);
+          const box = line.getBoundingClientRect();
+          return {
+            overflow: style.overflow,
+            textOverflow: style.textOverflow,
+            whiteSpace: style.whiteSpace,
+            clipped: line.scrollWidth > line.clientWidth,
+            onScreen: box.width > 0 && box.height > 0,
+          };
+        }
+        """
+    )
+    assert truncation == {
+        "overflow": "hidden",
+        "textOverflow": "ellipsis",
+        "whiteSpace": "nowrap",
+        "clipped": True,
+        "onScreen": True,
+    }
+    assert progress.is_visible()
+    assert page.locator(REST_ASIDE).is_visible()
+
+    _click_the_composers_input(page)
+    strip = page.locator("[data-conversation-task-strip]")
+    strip_box = strip.bounding_box()
+    assert strip_box is not None
+    assert round(strip_box["height"]) == 34
+    assert "2 / 3 tasks" in strip.inner_text()
+    assert page.locator(f"{THREAD} [data-conversation-task-progress]").count() == 0
+
+    _take_it_full(page)
+    opened_strip_box = page.locator("[data-conversation-task-strip]").bounding_box()
+    assert opened_strip_box is not None
+    assert round(opened_strip_box["height"]) == 34
 
 # What each state is, on screen. The state attribute is the pane's own word for where it
 # is; everything else here is what a person would see.

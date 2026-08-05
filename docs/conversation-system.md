@@ -216,6 +216,14 @@ from zero, and a long wait for the agent to start is counted rather than lost.
 Where the sender minted no such moment, or minted one its own row cannot be
 reconciled with, the whole second the row was written in is counted from instead.
 
+The newest plan is conversation status, not thread history. At rest, an active plan
+step shows its position, its text, and the elapsed time. The position opens the whole
+checklist on pointer hover or keyboard focus. A permission request still replaces this
+line because it needs the person. Without an active step, the line keeps its normal
+elapsed time and newest tool call. In peeked and opened states, the same checklist sits
+in a centered 34-pixel strip between the thread and composer while unfinished work runs.
+The plan never appears under the turn that first stated it.
+
 When the turn is over that head becomes a fold, and everything the turn produced
 goes behind it: its tool calls, and everything the agent said on the way to its
 answer. What stays out is the person's own message, the last thing the agent

@@ -6,7 +6,7 @@
  */
 
 import type { TranscriptRow, ToolCallRow } from "../transcript";
-import type { ConversationTurnEnding, PlanEntry } from "../wire";
+import type { ConversationTurnEnding } from "../wire";
 
 /** What the thread is made of once a turn's work is gathered up.
  *
@@ -43,9 +43,6 @@ export type ThreadItem =
       settled: boolean;
       /** The turn stopped without an ending, so there is no length anybody can claim. */
       stopped: boolean;
-      /** The plan as this turn last stated it, when this is the anchor holding the
-       *  newest one. A conversation has one plan, so only one anchor ever shows it. */
-      plan: readonly PlanEntry[] | null;
       /** When the turn began, in milliseconds, so a live counter can be honest after a
        *  reload. This is the sender's browser's clock, and `durationSeconds` below is the
        *  record's own, so the two are never subtracted from each other: a settled turn's
@@ -194,35 +191,8 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
     }
 
     if (row.kind === "plan_updated") {
-      // A plan replaces the plan; it is never merged into the one before it. It is also
-      // never a line of its own — the strip is how a plan is read.
-      const at = turn.anchorIndex;
-      const anchor = at === null ? null : items[at];
-      if (at !== null && anchor?.kind === "turn") {
-        items[at] = { ...anchor, plan: row.entries };
-        continue;
-      }
-      turn = {
-        ...turn,
-        turnKey: `turn:${row.key}`,
-        anchorIndex: items.length,
-        groupIndexes: [],
-        messageIndexes: []
-      };
-      items.push({
-        kind: "turn",
-        key: `turn:${row.key}`,
-        turnKey: `turn:${row.key}`,
-        settled: false,
-        stopped: false,
-        plan: row.entries,
-        startedAtUnixMilliseconds: null,
-        ending: null,
-        isLatest: false,
-        durationSeconds: null,
-        toolCallCount: 0,
-        foldedMessageCount: 0
-      });
+      // The latest plan belongs to conversation status. It is not thread history and it
+      // does not interrupt a visible run of tool calls.
       continue;
     }
 
@@ -252,7 +222,6 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
         turnKey: `turn:${row.key}`,
         settled: false,
         stopped: false,
-        plan: null,
         startedAtUnixMilliseconds: row.sentAtUnixMilliseconds,
         ending: null,
         isLatest: false,
@@ -278,16 +247,6 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
     if (item?.kind !== "turn") continue;
     items[at] = { ...item, isLatest: true };
     break;
-  }
-
-  // One conversation, one plan: the newest plan row is the plan, and the heads that
-  // stated earlier ones are history rather than a second strip.
-  let seenNewestPlan = false;
-  for (let at = items.length - 1; at >= 0; at -= 1) {
-    const item = items[at];
-    if (item?.kind !== "turn" || item.plan === null) continue;
-    if (seenNewestPlan) items[at] = { ...item, plan: null };
-    seenNewestPlan = true;
   }
 
   return items;

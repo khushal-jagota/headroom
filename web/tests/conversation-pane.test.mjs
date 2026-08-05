@@ -41,7 +41,7 @@ const expectedInventory = [
   "NewConversationForm.svelte",
   "PermissionAskActions.svelte",
   "PermissionAskCard.svelte",
-  "PlanStrip.svelte",
+  "TaskProgress.svelte",
   "ToolCallRow.svelte",
   "TurnAnchor.svelte",
   "UnifiedModelPicker.svelte",
@@ -239,7 +239,7 @@ try {
       'export { default as AskActions } from "../src/components/conversation/PermissionAskActions.svelte";',
       'export { default as TurnAnchor } from "../src/components/conversation/TurnAnchor.svelte";',
       'export { default as WorkGroup } from "../src/components/conversation/WorkGroup.svelte";',
-      'export { default as PlanStrip } from "../src/components/conversation/PlanStrip.svelte";',
+      'export { default as TaskProgress } from "../src/components/conversation/TaskProgress.svelte";',
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
       'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
       'export { default as RestBar } from "../src/components/conversation/ConversationRestBar.svelte";',
@@ -260,7 +260,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, BackendCard, CommandMenu, Composer, NewForm, Pane, TaskProgress, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -391,6 +391,43 @@ try {
   assert.match(peekedPane, /class="chat-lbl">Product Design worker/);
   assert.match(peekedPane, /class="chat-state[^>]*>working/);
   assert.match(peekedPane, /class="chat-usage" data-conversation-workspace/);
+
+  const activePlanRows = [
+    {
+      key: "prompt",
+      kind: "prompt",
+      sequence: 1,
+      createdAt: 1,
+      content: [{ piece: "text", text: "work" }],
+      senderLabel: "owner",
+      mode: "run_when_free",
+      sentAtUnixMilliseconds: 1_000
+    },
+    {
+      key: "plan",
+      kind: "plan_updated",
+      sequence: 2,
+      createdAt: 2,
+      entries: [{ text: "do it", status: "in_progress" }]
+    }
+  ];
+  for (const takeover of [
+    { ask: { askId: "a1", title: "Allow it?", detail: null, options: [] } },
+    { userInput: { requestId: "u1", questions: [] } }
+  ]) {
+    const waitingOnPerson = drawn(Pane, {
+      conversationId: "c1",
+      label: "Coding",
+      conversationState: "peeked",
+      rows: activePlanRows,
+      running: true,
+      ...takeover,
+      onSend: async () => true
+    });
+    assert.match(waitingOnPerson, /data-conversation-task-strip/);
+    assert.match(waitingOnPerson, /data-conversation-task-progress/);
+    assert.doesNotMatch(waitingOnPerson, /acp-spin/);
+  }
 
   // A message that holds a picture draws the picture, on both sides of the thread, and
   // fetches it from the conversation that kept it. A transcript that drew only the words
@@ -784,26 +821,29 @@ try {
   // and its own row already says what happened.
   assert.equal(drawn(TurnAnchor, { settled: true, stopped: true, toolCallCount: 0 }).trim(), "");
 
-  // FINDING 8 — the plan reads as a count you can open, in the old strip's own vocabulary.
+  // The plan reads as the current ordinal and opens without becoming thread history.
   const plan = [
     { text: "read the code", status: "completed" },
     { text: "write it", status: "in_progress" },
     { text: "test it", status: "pending" }
   ];
-  const strip = drawn(PlanStrip, { entries: plan });
-  assert.match(strip, /1 \/ 3 tasks/);
+  const progress = {
+    entries: plan,
+    currentPosition: 2,
+    currentEntry: plan[1],
+    completedCount: 1,
+    hasUnfinishedEntry: true,
+    turnRunning: true
+  };
+  const strip = drawn(TaskProgress, { progress, variant: "strip" });
+  assert.match(strip, /2 \/ 3 tasks/);
   assert.match(strip, /aria-label="1 of 3 tasks complete"/);
-  assert.doesNotMatch(strip, /data-conversation-plan-list/, "the checklist starts closed");
-  assert.equal(drawn(PlanStrip, { entries: [] }).trim(), "", "no plan, no strip");
-
-  // It survives its turn: a settled anchor with no tool calls still carries the plan.
-  const settledWithPlan = drawn(TurnAnchor, { settled: true, toolCallCount: 0, plan });
-  assert.match(settledWithPlan, /data-conversation-plan/);
-  assert.match(settledWithPlan, /1 \/ 3 tasks/);
-  assert.doesNotMatch(settledWithPlan, /data-conversation-alive/);
-  const runningWithPlan = drawn(TurnAnchor, { settled: false, plan });
-  assert.match(runningWithPlan, /data-conversation-alive/);
-  assert.match(runningWithPlan, /data-conversation-plan/);
+  assert.match(strip, /data-conversation-task-list/);
+  assert.match(strip, /acp-spin/);
+  const idleStrip = drawn(TaskProgress, { progress, variant: "strip", running: false });
+  assert.match(idleStrip, /data-conversation-task-strip/);
+  assert.doesNotMatch(idleStrip, /data-conversation-task-progress/);
+  assert.doesNotMatch(drawn(TurnAnchor, { settled: true, toolCallCount: 0 }), /task-progress/);
 
   // Mid-turn keeps separate Stop and Send controls. Delivery is chosen on held rows.
   const hermesComposer = drawn(Composer, {
@@ -1231,6 +1271,7 @@ try {
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import ConversationTranscript from "../src/components/conversation/ConversationTranscript.svelte";
+  import TaskProgress from "../src/components/conversation/TaskProgress.svelte";
   import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
   import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
 
@@ -1512,6 +1553,20 @@ try {
 
 <div data-running-thread>
   <ConversationTranscript rows={runningRows} ownSenderLabel="owner" />
+</div>
+
+<div data-task-progress-fixture>
+  <TaskProgress
+    variant="strip"
+    progress={{
+      entries: runningRows.find((row) => row.kind === "plan_updated")?.entries ?? [],
+      currentPosition: 2,
+      currentEntry: { text: "write it", status: "in_progress" },
+      completedCount: 1,
+      hasUnfinishedEntry: true,
+      turnRunning: true
+    }}
+  />
 </div>
 
 <PermissionAskCard ask={question} onAnswer={(optionId) => answers.push(optionId)} />
@@ -2117,21 +2172,22 @@ with sync_playwright() as playwright:
         "opening one batch leaves the other alone"
     )
 
-    # FINDING 8 — the plan is a count that opens into the checklist.
-    pill = running.locator("[data-conversation-plan-pill]")
+    # The conversation plan is status beside the thread, not a row inside it.
+    progress_fixture = page.locator("[data-task-progress-fixture]")
+    pill = progress_fixture.locator("[data-conversation-task-progress]")
     assert pill.count() == 1
-    assert "1 / 2 tasks" in pill.inner_text(), pill.inner_text()
-    assert running.locator("[data-conversation-plan-list]").count() == 0
-    pill.click()
+    assert "2 / 2 tasks" in pill.inner_text(), pill.inner_text()
+    checklist = progress_fixture.locator("[data-conversation-task-list]")
+    assert not checklist.is_visible()
+    pill.hover(force=True)
     page.wait_for_function(
-        "document.querySelectorAll('[data-conversation-plan-list]').length === 1"
+        "getComputedStyle(document.querySelector('[data-conversation-task-list]')).display === 'grid'"
     )
-    marks = running.locator("[data-conversation-plan-status]").all_inner_texts()
+    marks = progress_fixture.locator("[data-conversation-task-status]").all_inner_texts()
     assert "read the code" in marks[0], marks
-    pill.click()
-    page.wait_for_function(
-        "document.querySelectorAll('[data-conversation-plan-list]').length === 0"
-    )
+    checklist.hover()
+    assert checklist.is_visible(), "hovering the checklist holds it open"
+    assert running.locator("[data-conversation-task-progress]").count() == 0
 
     # A question is answered by its number key as well as by its row.
     page.keyboard.press("2")
