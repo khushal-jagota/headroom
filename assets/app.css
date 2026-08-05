@@ -2443,6 +2443,80 @@ button.list-row:hover .list-row-title {
 }
 .chat-send:disabled { opacity: 0.5; cursor: default; }
 
+/* --- Voice input (t_0pgfmbsr) -------------------------------------------- */
+/* Every voice state keeps the composer's two-zone shape: a centred line where the
+ * textarea rests (same min-height, so the box never jumps) and actions in the foot. */
+.chat-voice-idle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 40px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  color: var(--text-faint);
+}
+.chat-voice-idle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+.chat-voice-idle span { font-size: var(--type-sm); color: var(--text-faintest); }
+.chat-voice-idle:disabled { opacity: 0.5; cursor: default; }
+.chat-voice-mid {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  font-size: var(--type-md);
+}
+.chat-voice-time {
+  font-family: var(--font-mono);
+  letter-spacing: var(--tracking-mono);
+  color: var(--text-strong);
+}
+.chat-voice-fail { font-size: var(--type-sm); color: var(--text-muted); }
+.chat-voice-fail .chat-voice-time { font-size: var(--type-sm); color: var(--text-faint); }
+/* The X undoes; drawn in the stop idiom (.chat-send.stop): red hairline, transparent. */
+.chat-voice-cancel {
+  width: var(--space-5);
+  height: var(--space-5);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: var(--border-hairline) solid var(--accent-error);
+  border-radius: var(--radius-md);
+  color: var(--accent-error);
+  cursor: pointer;
+}
+.chat-voice-cancel svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+/* The going-forward action sits where the send arrow does: filled accent, far right. */
+.chat-voice-stop,
+.chat-voice-retry {
+  margin-left: auto;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-bright);
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.chat-voice-stop {
+  width: var(--space-5);
+  height: var(--space-5);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+.chat-voice-square { width: 9px; height: 9px; border-radius: 2px; background: var(--accent-ink); }
+.chat-voice-retry {
+  height: var(--space-5);
+  padding: 0 var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--type-sm);
+  line-height: 1;
+}
+
 /* Delivery segment: compact segmented pill in the footer, present only mid-turn */
 .chat-seg {
   display: inline-flex;
