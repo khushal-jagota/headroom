@@ -2151,6 +2151,7 @@ button.list-row:hover .list-row-title {
   min-height: 0;
   min-width: 0;
   max-width: 100%;
+  overflow-x: hidden;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
