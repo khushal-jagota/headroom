@@ -1523,8 +1523,9 @@ with sync_playwright() as playwright:
         return showing.inner_text() if showing.count() == 1 else ""
 
     def open_the_panel(picker):
-        picker.locator("[data-conversation-picker-trigger]").click()
-        page.wait_for_selector("[data-conversation-picker-panel]")
+        if picker.locator("[data-conversation-picker-panel]").count() == 0:
+            picker.locator("[data-conversation-picker-trigger]").click()
+            page.wait_for_selector("[data-conversation-picker-panel]")
 
     def the_panel_is_gone():
         page.wait_for_selector("[data-conversation-picker-panel]", state="detached")
@@ -1534,9 +1535,12 @@ with sync_playwright() as playwright:
 
     def pick(picker, value):
         open_the_panel(picker)
-        if picker.locator('[data-conversation-picker-choice="' + value + '"]').count() == 0:
+        model_choice = picker.locator('[data-conversation-picker-choice="' + value + '"]').count() == 1
+        if not model_choice:
             picker.locator("[data-conversation-picker-reasoning]").click()
         picker.locator('[data-conversation-picker-choice="' + value + '"]').click()
+        if model_choice and picker.locator('[data-conversation-picker-reasoning][aria-pressed="true"]').count() == 1:
+            picker.locator("[data-conversation-picker-chosen]").click()
         the_panel_is_gone()
 
     def footer_child_roles():
@@ -1607,9 +1611,20 @@ with sync_playwright() as playwright:
     page.keyboard.press("ArrowDown")
     assert the_box.input_value() == "half a thought"
 
-    # Enter takes the highlighted row, and the keyboard goes back to the box — which is
-    # where the person was, and what they do next.
+    # Enter takes the highlighted model, keeps the panel open, and moves directly to
+    # reasoning choices.
     page.keyboard.press("Enter")
+    page.wait_for_function(
+        "document.querySelector('[data-conversation-picker-reasoning]').getAttribute('aria-pressed') === 'true'"
+    )
+    assert page.locator("[data-conversation-picker-panel]").count() == 1
+    assert model.locator("[data-conversation-picker-choice] .model-picker-choice-name").all_inner_texts() == ["low", "high"]
+    page.wait_for_function("document.activeElement.matches('.model-picker-list')")
+    assert highlighted() == "low", highlighted()
+
+    # Enter a reasoning choice to complete the flow. The panel closes and the caller
+    # receives focus after the full model-plus-reasoning choice.
+    model.locator('[data-conversation-picker-choice="low"]').click()
     the_panel_is_gone()
     assert face(model) == "Sonnet low", face(model)
     assert page.evaluate(
