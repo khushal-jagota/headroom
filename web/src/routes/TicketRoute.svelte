@@ -69,54 +69,17 @@
 
   /** How far open this page's conversation is.
    *
-   * The state a conversation opens in belongs to the page that shows it, so this page
-   * names its own. A Ticket opens at rest — the composer, and above it one line of
-   * whatever happened last, against the bottom of the ticket — unless it is paired, which
-   * opens full (seeded below). The person moves it from there and the conversation writes
-   * back here when they do.
+   * The Ticket status owns the opening state. A paired Ticket opens full. Every other
+   * status opens at rest. The person can still move the conversation within that state
+   * until the Ticket status changes again.
    */
   let conversationState = $state<ConversationState>("rest");
 
-  /** A paired Ticket opens straight into the full conversation.
-   *
-   * Paired is work the person is doing with the worker right now, so arriving on one puts
-   * the conversation full rather than making them open it. This is the page's opening
-   * state, not a rule the page keeps enforcing: it is seeded once, the first time this
-   * visit's status is known, and after that the person's own expand and collapse are the
-   * only things that move it — a paired conversation they put away stays away until they
-   * next land on the Ticket, when a fresh visit seeds it full again.
-   */
-  let seededOpenStateFromStatus = false;
   $effect(() => {
     const status = ticket.data?.ticket_status;
-    if (status === undefined || seededOpenStateFromStatus) return;
-    seededOpenStateFromStatus = true;
-    if (status === "paired") conversationState = "opened";
+    if (status === undefined) return;
+    conversationState = status === "paired" ? "opened" : "rest";
   });
-
-  /** A click outside the conversation dismisses it to rest.
-   *
-   * The conversation is the section under the ticket, not a mode it puts the page into,
-   * so touching the ticket is how you put it away. Read while the click is still on its
-   * way down and neither stopped nor prevented: whatever that click was going to do to
-   * the ticket still happens.
-   */
-  function dismissConversationToRest(): void {
-    if (conversationState !== "rest") conversationState = "rest";
-  }
-
-  /** A press in the space either side of the card puts it away, the same as the ticket does.
-   *
-   * The card is centred in its section, so the section is wider than the card and what is
-   * left is page, not conversation. Pressing page is how you put the conversation away, and
-   * where on the page it was is not the point.
-   */
-  function dismissConversationOnAPressBesideTheCard(event: MouseEvent): void {
-    const pressed = event.target;
-    if (!(pressed instanceof Element)) return;
-    if (pressed.closest("[data-conversation-pane]") !== null) return;
-    dismissConversationToRest();
-  }
 
   let projectOptions = $derived([
     { value: "", label: "+ project" },
@@ -381,11 +344,7 @@
     {:else if ticket.data}
       {@const detail = ticket.data}
       <div class="ticket-page">
-      <!-- The document hears a click only to put the conversation away, and it hears it
-           in the capture phase so nothing inside can have gone yet. There is no keyboard
-           twin here because Escape does the same thing from anywhere on the page, and it
-           belongs to the conversation rather than to the document above it. -->
-      <main class="ticket-doc" onclickcapture={dismissConversationToRest}>
+      <main class="ticket-doc">
         <header class="ticket-head">
           <div class="ticket-identity" data-ticket-identity>
             <TicketPriorityControl
@@ -604,7 +563,6 @@
       <div
         class="ticket-conversation-layer"
         data-conversation-layer-host
-        onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
         <div class="ticket-conversation-column">
           <LiveConversation

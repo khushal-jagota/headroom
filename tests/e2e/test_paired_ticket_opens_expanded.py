@@ -1,11 +1,8 @@
-"""A paired Ticket opens straight into the full conversation, on arrival, in a browser.
+"""A Ticket conversation follows the current status, on arrival and in a browser.
 
-Paired is work the person is doing with the worker right now, so landing on a paired
-Ticket puts the conversation full rather than making them open it. The page seeds this
-once, the first time the status is known on a visit — it is the state the page opens in,
-not a rule it keeps enforcing. So a person who puts a paired conversation away keeps it
-away: nothing the page hears afterwards on that visit opens it again, and only the next
-arrival seeds it full once more.
+Paired is work the person is doing with the worker right now, so a paired Ticket opens
+the conversation full. Every other status opens at rest. A live status change updates
+the same mounted Ticket page without a new visit.
 
 Nothing here needs an agent. A Ticket is parked on a filed proposal, a reply is reported
 straight to the reply door the way the ticket screen reports one, and that is what moves it
@@ -22,15 +19,14 @@ from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 TICKET_SCREEN = '[data-screen="ticket"]'
 PANE = f"{TICKET_SCREEN} [data-conversation-pane]"
-COLLAPSE = f"{TICKET_SCREEN} [data-conversation-collapse]"
-TITLE = f"{TICKET_SCREEN} .ticket-title"
 PROPOSAL = "# Success criteria\n\nThe suite goes green.\n"
+APPROACH = "# Approach\n\nThe page follows the current Ticket status.\n"
 
 
-def _a_paired_ticket(
-    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+def _a_ticket_on_a_proposal(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper, title: str
 ) -> str:
-    """A Ticket parked on a proposal that its owner has since replied to, which pairs it."""
+    """Create a Ticket that waits for approval of a worker proposal."""
     ticket_id: str = cli(
         server,
         "ticket",
@@ -38,7 +34,7 @@ def _a_paired_ticket(
         "--worker-type",
         "coding",
         "--title",
-        "Paired work",
+        title,
     )["id"]
     cli(
         server,
@@ -52,6 +48,14 @@ def _a_paired_ticket(
         stdin=PROPOSAL,
     )
     assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
+    return ticket_id
+
+
+def _a_paired_ticket(
+    server: ServerHandle, cli: Callable[..., JsonObject], api: ApiHelper
+) -> str:
+    """A Ticket parked on a proposal that its owner has since replied to, which pairs it."""
+    ticket_id = _a_ticket_on_a_proposal(server, cli, api, "Paired work")
     # A reply is what pairs it. The server owns that move; the reply door is how it is told.
     paired = api.direct_post(server, f"/api/tickets/{ticket_id}/human-reply", {})
     assert paired["ticket_status"] == "paired", paired
@@ -81,54 +85,50 @@ def test_a_paired_ticket_opens_full_on_arrival(
     cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
-    """Landing on a paired Ticket, the conversation is already at full height.
-
-    The plain coding Ticket its three-state neighbour opens lands at rest; this one is
-    paired, and the only difference between them is the status the page seeds from.
-    """
+    """A paired Ticket opens at full height."""
     ticket_id = _a_paired_ticket(server, cli, api)
     page = _the_ticket_page(server, context_factory(), open_page, ticket_id)
 
-    # The seed, the moment the status is known: full height, not rest.
     page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
 
 
-def test_a_paired_conversation_put_away_stays_away_for_the_visit(
+def test_an_awaiting_approval_ticket_opens_at_rest_on_arrival(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
     api: ApiHelper,
 ) -> None:
-    """Seeded once, then the person's own controls own it.
+    """An awaiting-approval Ticket opens at the normal non-full state."""
+    ticket_id = _a_ticket_on_a_proposal(server, cli, api, "Awaiting approval work")
+    page = _the_ticket_page(server, context_factory(), open_page, ticket_id)
 
-    The page opens a paired conversation full. The person collapses it. Then something
-    lands under the page — a real write the browser hears and refetches on — and the pane
-    must stay where the person left it: the seed is an opening state, not a clamp that
-    re-opens on every change while the Ticket is paired.
-    """
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
+
+
+def test_a_live_status_change_resets_the_mounted_ticket_conversation(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    """A mounted Ticket follows a live change from paired to awaiting approval."""
     ticket_id = _a_paired_ticket(server, cli, api)
     page = _the_ticket_page(server, context_factory(), open_page, ticket_id)
     page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
 
-    # The person puts it away. Opened's control steps it back to peeked.
-    page.click(COLLAPSE, timeout=WAIT_MS)
-    page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
-
-    # A real write lands under the page while it is still paired. The browser hears the
-    # change signal and refetches the Ticket, which re-runs the page's opening logic.
-    renamed = "Paired work, renamed under the page"
-    api.direct_patch(server, f"/api/tickets/{ticket_id}", {"title": renamed})
-    # Wait for that refetch to actually reach the screen, so the re-run has happened.
-    page.wait_for_function(
-        "([selector, text]) => document.querySelector(selector)?.textContent.includes(text)",
-        arg=[TITLE, renamed],
-        timeout=WAIT_MS,
+    cli(
+        server,
+        "worker",
+        "propose",
+        "--body-file",
+        "-",
+        "--recap",
+        "Approach proposed.",
+        ticket_id=ticket_id,
+        stdin=APPROACH,
     )
-    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "paired"
+    assert api.get(server, f"/api/tickets/{ticket_id}")["ticket_status"] == "awaiting_approval"
 
-    # Still where the person left it. A clamp would have snapped it back to opened.
-    state = page.evaluate(
-        "() => document.querySelector('[data-conversation-pane]')?.dataset.conversationState"
-    )
-    assert state == "peeked", ("the seed re-opened a conversation the person put away", state)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
