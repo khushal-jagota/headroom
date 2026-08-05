@@ -1345,6 +1345,9 @@ textarea {
   min-width: 0;
   max-width: 100%;
   margin: 0;
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 /* The header curves over the top of the document and stays put; the document
