@@ -56,7 +56,8 @@ assert.deepEqual(inventory, expectedInventory);
 const sourceFiles = [
   ...inventory,
   "viewport/ConversationViewport.svelte",
-  "composer/ComposerRunControls.svelte"
+  "composer/ComposerRunControls.svelte",
+  "composer/HeldPromptStack.svelte"
 ];
 const sources = {};
 for (const fileName of sourceFiles) {
@@ -110,7 +111,8 @@ assert.match(sources["ConversationTranscript.svelte"], /chat-u|chat-a/);
 // one of them.
 assert.match(sources["MessagePieces.svelte"], /MarkdownBlock/);
 assert.match(sources["ConversationTranscript.svelte"], /MessagePieces/);
-assert.match(sources["composer/ComposerRunControls.svelte"], /chat-seg/);
+assert.match(sources["composer/ComposerRunControls.svelte"], /chat-submit/);
+assert.match(sources["composer/HeldPromptStack.svelte"], /data-conversation-held-row/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
 // The pane that came before this one is gone, and nothing may reach for it.
@@ -286,6 +288,17 @@ try {
       knownFate
     };
   }
+  function held(heldPromptId, senderMessageId, text = `text of ${heldPromptId}`) {
+    return {
+      key: `held:${heldPromptId}`,
+      heldPromptId,
+      senderMessageId,
+      content: [{ piece: "text", text }],
+      senderLabel: "owner",
+      sentAtUnixMilliseconds: 1_000,
+      state: "held"
+    };
+  }
 
   // The band is card structure, not an activity row. Before a conversation read has
   // answered — and for a conversation where nothing has happened — it occupies the same
@@ -294,29 +307,32 @@ try {
   assert.match(emptyRestBar, /data-conversation-rest-bar/);
   assert.doesNotMatch(emptyRestBar, /data-conversation-rest-line/);
 
-  const waiting = drawn(Pane, {
-    conversationId: "c1",
-    label: "Worker",
-    outgoingMessages: [
-      outgoing("held", "waiting_for_the_agent"),
-      outgoing("in-flight", "nothing_yet"),
-      outgoing("unanswered", "answer_never_came_back")
+  const waiting = drawn(Composer, {
+    backendKey: "hermes",
+    running: true,
+    heldPromptRows: [
+      held("held", "same"),
+      { ...held("in-flight", "flight"), heldPromptId: null, state: "in_flight" },
+      { ...held("unanswered", "unknown"), heldPromptId: null, state: "unknown" }
     ],
-    onDiscardHeldPrompt: () => undefined
+    onDiscardHeldPrompt: () => undefined,
+    onPromoteHeldPrompt: () => undefined,
+    onSend: async () => true
   });
-  assert.match(waiting, /data-conversation-outgoing-discard="held"/);
-  assert.doesNotMatch(waiting, /data-conversation-outgoing-discard="in-flight"/);
-  assert.doesNotMatch(waiting, /data-conversation-outgoing-discard="unanswered"/);
+  assert.match(waiting, /data-conversation-held-discard="held"/);
+  assert.match(waiting, /data-conversation-held-promote="send_now"/);
+  assert.match(waiting, /data-conversation-held-promote="steer"/);
+  assert.match(waiting, /sending/);
+  assert.match(waiting, /no answer came/);
 
   // A caller that cannot take a message back is not offered the control at all, rather
   // than offered one that does nothing.
-  const noDiscard = drawn(Pane, {
-    conversationId: "c1",
-    label: "Worker",
-    outgoingMessages: [outgoing("held", "waiting_for_the_agent")]
+  const noDiscard = drawn(Composer, {
+    heldPromptRows: [{ ...held("local", "local"), heldPromptId: null }],
+    onSend: async () => true
   });
-  assert.match(noDiscard, /data-conversation-outgoing="held"/);
-  assert.doesNotMatch(noDiscard, /data-conversation-outgoing-discard/);
+  assert.match(noDiscard, /data-conversation-held-row="held:local"/);
+  assert.doesNotMatch(noDiscard, /data-conversation-held-discard="local"/);
 
   const optimisticPicture = drawn(Pane, {
     conversationId: "c1",
@@ -753,22 +769,20 @@ try {
   assert.match(runningWithPlan, /data-conversation-alive/);
   assert.match(runningWithPlan, /data-conversation-plan/);
 
-  // Steering is offered to hermes and to nobody else.
+  // Mid-turn keeps separate Stop and Send controls. Delivery is chosen on held rows.
   const hermesComposer = drawn(Composer, {
     backendKey: "hermes",
     running: true,
     onSend: async () => true
   });
-  assert.match(hermesComposer, /data-conversation-delivery-mode="steer"/);
+  assert.doesNotMatch(hermesComposer, /data-conversation-delivery/);
+  assert.match(hermesComposer, /data-conversation-stop="true"/);
+  assert.match(hermesComposer, /data-conversation-send="true"/);
   for (const backendKey of ["codex", "claude"]) {
     const composer = drawn(Composer, { backendKey, running: true, onSend: async () => true });
-    assert.match(composer, /data-conversation-delivery-mode="run_when_free"/);
-    assert.match(composer, /data-conversation-delivery-mode="send_now"/);
-    assert.doesNotMatch(
-      composer,
-      /data-conversation-delivery-mode="steer"/,
-      `${backendKey} must not be offered steering`
-    );
+    assert.doesNotMatch(composer, /data-conversation-delivery/);
+    assert.match(composer, /data-conversation-stop="true"/);
+    assert.match(composer, /data-conversation-send="true"/);
   }
 
   // Idle, there is nothing to choose: a message runs.
@@ -779,7 +793,6 @@ try {
   });
   assert.doesNotMatch(idleComposer, /data-conversation-delivery/);
   assert.match(idleComposer, /data-conversation-send="true"/);
-  assert.match(hermesComposer, /data-conversation-stop="true"/);
 
   // The ask takes the composer over: the input is shut and the ask's own words replace it.
   const askedComposer = drawn(Composer, {
@@ -1566,7 +1579,7 @@ with sync_playwright() as playwright:
         "data-conversation-image",
         "data-conversation-image-input",
         "data-conversation-picker-model",
-        "data-conversation-send",
+        "div",
     ], footer_child_roles()
 
     assert face(model) == "Opus", face(model)
@@ -2222,47 +2235,46 @@ with sync_playwright() as playwright:
     assert "agent" not in nothing_to_offer.lower(), nothing_to_offer
     assert page.evaluate("window.__sends().length") == sent_before_the_menu
 
-    # A steer cannot consume a model or effort change: it joins a turn already running
-    # under its own values. The picks stay visible and ride the next ordinary send.
+    # Mid-turn the composer keeps both actions. Enter and the arrow always queue by default.
     box.fill("")
     page.wait_for_selector("[data-conversation-commands]", state="detached")
     page.evaluate("window.__setExists(true)")
     page.evaluate("window.__setComposerRunState('hermes', true)")
-    page.wait_for_selector('[data-conversation-delivery-mode="steer"]')
+    page.wait_for_selector('[data-conversation-stop]')
+    assert page.locator("[data-conversation-delivery]").count() == 0
+    assert page.locator("[data-conversation-send]").count() == 1
     assert footer_child_roles() == [
         "data-conversation-slash",
         "data-conversation-image",
         "data-conversation-image-input",
         "data-conversation-picker-model",
-        "data-conversation-delivery",
-        "data-conversation-stop",
+        "div",
     ], footer_child_roles()
     pick(model, "sonnet")
     pick(effort, "low")
-    page.locator('[data-conversation-delivery-mode="steer"]').click()
-    send_count_before_steer = page.evaluate("window.__sends().length")
-    box.fill("join the running turn")
+    send_count_before_queue = page.evaluate("window.__sends().length")
+    box.fill("wait behind the running turn")
     box.press("Enter")
     page.wait_for_function(
-        f"window.__sends().length === {send_count_before_steer + 1}"
+        f"window.__sends().length === {send_count_before_queue + 1}"
     )
-    steered = page.evaluate("window.__sends().at(-1)")
-    assert steered["mode"] == "steer", steered
-    assert steered["picked"]["model"] == "sonnet", steered
-    assert steered["picked"]["reasoningEffort"] == "low", steered
-    assert face(model) == "Sonnet low", face(model)
+    queued = page.evaluate("window.__sends().at(-1)")
+    assert queued["mode"] == "run_when_free", queued
+    assert queued["picked"]["model"] == "sonnet", queued
+    assert queued["picked"]["reasoningEffort"] == "low", queued
+    assert face(model) == "Opus", face(model)
 
     page.evaluate("window.__setComposerRunState('hermes', false)")
-    page.wait_for_selector("[data-conversation-delivery]", state="detached")
-    box.fill("use those picks next")
+    page.wait_for_selector("[data-conversation-stop]", state="detached")
+    box.fill("ordinary next")
     box.press("Enter")
     page.wait_for_function(
-        f"window.__sends().length === {send_count_before_steer + 2}"
+        f"window.__sends().length === {send_count_before_queue + 2}"
     )
     ordinary = page.evaluate("window.__sends().at(-1)")
     assert ordinary["mode"] == "run_when_free", ordinary
-    assert ordinary["picked"]["model"] == "sonnet", ordinary
-    assert ordinary["picked"]["reasoningEffort"] == "low", ordinary
+    assert ordinary["picked"]["model"] is None, ordinary
+    assert ordinary["picked"]["reasoningEffort"] is None, ordinary
     assert face(model) == "Opus", face(model)
 
     # If navigation destroys the composer while a file is still being read, the batch

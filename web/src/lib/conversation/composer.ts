@@ -1,11 +1,6 @@
 /** What the composer is allowed to offer right now, worked out away from any markup.
  *
- * Three decisions live here and none of them belongs in a template.
- *
- * **How a message may meet the agent.** Idle, there is nothing to choose: a message runs.
- * Mid-turn there are three ways in, and one of them — steering into the running turn — is
- * a per-backend fact rather than a preference. A backend that cannot steer is not offered
- * steering at all: an option that would always be refused is worse than no option.
+ * Two decisions live here and neither belongs in a template.
  *
  * **What a permission ask offers.** Every ask card has the same three anchors — cancel the
  * turn, decline, approve once — in that order, which is the order of how much they commit
@@ -25,56 +20,9 @@ import type {
   PromptDeliveryFate,
   PromptDeliveryMode
 } from "./wire";
-import { backendSupportsSteer, type ConversationBackendKey } from "./wire";
+import type { ConversationBackendKey } from "./wire";
 import type { OutgoingMessage } from "./outgoing";
 import { refusalSentence } from "./transcript";
-
-// --- how a message meets the agent -------------------------------------------------------
-
-export type DeliveryOption = {
-  mode: PromptDeliveryMode;
-  label: string;
-  description: string;
-};
-
-const QUEUE_OPTION: DeliveryOption = {
-  mode: "run_when_free",
-  label: "queue",
-  description: "Hold this until the agent is free"
-};
-
-const SEND_NOW_OPTION: DeliveryOption = {
-  mode: "send_now",
-  label: "send now",
-  description: "Stop the running turn and run this instead"
-};
-
-const STEER_OPTION: DeliveryOption = {
-  mode: "steer",
-  label: "steer",
-  description: "Put this into the turn that is already running"
-};
-
-/** The ways in that exist for this backend while a turn is running.
- *
- * Steering is absent rather than greyed out for a backend that cannot do it, because
- * there is nothing here for a person to enable — the backend simply does not take text
- * into a running turn.
- */
-export function deliveryOptionsFor(
-  backendKey: ConversationBackendKey | null
-): DeliveryOption[] {
-  const options = [QUEUE_OPTION, SEND_NOW_OPTION];
-  if (backendSupportsSteer(backendKey)) options.push(STEER_OPTION);
-  return options;
-}
-
-export function deliveryModeIsOffered(
-  backendKey: ConversationBackendKey | null,
-  mode: PromptDeliveryMode
-): boolean {
-  return deliveryOptionsFor(backendKey).some((option) => option.mode === mode);
-}
 
 // --- what an ask offers ------------------------------------------------------------------
 
@@ -391,7 +339,7 @@ export function fateSentence(fate: PromptDeliveryFate): string | null {
     case "started":
       return null;
     case "queued":
-      return `queued · position ${fate.queue_position}`;
+      return null;
     case "injected":
       return "steered into the running turn";
     case "refused":

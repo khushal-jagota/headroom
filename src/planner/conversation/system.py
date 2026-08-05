@@ -37,6 +37,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from functools import partial
 from typing import Any
+from uuid import uuid4
 
 from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
 from planner.conversation.backends.contracts import (
@@ -56,6 +57,9 @@ from planner.conversation.contracts import (
     AgentCommand,
     ConversationBackendKey,
     ConversationStartRequest,
+    HeldPrompt,
+    HeldPromptPromotionFate,
+    HeldPromptPromotionMode,
     PromptDeliveryFate,
     PromptDeliveryInjected,
     PromptDeliveryMode,
@@ -72,6 +76,7 @@ from planner.conversation.events import (
     ConversationEventPayload,
     ConversationLiveTailFrame,
     ConversationTurnEnding,
+    HeldPromptsChangedFrame,
     ModelChangedEventPayload,
     ModelThinkingFrame,
     PermissionAnsweredEventPayload,
@@ -186,12 +191,14 @@ class _HeldPrompt:
     to carry the same id the sender minted.
     """
 
+    held_prompt_id: str
     content: MessageContent
     sender_label: str
     model_change: str | None
     reasoning_effort_change: str | None
     sender_message_id: str | None
     sent_at_unix_milliseconds: int | None
+    snapshot_sent_at_unix_milliseconds: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -455,17 +462,153 @@ class SqliteProcessConversationSystem:
             return frozenset()
         return frozenset(state.running_turn.pending_user_input_questions)
 
-    async def held_prompt_count(self, conversation_id: str) -> int:
-        """How many messages are waiting for the agent to free up.
-
-        Held messages live in this process and nowhere else, so this is a question only
-        the running system can answer — the record has no row for a message that has not
-        been delivered yet.
-        """
+    async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
+        """Return a stable FIFO snapshot of the messages waiting in this process."""
         state = await self._conversation_state(conversation_id)
-        return 0 if state is None else len(state.held_prompts)
+        if state is None:
+            return ()
+        async with state.lock:
+            return tuple(
+                HeldPrompt(
+                    held_prompt_id=held.held_prompt_id,
+                    content=held.content,
+                    sender_label=held.sender_label,
+                    sender_message_id=held.sender_message_id,
+                    sent_at_unix_milliseconds=held.snapshot_sent_at_unix_milliseconds,
+                )
+                for held in state.held_prompts
+            )
 
-    async def discard_held_prompt(self, conversation_id: str, sender_message_id: str) -> bool:
+    async def promote_held_prompt(
+        self,
+        conversation_id: str,
+        held_prompt_id: str,
+        mode: HeldPromptPromotionMode,
+    ) -> HeldPromptPromotionFate | None:
+        """Atomically claim one held message and deliver it in the selected mode."""
+        state = await self._conversation_state(conversation_id)
+        if state is None:
+            return None
+        state.last_touched_monotonic = self._monotonic_now()
+
+        await self._acquire_settled(state)
+        held: _HeldPrompt | None = None
+        reservation: _ReservedTurn | None = None
+        steer_child: BackendChild | None = None
+        immediate_refusal: PromptDeliveryRefusalReason | None = None
+        try:
+            position = next(
+                (
+                    index
+                    for index, candidate in enumerate(state.held_prompts)
+                    if candidate.held_prompt_id == held_prompt_id
+                ),
+                None,
+            )
+            if position is None:
+                return None
+            held = state.held_prompts[position]
+
+            if mode is HeldPromptPromotionMode.send_now:
+                running = state.running_turn
+                if running is not None:
+                    try:
+                        await self._cancel_and_end_running_turn(state, running)
+                    except BaseException:
+                        self._settle_phase(state)
+                        raise
+                del state.held_prompts[position]
+                self._publish_held_prompts_changed(state)
+                reservation = self._reserve_turn(state)
+            else:
+                del state.held_prompts[position]
+                self._publish_held_prompts_changed(state)
+                if not backend_supports_steer(state.record.backend_key):
+                    immediate_refusal = PromptDeliveryRefusalReason.backend_cannot_steer
+                elif state.running_turn is None or state.child is None:
+                    immediate_refusal = (
+                        PromptDeliveryRefusalReason.no_running_turn_to_steer_into
+                    )
+                else:
+                    steer_child = state.child
+
+                if immediate_refusal is not None:
+                    await self._record_promoted_refusal(
+                        state,
+                        held,
+                        PromptDeliveryMode.steer,
+                        immediate_refusal,
+                    )
+        finally:
+            state.lock.release()
+
+        assert held is not None
+        if mode is HeldPromptPromotionMode.send_now:
+            assert reservation is not None
+            try:
+                delivery = await self._deliver_prompt(
+                    state,
+                    reservation.token,
+                    content=held.content,
+                    sender_label=held.sender_label,
+                    mode=PromptDeliveryMode.send_now,
+                    model_change=held.model_change,
+                    reasoning_effort_change=held.reasoning_effort_change,
+                )
+                started = await self._finalize_delivery(
+                    state,
+                    reservation,
+                    delivery.refusal_reason,
+                    content=held.content,
+                    sender_label=held.sender_label,
+                    mode=PromptDeliveryMode.send_now,
+                    model_change=held.model_change,
+                    reasoning_effort_change=held.reasoning_effort_change,
+                    sender_message_id=held.sender_message_id,
+                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                    record_refusal=True,
+                    phase_when_not_started=_ConversationPhase.idle,
+                )
+            except BaseException:
+                self._abandon_reserved_turn(state, reservation, _ConversationPhase.idle)
+                raise
+            if started:
+                return PromptDeliveryStarted()
+            refusal = delivery.refusal_reason
+            assert refusal is not None
+            await self._drain_held_prompts(state)
+            return PromptDeliveryRefused(refusal_reason=refusal)
+
+        if immediate_refusal is not None:
+            await self._drain_held_prompts(state)
+            return PromptDeliveryRefused(refusal_reason=immediate_refusal)
+
+        assert steer_child is not None
+        try:
+            await steer_child.steer(held.content, sender_label=held.sender_label)
+        except PromptWriteFailed:
+            refusal = PromptDeliveryRefusalReason.write_to_backend_failed
+            async with state.lock:
+                await self._record_promoted_refusal(
+                    state, held, PromptDeliveryMode.steer, refusal
+                )
+            await self._drain_held_prompts(state)
+            return PromptDeliveryRefused(refusal_reason=refusal)
+
+        async with state.lock:
+            await self._append_event(
+                state,
+                PromptEventPayload(
+                    content=held.content,
+                    sender_label=held.sender_label,
+                    mode=PromptDeliveryMode.steer,
+                    sender_message_id=held.sender_message_id,
+                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                ),
+            )
+        return PromptDeliveryInjected()
+
+    async def discard_held_prompt(self, conversation_id: str, held_prompt_id: str) -> bool:
         """Throw away one message that is waiting, and say whether there was one to throw.
 
         A held message is this system's own and nothing else's: it has never been written
@@ -473,9 +616,7 @@ class SqliteProcessConversationSystem:
         It is still written down as discarded — the same row a kill writes — because text
         somebody handed over must never disappear without a trace.
 
-        It is addressed by the id its sender gave it, which is the only name a held
-        message has. A message sent without one cannot be asked for by name and is never
-        matched here.
+        It is addressed by the id the server gave the held queue entry.
 
         Not finding it is an ordinary answer rather than an error. A held message runs the
         moment the agent frees up, so the one somebody is looking at may already have
@@ -488,11 +629,12 @@ class SqliteProcessConversationSystem:
 
         async with state.lock:
             for position, held in enumerate(state.held_prompts):
-                if held.sender_message_id != sender_message_id:
+                if held.held_prompt_id != held_prompt_id:
                     continue
                 # Out of the queue before its row is written, so a write that falls over
                 # leaves the message discarded rather than delivered.
                 del state.held_prompts[position]
+                self._publish_held_prompts_changed(state)
                 await self._append_event(
                     state,
                     PromptDiscardedEventPayload(
@@ -683,14 +825,21 @@ class SqliteProcessConversationSystem:
             if state.phase is not _ConversationPhase.idle or state.held_prompts:
                 state.held_prompts.append(
                     _HeldPrompt(
+                        held_prompt_id=f"held_{uuid4().hex}",
                         content=content,
                         sender_label=sender_label,
                         model_change=model_change,
                         reasoning_effort_change=reasoning_effort_change,
                         sender_message_id=sender_message_id,
                         sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                        snapshot_sent_at_unix_milliseconds=(
+                            sent_at_unix_milliseconds
+                            if sent_at_unix_milliseconds is not None
+                            else int(time.time() * 1000)
+                        ),
                     )
                 )
+                self._publish_held_prompts_changed(state)
                 return PromptDeliveryQueued(queue_position=len(state.held_prompts))
             reservation = self._reserve_turn(state)
 
@@ -1055,6 +1204,7 @@ class SqliteProcessConversationSystem:
                     self._set_phase(state, _ConversationPhase.idle)
                     return
                 held = state.held_prompts.popleft()
+                self._publish_held_prompts_changed(state)
                 reservation = self._reserve_turn(state)
 
             try:
@@ -1097,6 +1247,7 @@ class SqliteProcessConversationSystem:
         """
         while state.held_prompts:
             discarded = state.held_prompts.popleft()
+            self._publish_held_prompts_changed(state)
             await self._append_event(
                 state,
                 PromptDiscardedEventPayload(
@@ -1105,6 +1256,25 @@ class SqliteProcessConversationSystem:
                     sender_message_id=discarded.sender_message_id,
                 ),
             )
+
+    async def _record_promoted_refusal(
+        self,
+        state: _ConversationState,
+        held: _HeldPrompt,
+        mode: PromptDeliveryMode,
+        refusal: PromptDeliveryRefusalReason,
+    ) -> None:
+        """Keep the fate of a claimed held message after its original caller left."""
+        await self._append_event(
+            state,
+            PromptDeliveryRefusedEventPayload(
+                content=held.content,
+                sender_label=held.sender_label,
+                mode=mode,
+                refusal_reason=refusal,
+                sender_message_id=held.sender_message_id,
+            ),
+        )
 
     # --- turns --------------------------------------------------------------------------
 
@@ -1723,6 +1893,14 @@ class SqliteProcessConversationSystem:
         if self._live_tail is None or not self._names_a_turn_to_show(state, turn_token):
             return
         self._live_tail.publish_frame(state.record.conversation_id, frame)
+
+    def _publish_held_prompts_changed(self, state: _ConversationState) -> None:
+        """Tell open readers that the process-owned queue snapshot changed."""
+        if self._live_tail is None:
+            return
+        self._live_tail.publish_frame(
+            state.record.conversation_id, HeldPromptsChangedFrame()
+        )
 
     def _publish_model_thinking(
         self, state: _ConversationState, turn_token: TurnToken

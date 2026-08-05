@@ -17,6 +17,9 @@ from planner.conversation.contracts import (
     ConversationAccess,
     ConversationBackendKey,
     ConversationStartRequest,
+    HeldPrompt,
+    HeldPromptPromotionFate,
+    HeldPromptPromotionMode,
     PromptDeliveryFate,
     PromptDeliveryMode,
     PromptDeliveryQueued,
@@ -115,6 +118,26 @@ class _LinkWatchingConversationSystem:
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)
+
+    async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
+        return await self._system.held_prompts(conversation_id)
+
+    async def promote_held_prompt(
+        self,
+        conversation_id: str,
+        held_prompt_id: str,
+        mode: HeldPromptPromotionMode,
+    ) -> HeldPromptPromotionFate | None:
+        return await self._system.promote_held_prompt(
+            conversation_id, held_prompt_id, mode
+        )
+
+    async def discard_held_prompt(
+        self, conversation_id: str, held_prompt_id: str
+    ) -> bool:
+        return await self._system.discard_held_prompt(
+            conversation_id, held_prompt_id
+        )
 
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)
@@ -435,6 +458,26 @@ class _RelinkingConversationSystem:
 
     async def interrupt(self, conversation_id: str) -> None:
         await self._system.interrupt(conversation_id)
+
+    async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
+        return await self._system.held_prompts(conversation_id)
+
+    async def promote_held_prompt(
+        self,
+        conversation_id: str,
+        held_prompt_id: str,
+        mode: HeldPromptPromotionMode,
+    ) -> HeldPromptPromotionFate | None:
+        return await self._system.promote_held_prompt(
+            conversation_id, held_prompt_id, mode
+        )
+
+    async def discard_held_prompt(
+        self, conversation_id: str, held_prompt_id: str
+    ) -> bool:
+        return await self._system.discard_held_prompt(
+            conversation_id, held_prompt_id
+        )
 
     async def kill(self, conversation_id: str) -> None:
         await self._system.kill(conversation_id)

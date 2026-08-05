@@ -54,7 +54,6 @@ function selection(
   overrides: Partial<ComposerRunSelection> = {}
 ): ComposerRunSelection {
   return {
-    deliveryMode: "run_when_free",
     pickedBackend: null,
     pickedModel: null,
     pickedReasoningEffort: null,
@@ -109,7 +108,6 @@ describe("composer run selection", () => {
 
   it("switches only an unlocked backend and clears values belonging to the old catalog", () => {
     const selected = selection({
-      deliveryMode: "send_now",
       pickedModel: "opus",
       pickedReasoningEffort: "high"
     });
@@ -128,7 +126,6 @@ describe("composer run selection", () => {
     );
 
     expect(changed).toEqual({
-      deliveryMode: "send_now",
       pickedBackend: "codex",
       pickedModel: null,
       pickedReasoningEffort: null
@@ -247,7 +244,6 @@ describe("composer run selection", () => {
     );
 
     expect(view.normalizedSelection).toEqual({
-      deliveryMode: "run_when_free",
       pickedBackend: null,
       pickedModel: null,
       pickedReasoningEffort: null
@@ -317,31 +313,24 @@ describe("composer run selection", () => {
     ]);
   });
 
-  it("projects actual-backend delivery and effective mode only while running", () => {
+  it("keeps Send present beside a separate Stop control while running", () => {
     const running = resolveComposerRunControls(
       input({
         backendKey: "hermes",
-        running: true,
-        selection: selection({ deliveryMode: "steer" })
+        running: true
       })
     );
     const idle = resolveComposerRunControls(
       input({
         backendKey: "hermes",
-        running: false,
-        selection: selection({ deliveryMode: "steer" })
+        running: false
       })
     );
 
-    expect(running.delivery?.selected).toBe("steer");
-    expect(running.delivery?.options.map((option) => option.mode)).toEqual([
-      "run_when_free",
-      "send_now",
-      "steer"
-    ]);
-    expect(running.effectiveDeliveryMode).toBe("steer");
-    expect(idle.delivery).toBeNull();
-    expect(idle.effectiveDeliveryMode).toBe("run_when_free");
+    expect(running.showStop).toBe(true);
+    expect(running.submit.title).toBe("Queue this message");
+    expect(idle.showStop).toBe(false);
+    expect(idle.submit.title).toBe("Send");
   });
 
   it.each([
@@ -349,7 +338,6 @@ describe("composer run selection", () => {
       "empty",
       {},
       {
-        action: "send",
         active: false,
         sending: false,
         disabled: true,
@@ -361,7 +349,6 @@ describe("composer run selection", () => {
       "sendable",
       { hasSendableContent: true },
       {
-        action: "send",
         active: true,
         sending: false,
         disabled: false,
@@ -373,7 +360,6 @@ describe("composer run selection", () => {
       "in flight",
       { sendsInFlight: 1 },
       {
-        action: "send",
         active: false,
         sending: true,
         disabled: true,
@@ -385,7 +371,6 @@ describe("composer run selection", () => {
       "disabled with content",
       { inputDisabled: true, hasSendableContent: true },
       {
-        action: "send",
         active: true,
         sending: false,
         disabled: true,
@@ -397,21 +382,19 @@ describe("composer run selection", () => {
       "running",
       { running: true },
       {
-        action: "stop",
         active: false,
         sending: false,
-        disabled: false,
-        title: "Stop the turn — press Enter to send instead",
-        ariaLabel: "Stop the turn"
+        disabled: true,
+        title: "Queue this message",
+        ariaLabel: "Queue this message"
       }
     ]
   ] as const)("projects the existing %s submit state", (_label, overrides, expected) => {
     expect(resolveComposerRunControls(input(overrides)).submit).toEqual(expected);
   });
 
-  it("changes only the selected model, effort, or delivery field", () => {
+  it("changes only the selected model or effort field", () => {
     const selected = selection({
-      deliveryMode: "send_now",
       pickedBackend: "codex",
       pickedModel: "one",
       pickedReasoningEffort: "low"
@@ -426,10 +409,6 @@ describe("composer run selection", () => {
       supplied,
       { intent: "choose_reasoning_effort", reasoningEffort: "high" }
     )).toEqual({ ...selected, pickedReasoningEffort: "high" });
-    expect(applyComposerRunSelectionIntent(
-      supplied,
-      { intent: "choose_delivery_mode", deliveryMode: "steer" }
-    )).toEqual({ ...selected, deliveryMode: "steer" });
     expect(supplied.selection).toEqual(selected);
   });
 

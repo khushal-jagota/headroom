@@ -80,7 +80,7 @@ def test_chief_of_staff_leads_the_workspace_rail(
                 "identity_environment_variable_names": [],
                 "latest_sequence": 9,
                 "is_running": False,
-                "held_prompt_count": 0,
+                "held_prompts": [],
                 "pending_permission_ask": None,
                 "pending_user_input": None,
                 "available_commands": [],

@@ -13,14 +13,20 @@ import asyncio
 
 import pytest
 
-from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
+from planner.conversation.contracts import (
+    ConversationBackendKey,
+    ConversationStartRequest,
+    HeldPromptPromotionMode,
+    PromptDeliveryInjected,
+    PromptDeliveryStarted,
+)
 from planner.conversation.events import UserInputAnswer, UserInputOption, UserInputQuestion
 from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
     TurnCannotEndWhilePermissionAskIsPending,
     TurnCannotEndWhileUserInputIsPending,
 )
-from planner.conversation.message_content import text_message_content
+from planner.conversation.message_content import message_content_text, text_message_content
 
 
 async def _system_with_a_pending_ask() -> tuple[InMemoryConversationSystem, str]:
@@ -96,5 +102,62 @@ def test_in_memory_user_input_waits_for_the_complete_answer_map() -> None:
             UserInputAnswer(question_id="q1", answers=("One",)),
         )
         system.complete_running_turn("c")
+
+    asyncio.run(exercise())
+
+
+def test_in_memory_held_snapshot_and_send_now_promotion_match_the_contract() -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        await system.start_conversation(
+            ConversationStartRequest(
+                conversation_id="c",
+                model="a-model",
+                backend_key=ConversationBackendKey.hermes,
+            )
+        )
+        await system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await system.send(
+            "c",
+            text_message_content("held"),
+            sender_label="owner",
+            sender_message_id=None,
+        )
+        held = (await system.held_prompts("c"))[0]
+        assert held.held_prompt_id == "held-1"
+        assert held.sender_message_id is None
+        assert held.sent_at_unix_milliseconds == 1
+
+        assert await system.promote_held_prompt(
+            "c", held.held_prompt_id, HeldPromptPromotionMode.send_now
+        ) == PromptDeliveryStarted()
+        assert await system.held_prompts("c") == ()
+
+    asyncio.run(exercise())
+
+
+def test_in_memory_steer_promotion_drops_queued_model_selections() -> None:
+    async def exercise() -> None:
+        system = InMemoryConversationSystem()
+        await system.start_conversation(
+            ConversationStartRequest(
+                conversation_id="c",
+                model="a-model",
+                backend_key=ConversationBackendKey.hermes,
+            )
+        )
+        await system.send("c", text_message_content("incumbent"), sender_label="owner")
+        await system.send(
+            "c",
+            text_message_content("held"),
+            sender_label="owner",
+            model_change="never-model",
+        )
+        held = (await system.held_prompts("c"))[0]
+        assert await system.promote_held_prompt(
+            "c", held.held_prompt_id, HeldPromptPromotionMode.steer
+        ) == PromptDeliveryInjected()
+        assert system.backend_model("c") == "a-model"
+        assert message_content_text(system.backend_prompt_writes("c")[-1].content) == "held"
 
     asyncio.run(exercise())

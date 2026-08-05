@@ -436,8 +436,16 @@ class ModelThinkingFrame:
     """
 
 
+@dataclass(frozen=True, slots=True)
+class HeldPromptsChangedFrame:
+    """The in-memory held queue changed and readers must refresh its snapshot."""
+
+
 type ConversationLiveTailFrame = (
-    AgentMessageDeltaFrame | ToolCallProgressFrame | ModelThinkingFrame
+    AgentMessageDeltaFrame
+    | ToolCallProgressFrame
+    | ModelThinkingFrame
+    | HeldPromptsChangedFrame
 )
 
 

@@ -26,6 +26,7 @@
     type ConversationStream
   } from "../../lib/conversation/feed";
   import { fateSentence, sendBodyFor, type RunValues } from "../../lib/conversation/composer";
+  import { heldPromptRows } from "../../lib/conversation/heldPrompts";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import {
     afterTheRecordHasBeenRead,
@@ -51,6 +52,7 @@
     discardHeldPrompt,
     interruptConversation,
     openConversationTail,
+    promoteHeldPrompt,
     readConversation,
     readEventsAfter,
     ConversationWireError,
@@ -120,6 +122,8 @@
   let feed = $state<ConversationFeed>(emptyConversationFeed());
   /** What this browser has sent that the record does not have yet, oldest first. */
   let sentMessages = $state<readonly OutgoingMessage[]>([]);
+  /** Local sends aimed at the queue before the server snapshot can name them. */
+  let composerStackMessageIds = $state<readonly string[]>([]);
   let connectionTrouble = $state(false);
   let fateNote = $state<string | null>(null);
   let fateNoteIsRefusal = $state(false);
@@ -177,6 +181,24 @@
       feed
     )
   );
+  let serverHeldSenderIds = $derived(
+    new Set((view?.held_prompts ?? []).flatMap((held) =>
+      held.sender_message_id == null ? [] : [held.sender_message_id]
+    ))
+  );
+  let stackOutgoingMessages = $derived(
+    sentMessages.filter((message) =>
+      composerStackMessageIds.includes(message.messageId)
+      || message.knownFate === "waiting_for_the_agent"
+      || serverHeldSenderIds.has(message.messageId)
+    )
+  );
+  let transcriptOutgoingMessages = $derived(
+    sentMessages.filter((message) =>
+      !stackOutgoingMessages.some((stackMessage) => stackMessage.messageId === message.messageId)
+    )
+  );
+  let heldRows = $derived(heldPromptRows(view?.held_prompts ?? [], stackOutgoingMessages));
 
   // A queued or steered note describes traffic that a turn ending settles. A refusal
   // outlives endings: it is cleared by the next send, not by a turn it never touched.
@@ -210,6 +232,7 @@
       view = null;
       feed = emptyConversationFeed();
       holdOnTo([]);
+      composerStackMessageIds = [];
       return;
     }
     void adopt(wanted);
@@ -222,6 +245,9 @@
     feed = emptyConversationFeed();
     // Whatever this tab was still holding for this conversation when it was last here.
     sentMessages = reserveRecalledOutgoingMessages(recallOutgoingMessages(id));
+    composerStackMessageIds = sentMessages
+      .filter((message) => message.knownFate === "waiting_for_the_agent")
+      .map((message) => message.messageId);
     await openConversation(id);
   }
 
@@ -273,6 +299,7 @@
       // Every connect asks the system about itself again, after the rows are in. This is
       // the after-a-restart path: the rows still leave a turn open, and only the system
       // can say nothing is running behind it any more.
+      () => void refreshView(),
       () => void refreshView()
     );
     try {
@@ -340,6 +367,7 @@
       senderLabel,
       mode
     });
+    if (running) composerStackMessageIds = [...composerStackMessageIds, message.messageId];
     if (!reserveOutgoingMessageImages(message)) {
       errorNote = "Wait for an outstanding image message to reach the conversation.";
       return false;
@@ -362,7 +390,7 @@
         openedId = delivered.conversation_id;
         await openConversation(delivered.conversation_id);
       }
-      fateNote = fateSentence(fate);
+      fateNote = fate.fate === "refused" ? fateSentence(fate) : null;
       fateNoteIsRefusal = fate.fate === "refused";
       if (fate.fate === "refused") {
         stopDrawing(message.messageId);
@@ -371,7 +399,12 @@
       }
       // Held for a busy agent: it has reached nothing yet, and it says so rather than
       // sitting there looking like a message something is answering.
-      if (fate.fate === "queued") whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
+      if (fate.fate === "queued") {
+        whatIsKnownAbout(message.messageId, "waiting_for_the_agent");
+        if (!composerStackMessageIds.includes(message.messageId)) {
+          composerStackMessageIds = [...composerStackMessageIds, message.messageId];
+        }
+      }
       await refreshView();
       // Told after the conversation took it, and never for a refusal: a message that
       // reached nothing is not something a caller should act on.
@@ -406,6 +439,7 @@
       }
     }
     sentMessages = messages;
+    composerStackMessageIds = composerStackMessageIds.filter((messageId) => stillHeld.has(messageId));
     if (openedId !== null) rememberOutgoingMessages(openedId, messages);
   }
 
@@ -438,11 +472,26 @@
    * nothing to undo here if the answer is no — the message has already run, and its row
    * is on its way.
    */
-  async function discard(messageId: string): Promise<void> {
+  async function discard(heldPromptId: string): Promise<void> {
     if (openedId === null) return;
     errorNote = null;
     try {
-      await discardHeldPrompt(openedId, messageId);
+      await discardHeldPrompt(openedId, heldPromptId);
+      await refreshView();
+    } catch (error) {
+      errorNote = sentenceFor(error);
+    }
+  }
+
+  async function promote(heldPromptId: string, mode: "send_now" | "steer"): Promise<void> {
+    if (openedId === null) return;
+    errorNote = null;
+    try {
+      const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
+      if (result.promoted && result.fate === "refused") {
+        fateNote = fateSentence(result);
+        fateNoteIsRefusal = true;
+      }
       await refreshView();
     } catch (error) {
       errorNote = sentenceFor(error);
@@ -498,6 +547,7 @@
     // it is going anywhere. It is let go before the id changes, or it would be left behind
     // under a name nothing here answers to any more.
     holdOnTo([]);
+    composerStackMessageIds = [];
     openedId = null;
     view = null;
     feed = emptyConversationFeed();
@@ -530,7 +580,8 @@
   {backends}
   workspaceFolder={view?.workspace_folder ?? null}
   {rows}
-  outgoingMessages={sentMessages}
+  outgoingMessages={transcriptOutgoingMessages}
+  heldPromptRows={heldRows}
   ownSenderLabel={senderLabel}
   livenessPulse={feed.livenessPulse}
   {running}
@@ -543,7 +594,6 @@
   availableCommands={view?.available_commands ?? []}
   startsOnModel={startValues?.model ?? null}
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
-  heldPromptCount={view?.held_prompt_count ?? 0}
   bind:conversationState
   {fateNote}
   {errorNote}
@@ -556,7 +606,8 @@
   onAnswer={(optionId) => void answer(optionId)}
   onSubmitUserInput={(answers) => void submitUserInput(answers)}
   onCancelTurn={() => void stop()}
-  onDiscardHeldPrompt={(messageId) => void discard(messageId)}
+  onDiscardHeldPrompt={(heldPromptId) => discard(heldPromptId)}
+  onPromoteHeldPrompt={(heldPromptId, mode) => promote(heldPromptId, mode)}
   onNewConversation={() => void newConversation()}
   emptyState={emptyState === undefined ? undefined : beforeThereIsAConversation}
   showRunPicker={started || emptyState === undefined}

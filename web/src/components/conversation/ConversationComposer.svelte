@@ -22,6 +22,7 @@
   import { onMount, tick } from "svelte";
   import AgentCommandMenu from "./AgentCommandMenu.svelte";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
+  import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
   import PermissionAskCard from "./PermissionAskCard.svelte";
   import UserInputQuestionPanel from "./UserInputQuestionPanel.svelte";
@@ -43,6 +44,7 @@
   } from "../../lib/conversation/runControls/contracts";
   import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
+  import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import {
     createVoiceCapture,
     formatVoiceTime,
@@ -83,7 +85,7 @@
     availableCommands = [],
     startsOnModel = null,
     startsOnReasoningEffort = null,
-    heldPromptCount = 0,
+    heldPromptRows = [],
     fateNote = null,
     errorNote = null,
     placeholder = "Message the agent...",
@@ -93,7 +95,9 @@
     onStop,
     onAnswer,
     onSubmitUserInput,
-    onCancelTurn
+    onCancelTurn,
+    onDiscardHeldPrompt,
+    onPromoteHeldPrompt
   }: {
     /** The conversation a voice recording would be transcribed against. Voice needs a
      *  conversation to send audio to, so without one there is no voice UI. */
@@ -135,7 +139,7 @@
      *  a model that takes none is a real answer and an untouched control has not given one. */
     startsOnModel?: string | null;
     startsOnReasoningEffort?: string | null;
-    heldPromptCount?: number;
+    heldPromptRows?: readonly HeldPromptRow[];
     fateNote?: string | null;
     errorNote?: string | null;
     placeholder?: string;
@@ -151,11 +155,15 @@
     onAnswer?: (optionId: string) => void;
     onSubmitUserInput?: (answers: UserInputAnswers) => void;
     onCancelTurn?: () => void;
+    onDiscardHeldPrompt?: (heldPromptId: string) => Promise<void> | void;
+    onPromoteHeldPrompt?: (
+      heldPromptId: string,
+      mode: "send_now" | "steer"
+    ) => Promise<void> | void;
   } = $props();
 
   let text = $state("");
   let runSelection = $state<ComposerRunSelection>({
-    deliveryMode: "run_when_free",
     pickedBackend: null,
     pickedModel: null,
     pickedReasoningEffort: null
@@ -281,8 +289,7 @@
     other: ComposerRunSelection
   ): boolean {
     return (
-      one.deliveryMode === other.deliveryMode
-      && one.pickedBackend === other.pickedBackend
+      one.pickedBackend === other.pickedBackend
       && one.pickedModel === other.pickedModel
       && one.pickedReasoningEffort === other.pickedReasoningEffort
     );
@@ -323,7 +330,7 @@
     const changed = !sameRunSelection(runSelection, next);
     if (changed) {
       runSelection = next;
-      if (intent.intent !== "choose_delivery_mode") recordDraftChange();
+      recordDraftChange();
     }
     if (
       intent.intent === "choose_model"
@@ -337,11 +344,10 @@
     await intakeTail;
     const trimmed = text.trim();
     if ((!trimmed && pendingImages.length === 0) || inputDisabled) return;
-    const modeForAttempt = runControlsView.effectiveDeliveryMode;
     const attempt = beginComposerSend(
       currentComposerDraft(),
       runControlsView.carriedRunValues,
-      modeForAttempt
+      "run_when_free"
     );
     applyComposerDraft(attempt.draftAfterSend);
     cursorAt = 0;
@@ -352,7 +358,7 @@
     try {
       const delivered = await onSend(
         [...attempt.content],
-        modeForAttempt,
+        "run_when_free",
         attempt.carriedRunValues
       );
       if (!delivered) await restoreRefusedAttempt(attempt);
@@ -369,10 +375,6 @@
     chooseReasoningEffort: (reasoningEffort) => applyRunSelectionIntent({
       intent: "choose_reasoning_effort",
       reasoningEffort
-    }),
-    chooseDeliveryMode: (deliveryMode) => applyRunSelectionIntent({
-      intent: "choose_delivery_mode",
-      deliveryMode
     }),
     send: () => void send(),
     stop: () => onStop?.()
@@ -689,15 +691,6 @@
 
 <section class="c2-composer" data-conversation-composer>
   <div class="chat-box-stack">
-    {#if heldPromptCount > 0}
-      <ol class="chat-queue-tray" aria-label="Messages waiting">
-        <li class="chat-qrow">
-          <span class="chat-qrow-n">{heldPromptCount}</span>
-          <span class="chat-qrow-txt">waiting for the agent to be free</span>
-        </li>
-      </ol>
-    {/if}
-
     <div
       class="chat-box"
       class:drag={draggingImages}
@@ -727,6 +720,14 @@
           onAnswer={(optionId) => onAnswer?.(optionId)}
         />
       {/if}
+
+      <HeldPromptStack
+        rows={heldPromptRows}
+        hermes={backendKey === "hermes"}
+        {running}
+        onDiscard={onDiscardHeldPrompt}
+        onPromote={onPromoteHeldPrompt}
+      />
 
       {#if commandMenuIsOpen}
         <AgentCommandMenu

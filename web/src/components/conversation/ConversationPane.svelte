@@ -13,6 +13,7 @@
   import type { RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
+  import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import { restLineFrom } from "../../lib/conversation/restLine";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
@@ -48,7 +49,7 @@
     availableCommands = [],
     startsOnModel = null,
     startsOnReasoningEffort = null,
-    heldPromptCount = 0,
+    heldPromptRows = [],
     fateNote = null,
     errorNote = null,
     connectionTrouble = false,
@@ -63,6 +64,7 @@
     onSubmitUserInput,
     onCancelTurn,
     onDiscardHeldPrompt,
+    onPromoteHeldPrompt,
     onNewConversation,
     ticketId = null
   }: {
@@ -107,7 +109,7 @@
      *  there is none. Its owner resolved them; nothing here reads them. */
     startsOnModel?: string | null;
     startsOnReasoningEffort?: string | null;
-    heldPromptCount?: number;
+    heldPromptRows?: readonly HeldPromptRow[];
     fateNote?: string | null;
     errorNote?: string | null;
     connectionTrouble?: boolean;
@@ -129,6 +131,10 @@
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
     onDiscardHeldPrompt?: (messageId: string) => void;
+    onPromoteHeldPrompt?: (
+      heldPromptId: string,
+      mode: "send_now" | "steer"
+    ) => Promise<void> | void;
     onNewConversation?: () => void;
   } = $props();
 
@@ -289,7 +295,6 @@
     {livenessPulse}
     {conversationState}
     {emptyState}
-    {onDiscardHeldPrompt}
   />
 
   <!-- At rest this one line is the whole conversation visible above the composer. -->
@@ -311,7 +316,7 @@
     {availableCommands}
     {startsOnModel}
     {startsOnReasoningEffort}
-    {heldPromptCount}
+    {heldPromptRows}
     {fateNote}
     {errorNote}
     placeholder={composerPlaceholder}
@@ -323,6 +328,8 @@
     {userInput}
     {onSubmitUserInput}
     {onCancelTurn}
+    {onDiscardHeldPrompt}
+    {onPromoteHeldPrompt}
   />
 </div>
 

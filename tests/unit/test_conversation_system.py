@@ -39,6 +39,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
+    HeldPromptPromotionMode,
     PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
@@ -52,6 +53,7 @@ from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationEventKind,
     ConversationTurnEnding,
+    HeldPromptsChangedFrame,
     ModelThinkingFrame,
     PermissionAnsweredEventPayload,
     PermissionAskedEventPayload,
@@ -138,6 +140,7 @@ class _FakeBackend:
     spawn_fails: bool = False
     session_load_fails: bool = False
     write_fails: bool = False
+    write_failures_remaining: int = 0
     permission_answer_write_fails: bool = False
     user_input_answer_write_fails: bool = False
     needs_rebind_once: bool = False
@@ -227,6 +230,9 @@ class _FakeBackendChild:
         if self._backend.writes_raise_something_unnamed:
             raise RuntimeError("the adapter fell over")
         if self._backend.write_fails:
+            raise PromptWriteFailed(self._backend.conversation_id)
+        if self._backend.write_failures_remaining:
+            self._backend.write_failures_remaining -= 1
             raise PromptWriteFailed(self._backend.conversation_id)
         if model_change is not None:
             self._backend.model = model_change
@@ -2818,8 +2824,11 @@ def test_one_waiting_message_can_be_taken_back_and_the_rest_still_run(
             sender_message_id="message-two",
         )
 
-        assert await harness.system.discard_held_prompt("c", "message-one") is True
-        assert await harness.system.held_prompt_count("c") == 1
+        held = await harness.system.held_prompts("c")
+        assert await harness.system.discard_held_prompt(
+            "c", held[0].held_prompt_id
+        ) is True
+        assert len(await harness.system.held_prompts("c")) == 1
         # Nothing was asked of the backend: a waiting message had never reached it.
         assert harness.backend("c").written_texts() == ("incumbent",)
         assert harness.backend("c").cancellations == 0
@@ -2876,15 +2885,179 @@ def test_a_message_that_is_no_longer_waiting_is_an_ordinary_no(harness: _Harness
     _run(exercise)
 
 
-def test_a_message_sent_without_a_name_cannot_be_asked_for_by_one(harness: _Harness) -> None:
-    """The sender's id is the only name a held message has, and the loop mints none."""
+def test_a_message_without_a_sender_id_gets_a_server_owned_held_id(harness: _Harness) -> None:
 
     async def exercise() -> None:
         await _start(harness, "c")
         await harness.system.send("c", text_message_content("incumbent"), sender_label="owner")
         await harness.system.send("c", text_message_content("held"), sender_label="automatic-loop")
 
-        assert await harness.system.discard_held_prompt("c", "") is False
-        assert await harness.system.held_prompt_count("c") == 1
+        held = await harness.system.held_prompts("c")
+        assert len(held) == 1
+        assert held[0].held_prompt_id.startswith("held_")
+        assert held[0].sender_message_id is None
+        assert held[0].sent_at_unix_milliseconds > 0
+        assert await harness.system.discard_held_prompt(
+            "c", held[0].held_prompt_id
+        ) is True
+
+    _run(exercise)
+
+
+def test_promoted_send_now_claims_one_message_and_preserves_fifo(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send(
+            "c", text_message_content("incumbent"), sender_label="owner"
+        )
+        await harness.system.send(
+            "c", text_message_content("first"), sender_label="owner"
+        )
+        await harness.system.send(
+            "c",
+            text_message_content("selected"),
+            sender_label="owner",
+            model_change="selected-model",
+        )
+        await harness.system.send(
+            "c", text_message_content("last"), sender_label="owner"
+        )
+        held = await harness.system.held_prompts("c")
+
+        fate = await harness.system.promote_held_prompt(
+            "c", held[1].held_prompt_id, HeldPromptPromotionMode.send_now
+        )
+
+        assert fate == PromptDeliveryStarted()
+        assert harness.backend("c").written_texts() == ("incumbent", "selected")
+        assert harness.backend("c").model == "selected-model"
+        waiting = await harness.system.held_prompts("c")
+        assert [message_content_text(item.content) for item in waiting] == ["first", "last"]
+        assert await harness.system.promote_held_prompt(
+            "c", held[1].held_prompt_id, HeldPromptPromotionMode.send_now
+        ) is None
+
+        await harness.complete_turn("c")
+        assert harness.backend("c").written_texts() == (
+            "incumbent",
+            "selected",
+            "first",
+        )
+
+    _run(exercise)
+
+
+def test_refused_promoted_send_now_is_recorded_and_drains_the_fifo(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send(
+            "c", text_message_content("incumbent"), sender_label="owner"
+        )
+        await harness.system.send(
+            "c",
+            text_message_content("selected"),
+            sender_label="owner",
+            sender_message_id="selected-sender-id",
+            model_change="never-model",
+        )
+        await harness.system.send(
+            "c", text_message_content("next"), sender_label="owner"
+        )
+        selected = (await harness.system.held_prompts("c"))[0]
+        harness.backend("c").write_failures_remaining = 1
+
+        fate = await harness.system.promote_held_prompt(
+            "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
+        )
+
+        assert fate == PromptDeliveryRefused(
+            refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
+        )
+        assert harness.backend("c").cancellations == 1
+        assert harness.backend("c").model != "never-model"
+        assert harness.backend("c").written_texts() == ("incumbent", "next")
+        refusals = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptDeliveryRefusedEventPayload)
+        ]
+        assert len(refusals) == 1
+        assert refusals[0].mode is PromptDeliveryMode.send_now
+        assert refusals[0].sender_message_id == "selected-sender-id"
+
+    _run(exercise)
+
+
+def test_two_promotions_of_one_held_id_have_exactly_one_winner(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send(
+            "c", text_message_content("incumbent"), sender_label="owner"
+        )
+        await harness.system.send(
+            "c", text_message_content("selected"), sender_label="owner"
+        )
+        selected = (await harness.system.held_prompts("c"))[0]
+
+        results = await asyncio.gather(
+            harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
+            ),
+            harness.system.promote_held_prompt(
+                "c", selected.held_prompt_id, HeldPromptPromotionMode.send_now
+            ),
+        )
+
+        assert results.count(PromptDeliveryStarted()) == 1
+        assert results.count(None) == 1
+        assert harness.backend("c").written_texts().count("selected") == 1
+
+    _run(exercise)
+
+
+def test_promoted_steer_does_not_apply_the_queued_model_change(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send(
+            "c", text_message_content("incumbent"), sender_label="owner"
+        )
+        await harness.system.send(
+            "c",
+            text_message_content("steered"),
+            sender_label="owner",
+            model_change="never-model",
+        )
+        held = (await harness.system.held_prompts("c"))[0]
+
+        fate = await harness.system.promote_held_prompt(
+            "c", held.held_prompt_id, HeldPromptPromotionMode.steer
+        )
+
+        assert fate == PromptDeliveryInjected()
+        assert harness.backend("c").model != "never-model"
+        assert harness.backend("c").writes[-1] == _FakeBackendWrite(
+            content=text_message_content("steered"), steered=True
+        )
+        assert ConversationEventKind.model_changed not in await harness.recorded_kinds("c")
+
+    _run(exercise)
+
+
+def test_each_held_queue_mutation_publishes_an_empty_live_frame(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c")
+        await harness.system.send(
+            "c", text_message_content("incumbent"), sender_label="owner"
+        )
+        with harness.watch("c") as watching:
+            await harness.system.send(
+                "c", text_message_content("held"), sender_label="owner"
+            )
+            assert isinstance(await watching.next_item(), HeldPromptsChangedFrame)
+            held = (await harness.system.held_prompts("c"))[0]
+            await harness.system.discard_held_prompt("c", held.held_prompt_id)
+            assert isinstance(await watching.next_item(), HeldPromptsChangedFrame)
 
     _run(exercise)

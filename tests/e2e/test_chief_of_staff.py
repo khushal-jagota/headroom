@@ -266,7 +266,7 @@ def test_chief_canonical_id_send_and_reset_survive_desktop_navigation(
                 '"model":"gpt-5.6-sol","reasoning_effort":"medium",'
                 '"workspace_folder":"/workspace","access":"direct","role_text":null,'
                 '"identity_environment_variable_names":[],"latest_sequence":0,'
-                '"is_running":false,"held_prompt_count":0,'
+                '"is_running":false,"held_prompts":[],'
                 '"pending_permission_ask":null,"pending_user_input":null,'
                 '"available_commands":[]}'
             ),

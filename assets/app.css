@@ -2428,8 +2428,13 @@ button.list-row:hover .list-row-title {
 .chat-image:disabled { opacity: 0.5; cursor: default; }
 .chat-image svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
 .chat-image-input { display: none; }
-.chat-send {
+.chat-submit {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.chat-send {
   width: var(--space-5); height: var(--space-5);
   border: none;
   border-radius: var(--radius-md);
@@ -2528,57 +2533,52 @@ button.list-row:hover .list-row-title {
   line-height: 1;
 }
 
-/* Delivery segment: compact segmented pill in the footer, present only mid-turn */
-.chat-seg {
-  display: inline-flex;
-  align-items: center;
-  margin-left: var(--space-2);
-  border: var(--border-hairline) solid var(--border-color);
-  border-radius: var(--radius-pill);
-  overflow: hidden;
-}
-.chat-seg button {
-  background: transparent;
-  border: 0;
-  padding: var(--space-1) var(--space-2);
-  color: var(--text-faintest);
-  font-family: var(--font-mono);
-  font-size: var(--type-xs);
-  letter-spacing: var(--tracking-mono);
-  cursor: pointer;
-  line-height: 1.2;
-}
-.chat-seg button:hover { color: var(--text-muted); }
-.chat-seg button.on { background: var(--surface-overlay); color: var(--text-strong); }
-.chat-seg button:disabled { color: var(--text-faintest); opacity: 0.45; cursor: default; }
-
-/* Queue tray: queued prompts fused to the top of the sending box — same sunken
- * surface, inset horizontally, top corners rounded, bottom edge open. The box
- * keeps its full native rounding in all states. */
+/* Waiting messages are part of the recessed composer well. */
 .chat-box-stack { display: grid; min-width: 0; max-width: 100%; }
-.chat-queue-tray {
-  margin: 0 var(--space-2);
-  padding: var(--space-1) var(--space-2);
+.chat-queue-wrap {
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  padding-bottom: var(--space-1);
+}
+.chat-queue-stack {
+  margin: 0;
+  padding: 0;
   list-style: none;
-  display: grid;
-  background: var(--surface-sunken);
-  border: var(--border-hairline) solid var(--border-color);
-  border-bottom: 0;
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  max-height: 172px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.chat-queue-stack.is-scrollable {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
 }
 .chat-qrow {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  color: var(--text-muted);
-  font-size: var(--type-xs);
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-hairline) solid var(--border-color);
+  animation: chat-queue-row-in var(--motion-base) var(--motion-ease);
 }
-.chat-qrow + .chat-qrow { border-top: var(--border-hairline) solid var(--border-color); }
-.chat-qrow-n { flex: none; font-family: var(--font-mono); color: var(--text-faintest); }
+.chat-qrow:last-child { border-bottom: 0; }
+.chat-qrow.is-leaving {
+  opacity: 0;
+  transform: translateY(-2px);
+  transition:
+    opacity var(--motion-fast) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
+}
+@keyframes chat-queue-row-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
 .chat-qrow-txt {
   flex: 1;
   min-width: 0;
+  padding-top: 3px;
+  color: var(--text-muted);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.5;
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -2586,17 +2586,56 @@ button.list-row:hover .list-row-title {
   line-clamp: 3;
   overflow-wrap: anywhere;
 }
+.chat-qrow[data-fate="in_flight"] .chat-qrow-txt,
+.chat-qrow[data-fate="unknown"] .chat-qrow-txt { color: var(--text-faintest); }
 .chat-qrow-x {
   flex: none;
   background: none;
   border: 0;
-  padding: 0 2px;
+  padding: var(--space-2);
+  margin-inline-start: calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
   color: var(--text-faintest);
   cursor: pointer;
+  font-family: var(--font-mono);
   font-size: var(--type-sm);
   line-height: 1;
 }
-.chat-qrow-x:hover { color: var(--accent-error); }
+.chat-qrow-x:hover:not(:disabled) { color: var(--accent-error); background: var(--surface-overlay); }
+.chat-qrow-state {
+  flex: none;
+  align-self: center;
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  padding: 0 var(--space-1);
+}
+.chat-qrow-act {
+  flex: none;
+  align-self: center;
+  background: transparent;
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  line-height: 1.2;
+  padding: var(--space-1) var(--space-2);
+  white-space: nowrap;
+}
+.chat-qrow-act:hover:not(:disabled) { border-color: var(--border-color); color: var(--text-strong); }
+.chat-qrow-x:disabled,
+.chat-qrow-act:disabled { opacity: 0.45; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .chat-qrow { animation: none; }
+  .chat-qrow.is-leaving { transition: none; transform: none; }
+}
+@media (max-width: 560px) {
+  .chat-qrow-txt { -webkit-line-clamp: 2; line-clamp: 2; }
+}
 
 /* Composer receipt: only failures speak — a mono error line under the box */
 .chat-receipt {

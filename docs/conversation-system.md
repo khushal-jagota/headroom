@@ -122,12 +122,15 @@ sent with words or as the whole message. The browser sends one native content ru
 the trimmed words when there are any, followed by every remaining picture in the
 order shown. There is no separate upload conversation or attachment record.
 
-Send has one knob with three settings. The default runs the message when the
-agent is free — if it is busy, the message waits in line. "Send now" makes the
-message the running turn: a busy agent's current turn is stopped (recorded
-honestly as interrupted) and the new message runs next, ahead of the line.
-"Steer" injects text into the running turn without ending it — only hermes can
-do that.
+Send has no delivery knob. Every new message runs when the agent is free, and a
+busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,
+including while a turn runs.
+
+The composer shows the held line as a stack inside its recessed well. Each row
+shows one message and can discard it or make it run next. A Hermes row can also
+steer its text into the running turn. The server snapshot is the shared answer,
+so a second tab or device shows the same held line. A tab merges its immediate
+copy with that snapshot by the sender's message id rather than drawing it twice.
 
 The answer to a send is the fate of that delivery, and fate means it happened:
 started (the text reached a live agent), queued at a position, injected, or
@@ -138,13 +141,18 @@ cannot steer. A busy agent is never a refusal. A message with nothing in it is n
 either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
 
-A message that is waiting can be taken back, by the name the sender gave it. It
-has reached no agent, so taking it back reaches none either — it comes out of the
-line and is written down as discarded, the same row a New writes for everything it
-throws away, because text somebody handed over never disappears without a trace.
-Being told there was nothing to take back is an ordinary answer: a waiting message
-runs the moment the agent frees up, so the one you were looking at may already have
-gone.
+A held message has one server-owned line id. The browser sender id stays beside
+it when the browser supplied one, which is how the optimistic copy matches the
+shared snapshot. The server supplies an id and send instant when the original
+sender supplied neither, so every held row still has an order and actions.
+
+Discard takes one held message out of the line and writes it down as discarded.
+Send now stops the running turn, records that interruption honestly, and runs
+the selected message ahead of the line. A refusal still records the selected
+message, then the remaining FIFO line continues. Steer consumes the selected
+text into a running Hermes turn and does not apply model choices that waited with
+that message. Being told that the message is gone is an ordinary answer because
+automatic delivery may win the same race.
 
 A send may also carry a model or reasoning-effort change. The change rides the
 message: browsing a picker does nothing, the change lands when the message is
@@ -170,15 +178,16 @@ because they are what the server resolves again when it arrives.
 
 Nobody waits for the network to see what they typed or attached. The browser gives a message
 its own name and stamps the moment the person pressed send, draws it in the
-thread there and then, and empties the box — which stays typeable, with only the
-send arrow saying anything is still in flight. Those two stamps travel with the
-message and are kept on its row, so when the row comes back the browser knows it
-for its own and simply stops drawing its copy; nothing is swapped and nothing
-moves. If the message turns out to have got nowhere, the copy goes and its exact
-words, pictures and pending run choices come back to the box, unless something
-else has been composed there since. A
-message the agent was too busy for stays in the thread and says it is waiting,
-because nothing is answering it yet.
+composer stack there and then, and empties the box. Those two stamps travel with
+the message and are kept on its row, so the shared held snapshot and the eventual
+notebook row can recognize the same message. If the message turns out to have got
+nowhere, the copy goes and its exact words, pictures and pending run choices come
+back to the box, unless something else has been composed there since.
+
+Queue changes also travel on the conversation's live connection as a contentless
+wake. Every open binder then reads the shared snapshot again. The wake carries no
+second copy of queue state, so FIFO order and action availability still have one
+server answer.
 
 A tab keeps the messages it is still holding, so reloading the page cannot take
 somebody's words away before anything has a record of them. They come back saying
@@ -389,4 +398,4 @@ that is honest: until an agent has been up once, nothing has said what it takes.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope; unify when the swap wires production screens.
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-08-05._

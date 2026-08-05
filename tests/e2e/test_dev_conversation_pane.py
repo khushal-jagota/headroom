@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from playwright.sync_api import BrowserContext, FilePayload, Page
+from playwright.sync_api import BrowserContext, FilePayload, Page, Route
 from tests.e2e.harness import ServerHandle
 
 from planner.conversation.contracts import AgentCommand, PromptDeliveryMode
@@ -596,25 +596,147 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
     assert sent["sender_message_id"] != ""
     assert sent["sent_at_unix_milliseconds"] > 1_700_000_000_000
 
-    # Held for a busy agent. It stays where it was put and says it has reached nothing,
-    # because nothing is answering it yet.
+    # Held for a busy agent. It moves into the per-message composer stack.
     page.evaluate("() => window.__heldSends[0].answer({ fate: 'queued', queue_position: 1 })")
-    page.wait_for_selector("[data-conversation-outgoing-label]", timeout=WAIT_MS)
-    assert "waiting for the agent to be free" in page.inner_text(
-        "[data-conversation-outgoing-label]"
-    )
+    held_row = page.wait_for_selector("[data-conversation-held-row]", timeout=WAIT_MS)
+    assert held_row is not None
+    assert "what is the plan" in held_row.inner_text()
+    assert page.query_selector("[data-conversation-outgoing]") is None
+    assert page.is_disabled('[data-conversation-held-promote="send_now"]')
     assert page.query_selector("[data-conversation-sending]") is None
 
-    # A held message belongs to the tab until its row lands, including its picture bytes.
-    # Reloading recalls and redraws the same two images rather than reducing it to words.
+    # A held message belongs to the tab until the server snapshot confirms or resolves it.
+    # Reloading recalls the same message as one inert stack row.
     page.reload(wait_until="domcontentloaded")
-    page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
-    page.wait_for_function(
-        "() => document.querySelectorAll("
-        "  '[data-conversation-outgoing] [data-conversation-piece-outgoing]'"
-        ").length === 2",
+    recalled = page.wait_for_selector("[data-conversation-held-row]", timeout=WAIT_MS)
+    assert recalled is not None
+    assert "what is the plan" in recalled.inner_text()
+    assert page.is_disabled('[data-conversation-held-promote="send_now"]')
+
+
+def test_canonical_queue_rows_work_across_tabs_and_on_a_phone(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+) -> None:
+    """Two binders draw and act on one server-owned FIFO stack."""
+    conversation_id = "e2e-canonical-queue"
+    _create_conversation(server, conversation_id)
+    view = httpx.get(
+        f"{server.base}/api/conversation/conversations/{conversation_id}",
+        timeout=10.0,
+    ).json()
+    held = [
+        {
+            "held_prompt_id": f"held-{number}",
+            "text": f"queued message {number}",
+            "sender_label": "owner",
+            "sender_message_id": f"sender-{number}",
+            "sent_at_unix_milliseconds": 1_700_000_000_000 + number,
+        }
+        for number in range(1, 7)
+    ]
+    actions: list[tuple[str, str]] = []
+
+    def queue_api(route: Route) -> None:
+        request = route.request
+        path = request.url.split("?", 1)[0]
+        view_path = f"/api/conversation/conversations/{conversation_id}"
+        if request.method == "GET" and path.endswith(view_path):
+            route.fulfill(
+                json={**view, "backend_key": "hermes", "is_running": True, "held_prompts": held}
+            )
+            return
+        if request.method == "DELETE" and "/held-prompts/" in path:
+            held_prompt_id = path.rsplit("/", 1)[-1]
+            actions.append((held_prompt_id, "discard"))
+            held[:] = [item for item in held if item["held_prompt_id"] != held_prompt_id]
+            route.fulfill(json={"discarded": True})
+            return
+        if request.method == "POST" and path.endswith("/promote"):
+            held_prompt_id = path.rsplit("/", 2)[-2]
+            payload = request.post_data_json
+            assert payload is not None
+            mode = str(payload["mode"])
+            actions.append((held_prompt_id, mode))
+            held[:] = [item for item in held if item["held_prompt_id"] != held_prompt_id]
+            route.fulfill(
+                json={
+                    "promoted": True,
+                    "fate": "injected" if mode == "steer" else "started",
+                }
+            )
+            return
+        route.continue_()
+
+    context = context_factory()
+    context.route(
+        f"**/api/conversation/conversations/{conversation_id}**",
+        queue_api,
+    )
+    desktop = open_page(
+        context,
+        server,
+        f"#/dev/conversation?id={conversation_id}",
+        "[data-conversation-held-stack]",
+    )
+    phone = open_page(
+        context,
+        server,
+        f"#/dev/conversation?id={conversation_id}",
+        "[data-conversation-held-stack]",
+    )
+    phone.set_viewport_size({"width": 390, "height": 844})
+
+    expected = [f"queued message {number}" for number in range(1, 7)]
+    for page in (desktop, phone):
+        assert page.locator(
+            "[data-conversation-held-row] .chat-qrow-txt"
+        ).all_inner_texts() == expected
+
+    assert phone.evaluate(
+        "() => {"
+        " const stack = document.querySelector('.chat-queue-stack');"
+        " const text = document.querySelector('.chat-qrow-txt');"
+        " return stack.scrollHeight > stack.clientHeight"
+        "   && getComputedStyle(text).webkitLineClamp === '2'"
+        "   && document.documentElement.scrollWidth <= window.innerWidth;"
+        "}"
+    )
+
+    desktop.click('[data-conversation-held-promote="steer"][data-held-prompt-id="held-1"]')
+    desktop.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-held-row]').length === 5",
         timeout=WAIT_MS,
     )
+    assert actions[-1] == ("held-1", "steer")
+
+    # The other binder asks the canonical snapshot again when its live connection opens.
+    phone.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+    phone.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-held-row]').length === 5",
+        timeout=WAIT_MS,
+    )
+    assert "queued message 1" not in phone.inner_text("[data-conversation-held-stack]")
+
+    phone.click('[data-conversation-held-discard="held-2"]')
+    phone.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-held-row]').length === 4",
+        timeout=WAIT_MS,
+    )
+    assert actions[-1] == ("held-2", "discard")
+
+    desktop.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
+    desktop.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-held-row]').length === 4",
+        timeout=WAIT_MS,
+    )
+    desktop.click('[data-conversation-held-promote="send_now"][data-held-prompt-id="held-3"]')
+    desktop.wait_for_function(
+        "() => document.querySelectorAll('[data-conversation-held-row]').length === 3",
+        timeout=WAIT_MS,
+    )
+    assert actions[-1] == ("held-3", "send_now")
 
 
 def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
@@ -648,7 +770,6 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
     trigger = picker.locator("[data-conversation-picker-trigger]")
     trigger.click()
     picker.locator('[data-conversation-picker-choice="codex-deep"]').click()
-    trigger.click()
     picker.locator("[data-conversation-picker-reasoning]").click()
     picker.locator('[data-conversation-picker-choice="high"]').click()
     assert "Codex deep high" in trigger.inner_text()

@@ -588,7 +588,7 @@ def test_starting_a_conversation_answers_with_what_it_resolved_to(harness: _Harn
             assert view["access"] == "full"
             assert view["is_running"] is False
             assert view["latest_sequence"] == 0
-            assert view["held_prompt_count"] == 0
+            assert view["held_prompts"] == []
             assert view["pending_permission_ask"] is None
             # Nothing has reported a menu, so there is none to offer.
             assert view["available_commands"] == []
@@ -1009,7 +1009,15 @@ def test_the_view_says_what_is_running_and_what_is_waiting(harness: _Harness) ->
             view = (await client.get("/api/conversation/conversations/c")).json()
 
             assert view["is_running"] is True
-            assert view["held_prompt_count"] == 2
+            assert [held["text"] for held in view["held_prompts"]] == [
+                "held one",
+                "held two",
+            ]
+            assert all(held["held_prompt_id"] for held in view["held_prompts"])
+            assert all(
+                isinstance(held["sent_at_unix_milliseconds"], int)
+                for held in view["held_prompts"]
+            )
             assert view["latest_sequence"] == 2
             waiting = view["pending_permission_ask"]
             assert waiting["ask_id"] == ask_id
@@ -1097,27 +1105,140 @@ def test_a_waiting_message_can_be_taken_back_by_the_name_its_sender_gave_it(
                 },
             )
             assert queued.json()["fate"] == "queued"
-            assert (await client.get("/api/conversation/conversations/c")).json()[
-                "held_prompt_count"
-            ] == 1
+            held = (await client.get("/api/conversation/conversations/c")).json()[
+                "held_prompts"
+            ]
+            assert len(held) == 1
+            assert held[0]["sender_message_id"] == "message-one"
 
             discarded = await client.delete(
-                "/api/conversation/conversations/c/held-prompts/message-one"
+                f"/api/conversation/conversations/c/held-prompts/{held[0]['held_prompt_id']}"
             )
             assert discarded.status_code == 200
             assert discarded.json() == {"discarded": True}
             assert (await client.get("/api/conversation/conversations/c")).json()[
-                "held_prompt_count"
-            ] == 0
+                "held_prompts"
+            ] == []
             # It reached no backend on the way in, so it reaches none on the way out.
             assert harness.backend("c").written_texts == ["incumbent"]
 
             # Asking again finds nothing, which is an answer rather than an error.
             again = await client.delete(
-                "/api/conversation/conversations/c/held-prompts/message-one"
+                f"/api/conversation/conversations/c/held-prompts/{held[0]['held_prompt_id']}"
             )
             assert again.status_code == 200
             assert again.json() == {"discarded": False}
+
+    _run(exercise)
+
+
+def test_a_waiting_message_can_be_promoted_by_its_server_owned_id(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "incumbent"}],
+                    "sender_label": "owner",
+                },
+            )
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "held"}],
+                    "sender_label": "owner",
+                    "sender_message_id": "sender-one",
+                    "sent_at_unix_milliseconds": 1234,
+                },
+            )
+            held = (await client.get("/api/conversation/conversations/c")).json()[
+                "held_prompts"
+            ][0]
+            assert held == {
+                "held_prompt_id": held["held_prompt_id"],
+                "text": "held",
+                "sender_label": "owner",
+                "sender_message_id": "sender-one",
+                "sent_at_unix_milliseconds": 1234,
+            }
+
+            promoted = await client.post(
+                f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}/promote",
+                json={"mode": "send_now"},
+            )
+
+            assert promoted.json() == {"promoted": True, "fate": "started"}
+            assert harness.backend("c").written_texts == ["incumbent", "held"]
+            assert harness.backend("c").cancellations == 1
+            assert (await client.get("/api/conversation/conversations/c")).json()[
+                "held_prompts"
+            ] == []
+            again = await client.post(
+                f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}/promote",
+                json={"mode": "send_now"},
+            )
+            assert again.json() == {"promoted": False}
+
+    _run(exercise)
+
+
+def test_the_tail_signals_that_held_prompts_changed(harness: _Harness) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            await _start(client, "c")
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "incumbent"}],
+                    "sender_label": "owner",
+                },
+            )
+            await client.post(
+                "/api/conversation/conversations/c/send",
+                json={
+                    "content": [{"piece": "text", "text": "held before subscribe"}],
+                    "sender_label": "owner",
+                },
+            )
+            async with _EventStreamDrive(
+                harness.app, "/api/conversation/conversations/c/tail", "after=1"
+            ) as stream:
+                await stream.wait_until_watching(harness.live_tail)
+                # The tail registered after the enqueue, so its initial wake closes the
+                # exact gap where the ephemeral mutation frame was unavailable.
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "held_prompts_changed"},
+                )
+                held = (await client.get(
+                    "/api/conversation/conversations/c"
+                )).json()["held_prompts"][0]
+                await client.delete(
+                    f"/api/conversation/conversations/c/held-prompts/{held['held_prompt_id']}"
+                )
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "held_prompts_changed"},
+                )
+
+            # An empty queue still wakes a new binder. This closes the inverse race:
+            # its earlier view may have contained the row that was just discarded.
+            latest = (await client.get(
+                "/api/conversation/conversations/c"
+            )).json()["latest_sequence"]
+            async with _EventStreamDrive(
+                harness.app,
+                "/api/conversation/conversations/c/tail",
+                f"after={latest}",
+            ) as empty_stream:
+                await empty_stream.wait_until_watching(harness.live_tail)
+                assert await empty_stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "held_prompts_changed"},
+                )
 
     _run(exercise)
 
@@ -1326,6 +1447,11 @@ def test_the_tail_replays_then_carries_on_with_no_gap_and_no_repeat(
                     assert name == COMMITTED_EVENT_STREAM_NAME
                     seen.append((payload["sequence"], payload["payload"]["text"]))
 
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "held_prompts_changed"},
+                )
+
                 # Committed after the replay was read: it can only arrive live.
                 stored = await harness.store.append_event(
                     "c", AgentMessageEventPayload(content=text_message_content("row five"))
@@ -1364,6 +1490,10 @@ def test_the_tail_shows_text_that_has_not_finished_arriving_and_never_stores_it(
                 harness.app, "/api/conversation/conversations/c/tail", "after=1"
             ) as stream:
                 await stream.wait_until_watching(harness.live_tail)
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "held_prompts_changed"},
+                )
                 await harness.stream_agent_text("c", "half a th")
                 await harness.stream_agent_text("c", "ought")
 
@@ -1408,6 +1538,10 @@ def test_the_tail_shows_a_tool_call_getting_on_with_it_and_keeps_no_row_for_it(
                 harness.app, "/api/conversation/conversations/c/tail", "after=1"
             ) as stream:
                 await stream.wait_until_watching(harness.live_tail)
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "held_prompts_changed"},
+                )
                 await harness.start_tool_call("c", "t-9")
                 await harness.stream_tool_output("c", "t-9", "total 0\n")
                 await harness.stream_tool_output("c", "t-9", "halfway")
@@ -1463,6 +1597,10 @@ def test_the_tail_says_the_model_is_thinking_without_saying_what(
                 harness.app, "/api/conversation/conversations/c/tail", "after=1"
             ) as stream:
                 await stream.wait_until_watching(harness.live_tail)
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "held_prompts_changed"},
+                )
                 await harness.model_is_thinking("c")
 
                 assert await stream.next_named_frame() == (
@@ -1485,6 +1623,10 @@ def test_a_quiet_tail_is_kept_alive_by_a_comment(harness: _Harness) -> None:
         async with _EventStreamDrive(
             harness.app, "/api/conversation/conversations/c/tail", "after=0"
         ) as stream:
+            assert await stream.next_named_frame() == (
+                LIVE_FRAME_STREAM_NAME,
+                {"frame": "held_prompts_changed"},
+            )
             assert (await stream.next_frame()).startswith(":")
 
     _run(exercise)

@@ -147,6 +147,13 @@ export type AgentCommand = {
   argument_hint: string | null;
 };
 
+export type HeldPrompt = StoredMessageContent & {
+  held_prompt_id: string;
+  sender_message_id?: string | null;
+  sender_label: string;
+  sent_at_unix_milliseconds: number;
+};
+
 /** What a conversation is, what it is doing, and what it is waiting on. */
 export type ConversationView = {
   conversation_id: string;
@@ -159,7 +166,7 @@ export type ConversationView = {
   identity_environment_variable_names: string[];
   latest_sequence: number;
   is_running: boolean;
-  held_prompt_count: number;
+  held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
   available_commands: AgentCommand[];
@@ -264,13 +271,22 @@ export type ConversationEventKind = ConversationEvent["kind"];
 export type ConversationLiveFrame =
   | { frame: "agent_message_delta"; text_delta: string }
   | { frame: "tool_call_progress"; tool_call_id: string; detail: string }
-  | { frame: "model_thinking" };
+  | { frame: "model_thinking" }
+  | { frame: "held_prompts_changed" };
 
 export type PromptDeliveryFate =
   | { fate: "started" }
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
   | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason };
+
+export type HeldPromptPromotionResult =
+  | { promoted: false }
+  | ({ promoted: true } & (
+      | { fate: "started" }
+      | { fate: "injected" }
+      | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
+    ));
 
 export type BackendIdentity = {
   status: "authenticated" | "unauthenticated" | "unknown";
@@ -545,6 +561,18 @@ export function discardHeldPrompt(
     `/conversations/${encodeURIComponent(conversationId)}`
       + `/held-prompts/${encodeURIComponent(senderMessageId)}`,
     { method: "DELETE" }
+  );
+}
+
+export function promoteHeldPrompt(
+  conversationId: string,
+  heldPromptId: string,
+  mode: "send_now" | "steer"
+): Promise<HeldPromptPromotionResult> {
+  return request<HeldPromptPromotionResult>(
+    `/conversations/${encodeURIComponent(conversationId)}`
+      + `/held-prompts/${encodeURIComponent(heldPromptId)}/promote`,
+    postJson({ mode })
   );
 }
 

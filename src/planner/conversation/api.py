@@ -40,6 +40,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
+    HeldPromptPromotionMode,
     PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
@@ -48,6 +49,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
+    HeldPromptsChangedFrame,
     ModelThinkingFrame,
     PermissionAskedEventPayload,
     ToolCallProgressFrame,
@@ -66,6 +68,7 @@ from planner.conversation.message_content import (
     MessageImage,
     MessagePiece,
     MessageText,
+    message_content_json_entries,
 )
 from planner.conversation.message_files import (
     ConversationMessageFiles,
@@ -289,6 +292,10 @@ class UserInputAnswerBody(BaseModel):
     answers: dict[str, UserInputQuestionAnswerBody]
 
 
+class PromoteHeldPromptBody(BaseModel):
+    mode: HeldPromptPromotionMode
+
+
 # --- starting, reading, writing -----------------------------------------------------------
 
 
@@ -472,9 +479,9 @@ async def kill_conversation(conversation_id: str, runtime: Runtime) -> Response:
     return Response(status_code=204)
 
 
-@router.delete("/conversations/{conversation_id}/held-prompts/{sender_message_id}")
+@router.delete("/conversations/{conversation_id}/held-prompts/{held_prompt_id}")
 async def discard_held_prompt(
-    conversation_id: str, sender_message_id: str, runtime: Runtime
+    conversation_id: str, held_prompt_id: str, runtime: Runtime
 ) -> dict[str, bool]:
     """Throw away one message that is waiting, and say whether there was one to throw.
 
@@ -483,8 +490,26 @@ async def discard_held_prompt(
     a held message runs the moment the agent frees up — so it is a false rather than an
     error.
     """
-    discarded = await runtime.system.discard_held_prompt(conversation_id, sender_message_id)
+    discarded = await runtime.system.discard_held_prompt(conversation_id, held_prompt_id)
     return {"discarded": discarded}
+
+
+@router.post(
+    "/conversations/{conversation_id}/held-prompts/{held_prompt_id}/promote"
+)
+async def promote_held_prompt(
+    conversation_id: str,
+    held_prompt_id: str,
+    body: PromoteHeldPromptBody,
+    runtime: Runtime,
+) -> dict[str, Any]:
+    """Claim one waiting message and deliver it now in the selected mode."""
+    fate = await runtime.system.promote_held_prompt(
+        conversation_id, held_prompt_id, body.mode
+    )
+    if fate is None:
+        return {"promoted": False}
+    return {"promoted": True, **delivery_fate_json(fate)}
 
 
 @router.post("/conversations/{conversation_id}/permission-answers")
@@ -627,7 +652,16 @@ async def _conversation_view(
         ],
         "latest_sequence": record.latest_sequence,
         "is_running": await runtime.system.is_running(conversation_id),
-        "held_prompt_count": await runtime.system.held_prompt_count(conversation_id),
+        "held_prompts": [
+            {
+                "held_prompt_id": held.held_prompt_id,
+                **message_content_json_entries(held.content),
+                "sender_label": held.sender_label,
+                "sender_message_id": held.sender_message_id,
+                "sent_at_unix_milliseconds": held.sent_at_unix_milliseconds,
+            }
+            for held in await runtime.system.held_prompts(conversation_id)
+        ],
         "pending_permission_ask": await _pending_permission_ask(runtime, conversation_id),
         "pending_user_input": await _pending_user_input(runtime, conversation_id),
     }
@@ -912,6 +946,8 @@ def _live_frame_json(frame: ConversationTailItem) -> Mapping[str, Any] | None:
             return {"frame": "agent_message_delta", "text_delta": text_delta}
         case ModelThinkingFrame():
             return {"frame": "model_thinking"}
+        case HeldPromptsChangedFrame():
+            return {"frame": "held_prompts_changed"}
         case ToolCallProgressFrame(tool_call_id=tool_call_id, detail=detail):
             return {
                 "frame": "tool_call_progress",
@@ -942,6 +978,13 @@ async def _tail_stream(
         highest_replayed = replayed[-1].sequence if replayed else after
         for event in replayed:
             yield _stream_frame(COMMITTED_EVENT_STREAM_NAME, _event_json(event))
+        # The subscription exists before this wake. Every new binder refreshes the
+        # canonical snapshot once, even when it is empty: a last-row removal can happen
+        # between the binder's view read and this subscription just as an enqueue can.
+        yield _stream_frame(
+            LIVE_FRAME_STREAM_NAME,
+            {"frame": "held_prompts_changed"},
+        )
         while True:
             try:
                 item = await asyncio.wait_for(

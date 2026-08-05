@@ -5,11 +5,7 @@
  * picker presentation, and the exact values carried by a send as one answer, without
  * putting policy or a second selection owner in the renderer.
  */
-import {
-  deliveryOptionsFor,
-  effortOptionsFor,
-  preselectedValue
-} from "../../composer";
+import { effortOptionsFor, preselectedValue } from "../../composer";
 import type {
   BackendModel,
   ConversationBackendKey
@@ -86,23 +82,12 @@ function submitProjection(
   input: ComposerRunControlsInput
 ): ComposerRunControlsView["submit"] {
   const sending = input.sendsInFlight > 0 && !input.running;
-  if (input.running) {
-    return {
-      action: "stop",
-      active: false,
-      sending,
-      disabled: false,
-      title: "Stop the turn — press Enter to send instead",
-      ariaLabel: "Stop the turn"
-    };
-  }
   return {
-    action: "send",
     active: input.hasSendableContent,
     sending,
     disabled: input.inputDisabled || !input.hasSendableContent,
-    title: sending ? "On its way" : "Send",
-    ariaLabel: sending ? "On its way" : "Send"
+    title: sending ? "On its way" : input.running ? "Queue this message" : "Send",
+    ariaLabel: sending ? "On its way" : input.running ? "Queue this message" : "Send"
   };
 }
 
@@ -151,9 +136,6 @@ export function resolveComposerRunControls(
         ? null
         : input.selection.pickedBackend
     },
-    effectiveDeliveryMode: input.running
-      ? input.selection.deliveryMode
-      : "run_when_free",
     disabled: input.inputDisabled,
     picker: resolveModelPicker({
       backendKey: shownBackend(input),
@@ -171,13 +153,8 @@ export function resolveComposerRunControls(
       models: catalog.models,
       backendEffortOptions: catalog.effortOptions
     },
-    delivery: input.running
-      ? {
-          selected: input.selection.deliveryMode,
-          options: deliveryOptionsFor(input.backendKey)
-        }
-      : null,
-    submit: submitProjection(input)
+    submit: submitProjection(input),
+    showStop: input.running
   };
 }
 
@@ -210,7 +187,5 @@ export function applyComposerRunSelectionIntent(
         ...input.selection,
         pickedReasoningEffort: intent.reasoningEffort
       };
-    case "choose_delivery_mode":
-      return { ...input.selection, deliveryMode: intent.deliveryMode };
   }
 }
