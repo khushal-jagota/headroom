@@ -62,8 +62,8 @@ export type ThreadItem =
       foldedMessageCount: number;
     }
   /** One unbroken run of tool calls, sitting exactly where it happened. A run ends at
-   *  the first thing that is not a tool call, so the work between two pieces of the
-   *  agent's own commentary stays between them rather than being gathered elsewhere. */
+   *  the first visible transcript row, so the work between two pieces of the agent's
+   *  own commentary stays between them rather than being gathered elsewhere. */
   | {
       kind: "work_group";
       key: string;
@@ -188,8 +188,10 @@ export function threadItems(rows: readonly TranscriptRow[]): ThreadItem[] {
       continue;
     }
 
-    // Anything that is not a tool call breaks the run it interrupted.
-    turn.openGroupIndex = null;
+    // Rows that never appear in the transcript do not interrupt the visible work run.
+    if (row.kind !== "plan_updated" && row.kind !== "token_usage") {
+      turn.openGroupIndex = null;
+    }
 
     if (row.kind === "plan_updated") {
       // A plan replaces the plan; it is never merged into the one before it. It is also
