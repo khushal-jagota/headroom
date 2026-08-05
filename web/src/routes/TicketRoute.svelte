@@ -42,10 +42,7 @@
   const conversationStartValues = createQuery(() =>
     queries.ticketConversationStartValues(stableId)
   );
-  const sprints = createQuery(() => queries.sprintSummaries());
-  const sprintItems = createQuery(() => queries.sprintItems());
   const projects = createQuery(() => queries.projects());
-  const currentSprint = createQuery(() => queries.currentSprint());
   const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
@@ -88,17 +85,6 @@
   let projectOptions = $derived([
     { value: "", label: "No project" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
-  ]);
-  let sprintItemOptions = $derived([
-    { value: "", label: "Backlog" },
-    ...(sprintItems.data?.items || []).map((item) => {
-      const sprint = item.sprint_id ? sprintLabel(item.sprint_id) : "Unscheduled";
-      const fallback = item.kind === "other" ? " · fallback" : "";
-      return {
-        value: item.id,
-        label: `${sprint} · ${item.project} · ${item.title}${fallback}`
-      };
-    })
   ]);
 
   $effect(() => {
@@ -148,28 +134,6 @@
     } catch (err) {
       // The message itself got through. Failing to move the Ticket is worth saying and
       // not worth taking the reply back for.
-      headerError = err;
-    }
-  }
-
-  async function saveSprintItemPlacement(
-    detail: TicketDetail,
-    sprintItemId: string
-  ): Promise<void> {
-    try {
-      headerError = null;
-      if (sprintItemId) {
-        await mutateJson(`/api/items/${encodeURIComponent(sprintItemId)}/tickets`, {
-          method: "POST",
-          body: { ticket_id: stableId }
-        });
-      } else if (detail.sprint_item_id) {
-        await mutateJson(
-          `/api/items/${encodeURIComponent(detail.sprint_item_id)}/tickets/${encodeURIComponent(stableId)}`,
-          { method: "DELETE" }
-        );
-      }
-    } catch (err) {
       headerError = err;
     }
   }
@@ -300,12 +264,6 @@
     closeLeash();
   }
 
-  function sprintLabel(sprintId: string | null | undefined): string {
-    if (!sprintId) return "";
-    if (sprintId === currentSprint.data?.sprint?.id) return "current";
-    return sprints.data?.sprints?.find((sprint) => sprint.id === sprintId)?.name || sprintId;
-  }
-
   async function takeoverFromLeash(detail: TicketDetail): Promise<void> {
     await takeover(detail);
     closeLeash();
@@ -422,35 +380,6 @@
                 <span class="ticket-identity-fact" data-ticket-worker-name>{lc.workerTypeLabel}</span>
               </span>
             {/if}
-            <span class="ticket-identity-group">
-              <span class="ticket-identity-separator" aria-hidden="true">·</span>
-              <span
-                class="ticket-identity-fact"
-                class:ticket-identity-add={!detail.sprint_item_id}
-                data-sprint-item-control
-              >
-                {#if detail.sprint_item_id}
-                  <span class="ticket-identity-key">sprint</span>
-                  {sprintLabel(detail.effective_sprint_id)}
-                {:else}
-                  + add
-                {/if}
-                <select
-                  aria-label={detail.sprint_item_id ? "Ticket sprint placement" : "Add ticket sprint placement"}
-                  value={detail.sprint_item_id || ""}
-                  onchange={(event) => {
-                    const sprintItemId = event.currentTarget.value;
-                    if (sprintItemId !== (detail.sprint_item_id || "")) {
-                      void saveSprintItemPlacement(detail, sprintItemId);
-                    }
-                  }}
-                >
-                  {#each sprintItemOptions as option}
-                    <option value={option.value}>{option.label}</option>
-                  {/each}
-                </select>
-              </span>
-            </span>
           </div>
           <div class="ticket-title-row">
             <div class="ticket-title">
