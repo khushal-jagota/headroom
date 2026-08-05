@@ -152,6 +152,12 @@ delivered, a waiting message applies it when it runs, and a refused delivery
 changes nothing. Codex and hermes take the change in place; claude is restarted
 under the same conversation with its memory carried over.
 
+Claude uses that same restart when its message stream fails for good. The failed turn
+stays failed. The next message stops the broken child, resumes one replacement from the
+stored Claude session, and sends only that next message. Panels never retries a prompt
+whose write failed because it cannot know whether Claude received it. If the resume or
+replacement write fails, the refused follow-up remains in the conversation record.
+
 Before there is a conversation the pickers still have to show something, and what
 they show is what starting one here right now would run on. That is the owner's own
 answer — a Ticket's worker from its Worker type and whatever that Ticket last ran

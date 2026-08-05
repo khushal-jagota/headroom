@@ -39,6 +39,12 @@ new values, from the same session cursor, under the same conversation. A change 
 therefore in force before the prompt that carried it is written, and a prompt that never
 reaches the wire leaves a child the core discards.
 
+**A terminal stream failure leaves a resumable session behind a broken wire.** The turn
+that was running fails. A later prompt meets the broken wire before it writes any bytes,
+so the adapter says ``NeedsRebind`` and the core resumes one replacement child. A failure
+during the current query remains ``PromptWriteFailed`` because delivery is then uncertain
+and the prompt must not be retried.
+
 **Permission asks are a callback the SDK waits on.** ``can_use_tool`` is called with the
 tool and its input and does not return until a person has answered or the turn it belongs
 to has died, which is exactly how an ask is meant to wait.
@@ -674,9 +680,11 @@ class ClaudeAgentSdkBackendChild:
         return client
 
     def _require_a_live_wire(self) -> None:
-        """Refuse to touch a child that has already failed or been taken from us."""
+        """Replace a known-broken wire before a new prompt writes any bytes."""
         if self._wire_broken:
-            raise PromptWriteFailed("this child's wire has already failed")
+            raise NeedsRebind(
+                "this child's wire has already failed", failed_child_recovery=True
+            )
 
     # --- the turn -----------------------------------------------------------------------
 
