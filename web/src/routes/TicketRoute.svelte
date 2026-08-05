@@ -323,9 +323,13 @@
     return null;
   }
 
+  function conversationWorkerTypeLabel(detail: TicketDetail): string {
+    return lc?.workerTypeLabel ?? labelize(detail.worker_type);
+  }
+
   function conversationEmployeeLabel(detail: TicketDetail): string {
-    const workerLabel = lc?.workerTypeLabel ?? labelize(detail.worker_type);
-    return /worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`;
+    const workerTypeLabel = conversationWorkerTypeLabel(detail);
+    return /worker$/i.test(workerTypeLabel) ? workerTypeLabel : `${workerTypeLabel} worker`;
   }
 
   // The Kickoff approval card still carries Worker configuration while that
@@ -641,7 +645,8 @@
             bind:conversationState
             conversationId={detail.conversation_id}
             ticketId={detail.id}
-            label={conversationEmployeeLabel(detail)}
+            label={conversationWorkerTypeLabel(detail)}
+            composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"

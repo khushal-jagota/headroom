@@ -390,6 +390,10 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert peeked["paneHeight"] > at_rest["paneHeight"], (at_rest, peeked)
     assert peeked["paneHeight"] < peeked["ticketHeight"], "peeked is a card, not the page"
     assert peeked["ticketOnScreen"] is True, "the ticket is behind it, not gone"
+    peeked_label = page.locator(f"{PANE} .chat-lbl").inner_text()
+    assert peeked_label.endswith(" worker"), peeked_label
+    composer_placeholder = page.locator(INPUT).get_attribute("placeholder")
+    assert composer_placeholder == f"Message {peeked_label}...", composer_placeholder
 
     # --- opened: the same conversation at full height ---------------------------------------
     _take_it_full(page)
@@ -401,6 +405,8 @@ def test_the_three_states_are_what_the_ticket_page_shows(
     assert opened["collapse"] is True, "a control back"
     assert opened["expand"] is False
     assert opened["paneHeight"] > peeked["paneHeight"], (peeked, opened)
+    assert page.locator(f"{PANE} .chat-lbl").inner_text() == peeked_label.removesuffix(" worker")
+    assert page.locator(INPUT).get_attribute("placeholder") == composer_placeholder
     # Opening is a change of size, not colour: the full-height surface is the same ink blue
     # the card wore at rest and peeked, not the lighter base surface it used to switch to.
     assert at_rest["paneBackground"] == peeked["paneBackground"], (at_rest, peeked)

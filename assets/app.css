@@ -2111,6 +2111,8 @@ button.list-row:hover .list-row-title {
   display: grid;
 }
 
+.chat-overflow-actions { display: grid; }
+
 .chat-overflow-item {
   background: none;
   border: none;
@@ -2125,6 +2127,56 @@ button.list-row:hover .list-row-title {
 .chat-overflow-item:hover { color: var(--text-strong); background: var(--surface-overlay); }
 .chat-overflow-item--confirm { color: var(--accent-error); }
 .chat-overflow-item--confirm:hover { color: var(--accent-error); }
+
+/* At full height, the top bar is the conversation's only chrome. The larger targets keep
+ * their glyph ink on the same inset as the worker type. Smaller states retain the card
+ * header above without any size or spacing changes. */
+[data-conversation-pane][data-conversation-state="opened"] .chat-head {
+  height: 44px;
+  padding: 0;
+  gap: var(--space-2);
+}
+
+[data-conversation-pane][data-conversation-state="opened"] .chat-head-right {
+  margin-right: calc(var(--space-2) * -1);
+  gap: var(--space-1);
+}
+
+[data-conversation-pane][data-conversation-state="opened"] .chat-overflow-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  border-radius: var(--radius-md);
+  transition:
+    color var(--motion-fast) var(--motion-ease),
+    background var(--motion-fast) var(--motion-ease);
+}
+
+[data-conversation-pane][data-conversation-state="opened"] .chat-overflow-btn:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: 2px;
+}
+
+[data-conversation-pane][data-conversation-state="opened"] .chat-overflow-menu {
+  min-width: 200px;
+}
+
+/* The workspace path is a fact in the menu, not an action. A path wraps because either
+ * truncated end can contain the part that identifies the workspace. */
+.chat-overflow-path {
+  margin-top: var(--space-1);
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  border-top: var(--border-hairline) solid var(--border-color);
+  color: var(--text-faintest);
+  font-family: var(--font-mono);
+  font-size: var(--type-xs);
+  letter-spacing: var(--tracking-mono);
+  overflow-wrap: anywhere;
+}
 
 .chat-thread-shell {
   position: relative;
