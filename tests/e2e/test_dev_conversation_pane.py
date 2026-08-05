@@ -648,7 +648,13 @@ def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
     trigger = picker.locator("[data-conversation-picker-trigger]")
     trigger.click()
     picker.locator('[data-conversation-picker-choice="codex-deep"]').click()
-    trigger.click()
+    page.wait_for_selector(
+        '[data-conversation-picker-panel] [data-conversation-picker-reasoning]',
+        timeout=WAIT_MS,
+    )
+    assert page.get_attribute(
+        '[data-conversation-picker-panel] [role="listbox"]', "aria-label"
+    ) == "Reasoning efforts"
     picker.locator("[data-conversation-picker-reasoning]").click()
     picker.locator('[data-conversation-picker-choice="high"]').click()
     assert "Codex deep high" in trigger.inner_text()
@@ -886,6 +892,7 @@ def test_horizontal_overflow_stays_inside_wide_conversation_content(
               thread.scrollLeft = 200;
               thread.scrollTop = 80;
               code.scrollLeft = 200;
+              toolOutputs.forEach(output => output.scrollLeft = 200);
               return {
                 thread: {
                   overflowX: getComputedStyle(thread).overflowX,
@@ -904,6 +911,9 @@ def test_horizontal_overflow_stays_inside_wide_conversation_content(
                 },
                 tools: toolOutputs.map(output => ({
                   overflowX: getComputedStyle(output).overflowX,
+                  clientWidth: output.clientWidth,
+                  scrollWidth: output.scrollWidth,
+                  scrollLeft: output.scrollLeft,
                   status: output.closest('.c2-tool')
                     .querySelector('[data-conversation-tool]').dataset.conversationToolStatus
                 }))
@@ -928,6 +938,10 @@ def test_horizontal_overflow_stays_inside_wide_conversation_content(
             width,
             geometry,
         )
+        assert all(
+            tool["scrollWidth"] > tool["clientWidth"] and tool["scrollLeft"] > 0
+            for tool in geometry["tools"]
+        ), (width, geometry)
         assert {tool["status"] for tool in geometry["tools"]} == {
             "running",
             "completed",
