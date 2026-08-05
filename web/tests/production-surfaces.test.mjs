@@ -108,9 +108,9 @@ assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/human-reply/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
-assert.match(ticketRouteSource, /data-sprint-item-control/);
-assert.match(ticketRouteSource, /\/api\/items\/\$\{encodeURIComponent\(sprintItemId\)\}\/tickets/);
-assert.match(ticketRouteSource, /method: "DELETE"/);
+// Sprint placement belongs to the Sprint surface; the redesigned Ticket identity keeps
+// only priority, project, and Worker identity.
+assert.doesNotMatch(ticketRouteSource, /data-sprint-item-control|\/api\/items\//);
 assert.doesNotMatch(ticketRouteSource, /detail\.sprint_id|body: \{ sprint_id/);
 
 // Sprint tracking has only Sprint Item groups. Machine-recognized Other items remain

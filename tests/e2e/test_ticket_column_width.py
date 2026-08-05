@@ -175,7 +175,7 @@ def test_a_narrow_pane_keeps_the_layout_it_had(
     open_page: Callable[..., Page],
     cli: Callable[..., JsonObject],
 ) -> None:
-    """Below the crossover nothing about this page changed. t_crmfy66x owns that end."""
+    """Below the crossover the newer mobile gutter system owns the page insets."""
     ticket_id = _a_ticket_with_a_conversation(server, cli, "The narrow page is untouched")
     page = _the_page_at(
         server, context_factory(), open_page, ticket_id, f"#/ticket/{ticket_id}", 390
@@ -186,8 +186,8 @@ def test_a_narrow_pane_keeps_the_layout_it_had(
     assert geometry["head"]["width"] == geometry["docClientWidth"], geometry
     assert geometry["col"]["width"] == geometry["docClientWidth"], geometry
     assert geometry["conversation"]["width"] == geometry["pane"]["width"], geometry
-    # And they keep their own narrow insets rather than the desktop column's.
+    # The mobile gutter is shared by the masthead, document column, and conversation.
     assert geometry["head"]["padLeft"] == "16px", geometry["head"]
-    assert geometry["col"]["padLeft"] == "24px", geometry["col"]
+    assert geometry["col"]["padLeft"] == "16px", geometry["col"]
     assert geometry["conversation"]["padLeft"] == "16px", geometry["conversation"]
     assert geometry["docOverflows"] is False

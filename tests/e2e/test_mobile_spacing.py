@@ -199,7 +199,9 @@ def test_mobile_spacing_contracts_and_desktop_frame(
     implementation_body = f'{ticket_selector} [data-field="implementation"] > .disclosure-body'
     assert _content_width(ticket, implementation_draft) == 316
     assert _content_width(ticket, implementation_body) == 348
-    assert _content_width(ticket, f'{ticket_selector} .ticket-recap-inner') == 316
+    # Recap is now a quiet subheader rather than an inset surface, so it shares the
+    # document column's usable width.
+    assert _content_width(ticket, f'{ticket_selector} .ticket-recap') == 348
     ticket.click(f'{ticket_selector} [data-conversation-input]')
     ticket.wait_for_selector(
         f'{ticket_selector} [data-conversation-pane][data-conversation-state="peeked"]',

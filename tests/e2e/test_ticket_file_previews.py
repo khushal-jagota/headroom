@@ -134,7 +134,13 @@ def _set_fields(
 
 def _open_ticket_field(page: Page, field: str) -> None:
     section = page.locator(f'details[data-field="{field}"]').first
-    section.evaluate("(node) => { node.open = true; }")
+    section.evaluate(
+        """(node) => {
+          const settledStages = node.closest('details.stage-fold');
+          if (settledStages) settledStages.open = true;
+          node.open = true;
+        }"""
+    )
     page.locator(f'details[data-field="{field}"][open]').wait_for(state="attached", timeout=WAIT_MS)
 
 
