@@ -2919,6 +2919,33 @@ select {
   color: var(--text-strong);
 }
 
+/* Voice on the revision box (t_0pgfmbsr): the mic is only an affordance beside the
+ * textarea — Approve stays this screen's primary action. The live states reuse the
+ * composer's .chat-voice-* language; these rules just seat them in this row. */
+.review-voice-mic {
+  flex: none;
+  align-self: center;
+  width: var(--space-5);
+  height: var(--space-5);
+  display: grid;
+  place-items: center;
+  padding: var(--space-1);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-faintest);
+  cursor: pointer;
+}
+.review-voice-mic:hover { color: var(--text-muted); background: var(--surface-overlay); }
+.review-voice-mic:disabled { opacity: 0.5; cursor: default; }
+.review-voice-mic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+/* The centred line stands where the textarea rests, at its height, so nothing jumps. */
+.review-voice-mid {
+  flex: 1;
+  min-height: 2.75rem;
+}
+.review-revision-box .review-voice-action { align-self: center; }
+
 /* Entrance rhythm: each decision's parts fade up in a short stagger. Keyed to the
  * current entry in the markup so advancing to the next decision re-runs it. */
 @keyframes review-arrive {
