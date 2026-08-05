@@ -15,14 +15,14 @@ export const connectionStatus = writable<ConnectionStatus>("reconnecting");
 let stream: EventSource | null = null;
 let flushTimer: number | null = null;
 
-function invalidateEverything(): void {
+function invalidateEverything(): Promise<void> {
   ensureDebug().flushes += 1;
-  void queryClient.invalidateQueries();
+  return queryClient.invalidateQueries();
 }
 
 function flush(): void {
   flushTimer = null;
-  invalidateEverything();
+  void invalidateEverything();
 }
 
 export function startChangeStream(): void {
@@ -35,7 +35,10 @@ export function startChangeStream(): void {
     connectionStatus.set("connected");
     // A connection just opened, so anything that changed while it was down is
     // still unseen: reconcile by refetching what is on screen.
-    invalidateEverything();
+    void invalidateEverything().then(() => {
+      if (stream !== source) return;
+      ensureDebug().sseReconciliations += 1;
+    });
   };
   source.onmessage = () => {
     if (stream !== source) return;
