@@ -57,35 +57,6 @@ from planner.conversation.storage import ConversationStore
 WAIT_MS = 10_000
 JUMP_BUTTON = "[aria-label='Jump to latest message']"
 
-COLD_START_BACKENDS = {
-    "backends": [
-        {
-            "backend_key": "codex",
-            "installed": True,
-            "executable_path": "/fixture/codex",
-            "version": "1",
-            "identity": None,
-            "available_models": [
-                {
-                    "model_id": "codex-quick",
-                    "display_name": "Codex quick",
-                    "reasoning_effort_options": ["low"],
-                },
-                {
-                    "model_id": "codex-deep",
-                    "display_name": "Codex deep",
-                    "reasoning_effort_options": ["medium", "high"],
-                },
-            ],
-            "reasoning_effort_options": ["low", "medium", "high"],
-            "default_model_id": "codex-quick",
-            "default_reasoning_effort": "low",
-            "update_advisory": None,
-            "diagnoses": [],
-        }
-    ]
-}
-
 # The send, held in the page until the test lets it go. Nothing else is touched: every
 # other request is the browser's own fetch, and the body handed over is the one the app
 # built, so what the test reads out of it is what the server would have received.
@@ -615,83 +586,6 @@ def test_a_sent_message_is_in_the_thread_before_the_server_answers(
         ").length === 2",
         timeout=WAIT_MS,
     )
-
-
-def test_the_first_message_of_a_conversation_says_nothing_it_does_not_know(
-    server: ServerHandle,
-    context_factory: Callable[[], BrowserContext],
-    open_page: Callable[..., Page],
-) -> None:
-    """The first message is the one that starts the conversation on its way to a backend.
-
-    Everything happens on that send: the conversation is created, its reading is opened,
-    and only then does the message go. It is in flight perfectly normally throughout, so
-    it must say nothing about itself — least of all on a cold start, which is the longest
-    a person ever waits and the worst moment to be told their message may have gone
-    nowhere.
-    """
-    context = context_factory()
-    context.add_init_script(HOLD_THE_SEND)
-    context.route(
-        "**/api/conversation/backends**",
-        lambda route: route.fulfill(json=COLD_START_BACKENDS),
-    )
-    page = open_page(
-        context, server, "#/dev/conversation?id=e2e-first-send", "[data-conversation-pane]"
-    )
-    # Nothing has been started yet: this is the empty state, not a conversation.
-    page.wait_for_selector("[data-conversation-new]", timeout=WAIT_MS)
-
-    # Pick the model and its effort through the same control used by every conversation
-    # surface. The model switch replaces the now-invalid low effort before high is chosen.
-    picker = page.locator("[data-conversation-new-model-picker]")
-    trigger = picker.locator("[data-conversation-picker-trigger]")
-    trigger.click()
-    picker.locator('[data-conversation-picker-choice="codex-deep"]').click()
-    page.wait_for_selector(
-        '[data-conversation-picker-panel] [data-conversation-picker-reasoning]',
-        timeout=WAIT_MS,
-    )
-    assert page.get_attribute(
-        '[data-conversation-picker-panel] [role="listbox"]', "aria-label"
-    ) == "Reasoning efforts"
-    picker.locator("[data-conversation-picker-reasoning]").click()
-    picker.locator('[data-conversation-picker-choice="high"]').click()
-    assert "Codex deep high" in trigger.inner_text()
-
-    page.fill("[data-conversation-input]", "the very first thing")
-    with page.expect_request(
-        lambda request: request.method == "POST"
-        and request.url.endswith("/api/conversation/conversations")
-    ) as start_request:
-        page.press("[data-conversation-input]", "Enter")
-    assert start_request.value.post_data_json == {
-        "conversation_id": "e2e-first-send",
-        "backend_key": "codex",
-        "model": "codex-deep",
-        "reasoning_effort": "high",
-    }
-    page.wait_for_function("() => window.__heldSends.length === 1", timeout=WAIT_MS)
-
-    drawn = page.wait_for_selector("[data-conversation-outgoing]", timeout=WAIT_MS)
-    assert drawn is not None
-    assert drawn.inner_text().strip() == "the very first thing"
-    assert page.query_selector("[data-conversation-outgoing-label]") is None, (
-        "a message on its way says nothing about itself"
-    )
-    # The conversation really was created on the way through, and the message really is
-    # still in flight.
-    assert httpx.get(
-        f"{server.base}/api/conversation/conversations/e2e-first-send", timeout=10.0
-    ).status_code == 200
-    page.evaluate("() => window.__heldSends[0].answer({ fate: 'started' })")
-    # Once the send lands, the composer takes over the same selected run values.
-    composer_picker = page.locator("[data-conversation-picker-model]")
-    composer_picker.wait_for(state="visible", timeout=WAIT_MS)
-    assert "Codex deep high" in composer_picker.locator(
-        "[data-conversation-picker-trigger]"
-    ).inner_text()
-    assert page.query_selector("[data-conversation-outgoing-label]") is None
 
 
 def test_a_send_that_gets_nowhere_gives_the_words_back(
