@@ -1345,6 +1345,9 @@ textarea {
   min-width: 0;
   max-width: 100%;
   margin: 0;
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 /* The header curves over the top of the document and stays put; the document
@@ -3904,6 +3907,12 @@ select {
   min-width: 0;
   max-width: 100%;
   position: relative;
+  /* The pane is what the column is measured against, so it is a size container. The
+   * window is the wrong ruler: this same route also renders in the Workspace right
+   * pane, which is around 500px narrower than the window it sits in. Inline-size only,
+   * so the height chain from the shell down to the page is untouched. */
+  container-type: inline-size;
+  container-name: ticket-pane;
 }
 
 /* The page is a column of two: the ticket, then the conversation, with the page's own gap
@@ -3964,17 +3973,15 @@ select {
   min-height: 0;
 }
 
-/* The conversation keeps the document's reading measure and its inset, so it stays in the
- * same column the ticket is written in instead of stretching across the whole screen. */
+/* The conversation stands in the page's one column, with its inset, so it stays in the
+ * same column the ticket is written in instead of stretching across the whole screen.
+ * The column itself is set once, further down, for all three of its users. */
 .ticket-conversation-column {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   min-width: 0;
-  width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
   padding: 0 var(--space-7);
 }
 
@@ -4062,14 +4069,11 @@ select {
   background: var(--accent-ink);
 }
 
-/* Header and body share one centered readable measure (~768px). The header has no
+/* Header and body stand in the page's one column, set once further down. The header has no
  * bottom hairline — the line diet keeps rules to the stage spine and the conversation
  * layer's seam only; space, not a line, separates the header from the body. */
 .ticket-head {
   min-width: 0;
-  max-width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
   padding: var(--space-5) var(--space-5) 0;
 }
 
@@ -4234,10 +4238,52 @@ select {
  * so there is nothing here to hold clear of. */
 .ticket-col {
   min-width: 0;
-  width: 100%;
-  max-width: calc(var(--space-7) * 16);
-  margin: 0 auto;
   padding: var(--space-4) var(--space-5) var(--space-6);
+}
+
+/* --- The page's one column ------------------------------------------------ */
+/* Header, body and conversation are the same column, so it is stated once here, after
+ * all three, and they cannot drift apart again.
+ *
+ * The column is measured against the ticket pane and never the window, because this
+ * route also renders in the Workspace right pane, which is around 500px narrower than
+ * the window around it. That is what `cqi` reads and what `.ticket-screen` declares.
+ *
+ * On a pane wide enough for them the column is the pane less a 192px gutter each side.
+ * Below that it keeps the fixed measure it has today. The two arms cross at a 1152px
+ * pane, so the column grows continuously and this needs no breakpoint. The outer min()
+ * is the document's own scrollbar: inside it 100% is a little less than the pane, and
+ * the column is never wider than what draws it. */
+.ticket-head,
+.ticket-col,
+.ticket-conversation-column {
+  width: min(
+    100%,
+    max(
+      min(100cqi, var(--ticket-column-measure)),
+      calc(100cqi - 2 * var(--ticket-column-gutter))
+    )
+  );
+  margin-inline: auto;
+}
+
+/* Once the column is fluid, the header and body take the conversation's inset, so all
+ * three read against one edge. Below the crossover they keep the tighter inset they have
+ * today, and t_crmfy66x still owns the narrow gutters.
+ *
+ * The document reserves its scrollbar on both edges here too, so its centre line is the
+ * pane's centre line and the ticket column sits exactly above the conversation column.
+ * At 768px that offset was half a scrollbar and invisible; against a column this wide and
+ * this far out it is a visible step between the two. */
+@container ticket-pane (min-width: 1152px) {
+  .ticket-head,
+  .ticket-col {
+    padding-inline: var(--space-7);
+  }
+
+  .ticket-doc {
+    scrollbar-gutter: stable both-edges;
+  }
 }
 
 /* --- Ticket serif voice (t_ui02) ----------------------------------------- */
