@@ -2743,6 +2743,24 @@ select {
   min-width: 0;
 }
 
+.review-ticket-heading-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.review-recap {
+  max-width: 60ch;
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-sm);
+  line-height: 1.5;
+}
+
+.review-recap .markdown > :last-child {
+  margin-bottom: 0;
+}
+
 .review-kickoff-priority {
   flex: none;
   font-family: var(--font-sans);
@@ -4146,7 +4164,7 @@ select {
 }
 
 .ticket-title-row {
-  margin: var(--space-3) 0;
+  margin: var(--space-3) 0 0;
 }
 
 .ticket-title {
@@ -4156,6 +4174,60 @@ select {
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
+}
+
+/* The recap is the title's quiet, editable second line. It has no surface of its own. */
+.ticket-recap {
+  display: block;
+  max-width: 62ch;
+  margin-top: var(--space-2);
+  color: var(--text-faint);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-lg);
+  line-height: 1.5;
+  cursor: text;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-recap:hover {
+  color: var(--text-muted);
+}
+
+.ticket-recap:focus-within {
+  color: var(--text-default);
+}
+
+.ticket-recap--clamped {
+  max-height: calc(var(--type-serif-lg) * 4.5);
+  overflow: hidden;
+}
+
+.ticket-recap--clamped:focus-within {
+  max-height: none;
+  overflow: visible;
+}
+
+.ticket-recap-more {
+  display: block;
+  margin-top: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font-family: var(--font-ui);
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.ticket-recap-more:hover {
+  color: var(--text-default);
+}
+
+.ticket-recap-inner {
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
 }
 
 /* The leash and quiet actions share one operating line. The action group moves as a
@@ -4170,37 +4242,26 @@ select {
   font-size: var(--type-sm);
 }
 
+.ticket-operating-copy {
+  padding: var(--space-1) var(--space-1);
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-xs);
+  cursor: pointer;
+}
+
+.ticket-operating-copy:hover {
+  color: var(--text-default);
+}
+
 .ticket-backend-error {
   margin-top: var(--space-3);
   color: var(--accent-error);
   font-size: var(--type-sm);
   line-height: 1.5;
   white-space: pre-wrap;
-}
-
-/* Take over / Release and Copy are quiet text actions, not facts or pills. */
-.ticket-act {
-  background: none;
-  border: 0;
-  color: var(--text-faintest);
-  font-family: var(--font-ui);
-  font-size: var(--type-xs);
-  cursor: pointer;
-  padding: var(--space-1) var(--space-1);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-.ticket-act:hover {
-  color: var(--text-default);
-}
-
-.ticket-operating-actions {
-  display: inline-flex;
-  flex-wrap: wrap;
-  min-width: 0;
-  max-width: 100%;
-  gap: var(--space-2);
-  margin-left: auto;
 }
 
 @media (max-width: 720px) {
@@ -4210,21 +4271,133 @@ select {
   }
 }
 
-/* The leash as one sentence: "approved until [stage] then [stop/propose]", the
- * connecting words in quiet prose, the two live pickers inline. */
+/* The leash is one disclosure that holds scope, takeover, and copy. */
 .ticket-leash {
-  display: flex;
-  flex-wrap: wrap;
+  position: relative;
+  display: block;
   min-width: 0;
   max-width: 100%;
-  align-items: center;
-  gap: var(--space-2);
   font-size: var(--type-sm);
   color: var(--text-faintest);
 }
 
-.ticket-leash-sel {
-  display: inline-flex;
+.ticket-leash > summary {
+  list-style: none;
+}
+
+.ticket-leash > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ticket-leash-face {
+  display: inline-block;
+  max-width: 100%;
+  margin: 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-leash-face:hover,
+.ticket-leash-face:focus-visible {
+  color: var(--text-default);
+}
+
+.ticket-leash-face:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: var(--space-1);
+}
+
+.ticket-leash-value {
+  color: var(--text-muted);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-leash-face--held .ticket-leash-value {
+  color: var(--accent-bright);
+}
+
+.ticket-leash-menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - var(--space-6)));
+  padding: var(--space-1) 0;
+  background: var(--surface-overlay);
+  border: var(--border-hairline) solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 var(--space-2) var(--space-5) var(--surface-scrim);
+}
+
+.ticket-leash-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--type-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--motion-ease), background var(--motion-fast) var(--motion-ease);
+}
+
+.ticket-leash-option:hover,
+.ticket-leash-option:focus-visible,
+.ticket-leash-option--selected {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+.ticket-leash-option:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: calc(-1 * var(--border-hairline));
+}
+
+.ticket-leash-option-mark {
+  flex: none;
+  width: var(--space-3);
+  color: var(--accent-bright);
+  font-size: var(--type-xs);
+}
+
+.ticket-leash-rule {
+  height: var(--border-hairline);
+  margin: var(--space-1) 0;
+  background: var(--border-color);
+}
+
+.ticket-leash-select {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  background: var(--surface-overlay);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--type-sm);
+  cursor: pointer;
+}
+
+.ticket-leash-select:hover,
+.ticket-leash-select:focus-visible {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+.ticket-leash-select:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: calc(-1 * var(--border-hairline));
 }
 
 /* The read's own generous tail, and under it the room the conversation layer stands in at
@@ -4272,10 +4445,8 @@ select {
     margin-left: 0;
   }
 
-  .ticket-operating-actions {
-    flex-basis: 100%;
-    justify-content: flex-start;
-    margin-left: 0;
+  .ticket-leash-menu {
+    max-width: calc(100vw - var(--space-5));
   }
 }
 
@@ -4345,15 +4516,77 @@ select {
   color: var(--accent-error);
 }
 
-.ticket-recap-inner {
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface-sunken);
-  border-radius: var(--radius-md);
+.ticket-recap-inner .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* Settled stages share one quiet row until the user opens them. */
+.stage-fold {
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+.stage-fold-summary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-sm);
+  text-align: left;
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.stage-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.stage-fold-summary:hover,
+.stage-fold-summary:focus-visible {
   color: var(--text-muted);
 }
 
-.ticket-recap-inner .markdown > :last-child {
-  margin-bottom: 0;
+.stage-fold-summary:focus-visible,
+.stage-fold-close:focus-visible {
+  outline: var(--border-hairline) solid var(--accent-bright);
+  outline-offset: calc(-1 * var(--border-hairline));
+}
+
+.stage-fold-names {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+.stage-fold-rows {
+  display: block;
+}
+
+.stage-fold-close {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: 0;
+  background: none;
+  color: var(--text-faintest);
+  font: inherit;
+  font-size: var(--type-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.stage-fold-close:hover {
+  color: var(--text-muted);
 }
 
 /* The blank spacer where the user-note row would carry a stage mark — it keeps the

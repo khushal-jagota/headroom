@@ -37,6 +37,7 @@ def test_ticket_takeover_is_quiet_and_current_stage_explains_user_ownership(
     assert detail["stage_ownership_overrides"] == {}
     assert detail["default_stage_ownership_mode"] == "worker"
     assert detail["effective_stage_ownership_mode"] == "worker"
+    page.click("[data-leash-face]")
     assert page.inner_text("[data-ticket-takeover-toggle]") == "Take over"
 
 
@@ -68,6 +69,7 @@ def test_release_from_a_default_user_stage_creates_a_worker_override(
     detail = api.get(server, f"/api/tickets/{ticket_id}")
     assert detail["stage_ownership_overrides"] == {}
     assert detail["effective_stage_ownership_mode"] == "user"
+    page.click("[data-leash-face]")
     assert page.inner_text("[data-ticket-takeover-toggle]") == "Release"
     assert page.locator('[data-stage-run-label="you\'re on it"]').count() == 1
 
@@ -83,4 +85,6 @@ def test_release_from_a_default_user_stage_creates_a_worker_override(
     assert detail["stage_ownership_overrides"] == {"needs_success": "worker"}
     assert detail["effective_stage_ownership_mode"] == "worker"
     assert page.locator("[data-stage-run-label]").count() == 0
+    if page.locator("details[data-leash]").get_attribute("open") is None:
+        page.click("[data-leash-face]")
     assert page.inner_text("[data-ticket-takeover-toggle]") == "Take over"

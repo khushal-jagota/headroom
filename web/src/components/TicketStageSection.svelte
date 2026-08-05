@@ -22,8 +22,6 @@
     lifecycle = null,
     stageState = "upcoming",
     variant = "ticket",
-    recap = null,
-    showRecap = false,
     emptyText = "Not written yet.",
     editableValue = true,
     approvalDisabled = false,
@@ -42,8 +40,6 @@
     lifecycle?: Lifecycle | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
-    recap?: string | null;
-    showRecap?: boolean;
     emptyText?: string;
     editableValue?: boolean;
     approvalDisabled?: boolean;
@@ -73,13 +69,6 @@
 </script>
 
 {#snippet stageBody()}
-  {#if showRecap && recap}
-    <div class="review-context" data-content-section="recap">
-      <div class="review-context-label">Recap</div>
-      <div class="review-context-recap"><MarkdownBlock text={recap} /></div>
-    </div>
-  {/if}
-
   {#if reviewVariant && hasNotes}
     <Disclosure title="Notes" variant="support" defaultOpen={false} data-content-section="notes">
       <MarkdownBlock text={slot.user_note} />
