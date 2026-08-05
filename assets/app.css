@@ -3177,6 +3177,42 @@ select {
   line-height: 1.2;
 }
 
+/* A folded status group hides its rows, so it carries their number in the
+ * trailing slot. An open group does not need one: the rows are the count.
+ * The count and the chevron share the one slot, so nothing moves between
+ * the two states. */
+.board-workspace-bucket-count {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: var(--type-md);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+.disclosure--workspace-bucket[open]
+  > .disclosure-summary
+  > .board-workspace-bucket-count {
+  display: none;
+}
+
+/* The count is the folded group's only mark, so the chevron stands down and
+ * the count carries the pointer and keyboard feedback in its place. */
+.disclosure--workspace-bucket:not([open])
+  > .disclosure-summary
+  > .disclosure-chev {
+  display: none;
+}
+
+.disclosure--workspace-bucket
+  > .disclosure-summary:hover
+  > .board-workspace-bucket-count,
+.disclosure--workspace-bucket
+  > .disclosure-summary:focus-visible
+  > .board-workspace-bucket-count {
+  color: var(--text-strong);
+}
+
 /* Errored carries the app's error red at the bucket level, so the row marks
  * stay free to carry only the two activity signals. */
 .disclosure--workspace-bucket[data-bucket-key="errored"] .board-workspace-bucket-label {

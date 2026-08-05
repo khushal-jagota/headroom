@@ -174,6 +174,75 @@ def test_workspace_shows_all_projects_and_matches_the_top_bucket_gap(
     assert abs(gap_after_chief - gap_between_buckets) < 1
 
 
+def test_workspace_group_count_matches_folded_rows_and_open_chevron(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    blocked_ticket = _create_ticket(cli, server, "Folded singular ticket")
+    done_tickets = [
+        _create_ticket(cli, server, "Folded plural ticket one"),
+        _create_ticket(cli, server, "Folded plural ticket two"),
+    ]
+    open_ticket = _create_ticket(cli, server, "Open group ticket")
+    for ticket_id in [blocked_ticket, *done_tickets, open_ticket]:
+        _add_today(api, server, ticket_id)
+    _set_ticket_status(server, blocked_ticket, "blocked")
+    for ticket_id in done_tickets:
+        _set_ticket_stage(server, ticket_id, "done")
+    _set_ticket_status(server, open_ticket, "user")
+
+    page = open_page(
+        context_factory(),
+        server,
+        "#/workspace",
+        '[data-bucket-section][data-bucket-key="blocked"]',
+    )
+    blocked = '[data-bucket-section][data-bucket-key="blocked"]'
+    done = '[data-bucket-section][data-bucket-key="done"]'
+    user = '[data-bucket-section][data-bucket-key="user"]'
+
+    assert page.locator(blocked).get_attribute("open") is None
+    assert page.locator(done).get_attribute("open") is None
+    assert page.locator(user).get_attribute("open") is not None
+
+    blocked_count = page.locator(f"{blocked} > summary .board-workspace-bucket-count")
+    assert blocked_count.inner_text() == "1"
+    assert blocked_count.get_attribute("role") == "img"
+    assert blocked_count.get_attribute("aria-label") == "1 Ticket"
+    assert page.locator(f"{blocked} > summary .disclosure-chev").evaluate(
+        "element => getComputedStyle(element).display"
+    ) == "none"
+
+    done_count = page.locator(f"{done} > summary .board-workspace-bucket-count")
+    assert done_count.inner_text() == "2"
+    assert done_count.get_attribute("aria-label") == "2 Tickets"
+    assert page.locator(f"{done} > summary .disclosure-chev").evaluate(
+        "element => getComputedStyle(element).display"
+    ) == "none"
+
+    user_count = page.locator(f"{user} > summary .board-workspace-bucket-count")
+    assert user_count.get_attribute("aria-label") == "1 Ticket"
+    assert page.locator(f"{user} > summary .board-workspace-bucket-count").evaluate(
+        "element => getComputedStyle(element).display"
+    ) == "none"
+    user_summary = page.locator(f"{user} > summary")
+    assert page.locator(f"{user} > summary .disclosure-chev").evaluate(
+        "element => getComputedStyle(element).display"
+    ) != "none"
+    assert page.locator(f"{user} > summary .disclosure-chev").evaluate(
+        "element => getComputedStyle(element).opacity"
+    ) == "0"
+    user_summary.hover()
+    page.wait_for_function(
+        "selector => getComputedStyle(document.querySelector(selector)).opacity === '1'",
+        arg=f"{user} > summary .disclosure-chev",
+        timeout=WAIT_MS,
+    )
+
+
 def test_workspace_reply_mark_follows_the_record_and_what_this_browser_has_read(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],

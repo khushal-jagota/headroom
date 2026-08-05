@@ -220,6 +220,11 @@
             >
               {#snippet summary()}
                 <span class="board-workspace-bucket-label">{group.label}</span>
+                <span
+                  class="board-workspace-bucket-count"
+                  role="img"
+                  aria-label={`${group.cards.length} ${group.cards.length === 1 ? "Ticket" : "Tickets"}`}
+                >{group.cards.length}</span>
               {/snippet}
 
               <div class="board-workspace-bucket-tickets">
