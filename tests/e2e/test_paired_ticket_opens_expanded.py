@@ -19,6 +19,7 @@ from tests.e2e.harness import ApiHelper, JsonObject, ServerHandle
 
 TICKET_SCREEN = '[data-screen="ticket"]'
 PANE = f"{TICKET_SCREEN} [data-conversation-pane]"
+INPUT = f"{TICKET_SCREEN} [data-conversation-input]"
 COLLAPSE = f"{TICKET_SCREEN} [data-conversation-collapse]"
 EXPAND = f"{TICKET_SCREEN} [data-conversation-expand]"
 TITLE = f"{TICKET_SCREEN} .ticket-title"
@@ -180,7 +181,7 @@ def test_manual_conversation_state_survives_status_changes_in_both_directions(
     page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
 
     page.click(COLLAPSE, timeout=WAIT_MS)
-    page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
     cli(
         server,
         "worker",
@@ -194,9 +195,11 @@ def test_manual_conversation_state_survives_status_changes_in_both_directions(
     )
     current = api.get(server, f"/api/tickets/{paired_ticket_id}")
     assert current["ticket_status"] == "awaiting_approval"
-    _wait_for_ticket_refresh(server, api, page, paired_ticket_id, "Peeked after proposal")
-    page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
+    _wait_for_ticket_refresh(server, api, page, paired_ticket_id, "At rest after proposal")
+    page.wait_for_selector(f'{PANE}[data-conversation-state="rest"]', timeout=WAIT_MS)
 
+    page.click(INPUT, timeout=WAIT_MS)
+    page.wait_for_selector(f'{PANE}[data-conversation-state="peeked"]', timeout=WAIT_MS)
     page.click(EXPAND, timeout=WAIT_MS)
     page.wait_for_selector(f'{PANE}[data-conversation-state="opened"]', timeout=WAIT_MS)
     paired = api.direct_post(server, f"/api/tickets/{paired_ticket_id}/human-reply", {})
