@@ -76,14 +76,16 @@ There is no immutable spec. `SPEC.md` was a starting point and has been retired:
   startup, select another and retry.
 - The worktree's database and other local state may remain for later use until
   Closeout.
-- At Closeout, bring current `staging` into the Ticket branch, repair and verify the
-  resulting revision, advance `staging` when it is green, push that exact revision to
-  `origin/staging`, and verify the remote ref matches before removing the Ticket's
-  services, local runtime state, worktree, and branch.
+- At Closeout, complete integration: bring current `staging` into the Ticket branch,
+  repair and verify the resulting revision, advance `staging` when it is green, push
+  that exact revision to `origin/staging`, and verify the remote ref matches before
+  removing the Ticket's services, local runtime state, worktree, and branch.
 - Always keep a single rolling `staging` → `main` pull request open. After the
   `origin/staging` push, check whether one already exists; if not, create one. It
   updates on its own as later Closeouts advance `staging`, so there is nothing to do
   when one is already open.
+- Deployment from `main` remains a later user action. It is not part of Ticket
+  integration.
 
 ## Conduct
 - Keep `./verify` green; never advance over failing tests.
