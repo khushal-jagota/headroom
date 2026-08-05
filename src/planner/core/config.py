@@ -42,6 +42,11 @@ class Config:
     trusted_ingress_provider: str | None
     trusted_ingress_allowed_login: str | None
     trusted_ingress_canonical_origin: str | None
+    # voice input: where spoken audio is transcribed, and with what
+    voice_transcription_base_url: str
+    voice_transcription_model: str
+    # voice transcription key — ENV ONLY (PLAN_GROQ_API_KEY), never in config.yaml
+    voice_transcription_api_key: str | None
     # test mode — ENV ONLY, never in config.yaml
     test_mode: bool
     fake_now: str | None
@@ -258,6 +263,22 @@ def load_config(path: str | None = None, env: Mapping[str, str] | None = None) -
         shutdown_grace_seconds=_int_value(
             cfg, env, "shutdown_grace_seconds", "PLAN_SHUTDOWN_GRACE_SECONDS", 30
         ),
+        voice_transcription_base_url=_str_value(
+            cfg,
+            env,
+            "voice_transcription_base_url",
+            "PLAN_VOICE_TRANSCRIPTION_BASE_URL",
+            "https://api.groq.com/openai/v1",
+        ),
+        voice_transcription_model=_str_value(
+            cfg,
+            env,
+            "voice_transcription_model",
+            "PLAN_VOICE_TRANSCRIPTION_MODEL",
+            "whisper-large-v3-turbo",
+        ),
+        # A secret, so environment-only like the test-mode keys: never in config.yaml.
+        voice_transcription_api_key=env.get("PLAN_GROQ_API_KEY") or None,
         trusted_ingress_provider=trusted_ingress_provider,
         trusted_ingress_allowed_login=trusted_ingress_allowed_login,
         trusted_ingress_canonical_origin=trusted_ingress_canonical_origin,

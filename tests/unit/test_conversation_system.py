@@ -141,6 +141,7 @@ class _FakeBackend:
     permission_answer_write_fails: bool = False
     user_input_answer_write_fails: bool = False
     needs_rebind_once: bool = False
+    needs_failed_child_recovery_once: bool = False
     ends_the_turn_while_writing: bool = False
     writes_raise_something_unnamed: bool = False
 
@@ -151,6 +152,7 @@ class _FakeBackend:
     # agent in it; anything else is two agents reading the same session.
     live_children: int = 0
     most_live_children_at_once: int = 0
+    lifecycle_events: list[str] = field(default_factory=list)
 
     # Gates, for the tests that need the system to be genuinely part-way through
     # something while another caller arrives.
@@ -189,6 +191,11 @@ class _FakeBackendChild:
         self._backend.model = resolved_start.model
         self._backend.reasoning_effort = resolved_start.reasoning_effort
         self._backend.sink = self._sink
+        self._backend.lifecycle_events.append(
+            "start:"
+            f"{vendor_session_cursor}:{resolved_start.model}:"
+            f"{resolved_start.reasoning_effort}"
+        )
         if vendor_session_cursor is None:
             await self._sink.vendor_session_cursor_rebound(VENDOR_SESSION_CURSOR)
 
@@ -205,9 +212,12 @@ class _FakeBackendChild:
         # The label and the mode travel with the text as metadata for backends that have a
         # channel for it. This stand-in has none, so it takes them and lets them go.
         del sender_label, mode
-        if self._backend.needs_rebind_once and (
-            model_change is not None or reasoning_effort_change is not None
-        ):
+        if self._backend.needs_failed_child_recovery_once:
+            self._backend.needs_failed_child_recovery_once = False
+            raise NeedsRebind(
+                self._backend.conversation_id, failed_child_recovery=True
+            )
+        if self._backend.needs_rebind_once:
             self._backend.needs_rebind_once = False
             raise NeedsRebind(self._backend.conversation_id)
         if self._backend.write_has_begun is not None:
@@ -223,6 +233,7 @@ class _FakeBackendChild:
         if reasoning_effort_change is not None:
             self._backend.reasoning_effort = reasoning_effort_change
         self._backend.writes.append(_FakeBackendWrite(content=content))
+        self._backend.lifecycle_events.append(f"write:{message_content_text(content)}")
         self._backend.live_turn_token = turn_token
         if self._backend.ends_the_turn_while_writing:
             self._backend.ends_the_turn_while_writing = False
@@ -287,6 +298,7 @@ class _FakeBackendChild:
         if self._backend.stops_wait_for_release is not None:
             await self._backend.stops_wait_for_release.wait()
         self._backend.stops += 1
+        self._backend.lifecycle_events.append("stop")
         self._backend.live_children -= 1
         self._backend.live_turn_token = None
 
@@ -1452,6 +1464,111 @@ def test_a_backend_that_can_only_change_by_starting_again_is_started_again(
     _run(exercise)
 
 
+def test_a_broken_claude_child_resumes_once_for_only_the_follow_up(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        await _start(
+            harness,
+            "c",
+            backend_key=ConversationBackendKey.claude,
+            model="current-model",
+            reasoning_effort="high",
+        )
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.fail_turn("c", "the terminal stream failed")
+        backend = harness.backend("c")
+        backend.needs_failed_child_recovery_once = True
+
+        fate = await harness.system.send(
+            "c", text_message_content("follow-up"), sender_label="owner"
+        )
+
+        assert fate == PromptDeliveryStarted()
+        assert backend.lifecycle_events == [
+            "start:None:current-model:high",
+            "write:first",
+            "stop",
+            f"start:{VENDOR_SESSION_CURSOR}:current-model:high",
+            "write:follow-up",
+        ]
+        assert backend.most_live_children_at_once == 1
+        assert backend.written_texts() == ("first", "follow-up")
+        assert await harness.recorded_prompts("c") == (
+            ("first", "owner", "run_when_free"),
+            ("follow-up", "owner", "run_when_free"),
+        )
+        assert not any(
+            isinstance(event.payload, AgentMessageEventPayload)
+            for event in await harness.events("c")
+        )
+
+    _run(exercise)
+
+
+def test_a_broken_child_resume_refusal_is_recorded(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.claude)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.fail_turn("c", "the terminal stream failed")
+        backend = harness.backend("c")
+        backend.needs_failed_child_recovery_once = True
+        backend.session_load_fails = True
+
+        fate = await harness.system.send(
+            "c",
+            text_message_content("follow-up"),
+            sender_label="owner",
+            sender_message_id="follow-up-id",
+        )
+
+        assert fate == PromptDeliveryRefused(
+            refusal_reason=PromptDeliveryRefusalReason.session_did_not_load
+        )
+        refused = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptDeliveryRefusedEventPayload)
+        ]
+        assert len(refused) == 1
+        assert message_content_text(refused[0].content) == "follow-up"
+        assert refused[0].sender_message_id == "follow-up-id"
+        assert refused[0].refusal_reason is PromptDeliveryRefusalReason.session_did_not_load
+        assert backend.written_texts() == ("first",)
+
+    _run(exercise)
+
+
+def test_a_broken_child_replacement_write_refusal_is_recorded(harness: _Harness) -> None:
+    async def exercise() -> None:
+        await _start(harness, "c", backend_key=ConversationBackendKey.claude)
+        await harness.system.send("c", text_message_content("first"), sender_label="owner")
+        await harness.fail_turn("c", "the terminal stream failed")
+        backend = harness.backend("c")
+        backend.needs_failed_child_recovery_once = True
+        backend.write_fails = True
+
+        fate = await harness.system.send(
+            "c", text_message_content("follow-up"), sender_label="owner"
+        )
+
+        assert fate == PromptDeliveryRefused(
+            refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
+        )
+        refused = [
+            event.payload
+            for event in await harness.events("c")
+            if isinstance(event.payload, PromptDeliveryRefusedEventPayload)
+        ]
+        assert len(refused) == 1
+        assert message_content_text(refused[0].content) == "follow-up"
+        assert refused[0].refusal_reason is PromptDeliveryRefusalReason.write_to_backend_failed
+        assert backend.written_texts() == ("first",)
+        assert backend.stops == 2
+
+    _run(exercise)
+
+
 def test_a_rebind_whose_write_still_fails_changes_nothing(harness: _Harness) -> None:
     async def exercise() -> None:
         await _start(harness, "c", backend_key=ConversationBackendKey.claude, model="start-model")
@@ -1469,6 +1586,9 @@ def test_a_rebind_whose_write_still_fails_changes_nothing(harness: _Harness) -> 
             refusal_reason=PromptDeliveryRefusalReason.write_to_backend_failed
         )
         assert ConversationEventKind.model_changed not in await harness.recorded_kinds("c")
+        assert ConversationEventKind.prompt_delivery_refused not in await harness.recorded_kinds(
+            "c"
+        )
         stored = await harness.store.read_conversation("c")
         assert stored is not None
         assert stored.model == "start-model"

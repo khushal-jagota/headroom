@@ -298,6 +298,7 @@
   {/if}
 
   <ConversationComposer
+    conversationId={conversationExists ? conversationId : null}
     {backendKey}
     {conversationExists}
     {running}

@@ -62,7 +62,7 @@ class SessionLoadFailed(BackendAdapterError):
 
 
 class PromptWriteFailed(BackendAdapterError):
-    """The prompt did not reach the backend's wire."""
+    """The prompt write did not complete, so an automatic retry is not safe."""
 
 
 class PermissionAnswerWriteFailed(BackendAdapterError):
@@ -78,13 +78,25 @@ class UserInputAnswerWriteFailed(BackendAdapterError):
 
 
 class NeedsRebind(BackendAdapterError):
-    """This change cannot be made to the child as it stands; restart it to make it.
+    """This child cannot safely accept the prompt; replace it before the write.
 
     Some backends take a model or reasoning-effort change as a parameter of the next turn,
     and some can only be changed by starting again. An adapter of the second kind raises
     this instead of applying the change, and the core stops the child and starts a new one
     from the stored session cursor, under the same conversation, before writing again.
+
+    An adapter also raises this when it knows before a new write that the child's wire is
+    unusable, but the stored session can be resumed. It must not raise this for a failure
+    during the current write because delivery is then uncertain and must not be retried.
+
+    ``failed_child_recovery`` is true only for that known-broken-child case. The core uses
+    it to keep a later recovery refusal in the conversation record. A value-change rebind
+    leaves it false and retains the normal direct-refusal behavior.
     """
+
+    def __init__(self, message: str, *, failed_child_recovery: bool = False) -> None:
+        super().__init__(message)
+        self.failed_child_recovery = failed_child_recovery
 
 
 @dataclass(frozen=True, slots=True)
@@ -365,8 +377,8 @@ class BackendChild(Protocol):
         A change of ``None`` means leave that value where it is.
 
         Returns once the text is on the wire, not when the turn ends. Raises
-        ``PromptWriteFailed`` if it did not get there, or ``NeedsRebind`` if the change
-        cannot be made to this child at all.
+        ``PromptWriteFailed`` if the current write did not complete, or ``NeedsRebind``
+        if this child cannot safely accept a write that has not started.
         """
 
     async def steer(self, content: MessageContent, *, sender_label: str) -> None:

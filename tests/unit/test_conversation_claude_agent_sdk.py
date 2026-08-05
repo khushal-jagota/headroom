@@ -620,7 +620,8 @@ def test_a_resume_that_answers_under_another_session_is_refused(tmp_path: Path) 
         assert ANOTHER_SESSION_ID in str(sink.endings[0]["error_summary"])
         assert sink.message_texts == []
         # Nothing more is written to a child that is not this conversation's session.
-        with pytest.raises(PromptWriteFailed):
+        # The stored cursor remains safe to try on one replacement child.
+        with pytest.raises(NeedsRebind):
             await _write(child, "again")
         await child.stop()
 
@@ -1008,10 +1009,12 @@ def test_a_prompt_that_does_not_reach_the_wire_says_so(tmp_path: Path) -> None:
         clients[0].query_failure = BrokenPipeError("the child has gone")
         with pytest.raises(PromptWriteFailed):
             await _write(child)
-        # A wire that has failed once fails the same way afterwards rather than hanging.
+        # The failed current write is never retried. A later prompt can safely replace the
+        # child because the adapter refuses it before another query starts.
         clients[0].query_failure = None
-        with pytest.raises(PromptWriteFailed):
+        with pytest.raises(NeedsRebind):
             await _write(child)
+        assert clients[0].prompts == []
         await child.stop()
 
     _run(exercise)
@@ -1506,6 +1509,10 @@ def test_a_child_whose_stream_ends_mid_turn_fails_the_turn(tmp_path: Path) -> No
         await clients[0].until_taken_in()
 
         assert sink.endings[0]["ending"] is ConversationTurnEnding.failed
+        with pytest.raises(NeedsRebind):
+            await _write(child, "follow-up")
+        assert clients[0].prompts == ["hello"]
+        assert sink.message_texts == []
         await child.stop()
 
     _run(exercise)

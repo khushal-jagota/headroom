@@ -34,8 +34,36 @@ def test_config_defaults_expose_only_live_runtime_knobs() -> None:
     assert cfg.trusted_ingress_canonical_origin is None
     assert cfg.shutdown_grace_seconds == 30
     assert cfg.backup_dir == "data/backups"
+    assert cfg.voice_transcription_base_url == "https://api.groq.com/openai/v1"
+    assert cfg.voice_transcription_model == "whisper-large-v3-turbo"
+    assert cfg.voice_transcription_api_key is None
     for name in _RETIRED_CONFIG_NAMES:
         assert not hasattr(cfg, name)
+
+
+def test_voice_transcription_settings_can_be_overridden_by_environment() -> None:
+    cfg = load_config(
+        path=None,
+        env={
+            "PLAN_VOICE_TRANSCRIPTION_BASE_URL": "http://127.0.0.1:9/v1",
+            "PLAN_VOICE_TRANSCRIPTION_MODEL": "whisper-large-v3",
+            "PLAN_GROQ_API_KEY": "gsk-test",
+        },
+    )
+
+    assert cfg.voice_transcription_base_url == "http://127.0.0.1:9/v1"
+    assert cfg.voice_transcription_model == "whisper-large-v3"
+    assert cfg.voice_transcription_api_key == "gsk-test"
+
+
+def test_voice_transcription_key_is_environment_only(tmp_path: Path) -> None:
+    """A secret in the checked-in yaml would be a leak, so the file cannot set it."""
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text("voice_transcription_api_key: leaked\n")
+
+    cfg = load_config(path=str(config_file), env={})
+
+    assert cfg.voice_transcription_api_key is None
 
 
 def test_trusted_ingress_config_loads_tailscale_contract() -> None:
