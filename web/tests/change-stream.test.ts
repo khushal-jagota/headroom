@@ -50,7 +50,7 @@ beforeEach(() => {
   fakes.invalidateQueries.mockResolvedValue();
   FakeEventSource.instances = [];
   statuses = [];
-  debug = { sseOpens: 0, flushes: 0 };
+  debug = { sseOpens: 0, sseReconciliations: 0, flushes: 0 };
   vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal("window", {
     setTimeout: globalThis.setTimeout,
@@ -86,10 +86,35 @@ describe("change stream", () => {
     startChangeStream();
 
     FakeEventSource.instances[0].onopen?.();
+    await vi.waitFor(() => expect(debug.sseReconciliations).toBe(1));
 
     expect(statuses.at(-1)).toBe("connected");
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
-    expect(debug).toEqual({ sseOpens: 1, flushes: 1 });
+    expect(debug).toEqual({
+      sseOpens: 1,
+      sseReconciliations: 1,
+      flushes: 1
+    });
+  });
+
+  it("reports initial reconciliation only after its invalidation resolves", async () => {
+    let resolveInvalidation!: () => void;
+    fakes.invalidateQueries.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveInvalidation = resolve;
+      })
+    );
+    const { startChangeStream } = await loadChangeStream();
+    startChangeStream();
+
+    FakeEventSource.instances[0].onopen?.();
+
+    expect(debug.sseOpens).toBe(1);
+    expect(debug.flushes).toBe(1);
+    expect(debug.sseReconciliations).toBe(0);
+
+    resolveInvalidation();
+    await vi.waitFor(() => expect(debug.sseReconciliations).toBe(1));
   });
 
   it("collapses a burst into one trailing invalidation and later changes into another", async () => {
@@ -126,9 +151,14 @@ describe("change stream", () => {
     expect(FakeEventSource.instances).toHaveLength(1);
 
     source.onopen?.();
+    await vi.waitFor(() => expect(debug.sseReconciliations).toBe(2));
     expect(statuses.at(-1)).toBe("connected");
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(2);
-    expect(debug).toEqual({ sseOpens: 2, flushes: 2 });
+    expect(debug).toEqual({
+      sseOpens: 2,
+      sseReconciliations: 2,
+      flushes: 2
+    });
   });
 
   it("stops cleanly, cancels a pending flush, and ignores stale callbacks", async () => {
@@ -149,6 +179,10 @@ describe("change stream", () => {
     source.onmessage?.();
     await vi.advanceTimersByTimeAsync(250);
     expect(fakes.invalidateQueries).toHaveBeenCalledTimes(1);
-    expect(debug).toEqual({ sseOpens: 1, flushes: 1 });
+    expect(debug).toEqual({
+      sseOpens: 1,
+      sseReconciliations: 0,
+      flushes: 1
+    });
   });
 });
