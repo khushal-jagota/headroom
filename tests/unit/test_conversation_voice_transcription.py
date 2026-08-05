@@ -12,7 +12,6 @@ import asyncio
 import base64
 import io
 import math
-import shutil
 import struct
 import wave
 from collections.abc import Callable, Coroutine, Iterator
@@ -38,7 +37,6 @@ from planner.conversation.snapshot import BackendSnapshotService
 from planner.conversation.storage import ConversationStore
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.conversation.voice_transcription import (
-    FFMPEG_PATH,
     VoiceTranscriptionFailed,
     VoiceTranscriptionUnconfigured,
     transcribe_conversation_audio,
@@ -121,13 +119,9 @@ def _wav_bytes(*segments: tuple[float, float]) -> bytes:
     return container.getvalue()
 
 
-ffmpeg_present = pytest.mark.skipif(
-    not Path(FFMPEG_PATH).exists() and shutil.which("ffmpeg") is None,
-    reason="ffmpeg is not installed",
-)
+# ffmpeg is a hard dependency of the silence trim; these tests fail loudly
+# without it rather than skipping, because verify forbids tainted suites.
 
-
-@ffmpeg_present
 def test_trim_removes_surrounding_silence_and_keeps_the_tone() -> None:
     with_silence = _wav_bytes((1.0, 0.0), (0.5, 0.9), (1.0, 0.0))
 
@@ -140,7 +134,6 @@ def test_trim_removes_surrounding_silence_and_keeps_the_tone() -> None:
     _run(exercise)
 
 
-@ffmpeg_present
 def test_a_clip_that_is_entirely_silence_is_declared_silent() -> None:
     silence = _wav_bytes((2.0, 0.0))
 
@@ -176,10 +169,7 @@ def test_a_silent_clip_is_answered_empty_without_a_provider_call() -> None:
         )
         assert transcript == ""
 
-    if Path(FFMPEG_PATH).exists():
-        _run(exercise)
-    else:
-        pytest.skip("ffmpeg is not installed")
+    _run(exercise)
 
 
 def test_transcribing_without_a_key_is_refused_before_anything_runs() -> None:

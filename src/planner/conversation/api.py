@@ -77,12 +77,12 @@ from planner.conversation.snapshot import (
     BackendUpdateResult,
 )
 from planner.conversation.storage import ConversationStore, StoredConversationEvent
+from planner.conversation.system import SqliteProcessConversationSystem
 from planner.conversation.voice_transcription import (
     VoiceTranscriptionFailed,
     VoiceTranscriptionUnconfigured,
     transcribe_conversation_audio,
 )
-from planner.conversation.system import SqliteProcessConversationSystem
 from planner.core.sse import HEARTBEAT_FRAME, register_open_stream_closer
 
 # The two things a tail carries, told apart by name so a browser never has to guess which
