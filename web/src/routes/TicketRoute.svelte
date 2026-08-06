@@ -18,6 +18,7 @@
   } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
+  import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
     readBackends,
     type BackendSnapshot,
@@ -94,7 +95,7 @@
       return;
     }
     seededConversationStateFromStatus = true;
-    conversationState = status === "paired" ? "opened" : "rest";
+    conversationState = initialTicketConversationState(status);
   });
 
   /** A click outside the conversation dismisses it to rest. */
@@ -323,9 +324,13 @@
     return null;
   }
 
+  function conversationWorkerTypeLabel(detail: TicketDetail): string {
+    return lc?.workerTypeLabel ?? labelize(detail.worker_type);
+  }
+
   function conversationEmployeeLabel(detail: TicketDetail): string {
-    const workerLabel = lc?.workerTypeLabel ?? labelize(detail.worker_type);
-    return /worker$/i.test(workerLabel) ? workerLabel : `${workerLabel} worker`;
+    const workerTypeLabel = conversationWorkerTypeLabel(detail);
+    return /worker$/i.test(workerTypeLabel) ? workerTypeLabel : `${workerTypeLabel} worker`;
   }
 
   // The Kickoff approval card still carries Worker configuration while that
@@ -577,6 +582,7 @@
                         lifecycle={lc}
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
+                        suggestedNextCeiling={detail.suggested_next_ceiling}
                         emptyText={emptyTicketFieldText}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
@@ -613,6 +619,7 @@
                   lifecycle={lc}
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
+                  suggestedNextCeiling={detail.suggested_next_ceiling}
                   emptyText={emptyTicketFieldText}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}
@@ -641,7 +648,8 @@
             bind:conversationState
             conversationId={detail.conversation_id}
             ticketId={detail.id}
-            label={conversationEmployeeLabel(detail)}
+            label={conversationWorkerTypeLabel(detail)}
+            composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             backends={conversationBackends}
             startValues={conversationStartValues.data ?? null}
             senderLabel="owner"

@@ -151,6 +151,7 @@ export type WorkerManagementSummary = {
   worker_type: string;
   label: string;
   specialist_skill_name: string;
+  suggested_next_ceiling: string;
   stage_ownership_defaults: Record<string, StageOwnershipMode>;
   launch_defaults: EmployeeConfigurationSnapshot;
 };
@@ -173,6 +174,7 @@ export type ChiefManagementSettings = {
 
 export type WorkerManagementSettings = {
   worker_type: string;
+  suggested_next_ceiling: string;
   stage_ownership_defaults: Record<string, StageOwnershipMode>;
   specialist_skill: ManagedSkill;
   launch_defaults: EmployeeConfigurationSnapshot;
@@ -208,6 +210,7 @@ export type TicketDetail = {
   stage: string;
   ceiling: string;
   at_cap: string;
+  suggested_next_ceiling: string;
   priority: string;
   deadline?: string | null;
   project_id?: string | null;

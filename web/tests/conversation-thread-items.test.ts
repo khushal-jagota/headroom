@@ -20,6 +20,7 @@ import { messageContentText, type ConversationEvent } from "../src/lib/conversat
 import {
   agentMessageEvent,
   permissionAskedEvent,
+  planUpdatedEvent,
   promptEvent,
   toolCallFinishedEvent,
   toolCallStartedEvent,
@@ -187,6 +188,45 @@ describe("Conversation thread items", () => {
       foldedMessageCount: 0
     });
     expect(rows(items).map((item) => item.behindTheFoldOf)).toEqual([null, null, null]);
+  });
+
+  it.each([
+    [
+      "plan update",
+      planUpdatedEvent(3, [{ text: "Inspect the result", status: "in_progress" }])
+    ],
+    [
+      "token usage",
+      {
+        conversation_id: "c1",
+        sequence: 3,
+        kind: "token_usage" as const,
+        payload: { input_tokens: 41_000, output_tokens: 920 },
+        created_at: 1_700_000_000
+      }
+    ]
+  ])("keeps one work run across a hidden %s row", (_label, hiddenEvent) => {
+    const items = itemsFrom([
+      promptEvent(1, "go"),
+      toolCallStartedEvent(2, { toolCallId: "t1", title: "One" }),
+      hiddenEvent,
+      toolCallStartedEvent(4, { toolCallId: "t2", title: "Two" })
+    ]);
+
+    expect(workGroups(items).map((group) => group.entries.map((entry) => entry.title)))
+      .toEqual([["One", "Two"]]);
+  });
+
+  it("keeps an agent message as a visible boundary between work runs", () => {
+    const items = itemsFrom([
+      promptEvent(1, "go"),
+      toolCallStartedEvent(2, { toolCallId: "t1", title: "One" }),
+      agentMessageEvent(3, "still working"),
+      toolCallStartedEvent(4, { toolCallId: "t2", title: "Two" })
+    ]);
+
+    expect(workGroups(items).map((group) => group.entries.map((entry) => entry.title)))
+      .toEqual([["One"], ["Two"]]);
   });
 
   it("retains interrupted answers but leaves a silent tool-only turn with no answer", () => {

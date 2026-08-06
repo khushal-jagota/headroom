@@ -372,6 +372,11 @@ def context_factory(browser: Browser) -> Iterator[Callable[[], BrowserContext]]:
     yield make
 
     for ctx in contexts:
+        # A route handler can still await route.fetch() after the test's last visible
+        # assertion. Wait for those handlers before closing their context, or Playwright
+        # can dispose the response while the next test creates its context.
+        if ctx.pages:
+            ctx.unroute_all(behavior="wait")
         ctx.close()
 
 

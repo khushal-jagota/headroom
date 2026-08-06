@@ -38,3 +38,6 @@ These are standing rules. They apply unless a live owner decision overrides them
 - Requirements and design decisions are stated concretely — decisions with criteria, never vibes or open qualifiers.
 - Acceptance tests assert specific stated values, never vibes. Tests evolve deliberately with the design; when one changes, the change is intentional and recorded on the owning ticket, never a silent weakening.
 - Verification means running the check fresh and showing full output. Results are never asserted from memory.
+- End-to-end tests exist only for a material risk that requires a real browser and live server together. Use a frontend, unit, or integration test when that cheaper layer proves the same contract.
+- A Ticket plan or review that adds or changes end-to-end coverage states the material risk, the exercised boundary, and why cheaper layers cannot prove it.
+- Keep the smallest end-to-end proof that protects the risk. Do not use end-to-end tests for route catalogs, presentation details, exact geometry, or contracts already proved at a lower layer.

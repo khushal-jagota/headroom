@@ -30,7 +30,6 @@ const componentDirectory = new URL("../src/components/conversation/", import.met
 
 const expectedInventory = [
   "AgentCommandMenu.svelte",
-  "BackendCard.svelte",
   "BackendMark.svelte",
   "ConversationComposer.svelte",
   "ConversationPane.svelte",
@@ -41,10 +40,11 @@ const expectedInventory = [
   "NewConversationForm.svelte",
   "PermissionAskActions.svelte",
   "PermissionAskCard.svelte",
-  "PlanStrip.svelte",
+  "TaskProgress.svelte",
   "ToolCallRow.svelte",
   "TurnAnchor.svelte",
   "UnifiedModelPicker.svelte",
+  "UsageRings.svelte",
   "UserInputQuestionPanel.svelte",
   "WorkGroup.svelte"
 ];
@@ -56,7 +56,8 @@ assert.deepEqual(inventory, expectedInventory);
 const sourceFiles = [
   ...inventory,
   "viewport/ConversationViewport.svelte",
-  "composer/ComposerRunControls.svelte"
+  "composer/ComposerRunControls.svelte",
+  "composer/HeldPromptStack.svelte"
 ];
 const sources = {};
 for (const fileName of sourceFiles) {
@@ -85,7 +86,17 @@ const routeSource = await readFile(
   new URL("../src/routes/DevConversationRoute.svelte", import.meta.url),
   "utf8"
 );
+const ticketRouteSource = await readFile(
+  new URL("../src/routes/TicketRoute.svelte", import.meta.url),
+  "utf8"
+);
 const appSource = await readFile(new URL("../src/App.svelte", import.meta.url), "utf8");
+
+assert.match(ticketRouteSource, /label=\{conversationWorkerTypeLabel\(detail\)\}/);
+assert.match(
+  ticketRouteSource,
+  /composerPlaceholder=\{`Message \$\{conversationEmployeeLabel\(detail\)\}\.\.\.`\}/
+);
 
 // The pane is an adaptation of the conversation styles the app already has, not a second set.
 for (const className of [
@@ -110,7 +121,8 @@ assert.match(sources["ConversationTranscript.svelte"], /chat-u|chat-a/);
 // one of them.
 assert.match(sources["MessagePieces.svelte"], /MarkdownBlock/);
 assert.match(sources["ConversationTranscript.svelte"], /MessagePieces/);
-assert.match(sources["composer/ComposerRunControls.svelte"], /chat-seg/);
+assert.match(sources["composer/ComposerRunControls.svelte"], /chat-submit/);
+assert.match(sources["composer/HeldPromptStack.svelte"], /data-conversation-held-row/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
 // The pane that came before this one is gone, and nothing may reach for it.
@@ -223,11 +235,10 @@ try {
       'export { default as Transcript } from "../src/components/conversation/ConversationTranscript.svelte";',
       'export { default as Composer } from "../src/components/conversation/ConversationComposer.svelte";',
       'export { default as AskCard } from "../src/components/conversation/PermissionAskCard.svelte";',
-      'export { default as BackendCard } from "../src/components/conversation/BackendCard.svelte";',
       'export { default as AskActions } from "../src/components/conversation/PermissionAskActions.svelte";',
       'export { default as TurnAnchor } from "../src/components/conversation/TurnAnchor.svelte";',
       'export { default as WorkGroup } from "../src/components/conversation/WorkGroup.svelte";',
-      'export { default as PlanStrip } from "../src/components/conversation/PlanStrip.svelte";',
+      'export { default as TaskProgress } from "../src/components/conversation/TaskProgress.svelte";',
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
       'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
       'export { default as RestBar } from "../src/components/conversation/ConversationRestBar.svelte";',
@@ -248,7 +259,7 @@ try {
       rollupOptions: { output: { entryFileNames: "entry.mjs" } }
     }
   });
-  const { AskActions, AskCard, BackendCard, CommandMenu, Composer, NewForm, Pane, PlanStrip, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
+  const { AskActions, AskCard, CommandMenu, Composer, NewForm, Pane, TaskProgress, RestBar, Transcript, TurnAnchor, WorkGroup } = await import(
     join(ssrDirectory, "entry.mjs")
   );
 
@@ -286,6 +297,17 @@ try {
       knownFate
     };
   }
+  function held(heldPromptId, senderMessageId, text = `text of ${heldPromptId}`) {
+    return {
+      key: `held:${heldPromptId}`,
+      heldPromptId,
+      senderMessageId,
+      content: [{ piece: "text", text }],
+      senderLabel: "owner",
+      sentAtUnixMilliseconds: 1_000,
+      state: "held"
+    };
+  }
 
   // The band is card structure, not an activity row. Before a conversation read has
   // answered — and for a conversation where nothing has happened — it occupies the same
@@ -294,29 +316,32 @@ try {
   assert.match(emptyRestBar, /data-conversation-rest-bar/);
   assert.doesNotMatch(emptyRestBar, /data-conversation-rest-line/);
 
-  const waiting = drawn(Pane, {
-    conversationId: "c1",
-    label: "Worker",
-    outgoingMessages: [
-      outgoing("held", "waiting_for_the_agent"),
-      outgoing("in-flight", "nothing_yet"),
-      outgoing("unanswered", "answer_never_came_back")
+  const waiting = drawn(Composer, {
+    backendKey: "hermes",
+    running: true,
+    heldPromptRows: [
+      held("held", "same"),
+      { ...held("in-flight", "flight"), heldPromptId: null, state: "in_flight" },
+      { ...held("unanswered", "unknown"), heldPromptId: null, state: "unknown" }
     ],
-    onDiscardHeldPrompt: () => undefined
+    onDiscardHeldPrompt: () => undefined,
+    onPromoteHeldPrompt: () => undefined,
+    onSend: async () => true
   });
-  assert.match(waiting, /data-conversation-outgoing-discard="held"/);
-  assert.doesNotMatch(waiting, /data-conversation-outgoing-discard="in-flight"/);
-  assert.doesNotMatch(waiting, /data-conversation-outgoing-discard="unanswered"/);
+  assert.match(waiting, /data-conversation-held-discard="held"/);
+  assert.match(waiting, /data-conversation-held-promote="send_now"/);
+  assert.match(waiting, /data-conversation-held-promote="steer"/);
+  assert.match(waiting, /sending/);
+  assert.match(waiting, /no answer came/);
 
   // A caller that cannot take a message back is not offered the control at all, rather
   // than offered one that does nothing.
-  const noDiscard = drawn(Pane, {
-    conversationId: "c1",
-    label: "Worker",
-    outgoingMessages: [outgoing("held", "waiting_for_the_agent")]
+  const noDiscard = drawn(Composer, {
+    heldPromptRows: [{ ...held("local", "local"), heldPromptId: null }],
+    onSend: async () => true
   });
-  assert.match(noDiscard, /data-conversation-outgoing="held"/);
-  assert.doesNotMatch(noDiscard, /data-conversation-outgoing-discard/);
+  assert.match(noDiscard, /data-conversation-held-row="held:local"/);
+  assert.doesNotMatch(noDiscard, /data-conversation-held-discard="local"/);
 
   const optimisticPicture = drawn(Pane, {
     conversationId: "c1",
@@ -339,6 +364,69 @@ try {
   assert.match(optimisticPicture, /data-conversation-piece-outgoing="true"/);
   assert.match(optimisticPicture, /src="data:image\/png;base64,AQID"/);
   assert.match(optimisticPicture, /alt="optimistic.png"/);
+
+  const openedPane = drawn(Pane, {
+    conversationId: "c1",
+    label: "Product Design",
+    workspaceFolder: "/home/vps/Coding/a-long-workspace-name",
+    conversationState: "opened",
+    composerPlaceholder: "Message Product Design worker...",
+    running: true,
+    onSend: async () => true
+  });
+  assert.match(openedPane, /class="chat-lbl">Product Design</);
+  assert.doesNotMatch(openedPane, /class="chat-state/);
+  assert.doesNotMatch(openedPane, /class="chat-usage"/);
+  assert.match(openedPane, /Message Product Design worker/);
+
+  const peekedPane = drawn(Pane, {
+    conversationId: "c1",
+    label: "Product Design",
+    workspaceFolder: "/home/vps/Coding",
+    conversationState: "peeked",
+    running: true,
+    onSend: async () => true
+  });
+  assert.match(peekedPane, /class="chat-lbl">Product Design worker/);
+  assert.match(peekedPane, /class="chat-state[^>]*>working/);
+  assert.match(peekedPane, /class="chat-usage" data-conversation-workspace/);
+
+  const activePlanRows = [
+    {
+      key: "prompt",
+      kind: "prompt",
+      sequence: 1,
+      createdAt: 1,
+      content: [{ piece: "text", text: "work" }],
+      senderLabel: "owner",
+      mode: "run_when_free",
+      sentAtUnixMilliseconds: 1_000
+    },
+    {
+      key: "plan",
+      kind: "plan_updated",
+      sequence: 2,
+      createdAt: 2,
+      entries: [{ text: "do it", status: "in_progress" }]
+    }
+  ];
+  for (const takeover of [
+    { ask: { askId: "a1", title: "Allow it?", detail: null, options: [] } },
+    { userInput: { requestId: "u1", questions: [] } }
+  ]) {
+    const waitingOnPerson = drawn(Pane, {
+      conversationId: "c1",
+      label: "Coding",
+      conversationState: "peeked",
+      rows: activePlanRows,
+      running: true,
+      ...takeover,
+      onSend: async () => true
+    });
+    assert.match(waitingOnPerson, /data-conversation-task-strip/);
+    assert.match(waitingOnPerson, /data-conversation-task-progress/);
+    assert.doesNotMatch(waitingOnPerson, /acp-spin/);
+  }
 
   // A message that holds a picture draws the picture, on both sides of the thread, and
   // fetches it from the conversation that kept it. A transcript that drew only the words
@@ -732,43 +820,44 @@ try {
   // and its own row already says what happened.
   assert.equal(drawn(TurnAnchor, { settled: true, stopped: true, toolCallCount: 0 }).trim(), "");
 
-  // FINDING 8 — the plan reads as a count you can open, in the old strip's own vocabulary.
+  // The plan reads as the current ordinal and opens without becoming thread history.
   const plan = [
     { text: "read the code", status: "completed" },
     { text: "write it", status: "in_progress" },
     { text: "test it", status: "pending" }
   ];
-  const strip = drawn(PlanStrip, { entries: plan });
-  assert.match(strip, /1 \/ 3 tasks/);
+  const progress = {
+    entries: plan,
+    currentPosition: 2,
+    currentEntry: plan[1],
+    completedCount: 1,
+    hasUnfinishedEntry: true,
+    turnRunning: true
+  };
+  const strip = drawn(TaskProgress, { progress, variant: "strip" });
+  assert.match(strip, /2 \/ 3 tasks/);
   assert.match(strip, /aria-label="1 of 3 tasks complete"/);
-  assert.doesNotMatch(strip, /data-conversation-plan-list/, "the checklist starts closed");
-  assert.equal(drawn(PlanStrip, { entries: [] }).trim(), "", "no plan, no strip");
+  assert.match(strip, /data-conversation-task-list/);
+  assert.match(strip, /acp-spin/);
+  const idleStrip = drawn(TaskProgress, { progress, variant: "strip", running: false });
+  assert.match(idleStrip, /data-conversation-task-strip/);
+  assert.doesNotMatch(idleStrip, /data-conversation-task-progress/);
+  assert.doesNotMatch(drawn(TurnAnchor, { settled: true, toolCallCount: 0 }), /task-progress/);
 
-  // It survives its turn: a settled anchor with no tool calls still carries the plan.
-  const settledWithPlan = drawn(TurnAnchor, { settled: true, toolCallCount: 0, plan });
-  assert.match(settledWithPlan, /data-conversation-plan/);
-  assert.match(settledWithPlan, /1 \/ 3 tasks/);
-  assert.doesNotMatch(settledWithPlan, /data-conversation-alive/);
-  const runningWithPlan = drawn(TurnAnchor, { settled: false, plan });
-  assert.match(runningWithPlan, /data-conversation-alive/);
-  assert.match(runningWithPlan, /data-conversation-plan/);
-
-  // Steering is offered to hermes and to nobody else.
+  // Mid-turn keeps separate Stop and Send controls. Delivery is chosen on held rows.
   const hermesComposer = drawn(Composer, {
     backendKey: "hermes",
     running: true,
     onSend: async () => true
   });
-  assert.match(hermesComposer, /data-conversation-delivery-mode="steer"/);
+  assert.doesNotMatch(hermesComposer, /data-conversation-delivery/);
+  assert.match(hermesComposer, /data-conversation-stop="true"/);
+  assert.match(hermesComposer, /data-conversation-send="true"/);
   for (const backendKey of ["codex", "claude"]) {
     const composer = drawn(Composer, { backendKey, running: true, onSend: async () => true });
-    assert.match(composer, /data-conversation-delivery-mode="run_when_free"/);
-    assert.match(composer, /data-conversation-delivery-mode="send_now"/);
-    assert.doesNotMatch(
-      composer,
-      /data-conversation-delivery-mode="steer"/,
-      `${backendKey} must not be offered steering`
-    );
+    assert.doesNotMatch(composer, /data-conversation-delivery/);
+    assert.match(composer, /data-conversation-stop="true"/);
+    assert.match(composer, /data-conversation-send="true"/);
   }
 
   // Idle, there is nothing to choose: a message runs.
@@ -779,7 +868,6 @@ try {
   });
   assert.doesNotMatch(idleComposer, /data-conversation-delivery/);
   assert.match(idleComposer, /data-conversation-send="true"/);
-  assert.match(hermesComposer, /data-conversation-stop="true"/);
 
   // The ask takes the composer over: the input is shut and the ask's own words replace it.
   const askedComposer = drawn(Composer, {
@@ -899,7 +987,7 @@ try {
     backendKey: "hermes",
     running: false,
     effortOptions: [],
-    models: [{ model_id: "m1", display_name: "One" }],
+    models: [{ model_id: "m1", display_name: "One", enabled: true }],
     onSend: async () => true
   });
   assert.equal((hermesPicker.match(/data-conversation-model-picker/g) ?? []).length, 1);
@@ -912,8 +1000,8 @@ try {
     running: false,
     effortOptions: ["low", "high"],
     models: [
-      { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] },
-      { model_id: "opus", display_name: "Opus" }
+      { model_id: "haiku", display_name: "Haiku", enabled: true, reasoning_effort_options: [] },
+      { model_id: "opus", display_name: "Opus", enabled: true }
     ],
     current: { model: "haiku", reasoningEffort: null },
     onSend: async () => true
@@ -928,7 +1016,7 @@ try {
   const claudeFresh = newForm({
     backend_key: "claude",
     installed: true,
-    available_models: [{ model_id: "opus", display_name: "Opus" }],
+    available_models: [{ model_id: "opus", display_name: "Opus", enabled: true }],
     reasoning_effort_options: ["low", "high"],
     default_model_id: "opus",
     default_reasoning_effort: null,
@@ -939,7 +1027,7 @@ try {
   const hermesFresh = newForm({
     backend_key: "hermes",
     installed: true,
-    available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5" }],
+    available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5", enabled: true }],
     reasoning_effort_options: [],
     default_model_id: "gpt-5.5",
     default_reasoning_effort: null,
@@ -952,7 +1040,7 @@ try {
     backendKey: "claude",
     running: false,
     effortOptions: ["low", "high"],
-    models: [{ model_id: "opus", display_name: "Opus" }],
+    models: [{ model_id: "opus", display_name: "Opus", enabled: true }],
     current: { model: "opus", reasoningEffort: "high" },
     onSend: async () => true
   });
@@ -964,7 +1052,7 @@ try {
     backendKey: "claude",
     running: false,
     effortOptions: ["low", "high"],
-    models: [{ model_id: "opus", display_name: "Opus 5", detail: "opus → claude-opus-5" }],
+    models: [{ model_id: "opus", display_name: "Opus 5", enabled: true, detail: "opus → claude-opus-5" }],
     current: { model: "opus", reasoningEffort: "high" },
     onSend: async () => true
   });
@@ -992,8 +1080,8 @@ try {
     conversationExists: false,
     running: false,
     models: [
-      { model_id: "opus", display_name: "Opus 5" },
-      { model_id: "sonnet", display_name: "Sonnet 5" }
+      { model_id: "opus", display_name: "Opus 5", enabled: true },
+      { model_id: "sonnet", display_name: "Sonnet 5", enabled: true }
     ],
     effortOptions: ["low", "high"],
     current: { model: null, reasoningEffort: null },
@@ -1010,8 +1098,8 @@ try {
     conversationExists: true,
     running: false,
     models: [
-      { model_id: "opus", display_name: "Opus 5" },
-      { model_id: "sonnet", display_name: "Sonnet 5" }
+      { model_id: "opus", display_name: "Opus 5", enabled: true },
+      { model_id: "sonnet", display_name: "Sonnet 5", enabled: true }
     ],
     effortOptions: ["low", "high"],
     current: { model: "opus", reasoningEffort: "low" },
@@ -1027,92 +1115,12 @@ try {
     backendKey: "claude",
     conversationExists: false,
     running: false,
-    models: [{ model_id: "opus", display_name: "Opus 5" }],
+    models: [{ model_id: "opus", display_name: "Opus 5", enabled: true }],
     effortOptions: ["low", "high"],
     current: { model: null, reasoningEffort: null },
     onSend: async () => true
   });
   assert.match(beforeAnybodyAnswers, /aria-label="Model: Claude"/);
-
-  // A backend card says what is known and names the terminal command when signing in is due.
-  const backendCard = drawn(BackendCard, {
-    snapshot: {
-      backend_key: "codex",
-      installed: true,
-      executable_path: "/usr/local/bin/codex",
-      version: "0.145.0",
-      identity: {
-        status: "unauthenticated",
-        account_label: null,
-        detail: null,
-        login_command: "codex login"
-      },
-      available_models: [],
-      reasoning_effort_options: [],
-      update_advisory: {
-        install_method: "npm_global",
-        update_command: "npm install -g @openai/codex@latest",
-        latest_version: "0.146.0",
-        update_available: true,
-        detail: "Version 0.146.0 is available."
-      },
-      diagnoses: ["`codex` is not signed in. Run `codex login` in a terminal."]
-    },
-    usageResult: {
-      backend_key: "codex",
-      outcome: "succeeded",
-      detail: null,
-      observed_at: "2026-07-31T12:34:56Z",
-      windows: [
-        { name: "5 hours", used_percent: 12.5, resets_at: "2026-07-31T15:00:00Z" }
-      ]
-    },
-    onUsageRefresh() {},
-    onUpdate() {}
-  });
-  assert.match(backendCard, /not signed in · run codex login in a terminal/);
-  assert.match(backendCard, /Version 0\.146\.0 is available\./);
-  assert.match(backendCard, /data-conversation-backend-update="codex"/);
-  assert.match(backendCard, /data-conversation-backend-usage-refresh="codex"/);
-  assert.match(backendCard, /data-conversation-backend-usage="succeeded"/);
-  assert.match(backendCard, /12\.5% used/);
-  assert.match(backendCard, /is not signed in\. Run `codex login` in a terminal\./);
-
-  const updatedCard = drawn(BackendCard, {
-    snapshot: {
-      backend_key: "hermes",
-      installed: true,
-      executable_path: "/opt/hermes",
-      version: "0.18.2",
-      identity: null,
-      available_models: [{ model_id: "m1", display_name: "One" }],
-      reasoning_effort_options: [],
-      update_advisory: {
-        install_method: "manual_only",
-        update_command: null,
-        latest_version: null,
-        update_available: false,
-        detail: "Hermes is installed from its own checkout."
-      },
-      diagnoses: []
-    },
-    result: { outcome: "unchanged", detail: "still 0.18.2", output_tail: "" },
-    onUsageRefresh() {},
-    onUpdate() {}
-  });
-  assert.match(updatedCard, /no account to sign in to/);
-  assert.match(updatedCard, /this backend has no such setting/);
-  assert.match(updatedCard, /data-conversation-backend-result="unchanged"/);
-  assert.doesNotMatch(
-    updatedCard,
-    /data-conversation-backend-update/,
-    "no button is offered for an update Panels cannot run"
-  );
-  assert.doesNotMatch(
-    updatedCard,
-    /data-conversation-backend-usage-refresh/,
-    "Hermes has no provider allowance to acquire"
-  );
 
   // The command menu draws what the agent reported and nothing else: the name a person
   // types, what the backend said it does, and the argument where it named one.
@@ -1180,7 +1188,9 @@ try {
     `
 <script lang="ts">
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
+  import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
   import ConversationTranscript from "../src/components/conversation/ConversationTranscript.svelte";
+  import TaskProgress from "../src/components/conversation/TaskProgress.svelte";
   import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
   import UserInputQuestionPanel from "../src/components/conversation/UserInputQuestionPanel.svelte";
 
@@ -1250,7 +1260,7 @@ try {
     {
       backend_key: "hermes",
       installed: true,
-      available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5" }],
+      available_models: [{ model_id: "gpt-5.5", display_name: "GPT-5.5", enabled: true }],
       reasoning_effort_options: [],
       default_model_id: "gpt-5.5",
       diagnoses: []
@@ -1259,8 +1269,8 @@ try {
       backend_key: "codex",
       installed: true,
       available_models: [
-        { model_id: "gpt-5.5-codex", display_name: "GPT-5.5 Codex" },
-        { model_id: "gpt-5.5-codex-mini", display_name: "GPT-5.5 Codex mini" }
+        { model_id: "gpt-5.5-codex", display_name: "GPT-5.5 Codex", enabled: true },
+        { model_id: "gpt-5.5-codex-mini", display_name: "GPT-5.5 Codex mini", enabled: true }
       ],
       reasoning_effort_options: ["low", "high"],
       default_model_id: "gpt-5.5-codex",
@@ -1271,9 +1281,9 @@ try {
       backend_key: "claude",
       installed: true,
       available_models: [
-        { model_id: "opus", display_name: "Opus", detail: "opus → claude-opus-5" },
-        { model_id: "sonnet", display_name: "Sonnet" },
-        { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] }
+        { model_id: "opus", display_name: "Opus", enabled: true, detail: "opus → claude-opus-5" },
+        { model_id: "sonnet", display_name: "Sonnet", enabled: true },
+        { model_id: "haiku", display_name: "Haiku", enabled: true, reasoning_effort_options: [] }
       ],
       reasoning_effort_options: ["low", "high"],
       default_model_id: "opus",
@@ -1428,9 +1438,9 @@ try {
     current={{ model: null, reasoningEffort: null }}
     startsOnModel="opus"
     models={[
-      { model_id: "opus", display_name: "Opus", detail: "opus → claude-opus-5" },
-      { model_id: "sonnet", display_name: "Sonnet" },
-      { model_id: "haiku", display_name: "Haiku", reasoning_effort_options: [] }
+      { model_id: "opus", display_name: "Opus", enabled: true, detail: "opus → claude-opus-5" },
+      { model_id: "sonnet", display_name: "Sonnet", enabled: true },
+      { model_id: "haiku", display_name: "Haiku", enabled: true, reasoning_effort_options: [] }
     ]}
     effortOptions={["low", "high"]}
     {availableCommands}
@@ -1441,10 +1451,41 @@ try {
   />
 {/if}
 
+<div data-top-bar-fixture style="width: 100%; max-width: 700px; height: 360px;">
+  <div class="ticket-conversation-layer" style="height: 100%;">
+    <div class="ticket-conversation-column">
+      <ConversationPane
+        conversationId="top-bar"
+        label="Product Design"
+        workspaceFolder="/home/vps/Coding/a-long-workspace-name-that-wraps"
+        conversationExists={true}
+        conversationState="opened"
+        composerPlaceholder="Message Product Design worker..."
+        running={true}
+        {onSend}
+      />
+    </div>
+  </div>
+</div>
+
 <ConversationTranscript rows={settledRows} ownSenderLabel="owner" />
 
 <div data-running-thread>
   <ConversationTranscript rows={runningRows} ownSenderLabel="owner" />
+</div>
+
+<div data-task-progress-fixture>
+  <TaskProgress
+    variant="strip"
+    progress={{
+      entries: runningRows.find((row) => row.kind === "plan_updated")?.entries ?? [],
+      currentPosition: 2,
+      currentEntry: { text: "write it", status: "in_progress" },
+      completedCount: 1,
+      hasUnfinishedEntry: true,
+      turnRunning: true
+    }}
+  />
 </div>
 
 <PermissionAskCard ask={question} onAnswer={(optionId) => answers.push(optionId)} />
@@ -1510,6 +1551,74 @@ with sync_playwright() as playwright:
     page = browser.new_page()
     page.set_default_timeout(5_000)
     page.goto(sys.argv[1], wait_until="domcontentloaded")
+    page.add_style_tag(path="assets/tokens.css")
+    page.add_style_tag(path="assets/app.css")
+
+    # The opened top bar matches the approved desktop geometry. Its content keeps the
+    # complete worker phrase only where that phrase tells the person who receives a message.
+    top_bar_fixture = page.locator("[data-top-bar-fixture]")
+    top_bar = top_bar_fixture.locator(".chat-head")
+    top_bar_label = top_bar.locator(".chat-lbl")
+    top_bar_buttons = top_bar.locator(".chat-overflow-btn")
+    assert top_bar.bounding_box()["height"] == 44, top_bar.bounding_box()
+    assert top_bar_label.inner_text() == "Product Design", top_bar_label.inner_text()
+    assert top_bar.locator(".chat-state").count() == 0
+    assert top_bar.locator(".chat-usage").count() == 0
+    assert top_bar_buttons.count() == 2
+    for button_index in range(2):
+        box = top_bar_buttons.nth(button_index).bounding_box()
+        assert box["width"] == 32 and box["height"] == 32, box
+        assert top_bar_buttons.nth(button_index).evaluate(
+            "element => getComputedStyle(element).fontSize"
+        ) == "17px"
+    assert top_bar.locator(".chat-head-right").evaluate(
+        "element => getComputedStyle(element).columnGap"
+    ) == "4px"
+    assert top_bar.locator(".chat-head-right").evaluate(
+        "element => getComputedStyle(element).marginRight"
+    ) == "-8px"
+    assert top_bar_fixture.locator("[data-conversation-input]").get_attribute(
+        "placeholder"
+    ) == "Message Product Design worker..."
+
+    options = top_bar_fixture.get_by_role("button", name="Conversation options")
+    options.click()
+    popup = top_bar_fixture.locator(".chat-overflow-menu")
+    menu = popup.get_by_role("menu")
+    path = popup.locator("[data-conversation-workspace]")
+    assert menu.get_by_role("menuitem").count() == 1
+    assert menu.locator("[data-conversation-workspace]").count() == 0
+    assert path.inner_text() == "/home/vps/Coding/a-long-workspace-name-that-wraps"
+    assert path.get_attribute("role") is None
+    assert path.evaluate("element => element.tabIndex") == -1
+    options.press("Escape")
+    page.wait_for_selector("[data-top-bar-fixture] [role=menu]", state="detached")
+
+    # Phone width keeps the row and both targets. The label, not the controls, yields.
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert top_bar.bounding_box()["height"] == 44, top_bar.bounding_box()
+    assert [
+        (top_bar_buttons.nth(index).bounding_box()["width"],
+         top_bar_buttons.nth(index).bounding_box()["height"])
+        for index in range(2)
+    ] == [(32, 32), (32, 32)]
+    assert top_bar.locator(".chat-head-right").evaluate(
+        "element => getComputedStyle(element).columnGap"
+    ) == "4px"
+    assert top_bar.locator(".chat-head-right").evaluate(
+        "element => getComputedStyle(element).marginRight"
+    ) == "-8px"
+    assert top_bar.bounding_box()["x"] >= 0
+    assert top_bar.bounding_box()["x"] + top_bar.bounding_box()["width"] <= 390
+    options.click()
+    path = top_bar_fixture.locator(".chat-overflow-menu [data-conversation-workspace]")
+    path_box = path.bounding_box()
+    line_height = float(path.evaluate("element => getComputedStyle(element).lineHeight").replace("px", ""))
+    assert path_box["height"] > line_height, path_box
+    options.press("Escape")
+    page.reload(wait_until="domcontentloaded")
+    page.locator("[data-top-bar-fixture]").evaluate("element => element.remove()")
+    page.set_viewport_size({"width": 1280, "height": 720})
 
     # FINDING 11 — the pickers show the concrete value already in force, unlabelled, and
     # the word "default" appears nowhere in them.
@@ -1566,7 +1675,7 @@ with sync_playwright() as playwright:
         "data-conversation-image",
         "data-conversation-image-input",
         "data-conversation-picker-model",
-        "data-conversation-send",
+        "div",
     ], footer_child_roles()
 
     assert face(model) == "Opus", face(model)
@@ -1982,21 +2091,22 @@ with sync_playwright() as playwright:
         "opening one batch leaves the other alone"
     )
 
-    # FINDING 8 — the plan is a count that opens into the checklist.
-    pill = running.locator("[data-conversation-plan-pill]")
+    # The conversation plan is status beside the thread, not a row inside it.
+    progress_fixture = page.locator("[data-task-progress-fixture]")
+    pill = progress_fixture.locator("[data-conversation-task-progress]")
     assert pill.count() == 1
-    assert "1 / 2 tasks" in pill.inner_text(), pill.inner_text()
-    assert running.locator("[data-conversation-plan-list]").count() == 0
-    pill.click()
+    assert "2 / 2 tasks" in pill.inner_text(), pill.inner_text()
+    checklist = progress_fixture.locator("[data-conversation-task-list]")
+    assert not checklist.is_visible()
+    pill.hover(force=True)
     page.wait_for_function(
-        "document.querySelectorAll('[data-conversation-plan-list]').length === 1"
+        "getComputedStyle(document.querySelector('[data-conversation-task-list]')).display === 'grid'"
     )
-    marks = running.locator("[data-conversation-plan-status]").all_inner_texts()
+    marks = progress_fixture.locator("[data-conversation-task-status]").all_inner_texts()
     assert "read the code" in marks[0], marks
-    pill.click()
-    page.wait_for_function(
-        "document.querySelectorAll('[data-conversation-plan-list]').length === 0"
-    )
+    checklist.hover()
+    assert checklist.is_visible(), "hovering the checklist holds it open"
+    assert running.locator("[data-conversation-task-progress]").count() == 0
 
     # A question is answered by its number key as well as by its row.
     page.keyboard.press("2")
@@ -2222,47 +2332,46 @@ with sync_playwright() as playwright:
     assert "agent" not in nothing_to_offer.lower(), nothing_to_offer
     assert page.evaluate("window.__sends().length") == sent_before_the_menu
 
-    # A steer cannot consume a model or effort change: it joins a turn already running
-    # under its own values. The picks stay visible and ride the next ordinary send.
+    # Mid-turn the composer keeps both actions. Enter and the arrow always queue by default.
     box.fill("")
     page.wait_for_selector("[data-conversation-commands]", state="detached")
     page.evaluate("window.__setExists(true)")
     page.evaluate("window.__setComposerRunState('hermes', true)")
-    page.wait_for_selector('[data-conversation-delivery-mode="steer"]')
+    page.wait_for_selector('[data-conversation-stop]')
+    assert page.locator("[data-conversation-delivery]").count() == 0
+    assert page.locator("[data-conversation-send]").count() == 1
     assert footer_child_roles() == [
         "data-conversation-slash",
         "data-conversation-image",
         "data-conversation-image-input",
         "data-conversation-picker-model",
-        "data-conversation-delivery",
-        "data-conversation-stop",
+        "div",
     ], footer_child_roles()
     pick(model, "sonnet")
     pick(effort, "low")
-    page.locator('[data-conversation-delivery-mode="steer"]').click()
-    send_count_before_steer = page.evaluate("window.__sends().length")
-    box.fill("join the running turn")
+    send_count_before_queue = page.evaluate("window.__sends().length")
+    box.fill("wait behind the running turn")
     box.press("Enter")
     page.wait_for_function(
-        f"window.__sends().length === {send_count_before_steer + 1}"
+        f"window.__sends().length === {send_count_before_queue + 1}"
     )
-    steered = page.evaluate("window.__sends().at(-1)")
-    assert steered["mode"] == "steer", steered
-    assert steered["picked"]["model"] == "sonnet", steered
-    assert steered["picked"]["reasoningEffort"] == "low", steered
-    assert face(model) == "Sonnet low", face(model)
+    queued = page.evaluate("window.__sends().at(-1)")
+    assert queued["mode"] == "run_when_free", queued
+    assert queued["picked"]["model"] == "sonnet", queued
+    assert queued["picked"]["reasoningEffort"] == "low", queued
+    assert face(model) == "Opus", face(model)
 
     page.evaluate("window.__setComposerRunState('hermes', false)")
-    page.wait_for_selector("[data-conversation-delivery]", state="detached")
-    box.fill("use those picks next")
+    page.wait_for_selector("[data-conversation-stop]", state="detached")
+    box.fill("ordinary next")
     box.press("Enter")
     page.wait_for_function(
-        f"window.__sends().length === {send_count_before_steer + 2}"
+        f"window.__sends().length === {send_count_before_queue + 2}"
     )
     ordinary = page.evaluate("window.__sends().at(-1)")
     assert ordinary["mode"] == "run_when_free", ordinary
-    assert ordinary["picked"]["model"] == "sonnet", ordinary
-    assert ordinary["picked"]["reasoningEffort"] == "low", ordinary
+    assert ordinary["picked"]["model"] is None, ordinary
+    assert ordinary["picked"]["reasoningEffort"] is None, ordinary
     assert face(model) == "Opus", face(model)
 
     # If navigation destroys the composer while a file is still being read, the batch

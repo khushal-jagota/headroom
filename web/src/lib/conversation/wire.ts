@@ -147,6 +147,13 @@ export type AgentCommand = {
   argument_hint: string | null;
 };
 
+export type HeldPrompt = StoredMessageContent & {
+  held_prompt_id: string;
+  sender_message_id?: string | null;
+  sender_label: string;
+  sent_at_unix_milliseconds: number;
+};
+
 /** What a conversation is, what it is doing, and what it is waiting on. */
 export type ConversationView = {
   conversation_id: string;
@@ -159,7 +166,7 @@ export type ConversationView = {
   identity_environment_variable_names: string[];
   latest_sequence: number;
   is_running: boolean;
-  held_prompt_count: number;
+  held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
   available_commands: AgentCommand[];
@@ -264,13 +271,22 @@ export type ConversationEventKind = ConversationEvent["kind"];
 export type ConversationLiveFrame =
   | { frame: "agent_message_delta"; text_delta: string }
   | { frame: "tool_call_progress"; tool_call_id: string; detail: string }
-  | { frame: "model_thinking" };
+  | { frame: "model_thinking" }
+  | { frame: "held_prompts_changed" };
 
 export type PromptDeliveryFate =
   | { fate: "started" }
   | { fate: "queued"; queue_position: number }
   | { fate: "injected" }
   | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason };
+
+export type HeldPromptPromotionResult =
+  | { promoted: false }
+  | ({ promoted: true } & (
+      | { fate: "started" }
+      | { fate: "injected" }
+      | { fate: "refused"; refusal_reason: PromptDeliveryRefusalReason }
+    ));
 
 export type BackendIdentity = {
   status: "authenticated" | "unauthenticated" | "unknown";
@@ -282,6 +298,8 @@ export type BackendIdentity = {
 export type BackendModel = {
   model_id: string;
   display_name: string | null;
+  /** Disabled models remain visible on Backends, but no picker offers them for a run. */
+  enabled: boolean;
   /** What this model really is, when the name alone does not say — an alias and the
    *  version it reaches, for instance. Optional: a catalog that offers none is read the
    *  same way as one that has not started offering them yet. */
@@ -313,6 +331,7 @@ export type BackendSnapshot = {
   default_model_id?: string | null;
   /** The same for reasoning effort. Some backends genuinely name none. */
   default_reasoning_effort?: string | null;
+  cached_usage: BackendCachedUsage | null;
   update_advisory: BackendUpdateAdvisory | null;
   diagnoses: string[];
 };
@@ -324,23 +343,32 @@ export type BackendUpdateResult = {
 };
 
 export type BackendUsageWindow = {
-  name: string;
+  kind: "five_hour" | "seven_day";
   used_percent: number;
   resets_at: string;
+  model_id: string | null;
 };
 
-/** A provider allowance reading acquired only after a person explicitly asks for it.
- *
- * It deliberately does not live on BackendSnapshot: reading the ordinary backend
- * catalogue is ambient application work, while some providers count usage checks
- * against the allowance being inspected.
- */
-export type BackendUsageResult = {
+export type BackendCachedUsage = {
+  observed_at: string;
+  windows: BackendUsageWindow[];
+};
+
+export type BackendUsageRefreshOutcome = {
   backend_key: ConversationBackendKey;
   outcome: "succeeded" | "unavailable" | "unauthenticated" | "failed";
   detail: string | null;
-  observed_at: string | null;
-  windows: BackendUsageWindow[];
+};
+
+export type BackendsRefreshResult = {
+  backends: BackendSnapshot[];
+  usage_outcomes: BackendUsageRefreshOutcome[];
+};
+
+export type BackendModelEnablementResult = {
+  backend_key: ConversationBackendKey;
+  model_id: string;
+  enabled: boolean;
 };
 
 export type StartConversationBody = {
@@ -548,6 +576,18 @@ export function discardHeldPrompt(
   );
 }
 
+export function promoteHeldPrompt(
+  conversationId: string,
+  heldPromptId: string,
+  mode: "send_now" | "steer"
+): Promise<HeldPromptPromotionResult> {
+  return request<HeldPromptPromotionResult>(
+    `/conversations/${encodeURIComponent(conversationId)}`
+      + `/held-prompts/${encodeURIComponent(heldPromptId)}/promote`,
+    postJson({ mode })
+  );
+}
+
 export async function readBackends(refresh = false): Promise<BackendSnapshot[]> {
   const answer = await request<{ backends: BackendSnapshot[] }>(
     `/backends${refresh ? "?refresh=true" : ""}`
@@ -563,12 +603,18 @@ export function updateBackend(
   });
 }
 
-export function refreshBackendUsage(
-  backendKey: ConversationBackendKey
-): Promise<BackendUsageResult> {
-  return request<BackendUsageResult>(
-    `/backends/${encodeURIComponent(backendKey)}/usage-refresh`,
-    { method: "POST" }
+export function refreshBackends(): Promise<BackendsRefreshResult> {
+  return request<BackendsRefreshResult>("/backends/refresh", { method: "POST" });
+}
+
+export function setBackendModelEnabled(
+  backendKey: ConversationBackendKey,
+  modelId: string,
+  enabled: boolean
+): Promise<BackendModelEnablementResult> {
+  return request<BackendModelEnablementResult>(
+    `/backends/${encodeURIComponent(backendKey)}/models/${encodeURIComponent(modelId)}/enablement`,
+    { ...postJson({ enabled }), method: "PUT" }
   );
 }
 

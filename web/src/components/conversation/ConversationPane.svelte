@@ -9,11 +9,14 @@
   import type { Snippet } from "svelte";
   import ConversationComposer from "./ConversationComposer.svelte";
   import ConversationRestBar from "./ConversationRestBar.svelte";
+  import TaskProgress from "./TaskProgress.svelte";
   import ConversationViewport from "./viewport/ConversationViewport.svelte";
   import type { RunValues } from "../../lib/conversation/composer";
   import type { ConversationState } from "../../lib/conversation/conversationState";
   import type { OutgoingMessage } from "../../lib/conversation/outgoing";
+  import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
   import { restLineFrom } from "../../lib/conversation/restLine";
+  import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
     AgentCommand,
@@ -48,7 +51,7 @@
     availableCommands = [],
     startsOnModel = null,
     startsOnReasoningEffort = null,
-    heldPromptCount = 0,
+    heldPromptRows = [],
     fateNote = null,
     errorNote = null,
     connectionTrouble = false,
@@ -63,6 +66,7 @@
     onSubmitUserInput,
     onCancelTurn,
     onDiscardHeldPrompt,
+    onPromoteHeldPrompt,
     onNewConversation,
     ticketId = null
   }: {
@@ -107,7 +111,7 @@
      *  there is none. Its owner resolved them; nothing here reads them. */
     startsOnModel?: string | null;
     startsOnReasoningEffort?: string | null;
-    heldPromptCount?: number;
+    heldPromptRows?: readonly HeldPromptRow[];
     fateNote?: string | null;
     errorNote?: string | null;
     connectionTrouble?: boolean;
@@ -129,6 +133,10 @@
     onCancelTurn?: () => void;
     /** Throw away one message that is still waiting for the agent, by its own id. */
     onDiscardHeldPrompt?: (messageId: string) => void;
+    onPromoteHeldPrompt?: (
+      heldPromptId: string,
+      mode: "send_now" | "steer"
+    ) => Promise<void> | void;
     onNewConversation?: () => void;
   } = $props();
 
@@ -144,9 +152,22 @@
     return null;
   });
 
+  // A layered card still identifies the employee. Full height uses the plain worker type
+  // that its route supplies, while a non-layer conversation uses its label unchanged.
+  let headerLabel = $derived(
+    conversationState === "rest" || conversationState === "peeked"
+      ? /worker$/i.test(label)
+        ? label
+        : `${label} worker`
+      : label
+  );
+
   // Only at rest is there a bar to put it in. Peeked and opened have the turn head.
+  let taskProgress = $derived(taskProgressFrom(rows));
   let restLine = $derived(
-    conversationState === "rest" ? restLineFrom(rows, ownSenderLabel ?? "") : null
+    conversationState === "rest"
+      ? restLineFrom(rows, ownSenderLabel ?? "", { ...taskProgress, turnRunning: running })
+      : null
   );
 
   /** The one control through the states, and what it means where it is standing. */
@@ -174,6 +195,7 @@
     const pressed = event.target;
     if (!(pressed instanceof Element) || paneElement === null) return;
     if (!paneElement.contains(pressed)) return;
+    if (pressed.closest("[data-conversation-task-control], [data-conversation-task-list]")) return;
     if (
       pressed.closest("[data-conversation-input]") === null
       && pressed.closest("[data-conversation-rest-bar]") === null
@@ -222,14 +244,14 @@
     {#if connectionTrouble}
       <span class="chat-conn-dot" role="img" aria-label="Connection trouble"></span>
     {/if}
-    <span class="chat-lbl">{label}</span>
-    {#if headerException}
+    <span class="chat-lbl">{headerLabel}</span>
+    {#if headerException && conversationState !== "opened"}
       <span class={`chat-state ${headerException.accent ? "chat-state--attn" : ""}`}>
         {headerException.text}
       </span>
     {/if}
     <div class="chat-head-right">
-      {#if workspaceFolder}
+      {#if workspaceFolder && conversationState !== "opened"}
         <span class="chat-usage" data-conversation-workspace>{workspaceFolder}</span>
       {/if}
       <!-- One state control survives as its meaning changes, preserving keyboard focus. -->
@@ -255,23 +277,28 @@
           onclick={() => (menuOpen ? closeMenu() : (menuOpen = true))}
         >⋯</button>
         {#if menuOpen}
-          <div class="chat-overflow-menu" role="menu">
-            {#if confirmArmed}
-              <button
-                type="button"
-                class="chat-overflow-item chat-overflow-item--confirm"
-                role="menuitem"
-                data-conversation-new-confirm
-                onclick={confirmNewConversation}
-              >Confirm — this kills the old one</button>
-            {:else}
-              <button
-                type="button"
-                class="chat-overflow-item"
-                role="menuitem"
-                data-conversation-new-arm
-                onclick={() => (confirmArmed = true)}
-              >New conversation</button>
+          <div class="chat-overflow-menu">
+            <div class="chat-overflow-actions" role="menu">
+              {#if confirmArmed}
+                <button
+                  type="button"
+                  class="chat-overflow-item chat-overflow-item--confirm"
+                  role="menuitem"
+                  data-conversation-new-confirm
+                  onclick={confirmNewConversation}
+                >Confirm — this kills the old one</button>
+              {:else}
+                <button
+                  type="button"
+                  class="chat-overflow-item"
+                  role="menuitem"
+                  data-conversation-new-arm
+                  onclick={() => (confirmArmed = true)}
+                >New conversation</button>
+              {/if}
+            </div>
+            {#if conversationState === "opened" && workspaceFolder}
+              <div class="chat-overflow-path" data-conversation-workspace>{workspaceFolder}</div>
             {/if}
           </div>
         {/if}
@@ -289,8 +316,17 @@
     {livenessPulse}
     {conversationState}
     {emptyState}
-    {onDiscardHeldPrompt}
   />
+
+  {#if conversationState === "peeked" || conversationState === "opened"}
+    <TaskProgress
+      progress={taskProgress}
+      variant="strip"
+      {running}
+      moving={running && ask === null && userInput === null}
+      composerGap={conversationState === "opened"}
+    />
+  {/if}
 
   <!-- At rest this one line is the whole conversation visible above the composer. -->
   {#if conversationState === "rest"}
@@ -311,7 +347,7 @@
     {availableCommands}
     {startsOnModel}
     {startsOnReasoningEffort}
-    {heldPromptCount}
+    {heldPromptRows}
     {fateNote}
     {errorNote}
     placeholder={composerPlaceholder}
@@ -323,6 +359,8 @@
     {userInput}
     {onSubmitUserInput}
     {onCancelTurn}
+    {onDiscardHeldPrompt}
+    {onPromoteHeldPrompt}
   />
 </div>
 

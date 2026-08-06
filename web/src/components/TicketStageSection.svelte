@@ -19,6 +19,7 @@
     slot,
     ticketStage,
     ceiling,
+    suggestedNextCeiling = null,
     lifecycle = null,
     stageState = "upcoming",
     variant = "ticket",
@@ -37,6 +38,7 @@
     slot: TicketField;
     ticketStage: string;
     ceiling: string;
+    suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
     stageState?: FieldStageVisualState;
     variant?: "ticket" | "review";
@@ -95,6 +97,7 @@
       proposalBody={slot.proposal?.body || ""}
       proposedBy={slot.proposal?.proposed_by || ""}
       newStage={nextStage}
+      suggestedNextCeiling={name === "kickoff" ? suggestedNextCeiling : null}
       {lifecycle}
       {contextRow}
       disabled={approvalDisabled}

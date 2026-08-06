@@ -251,8 +251,11 @@ def save_skill(
 
 
 def _bootstrap_settings_payload(definition: WorkerTypeDefinition) -> JsonDict:
+    suggested_next_ceiling = definition.advance_target(definition.default_ceiling())
+    assert suggested_next_ceiling is not None
     return {
         "worker_type": definition.worker_type,
+        "suggested_next_ceiling": suggested_next_ceiling,
         "stage_ownership_defaults": {
             stage.id: stage.default_ownership_mode.value
             for stage in definition.stages
@@ -377,6 +380,43 @@ def _settings_launch_defaults(
         settings_payload["launch_defaults"] = resolved_payload
         _atomic_replace_json(settings_path, settings_payload)
     return launch_defaults
+
+
+def _validate_suggested_next_ceiling(
+    raw: object, definition: WorkerTypeDefinition
+) -> str:
+    if not isinstance(raw, str):
+        raise PlannerError(
+            ErrorCode.validation,
+            "suggested next ceiling must be a string",
+            {"worker_type": definition.worker_type},
+        )
+    valid_later_ceilings = definition.ceiling_range()[1:]
+    if raw not in valid_later_ceilings:
+        raise PlannerError(
+            ErrorCode.validation,
+            "suggested next ceiling must be a later Worker stage",
+            {
+                "worker_type": definition.worker_type,
+                "suggested_next_ceiling": raw,
+            },
+        )
+    return raw
+
+
+def _settings_suggested_next_ceiling(
+    settings_path: Path,
+    settings_payload: JsonDict,
+    definition: WorkerTypeDefinition,
+) -> str:
+    if "suggested_next_ceiling" not in settings_payload:
+        stored = definition.advance_target(definition.default_ceiling())
+        assert stored is not None
+        settings_payload["suggested_next_ceiling"] = stored
+        _atomic_replace_json(settings_path, settings_payload)
+    else:
+        stored = settings_payload["suggested_next_ceiling"]
+    return _validate_suggested_next_ceiling(stored, definition)
 
 
 def _ensure_bootstrapped(root: Path, definition: WorkerTypeDefinition) -> None:
@@ -645,6 +685,9 @@ def _read_settings_with_recovery(
         launch_defaults = _settings_launch_defaults(
             settings_path, settings_payload, definition.worker_profile
         )
+        suggested_next_ceiling = _settings_suggested_next_ceiling(
+            settings_path, settings_payload, definition
+        )
         skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
         if not skill_path.is_file():
             raise FileNotFoundError(f"specialist skill source not found: {skill_path}")
@@ -663,6 +706,9 @@ def _read_settings_with_recovery(
         launch_defaults = _settings_launch_defaults(
             settings_path, settings_payload, definition.worker_profile
         )
+        suggested_next_ceiling = _settings_suggested_next_ceiling(
+            settings_path, settings_payload, definition
+        )
         skill_path = _managed_skill_path(root.parent, definition.worker_profile.specialist_skill)
         skill_text = skill_path.read_text(encoding="utf-8")
         skill = _parse_skill(skill_text, definition.worker_profile.specialist_skill)
@@ -670,6 +716,7 @@ def _read_settings_with_recovery(
 
     return ManagedWorkerSettings(
         worker_type=definition.worker_type,
+        suggested_next_ceiling=suggested_next_ceiling,
         stage_ownership_defaults=defaults,
         specialist_skill=skill,
         launch_defaults=launch_defaults,
@@ -716,6 +763,7 @@ def read_worker_management_index(
                 worker_type=worker_type,
                 label=definition.label,
                 specialist_skill_name=definition.worker_profile.specialist_skill,
+                suggested_next_ceiling=settings.suggested_next_ceiling,
                 stage_ownership_defaults=settings.stage_ownership_defaults,
                 launch_defaults=settings.launch_defaults,
             )
@@ -803,6 +851,7 @@ def update_worker_launch_defaults(
         launch_defaults = _validate_launch_defaults(payload)
         settings_payload: JsonDict = {
             "worker_type": worker_type,
+            "suggested_next_ceiling": current.suggested_next_ceiling,
             "stage_ownership_defaults": {
                 key: mode.value for key, mode in sorted(current.stage_ownership_defaults.items())
             },
@@ -849,6 +898,39 @@ def update_chief_launch_defaults(
             CHIEF_SKILL_NAME,
         )
         return ManagedChiefSettings(CHIEF_SETTINGS_KEY, CHIEF_LABEL, skill, launch_defaults)
+
+
+def update_suggested_next_ceiling(
+    configured_database_parent: Path | str,
+    registry: WorkerTypeRegistry,
+    worker_type: str,
+    suggested_next_ceiling: object,
+    *,
+    after_publish: Callable[[], None] | None = None,
+) -> ManagedWorkerSettings:
+    definition = registry.require(worker_type)
+    root = managed_worker_settings_root(configured_database_parent)
+    with _worker_settings_lock(root, worker_type):
+        current = _read_settings_with_recovery(root, definition)
+        validated = _validate_suggested_next_ceiling(suggested_next_ceiling, definition)
+        payload: JsonDict = {
+            "worker_type": worker_type,
+            "suggested_next_ceiling": validated,
+            "stage_ownership_defaults": {
+                key: mode.value
+                for key, mode in sorted(current.stage_ownership_defaults.items())
+            },
+            "launch_defaults": _launch_defaults_payload(current.launch_defaults),
+        }
+        snapshot = _PathSnapshot(_settings_path(root, worker_type))
+        try:
+            _atomic_replace_json(_settings_path(root, worker_type), payload)
+            if after_publish is not None:
+                after_publish()
+        except Exception:
+            snapshot.restore()
+            raise
+        return _read_settings_with_recovery(root, definition)
 
 
 def save_chief_skill(
@@ -942,6 +1024,7 @@ def update_stage_default_ownership(
         defaults[stage] = ownership_mode
         payload: JsonDict = {
             "worker_type": worker_type,
+            "suggested_next_ceiling": current.suggested_next_ceiling,
             "stage_ownership_defaults": {key: mode.value for key, mode in sorted(defaults.items())},
             "launch_defaults": _launch_defaults_payload(current.launch_defaults),
         }

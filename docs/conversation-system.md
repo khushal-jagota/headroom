@@ -122,12 +122,15 @@ sent with words or as the whole message. The browser sends one native content ru
 the trimmed words when there are any, followed by every remaining picture in the
 order shown. There is no separate upload conversation or attachment record.
 
-Send has one knob with three settings. The default runs the message when the
-agent is free — if it is busy, the message waits in line. "Send now" makes the
-message the running turn: a busy agent's current turn is stopped (recorded
-honestly as interrupted) and the new message runs next, ahead of the line.
-"Steer" injects text into the running turn without ending it — only hermes can
-do that.
+Send has no delivery knob. Every new message runs when the agent is free, and a
+busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,
+including while a turn runs.
+
+The composer shows the held line as a stack inside its recessed well. Each row
+shows one message and can discard it or make it run next. A Hermes row can also
+steer its text into the running turn. The server snapshot is the shared answer,
+so a second tab or device shows the same held line. A tab merges its immediate
+copy with that snapshot by the sender's message id rather than drawing it twice.
 
 The answer to a send is the fate of that delivery, and fate means it happened:
 started (the text reached a live agent), queued at a position, injected, or
@@ -138,13 +141,18 @@ cannot steer. A busy agent is never a refusal. A message with nothing in it is n
 either — it is not a message, and it is turned away where it is sent. How a turn later ends is never
 part of the answer — endings are notebook rows.
 
-A message that is waiting can be taken back, by the name the sender gave it. It
-has reached no agent, so taking it back reaches none either — it comes out of the
-line and is written down as discarded, the same row a New writes for everything it
-throws away, because text somebody handed over never disappears without a trace.
-Being told there was nothing to take back is an ordinary answer: a waiting message
-runs the moment the agent frees up, so the one you were looking at may already have
-gone.
+A held message has one server-owned line id. The browser sender id stays beside
+it when the browser supplied one, which is how the optimistic copy matches the
+shared snapshot. The server supplies an id and send instant when the original
+sender supplied neither, so every held row still has an order and actions.
+
+Discard takes one held message out of the line and writes it down as discarded.
+Send now stops the running turn, records that interruption honestly, and runs
+the selected message ahead of the line. A refusal still records the selected
+message, then the remaining FIFO line continues. Steer consumes the selected
+text into a running Hermes turn and does not apply model choices that waited with
+that message. Being told that the message is gone is an ordinary answer because
+automatic delivery may win the same race.
 
 A send may also carry a model or reasoning-effort change. The change rides the
 message: browsing a picker does nothing, the change lands when the message is
@@ -170,15 +178,16 @@ because they are what the server resolves again when it arrives.
 
 Nobody waits for the network to see what they typed or attached. The browser gives a message
 its own name and stamps the moment the person pressed send, draws it in the
-thread there and then, and empties the box — which stays typeable, with only the
-send arrow saying anything is still in flight. Those two stamps travel with the
-message and are kept on its row, so when the row comes back the browser knows it
-for its own and simply stops drawing its copy; nothing is swapped and nothing
-moves. If the message turns out to have got nowhere, the copy goes and its exact
-words, pictures and pending run choices come back to the box, unless something
-else has been composed there since. A
-message the agent was too busy for stays in the thread and says it is waiting,
-because nothing is answering it yet.
+composer stack there and then, and empties the box. Those two stamps travel with
+the message and are kept on its row, so the shared held snapshot and the eventual
+notebook row can recognize the same message. If the message turns out to have got
+nowhere, the copy goes and its exact words, pictures and pending run choices come
+back to the box, unless something else has been composed there since.
+
+Queue changes also travel on the conversation's live connection as a contentless
+wake. Every open binder then reads the shared snapshot again. The wake carries no
+second copy of queue state, so FIFO order and action availability still have one
+server answer.
 
 A tab keeps the messages it is still holding, so reloading the page cannot take
 somebody's words away before anything has a record of them. They come back saying
@@ -206,6 +215,14 @@ reload part way through shows the real elapsed time instead of starting again
 from zero, and a long wait for the agent to start is counted rather than lost.
 Where the sender minted no such moment, or minted one its own row cannot be
 reconciled with, the whole second the row was written in is counted from instead.
+
+The newest plan is conversation status, not thread history. At rest, an active plan
+step shows its position, its text, and the elapsed time. The position opens the whole
+checklist on pointer hover or keyboard focus. A permission request still replaces this
+line because it needs the person. Without an active step, the line keeps its normal
+elapsed time and newest tool call. In peeked and opened states, the same checklist sits
+in a centered 34-pixel strip between the thread and composer while unfinished work runs.
+The plan never appears under the turn that first stated it.
 
 When the turn is over that head becomes a fold, and everything the turn produced
 goes behind it: its tool calls, and everything the agent said on the way to its
@@ -313,24 +330,34 @@ change how the installation is managed. An authorized update runs as
 otherwise usable backend unavailable. Every attempted update refreshes the card,
 even when the command fails.
 
-Usage is a separate, explicit action beside these ordinary backend reads. Opening
-the Backends page, reading `GET /backends`, receiving a change signal, or refreshing
-some other query never acquires usage. A person presses Refresh usage for one backend,
-and only `POST /backends/{backend_key}/usage-refresh` crosses that boundary. Repeated
-refreshes for the same backend run one at a time; Codex and Claude do not hold each
-other up.
+Panels keeps the last successful usage reading for each backend in its database.
+Opening the Backends page, reading `GET /backends`, receiving a change signal, or
+refreshing another query only reads that stored answer. None of those actions contacts
+a provider. The one Refresh on the Backends page re-reads every catalogue and usage
+source through `POST /backends/refresh`. Codex and Claude refresh independently, so one
+failure does not discard the other provider's new answer. A failed refresh also leaves
+that backend's prior reading in place.
 
 Codex first reads the newest rate-limit event in its local rollout record. A reading
 no more than ten minutes old is returned without starting Codex. Otherwise Panels runs
 one minimal Luna request at low reasoning and reads the newly written event. Claude
 uses the CLI's existing OAuth login for one bounded request to its usage endpoint. The
 credential never appears in the result or logs. Both providers are translated into the
-same answer: the observed time and only the rolling windows the provider actually
-returned, with percentage used and reset time. Hermes has no usage source here.
+same answer: the observed time and only the rolling windows the provider returned, with
+percentage used and reset time. A window also says whether it is five hours or seven
+days. A model-scoped Claude window names the stable model id from Claude's current
+catalogue. Hermes has no usage source here.
 
-Unavailable, logged-out, transport, and changed-response cases are returned as calm,
-typed results for that backend. They do not erase its maintenance card, affect the other
-backend, invent missing windows, or turn ambient reads into retries.
+Unavailable, logged-out, transport, and changed-response cases are calm typed refresh
+results. They do not affect another backend, invent missing windows, or turn ordinary
+reads into retries. A logged-out backend keeps its stored reading but shows its login
+command instead of old rings.
+
+Panels also keeps one on or off choice for each backend model. A model is on until a
+person turns it off on the Backends page. An off model remains in the full backend
+catalogue, but no model picker offers it. Existing saved selections remain historical
+facts and can still appear as the current value until a person chooses another model.
+New Ticket, Chief, and Worker default saves refuse an off model.
 
 ## The commands an agent takes
 
@@ -389,4 +416,4 @@ that is honest: until an agent has been up once, nothing has said what it takes.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope; unify when the swap wires production screens.
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-08-05._

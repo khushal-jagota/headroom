@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from tests.support.probe import install_probe_registry, uninstall_probe_registry
 
+from planner.conversation.backend_state import write_model_enablement
 from planner.conversation.contracts import ConversationBackendKey
 from planner.conversation.snapshot import BackendModel, BackendSnapshot
 from planner.core.clock import build_clock
@@ -402,6 +403,36 @@ def test_employee_configuration_endpoint_allows_pristine_statuses(
             # The new backend's model came with it, so the Ticket says what it runs on.
             assert stored.employee_launch_model == "claude-model"
             assert stored.employee_launch_reasoning_effort is None
+    finally:
+        check.close()
+
+
+def test_employee_configuration_rejects_a_disabled_model_without_a_partial_write(
+    tmp_path: Path,
+    probe_runtime: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _create_pristine_ticket(db_path)
+    conn = connect(str(db_path))
+    before = tickets_data.employee_launch_configuration(
+        tickets_data.read_ticket(conn, ticket_id)
+    )
+    write_model_enablement(conn, ConversationBackendKey.claude, "disabled-model", False)
+    conn.close()
+
+    with TestClient(app) as client:
+        response = client.put(
+            f"/api/tickets/{ticket_id}/employee-configuration",
+            json=_employee_configuration_body("claude", "disabled-model"),
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "Employee model is disabled"
+    check = connect(str(db_path))
+    try:
+        assert tickets_data.employee_launch_configuration(
+            tickets_data.read_ticket(check, ticket_id)
+        ) == before
     finally:
         check.close()
 

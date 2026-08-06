@@ -107,8 +107,8 @@
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    white-space: pre;
+    overflow-wrap: normal;
   }
   @media (prefers-reduced-motion: reduce) {
     .c2-tool { transition: none; }

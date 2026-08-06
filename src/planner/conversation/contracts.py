@@ -206,6 +206,13 @@ class PromptDeliveryMode(StrEnum):
     steer = "steer"
 
 
+class HeldPromptPromotionMode(StrEnum):
+    """How one message already held by the system leaves the waiting line."""
+
+    send_now = "send_now"
+    steer = "steer"
+
+
 class PromptDeliveryRefusalReason(StrEnum):
     """The genuine delivery impossibilities, and nothing else.
 
@@ -309,6 +316,27 @@ type PromptDeliveryFate = (
     | PromptDeliveryInjected
     | PromptDeliveryRefused
 )
+
+
+type HeldPromptPromotionFate = (
+    PromptDeliveryStarted | PromptDeliveryInjected | PromptDeliveryRefused
+)
+
+
+@dataclass(frozen=True, slots=True)
+class HeldPrompt:
+    """One message waiting for the agent, in its current FIFO position.
+
+    ``held_prompt_id`` is owned by the conversation system and always exists. The
+    sender-owned id stays optional and unchanged. ``sent_at_unix_milliseconds`` is the
+    sender's instant when supplied, or the server's queue instant otherwise.
+    """
+
+    held_prompt_id: str
+    content: MessageContent
+    sender_label: str
+    sender_message_id: str | None
+    sent_at_unix_milliseconds: int
 
 
 class ConversationAlreadyStarted(Exception):
@@ -429,6 +457,25 @@ class ConversationSystem(Protocol):
         The turn's interruption is recorded as an event. There is nothing to return. If
         the conversation is idle, or the id names no conversation, nothing happens.
         """
+        ...
+
+    async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
+        """Return the messages still held by the system, in FIFO order."""
+        ...
+
+    async def promote_held_prompt(
+        self,
+        conversation_id: str,
+        held_prompt_id: str,
+        mode: HeldPromptPromotionMode,
+    ) -> HeldPromptPromotionFate | None:
+        """Deliver one held message now, or return ``None`` if it is no longer held."""
+        ...
+
+    async def discard_held_prompt(
+        self, conversation_id: str, held_prompt_id: str
+    ) -> bool:
+        """Discard one held message, or return false if it is no longer held."""
         ...
 
     async def kill(self, conversation_id: str) -> None:

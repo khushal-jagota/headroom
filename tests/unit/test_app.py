@@ -189,6 +189,7 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
             "HOME": "/Users/operator",
             "PATH": "/bin",
             "PLAN_DB_PATH": "/state/db",
+            "PLAN_GROQ_API_KEY": "groq-secret",
             "SECRET": "no",
         },
     )
@@ -196,6 +197,7 @@ def test_app_launcher_carries_identity_and_scrubs_unrelated_environment(tmp_path
         "HOME": "/Users/operator",
         "PATH": "/bin",
         "PLAN_DB_PATH": "/state/db",
+        "PLAN_GROQ_API_KEY": "groq-secret",
         "PLAN_APP_SHA": SHA,
         "PLAN_APP_ROOT": str(app),
     }

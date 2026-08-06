@@ -20,6 +20,11 @@ Linux uses systemd user services. `panels-live.service` launches the deployed ap
 deployment workflow, and the backup timer invokes the deployed app's backup command.
 The `vps` user controls them with `systemctl --user`.
 
+The live service receives provider secrets from protected environment files outside the
+deployment root. Voice transcription uses a mode-`0600` file at
+`~/.config/panels/panels-live.env`, loaded by a `panels-live.service` drop-in. The file
+contains `PLAN_GROQ_API_KEY` and persists when a deployment replaces `current/app`.
+
 macOS retains its launchd path. Both service controllers operate in the signed-in
 user's service-manager domain, and both preserve the user's normal Hermes, Codex, and
 Claude homes.

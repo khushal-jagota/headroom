@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
+from dataclasses import asdict
 from pathlib import Path
 from sqlite3 import Connection
 
@@ -31,6 +33,28 @@ def _ticket(conn: Connection, now: int) -> Ticket:
     )
 
 
+def _service_worker_push_results(payloads: list[object]) -> list[dict[str, object]]:
+    repository_root = Path(__file__).parents[2]
+    result = subprocess.run(
+        [
+            "node",
+            str(repository_root / "tests/support/service_worker_push_harness.mjs"),
+            str(repository_root / "static/service-worker.js"),
+        ],
+        input=json.dumps(payloads),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    decoded: object = json.loads(result.stdout)
+    assert isinstance(decoded, list)
+    normalized: list[dict[str, object]] = []
+    for item in decoded:
+        assert isinstance(item, dict)
+        normalized.append({str(key): value for key, value in item.items()})
+    return normalized
+
+
 def test_policy_is_the_one_privacy_safe_fact_to_intent_door() -> None:
     fact = NotificationFact(
         fact_id="ticket:t_example:1",
@@ -47,6 +71,66 @@ def test_policy_is_the_one_privacy_safe_fact_to_intent_door() -> None:
     assert intent.route == "/#/ticket/t_example"
     assert intent.tag == "panels-ticket-t_example"
     assert "transcript" not in intent.body.lower()
+
+
+def test_backend_routes_pass_through_the_service_worker_push_handler() -> None:
+    ticket_intent = decide_notification(
+        NotificationFact(
+            fact_id="ticket:t_example:1",
+            notification_type="ticket_needs_approval",
+            subject_kind="ticket",
+            subject_id="t_example",
+            subject_label="Example ticket",
+            occurred_at=1,
+        ),
+        enabled=True,
+    )
+    chief_intent = decide_notification(
+        NotificationFact(
+            fact_id="conversation:c_chief:1",
+            notification_type="worker_completed",
+            subject_kind="agent",
+            subject_id="chief_of_staff",
+            subject_label="Chief of Staff",
+            occurred_at=1,
+        ),
+        enabled=True,
+    )
+    assert ticket_intent is not None
+    assert chief_intent is not None
+
+    unsupported = {
+        "title": "Unsafe",
+        "body": "Unsupported destination",
+        "route": "/#/config",
+        "tag": "unsupported-route",
+    }
+    malformed = {"title": "Incomplete", "route": "/#/ticket/t_example"}
+    shown = _service_worker_push_results(
+        [asdict(ticket_intent), asdict(chief_intent), unsupported, malformed]
+    )
+
+    expected_valid = (ticket_intent, chief_intent)
+    for notification, intent in zip(shown[:2], expected_valid, strict=True):
+        assert notification["title"] == intent.title
+        options = notification["options"]
+        assert isinstance(options, dict)
+        assert options["body"] == intent.body
+        assert options["tag"] == intent.tag
+        assert options["data"] == {"route": intent.route}
+
+    fallback = {
+        "title": "Panels",
+        "options": {
+            "body": "Panels has an update.",
+            "icon": "/static/icon-192.png",
+            "badge": "/static/icon-192.png",
+            "tag": "panels-update",
+            "renotify": False,
+            "data": {"route": "/#/workspace"},
+        },
+    }
+    assert shown[2:] == [fallback, fallback]
 
 
 def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) -> None:

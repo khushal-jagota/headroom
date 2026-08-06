@@ -26,8 +26,11 @@ the Notifications screen renders that catalogue directly. Today it offers:
 
 The notification contains no transcript, prompt, permission detail, or worker output.
 Opening a Ticket notification goes to `/#/ticket/<ticket-id>`. Opening a Chief of Staff
-notification goes to `/#/agents/chief-of-staff`. All notifications for one subject use
-one stable replacement tag, so overlapping facts coalesce at the operating system.
+notification goes to the Chief workspace at `/#/workspace/chief-of-staff`. The service
+worker accepts the server's matching Chief link and ticket links. A malformed payload or
+an unsupported link opens the safe workspace fallback instead. All notifications for one
+subject use one stable replacement tag, so overlapping facts coalesce at the operating
+system.
 
 ## Durable delivery
 
@@ -63,4 +66,4 @@ Code paths: `src/planner/notifications/`, the `notifications` and
 `notification_subjects` database migrations, `static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 
-_Last verified: 2026-07-29._
+_Last verified: 2026-08-06._

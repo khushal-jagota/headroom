@@ -11,13 +11,12 @@
  * thing that happened, and so is a turn that stopped.
  *
  * Nothing here is derived a second time. Whether a turn is running, when it began, the
- * plan it is working through and the newest tool call it made are all read out of the
- * same thread the transcript is drawn from, so the bar and the turn head cannot disagree.
+ * newest tool call is read out of the same thread the transcript draws. The latest plan
+ * is read once as conversation status, because it no longer belongs to a turn head.
  */
 
 import {
   liveAskFrom,
-  planProgressSentence,
   promptLabelFor,
   turnEndingSentence,
   workingSentence,
@@ -25,6 +24,7 @@ import {
   TURN_STOPPED_SENTENCE
 } from "./transcript";
 import type { ToolCallRow, TranscriptRow } from "./transcript";
+import { taskProgressFrom, type ConversationTaskProgress } from "./taskProgress";
 import { threadItems, type ThreadItem } from "./threadLayout";
 import { presentToolCall } from "./toolCallPresentation";
 import { messageContentText } from "./wire";
@@ -34,8 +34,10 @@ export type RestLine = {
   who: string | null;
   /** The one line. The first line of whatever happened last. */
   text: string;
-  /** A quieter fact beside it: the plan's progress while a turn runs. */
+  /** A quieter fact beside the line, when a caller has one. */
   aside: string | null;
+  /** The current plan branch, separate from fallback text so its count stays a control. */
+  taskProgress: ConversationTaskProgress | null;
   /** Something is waiting on the person. The bar's most important job. */
   waiting: boolean;
   /** When a turn is running, when it started — so the bar counts as the turn head does. */
@@ -64,7 +66,8 @@ export const REST_LINE_MAXIMUM_CHARACTERS = 120;
 /** What the line says, or nothing at all when nothing has happened yet. */
 export function restLineFrom(
   rows: readonly TranscriptRow[],
-  ownSenderLabel: string
+  ownSenderLabel: string,
+  progress: ConversationTaskProgress = taskProgressFrom(rows)
 ): RestLine | null {
   const ask = liveAskFrom(rows);
   if (ask !== null) {
@@ -74,6 +77,7 @@ export function restLineFrom(
       // with no title, and then it is the only thing there is to say.
       text: oneLine(ask.title) || oneLine(ask.detail ?? ""),
       aside: null,
+      taskProgress: null,
       waiting: true,
       workingSinceUnixMilliseconds: null
     };
@@ -82,6 +86,17 @@ export function restLineFrom(
   const items = threadItems(rows);
   const turn = newestTurn(items);
   const happened = whateverHappenedLast(rows, ownSenderLabel);
+
+  if (progress.turnRunning && progress.currentEntry !== null) {
+    return {
+      who: null,
+      text: oneLine(progress.currentEntry.text),
+      aside: null,
+      taskProgress: progress,
+      waiting: false,
+      workingSinceUnixMilliseconds: turn?.startedAtUnixMilliseconds ?? null
+    };
+  }
 
   if (turn !== null && !turn.settled) {
     const call = newestToolCallOf(items, turn.turnKey);
@@ -93,7 +108,8 @@ export function restLineFrom(
       // What the turn is doing; failing that the last thing anybody can point at, which
       // for a turn that has not called a tool yet is the message that started it.
       text: doing ?? happened?.text ?? workingSentence(null),
-      aside: planProgress(items),
+      aside: null,
+      taskProgress: null,
       waiting: false,
       workingSinceUnixMilliseconds: turn.startedAtUnixMilliseconds
     };
@@ -104,6 +120,7 @@ export function restLineFrom(
     who: happened.who,
     text: happened.text,
     aside: null,
+    taskProgress: null,
     waiting: false,
     workingSinceUnixMilliseconds: null
   };
@@ -207,19 +224,6 @@ function newestToolCallOf(items: readonly ThreadItem[], turnKey: string): ToolCa
     const item = items[at];
     if (item?.kind !== "work_group" || item.turnKey !== turnKey) continue;
     return item.entries[item.entries.length - 1] ?? null;
-  }
-  return null;
-}
-
-/** How far through its plan the conversation is, said the way the strip under the turn's
- *  head says it.
- *
- * A conversation has one plan, so there is one head holding it however many turns ago it
- * was stated, and that is the one this reads. */
-function planProgress(items: readonly ThreadItem[]): string | null {
-  for (const item of items) {
-    if (item.kind !== "turn" || item.plan === null || item.plan.length === 0) continue;
-    return planProgressSentence(item.plan);
   }
   return null;
 }

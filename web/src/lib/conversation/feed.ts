@@ -99,6 +99,9 @@ export function feedWithLiveFrame(
     case "model_thinking":
       // There is nothing to show and nothing to keep. That it arrived is the whole message.
       return alive;
+    case "held_prompts_changed":
+      // Queue content lives in the conversation snapshot. The stream callback refreshes it.
+      return alive;
     default:
       // A frame this browser does not know yet. The server may be ahead of it, and a
       // page that guessed at the shape would draw something nobody sent.
@@ -243,7 +246,8 @@ export function createConversationStream(
   /** Called once the rows are in and the tail is open. This is where a reader asks the
    *  system about itself again: reconnecting is what happens after a server went away,
    *  and the rows alone cannot tell you that a turn stopped when it did. */
-  onConnected?: () => void
+  onConnected?: () => void,
+  onHeldPromptsChanged?: () => void
 ): ConversationStream {
   let feed = emptyConversationFeed();
   let closeTail: (() => void) | null = null;
@@ -270,6 +274,7 @@ export function createConversationStream(
       },
       onLiveFrame: (frame) => {
         if (opening !== generation) return;
+        if (frame.frame === "held_prompts_changed") onHeldPromptsChanged?.();
         publish(feedWithLiveFrame(feed, frame));
       },
       onTrouble: () => {

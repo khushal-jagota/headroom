@@ -202,8 +202,9 @@ _Code paths:_ `src/planner/core/server.py` serves the registry manifest;
 ## Managed settings and the Config page
 
 The registry remains the immutable workflow definition. A managed source beside the
-database owns the ownership default for each existing non-terminal Stage and every
-editable skill. `data/skills` is the one live skill home for Codex, Claude, and Hermes.
+database owns each Stage ownership default and each Worker's suggested Kickoff ceiling.
+It also owns every editable skill. `data/skills` is the one live skill home for Codex,
+Claude, and Hermes.
 The packaged `src/planner/skills` tree seeds a new home only; it is never changed by
 the product and does not replace a managed edit. Hermes contains symlinks to the
 managed home, never copied overlays.
@@ -225,8 +226,9 @@ screens.
   or Stage controls.
 - **Workers** links the configured Worker types. Each supporting line comes from that
   Worker's managed specialist skill. A Worker opens at
-  `#/config/workers/<worker-type>` with its launch defaults, Stage ownership table, and
-  specialist skill editor. Worker identity and lifecycle structure stay read-only.
+  `#/config/workers/<worker-type>` with its launch defaults, suggested Kickoff ceiling,
+  Stage ownership table, and specialist skill editor. The ceiling options come from the
+  Worker's later Stages. Worker identity and lifecycle structure stay read-only.
 
 Legacy `#/workers` and `#/workers/<worker-type>` addresses redirect to `#/config` and
 `#/config/workers/<worker-type>`.
@@ -250,9 +252,13 @@ conversation-owned signals without turning them into managed settings.
 `GET /api/workers/{id}` composes Worker registry structure with managed settings.
 `GET /api/skills` serves the shared skills home used for the Worker role and specialist
 descriptions on the index. Worker and Chief endpoints edit skill description and body
-or launch defaults; the shared
+or launch defaults. A focused endpoint edits the suggested Kickoff ceiling; the shared
 `PATCH /api/skills/{skill-name}` endpoint edits the Worker role skill. A saved change
 announces itself, and any Config screen on display refetches what it is showing.
+
+An absent suggested ceiling takes the Worker's normal Kickoff advance target. The saved
+value must be a later ceiling from that Worker's lifecycle. `No further` is not a managed
+default. It remains a choice for one approval.
 
 _Code paths:_ `src/planner/worker_settings/`, `src/planner/tickets/data.py`,
 `src/planner/environments/hermes_home.py`, and `web/src/routes/ConfigRoute.svelte`.

@@ -2,8 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   armedChangeFor,
-  deliveryModeIsOffered,
-  deliveryOptionsFor,
   effortOptionsFor,
   fateSentence,
   hasArmedChange,
@@ -26,17 +24,6 @@ const message: OutgoingMessage = {
 const current: RunValues = { model: "opus", reasoningEffort: "high" };
 
 describe("Conversation composer delivery", () => {
-  it("offers steering only for a backend that supports it", () => {
-    expect(deliveryOptionsFor("hermes").map((option) => option.mode))
-      .toEqual(["run_when_free", "send_now", "steer"]);
-    for (const backend of ["codex", "claude", null] as const) {
-      expect(deliveryOptionsFor(backend).map((option) => option.mode))
-        .toEqual(["run_when_free", "send_now"]);
-      expect(deliveryModeIsOffered(backend, "steer")).toBe(false);
-    }
-    expect(deliveryModeIsOffered("hermes", "steer")).toBe(true);
-  });
-
   it("arms only differing values on a delivery that can carry changes", () => {
     expect(armedChangeFor(
       current,
@@ -167,7 +154,7 @@ describe("Conversation composer delivery", () => {
 
   it("reports delivery fates in the composer's visible wording", () => {
     expect(fateSentence({ fate: "started" })).toBeNull();
-    expect(fateSentence({ fate: "queued", queue_position: 2 })).toBe("queued · position 2");
+    expect(fateSentence({ fate: "queued", queue_position: 2 })).toBeNull();
     expect(fateSentence({ fate: "injected" })).toBe("steered into the running turn");
     expect(fateSentence({
       fate: "refused",

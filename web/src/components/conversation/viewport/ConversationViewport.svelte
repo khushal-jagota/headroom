@@ -31,7 +31,6 @@
     livenessPulse,
     conversationState,
     emptyState,
-    onDiscardHeldPrompt,
     ticketId = null
   }: {
     conversationId: string;
@@ -43,7 +42,6 @@
     livenessPulse: number;
     conversationState: ConversationState | null;
     emptyState?: Snippet;
-    onDiscardHeldPrompt?: (messageId: string) => void;
   } = $props();
 
   let threadElement = $state<HTMLDivElement | null>(null);
@@ -373,15 +371,6 @@
           <div class="c2-label" data-conversation-outgoing-label>
             {#if note}{note}{/if}
             {#if chip}<span class="c2-chip">{chip}</span>{/if}
-            {#if message.knownFate === "waiting_for_the_agent" && onDiscardHeldPrompt}
-              <button
-                type="button"
-                class="c2-discard"
-                data-conversation-outgoing-discard={message.messageId}
-                aria-label="Do not send this message"
-                onclick={() => onDiscardHeldPrompt?.(message.messageId)}
-              >×</button>
-            {/if}
           </div>
         {/if}
         <MessagePieces content={message.content} {conversationId} {ticketId} />
@@ -427,15 +416,4 @@
     color: var(--accent-bright);
     padding: 0 var(--space-2);
   }
-  .c2-discard {
-    margin-inline-start: var(--space-2);
-    border: 0;
-    background: none;
-    color: inherit;
-    cursor: pointer;
-    font: inherit;
-    line-height: 1;
-    padding: 0 var(--space-1);
-  }
-  .c2-discard:hover { color: var(--accent-error); }
 </style>

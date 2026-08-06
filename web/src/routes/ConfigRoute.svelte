@@ -48,6 +48,10 @@
   let lastServerOwners = $state<Record<string, StageOwnershipMode>>({});
   let stageSaving = $state<Record<string, boolean>>({});
   let stageSaveErrors = $state<Record<string, unknown>>({});
+  let suggestedCeilingChoice = $state("");
+  let lastServerSuggestedCeiling = $state("");
+  let suggestedCeilingSaving = $state(false);
+  let suggestedCeilingSaveError = $state<unknown>(null);
 
   let indexedSkills = $derived(
     new Map((skillsHome.data?.skills || []).map((skill) => [skill.name, skill]))
@@ -109,6 +113,25 @@
     }
   }
 
+  async function saveSuggestedNextCeiling(
+    settings: WorkerManagementSettings,
+    suggestedNextCeiling: string
+  ): Promise<void> {
+    suggestedCeilingChoice = suggestedNextCeiling;
+    suggestedCeilingSaving = true;
+    suggestedCeilingSaveError = null;
+    try {
+      await mutateJson<WorkerManagementSettings>(
+        `/api/workers/${encodeURIComponent(settings.worker_type)}/suggested-next-ceiling`,
+        { method: "PUT", body: { suggested_next_ceiling: suggestedNextCeiling } }
+      );
+    } catch (err) {
+      suggestedCeilingSaveError = err;
+    } finally {
+      suggestedCeilingSaving = false;
+    }
+  }
+
   function saveWorkerLaunchDefaults(
     settings: WorkerManagementSettings,
     next: EmployeeConfigurationSnapshot
@@ -163,6 +186,19 @@
     }
     if (selectedChanged && !sameOwners(selectedOwners, next)) selectedOwners = next;
     if (!sameOwners(lastServerOwners, nextServer)) lastServerOwners = nextServer;
+  });
+
+  $effect(() => {
+    const serverValue = worker.data?.settings.suggested_next_ceiling;
+    if (!serverValue) return;
+    if (
+      !suggestedCeilingChoice ||
+      (!suggestedCeilingSaving && !suggestedCeilingSaveError &&
+        suggestedCeilingChoice === lastServerSuggestedCeiling)
+    ) {
+      suggestedCeilingChoice = serverValue;
+    }
+    lastServerSuggestedCeiling = serverValue;
   });
 </script>
 
@@ -345,6 +381,34 @@
               value={detail.settings.launch_defaults}
               onSave={(next) => saveWorkerLaunchDefaults(detail.settings, next)}
             />
+
+            <section class="worker-kickoff-default" data-worker-kickoff-default>
+              <div>
+                <h2>Kickoff ceiling</h2>
+                <p>Suggested scope when Kickoff has no owner choice.</p>
+              </div>
+              <select
+                aria-label="Suggested Kickoff ceiling"
+                data-suggested-next-ceiling
+                data-saving={suggestedCeilingSaving ? "true" : "false"}
+                value={suggestedCeilingChoice || detail.settings.suggested_next_ceiling}
+                onchange={(event) => void saveSuggestedNextCeiling(
+                  detail.settings,
+                  event.currentTarget.value
+                )}
+              >
+                {#each manifest.ceiling_range.slice(1) as ceiling}
+                  <option value={ceiling}>
+                    {manifest.stages.find((stage) => stage.id === ceiling)?.label || labelize(ceiling)}
+                  </option>
+                {/each}
+              </select>
+              {#if suggestedCeilingSaveError}
+                <div class="worker-row-error" data-suggested-next-ceiling-error>
+                  {errorMessage(suggestedCeilingSaveError)}
+                </div>
+              {/if}
+            </section>
 
             <div class="worker-stage-table-shell">
               <table class="worker-stage-table" data-worker-stage-table>

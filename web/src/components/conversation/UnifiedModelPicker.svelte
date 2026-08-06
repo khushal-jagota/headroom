@@ -8,6 +8,7 @@
   } from "../../lib/conversation/modelPicker";
   import type { BackendModel, BackendSnapshot, ConversationBackendKey } from "../../lib/conversation/wire";
   import BackendMark from "./BackendMark.svelte";
+  import UsageRings from "./UsageRings.svelte";
 
   let {
     view,
@@ -16,6 +17,7 @@
     backendEffortOptions,
     disabled = false,
     keepOpenWhenDisabled = false,
+    showUsage = false,
     below = false,
     label = "Model",
     attributes = {},
@@ -31,6 +33,8 @@
     disabled?: boolean;
     /** Keep an open backend catalogue visible while a persisted selection saves. */
     keepOpenWhenDisabled?: boolean;
+    /** Usage belongs only beside the run choice in the conversation composer. */
+    showUsage?: boolean;
     below?: boolean;
     label?: string;
     attributes?: Record<string, string | undefined>;
@@ -56,6 +60,22 @@
   let chosenValue = $derived(showing === "models" ? view.modelValue : view.reasoningEffort);
   let active = $derived(rows.length === 0 ? 0 : Math.min(activeIndex, rows.length - 1));
   let foot = $derived(feedback ?? view.staleModelReason);
+
+  function snapshotFor(key: ConversationBackendKey): BackendSnapshot | null {
+    return snapshots.find((snapshot) => snapshot.backend_key === key) ?? null;
+  }
+
+  function showsBackendUsage(key: ConversationBackendKey): boolean {
+    return snapshotFor(key)?.identity?.status !== "unauthenticated";
+  }
+
+  function hasModelUsage(modelId: string): boolean {
+    const snapshot = snapshotFor(view.backendKey ?? "claude");
+    if (snapshot?.identity?.status === "unauthenticated") return false;
+    return snapshot?.cached_usage?.windows.some(
+      (window) => window.model_id === modelId
+    ) ?? false;
+  }
 
   $effect(() => {
     if (!open) return;
@@ -233,6 +253,9 @@
           >
             <BackendMark backend={backend.key} />
             <span>{backend.name}</span>
+            {#if showUsage && showsBackendUsage(backend.key)}
+              <UsageRings windows={snapshotFor(backend.key)?.cached_usage?.windows ?? []} compact />
+            {/if}
           </button>
         {/each}
         <div class="model-picker-reasoning">
@@ -281,6 +304,14 @@
             onclick={() => take(choice)}
           >
             <span class="model-picker-choice-name">{choice.name}</span>
+            {#if showUsage && showing === "models" && hasModelUsage(choice.value)}
+              <UsageRings
+                windows={snapshotFor(view.backendKey ?? "claude")?.cached_usage?.windows ?? []}
+                modelId={choice.value}
+                label={`Usage allowances for ${choice.name}`}
+                compact
+              />
+            {/if}
             <span class="model-picker-tick" aria-hidden="true">{choice.value === chosenValue ? "✓" : ""}</span>
           </button>
         {/each}
@@ -321,6 +352,7 @@
     border: 0; color: var(--text-faint); cursor: pointer; font-family: var(--font-mono);
     font-size: var(--type-xs); padding: var(--space-2) var(--space-3); text-align: left; white-space: nowrap;
   }
+  .model-picker-rail-row > span:nth-child(2) { flex: 1; }
   .model-picker-rail-row:hover { background: var(--surface-raised); color: var(--text-muted); }
   .model-picker-rail-row.held { color: var(--text-strong); }
   .model-picker-rail-row.on { background: var(--surface-sunken); color: var(--text-strong); }

@@ -485,7 +485,6 @@ def test_mobile_embedded_managed_files_use_preview_links(
     download = page.locator('[data-file-preview-kind="download"]').first
     assert download.locator("a.file-preview-mobile-link").count() == 0
     download.locator('a.file-preview-link[download]').wait_for(state="visible", timeout=WAIT_MS)
-    assert page.locator("body").evaluate("node => node.scrollWidth <= window.innerWidth")
 
 
 def test_interactive_html_preview_paints_and_switches_variants_in_both_surfaces(

@@ -8,7 +8,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 
-from planner.conversation.contracts import ConversationSystem
+from planner.conversation.backend_state import model_is_enabled
+from planner.conversation.contracts import ConversationSystem, require_conversation_backend_key
 from planner.conversation.storage import ConversationStore
 from planner.core import change_signal
 from planner.core.authctx import RequestContext, request_context, require_direct_write
@@ -69,6 +70,7 @@ def _skills_home_json(home: SkillsHome) -> JsonDict:
 def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
     payload: JsonDict = {
         "worker_type": settings.worker_type,
+        "suggested_next_ceiling": settings.suggested_next_ceiling,
         "stage_ownership_defaults": {
             stage: mode.value for stage, mode in settings.stage_ownership_defaults.items()
         },
@@ -85,6 +87,7 @@ def _summary_json(summary: WorkerManagementSummary) -> JsonDict:
         "worker_type": summary.worker_type,
         "label": summary.label,
         "specialist_skill_name": summary.specialist_skill_name,
+        "suggested_next_ceiling": summary.suggested_next_ceiling,
         "stage_ownership_defaults": {
             stage: mode.value for stage, mode in summary.stage_ownership_defaults.items()
         },
@@ -107,6 +110,26 @@ def _chief_json(settings: ManagedChiefSettings) -> JsonDict:
         "skill": _skill_json(settings.skill),
         "launch_defaults": _launch_defaults_json(settings.launch_defaults),
     }
+
+
+def _reject_disabled_launch_model(conn: sqlite3.Connection, raw: dict[str, Any]) -> None:
+    if set(raw) != {
+        "employee_backend",
+        "employee_launch_model",
+        "employee_launch_reasoning_effort",
+    }:
+        return
+    backend = raw.get("employee_backend")
+    model = raw.get("employee_launch_model")
+    if not isinstance(backend, str) or not isinstance(model, str):
+        return
+    backend_key = require_conversation_backend_key(backend)
+    if not model_is_enabled(conn, backend_key, model):
+        raise PlannerError(
+            ErrorCode.validation,
+            "employee launch model is disabled",
+            {"employee_backend": backend, "employee_launch_model": model},
+        )
 
 
 async def add_agent_conversation_signals(
@@ -222,9 +245,10 @@ async def get_chief_settings(config: Cfg) -> JsonDict:
 
 @router.put("/workers/chief-of-staff/launch-defaults")
 async def put_chief_launch_defaults(
-    raw: dict[str, Any], ctx: Ctx, config: Cfg
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
+    _reject_disabled_launch_model(conn, raw)
     settings = service.update_chief_launch_defaults(
         _database_parent(config),
         raw,
@@ -264,10 +288,12 @@ async def patch_chief_skill(
 async def put_worker_launch_defaults(
     worker_type: str,
     raw: dict[str, Any],
+    conn: DbConn,
     ctx: Ctx,
     config: Cfg,
 ) -> JsonDict:
     require_direct_write(ctx)
+    _reject_disabled_launch_model(conn, raw)
     registry = configured_worker_runtime_definitions().worker_type_registry
     settings = service.update_worker_launch_defaults(
         _database_parent(config),
@@ -285,6 +311,31 @@ async def get_worker(worker_type: str, config: Cfg) -> JsonDict:
     return _detail_json(
         service.read_worker_management_detail(_database_parent(config), registry, worker_type)
     )
+
+
+@router.put("/workers/{worker_type}/suggested-next-ceiling")
+async def put_suggested_next_ceiling(
+    worker_type: str,
+    raw: dict[str, Any],
+    ctx: Ctx,
+    config: Cfg,
+) -> JsonDict:
+    require_direct_write(ctx)
+    if set(raw) != {"suggested_next_ceiling"}:
+        raise PlannerError(
+            ErrorCode.validation,
+            "suggested next ceiling requires suggested_next_ceiling",
+            {"fields": sorted(raw)},
+        )
+    registry = configured_worker_runtime_definitions().worker_type_registry
+    settings = service.update_suggested_next_ceiling(
+        _database_parent(config),
+        registry,
+        worker_type,
+        raw["suggested_next_ceiling"],
+        after_publish=_announce_worker_settings_change,
+    )
+    return _settings_json(settings)
 
 
 @router.put("/workers/{worker_type}/stages/{stage}/default-ownership")

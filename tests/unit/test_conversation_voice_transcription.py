@@ -295,6 +295,41 @@ def test_fresh_audio_is_kept_first_and_answered_with_its_transcript(
     _run(exercise)
 
 
+def test_codec_qualified_mobile_audio_is_kept_under_its_canonical_media_type(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    heard: list[bytes] = []
+
+    async def fake_transcribe(audio: bytes, **_ignored: Any) -> str:
+        heard.append(audio)
+        return "phone words"
+
+    monkeypatch.setattr(
+        conversation_api, "transcribe_conversation_audio", fake_transcribe
+    )
+
+    async def exercise() -> None:
+        await harness.create_conversation()
+        async with harness.client() as client:
+            response = await _post(
+                client,
+                {
+                    "audio": _encoded(b"mobile-opus-bytes"),
+                    "media_type": "audio/webm;codecs=opus",
+                },
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["transcript"] == "phone words"
+        assert heard == [b"mobile-opus-bytes"]
+        media_type = await harness.message_files.media_type_of(
+            CONVERSATION_ID, body["stored_file_id"]
+        )
+        assert media_type == "audio/webm"
+
+    _run(exercise)
+
+
 def test_a_retry_reads_the_kept_clip_instead_of_carrying_bytes_again(
     harness: _Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:

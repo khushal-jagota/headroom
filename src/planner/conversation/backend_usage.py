@@ -35,13 +35,24 @@ class BackendUsageOutcome(StrEnum):
     failed = "failed"
 
 
+class BackendUsageWindowKind(StrEnum):
+    five_hour = "five_hour"
+    seven_day = "seven_day"
+
+
 @dataclass(frozen=True, slots=True)
 class BackendUsageWindow:
     """One rolling allowance window, named for people rather than providers."""
 
-    name: str
+    kind: BackendUsageWindowKind
     used_percent: float
     resets_at: datetime
+    model_scope: str | None = None
+
+    @property
+    def name(self) -> str:
+        duration = "5 hours" if self.kind is BackendUsageWindowKind.five_hour else "7 days"
+        return duration if self.model_scope is None else f"{duration} · {self.model_scope}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +84,14 @@ class BackendUsageService:
                     outcome=BackendUsageOutcome.unavailable,
                     detail=f"{backend_key.value.title()} does not expose usage to Panels.",
                 )
-            return await adapter.refresh()
+            try:
+                return await adapter.refresh()
+            except Exception:
+                return BackendUsageResult(
+                    backend_key=backend_key,
+                    outcome=BackendUsageOutcome.failed,
+                    detail=f"{backend_key.value.title()} usage could not be refreshed. Try again.",
+                )
 
 
 # --- Codex -------------------------------------------------------------------------------
@@ -240,17 +258,20 @@ def _parse_codex_rate_limit_event(event: Any) -> _CodexRateLimitSnapshot | None:
         used_percent = _percentage(window.get("used_percent"))
         resets_at = _parse_datetime(window.get("resets_at"))
         minutes = window.get("window_minutes")
+        window_kind = (
+            _window_kind(minutes)
+            if isinstance(minutes, int) and not isinstance(minutes, bool)
+            else None
+        )
         if (
             used_percent is None
             or resets_at is None
-            or isinstance(minutes, bool)
-            or not isinstance(minutes, int)
-            or minutes <= 0
+            or window_kind is None
         ):
             continue
         windows.append(
             BackendUsageWindow(
-                name=_duration_name(int(minutes)),
+                kind=window_kind,
                 used_percent=used_percent,
                 resets_at=resets_at,
             )
@@ -435,24 +456,22 @@ def _parse_claude_limit_entry(value: Any) -> BackendUsageWindow | None:
     if not isinstance(model_name, str) or not model_name:
         model_name = model.get("displayName") if isinstance(model, dict) else None
     if isinstance(model_name, str) and model_name:
-        name = f"7 days · {model_name}"
+        kind = BackendUsageWindowKind.seven_day
+        model_scope = model_name
     else:
         group = value.get("group")
         if group == "session":
-            name = "5 hours"
+            kind = BackendUsageWindowKind.five_hour
         elif group in ("weekly", "week", "seven_day"):
-            name = "7 days"
+            kind = BackendUsageWindowKind.seven_day
         else:
-            kind = value.get("kind")
-            name = (
-                kind.replace("_", " ").title()
-                if isinstance(kind, str) and kind
-                else "Usage limit"
-            )
+            return None
+        model_scope = None
     return BackendUsageWindow(
-        name=name,
+        kind=kind,
         used_percent=used_percent,
         resets_at=resets_at,
+        model_scope=model_scope,
     )
 
 
@@ -464,9 +483,18 @@ def _parse_claude_window(key: str, value: Any) -> BackendUsageWindow | None:
     if used_percent is None or resets_at is None:
         return None
     return BackendUsageWindow(
-        name=_claude_window_name(key),
+        kind=(
+            BackendUsageWindowKind.five_hour
+            if key == "five_hour"
+            else BackendUsageWindowKind.seven_day
+        ),
         used_percent=used_percent,
         resets_at=resets_at,
+        model_scope=(
+            None
+            if key in ("five_hour", "seven_day")
+            else key.removeprefix("seven_day_").replace("_", " ").title()
+        ),
     )
 
 
@@ -476,15 +504,6 @@ def _claude_reset_time(value: Mapping[str, Any]) -> datetime | None:
         if parsed is not None:
             return parsed
     return None
-
-
-def _claude_window_name(key: str) -> str:
-    if key == "five_hour":
-        return "5 hours"
-    if key == "seven_day":
-        return "7 days"
-    suffix = key.removeprefix("seven_day_").replace("_", " ").title()
-    return f"7 days · {suffix}"
 
 
 # --- shared reading ----------------------------------------------------------------------
@@ -514,14 +533,12 @@ def _percentage(value: Any) -> float | None:
     return number if 0 <= number <= 100 else None
 
 
-def _duration_name(minutes: int) -> str:
-    if minutes > 0 and minutes % (24 * 60) == 0:
-        days = minutes // (24 * 60)
-        return f"{days} day" if days == 1 else f"{days} days"
-    if minutes > 0 and minutes % 60 == 0:
-        hours = minutes // 60
-        return f"{hours} hour" if hours == 1 else f"{hours} hours"
-    return f"{minutes} minutes"
+def _window_kind(minutes: int) -> BackendUsageWindowKind | None:
+    if minutes == 300:
+        return BackendUsageWindowKind.five_hour
+    if minutes == 10080:
+        return BackendUsageWindowKind.seven_day
+    return None
 
 
 def _as_utc(value: datetime) -> datetime:

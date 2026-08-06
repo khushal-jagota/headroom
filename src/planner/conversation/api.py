@@ -20,6 +20,7 @@ from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -28,9 +29,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
+from planner.conversation.backend_state import (
+    BackendStateStore,
+    resolve_usage_model_scopes,
+)
 from planner.conversation.backend_usage import (
+    BackendUsageOutcome,
     BackendUsageResult,
     BackendUsageService,
+    BackendUsageWindow,
     production_backend_usage_service,
 )
 from planner.conversation.backends.contracts import BackendChildFactory
@@ -40,6 +47,7 @@ from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationRoleMaterials,
     ConversationStartRequest,
+    HeldPromptPromotionMode,
     PromptDeliveryInjected,
     PromptDeliveryMode,
     PromptDeliveryQueued,
@@ -48,6 +56,7 @@ from planner.conversation.contracts import (
 )
 from planner.conversation.events import (
     AgentMessageDeltaFrame,
+    HeldPromptsChangedFrame,
     ModelThinkingFrame,
     PermissionAskedEventPayload,
     ToolCallProgressFrame,
@@ -66,6 +75,7 @@ from planner.conversation.message_content import (
     MessageImage,
     MessagePiece,
     MessageText,
+    message_content_json_entries,
 )
 from planner.conversation.message_files import (
     ConversationMessageFiles,
@@ -107,6 +117,7 @@ class ConversationRuntime:
     backend_usage: BackendUsageService
     message_files: ConversationMessageFiles
     sse_heartbeat_ms: int
+    backend_state: BackendStateStore | None = None
 
     async def shutdown(self) -> None:
         """Let the watchers go first, then stop the system's children.
@@ -144,6 +155,7 @@ def build_conversation_runtime(
         backend_usage=production_backend_usage_service(),
         message_files=message_files,
         sse_heartbeat_ms=sse_heartbeat_ms,
+        backend_state=BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
     )
 
 
@@ -261,6 +273,17 @@ VOICE_AUDIO_MEDIA_TYPES = frozenset(
 MAX_VOICE_AUDIO_BYTES = 25 * 1024 * 1024
 
 
+def _canonical_voice_audio_media_type(value: str) -> str | None:
+    """Return the allowlisted base type from a browser's full MIME value.
+
+    Mobile MediaRecorder implementations can append codec parameters, such as
+    ``audio/webm;codecs=opus``. Those parameters describe the same allowlisted
+    container and do not belong in the stored file's canonical media type.
+    """
+    base_type = value.partition(";")[0].strip().lower()
+    return base_type if base_type in VOICE_AUDIO_MEDIA_TYPES else None
+
+
 class VoiceTranscriptionBody(BaseModel):
     """One voice clip to turn into words, as JSON.
 
@@ -287,6 +310,14 @@ class UserInputQuestionAnswerBody(BaseModel):
 class UserInputAnswerBody(BaseModel):
     request_id: str
     answers: dict[str, UserInputQuestionAnswerBody]
+
+
+class PromoteHeldPromptBody(BaseModel):
+    mode: HeldPromptPromotionMode
+
+
+class ModelEnablementBody(BaseModel):
+    enabled: bool
 
 
 # --- starting, reading, writing -----------------------------------------------------------
@@ -417,14 +448,15 @@ async def transcribe_voice_note(
             status_code=422,
             detail="exactly one of audio and stored_file_id must be given",
         )
-    if body.media_type not in VOICE_AUDIO_MEDIA_TYPES:
+    media_type = _canonical_voice_audio_media_type(body.media_type)
+    if media_type is None:
         raise HTTPException(
             status_code=422, detail=f"unsupported voice media type {body.media_type}"
         )
     if body.audio is not None:
         contents = _decoded_voice_audio(body.audio)
         kept = await runtime.message_files.keep(
-            conversation_id, contents, media_type=body.media_type
+            conversation_id, contents, media_type=media_type
         )
         stored_file_id = kept.stored_file_id
     else:
@@ -472,9 +504,9 @@ async def kill_conversation(conversation_id: str, runtime: Runtime) -> Response:
     return Response(status_code=204)
 
 
-@router.delete("/conversations/{conversation_id}/held-prompts/{sender_message_id}")
+@router.delete("/conversations/{conversation_id}/held-prompts/{held_prompt_id}")
 async def discard_held_prompt(
-    conversation_id: str, sender_message_id: str, runtime: Runtime
+    conversation_id: str, held_prompt_id: str, runtime: Runtime
 ) -> dict[str, bool]:
     """Throw away one message that is waiting, and say whether there was one to throw.
 
@@ -483,8 +515,26 @@ async def discard_held_prompt(
     a held message runs the moment the agent frees up — so it is a false rather than an
     error.
     """
-    discarded = await runtime.system.discard_held_prompt(conversation_id, sender_message_id)
+    discarded = await runtime.system.discard_held_prompt(conversation_id, held_prompt_id)
     return {"discarded": discarded}
+
+
+@router.post(
+    "/conversations/{conversation_id}/held-prompts/{held_prompt_id}/promote"
+)
+async def promote_held_prompt(
+    conversation_id: str,
+    held_prompt_id: str,
+    body: PromoteHeldPromptBody,
+    runtime: Runtime,
+) -> dict[str, Any]:
+    """Claim one waiting message and deliver it now in the selected mode."""
+    fate = await runtime.system.promote_held_prompt(
+        conversation_id, held_prompt_id, body.mode
+    )
+    if fate is None:
+        return {"promoted": False}
+    return {"promoted": True, **delivery_fate_json(fate)}
 
 
 @router.post("/conversations/{conversation_id}/permission-answers")
@@ -525,7 +575,53 @@ async def answer_user_input(
 async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, Any]:
     """What each backend is right now. Probed when asked, then kept until asked again."""
     snapshots = await runtime.backend_snapshots.snapshots(refresh=refresh)
-    return {"backends": [_snapshot_json(snapshot) for snapshot in snapshots]}
+    return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
+
+
+@router.post("/backends/refresh")
+async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
+    """Refresh every catalogue and provider usage source as one user action."""
+    snapshots = await runtime.backend_snapshots.snapshots(refresh=True)
+    refreshed = await asyncio.gather(
+        *(runtime.backend_usage.refresh(backend_key) for backend_key in ConversationBackendKey)
+    )
+    by_backend = {snapshot.backend_key: snapshot for snapshot in snapshots}
+    resolved = tuple(
+        resolve_usage_model_scopes(result, by_backend[result.backend_key])
+        for result in refreshed
+    )
+    if runtime.backend_state is not None:
+        for result in resolved:
+            if (
+                result.outcome is BackendUsageOutcome.succeeded
+                and result.observed_at is not None
+            ):
+                runtime.backend_state.keep_successful_usage(result)
+    return {
+        "backends": [
+            _snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots
+        ],
+        "usage_outcomes": [_usage_outcome_json(result) for result in resolved],
+    }
+
+
+@router.put("/backends/{backend_key}/models/{model_id:path}/enablement")
+async def put_model_enablement(
+    backend_key: ConversationBackendKey,
+    model_id: str,
+    body: ModelEnablementBody,
+    runtime: Runtime,
+) -> dict[str, Any]:
+    """Set whether a current catalogue model is offered by new-model pickers."""
+    if not model_id or model_id != model_id.strip():
+        raise HTTPException(status_code=422, detail="model_id must be trimmed text")
+    snapshot = await runtime.backend_snapshots.snapshot(backend_key)
+    if model_id not in {model.model_id for model in snapshot.available_models}:
+        raise HTTPException(status_code=404, detail="model is not in the backend catalogue")
+    if runtime.backend_state is None:
+        raise HTTPException(status_code=503, detail="backend state is unavailable")
+    runtime.backend_state.write_model_enablement(backend_key, model_id, body.enabled)
+    return {"backend_key": str(backend_key), "model_id": model_id, "enabled": body.enabled}
 
 
 @router.post("/backends/{backend_key}/update")
@@ -534,14 +630,6 @@ async def update_backend(
 ) -> dict[str, Any]:
     """Run this backend's update, then look again and say which of three things happened."""
     return _update_result_json(await runtime.backend_snapshots.update_backend(backend_key))
-
-
-@router.post("/backends/{backend_key}/usage-refresh")
-async def refresh_backend_usage(
-    backend_key: ConversationBackendKey, runtime: Runtime
-) -> dict[str, Any]:
-    """Acquire usage only because a person explicitly asked for it."""
-    return _usage_result_json(await runtime.backend_usage.refresh(backend_key))
 
 
 # --- turning values into JSON ---------------------------------------------------------------
@@ -627,7 +715,16 @@ async def _conversation_view(
         ],
         "latest_sequence": record.latest_sequence,
         "is_running": await runtime.system.is_running(conversation_id),
-        "held_prompt_count": await runtime.system.held_prompt_count(conversation_id),
+        "held_prompts": [
+            {
+                "held_prompt_id": held.held_prompt_id,
+                **message_content_json_entries(held.content),
+                "sender_label": held.sender_label,
+                "sender_message_id": held.sender_message_id,
+                "sent_at_unix_milliseconds": held.sent_at_unix_milliseconds,
+            }
+            for held in await runtime.system.held_prompts(conversation_id)
+        ],
         "pending_permission_ask": await _pending_permission_ask(runtime, conversation_id),
         "pending_user_input": await _pending_user_input(runtime, conversation_id),
     }
@@ -821,9 +918,25 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             raise AssertionError(f"unknown delivery fate {fate!r}")
 
 
-def _snapshot_json(snapshot: BackendSnapshot) -> dict[str, Any]:
+def _snapshot_json(
+    snapshot: BackendSnapshot, backend_state: BackendStateStore | None = None
+) -> dict[str, Any]:
     identity = snapshot.identity
     advisory = snapshot.update_advisory
+    cached_usage = (
+        None if backend_state is None else backend_state.read_usage(snapshot.backend_key)
+    )
+    enabled_by_model = {
+        model.model_id: (
+            True
+            if backend_state is None
+            else backend_state.model_is_enabled(snapshot.backend_key, model.model_id)
+        )
+        for model in snapshot.available_models
+    }
+    default_model_id = snapshot.default_model_id
+    if default_model_id is not None and not enabled_by_model.get(default_model_id, True):
+        default_model_id = None
     return {
         "backend_key": str(snapshot.backend_key),
         "installed": snapshot.installed,
@@ -845,11 +958,12 @@ def _snapshot_json(snapshot: BackendSnapshot) -> dict[str, Any]:
                 "display_name": model.display_name,
                 "detail": model.detail,
                 "reasoning_effort_options": list(model.reasoning_effort_options),
+                "enabled": enabled_by_model[model.model_id],
             }
             for model in snapshot.available_models
         ],
         "reasoning_effort_options": list(snapshot.reasoning_effort_options),
-        "default_model_id": snapshot.default_model_id,
+        "default_model_id": default_model_id,
         "default_reasoning_effort": snapshot.default_reasoning_effort,
         "update_advisory": (
             None
@@ -867,6 +981,14 @@ def _snapshot_json(snapshot: BackendSnapshot) -> dict[str, Any]:
             }
         ),
         "diagnoses": list(snapshot.diagnoses),
+        "cached_usage": (
+            None
+            if cached_usage is None
+            else {
+                "observed_at": _datetime_json(cached_usage.observed_at),
+                "windows": [_usage_window_json(window) for window in cached_usage.windows],
+            }
+        ),
     }
 
 
@@ -883,20 +1005,30 @@ def _usage_result_json(result: BackendUsageResult) -> dict[str, Any]:
         "backend_key": str(result.backend_key),
         "outcome": str(result.outcome),
         "detail": result.detail,
-        "observed_at": (
-            None
-            if result.observed_at is None
-            else result.observed_at.isoformat().replace("+00:00", "Z")
-        ),
-        "windows": [
-            {
-                "name": window.name,
-                "used_percent": window.used_percent,
-                "resets_at": window.resets_at.isoformat().replace("+00:00", "Z"),
-            }
-            for window in result.windows
-        ],
+        "observed_at": None if result.observed_at is None else _datetime_json(result.observed_at),
+        "windows": [_usage_window_json(window) for window in result.windows],
     }
+
+
+def _usage_outcome_json(result: BackendUsageResult) -> dict[str, Any]:
+    return {
+        "backend_key": str(result.backend_key),
+        "outcome": str(result.outcome),
+        "detail": result.detail,
+    }
+
+
+def _usage_window_json(window: BackendUsageWindow) -> dict[str, Any]:
+    return {
+        "kind": str(window.kind),
+        "used_percent": window.used_percent,
+        "resets_at": _datetime_json(window.resets_at),
+        "model_id": window.model_scope,
+    }
+
+
+def _datetime_json(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
 
 
 # --- the live tail as an event stream -------------------------------------------------------
@@ -912,6 +1044,8 @@ def _live_frame_json(frame: ConversationTailItem) -> Mapping[str, Any] | None:
             return {"frame": "agent_message_delta", "text_delta": text_delta}
         case ModelThinkingFrame():
             return {"frame": "model_thinking"}
+        case HeldPromptsChangedFrame():
+            return {"frame": "held_prompts_changed"}
         case ToolCallProgressFrame(tool_call_id=tool_call_id, detail=detail):
             return {
                 "frame": "tool_call_progress",
@@ -942,6 +1076,13 @@ async def _tail_stream(
         highest_replayed = replayed[-1].sequence if replayed else after
         for event in replayed:
             yield _stream_frame(COMMITTED_EVENT_STREAM_NAME, _event_json(event))
+        # The subscription exists before this wake. Every new binder refreshes the
+        # canonical snapshot once, even when it is empty: a last-row removal can happen
+        # between the binder's view read and this subscription just as an enqueue can.
+        yield _stream_frame(
+            LIVE_FRAME_STREAM_NAME,
+            {"frame": "held_prompts_changed"},
+        )
         while True:
             try:
                 item = await asyncio.wait_for(

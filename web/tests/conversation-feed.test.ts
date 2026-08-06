@@ -210,6 +210,7 @@ describe("Conversation stream", () => {
     const calls: string[] = [];
     let firstTailHandlers: Parameters<ConversationStreamPorts["openTail"]>[2] | null = null;
     let connectedCount = 0;
+    let heldPromptsChangedCount = 0;
 
     const ports: ConversationStreamPorts = {
       readEventsAfter: (conversationId, after) => {
@@ -235,6 +236,9 @@ describe("Conversation stream", () => {
       },
       () => {
         connectedCount += 1;
+      },
+      () => {
+        heldPromptsChangedCount += 1;
       }
     );
 
@@ -250,6 +254,8 @@ describe("Conversation stream", () => {
       text_delta: "streaming"
     });
     expect(published.streamingAgentText).toBe("streaming");
+    firstTailHandlers!.onLiveFrame({ frame: "held_prompts_changed" });
+    expect(heldPromptsChangedCount).toBe(1);
 
     firstTailHandlers!.onTrouble();
     expect(calls.slice(-2)).toEqual(["close:2", "read:c1:2"]);

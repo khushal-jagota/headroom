@@ -19,6 +19,9 @@ from enum import StrEnum
 from planner.conversation.contracts import (
     ConversationAlreadyStarted,
     ConversationStartRequest,
+    HeldPrompt,
+    HeldPromptPromotionFate,
+    HeldPromptPromotionMode,
     PromptDeliveryFate,
     PromptDeliveryInjected,
     PromptDeliveryMode,
@@ -156,12 +159,14 @@ class _RunningTurn:
 
 @dataclass(frozen=True, slots=True)
 class _HeldPrompt:
+    held_prompt_id: str
     content: MessageContent
     sender_label: str
     model_change: str | None = None
     reasoning_effort_change: str | None = None
     sender_message_id: str | None = None
     sent_at_unix_milliseconds: int | None = None
+    snapshot_sent_at_unix_milliseconds: int = 0
 
 
 @dataclass
@@ -172,6 +177,7 @@ class _ConversationState:
     backend_session: _InMemoryBackendSession | None = None
     running_turn: _RunningTurn | None = None
     held_prompts: deque[_HeldPrompt] = field(default_factory=deque)
+    held_prompts_created: int = 0
     observations: list[InMemoryConversationObservation] = field(default_factory=list)
     permission_asks_raised: int = 0
     user_input_requests_raised: int = 0
@@ -235,14 +241,21 @@ class InMemoryConversationSystem:
             )
 
         if mode is PromptDeliveryMode.run_when_free and state.running_turn is not None:
+            state.held_prompts_created += 1
             state.held_prompts.append(
                 _HeldPrompt(
+                    held_prompt_id=f"held-{state.held_prompts_created}",
                     content=content,
                     sender_label=sender_label,
                     model_change=model_change,
                     reasoning_effort_change=reasoning_effort_change,
                     sender_message_id=sender_message_id,
                     sent_at_unix_milliseconds=sent_at_unix_milliseconds,
+                    snapshot_sent_at_unix_milliseconds=(
+                        sent_at_unix_milliseconds
+                        if sent_at_unix_milliseconds is not None
+                        else state.held_prompts_created
+                    ),
                 )
             )
             return PromptDeliveryQueued(queue_position=len(state.held_prompts))
@@ -284,6 +297,109 @@ class InMemoryConversationSystem:
             return
         self._end_running_turn(state, InMemoryConversationTurnEnding.interrupted)
         self._drain(state)
+
+    async def held_prompts(self, conversation_id: str) -> tuple[HeldPrompt, ...]:
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            return ()
+        return tuple(
+            HeldPrompt(
+                held_prompt_id=held.held_prompt_id,
+                content=held.content,
+                sender_label=held.sender_label,
+                sender_message_id=held.sender_message_id,
+                sent_at_unix_milliseconds=held.snapshot_sent_at_unix_milliseconds,
+            )
+            for held in state.held_prompts
+        )
+
+    async def promote_held_prompt(
+        self,
+        conversation_id: str,
+        held_prompt_id: str,
+        mode: HeldPromptPromotionMode,
+    ) -> HeldPromptPromotionFate | None:
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            return None
+        position = next(
+            (
+                index
+                for index, candidate in enumerate(state.held_prompts)
+                if candidate.held_prompt_id == held_prompt_id
+            ),
+            None,
+        )
+        if position is None:
+            return None
+        held = state.held_prompts[position]
+        del state.held_prompts[position]
+
+        fate: HeldPromptPromotionFate
+        if mode is HeldPromptPromotionMode.send_now:
+            if state.running_turn is not None:
+                self._end_running_turn(
+                    state, InMemoryConversationTurnEnding.interrupted
+                )
+            fate = self._start_turn(
+                state,
+                held.content,
+                held.sender_label,
+                PromptDeliveryMode.send_now,
+                held.model_change,
+                held.reasoning_effort_change,
+                sender_message_id=held.sender_message_id,
+                sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+            )
+        else:
+            fate = self._steer(
+                state,
+                held.content,
+                held.sender_label,
+                sender_message_id=held.sender_message_id,
+                sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+            )
+
+        if isinstance(fate, PromptDeliveryRefused):
+            state.observations.append(
+                InMemoryConversationObservation(
+                    kind=InMemoryConversationObservationKind.prompt_delivery_refused,
+                    content=held.content,
+                    sender_label=held.sender_label,
+                    mode=(
+                        PromptDeliveryMode.send_now
+                        if mode is HeldPromptPromotionMode.send_now
+                        else PromptDeliveryMode.steer
+                    ),
+                    refusal_reason=fate.refusal_reason,
+                    sender_message_id=held.sender_message_id,
+                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                )
+            )
+            self._drain(state)
+        return fate
+
+    async def discard_held_prompt(
+        self, conversation_id: str, held_prompt_id: str
+    ) -> bool:
+        state = self._conversations.get(conversation_id)
+        if state is None:
+            return False
+        for position, held in enumerate(state.held_prompts):
+            if held.held_prompt_id != held_prompt_id:
+                continue
+            del state.held_prompts[position]
+            state.observations.append(
+                InMemoryConversationObservation(
+                    kind=InMemoryConversationObservationKind.prompt_discarded,
+                    content=held.content,
+                    sender_label=held.sender_label,
+                    sender_message_id=held.sender_message_id,
+                    sent_at_unix_milliseconds=held.sent_at_unix_milliseconds,
+                )
+            )
+            return True
+        return False
 
     async def kill(self, conversation_id: str) -> None:
         state = self._conversations.get(conversation_id)
