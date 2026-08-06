@@ -110,6 +110,7 @@ def test_workers_api_composes_registry_with_managed_settings_and_signals_the_cha
         assert "worker_type" not in detail
         assert detail["manifest"]["worker_type"] == "coding"
         assert detail["settings"]["specialist_skill"]["name"] == "panels-worker-coding"
+        assert detail["settings"]["suggested_next_ceiling"] == "needs_success"
 
         updated = client.put(
             "/api/workers/coding/stages/needs_success/default-ownership",
@@ -132,6 +133,92 @@ def test_workers_api_composes_registry_with_managed_settings_and_signals_the_cha
     # Worker settings live in files, not the database, so the one accepted write says so
     # itself; the rejected terminal-stage write says nothing.
     assert signals.count == 1
+
+
+def test_suggested_next_ceiling_api_validates_preserves_and_reaches_ticket_detail(
+    tmp_path: Path,
+) -> None:
+    client, db_path = _app(tmp_path)
+    with _counting_change_signals() as signals, client:
+        changed = client.put(
+            "/api/workers/coding/suggested-next-ceiling",
+            json={"suggested_next_ceiling": "needs_plan"},
+        )
+        assert changed.status_code == 200
+        assert changed.json()["suggested_next_ceiling"] == "needs_plan"
+
+        for invalid in ("needs_kickoff", "none", "needs_alpha", None, 4):
+            refused = client.put(
+                "/api/workers/coding/suggested-next-ceiling",
+                json={"suggested_next_ceiling": invalid},
+            )
+            assert refused.status_code == 400
+
+        launch = client.put(
+            "/api/workers/coding/launch-defaults",
+            json={
+                "employee_backend": "hermes",
+                "employee_launch_model": "openai-codex:gpt-5.6-sol",
+                "employee_launch_reasoning_effort": None,
+            },
+        )
+        assert launch.json()["suggested_next_ceiling"] == "needs_plan"
+        ownership = client.put(
+            "/api/workers/coding/stages/needs_success/default-ownership",
+            json={"ownership_mode": "paired"},
+        )
+        assert ownership.json()["suggested_next_ceiling"] == "needs_plan"
+
+        created = client.post(
+            "/api/tickets",
+            json={
+                "title": "Suggestion is review context",
+                "worker_type": "coding",
+                "kickoff_note": "Review this premise",
+            },
+        )
+        assert created.status_code == 200
+        ticket = client.get(f"/api/tickets/{created.json()['id']}").json()
+        assert ticket["stage"] == "needs_kickoff"
+        assert ticket["ceiling"] == "needs_kickoff"
+        assert ticket["suggested_next_ceiling"] == "needs_plan"
+
+    assert signals.count == 4
+    stored = json.loads(
+        (
+            worker_settings_service.managed_worker_settings_root(db_path.parent)
+            / "coding"
+            / "settings.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert stored["suggested_next_ceiling"] == "needs_plan"
+
+
+def test_missing_suggested_next_ceiling_upgrades_and_recovery_preserves_custom_value(
+    tmp_path: Path,
+) -> None:
+    registry = configured_worker_type_registry()
+    initial = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    assert initial.suggested_next_ceiling == "needs_success"
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    path = root / "coding" / "settings.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["suggested_next_ceiling"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    upgraded = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    assert upgraded.suggested_next_ceiling == "needs_success"
+    assert json.loads(path.read_text(encoding="utf-8"))["suggested_next_ceiling"] == (
+        "needs_success"
+    )
+
+    custom = worker_settings_service.update_suggested_next_ceiling(
+        tmp_path, registry, "coding", "needs_closeout"
+    )
+    assert custom.suggested_next_ceiling == "needs_closeout"
+    path.write_text("not json", encoding="utf-8")
+    recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    assert recovered.suggested_next_ceiling == "needs_closeout"
 
 
 def test_workers_roster_projects_live_chief_conversation_signals(

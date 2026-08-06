@@ -70,6 +70,7 @@ def _skills_home_json(home: SkillsHome) -> JsonDict:
 def _settings_json(settings: ManagedWorkerSettings) -> JsonDict:
     payload: JsonDict = {
         "worker_type": settings.worker_type,
+        "suggested_next_ceiling": settings.suggested_next_ceiling,
         "stage_ownership_defaults": {
             stage: mode.value for stage, mode in settings.stage_ownership_defaults.items()
         },
@@ -86,6 +87,7 @@ def _summary_json(summary: WorkerManagementSummary) -> JsonDict:
         "worker_type": summary.worker_type,
         "label": summary.label,
         "specialist_skill_name": summary.specialist_skill_name,
+        "suggested_next_ceiling": summary.suggested_next_ceiling,
         "stage_ownership_defaults": {
             stage: mode.value for stage, mode in summary.stage_ownership_defaults.items()
         },
@@ -309,6 +311,31 @@ async def get_worker(worker_type: str, config: Cfg) -> JsonDict:
     return _detail_json(
         service.read_worker_management_detail(_database_parent(config), registry, worker_type)
     )
+
+
+@router.put("/workers/{worker_type}/suggested-next-ceiling")
+async def put_suggested_next_ceiling(
+    worker_type: str,
+    raw: dict[str, Any],
+    ctx: Ctx,
+    config: Cfg,
+) -> JsonDict:
+    require_direct_write(ctx)
+    if set(raw) != {"suggested_next_ceiling"}:
+        raise PlannerError(
+            ErrorCode.validation,
+            "suggested next ceiling requires suggested_next_ceiling",
+            {"fields": sorted(raw)},
+        )
+    registry = configured_worker_runtime_definitions().worker_type_registry
+    settings = service.update_suggested_next_ceiling(
+        _database_parent(config),
+        registry,
+        worker_type,
+        raw["suggested_next_ceiling"],
+        after_publish=_announce_worker_settings_change,
+    )
+    return _settings_json(settings)
 
 
 @router.put("/workers/{worker_type}/stages/{stage}/default-ownership")
