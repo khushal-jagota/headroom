@@ -112,7 +112,8 @@ One screen per part of the system:
   the shared Worker skill, and every configured Worker type. Chief settings open at
   `#/config/chief-of-staff`, Worker skill at `#/config/worker-skill`, and a Worker at
   `#/config/workers/<worker-type>`. Those detail screens provide the applicable
-  launch defaults, Stage ownership controls, and skill editors. Worker and skill
+  launch defaults, suggested Kickoff ceiling controls, Stage ownership controls, and
+  skill editors. Worker and skill
   identities and lifecycle structure stay read-only. Each editable value saves
   independently; a failed save keeps the attempted value and a useful error so it can
   be corrected or retried. The former `#/agents/worker-skill` and

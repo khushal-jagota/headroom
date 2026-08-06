@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from planner.conversation.contracts import ConversationStartRequest
+from planner.conversation.backend_state import write_model_enablement
+from planner.conversation.contracts import ConversationBackendKey, ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
 from planner.core import change_signal
@@ -109,6 +110,7 @@ def test_workers_api_composes_registry_with_managed_settings_and_signals_the_cha
         assert "worker_type" not in detail
         assert detail["manifest"]["worker_type"] == "coding"
         assert detail["settings"]["specialist_skill"]["name"] == "panels-worker-coding"
+        assert detail["settings"]["suggested_next_ceiling"] == "needs_success"
 
         updated = client.put(
             "/api/workers/coding/stages/needs_success/default-ownership",
@@ -131,6 +133,92 @@ def test_workers_api_composes_registry_with_managed_settings_and_signals_the_cha
     # Worker settings live in files, not the database, so the one accepted write says so
     # itself; the rejected terminal-stage write says nothing.
     assert signals.count == 1
+
+
+def test_suggested_next_ceiling_api_validates_preserves_and_reaches_ticket_detail(
+    tmp_path: Path,
+) -> None:
+    client, db_path = _app(tmp_path)
+    with _counting_change_signals() as signals, client:
+        changed = client.put(
+            "/api/workers/coding/suggested-next-ceiling",
+            json={"suggested_next_ceiling": "needs_plan"},
+        )
+        assert changed.status_code == 200
+        assert changed.json()["suggested_next_ceiling"] == "needs_plan"
+
+        for invalid in ("needs_kickoff", "none", "needs_alpha", None, 4):
+            refused = client.put(
+                "/api/workers/coding/suggested-next-ceiling",
+                json={"suggested_next_ceiling": invalid},
+            )
+            assert refused.status_code == 400
+
+        launch = client.put(
+            "/api/workers/coding/launch-defaults",
+            json={
+                "employee_backend": "hermes",
+                "employee_launch_model": "openai-codex:gpt-5.6-sol",
+                "employee_launch_reasoning_effort": None,
+            },
+        )
+        assert launch.json()["suggested_next_ceiling"] == "needs_plan"
+        ownership = client.put(
+            "/api/workers/coding/stages/needs_success/default-ownership",
+            json={"ownership_mode": "paired"},
+        )
+        assert ownership.json()["suggested_next_ceiling"] == "needs_plan"
+
+        created = client.post(
+            "/api/tickets",
+            json={
+                "title": "Suggestion is review context",
+                "worker_type": "coding",
+                "kickoff_note": "Review this premise",
+            },
+        )
+        assert created.status_code == 200
+        ticket = client.get(f"/api/tickets/{created.json()['id']}").json()
+        assert ticket["stage"] == "needs_kickoff"
+        assert ticket["ceiling"] == "needs_kickoff"
+        assert ticket["suggested_next_ceiling"] == "needs_plan"
+
+    assert signals.count == 4
+    stored = json.loads(
+        (
+            worker_settings_service.managed_worker_settings_root(db_path.parent)
+            / "coding"
+            / "settings.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert stored["suggested_next_ceiling"] == "needs_plan"
+
+
+def test_missing_suggested_next_ceiling_upgrades_and_recovery_preserves_custom_value(
+    tmp_path: Path,
+) -> None:
+    registry = configured_worker_type_registry()
+    initial = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    assert initial.suggested_next_ceiling == "needs_success"
+    root = worker_settings_service.managed_worker_settings_root(tmp_path)
+    path = root / "coding" / "settings.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["suggested_next_ceiling"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    upgraded = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    assert upgraded.suggested_next_ceiling == "needs_success"
+    assert json.loads(path.read_text(encoding="utf-8"))["suggested_next_ceiling"] == (
+        "needs_success"
+    )
+
+    custom = worker_settings_service.update_suggested_next_ceiling(
+        tmp_path, registry, "coding", "needs_closeout"
+    )
+    assert custom.suggested_next_ceiling == "needs_closeout"
+    path.write_text("not json", encoding="utf-8")
+    recovered = worker_settings_service.read_worker_settings(tmp_path, registry, "coding")
+    assert recovered.suggested_next_ceiling == "needs_closeout"
 
 
 def test_workers_roster_projects_live_chief_conversation_signals(
@@ -287,6 +375,39 @@ def test_launch_defaults_naming_no_model_are_refused(tmp_path: Path) -> None:
                 },
             )
             assert refused.status_code == 400
+
+
+def test_disabled_models_are_refused_before_worker_or_chief_settings_change(
+    tmp_path: Path,
+) -> None:
+    client, db_path = _app(tmp_path, raise_server_exceptions=False)
+    conn = connect(str(db_path))
+    write_model_enablement(conn, ConversationBackendKey.codex, "disabled-model", False)
+    conn.close()
+    root = worker_settings_service.managed_worker_settings_root(db_path.parent)
+
+    with client:
+        worker_before = client.get("/api/workers/coding").json()["settings"]["launch_defaults"]
+        chief_before = client.get("/api/workers/chief-of-staff/settings").json()[
+            "launch_defaults"
+        ]
+        body = {
+            "employee_backend": "codex",
+            "employee_launch_model": "disabled-model",
+            "employee_launch_reasoning_effort": "medium",
+        }
+        worker = client.put("/api/workers/coding/launch-defaults", json=body)
+        chief = client.put("/api/workers/chief-of-staff/launch-defaults", json=body)
+        worker_after = client.get("/api/workers/coding").json()["settings"]["launch_defaults"]
+        chief_after = client.get("/api/workers/chief-of-staff/settings").json()[
+            "launch_defaults"
+        ]
+
+    assert worker.status_code == chief.status_code == 400
+    assert worker.json()["error"]["message"] == "employee launch model is disabled"
+    assert worker_after == worker_before
+    assert chief_after == chief_before
+    assert (root / "coding" / "settings.json").is_file()
 
 
 def test_stored_launch_defaults_naming_no_model_are_repaired_to_the_shipped_ones(

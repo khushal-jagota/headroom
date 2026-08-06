@@ -58,20 +58,19 @@ assert.doesNotMatch(
   /capabilities|relay_chief_enabled|resolveRelayChiefFromMeta|markRelayChiefMetaError/,
 );
 
-// Backend management has one production home. Provider allowance acquisition exists
-// behind its explicit action only; mounting the page and the dev composer merely read the
-// ordinary backend catalogue.
+// Backend management has one production home. One explicit action refreshes both the
+// catalogue and cached allowance readings. Ordinary mounts only read cached state.
 assert.match(appSource, /href="#\/backends"/);
 assert.match(appSource, /<BackendsRoute \/>/);
-assert.match(backendsRouteSource, /onUsageRefresh=\{\(\) => void runUsageRefresh/);
-assert.match(backendsRouteSource, /await refreshBackendUsage\(key\)/);
+assert.match(backendsRouteSource, /await refreshBackends\(\)/);
+assert.match(backendsRouteSource, /await setBackendModelEnabled\(backendKey, modelId, enabled\)/);
 const backendsOnMount = backendsRouteSource.slice(
   backendsRouteSource.indexOf("onMount(() =>"),
   backendsRouteSource.indexOf("</script>"),
 );
-assert.doesNotMatch(backendsOnMount, /refreshBackendUsage/);
+assert.doesNotMatch(backendsOnMount, /refreshBackends/);
 assert.match(devConversationRouteSource, /readBackends\(\)/);
-assert.doesNotMatch(devConversationRouteSource, /BackendCard|updateBackend|refreshBackendUsage/);
+assert.doesNotMatch(devConversationRouteSource, /BackendCard|updateBackend|refreshBackends/);
 
 // --- the Chief is one conversation, in the Workspace inspector -------------------------
 

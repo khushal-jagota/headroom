@@ -18,6 +18,7 @@
   } from "../lib/types";
   import LiveConversation from "../components/conversation/LiveConversation.svelte";
   import type { ConversationState } from "../lib/conversation/conversationState";
+  import { initialTicketConversationState } from "../lib/conversation/ticketConversationState";
   import {
     readBackends,
     type BackendSnapshot,
@@ -94,7 +95,7 @@
       return;
     }
     seededConversationStateFromStatus = true;
-    conversationState = status === "paired" ? "opened" : "rest";
+    conversationState = initialTicketConversationState(status);
   });
 
   /** A click outside the conversation dismisses it to rest. */
@@ -581,6 +582,7 @@
                         lifecycle={lc}
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
+                        suggestedNextCeiling={detail.suggested_next_ceiling}
                         emptyText={emptyTicketFieldText}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
@@ -617,6 +619,7 @@
                   lifecycle={lc}
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
+                  suggestedNextCeiling={detail.suggested_next_ceiling}
                   emptyText={emptyTicketFieldText}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}

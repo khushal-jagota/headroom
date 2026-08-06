@@ -7,7 +7,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test:vitest": "vitest run --typecheck",
-    "test:legacy": "node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/browser-css.test.mjs && node tests/shell-status.test.mjs && node tests/backlog-ideas.test.mjs && node tests/scheduled-tasks-browser.test.mjs && node tests/production-surfaces.test.mjs && node tests/agents-workspace-source.test.mjs && node tests/worker-configuration-setup.test.mjs && node tests/conversation-rest-line.test.mjs && node tests/conversation-pane.test.mjs",
+    "test:legacy": "node tests/managed-markdown.test.mjs && node tests/markdown-renderer.test.mjs && node tests/browser-css.test.mjs && node tests/shell-status.test.mjs && node tests/backlog-ideas.test.mjs && node tests/scheduled-tasks-browser.test.mjs && node tests/production-surfaces.test.mjs && node tests/backends-source-contract.test.mjs && node tests/agents-workspace-source.test.mjs && node tests/worker-configuration-setup.test.mjs && node tests/conversation-rest-line.test.mjs && node tests/conversation-pane.test.mjs && node tests/conversation-pane-browser.test.mjs",
     "test": "npm run test:vitest && npm run test:legacy"
   },
   "dependencies": {

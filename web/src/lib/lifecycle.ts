@@ -126,6 +126,19 @@ export function ceilingOptionsFor(
   return lc.stageOrder.slice(start).map((stage) => ({ value: stage, label: stageLabel(stage) }));
 }
 
+export function preferredScopeCeilingFor(
+  lc: Lifecycle | null,
+  newStage: string | null,
+  suggestedNextCeiling: string | null
+): string | null {
+  if (!lc) return null;
+  const options = ceilingOptionsFor(lc, newStage || lc.ceilingRange[0] || "needs_success");
+  if (suggestedNextCeiling && options.some((option) => option.value === suggestedNextCeiling)) {
+    return suggestedNextCeiling;
+  }
+  return newStage || options[0]?.value || null;
+}
+
 export function fieldIsPassedFor(
   lc: Lifecycle | null,
   field: string,

@@ -298,6 +298,8 @@ export type BackendIdentity = {
 export type BackendModel = {
   model_id: string;
   display_name: string | null;
+  /** Disabled models remain visible on Backends, but no picker offers them for a run. */
+  enabled: boolean;
   /** What this model really is, when the name alone does not say — an alias and the
    *  version it reaches, for instance. Optional: a catalog that offers none is read the
    *  same way as one that has not started offering them yet. */
@@ -329,6 +331,7 @@ export type BackendSnapshot = {
   default_model_id?: string | null;
   /** The same for reasoning effort. Some backends genuinely name none. */
   default_reasoning_effort?: string | null;
+  cached_usage: BackendCachedUsage | null;
   update_advisory: BackendUpdateAdvisory | null;
   diagnoses: string[];
 };
@@ -340,23 +343,32 @@ export type BackendUpdateResult = {
 };
 
 export type BackendUsageWindow = {
-  name: string;
+  kind: "five_hour" | "seven_day";
   used_percent: number;
   resets_at: string;
+  model_id: string | null;
 };
 
-/** A provider allowance reading acquired only after a person explicitly asks for it.
- *
- * It deliberately does not live on BackendSnapshot: reading the ordinary backend
- * catalogue is ambient application work, while some providers count usage checks
- * against the allowance being inspected.
- */
-export type BackendUsageResult = {
+export type BackendCachedUsage = {
+  observed_at: string;
+  windows: BackendUsageWindow[];
+};
+
+export type BackendUsageRefreshOutcome = {
   backend_key: ConversationBackendKey;
   outcome: "succeeded" | "unavailable" | "unauthenticated" | "failed";
   detail: string | null;
-  observed_at: string | null;
-  windows: BackendUsageWindow[];
+};
+
+export type BackendsRefreshResult = {
+  backends: BackendSnapshot[];
+  usage_outcomes: BackendUsageRefreshOutcome[];
+};
+
+export type BackendModelEnablementResult = {
+  backend_key: ConversationBackendKey;
+  model_id: string;
+  enabled: boolean;
 };
 
 export type StartConversationBody = {
@@ -591,12 +603,18 @@ export function updateBackend(
   });
 }
 
-export function refreshBackendUsage(
-  backendKey: ConversationBackendKey
-): Promise<BackendUsageResult> {
-  return request<BackendUsageResult>(
-    `/backends/${encodeURIComponent(backendKey)}/usage-refresh`,
-    { method: "POST" }
+export function refreshBackends(): Promise<BackendsRefreshResult> {
+  return request<BackendsRefreshResult>("/backends/refresh", { method: "POST" });
+}
+
+export function setBackendModelEnabled(
+  backendKey: ConversationBackendKey,
+  modelId: string,
+  enabled: boolean
+): Promise<BackendModelEnablementResult> {
+  return request<BackendModelEnablementResult>(
+    `/backends/${encodeURIComponent(backendKey)}/models/${encodeURIComponent(modelId)}/enablement`,
+    { ...postJson({ enabled }), method: "PUT" }
   );
 }
 

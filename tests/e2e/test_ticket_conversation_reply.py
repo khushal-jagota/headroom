@@ -119,7 +119,13 @@ def _browser_server_with_accepting_backend(tmp_path: Path) -> Iterator[tuple[str
         available.bind(("127.0.0.1", 0))
         port = int(available.getsockname()[1])
     server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
+        uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=port,
+            log_level="error",
+            timeout_graceful_shutdown=2,
+        )
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -312,4 +318,4 @@ def test_ticket_images_cross_the_owner_api_become_managed_files_and_reload(
             "}",
             timeout=WAIT_MS,
         )
-        page.close()
+        context.close()

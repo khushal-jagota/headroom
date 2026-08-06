@@ -3,6 +3,52 @@ import { describe, expect, it } from "vitest";
 import { createCoalescedAsyncCall } from "../src/lib/coalescedAsyncCall";
 
 describe("coalesced async calls", () => {
+  it("coalesces duplicate requests into one trailing pass", async () => {
+    const passes: boolean[] = [];
+    let finish = (): void => {
+      throw new Error("the pass did not start");
+    };
+    const request = createCoalescedAsyncCall(async (force) => {
+      passes.push(force);
+      if (passes.length === 1) {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      }
+    });
+
+    const first = request();
+    const duplicate = request();
+    expect(passes).toEqual([false]);
+
+    finish();
+    await Promise.all([first, duplicate]);
+    expect(passes).toEqual([false, false]);
+  });
+
+  it("merges requests during one pass into one forced trailing pass", async () => {
+    const passes: boolean[] = [];
+    let finish = (): void => {
+      throw new Error("the pass did not start");
+    };
+    const request = createCoalescedAsyncCall(async (force) => {
+      passes.push(force);
+      if (passes.length === 1) {
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      }
+    });
+
+    const first = request();
+    const ordinary = request();
+    const forced = request(true);
+    finish();
+
+    await Promise.all([first, ordinary, forced]);
+    expect(passes).toEqual([false, true]);
+  });
+
   it("hands settlement-gap intent to a trailing owner", async () => {
     const passes: boolean[] = [];
     let settleFirst = (): void => {
