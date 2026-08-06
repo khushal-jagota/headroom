@@ -120,9 +120,10 @@ One screen per part of the system:
   `#/agents/workers/<worker-type>` paths, plus legacy `#/workers` paths, redirect to
   Config.
 - **Notifications** — the personal notification settings at `#/notifications`.
-  “What counts” is rendered from the server's notification catalogue, so adding a
-  future choice does not require a second hard-coded browser list. Each switch saves
-  independently. “This device” asks for browser permission only after the user
+  “What counts” renders the Ticket and Chief of Staff groups from the server's
+  notification catalogue. Tickets have five switches, and the Chief has four. Each
+  subject-and-type switch saves and reports errors independently. “This device” asks
+  for browser permission only after the user
   presses Enable, registers the browser's Web Push subscription, and can remove it
   again. On iPhone or iPad, Panels explains that the site must first be added to the
   Home Screen.

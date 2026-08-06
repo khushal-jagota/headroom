@@ -318,7 +318,13 @@ export type NotificationTypeSetting = {
   enabled: boolean;
 };
 
-export type NotificationSettingsResponse = {
+export type NotificationSubjectSettings = {
+  key: string;
+  label: string;
   types: NotificationTypeSetting[];
+};
+
+export type NotificationSettingsResponse = {
+  subjects: NotificationSubjectSettings[];
   vapid_public_key: string;
 };

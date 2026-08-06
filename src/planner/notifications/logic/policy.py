@@ -10,7 +10,7 @@ from planner.notifications.contracts import (
 
 _REASONS = {
     "ticket_needs_approval": "needs your approval",
-    "ticket_needs_input": "needs your input",
+    "needs_input": "needs your input",
     "permission_requested": "is waiting for permission",
     "worker_completed": "has a completed worker reply",
     "worker_failed": "has a failed worker reply",
@@ -25,9 +25,7 @@ def _subject_route(fact: NotificationFact) -> str:
     raise ValueError(f"unknown notification subject kind: {fact.subject_kind}")
 
 
-def decide_notification(
-    fact: NotificationFact, *, enabled: bool
-) -> NotificationIntent | None:
+def decide_notification(fact: NotificationFact, *, enabled: bool) -> NotificationIntent | None:
     """Apply saved policy to one normalized fact.
 
     Sources never call delivery and delivery never interprets source facts. Every

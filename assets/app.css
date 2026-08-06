@@ -6127,6 +6127,18 @@ select {
   margin: 0 0 var(--space-3);
 }
 
+.notification-subject + .notification-subject {
+  margin-top: var(--space-6);
+}
+
+.notification-subject h3 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  font-weight: 500;
+  color: var(--text-strong);
+}
+
 .notification-option {
   display: flex;
   gap: var(--space-5);

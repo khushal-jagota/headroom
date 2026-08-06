@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 NotificationSubjectKind = Literal["ticket", "agent"]
+TICKET_NOTIFICATION_SUBJECT_KEY: Final = "tickets"
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +17,13 @@ class NotificationType:
     default_enabled: bool
 
 
+@dataclass(frozen=True, slots=True)
+class NotificationSubject:
+    key: str
+    label: str
+    notification_type_ids: tuple[str, ...]
+
+
 NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
     NotificationType(
         "ticket_needs_approval",
@@ -24,7 +32,7 @@ NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
         True,
     ),
     NotificationType(
-        "ticket_needs_input",
+        "needs_input",
         "Needs input",
         "A Ticket or worker is waiting for information from you.",
         True,
@@ -51,6 +59,27 @@ NOTIFICATION_TYPES: Final[tuple[NotificationType, ...]] = (
 NOTIFICATION_TYPE_BY_ID: Final[dict[str, NotificationType]] = {
     item.id: item for item in NOTIFICATION_TYPES
 }
+
+NOTIFICATION_SUBJECTS: Final[tuple[NotificationSubject, ...]] = (
+    NotificationSubject(
+        TICKET_NOTIFICATION_SUBJECT_KEY,
+        "Tickets",
+        tuple(item.id for item in NOTIFICATION_TYPES),
+    ),
+    NotificationSubject(
+        "chief_of_staff",
+        "Chief of Staff",
+        tuple(item.id for item in NOTIFICATION_TYPES if item.id != "ticket_needs_approval"),
+    ),
+)
+NOTIFICATION_SUBJECT_BY_KEY: Final[dict[str, NotificationSubject]] = {
+    item.key: item for item in NOTIFICATION_SUBJECTS
+}
+
+
+def notification_preference_is_valid(subject_key: str, notification_type: str) -> bool:
+    subject = NOTIFICATION_SUBJECT_BY_KEY.get(subject_key)
+    return subject is not None and notification_type in subject.notification_type_ids
 
 
 @dataclass(frozen=True, slots=True)

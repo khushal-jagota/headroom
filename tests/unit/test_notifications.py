@@ -154,9 +154,7 @@ def test_status_projection_policy_and_delivery_are_exact_once(tmp_path: Path) ->
     assert notifications_data.apply_policy(conn, 2) == 0
     assert len(notifications_data.pending_deliveries(conn, 2)) == 1
 
-    fact = conn.execute(
-        "SELECT notification_type, payload FROM notification_facts"
-    ).fetchone()
+    fact = conn.execute("SELECT notification_type, payload FROM notification_facts").fetchone()
     assert fact is not None
     assert fact["notification_type"] == "worker_failed"
     assert json.loads(fact["payload"]) == {"subject_label": "Phone-worthy work"}
@@ -177,12 +175,12 @@ def test_disabled_type_is_decided_once_and_never_backfilled(tmp_path: Path) -> N
     create_schema(conn)
     ticket = _ticket(conn, 1)
     notifications_data.project_facts(conn)
-    notifications_data.set_preference(conn, "worker_failed", False, 1)
+    notifications_data.set_preference(conn, "tickets", "worker_failed", False, 1)
 
     tickets_data.mark_ticket_errored(conn, ticket.id, error="backend stopped", now=2)
     notifications_data.project_facts(conn)
     assert notifications_data.apply_policy(conn, 2) == 1
-    notifications_data.set_preference(conn, "worker_failed", True, 3)
+    notifications_data.set_preference(conn, "tickets", "worker_failed", True, 3)
     assert notifications_data.apply_policy(conn, 3) == 0
     assert conn.execute("SELECT outcome FROM notification_decisions").fetchone()[0] == "suppress"
     assert conn.execute("SELECT COUNT(*) FROM notification_intents").fetchone()[0] == 0
@@ -219,12 +217,11 @@ def test_conversation_events_project_to_the_catalogue_once(tmp_path: Path) -> No
     assert [
         (str(row["fact_id"]), str(row["notification_type"]))
         for row in conn.execute(
-            "SELECT fact_id, notification_type FROM notification_facts "
-            "ORDER BY source_sequence"
+            "SELECT fact_id, notification_type FROM notification_facts ORDER BY source_sequence"
         )
     ] == [
         ("conversation:c_notify:1", "permission_requested"),
-        ("conversation:c_notify:2", "ticket_needs_input"),
+        ("conversation:c_notify:2", "needs_input"),
         ("conversation:c_notify:3", "worker_completed"),
         ("conversation:c_notify:4", "worker_failed"),
     ]
@@ -283,6 +280,41 @@ def test_chief_conversation_events_use_agent_destination_and_one_coalescing_tag(
     notifications_data.project_facts(conn)
     assert notifications_data.apply_policy(conn, 4) == 0
     assert conn.execute("SELECT COUNT(*) FROM notification_facts").fetchone()[0] == 4
+    conn.close()
+
+
+def test_policy_resolves_the_same_type_independently_by_subject(tmp_path: Path) -> None:
+    conn = connect(str(tmp_path / "subject-policy.db"))
+    create_schema(conn)
+    ticket = _ticket(conn, 1)
+    notifications_data.project_facts(conn)
+    tickets_data.mark_ticket_errored(conn, ticket.id, error="stopped", now=2)
+    conn.execute(
+        "INSERT INTO conversations"
+        "(conversation_id, backend_key, workspace_folder, access, latest_sequence, created_at) "
+        "VALUES ('c_chief_policy', 'codex', '/tmp/workspace', 'full', 1, 1)"
+    )
+    conn.execute(
+        "INSERT INTO agents(agent_key, conversation_id) VALUES ('chief_of_staff', 'c_chief_policy')"
+    )
+    conn.execute(
+        "INSERT INTO conversation_events"
+        "(conversation_id, sequence, kind, payload, created_at) "
+        "VALUES ('c_chief_policy', 1, 'turn_ended', "
+        '\'{"ending":"failed","error_summary":"stopped"}\', 2)'
+    )
+    notifications_data.set_preference(conn, "tickets", "worker_failed", False, 2)
+
+    notifications_data.project_facts(conn)
+    assert notifications_data.apply_policy(conn, 3) == 2
+    assert [
+        (row["subject_kind"], row["outcome"])
+        for row in conn.execute(
+            "SELECT f.subject_kind, d.outcome FROM notification_facts f "
+            "JOIN notification_decisions d ON d.fact_id = f.fact_id "
+            "ORDER BY f.subject_kind"
+        )
+    ] == [("agent", "notify"), ("ticket", "suppress")]
     conn.close()
 
 
@@ -393,9 +425,25 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
         settings = client.get("/api/notifications/settings")
         assert settings.status_code == 200
         payload = settings.json()
-        assert {item["id"] for item in payload["types"]} == {
+        assert [subject["key"] for subject in payload["subjects"]] == [
+            "tickets",
+            "chief_of_staff",
+        ]
+        types_by_subject = {
+            subject["key"]: {item["id"] for item in subject["types"]}
+            for subject in payload["subjects"]
+        }
+        assert sum(len(subject["types"]) for subject in payload["subjects"]) == 9
+        assert all(item["enabled"] for subject in payload["subjects"] for item in subject["types"])
+        assert types_by_subject["tickets"] == {
             "ticket_needs_approval",
-            "ticket_needs_input",
+            "needs_input",
+            "permission_requested",
+            "worker_completed",
+            "worker_failed",
+        }
+        assert types_by_subject["chief_of_staff"] == {
+            "needs_input",
             "permission_requested",
             "worker_completed",
             "worker_failed",
@@ -403,9 +451,19 @@ def test_notification_settings_api_serves_catalogue_and_persists_choice(
         assert payload["vapid_public_key"]
 
         changed = client.put(
-            "/api/notifications/preferences/worker_completed",
+            "/api/notifications/preferences/chief_of_staff/worker_completed",
             json={"enabled": False},
         )
         assert changed.status_code == 200
-        resolved = {item["id"]: item["enabled"] for item in changed.json()["types"]}
-        assert resolved["worker_completed"] is False
+        resolved = {
+            subject["key"]: {item["id"]: item["enabled"] for item in subject["types"]}
+            for subject in changed.json()["subjects"]
+        }
+        assert resolved["chief_of_staff"]["worker_completed"] is False
+        assert resolved["tickets"]["worker_completed"] is True
+
+        invalid = client.put(
+            "/api/notifications/preferences/chief_of_staff/ticket_needs_approval",
+            json={"enabled": False},
+        )
+        assert invalid.status_code == 404

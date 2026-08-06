@@ -13,7 +13,7 @@ from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
 
 PREVIOUS_REVISION = "notifications"
-HEAD_REVISION = "backend_usage_and_model_enablement"
+HEAD_REVISION = "notification_preferences_by_subject"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:

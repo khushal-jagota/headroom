@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "backend_usage_and_model_enablement"
+HEAD_REVISION = "notification_preferences_by_subject"
 
 
 def _table_columns(
