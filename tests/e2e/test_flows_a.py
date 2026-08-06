@@ -801,6 +801,93 @@ def test_pending_kickoff_edits_and_approves_before_five_worker_stages(
     assert len(detail["fields"]) == 6
 
 
+def test_kickoff_ceiling_suggestion_prefills_ticket_and_review_but_owner_choice_wins(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    open_page: Callable[..., Page],
+    cli: Callable[..., JsonObject],
+    api: ApiHelper,
+) -> None:
+    api.direct_put(
+        server,
+        "/api/workers/coding/suggested-next-ceiling",
+        {"suggested_next_ceiling": "needs_plan"},
+    )
+    ticket_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Ticket suggestion",
+        "--kickoff-note",
+        "Confirm Ticket scope.",
+    )["id"]
+    initial = api.get(server, f"/api/tickets/{ticket_id}")
+    assert initial["stage"] == "needs_kickoff"
+    assert initial["ceiling"] == "needs_kickoff"
+    assert initial["suggested_next_ceiling"] == "needs_plan"
+
+    ticket_scope = 'details[data-field="kickoff"] [data-scope-ceiling]'
+    ticket_page = open_page(
+        context_factory(),
+        server,
+        f"#/ticket/{ticket_id}",
+        ticket_scope,
+    )
+    assert ticket_page.locator(ticket_scope).input_value() == "needs_plan"
+    ticket_page.select_option(ticket_scope, "needs_approach")
+    ticket_page.select_option(
+        'details[data-field="kickoff"] [data-scope-atcap] select', "stop"
+    )
+    with ticket_page.expect_response(
+        lambda response: response.request.method == "GET"
+        and response.url.endswith(f"/api/tickets/{ticket_id}")
+    ):
+        api.direct_patch(
+            server,
+            f"/api/tickets/{ticket_id}",
+            {"priority": "P2"},
+        )
+    assert ticket_page.locator(ticket_scope).input_value() == "needs_approach"
+    assert ticket_page.locator(
+        'details[data-field="kickoff"] [data-scope-atcap] select'
+    ).input_value() == "stop"
+    ticket_page.click('details[data-field="kickoff"] [data-accept]')
+    ticket_page.wait_for_selector(
+        f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
+        '[data-stage="needs_success"]',
+        timeout=WAIT_MS,
+    )
+    accepted_ticket = api.get(server, f"/api/tickets/{ticket_id}")
+    assert accepted_ticket["ceiling"] == "needs_approach"
+    assert accepted_ticket["at_cap"] == "stop"
+
+    review_id = cli(
+        server,
+        "ticket",
+        "create",
+        "--worker-type",
+        "coding",
+        "--title",
+        "Review suggestion",
+        "--kickoff-note",
+        "Confirm Review scope.",
+    )["id"]
+    _add_to_today(api, server, review_id)
+    review_card = f'[data-review-card][data-ticket-id="{review_id}"]'
+    review_page = open_page(context_factory(), server, "#/review", review_card)
+    review_scope = f"{review_card} [data-scope-ceiling]"
+    assert review_page.locator(review_scope).input_value() == "needs_plan"
+    review_page.select_option(review_scope, "needs_closeout")
+    review_page.click(f"{review_card} [data-accept]")
+    review_page.wait_for_selector(review_card, state="detached", timeout=WAIT_MS)
+    accepted_review = api.get(server, f"/api/tickets/{review_id}")
+    assert accepted_review["ceiling"] == "needs_closeout"
+    assert accepted_review["at_cap"] == "propose"
+
+
 def test_review_pending_kickoff_corrects_own_ticket_priority(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],

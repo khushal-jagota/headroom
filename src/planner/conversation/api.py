@@ -20,6 +20,7 @@ from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -28,9 +29,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from planner.conversation.backend_lifecycle import BackendLifecycleCoordinator
+from planner.conversation.backend_state import (
+    BackendStateStore,
+    resolve_usage_model_scopes,
+)
 from planner.conversation.backend_usage import (
+    BackendUsageOutcome,
     BackendUsageResult,
     BackendUsageService,
+    BackendUsageWindow,
     production_backend_usage_service,
 )
 from planner.conversation.backends.contracts import BackendChildFactory
@@ -110,6 +117,7 @@ class ConversationRuntime:
     backend_usage: BackendUsageService
     message_files: ConversationMessageFiles
     sse_heartbeat_ms: int
+    backend_state: BackendStateStore | None = None
 
     async def shutdown(self) -> None:
         """Let the watchers go first, then stop the system's children.
@@ -147,6 +155,7 @@ def build_conversation_runtime(
         backend_usage=production_backend_usage_service(),
         message_files=message_files,
         sse_heartbeat_ms=sse_heartbeat_ms,
+        backend_state=BackendStateStore(db_path, busy_timeout_ms=db_busy_timeout_ms),
     )
 
 
@@ -305,6 +314,10 @@ class UserInputAnswerBody(BaseModel):
 
 class PromoteHeldPromptBody(BaseModel):
     mode: HeldPromptPromotionMode
+
+
+class ModelEnablementBody(BaseModel):
+    enabled: bool
 
 
 # --- starting, reading, writing -----------------------------------------------------------
@@ -562,7 +575,53 @@ async def answer_user_input(
 async def read_backends(runtime: Runtime, refresh: bool = False) -> dict[str, Any]:
     """What each backend is right now. Probed when asked, then kept until asked again."""
     snapshots = await runtime.backend_snapshots.snapshots(refresh=refresh)
-    return {"backends": [_snapshot_json(snapshot) for snapshot in snapshots]}
+    return {"backends": [_snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots]}
+
+
+@router.post("/backends/refresh")
+async def refresh_backends(runtime: Runtime) -> dict[str, Any]:
+    """Refresh every catalogue and provider usage source as one user action."""
+    snapshots = await runtime.backend_snapshots.snapshots(refresh=True)
+    refreshed = await asyncio.gather(
+        *(runtime.backend_usage.refresh(backend_key) for backend_key in ConversationBackendKey)
+    )
+    by_backend = {snapshot.backend_key: snapshot for snapshot in snapshots}
+    resolved = tuple(
+        resolve_usage_model_scopes(result, by_backend[result.backend_key])
+        for result in refreshed
+    )
+    if runtime.backend_state is not None:
+        for result in resolved:
+            if (
+                result.outcome is BackendUsageOutcome.succeeded
+                and result.observed_at is not None
+            ):
+                runtime.backend_state.keep_successful_usage(result)
+    return {
+        "backends": [
+            _snapshot_json(snapshot, runtime.backend_state) for snapshot in snapshots
+        ],
+        "usage_outcomes": [_usage_outcome_json(result) for result in resolved],
+    }
+
+
+@router.put("/backends/{backend_key}/models/{model_id:path}/enablement")
+async def put_model_enablement(
+    backend_key: ConversationBackendKey,
+    model_id: str,
+    body: ModelEnablementBody,
+    runtime: Runtime,
+) -> dict[str, Any]:
+    """Set whether a current catalogue model is offered by new-model pickers."""
+    if not model_id or model_id != model_id.strip():
+        raise HTTPException(status_code=422, detail="model_id must be trimmed text")
+    snapshot = await runtime.backend_snapshots.snapshot(backend_key)
+    if model_id not in {model.model_id for model in snapshot.available_models}:
+        raise HTTPException(status_code=404, detail="model is not in the backend catalogue")
+    if runtime.backend_state is None:
+        raise HTTPException(status_code=503, detail="backend state is unavailable")
+    runtime.backend_state.write_model_enablement(backend_key, model_id, body.enabled)
+    return {"backend_key": str(backend_key), "model_id": model_id, "enabled": body.enabled}
 
 
 @router.post("/backends/{backend_key}/update")
@@ -571,14 +630,6 @@ async def update_backend(
 ) -> dict[str, Any]:
     """Run this backend's update, then look again and say which of three things happened."""
     return _update_result_json(await runtime.backend_snapshots.update_backend(backend_key))
-
-
-@router.post("/backends/{backend_key}/usage-refresh")
-async def refresh_backend_usage(
-    backend_key: ConversationBackendKey, runtime: Runtime
-) -> dict[str, Any]:
-    """Acquire usage only because a person explicitly asked for it."""
-    return _usage_result_json(await runtime.backend_usage.refresh(backend_key))
 
 
 # --- turning values into JSON ---------------------------------------------------------------
@@ -867,9 +918,25 @@ def delivery_fate_json(fate: object) -> dict[str, Any]:
             raise AssertionError(f"unknown delivery fate {fate!r}")
 
 
-def _snapshot_json(snapshot: BackendSnapshot) -> dict[str, Any]:
+def _snapshot_json(
+    snapshot: BackendSnapshot, backend_state: BackendStateStore | None = None
+) -> dict[str, Any]:
     identity = snapshot.identity
     advisory = snapshot.update_advisory
+    cached_usage = (
+        None if backend_state is None else backend_state.read_usage(snapshot.backend_key)
+    )
+    enabled_by_model = {
+        model.model_id: (
+            True
+            if backend_state is None
+            else backend_state.model_is_enabled(snapshot.backend_key, model.model_id)
+        )
+        for model in snapshot.available_models
+    }
+    default_model_id = snapshot.default_model_id
+    if default_model_id is not None and not enabled_by_model.get(default_model_id, True):
+        default_model_id = None
     return {
         "backend_key": str(snapshot.backend_key),
         "installed": snapshot.installed,
@@ -891,11 +958,12 @@ def _snapshot_json(snapshot: BackendSnapshot) -> dict[str, Any]:
                 "display_name": model.display_name,
                 "detail": model.detail,
                 "reasoning_effort_options": list(model.reasoning_effort_options),
+                "enabled": enabled_by_model[model.model_id],
             }
             for model in snapshot.available_models
         ],
         "reasoning_effort_options": list(snapshot.reasoning_effort_options),
-        "default_model_id": snapshot.default_model_id,
+        "default_model_id": default_model_id,
         "default_reasoning_effort": snapshot.default_reasoning_effort,
         "update_advisory": (
             None
@@ -913,6 +981,14 @@ def _snapshot_json(snapshot: BackendSnapshot) -> dict[str, Any]:
             }
         ),
         "diagnoses": list(snapshot.diagnoses),
+        "cached_usage": (
+            None
+            if cached_usage is None
+            else {
+                "observed_at": _datetime_json(cached_usage.observed_at),
+                "windows": [_usage_window_json(window) for window in cached_usage.windows],
+            }
+        ),
     }
 
 
@@ -929,20 +1005,30 @@ def _usage_result_json(result: BackendUsageResult) -> dict[str, Any]:
         "backend_key": str(result.backend_key),
         "outcome": str(result.outcome),
         "detail": result.detail,
-        "observed_at": (
-            None
-            if result.observed_at is None
-            else result.observed_at.isoformat().replace("+00:00", "Z")
-        ),
-        "windows": [
-            {
-                "name": window.name,
-                "used_percent": window.used_percent,
-                "resets_at": window.resets_at.isoformat().replace("+00:00", "Z"),
-            }
-            for window in result.windows
-        ],
+        "observed_at": None if result.observed_at is None else _datetime_json(result.observed_at),
+        "windows": [_usage_window_json(window) for window in result.windows],
     }
+
+
+def _usage_outcome_json(result: BackendUsageResult) -> dict[str, Any]:
+    return {
+        "backend_key": str(result.backend_key),
+        "outcome": str(result.outcome),
+        "detail": result.detail,
+    }
+
+
+def _usage_window_json(window: BackendUsageWindow) -> dict[str, Any]:
+    return {
+        "kind": str(window.kind),
+        "used_percent": window.used_percent,
+        "resets_at": _datetime_json(window.resets_at),
+        "model_id": window.model_scope,
+    }
+
+
+def _datetime_json(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
 
 
 # --- the live tail as an event stream -------------------------------------------------------

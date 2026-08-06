@@ -41,6 +41,7 @@ const transpiledModules = [
   ["threadLayout/index.ts", "threadLayout.mjs"],
   ["conversationDetail.ts", "conversationDetail.mjs"],
   ["toolCallPresentation/index.ts", "toolCallPresentation.mjs"],
+  ["taskProgress.ts", "taskProgress.mjs"],
   ["restLine.ts", "restLine.mjs"]
 ];
 
@@ -64,6 +65,10 @@ for (const [sourcePath, outputName] of transpiledModules) {
     .replace(
       /from\s+["']\.\/conversationDetail["']/g,
       'from "./conversationDetail.mjs"'
+    )
+    .replace(
+      /from\s+["']\.\/taskProgress["']/g,
+      'from "./taskProgress.mjs"'
     );
   await writeFile(join(directory, outputName), output, "utf8");
 }
@@ -144,18 +149,33 @@ const PLAN = [
   // With the conversation closed this is the only thing on the screen that could say a
   // request needs answering, so nothing the turn is doing gets in front of it.
   const line = restLineFrom(
-    [prompt("go"), toolCall("Bash", "Bash", '{"command": "rm -rf /tmp/x"}', "running"), permissionAsk("Run rm -rf")],
+    [prompt("go"), row("plan_updated", { entries: PLAN }), toolCall("Bash", "Bash", '{"command": "rm -rf /tmp/x"}', "running"), permissionAsk("Run rm -rf")],
     "owner"
   );
   assert.equal(line.waiting, true);
   assert.equal(line.text, "Run rm -rf", "the ask's own title is the line");
   assert.equal(line.who, null, "an ask speaks for itself");
   assert.equal(line.aside, null);
+  assert.equal(line.taskProgress, null);
   assert.equal(
     line.workingSinceUnixMilliseconds,
     null,
     "counting seconds beside a question is not what the person is being asked"
   );
+}
+
+{
+  // A plan without a step in progress does not replace the current turn fallback.
+  const line = restLineFrom(
+    [
+      prompt("go"),
+      row("plan_updated", { entries: [{ text: "later", status: "pending" }] }),
+      toolCall("Read", "read")
+    ],
+    "owner"
+  );
+  assert.equal(line.text, "Read");
+  assert.equal(line.taskProgress, null);
 }
 
 {
@@ -191,9 +211,11 @@ const PLAN = [
     ],
     "owner"
   );
-  assert.equal(line.text, "Ran command · ls -la /tmp", "the newest tool call, as its own line");
-  assert.equal(line.who, null, "a tool call is the turn's own doing");
-  assert.equal(line.aside, "1 / 3 tasks", "the plan's progress, quietly, beside it");
+  assert.equal(line.text, "write it", "the current plan step replaces tool activity");
+  assert.equal(line.who, null);
+  assert.equal(line.aside, null);
+  assert.equal(line.taskProgress.currentPosition, 2);
+  assert.equal(line.taskProgress.completedCount, 1);
   assert.equal(line.waiting, false);
   assert.equal(
     line.workingSinceUnixMilliseconds,
@@ -210,6 +232,7 @@ const PLAN = [
   assert.equal(line.who, "you");
   assert.equal(line.workingSinceUnixMilliseconds, SENT_AT);
   assert.equal(line.aside, null, "no plan, nothing beside it");
+  assert.equal(line.taskProgress, null);
 }
 
 {
@@ -253,7 +276,8 @@ const PLAN = [
     ],
     "owner"
   );
-  assert.equal(line.aside, "1 / 3 tasks");
+  assert.equal(line.text, "write it");
+  assert.equal(line.taskProgress.currentPosition, 2);
 }
 
 // --- 3. whatever happened last ------------------------------------------------------------------
@@ -268,6 +292,7 @@ const PLAN = [
     who: null,
     text: "Here is the summary",
     aside: null,
+    taskProgress: null,
     waiting: false,
     workingSinceUnixMilliseconds: null
   });
@@ -362,6 +387,7 @@ const PLAN = [
   const line = restLineFrom(rows, "owner");
   assert.equal(line.text, "the answer");
   assert.equal(line.aside, null, "the plan is a fact about a turn that is running, and none is");
+  assert.equal(line.taskProgress, null);
 }
 
 {
@@ -425,8 +451,8 @@ const PLAN = [
   ]);
 
   const running = restLineFrom(transcriptRows(feed), "owner");
-  assert.equal(running.text, "Ran command · ls -la /tmp");
-  assert.equal(running.aside, "1 / 3 tasks");
+  assert.equal(running.text, "write it");
+  assert.equal(running.taskProgress.currentPosition, 2);
   assert.equal(running.workingSinceUnixMilliseconds, 1_700_000_000_400);
 
   // The same conversation with an ask on it: the ask is what the line says.

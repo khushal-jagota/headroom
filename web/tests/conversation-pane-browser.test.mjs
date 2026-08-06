@@ -42,6 +42,7 @@ try {
     }))
   );
   let nextRowIndex = 28;
+  let running = $state(false);
   let conversationState = $state<ConversationState>("rest");
 
   function dismissConversation(): void {
@@ -89,6 +90,33 @@ try {
   };
   (window as any).__conversationInputSurvived = () =>
     (window as any).__conversationInput === document.querySelector("[data-conversation-input]");
+  (window as any).__showActivePlan = () => {
+    rows = [
+      ...rows,
+      {
+        key: "active-prompt",
+        kind: "prompt",
+        sequence: 1_000,
+        createdAt: 2_000,
+        content: [{ piece: "text", text: "Continue" }],
+        senderLabel: "owner",
+        mode: "run_when_free",
+        sentAtUnixMilliseconds: 2_000
+      },
+      {
+        key: "active-plan",
+        kind: "plan_updated",
+        sequence: 1_001,
+        createdAt: 2_001,
+        entries: [
+          { text: "Inspect", status: "completed" },
+          { text: "Implement", status: "in_progress" },
+          { text: "Verify", status: "pending" }
+        ]
+      }
+    ];
+    running = true;
+  };
 </script>
 
 <main class="fixture-ticket">
@@ -107,6 +135,7 @@ try {
         label="Worker"
         conversationExists
         {rows}
+        {running}
         outgoingMessages={[]}
         ownSenderLabel="owner"
         showRunPicker={false}
@@ -327,6 +356,28 @@ with sync_playwright() as playwright:
       return newest.getBoundingClientRect().bottom <= thread.getBoundingClientRect().bottom + 1;
     }""")
     assert thread.evaluate("node => node.scrollTop") >= before
+
+    # Opened adds one spacing token after the task strip. Peeked stays flush.
+    page.locator("[data-ticket-behind]").click()
+    state(page, "rest")
+    page.evaluate("window.__showActivePlan()")
+    page.locator(INPUT).click()
+    state(page, "peeked")
+    strip = page.locator("[data-conversation-task-strip]")
+    composer = page.locator("[data-conversation-composer]")
+    strip_box = strip.bounding_box()
+    composer_box = composer.bounding_box()
+    assert strip_box is not None and composer_box is not None
+    assert round(strip_box["height"]) == 34
+    assert round(composer_box["y"] - strip_box["y"] - strip_box["height"]) == 0
+
+    page.locator("[data-conversation-expand]").click()
+    state(page, "opened")
+    strip_box = strip.bounding_box()
+    composer_box = composer.bounding_box()
+    assert strip_box is not None and composer_box is not None
+    assert round(strip_box["height"]) == 34
+    assert round(composer_box["y"] - strip_box["y"] - strip_box["height"]) == 8
 
     browser.close()
 

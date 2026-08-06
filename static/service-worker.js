@@ -1,7 +1,12 @@
 "use strict";
 
 const FALLBACK_ROUTE = "/#/workspace";
+const CHIEF_ROUTE = "/#/agents/chief-of-staff";
 const ICON = "/static/icon-192.png";
+
+function isSupportedRoute(route) {
+  return route.startsWith("/#/ticket/") || route === CHIEF_ROUTE;
+}
 
 function notificationPayload(event) {
   try {
@@ -11,7 +16,7 @@ function notificationPayload(event) {
       typeof value.title === "string" &&
       typeof value.body === "string" &&
       typeof value.route === "string" &&
-      value.route.startsWith("/#/ticket/") &&
+      isSupportedRoute(value.route) &&
       typeof value.tag === "string"
     ) {
       return value;

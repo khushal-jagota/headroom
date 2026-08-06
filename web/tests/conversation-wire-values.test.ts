@@ -9,7 +9,8 @@ import {
   conversationFileHref,
   messageContentOf,
   messageContentText,
-  refreshBackendUsage
+  refreshBackends,
+  setBackendModelEnabled
 } from "../src/lib/conversation/wire";
 
 afterEach(() => {
@@ -55,25 +56,42 @@ describe("Conversation wire values", () => {
       .toBe("/api/conversation/conversations/a%2Fb/files/file%201");
   });
 
-  it("acquires provider usage only through the explicit backend action", async () => {
+  it("refreshes backend snapshots and cached provider usage through one action", async () => {
     const fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({
-        backend_key: "codex",
-        outcome: "succeeded",
-        detail: null,
-        observed_at: "2026-07-31T12:34:56Z",
-        windows: [{ name: "5 hours", used_percent: 12.5, resets_at: "2026-07-31T15:00:00Z" }]
+        backends: [],
+        usage_outcomes: [{ backend_key: "codex", outcome: "succeeded", detail: null }]
       }), { status: 200 })
     );
     vi.stubGlobal("fetch", fetch);
 
-    const answer = await refreshBackendUsage("codex");
+    const answer = await refreshBackends();
 
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch).toHaveBeenCalledWith(
-      "/api/conversation/backends/codex/usage-refresh",
+      "/api/conversation/backends/refresh",
       { method: "POST" }
     );
-    expect(answer.windows[0]).toMatchObject({ name: "5 hours", used_percent: 12.5 });
+    expect(answer.usage_outcomes[0]).toMatchObject({ backend_key: "codex", outcome: "succeeded" });
+  });
+
+  it("persists one model enablement boolean with encoded path identities", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      backend_key: "claude",
+      model_id: "claude/opus",
+      enabled: false
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await setBackendModelEnabled("claude", "claude/opus", false);
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/conversation/backends/claude/models/claude%2Fopus/enablement",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: false })
+      }
+    );
   });
 });

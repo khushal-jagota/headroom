@@ -19,6 +19,7 @@ import sqlite3
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from enum import StrEnum
+from pathlib import Path
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Request
@@ -29,6 +30,7 @@ from planner.conversation.api import (
     conversation_message_content,
     delivery_fate_json,
 )
+from planner.conversation.backend_state import model_is_enabled
 from planner.conversation.contracts import (
     ConversationBackendKey,
     ConversationSystem,
@@ -83,6 +85,7 @@ from planner.tickets.contracts import (
     ValueEditBody,
 )
 from planner.worker_context.contracts import WorkerContextService
+from planner.worker_settings import service as worker_settings_service
 from planner.worker_settings.service import CHIEF_SETTINGS_KEY
 from planner.worker_types.configuration import (
     configured_worker_type_registry,
@@ -164,6 +167,21 @@ MessageFiles = Annotated[
 ]
 ConversationRecord = Annotated[ConversationStore, Depends(get_conversation_record)]
 WorkerContext = Annotated[WorkerContextService, Depends(get_worker_context_service)]
+
+
+def _ticket_detail_with_worker_settings(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    now: int,
+    config: Config,
+) -> JsonDict:
+    detail = tickets_views.ticket_detail(conn, ticket_id, now)
+    detail["suggested_next_ceiling"] = worker_settings_service.read_worker_settings(
+        Path(config.db_path).expanduser().parent,
+        configured_worker_type_registry(),
+        str(detail["worker_type"]),
+    ).suggested_next_ceiling
+    return detail
 
 
 async def reject_while_the_conversation_is_running(
@@ -690,6 +708,7 @@ async def get_worker_self_ticket(
     ticket_id: str,
     conn: DbConn,
     clk: Clk,
+    config: Cfg,
 ) -> JsonDict:
     """A worker agent's own Ticket, resolved from `PLAN_TICKET_ID` (its spawn env, flag-on).
 
@@ -713,7 +732,7 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
+    detail = _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), config)
     detail["worker"] = (
         configured_worker_type_registry()
         .require(ticket.worker_type)
@@ -723,8 +742,8 @@ async def get_worker_self_ticket(
 
 
 @router.get("/tickets/{ticket_id}")
-async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk) -> JsonDict:
-    return tickets_views.ticket_detail(conn, ticket_id, clk.now_unix())
+async def get_ticket(ticket_id: str, conn: DbConn, clk: Clk, config: Cfg) -> JsonDict:
+    return _ticket_detail_with_worker_settings(conn, ticket_id, clk.now_unix(), config)
 
 
 @router.post("/tickets/{ticket_id}/human-reply")
@@ -802,6 +821,15 @@ async def put_ticket_employee_configuration(
         employee_launch_model=body["employee_launch_model"],
         employee_launch_reasoning_effort=body["employee_launch_reasoning_effort"],
     )
+    if not model_is_enabled(conn, registered_backend, body["employee_launch_model"]):
+        raise PlannerError(
+            ErrorCode.validation,
+            "Employee model is disabled",
+            {
+                "employee_backend": str(registered_backend),
+                "employee_launch_model": body["employee_launch_model"],
+            },
+        )
     if registered_backend == expected.employee_backend and candidate != expected:
         advertised_models, advertised_reasoning_efforts = (
             await _advertised_launch_options(
@@ -823,7 +851,9 @@ async def put_ticket_employee_configuration(
         advertised_reasoning_efforts=advertised_reasoning_efforts,
         now=clk.now_unix(),
     )
-    return tickets_views.ticket_detail(conn, ticket.id, clk.now_unix())
+    return _ticket_detail_with_worker_settings(
+        conn, ticket.id, clk.now_unix(), get_config(request)
+    )
 
 
 @router.delete("/tickets/{ticket_id}")

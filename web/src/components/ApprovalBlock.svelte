@@ -19,6 +19,7 @@
     proposedBy = "",
     note = "",
     newStage = null,
+    suggestedNextCeiling = null,
     lifecycle = null,
     layout = "default",
     requireScope = false,
@@ -35,6 +36,7 @@
     proposedBy?: string;
     note?: string | null;
     newStage?: string | null;
+    suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
     layout?: "default" | "review";
     requireScope?: boolean;
@@ -123,7 +125,7 @@
       >
         {actionLabel}
       </Button>
-      {#if showScope}<ScopePairPicker {newStage} {lifecycle} bind:scope />{/if}
+      {#if showScope}<ScopePairPicker {newStage} {suggestedNextCeiling} {lifecycle} bind:scope />{/if}
     </div>
   </div>
 {/snippet}
