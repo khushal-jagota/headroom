@@ -32,6 +32,7 @@ function snapshot(
     reasoning_effort_options: [],
     default_model_id: null,
     default_reasoning_effort: null,
+    cached_usage: null,
     update_advisory: null,
     diagnoses: [],
     ...overrides
@@ -46,6 +47,7 @@ function model(
   return {
     model_id: modelId,
     display_name: displayName,
+    enabled: true,
     ...overrides
   };
 }
@@ -225,6 +227,54 @@ describe("composer run selection", () => {
     expect(view.picker.face).toBe("legacy high");
     expect(view.picker.models.some((choice) => choice.value === "legacy")).toBe(false);
     expect(view.picker.staleModelReason).toBe("Claude no longer offers legacy.");
+  });
+
+  it("keeps a disabled historical model on the face but removes it from every choice", () => {
+    const view = resolveComposerRunControls(
+      input({
+        conversationExists: true,
+        current: { model: "opus", reasoningEffort: "high" },
+        models: [
+          model("opus", "Opus 5", { enabled: false }),
+          model("sonnet", "Sonnet 5")
+        ]
+      })
+    );
+
+    expect(view.picker.modelValue).toBe("opus");
+    expect(view.picker.face).toBe("Opus 5 high");
+    expect(view.picker.models).toEqual([{ value: "sonnet", name: "Sonnet 5" }]);
+    expect(view.picker.staleModelReason).toBe("Claude no longer offers opus.");
+  });
+
+  it("treats a pre-enablement model payload as enabled by default", () => {
+    const legacyModel = {
+      model_id: "sonnet",
+      display_name: "Sonnet"
+    } as BackendModel;
+
+    const view = resolveModelPicker({
+      backendKey: "claude",
+      model: "sonnet",
+      reasoningEffort: null,
+      backends: [],
+      models: [legacyModel]
+    });
+
+    expect(view.models).toEqual([{ value: "sonnet", name: "Sonnet" }]);
+  });
+
+  it("does not carry a disabled draft pick into the next run", () => {
+    const view = resolveComposerRunControls(input({
+      selection: selection({ pickedModel: "opus" }),
+      models: [
+        model("opus", "Opus", { enabled: false }),
+        model("sonnet", "Sonnet")
+      ]
+    }));
+
+    expect(view.normalizedSelection.pickedModel).toBeNull();
+    expect(view.picker.models.map((choice) => choice.value)).toEqual(["sonnet"]);
   });
 
   it("uses the normalized shown model for effort options in the same resolved view", () => {

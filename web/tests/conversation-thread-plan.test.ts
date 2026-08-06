@@ -10,12 +10,7 @@ import {
   type ThreadItem
 } from "../src/lib/conversation/threadLayout";
 import type { ConversationEvent } from "../src/lib/conversation/wire";
-import {
-  agentMessageEvent,
-  planUpdatedEvent,
-  promptEvent,
-  turnEndedEvent
-} from "./support/conversationEvents";
+import { planUpdatedEvent, promptEvent, turnEndedEvent } from "./support/conversationEvents";
 
 type TurnItem = Extract<ThreadItem, { kind: "turn" }>;
 
@@ -33,7 +28,7 @@ function turns(items: readonly ThreadItem[]): TurnItem[] {
 }
 
 describe("Conversation thread plans", () => {
-  it("keeps the plan in the record and renders it on the turn instead of as a thread line", () => {
+  it("keeps the plan in the record but removes it from thread history", () => {
     const plan = [
       { text: "read the code", status: "completed" as const },
       { text: "write it", status: "in_progress" as const },
@@ -50,10 +45,11 @@ describe("Conversation thread plans", () => {
         item.kind === "turn" ? "turn" : item.kind === "work_group" ? "work" : item.row.kind
       )
     ).toEqual(["prompt", "turn"]);
-    expect(turns(items)[0]!.plan).toEqual(plan);
+    expect(turns(items)).toHaveLength(1);
+    expect(items.some((item) => item.kind === "row" && item.row.kind === "plan_updated")).toBe(false);
   });
 
-  it("replaces the previous plan instead of merging it", () => {
+  it("multiple plan snapshots do not alter turn anchors", () => {
     const { items } = threadFrom([
       promptEvent(1),
       planUpdatedEvent(2, [
@@ -63,45 +59,28 @@ describe("Conversation thread plans", () => {
       planUpdatedEvent(3, [{ text: "one", status: "completed" }])
     ]);
 
-    expect(turns(items).map((item) => item.plan)).toEqual([
-      [{ text: "one", status: "completed" }]
-    ]);
+    expect(turns(items)).toHaveLength(1);
+    expect(items).toHaveLength(2);
   });
 
-  it("persists the newest plan after settling and moves ownership to a later turn", () => {
-    const firstPlan = [{ text: "one", status: "completed" as const }];
-    const secondPlan = [{ text: "two", status: "in_progress" as const }];
+  it("plans across turns never attach to either turn", () => {
     const firstTurnEvents = [
       promptEvent(1, "first", "run_when_free", { createdAt: 100 }),
-      planUpdatedEvent(2, firstPlan),
+      planUpdatedEvent(2, [{ text: "one", status: "completed" }]),
       turnEndedEvent(3, { ending: "completed", createdAt: 104 })
     ];
-    const settledAnchors = turns(threadFrom(firstTurnEvents).items);
-
-    expect(settledAnchors).toHaveLength(1);
-    expect(settledAnchors[0]).toMatchObject({ settled: true, plan: firstPlan });
-
     const { items } = threadFrom([
       ...firstTurnEvents,
       promptEvent(4, "again", "run_when_free", { createdAt: 200 }),
-      planUpdatedEvent(5, secondPlan)
+      planUpdatedEvent(5, [{ text: "two", status: "in_progress" }])
     ]);
-    const anchors = turns(items);
-
-    expect(anchors).toHaveLength(2);
-    expect(anchors[0]).toMatchObject({ settled: true, plan: null });
-    expect(anchors[1]).toMatchObject({ settled: false, plan: secondPlan });
+    expect(turns(items)).toHaveLength(2);
   });
 
-  it("leaves every turn without a plan when the Conversation never planned", () => {
+  it("an orphan plan does not invent a turn", () => {
     const { items } = threadFrom([
-      promptEvent(1),
-      agentMessageEvent(2, "done"),
-      turnEndedEvent(3),
-      promptEvent(4, "again")
+      planUpdatedEvent(1, [{ text: "one", status: "in_progress" }])
     ]);
-
-    expect(turns(items)).toHaveLength(2);
-    expect(turns(items).map((item) => item.plan)).toEqual([null, null]);
+    expect(items).toEqual([]);
   });
 });

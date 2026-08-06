@@ -243,7 +243,9 @@ worker may go next — the system refuses an approval that doesn't answer that
 question. That same scope is shown and editable right on the ticket header as a plain
 row: "approved until [a stage] then Continue" — or "then Stop", rendered as pills you
 can tap to change any time. A fresh approval starts on Continue so the worker
-keeps drafting the next gated step unless the human changes it. The stages it offers
+keeps drafting the next gated step unless the human changes it. At Kickoff, an unchosen
+ceiling starts from that Worker type's managed suggestion. Other approvals start from
+their normal next Stage. `No further` remains a one-off choice. The stages it offers
 are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
 already covered. One shared source of the allowed stages feeds both the header row

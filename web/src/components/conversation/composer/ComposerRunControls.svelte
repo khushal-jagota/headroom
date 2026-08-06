@@ -19,6 +19,7 @@
   snapshots={view.pickerSource.backends}
   models={view.pickerSource.models}
   backendEffortOptions={view.pickerSource.backendEffortOptions}
+  showUsage
   disabled={view.disabled}
   attributes={{ "data-conversation-picker-model": "" }}
   afterChoose={() => {}}

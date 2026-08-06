@@ -13,10 +13,12 @@
    */
   import {
     elapsedSecondsSince,
+    formatDuration,
     millisecondsUntilNextSecond,
     workingSentence
   } from "../../lib/conversation/transcript";
   import type { RestLine } from "../../lib/conversation/restLine";
+  import TaskProgress from "./TaskProgress.svelte";
 
   let { line }: { line: RestLine | null } = $props();
 
@@ -53,14 +55,19 @@
         <span class="c2-rest-dot" aria-hidden="true"></span>
         <span class="chat-state chat-state--attn">waiting for you</span>
       </span>
+    {:else if line.taskProgress}
+      <TaskProgress progress={line.taskProgress} variant="rest" />
     {:else if workingSince !== null}
       <span class="c2-rest-working">{workingSentence(elapsedSeconds)}</span>
+      <span class="c2-rest-seam" aria-hidden="true">·</span>
     {/if}
     {#if line.who}
       <span class="c2-rest-who" data-conversation-rest-who>{line.who}</span>
     {/if}
     <span class="c2-rest-line" data-conversation-rest-line>{line.text}</span>
-    {#if line.aside}
+    {#if line.taskProgress && elapsedSeconds !== null}
+      <span class="c2-rest-aside" data-conversation-rest-aside>{formatDuration(elapsedSeconds)}</span>
+    {:else if line.aside}
       <span class="c2-rest-aside" data-conversation-rest-aside>{line.aside}</span>
     {/if}
   {/if}
@@ -112,6 +119,7 @@
     flex: none;
     font-variant-numeric: tabular-nums;
   }
+  .c2-rest-seam { flex: none; color: var(--text-faintest); }
   .c2-rest-who { flex: none; color: var(--text-default); }
   .c2-rest-who::after { content: "·"; padding-inline-start: var(--space-1); }
   /* One line whatever is in it: what will not fit is cut here rather than wrapping the

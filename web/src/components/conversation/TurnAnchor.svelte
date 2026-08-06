@@ -16,7 +16,6 @@
    * head is the same line all the way through, and a line that disappears the instant a
    * turn ends moves everything under it for no reason anybody reading could name.
    */
-  import PlanStrip from "./PlanStrip.svelte";
   import {
     elapsedSecondsSince,
     foldedWorkSentence,
@@ -24,7 +23,7 @@
     turnFoldLabel,
     workingSentence
   } from "../../lib/conversation/transcript";
-  import type { ConversationTurnEnding, PlanEntry } from "../../lib/conversation/wire";
+  import type { ConversationTurnEnding } from "../../lib/conversation/wire";
 
   /** How long a sign of life is still recent. Long enough to ride out the gaps between
    *  frames, short enough that a stalled backend stops claiming to be alive. */
@@ -33,7 +32,6 @@
   let {
     settled = false,
     stopped = false,
-    plan = null,
     startedAtUnixMilliseconds = null,
     ending = null,
     isLatest = false,
@@ -46,8 +44,6 @@
   }: {
     settled?: boolean;
     stopped?: boolean;
-    /** The plan as it stands, when this head is the one holding the newest. */
-    plan?: readonly PlanEntry[] | null;
     /** When the turn began, in unix milliseconds, so a reload counts from the truth and
      *  the count turns over on that instant's own seconds. */
     startedAtUnixMilliseconds?: number | null;
@@ -73,7 +69,6 @@
   // no row is touched: only this number moves.
   let elapsedSeconds = $state<number | null>(null);
 
-  let hasPlan = $derived(plan !== null && plan.length > 0);
   let foldLabel = $derived(turnFoldLabel({ durationSeconds, ending, isLatest }));
   let countLabel = $derived(foldedWorkSentence(toolCallCount, foldedMessageCount));
   // A turn that only talked folds too: five paragraphs of commentary is exactly as long
@@ -84,7 +79,7 @@
   // nothing behind it and no plan, has nothing it can honestly say. It still keeps its
   // fold when it did work, because that work is behind the fold and this is the only way
   // to reach it.
-  let visible = $derived(!settled || !stopped || foldVisible || hasPlan);
+  let visible = $derived(!settled || !stopped || foldVisible);
 
   $effect(() => {
     livenessPulse;
@@ -162,10 +157,6 @@
           {workingSentence(elapsedSeconds)}
         </span>
       </div>
-    {/if}
-
-    {#if plan}
-      <PlanStrip entries={plan} />
     {/if}
   </div>
 {/if}

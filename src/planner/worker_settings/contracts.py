@@ -50,6 +50,7 @@ class ManagedWorkerLaunchDefaults:
 @dataclass(frozen=True, slots=True)
 class ManagedWorkerSettings:
     worker_type: str
+    suggested_next_ceiling: str
     stage_ownership_defaults: dict[str, StageOwnershipMode]
     specialist_skill: ManagedSkill
     launch_defaults: ManagedWorkerLaunchDefaults
@@ -69,6 +70,7 @@ class WorkerManagementSummary:
     worker_type: str
     label: str
     specialist_skill_name: str
+    suggested_next_ceiling: str
     stage_ownership_defaults: dict[str, StageOwnershipMode]
     launch_defaults: ManagedWorkerLaunchDefaults
 

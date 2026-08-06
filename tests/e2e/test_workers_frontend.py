@@ -422,15 +422,20 @@ def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_de
     requests.clear()
 
     with page.expect_response(
-        lambda response: (
-            response.request.method == "PUT"
-            and "/api/workers/coding/stages/needs_success/default-ownership" in response.url
-        )
+        lambda response: response.request.method == "GET"
+        and response.url == server.base + "/api/workers/coding"
     ):
-        page.select_option(
-            '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]',
-            "user",
-        )
+        with page.expect_response(
+            lambda response: (
+                response.request.method == "PUT"
+                and "/api/workers/coding/stages/needs_success/default-ownership"
+                in response.url
+            )
+        ):
+            page.select_option(
+                '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]',
+                "user",
+            )
     page.wait_for_function(
         """() => document.querySelector(
           '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]'
@@ -461,6 +466,36 @@ def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_de
     assert fresh["stage"] == "needs_success"
     assert fresh["default_stage_ownership_mode"] == "user"
     assert fresh["effective_stage_ownership_mode"] == "user"
+
+
+def test_worker_kickoff_ceiling_suggestion_uses_manifest_options_and_saves(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    api: ApiHelper,
+) -> None:
+    page = context_factory().new_page()
+    page.goto(server.base + "/#/config/workers/coding")
+    page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
+    selector = "[data-suggested-next-ceiling]"
+    picker = page.locator(selector)
+    assert picker.input_value() == "needs_success"
+    assert picker.locator('option[value="needs_kickoff"]').count() == 0
+    assert picker.locator('option[value="none"]').count() == 0
+    assert picker.locator('option[value="done"]').count() == 1
+
+    with page.expect_response(
+        lambda response: response.request.method == "PUT"
+        and response.url.endswith("/api/workers/coding/suggested-next-ceiling")
+    ):
+        picker.select_option("needs_plan")
+    page.wait_for_function(
+        "selector => document.querySelector(selector)?.value === 'needs_plan'",
+        arg=selector,
+        timeout=WAIT_MS,
+    )
+    assert api.get(server, "/api/workers/coding")["settings"][
+        "suggested_next_ceiling"
+    ] == "needs_plan"
 
 
 def test_worker_skill_edit_save_failure_and_session_stability(

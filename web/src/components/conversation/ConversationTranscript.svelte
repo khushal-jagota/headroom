@@ -99,7 +99,6 @@
       <TurnAnchor
         settled={item.settled}
         stopped={item.stopped}
-        plan={item.plan}
         startedAtUnixMilliseconds={item.startedAtUnixMilliseconds}
         ending={item.ending}
         isLatest={item.isLatest}

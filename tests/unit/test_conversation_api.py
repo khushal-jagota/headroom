@@ -17,6 +17,7 @@ import sqlite3
 import zlib
 from collections.abc import Callable, Coroutine, Iterator, MutableMapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,10 +32,13 @@ from planner.conversation.api import (
     ConversationRuntime,
     router,
 )
+from planner.conversation.backend_state import BackendStateStore
 from planner.conversation.backend_usage import (
     BackendUsageOutcome,
     BackendUsageResult,
     BackendUsageService,
+    BackendUsageWindow,
+    BackendUsageWindowKind,
 )
 from planner.conversation.backends.claude_model_catalog import (
     ClaudeModel,
@@ -81,6 +85,8 @@ from planner.conversation.message_content import (
 )
 from planner.conversation.message_files import ConversationMessageFiles
 from planner.conversation.snapshot import (
+    BackendModel,
+    BackendSnapshot,
     BackendSnapshotService,
     CommandOutcome,
 )
@@ -1888,39 +1894,140 @@ def test_an_unknown_backend_is_not_a_backend(harness: _Harness) -> None:
     _run(exercise)
 
 
-def test_usage_refresh_is_explicit_and_has_one_stable_wire_shape(harness: _Harness) -> None:
-    class CountingUsage:
-        calls = 0
+def test_composite_refresh_keeps_successes_and_returns_current_cached_snapshots(
+    harness: _Harness,
+) -> None:
+    observed = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+    reset = datetime(2026, 8, 12, 12, 0, tzinfo=UTC)
+
+    def snapshot(backend_key: ConversationBackendKey) -> BackendSnapshot:
+        model = BackendModel(
+            model_id="provider/model" if backend_key is ConversationBackendKey.claude else "model",
+            display_name="Opus 5" if backend_key is ConversationBackendKey.claude else "Model",
+        )
+        return BackendSnapshot(
+            backend_key=backend_key,
+            installed=True,
+            executable_path=f"/bin/{backend_key}",
+            version="1.0.0",
+            identity=None,
+            available_models=(model,),
+            reasoning_effort_options=(),
+            default_model_id=model.model_id,
+            default_reasoning_effort=None,
+            update_advisory=None,
+            diagnoses=(),
+        )
+
+    class StaticSnapshots:
+        async def snapshots(self, *, refresh: bool = False) -> tuple[BackendSnapshot, ...]:
+            return tuple(snapshot(key) for key in ConversationBackendKey)
+
+        async def snapshot(
+            self, backend_key: ConversationBackendKey, *, refresh: bool = False
+        ) -> BackendSnapshot:
+            assert refresh is False
+            return snapshot(backend_key)
+
+    @dataclass
+    class Usage:
+        result: BackendUsageResult
+        calls: int = 0
 
         async def refresh(self) -> BackendUsageResult:
             self.calls += 1
-            return BackendUsageResult(
-                ConversationBackendKey.codex, BackendUsageOutcome.succeeded
-            )
+            return self.result
+
+    claude = Usage(
+        BackendUsageResult(
+            ConversationBackendKey.claude,
+            BackendUsageOutcome.succeeded,
+            observed_at=observed,
+            windows=(
+                BackendUsageWindow(
+                    BackendUsageWindowKind.seven_day,
+                    12.5,
+                    reset,
+                    model_scope="Opus",
+                ),
+            ),
+        )
+    )
+    codex = Usage(
+        BackendUsageResult(
+            ConversationBackendKey.codex,
+            BackendUsageOutcome.failed,
+            detail="provider failed",
+        )
+    )
+    hermes = Usage(
+        BackendUsageResult(
+            ConversationBackendKey.hermes,
+            BackendUsageOutcome.unavailable,
+            detail="no usage",
+        )
+    )
+    state = BackendStateStore(str(harness.db_path))
+    state.keep_successful_usage(
+        BackendUsageResult(
+            ConversationBackendKey.codex,
+            BackendUsageOutcome.succeeded,
+            observed_at=observed,
+            windows=(BackendUsageWindow(BackendUsageWindowKind.seven_day, 33, reset),),
+        )
+    )
 
     async def exercise() -> None:
-        usage = CountingUsage()
+        object.__setattr__(harness.runtime, "backend_snapshots", StaticSnapshots())
         object.__setattr__(
             harness.runtime,
             "backend_usage",
-            BackendUsageService({ConversationBackendKey.codex: usage}),
+            BackendUsageService(
+                {
+                    ConversationBackendKey.claude: claude,
+                    ConversationBackendKey.codex: codex,
+                    ConversationBackendKey.hermes: hermes,
+                }
+            ),
         )
+        object.__setattr__(harness.runtime, "backend_state", state)
         async with harness.client() as client:
-            ordinary_read = await client.get("/api/conversation/backends")
-            response = await client.post(
-                "/api/conversation/backends/codex/usage-refresh"
+            response = await client.post("/api/conversation/backends/refresh")
+            toggled = await client.put(
+                "/api/conversation/backends/claude/models/provider/model/enablement",
+                json={"enabled": False},
             )
+            after_toggle = await client.get("/api/conversation/backends")
 
-        assert ordinary_read.status_code == 200
-        assert usage.calls == 1
         assert response.status_code == 200
-        assert response.json() == {
-            "backend_key": "codex",
-            "outcome": "succeeded",
-            "detail": None,
-            "observed_at": None,
-            "windows": [],
-        }
+        payload = response.json()
+        assert [outcome["outcome"] for outcome in payload["usage_outcomes"]] == [
+            "unavailable",
+            "failed",
+            "succeeded",
+        ]
+        claude_backend = next(
+            backend for backend in payload["backends"] if backend["backend_key"] == "claude"
+        )
+        assert claude_backend["cached_usage"]["windows"] == [
+            {
+                "kind": "seven_day",
+                "used_percent": 12.5,
+                "resets_at": "2026-08-12T12:00:00Z",
+                "model_id": "provider/model",
+            }
+        ]
+        assert state.read_usage(ConversationBackendKey.codex) is not None
+        assert toggled.status_code == 200
+        assert state.model_is_enabled(ConversationBackendKey.claude, "provider/model") is False
+        toggled_claude = next(
+            backend
+            for backend in after_toggle.json()["backends"]
+            if backend["backend_key"] == "claude"
+        )
+        assert toggled_claude["available_models"][0]["enabled"] is False
+        assert toggled_claude["default_model_id"] is None
+        assert claude.calls == codex.calls == hermes.calls == 1
 
     _run(exercise)
 
