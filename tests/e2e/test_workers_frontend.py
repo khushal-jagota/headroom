@@ -422,15 +422,20 @@ def test_worker_stage_default_save_refreshes_without_change_stream_and_ticket_de
     requests.clear()
 
     with page.expect_response(
-        lambda response: (
-            response.request.method == "PUT"
-            and "/api/workers/coding/stages/needs_success/default-ownership" in response.url
-        )
+        lambda response: response.request.method == "GET"
+        and response.url == server.base + "/api/workers/coding"
     ):
-        page.select_option(
-            '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]',
-            "user",
-        )
+        with page.expect_response(
+            lambda response: (
+                response.request.method == "PUT"
+                and "/api/workers/coding/stages/needs_success/default-ownership"
+                in response.url
+            )
+        ):
+            page.select_option(
+                '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]',
+                "user",
+            )
     page.wait_for_function(
         """() => document.querySelector(
           '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]'
