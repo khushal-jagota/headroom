@@ -6,12 +6,14 @@
     progress,
     variant,
     running = progress.turnRunning,
-    moving = running
+    moving = running,
+    composerGap = false
   }: {
     progress: ConversationTaskProgress;
     variant: "rest" | "strip";
     running?: boolean;
     moving?: boolean;
+    composerGap?: boolean;
   } = $props();
 
   let visible = $derived(
@@ -67,7 +69,7 @@
     </button>
   {/if}
 {:else}
-  <div class="task-strip" data-conversation-task-strip>
+  <div class="task-strip" class:has-composer-gap={composerGap} data-conversation-task-strip>
     {#if visible}
       <button
         type="button"
@@ -93,6 +95,7 @@
     align-items: center;
     justify-content: center;
   }
+  .task-strip.has-composer-gap { margin-block-end: var(--space-2); }
   .task-pill {
     display: inline-flex;
     align-items: center;

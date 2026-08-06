@@ -324,6 +324,7 @@
       variant="strip"
       {running}
       moving={running && ask === null && userInput === null}
+      composerGap={conversationState === "opened"}
     />
   {/if}
 

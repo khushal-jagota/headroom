@@ -154,6 +154,9 @@ def test_the_current_plan_is_status_in_all_three_states(
     strip_box = strip.bounding_box()
     assert strip_box is not None
     assert round(strip_box["height"]) == 34
+    composer_box = page.locator("[data-conversation-composer]").bounding_box()
+    assert composer_box is not None
+    assert round(composer_box["y"] - strip_box["y"] - strip_box["height"]) == 0
     assert "2 / 3 tasks" in strip.inner_text()
     assert page.locator(f"{THREAD} [data-conversation-task-progress]").count() == 0
 
@@ -161,6 +164,13 @@ def test_the_current_plan_is_status_in_all_three_states(
     opened_strip_box = page.locator("[data-conversation-task-strip]").bounding_box()
     assert opened_strip_box is not None
     assert round(opened_strip_box["height"]) == 34
+    opened_composer_box = page.locator("[data-conversation-composer]").bounding_box()
+    assert opened_composer_box is not None
+    assert round(
+        opened_composer_box["y"]
+        - opened_strip_box["y"]
+        - opened_strip_box["height"]
+    ) == 8
 
 # What each state is, on screen. The state attribute is the pane's own word for where it
 # is; everything else here is what a person would see.
