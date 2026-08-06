@@ -24,6 +24,8 @@ assert.match(route, /onchange=\{\(event\) => void setModelEnabled/);
 assert.match(route, /isSignedOut\(snapshot\)/);
 assert.match(route, /snapshot\.identity\.login_command/);
 assert.match(route, /<UsageRings/);
+assert.match(route, /class="opener subject"[\s\S]*class="version-cell"[\s\S]*class="usage-cell"/);
+assert.match(route, /class="model-name"[\s\S]*class="model-rings"/);
 assert.doesNotMatch(route, /BackendCard|refreshBackendUsage/);
 
 assert.match(picker, /showUsage && showsBackendUsage/);

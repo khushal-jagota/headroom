@@ -53,52 +53,58 @@
       data-usage-window={value.kind}
       data-usage-percent={value.window?.used_percent}
     >
-      <svg
-        width={compact ? 18 : 30}
-        height={compact ? 18 : 30}
-        viewBox={`0 0 ${compact ? 18 : 30} ${compact ? 18 : 30}`}
-        aria-hidden="true"
-      >
-        <circle
-          cx={compact ? 9 : 15}
-          cy={compact ? 9 : 15}
-          r={compact ? 7 : 12}
-          fill="none"
-          stroke="var(--border-color)"
-          stroke-width={compact ? 2 : 3}
-          stroke-dasharray={value.window === null ? "2 3" : undefined}
-        />
-        {#if value.window !== null}
+      <span class="usage-ring-visual">
+        <svg
+          width={compact ? 18 : 34}
+          height={compact ? 18 : 34}
+          viewBox={`0 0 ${compact ? 18 : 34} ${compact ? 18 : 34}`}
+          aria-hidden="true"
+        >
           <circle
-            cx={compact ? 9 : 15}
-            cy={compact ? 9 : 15}
-            r={compact ? 7 : 12}
+            cx={compact ? 9 : 17}
+            cy={compact ? 9 : 17}
+            r={compact ? 7 : 14}
             fill="none"
-            stroke={usageIsNearlySpent(value.window.used_percent) ? "var(--accent-error)" : "var(--text-faint)"}
-            stroke-width={compact ? 2 : 3}
-            stroke-dasharray={dash(value.window.used_percent, compact ? 7 : 12)}
-            transform={`rotate(-90 ${compact ? 9 : 15} ${compact ? 9 : 15})`}
+            stroke="var(--border-color)"
+            stroke-width={compact ? 2 : 2.5}
+            stroke-dasharray={value.window === null ? "2 3" : undefined}
           />
+          {#if value.window !== null}
+            <circle
+              cx={compact ? 9 : 17}
+              cy={compact ? 9 : 17}
+              r={compact ? 7 : 14}
+              fill="none"
+              stroke={usageIsNearlySpent(value.window.used_percent) ? "var(--accent-error)" : "var(--text-faint)"}
+              stroke-width={compact ? 2 : 2.5}
+              stroke-dasharray={dash(value.window.used_percent, compact ? 7 : 14)}
+              transform={`rotate(-90 ${compact ? 9 : 17} ${compact ? 9 : 17})`}
+            />
+          {/if}
+        </svg>
+        {#if !compact}
+          <span class="usage-ring-percent" aria-hidden="true">{value.window === null ? "—" : value.window.used_percent}</span>
         {/if}
-      </svg>
-      {#if !compact}
-        <span class="usage-ring-percent" aria-hidden="true">{value.window === null ? "—" : `${value.window.used_percent}%`}</span>
-      {/if}
+      </span>
+      {#if !compact}<span class="usage-ring-label" aria-hidden="true">{value.label}</span>{/if}
     </span>
   {/each}
 </span>
 
 <style>
-  .usage-rings { display: inline-flex; gap: var(--space-3); }
+  .usage-rings { display: inline-flex; gap: var(--space-2); }
   .usage-rings.compact { gap: var(--space-2); }
-  .usage-ring { display: grid; justify-items: center; gap: var(--border-hairline); }
+  .usage-ring { display: grid; justify-items: center; gap: var(--space-1); }
+  .usage-ring-visual { display: grid; place-items: center; }
+  .usage-ring-visual > * { grid-area: 1 / 1; }
   .usage-ring svg { display: block; }
   .usage-ring-percent {
     color: var(--text-faint);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
-    letter-spacing: var(--tracking-mono);
+    line-height: 1;
   }
+  .usage-ring-label { color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs); line-height: 1; }
   .usage-ring.absent .usage-ring-percent { color: var(--text-faintest); }
   .usage-ring.spent .usage-ring-percent { color: var(--accent-error); }
 </style>

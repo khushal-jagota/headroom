@@ -47,6 +47,8 @@ describe("usage ring presentation", () => {
     expect(body).toContain("5 hr: nothing reported");
     expect(body).toContain("week: 90% used, warning, nearly spent, resets");
     expect(body).toMatch(/class="usage-ring [^"]*spent"/);
+    expect(body).toMatch(/class="usage-ring-label [^"]*" aria-hidden="true">5 hr<\/span>/);
+    expect(body).toMatch(/class="usage-ring-label [^"]*" aria-hidden="true">week<\/span>/);
   });
 
   it("uses a readable label for model-scoped rings", () => {

@@ -156,34 +156,18 @@
   {:else if backends.length === 0}
     <p class="quiet-line">No backends were reported.</p>
   {:else}
-    <div class="rowgrid colhead" aria-hidden="true">
-      <span class="labels"><span>5 hr</span><span>week</span></span>
-      <span></span><span></span>
-    </div>
     <div class="rows">
       {#each backends as snapshot (snapshot.backend_key)}
         {@const open = openBackend === snapshot.backend_key}
         <section class="backend-row" class:open data-conversation-backend={snapshot.backend_key}>
           <div class="rowgrid rowhead">
             <button
-              class="opener rings-opener"
+              class="opener subject"
               aria-expanded={open}
               aria-label={`${snapshot.backend_key} models`}
               onclick={() => (openBackend = open ? null : snapshot.backend_key)}
             >
-              {#if isSignedOut(snapshot)}
-                <span class="signed-out-space" aria-hidden="true"></span>
-              {:else}
-                <UsageRings windows={snapshot.cached_usage?.windows ?? []} />
-              {/if}
-            </button>
-            <button
-              class="opener subject"
-              tabindex="-1"
-              aria-hidden="true"
-              onclick={() => (openBackend = open ? null : snapshot.backend_key)}
-            >
-              <span class="chevron">{open ? "⌄" : "›"}</span>
+              <span class="chevron" aria-hidden="true">{open ? "⌄" : "›"}</span>
               <span class="backend-name">{snapshot.backend_key}</span>
               {#if isSignedOut(snapshot)}
                 <span class="identity-note">
@@ -210,6 +194,14 @@
                 <span class="version">{snapshot.installed ? snapshot.version ?? "version unknown" : "not installed"}</span>
               {/if}
             </span>
+            <span class="usage-cell">
+              {#if !isSignedOut(snapshot)}
+                <UsageRings
+                  windows={snapshot.cached_usage?.windows ?? []}
+                  label={`Usage allowances for ${snapshot.backend_key}`}
+                />
+              {/if}
+            </span>
           </div>
           {#if open}
             <div class="drawer" data-backend-model-drawer={snapshot.backend_key}>
@@ -219,16 +211,17 @@
                 {#each snapshot.available_models as model (model.model_id)}
                   {@const key = modelKey(snapshot.backend_key, model.model_id)}
                   <div class="rowgrid model-row" class:off={!model.enabled}>
+                    <label class="model-name" for={key}>{model.display_name ?? model.model_id}</label>
                     <span class="model-rings">
                       {#if !isSignedOut(snapshot) && hasModelUsage(snapshot, model.model_id)}
                         <UsageRings
                           windows={snapshot.cached_usage?.windows ?? []}
                           modelId={model.model_id}
                           label={`Usage allowances for ${model.display_name ?? model.model_id}`}
+                          compact
                         />
                       {/if}
                     </span>
-                    <label class="model-name" for={key}>{model.display_name ?? model.model_id}</label>
                     <input
                       id={key}
                       type="checkbox"
@@ -270,31 +263,29 @@
   .when, .version, .version-action { color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs); }
   .quiet-button { padding: var(--space-1) var(--space-3); background: var(--surface-overlay); border: var(--border-hairline) solid var(--text-faint); border-radius: var(--radius-sm); color: var(--text-strong); cursor: pointer; font: inherit; font-size: var(--type-sm); }
   button:disabled, input:disabled { cursor: default; opacity: .5; }
-  .rowgrid { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); }
-  .colhead { margin-top: var(--space-6); padding-bottom: var(--space-2); }
-  .labels { display: inline-flex; gap: var(--space-3); }
-  .labels span { width: 30px; color: var(--text-faintest); font-family: var(--font-mono); font-size: var(--type-xs); letter-spacing: var(--tracking-mono); text-align: center; }
-  .rows { border-top: var(--border-hairline) solid var(--border-color); }
-  .backend-row { border-bottom: var(--border-hairline) solid var(--border-color); }
-  .rowhead { padding: var(--space-3) 0; }
+  .rowgrid { display: grid; grid-template-columns: minmax(0, 1fr) auto 5rem; align-items: center; gap: var(--space-4); }
+  .rows { display: grid; gap: var(--space-2); margin-top: var(--space-6); }
+  .backend-row { border-radius: var(--radius-md); transition: background var(--motion-fast) var(--motion-ease); }
+  .backend-row:hover, .backend-row.open { background: var(--surface-raised); }
+  .rowhead { min-height: 4.25rem; padding: var(--space-2) var(--space-3); }
   .opener { margin: 0; padding: 0; background: none; border: 0; color: inherit; cursor: pointer; font: inherit; text-align: left; }
-  .rings-opener { display: inline-flex; }
-  .signed-out-space { width: 72px; }
   .subject { display: flex; align-items: baseline; gap: var(--space-3); min-width: 0; }
   .chevron { display: inline-block; width: var(--space-3); color: var(--text-faintest); font-size: var(--type-md); }
-  .backend-name { color: var(--text-muted); font-family: var(--font-serif); font-size: var(--type-serif-lg); font-weight: 500; }
+  .backend-name { color: var(--text-strong); font-family: var(--font-serif); font-size: var(--type-serif-lg); font-weight: 500; text-transform: capitalize; }
   .rowhead:hover .backend-name, .open .backend-name { color: var(--text-strong); }
   .identity-note { color: var(--text-faintest); font-size: var(--type-xs); }
   .identity-note b { color: var(--text-faint); font-family: var(--font-mono); font-weight: 500; }
-  .version-cell { white-space: nowrap; }
+  .version-cell { min-width: 0; white-space: nowrap; }
+  .usage-cell { display: flex; justify-content: flex-end; min-width: 5rem; }
   .version-action { padding: var(--space-1) var(--space-2); background: var(--surface-overlay); border: 0; border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer; letter-spacing: var(--tracking-mono); }
-  .drawer { margin: 0 calc(var(--page-gutter) * -1); padding: var(--space-2) var(--page-gutter); background: var(--surface-sunken); border-top: var(--border-hairline) solid var(--border-color); }
-  .model-row { padding: var(--space-2) 0; }
+  .drawer { margin: 0 var(--space-3); padding: var(--space-1) 0 var(--space-2) calc(var(--space-3) + var(--space-3)); border-top: var(--border-hairline) solid var(--border-color); }
+  .model-row { grid-template-columns: minmax(0, 1fr) auto auto; min-height: 2.5rem; padding: var(--space-2) 0; }
   .model-row + .model-row { border-top: var(--border-hairline) solid var(--border-color); }
   .model-name { min-width: 0; overflow: hidden; color: var(--text-default); font-size: var(--type-sm); text-overflow: ellipsis; white-space: nowrap; }
   .model-row.off .model-name { color: var(--text-faintest); }
   .model-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent-bright); cursor: pointer; }
-  .model-error { grid-column: 2 / -1; color: var(--accent-error); font-size: var(--type-xs); }
+  .model-rings { display: flex; justify-content: flex-end; min-width: 2.75rem; }
+  .model-error { grid-column: 1 / -1; color: var(--accent-error); font-size: var(--type-xs); }
   .empty-models, .result, .note, .quiet-line, .error { margin: var(--space-3) 0; color: var(--text-faintest); font-size: var(--type-xs); }
   .result { padding-inline: var(--space-3); }
   .result.failed, .error { color: var(--accent-error); }
@@ -302,8 +293,11 @@
   @media (max-width: 720px) {
     .screen-header-row { flex-direction: column; align-items: stretch; gap: var(--space-3); }
     .readline { padding-top: 0; }
-    .rowgrid { grid-template-columns: 4.75rem minmax(0, 1fr) auto; gap: var(--space-2); }
+    .rowgrid { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); }
     .subject { gap: var(--space-2); }
-    .drawer { margin: 0 calc(var(--space-4) * -1); padding: var(--space-2) var(--space-4); }
+    .version-cell { grid-column: 1; padding-left: calc(var(--space-3) + var(--space-2)); }
+    .usage-cell { grid-column: 2; grid-row: 1 / 3; }
+    .drawer { margin-inline: var(--space-3); padding-left: calc(var(--space-3) + var(--space-2)); }
+    .model-row { grid-template-columns: minmax(0, 1fr) auto auto; }
   }
 </style>
