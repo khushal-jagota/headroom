@@ -14,11 +14,15 @@ import {
 
 /** A recorder that hands one webm chunk back when stopped, the way MediaRecorder does. */
 class FakeRecorder implements VoiceRecorderLike {
-  mimeType = "audio/webm";
+  mimeType: string;
   started = false;
   stopped = false;
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
+
+  constructor(private readonly chunkMediaType = "audio/webm") {
+    this.mimeType = chunkMediaType;
+  }
 
   start(): void {
     this.started = true;
@@ -26,7 +30,9 @@ class FakeRecorder implements VoiceRecorderLike {
 
   stop(): void {
     this.stopped = true;
-    this.ondataavailable?.({ data: new Blob(["spoken words"], { type: "audio/webm" }) });
+    this.ondataavailable?.({
+      data: new Blob(["spoken words"], { type: this.chunkMediaType })
+    });
     this.onstop?.();
   }
 }
@@ -47,7 +53,8 @@ function makeHarness(
   transcribe: (
     body: VoiceTranscriptionBody,
     signal: AbortSignal
-  ) => Promise<VoiceTranscriptionResult>
+  ) => Promise<VoiceTranscriptionResult>,
+  chunkMediaType = "audio/webm"
 ): Harness {
   let clock = 0;
   const states: VoiceCaptureState[] = [];
@@ -63,7 +70,7 @@ function makeHarness(
   const deps: Partial<VoiceCaptureDeps> = {
     getStream: () => Promise.resolve(streamLike),
     makeRecorder: () => {
-      const recorder = new FakeRecorder();
+      const recorder = new FakeRecorder(chunkMediaType);
       recorders.push(recorder);
       return recorder;
     },
@@ -150,6 +157,20 @@ describe("voice capture machine", () => {
     await settle();
     expect(harness.capture.state().phase).toBe("idle");
     expect(harness.transcripts).toEqual([""]);
+  });
+
+  it("uploads the codec-qualified media type emitted by a mobile recorder", async () => {
+    const harness = makeHarness(
+      async () => ({ transcript: "mobile words", stored_file_id: "sf-mobile" }),
+      "audio/webm;codecs=opus"
+    );
+    await harness.capture.startRecording();
+    harness.capture.stopRecording();
+    await settle();
+
+    const sent = harness.requests[0]?.body;
+    expect(sent && "audio" in sent && sent.media_type).toBe("audio/webm;codecs=opus");
+    expect(harness.transcripts).toEqual(["mobile words"]);
   });
 
   it("cancel while recording discards everything and stops the tracks", async () => {

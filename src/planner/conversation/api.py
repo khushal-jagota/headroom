@@ -264,6 +264,17 @@ VOICE_AUDIO_MEDIA_TYPES = frozenset(
 MAX_VOICE_AUDIO_BYTES = 25 * 1024 * 1024
 
 
+def _canonical_voice_audio_media_type(value: str) -> str | None:
+    """Return the allowlisted base type from a browser's full MIME value.
+
+    Mobile MediaRecorder implementations can append codec parameters, such as
+    ``audio/webm;codecs=opus``. Those parameters describe the same allowlisted
+    container and do not belong in the stored file's canonical media type.
+    """
+    base_type = value.partition(";")[0].strip().lower()
+    return base_type if base_type in VOICE_AUDIO_MEDIA_TYPES else None
+
+
 class VoiceTranscriptionBody(BaseModel):
     """One voice clip to turn into words, as JSON.
 
@@ -424,14 +435,15 @@ async def transcribe_voice_note(
             status_code=422,
             detail="exactly one of audio and stored_file_id must be given",
         )
-    if body.media_type not in VOICE_AUDIO_MEDIA_TYPES:
+    media_type = _canonical_voice_audio_media_type(body.media_type)
+    if media_type is None:
         raise HTTPException(
             status_code=422, detail=f"unsupported voice media type {body.media_type}"
         )
     if body.audio is not None:
         contents = _decoded_voice_audio(body.audio)
         kept = await runtime.message_files.keep(
-            conversation_id, contents, media_type=body.media_type
+            conversation_id, contents, media_type=media_type
         )
         stored_file_id = kept.stored_file_id
     else:
