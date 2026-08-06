@@ -581,6 +581,7 @@
                         lifecycle={lc}
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
+                        suggestedNextCeiling={detail.suggested_next_ceiling}
                         emptyText={emptyTicketFieldText}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
@@ -617,6 +618,7 @@
                   lifecycle={lc}
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
+                  suggestedNextCeiling={detail.suggested_next_ceiling}
                   emptyText={emptyTicketFieldText}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}

@@ -1,14 +1,20 @@
 <script lang="ts">
-  import { ceilingOptionsFor, type Lifecycle } from "../lib/lifecycle";
+  import {
+    ceilingOptionsFor,
+    preferredScopeCeilingFor,
+    type Lifecycle
+  } from "../lib/lifecycle";
 
   type ScopePair = { next_ceiling: string; at_cap: string };
 
   let {
     newStage,
+    suggestedNextCeiling = null,
     lifecycle = null,
     scope = $bindable<ScopePair | null>(null)
   }: {
     newStage: string | null;
+    suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
     scope?: ScopePair | null;
   } = $props();
@@ -22,8 +28,13 @@
   ]);
 
   $effect(() => {
+    if (!lifecycle) return;
     const externalScope = scope;
-    const nextDefault = newStage || options[1]?.value || "none";
+    const nextDefault = preferredScopeCeilingFor(
+      lifecycle,
+      newStage,
+      suggestedNextCeiling
+    ) || "none";
     let nextCeiling = externalScope === null ? nextDefault : ceiling;
     let nextAtCap = externalScope === null ? "propose" : atCap;
     if (externalScope && !nextCeiling) nextCeiling = externalScope.next_ceiling;

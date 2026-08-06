@@ -7,6 +7,7 @@ import {
   fieldStageVisualStateFor,
   gatingFieldFor,
   lifecycleFor,
+  preferredScopeCeilingFor,
   ticketStageVisualStateFor,
   type WorkerTypeManifest,
   type WorkerTypesResponse
@@ -182,6 +183,7 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     stage: "needs_success",
     ceiling: "done",
     at_cap: "no",
+    suggested_next_ceiling: "needs_success",
     priority: "P1",
     resolved_priority_anchors: {
       sprint_item: null,
@@ -268,6 +270,16 @@ describe("coding lifecycle", () => {
       { value: "needs_closeout", label: "needs closeout" },
       { value: "done", label: "done" }
     ]);
+  });
+
+  it("waits for lifecycle data before choosing a scope default", () => {
+    expect(preferredScopeCeilingFor(null, "needs_success", "needs_plan")).toBeNull();
+    expect(
+      preferredScopeCeilingFor(codingLifecycle, "needs_success", "needs_plan")
+    ).toBe("needs_plan");
+    expect(
+      preferredScopeCeilingFor(codingLifecycle, "needs_success", "foreign_stage")
+    ).toBe("needs_success");
   });
 
   it("projects gating, advance targets, and passed fields", () => {
