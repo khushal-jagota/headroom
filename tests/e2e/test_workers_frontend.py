@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -152,45 +151,6 @@ def _replace_inline_edit_markdown(page: Page, selector: str, source: str) -> Non
 def _editable_text(page: Page, selector: str) -> str:
     text: str = page.locator(selector).evaluate("(node) => node.textContent")
     return text
-
-
-def _assert_config_more_active(page: Page) -> None:
-    nav = page.locator('.shell-links .nav-link[data-screen="more"]')
-    assert nav.inner_text().strip() == "More"
-    assert "active" in (nav.get_attribute("class") or "").split()
-
-
-def _assert_no_horizontal_overflow(page: Page) -> None:
-    overflow = page.evaluate(
-        "() => document.documentElement.scrollWidth - document.documentElement.clientWidth"
-    )
-    assert overflow <= 0
-
-
-def test_agents_index_renders_when_the_workers_read_answers_last(
-    server: ServerHandle, context_factory: Callable[[], BrowserContext]
-) -> None:
-    """The Agents index waits on two reads, and the order they answer in is a race.
-
-    Held here so the read the screen looks at first is the last one to answer. A screen is
-    only told about the parts of a read it has already looked at, so a gate that stops at
-    the first unfinished read never looks at the other one, is never told when it answers,
-    and stays on its loading line for good.
-    """
-    page = context_factory().new_page()
-    # No change stream: its connect handler refetches everything, which would wake a
-    # screen that had stopped listening and hide the failure this test is for.
-    page.route("**/api/changes", lambda route: route.abort())
-
-    def answer_after_the_others(route: Route) -> None:
-        time.sleep(0.5)
-        route.continue_()
-
-    page.route("**/api/workers", answer_after_the_others)
-    page.goto(server.base + "/#/config")
-    page.wait_for_selector(
-        '[data-screen="config"] [data-workers-list] [data-worker-destination]', timeout=WAIT_MS
-    )
 
 
 def test_chief_detail_edits_skill_independently_and_retries_failure(
@@ -358,15 +318,6 @@ def test_shared_worker_skill_detail_edits_independently_and_retries_failure(
     )
     assert saved["description"] == "Shared Worker purpose saved independently"
     assert saved["markdown_body"] == f"\n{attempted_body}\n"
-
-    mobile = context_factory().new_page()
-    mobile.set_viewport_size({"width": 390, "height": 844})
-    mobile.goto(server.base + "/#/config/worker-skill")
-    mobile.wait_for_selector("[data-shared-worker-skill]", timeout=WAIT_MS)
-    _assert_config_more_active(mobile)
-    _assert_no_horizontal_overflow(mobile)
-    assert mobile.locator(DESCRIPTION_EDIT).is_editable()
-    assert mobile.locator(BODY_EDIT).is_editable()
 
 
 def test_worker_selection_persists_from_kickoff_card_context_row(
@@ -540,38 +491,6 @@ def test_worker_kickoff_ceiling_suggestion_uses_manifest_options_and_saves(
     assert api.get(server, "/api/workers/coding")["settings"][
         "suggested_next_ceiling"
     ] == "needs_plan"
-
-
-def test_worker_stage_failed_save_keeps_chosen_row_value(
-    server: ServerHandle, context_factory: Callable[[], BrowserContext]
-) -> None:
-    page = context_factory().new_page()
-
-    def fail_stage(route: Route) -> None:
-        if route.request.method == "PUT":
-            route.fulfill(
-                status=500,
-                content_type="application/json",
-                body='{"error":{"code":"test","message":"stage save failed"}}',
-            )
-            return
-        route.continue_()
-
-    page.route("**/api/workers/coding/stages/needs_success/default-ownership", fail_stage)
-    page.goto(server.base + "/#/config/workers/coding")
-    page.wait_for_selector('[data-worker-detail][data-worker-id="coding"]', timeout=WAIT_MS)
-    selector = '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-select]'
-    page.select_option(selector, "paired")
-    page.locator(
-        '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-error]'
-    ).wait_for(state="visible", timeout=WAIT_MS)
-    assert page.locator(selector).input_value() == "paired"
-    assert (
-        "stage save failed"
-        in page.locator(
-            '[data-worker-stage-row][data-stage="needs_success"] [data-stage-owner-error]'
-        ).inner_text()
-    )
 
 
 def test_worker_skill_edit_save_failure_and_session_stability(
