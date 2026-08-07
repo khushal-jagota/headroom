@@ -59,6 +59,7 @@ from planner.conversation.events import (
     HeldPromptsChangedFrame,
     ModelThinkingFrame,
     PermissionAskedEventPayload,
+    ToolCallFinishedEventPayload,
     ToolCallProgressFrame,
     UserInputAnswer,
     UserInputRequestedEventPayload,
@@ -86,7 +87,11 @@ from planner.conversation.snapshot import (
     BackendSnapshotService,
     BackendUpdateResult,
 )
-from planner.conversation.storage import ConversationStore, StoredConversationEvent
+from planner.conversation.storage import (
+    ConversationRecord,
+    ConversationStore,
+    StoredConversationEvent,
+)
 from planner.conversation.system import SqliteProcessConversationSystem
 from planner.conversation.voice_transcription import (
     VoiceTranscriptionFailed,
@@ -352,9 +357,14 @@ async def read_conversation(conversation_id: str, runtime: Runtime) -> dict[str,
 async def read_conversation_events(
     conversation_id: str, runtime: Runtime, after: int = 0
 ) -> dict[str, Any]:
-    await _require_conversation(runtime, conversation_id)
+    record = await _require_conversation(runtime, conversation_id)
     events = await runtime.store.read_events_after(conversation_id, after)
-    return {"events": [_event_json(event) for event in events]}
+    return {
+        "events": [
+            _public_event_json(event, backend_key=record.backend_key)
+            for event in events
+        ]
+    }
 
 
 @router.get("/conversations/{conversation_id}/tail")
@@ -368,9 +378,10 @@ async def tail_conversation(
     the high-water mark, and anything at or below it that arrives on the watch has already
     been sent — so the join has no hole in it and nothing arrives twice.
     """
-    await _require_conversation(runtime, conversation_id)
+    record = await _require_conversation(runtime, conversation_id)
     return StreamingResponse(
-        _tail_stream(runtime, conversation_id, after), media_type="text/event-stream"
+        _tail_stream(runtime, conversation_id, record.backend_key, after),
+        media_type="text/event-stream",
     )
 
 
@@ -678,9 +689,13 @@ def _workspace_folder(typed: str | None) -> Path | None:
 
 async def _require_conversation(
     runtime: ConversationRuntime, conversation_id: str
-) -> None:
-    if await runtime.store.read_conversation(conversation_id) is None:
-        raise HTTPException(status_code=404, detail=f"no conversation {conversation_id}")
+) -> ConversationRecord:
+    record = await runtime.store.read_conversation(conversation_id)
+    if record is None:
+        raise HTTPException(
+            status_code=404, detail=f"no conversation {conversation_id}"
+        )
+    return record
 
 
 async def _conversation_view(
@@ -894,14 +909,60 @@ def _decoded_voice_audio(data: str) -> bytes:
     return contents
 
 
-def _event_json(event: StoredConversationEvent) -> dict[str, Any]:
+def _public_event_json(
+    event: StoredConversationEvent, *, backend_key: ConversationBackendKey
+) -> dict[str, Any]:
+    payload = json.loads(conversation_event_payload_to_canonical_json(event.payload))
+    if (
+        backend_key is ConversationBackendKey.claude
+        and isinstance(event.payload, ToolCallFinishedEventPayload)
+        and _is_legacy_claude_image_only_detail(event.payload.detail)
+    ):
+        payload["detail"] = None
     return {
         "conversation_id": event.conversation_id,
         "sequence": event.sequence,
         "kind": str(event.kind),
-        "payload": json.loads(conversation_event_payload_to_canonical_json(event.payload)),
+        "payload": payload,
         "created_at": event.created_at,
     }
+
+
+def _is_legacy_claude_image_only_detail(detail: str | None) -> bool:
+    """Whether old Claude detail is only base64 image blocks and has no readable text."""
+    if detail is None:
+        return False
+    try:
+        blocks = json.loads(detail)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(blocks, list) or not blocks:
+        return False
+    return all(_is_claude_base64_image_block(block) for block in blocks)
+
+
+def _is_claude_base64_image_block(block: object) -> bool:
+    if (
+        not isinstance(block, dict)
+        or set(block) != {"type", "source"}
+        or block.get("type") != "image"
+    ):
+        return False
+    source = block.get("source")
+    if (
+        not isinstance(source, dict)
+        or set(source) != {"type", "media_type", "data"}
+        or source.get("type") != "base64"
+    ):
+        return False
+    media_type = source.get("media_type")
+    data = source.get("data")
+    return (
+        isinstance(media_type, str)
+        and media_type.startswith("image/")
+        and isinstance(data, str)
+        and bool(data)
+    )
 
 
 def delivery_fate_json(fate: object) -> dict[str, Any]:
@@ -1057,7 +1118,10 @@ def _live_frame_json(frame: ConversationTailItem) -> Mapping[str, Any] | None:
 
 
 async def _tail_stream(
-    runtime: ConversationRuntime, conversation_id: str, after: int
+    runtime: ConversationRuntime,
+    conversation_id: str,
+    backend_key: ConversationBackendKey,
+    after: int,
 ) -> AsyncIterator[str]:
     subscription = runtime.live_tail.subscribe(conversation_id)
     heartbeat_seconds = runtime.sse_heartbeat_ms / 1000
@@ -1075,7 +1139,10 @@ async def _tail_stream(
         replayed = await runtime.store.read_events_after(conversation_id, after)
         highest_replayed = replayed[-1].sequence if replayed else after
         for event in replayed:
-            yield _stream_frame(COMMITTED_EVENT_STREAM_NAME, _event_json(event))
+            yield _stream_frame(
+                COMMITTED_EVENT_STREAM_NAME,
+                _public_event_json(event, backend_key=backend_key),
+            )
         # The subscription exists before this wake. Every new binder refreshes the
         # canonical snapshot once, even when it is empty: a last-row removal can happen
         # between the binder's view read and this subscription just as an enqueue can.
@@ -1102,7 +1169,10 @@ async def _tail_stream(
                     # sent. This is the join, and it neither drops nor repeats a row.
                     continue
                 highest_replayed = item.sequence
-                yield _stream_frame(COMMITTED_EVENT_STREAM_NAME, _event_json(item))
+                yield _stream_frame(
+                    COMMITTED_EVENT_STREAM_NAME,
+                    _public_event_json(item, backend_key=backend_key),
+                )
                 continue
             live_frame = _live_frame_json(item)
             if live_frame is not None:

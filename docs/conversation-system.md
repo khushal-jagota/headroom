@@ -91,6 +91,12 @@ deleting a Ticket leaves its conversation behind. A file removed by either would
 turn a picture somebody sent into a picture nobody can see, while the row still
 says a picture was sent.
 
+A finished tool call keeps the readable text that its backend reports. Claude can
+report a result as a list of text and non-text blocks. Panels joins its text blocks
+and keeps no finish detail when the list contains no text. Some older Claude rows
+contain image-only block lists with base64 bytes. Public event reads omit the detail
+from those recognized rows, but the append-only notebook rows stay unchanged.
+
 ## What a turn cost, and where the thread was cut
 
 Two more kinds of row, both of them facts the backends were already reporting and

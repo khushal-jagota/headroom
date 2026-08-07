@@ -1391,7 +1391,7 @@ def _tool_result_detail(content: str | list[dict[str, Any]] | None) -> str | Non
         for item in content
         if isinstance(item, dict) and isinstance(text := item.get("text"), str) and text
     ]
-    return "\n".join(texts) if texts else _canonical_json(content)
+    return "\n".join(texts) or None
 
 
 def _result_error_summary(message: ResultMessage) -> str:
