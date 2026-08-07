@@ -2627,10 +2627,6 @@ button.list-row:hover .list-row-title {
   overflow-y: auto;
   scrollbar-width: thin;
 }
-.chat-queue-stack.is-scrollable {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
-}
 .chat-qrow {
   display: flex;
   align-items: center;

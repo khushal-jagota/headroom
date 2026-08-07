@@ -158,6 +158,7 @@ assert.ok(
   "each held row puts Send now before Hermes Steer"
 );
 assert.match(heldStackSource, />Hermes Steer<\/button>/);
+assert.doesNotMatch(heldStackSource, /class:is-scrollable/);
 
 // The pane that came before this one is gone, and nothing may reach for it.
 for (const [fileName, source] of Object.entries(sources)) {
