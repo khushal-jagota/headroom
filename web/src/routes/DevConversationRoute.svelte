@@ -195,4 +195,10 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
   }
+  @media (max-width: 720px) {
+    /* Both fixed navigation bars and both content gutters own viewport space. */
+    .c2-route {
+      height: calc(100dvh - 2 * var(--shell-nav-height) - 2 * var(--page-gutter));
+    }
+  }
 </style>

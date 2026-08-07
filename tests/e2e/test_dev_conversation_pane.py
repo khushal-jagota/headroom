@@ -574,12 +574,46 @@ def test_canonical_queue_rows_work_across_tabs_and_on_a_phone(
             "[data-conversation-held-row] .chat-qrow-txt"
         ).all_inner_texts() == expected
 
+    def control_signature(page: Page) -> dict[str, object]:
+        return page.evaluate(
+            """() => {
+              const signature = (button) => {
+                const style = getComputedStyle(button);
+                return {
+                  label: button.getAttribute('aria-label') || button.textContent.trim(),
+                  className: button.className,
+                  borderRadius: style.borderRadius,
+                  fontFamily: style.fontFamily,
+                  fontSize: style.fontSize,
+                  height: style.height,
+                  padding: style.padding,
+                };
+              };
+              const row = document.querySelector('[data-conversation-held-row]');
+              const foot = document.querySelector('.chat-foot');
+              return {
+                queue: [...row.querySelectorAll('button')].map(signature),
+                input: [...foot.querySelectorAll('button')].map(signature),
+                inputWrap: getComputedStyle(foot).flexWrap,
+              };
+            }"""
+        )
+
+    desktop_controls = control_signature(desktop)
+    phone_controls = control_signature(phone)
+    assert desktop_controls == phone_controls
+    assert desktop_controls["inputWrap"] == "nowrap"
+
     assert phone.evaluate(
         "() => {"
         " const stack = document.querySelector('.chat-queue-stack');"
         " const text = document.querySelector('.chat-qrow-txt');"
+        " const composer = document.querySelector('[data-conversation-composer]');"
+        " const bottomNav = document.querySelector('.shell-nav');"
         " return stack.scrollHeight > stack.clientHeight"
         "   && getComputedStyle(text).whiteSpace === 'nowrap'"
+        "   && composer.getBoundingClientRect().bottom"
+        "     <= bottomNav.getBoundingClientRect().top"
         "   && document.documentElement.scrollWidth <= window.innerWidth;"
         "}"
     )

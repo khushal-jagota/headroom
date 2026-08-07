@@ -133,6 +133,9 @@ turn. The server snapshot is the shared answer, so a second tab or device shows 
 held line. A tab merges its immediate copy with that snapshot by the sender's message id
 rather than drawing it twice.
 
+The queue actions and the input action row use the same order, labels, and button treatment
+on desktop and phone. Width changes the available text space, not the control design.
+
 The answer to a send is the fate of that delivery, and fate means it happened:
 started (the text reached a live agent), queued at a position, injected, or
 refused with a named reason. The only refusals are genuine impossibilities — no
