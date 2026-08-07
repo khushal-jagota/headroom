@@ -604,6 +604,10 @@ def test_canonical_queue_rows_work_across_tabs_and_on_a_phone(
     assert desktop_controls == phone_controls
     assert desktop_controls["inputWrap"] == "nowrap"
 
+    phone.locator(".c2-route").evaluate(
+        "route => route.style.setProperty('--conversation-safe-area-bottom', '34px')"
+    )
+
     assert phone.evaluate(
         "() => {"
         " const stack = document.querySelector('.chat-queue-stack');"
