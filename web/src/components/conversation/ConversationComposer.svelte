@@ -45,6 +45,7 @@
   import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
+  import { COMPOSITION_STATE_EVENT } from "../../lib/releaseMonitor";
   import {
     createVoiceCapture,
     formatVoiceTime,
@@ -252,6 +253,14 @@
     || draggingImages
     || imageIntakesInFlight > 0
   );
+
+  function publishCompositionState(active: boolean): void {
+    document.dispatchEvent(new CustomEvent(COMPOSITION_STATE_EVENT, { detail: { active } }));
+  }
+
+  $effect(() => {
+    publishCompositionState(compositionActive);
+  });
 
   // --- the command being written -----------------------------------------------------------
   let commandUnderway = $derived(commandOnTheCursorsLine(text, cursorAt));
@@ -691,6 +700,7 @@
     });
     return () => {
       destroyed = true;
+      publishCompositionState(false);
       releasePendingImages(pendingImages);
       voice?.dispose();
       voice = null;

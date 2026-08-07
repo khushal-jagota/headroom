@@ -134,6 +134,9 @@ assert.match(
   composerSource,
   /data-conversation-composition-active=\{compositionActive \? "true" : undefined\}/
 );
+assert.match(composerSource, /new CustomEvent\(COMPOSITION_STATE_EVENT, \{ detail: \{ active \} \}\)/);
+assert.match(composerSource, /publishCompositionState\(compositionActive\)/);
+assert.match(composerSource, /publishCompositionState\(false\)/);
 for (const activeComposition of [
   'text !== ""',
   "pendingImages.length > 0",
