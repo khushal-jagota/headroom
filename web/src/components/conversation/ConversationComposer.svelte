@@ -252,6 +252,9 @@
     || takenOver
     || draggingImages
     || imageIntakesInFlight > 0
+    || runSelection.pickedBackend !== null
+    || runSelection.pickedModel !== null
+    || runSelection.pickedReasoningEffort !== null
   );
 
   function publishCompositionState(active: boolean): void {

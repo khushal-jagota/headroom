@@ -143,7 +143,10 @@ for (const activeComposition of [
   'voiceState.phase !== "idle"',
   "takenOver",
   "draggingImages",
-  "imageIntakesInFlight > 0"
+  "imageIntakesInFlight > 0",
+  "runSelection.pickedBackend !== null",
+  "runSelection.pickedModel !== null",
+  "runSelection.pickedReasoningEffort !== null"
 ]) {
   assert.ok(
     composerSource.includes(activeComposition),
