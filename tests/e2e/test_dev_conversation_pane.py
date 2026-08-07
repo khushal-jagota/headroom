@@ -579,7 +579,7 @@ def test_canonical_queue_rows_work_across_tabs_and_on_a_phone(
         " const stack = document.querySelector('.chat-queue-stack');"
         " const text = document.querySelector('.chat-qrow-txt');"
         " return stack.scrollHeight > stack.clientHeight"
-        "   && getComputedStyle(text).webkitLineClamp === '2'"
+        "   && getComputedStyle(text).whiteSpace === 'nowrap'"
         "   && document.documentElement.scrollWidth <= window.innerWidth;"
         "}"
     )

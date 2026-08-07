@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from playwright.sync_api import BrowserContext
-
 from tests.e2e.harness import WAIT_MS, ServerHandle
 
 
