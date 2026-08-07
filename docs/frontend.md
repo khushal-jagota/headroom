@@ -152,6 +152,19 @@ Each screen is a projection of a backend; the behaviour behind it is documented 
 that backend, not here. This doc owns the shell and the rendering rules the screens
 share.
 
+## Installed app releases
+
+The root document carries the deployed app SHA that booted the browser. The browser
+checks `/api/meta` without cache reuse when it loads and when a retained page resumes.
+If the server reports a different SHA, Panels shows an **Update now** action. Panels
+never reloads for a new release without that action.
+
+Conversation composers publish `panels:composition-state` on `document`, with an
+`active` boolean. If the user requests an update during active composition, Panels
+waits. It checks the server identity again when composition becomes inactive, then
+applies the requested update. The push-only service worker and its subscription remain
+in place across this page reload.
+
 **Backends** at `#/backends` shows the conversation backends installed on this machine,
 their account and model facts, and any update Panels can run. Codex and Claude cards also
 offer a manual usage-limit check. Opening the page, refreshing its ordinary backend facts,

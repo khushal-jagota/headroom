@@ -87,6 +87,8 @@ def test_static_assets_are_served_when_cwd_has_no_assets(
 
     assert root.status_code == 200
     assert "data-svelte-app" in root.text
+    assert '<meta name="panels-app-sha" content="">' in root.text
+    assert root.headers["cache-control"] == "no-cache, must-revalidate"
     assert css.status_code == 200
     assert ".ticket-page" in css.text
     assert favicon.status_code == 200
@@ -104,3 +106,17 @@ def test_static_asset_paths_remain_anchored_to_repository_root() -> None:
     assert server._WEB_DIST == server._REPO_ROOT / "web" / "dist"
     assert server._ASSETS_DIR == server._REPO_ROOT / "assets"
     assert server._STATIC_DIR == server._REPO_ROOT / "static"
+
+
+def test_root_document_contains_the_configured_boot_app_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    index = tmp_path / "index.html"
+    index.write_text("<html><head><title>Panels</title></head><body></body></html>")
+    monkeypatch.setattr(server, "_WEB_INDEX", index)
+
+    assert (
+        '<meta name="panels-app-sha" content="0123456789abcdef0123456789abcdef01234567">'
+        in server.svelte_index_html(sha)
+    )

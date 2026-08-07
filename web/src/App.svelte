@@ -17,6 +17,7 @@
   import ConfigRoute from "./routes/ConfigRoute.svelte";
   import DevConversationRoute from "./routes/DevConversationRoute.svelte";
   import DevFilePreviewGalleryRoute from "./routes/DevFilePreviewGalleryRoute.svelte";
+  import ReleaseUpdate from "./components/ReleaseUpdate.svelte";
   import ShellStatus from "./components/ShellStatus.svelte";
 
   type Route = {
@@ -238,6 +239,7 @@
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onWindowKeydown} />
 
 <div class="shell">
+  <ReleaseUpdate />
   <header class="shell-mobile-head">
     <span class="shell-mobile-title" data-shell-screen-title>{screenTitle()}</span>
   </header>

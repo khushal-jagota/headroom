@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import os
 import sqlite3
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -84,16 +85,22 @@ def resolve_worker_workspace_root() -> Path:
     return _REPO_ROOT.resolve(strict=False)
 
 
-def svelte_index_html() -> str:
+def svelte_index_html(app_sha: str | None = None) -> str:
     if _WEB_INDEX.is_file():
-        return _WEB_INDEX.read_text(encoding="utf-8")
-    return (
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        "<title>Panels</title></head><body>"
-        '<div id="app" data-svelte-app>'
-        "web/dist is missing; run npm --prefix web run build."
-        "</div></body></html>"
+        document = _WEB_INDEX.read_text(encoding="utf-8")
+    else:
+        document = (
+            '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            "<title>Panels</title></head><body>"
+            '<div id="app" data-svelte-app>'
+            "web/dist is missing; run npm --prefix web run build."
+            "</div></body></html>"
+        )
+    identity = (
+        '<meta name="panels-app-sha" '
+        f'content="{html.escape(app_sha or "", quote=True)}">'
     )
+    return document.replace("</head>", f"{identity}</head>", 1)
 
 
 def http_status_for(code: ErrorCode) -> int:
@@ -299,8 +306,11 @@ def create_app(
         )
 
     @app.get("/", response_class=HTMLResponse)
-    async def index() -> str:
-        return svelte_index_html()
+    async def index() -> HTMLResponse:
+        return HTMLResponse(
+            content=svelte_index_html(config.app_sha),
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     @app.get("/service-worker.js", response_class=FileResponse)
     async def service_worker() -> FileResponse:
