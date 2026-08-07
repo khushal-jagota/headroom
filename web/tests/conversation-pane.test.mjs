@@ -125,6 +125,37 @@ assert.match(sources["composer/ComposerRunControls.svelte"], /chat-submit/);
 assert.match(sources["composer/HeldPromptStack.svelte"], /data-conversation-held-row/);
 assert.match(sources["ConversationPane.svelte"], /chat-overflow/);
 
+const composerSource = sources["ConversationComposer.svelte"];
+assert.ok(
+  composerSource.indexOf("<HeldPromptStack") < composerSource.indexOf('class="chat-box"'),
+  "the shared queue tray sits above the separate input box"
+);
+assert.match(
+  composerSource,
+  /data-conversation-composition-active=\{compositionActive \? "true" : undefined\}/
+);
+for (const activeComposition of [
+  'text !== ""',
+  "pendingImages.length > 0",
+  'voiceState.phase !== "idle"',
+  "takenOver",
+  "draggingImages",
+  "imageIntakesInFlight > 0"
+]) {
+  assert.ok(
+    composerSource.includes(activeComposition),
+    `release deferral must include ${activeComposition}`
+  );
+}
+
+const heldStackSource = sources["composer/HeldPromptStack.svelte"];
+assert.ok(
+  heldStackSource.indexOf('data-conversation-held-promote="send_now"')
+    < heldStackSource.indexOf('data-conversation-held-promote="steer"'),
+  "each held row puts Send now before Hermes Steer"
+);
+assert.match(heldStackSource, />Hermes Steer<\/button>/);
+
 // The pane that came before this one is gone, and nothing may reach for it.
 for (const [fileName, source] of Object.entries(sources)) {
   assert.doesNotMatch(source, /lib\/acp\/|components\/acp\//, fileName);
@@ -333,6 +364,11 @@ try {
   assert.match(waiting, /data-conversation-held-promote="steer"/);
   assert.match(waiting, /sending/);
   assert.match(waiting, /no answer came/);
+  assert.ok(
+    waiting.indexOf('data-conversation-held-promote="send_now"')
+      < waiting.indexOf('data-conversation-held-promote="steer"'),
+    "Send now precedes Hermes Steer in each actionable Hermes row"
+  );
 
   // A caller that cannot take a message back is not offered the control at all, rather
   // than offered one that does nothing.
@@ -868,6 +904,7 @@ try {
   });
   assert.doesNotMatch(idleComposer, /data-conversation-delivery/);
   assert.match(idleComposer, /data-conversation-send="true"/);
+  assert.doesNotMatch(idleComposer, /data-conversation-composition-active/);
 
   // The ask takes the composer over: the input is shut and the ask's own words replace it.
   const askedComposer = drawn(Composer, {
@@ -886,6 +923,7 @@ try {
     onSend: async () => true
   });
   assert.match(askedComposer, /data-conversation-taken-over="true"/);
+  assert.match(askedComposer, /data-conversation-composition-active="true"/);
   assert.match(askedComposer, /<textarea[^>]*disabled/);
   assert.match(askedComposer, /placeholder="in ~\/Coding"/);
   assert.doesNotMatch(askedComposer, /data-conversation-send/, "there is no sending past an ask");

@@ -2472,9 +2472,7 @@ button.list-row:hover .list-row-title {
   display: block;
 }
 .chat-ta::placeholder { color: var(--text-faintest); }
-/* The foot may wrap: on a phone the pickers and the mid-turn delivery segment do
- * not all fit one row, and a row that refuses to wrap forces the page wider than
- * the screen — the browser then zooms the whole layout out to fit it. */
+/* The foot can wrap before the horizontal Stop and Send group on a narrow screen. */
 .chat-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; row-gap: var(--space-1); margin-top: var(--space-1); }
 .chat-slash {
   background: none;
@@ -2610,11 +2608,16 @@ button.list-row:hover .list-row-title {
   line-height: 1;
 }
 
-/* Waiting messages are part of the recessed composer well. */
+/* Waiting messages share one inset tray directly above the separate input box. */
 .chat-box-stack { display: grid; min-width: 0; max-width: 100%; }
 .chat-queue-wrap {
-  border-bottom: var(--border-hairline) solid var(--border-color);
-  padding-bottom: var(--space-1);
+  min-width: 0;
+  margin: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 .chat-queue-stack {
   margin: 0;
@@ -2630,9 +2633,10 @@ button.list-row:hover .list-row-title {
 }
 .chat-qrow {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-1);
-  padding: var(--space-2) 0;
+  min-width: 0;
+  padding: var(--space-1) 0;
   border-bottom: var(--border-hairline) solid var(--border-color);
   animation: chat-queue-row-in var(--motion-base) var(--motion-ease);
 }
@@ -2651,17 +2655,13 @@ button.list-row:hover .list-row-title {
 .chat-qrow-txt {
   flex: 1;
   min-width: 0;
-  padding-top: 3px;
   color: var(--text-muted);
   font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
-  line-height: 1.5;
+  font-size: var(--type-xs);
+  line-height: 1.35;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-qrow[data-fate="in_flight"] .chat-qrow-txt,
 .chat-qrow[data-fate="unknown"] .chat-qrow-txt { color: var(--text-faintest); }
@@ -2669,8 +2669,7 @@ button.list-row:hover .list-row-title {
   flex: none;
   background: none;
   border: 0;
-  padding: var(--space-2);
-  margin-inline-start: calc(var(--space-2) * -1);
+  padding: var(--space-1);
   border-radius: var(--radius-sm);
   color: var(--text-faintest);
   cursor: pointer;
@@ -2709,9 +2708,6 @@ button.list-row:hover .list-row-title {
 @media (prefers-reduced-motion: reduce) {
   .chat-qrow { animation: none; }
   .chat-qrow.is-leaving { transition: none; transform: none; }
-}
-@media (max-width: 560px) {
-  .chat-qrow-txt { -webkit-line-clamp: 2; line-clamp: 2; }
 }
 
 /* Composer receipt: only failures speak — a mono error line under the box */

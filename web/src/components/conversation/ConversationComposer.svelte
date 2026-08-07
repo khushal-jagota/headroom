@@ -243,6 +243,15 @@
     sendsInFlight
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
+  /** A retained page must not reload while this composer owns work or a user decision. */
+  let compositionActive = $derived(
+    text !== ""
+    || pendingImages.length > 0
+    || voiceState.phase !== "idle"
+    || takenOver
+    || draggingImages
+    || imageIntakesInFlight > 0
+  );
 
   // --- the command being written -----------------------------------------------------------
   let commandUnderway = $derived(commandOnTheCursorsLine(text, cursorAt));
@@ -689,8 +698,20 @@
   });
 </script>
 
-<section class="c2-composer" data-conversation-composer>
+<section
+  class="c2-composer"
+  data-conversation-composer
+  data-conversation-composition-active={compositionActive ? "true" : undefined}
+>
   <div class="chat-box-stack">
+    <HeldPromptStack
+      rows={heldPromptRows}
+      hermes={backendKey === "hermes"}
+      {running}
+      onDiscard={onDiscardHeldPrompt}
+      onPromote={onPromoteHeldPrompt}
+    />
+
     <div
       class="chat-box"
       class:drag={draggingImages}
@@ -720,14 +741,6 @@
           onAnswer={(optionId) => onAnswer?.(optionId)}
         />
       {/if}
-
-      <HeldPromptStack
-        rows={heldPromptRows}
-        hermes={backendKey === "hermes"}
-        {running}
-        onDiscard={onDiscardHeldPrompt}
-        onPromote={onPromoteHeldPrompt}
-      />
 
       {#if commandMenuIsOpen}
         <AgentCommandMenu

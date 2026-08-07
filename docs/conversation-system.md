@@ -126,11 +126,12 @@ Send has no delivery knob. Every new message runs when the agent is free, and a
 busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,
 including while a turn runs.
 
-The composer shows the held line as a stack inside its recessed well. Each row
-shows one message and can discard it or make it run next. A Hermes row can also
-steer its text into the running turn. The server snapshot is the shared answer,
-so a second tab or device shows the same held line. A tab merges its immediate
-copy with that snapshot by the sender's message id rather than drawing it twice.
+The composer shows the held line in one inset tray above its recessed input on desktop
+and phone. Messages stack inside that tray. Each row stays on one line and can discard
+the message or make it run next. A Hermes row can also steer its text into the running
+turn. The server snapshot is the shared answer, so a second tab or device shows the same
+held line. A tab merges its immediate copy with that snapshot by the sender's message id
+rather than drawing it twice.
 
 The answer to a send is the fate of that delivery, and fate means it happened:
 started (the text reached a live agent), queued at a position, injected, or

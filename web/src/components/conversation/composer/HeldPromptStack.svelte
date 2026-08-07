@@ -88,19 +88,6 @@
           >×</button>
           <span class="chat-qrow-txt">{rowText(row)}</span>
           {#if word}<span class="chat-qrow-state">{word}</span>{/if}
-          {#if hermes}
-            <button
-              type="button"
-              class="chat-qrow-act"
-              data-conversation-held-promote="steer"
-              data-held-prompt-id={row.heldPromptId ?? undefined}
-              title="Put this into the turn that is already running"
-              disabled={!actionable || !running}
-              onclick={() => row.heldPromptId === null
-                ? undefined
-                : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
-            >Steer</button>
-          {/if}
           <button
             type="button"
             class="chat-qrow-act"
@@ -112,6 +99,19 @@
               ? undefined
               : void act(row.key, () => onPromote?.(row.heldPromptId!, "send_now"))}
           >Send now</button>
+          {#if hermes}
+            <button
+              type="button"
+              class="chat-qrow-act"
+              data-conversation-held-promote="steer"
+              data-held-prompt-id={row.heldPromptId ?? undefined}
+              title="Put this into the turn that is already running"
+              disabled={!actionable || !running}
+              onclick={() => row.heldPromptId === null
+                ? undefined
+                : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
+            >Hermes Steer</button>
+          {/if}
         </li>
       {/each}
     </ol>
