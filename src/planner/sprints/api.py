@@ -328,8 +328,8 @@ async def patch_sprint(
 
 @router.get("/sprint/current")
 async def current_sprint(conn: DbConn, cfg: Cfg, clk: Clk) -> JsonDict:
-    today_iso = planning_date(clk.now(), cfg.boundary_hour).isoformat()
-    return sprints_views.sprint_current_view(conn, today_iso, clk.now_unix())
+    planning_date_iso = planning_date(clk.now(), cfg.boundary_hour).isoformat()
+    return sprints_views.sprint_current_view(conn, planning_date_iso)
 
 
 # --- idea routes ---------------------------------------------------------------

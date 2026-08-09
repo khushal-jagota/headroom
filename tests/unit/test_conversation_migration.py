@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "notification_preferences_by_subject"
+HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
 
 
 def _table_columns(

@@ -74,21 +74,22 @@ and `src/planner/core/links.py`.
 ### 3. Scheduled Ticket Creation
 
 Panels can persist a generic schedule that supplies an ordinary Ticket at one exact
-local clock time. A schedule carries one of two planning-neutral cadences — every
-planning day or the final day of the current sprint — plus the same creation context an
-ordinary Ticket uses. Schedule configuration and its created, suppressed, or failed
-occurrence receipts are canonical SQLite records, managed through the actor-neutral
-HTTP and `panels schedule` CLI surfaces.
+local clock time. A schedule carries one of three planning-neutral cadences: every
+planning day, day four of the current sprint, or the final day of the current sprint.
+It also carries the same creation context that an ordinary Ticket uses. Schedule
+configuration and its created, suppressed, or failed occurrence receipts are canonical
+SQLite records, managed through the actor-neutral HTTP and `panels schedule` CLI surfaces.
 
 The schedule loop runs under the same single-machine ownership and server lifespan as
 Worker readiness. It evaluates only schedules matching the current local minute. It
 never searches elapsed minutes after downtime, so a missed trigger produces no late or
 backlog occurrence. The existing 5am planning-date rule picks the target day; canonical
-sprint ranges decide whether a final-sprint-day cadence qualifies.
+sprint ranges decide whether a day-four or final-day cadence qualifies.
 
-One transaction settles a due occurrence. A Ticket of the configured Worker type already
-on the target day suppresses creation, including a manually laid Ticket. Otherwise the
-ordinary Ticket writer applies Worker registration, launch defaults, hierarchy
+One transaction settles a due occurrence. A specialist Ticket with the configured Worker
+type already on the target day suppresses creation. A personal schedule also requires an
+exact title match, so unrelated personal work does not suppress it. Otherwise the ordinary
+Ticket writer applies Worker registration, launch defaults, hierarchy
 validation, lifecycle initialization, and day placement. A durable occurrence identity
 makes repeated polls and restarts idempotent. A failed occurrence is recorded and does
 not stop later schedules.

@@ -10,6 +10,7 @@ from planner.core.contracts import Priority
 
 class ScheduleCadence(StrEnum):
     every_planning_day = "every_planning_day"
+    current_sprint_day_four = "current_sprint_day_four"
     current_sprint_final_day = "current_sprint_final_day"
 
 

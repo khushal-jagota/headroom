@@ -237,7 +237,9 @@ def list_ideas(
 # --- sprint-current view (§5) --------------------------------------------------
 
 
-def sprint_current_view(conn: sqlite3.Connection, today_iso: str, now: int) -> JsonDict:
+def sprint_current_view(
+    conn: sqlite3.Connection, planning_date_iso: str
+) -> JsonDict:
     ranges = [
         DateRange(
             id=str(r["id"]),
@@ -246,9 +248,10 @@ def sprint_current_view(conn: sqlite3.Connection, today_iso: str, now: int) -> J
         )
         for r in conn.execute("SELECT id, date_start, date_end FROM sprints").fetchall()
     ]
-    sid = current_sprint_id(today_iso, ranges)
+    sid = current_sprint_id(planning_date_iso, ranges)
     if sid is None:
         return {
+            "planning_date": planning_date_iso,
             "sprint": None,
             "groups": {s.value: [] for s in ItemStatus},
         }
@@ -272,6 +275,7 @@ def sprint_current_view(conn: sqlite3.Connection, today_iso: str, now: int) -> J
             }
         )
     return {
+        "planning_date": planning_date_iso,
         "sprint": sprint_json(sprints_data.read_sprint(conn, sid)),
         "groups": groups,
     }

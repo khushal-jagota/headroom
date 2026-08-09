@@ -41,6 +41,40 @@ export type SprintTicketSections = {
   done: SprintTicket[];
 };
 
+export type SprintDateRange = {
+  date_start: string;
+  date_end: string;
+};
+
+const millisecondsPerDay = 86_400_000;
+
+function isoCalendarDay(isoDate: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const timestamp = Date.UTC(year, month - 1, day);
+  const parsed = new Date(timestamp);
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) return null;
+  return timestamp / millisecondsPerDay;
+}
+
+export function sprintDayLabel(sprint: SprintDateRange, planningDate: string): string {
+  const start = isoCalendarDay(sprint.date_start);
+  const end = isoCalendarDay(sprint.date_end);
+  const current = isoCalendarDay(planningDate);
+  if (start === null || end === null || current === null || end < start) return "";
+  const total = end - start + 1;
+  const day = current - start + 1;
+  if (day < 1 || day > total) return "";
+  return `day ${day} of ${total}`;
+}
+
 const priorityRank = new Map<Priority, number>([
   ["P0", 0],
   ["P1", 1],

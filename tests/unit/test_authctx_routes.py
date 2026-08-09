@@ -605,7 +605,7 @@ def test_patch_sprint_marshals_bad_field_types(tmp_path: Path) -> None:
     # PATCH /sprints marshals each field like the Day PATCH: a non-string value is a
     # clean validation error (400), never a raw SQLite binding error; a null is treated
     # as absent (→ "no fields to update"), never a NOT-NULL crash. Both write nothing.
-    # The new Mid-sprint Review field round-trips through the same route.
+    # The Checkpoint field round-trips through the same route.
     app, db_path = _make_app(tmp_path)
     sid = _sprint(db_path)
     with TestClient(app) as client:

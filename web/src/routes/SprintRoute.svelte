@@ -8,6 +8,7 @@
     sprintItemIsDone,
     sprintItemRollup,
     sprintItems,
+    sprintDayLabel,
     sprintProjectGroups,
     sprintTicketCondition,
     sprintTicketSections,
@@ -126,20 +127,6 @@
     return Number.isNaN(parsed) ? iso : shortMonthDayLabel(new Date(parsed));
   }
 
-  function dayOfSprint(sprint: AnyRecord): string {
-    const start = Date.parse(`${sprint.date_start}T00:00:00`);
-    const end = Date.parse(`${sprint.date_end}T00:00:00`);
-    if (Number.isNaN(start) || Number.isNaN(end)) return "";
-    const dayMs = 86_400_000;
-    const total = Math.round((end - start) / dayMs) + 1;
-    const now = new Date();
-    const todayMs = Date.parse(
-      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}T00:00:00`
-    );
-    const day = Math.max(0, Math.min(Math.round((todayMs - start) / dayMs) + 1, total));
-    return `day ${day} of ${total}`;
-  }
-
   function sectionHasContent(sprint: AnyRecord, fields: string[][]): boolean {
     return fields.some((field) => String(sprint[field[0]] || "").trim() !== "");
   }
@@ -182,14 +169,14 @@
             <a class="sprint-back" href="#/sprint">‹ {sprint.name}</a>
             <header class="sprint-docs-head">
               <h1 class="sprint-docs-title">Sprint documents</h1>
-              <div class="sprint-docs-sub">Kickoff, mid-sprint review, and sprint review — the sprint's written record.</div>
+              <div class="sprint-docs-sub">Kickoff, Checkpoint, and sprint review — the sprint's written record.</div>
             </header>
             {@const reviewHas = sectionHasContent(sprint, review)}
             {@const midHas = sectionHasContent(sprint, mid)}
             {#each [
               { kind: "kickoff", name: "Kickoff", meta: "set at the start", open: !reviewHas && !midHas, fields: kickoff, refline: "" },
-              { kind: "mid", name: "Mid-sprint Review", meta: "mid-sprint", open: reviewHas || midHas, fields: mid, refline: "" },
-              { kind: "review", name: "Sprint Review", meta: "end of sprint", open: reviewHas, fields: review, refline: "Written with the Mid-sprint Review above in view — it's the raw material for this retrospective." }
+              { kind: "mid", name: "Checkpoint", meta: "day four", open: reviewHas || midHas, fields: mid, refline: "" },
+              { kind: "review", name: "Sprint Review", meta: "end of sprint", open: reviewHas, fields: review, refline: "Written with the Checkpoint above in view — it is the raw material for this retrospective." }
             ] as phase}
               <Disclosure variant="phase" data-phase={phase.kind} defaultOpen={phase.open}>
                 {#snippet summary()}
@@ -300,7 +287,7 @@
               <div class="sprint-meta-line">
                 <span>{sprintDate(sprint.date_start)} – {sprintDate(sprint.date_end)}</span>
                 <span class="sep">·</span>
-                <span>{dayOfSprint(sprint)}</span>
+                <span>{sprintDayLabel(sprint, current.data.planning_date)}</span>
                 <span class="sep">·</span>
                 <span>{allItems.filter(sprintItemIsDone).length} of {totalItems(groups)} items done</span>
                 <a class="sprint-docs-link" href="#/sprint/documents">Sprint documents ›</a>

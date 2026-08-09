@@ -5115,7 +5115,7 @@ select {
   color: var(--text-faintest);
 }
 
-/* Sprint Overview (rev6): Kickoff / Mid-sprint Review / Sprint Review. Three headed
+/* Sprint Overview (rev6): Kickoff / Checkpoint / Sprint Review. Three headed
    .disclosure--phase sections; the phase decides which is open (JS). Each field is a
    label + the shared .ed inline-edit surface. No freeze, no accent, no ✓/●/○ marks. */
 [data-screen="sprint"] .disclosure--phase {
@@ -5138,7 +5138,7 @@ select {
   color: var(--text-strong);
 }
 
-/* the phase meta ("set at the start" / "mid-sprint" / "end of sprint") is a plain
+/* the phase meta ("set at the start" / "day four" / "end of sprint") is a plain
  * lowercase whisper — no weight, no tracking, per the docs mockup. */
 [data-screen="sprint"] .disclosure--phase .pmeta {
   flex: 1;

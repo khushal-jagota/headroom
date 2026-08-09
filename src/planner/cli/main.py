@@ -97,7 +97,11 @@ _SCHEDULE_FIELDS = {
     "employee-launch-model": "employee_launch_model",
 }
 
-_SCHEDULE_CADENCES = ("every-planning-day", "current-sprint-final-day")
+_SCHEDULE_CADENCES = (
+    "every-planning-day",
+    "current-sprint-day-four",
+    "current-sprint-final-day",
+)
 
 
 def _read_source(spec: str, as_json: bool) -> str:

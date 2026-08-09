@@ -98,7 +98,8 @@ One screen per part of the system:
   plus a dedicated view for each Item and a separate documents page. The overview
   shows Item progress without Ticket rows. An Item view joins today's Day membership
   to split its Tickets into on-today, off-today, and folded done work. Project priority
-  orders the Project folds. See `sprints.md`.
+  orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
+  Review. See `sprints.md`.
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
 - **Agents** — the runtime home for agent conversations. Above 960px it follows
@@ -380,9 +381,9 @@ native selects.
 
 **The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
 diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
-restated here. One caveat lives in the Sprint tracking page: its "day N of M" readout is
-derived from the browser's own clock against the sprint dates, so it follows the reader's
-local day, not the server's planning-day boundary.
+restated here. The Sprint tracking page derives its "day N of M" readout from the
+canonical sprint day. That day changes at 05:00 local time, in step with the server's
+planning-day boundary.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),

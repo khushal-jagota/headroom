@@ -44,9 +44,10 @@ generic Stage setter.
   served Worker-type manifest for automation. Commands that require `--worker-type`
   point to this list instead of embedding a second catalog.
 - **`schedule create / list / show / set`** — manage generic internal schedules that
-  create and place an ordinary Ticket at an exact local time. A schedule uses either
-  `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
-  placement context as `ticket create`, and can be enabled or disabled. With no kickoff
+  create and place an ordinary Ticket at an exact local time. A schedule uses
+  `every-planning-day`, `current-sprint-day-four`, or `current-sprint-final-day`. It
+  carries the same Worker type and placement context as `ticket create`, and it can be
+  enabled or disabled. With no kickoff
   context, the created Ticket has no pending proposal, so readiness can start its
   Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
   and waits for approval. By default each

@@ -13,7 +13,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "day_midday_reconciliation"
-HEAD_REVISION = "notification_preferences_by_subject"
+HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:
@@ -232,7 +232,7 @@ def test_migration_moves_direct_placements_to_shared_other_items_and_preserves_s
     assert upgraded.execute("SELECT count(*) FROM tickets").fetchone()[0] == 5
     assert upgraded.execute(
         "SELECT count(*) FROM scheduled_ticket_schedules"
-    ).fetchone()[0] == 4
+    ).fetchone()[0] == 5
     assert upgraded.execute("SELECT count(*) FROM day_tickets").fetchone()[0] == 1
     assert upgraded.execute(
         "SELECT count(*) FROM scheduled_ticket_occurrences"

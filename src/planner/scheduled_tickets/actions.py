@@ -208,15 +208,26 @@ def _sprint_ranges(conn: sqlite3.Connection) -> tuple[DateRange, ...]:
     )
 
 
-def _existing_ticket_of_type_on_day(
-    conn: sqlite3.Connection, *, target_day_id: str, worker_type: str
+def _existing_ticket_for_schedule_on_day(
+    conn: sqlite3.Connection,
+    *,
+    target_day_id: str,
+    worker_type: str,
+    title: str,
 ) -> str | None:
+    title_clause = " AND tickets.title = ?" if worker_type == "personal" else ""
+    parameters = (
+        (target_day_id, worker_type, title)
+        if worker_type == "personal"
+        else (target_day_id, worker_type)
+    )
     row = conn.execute(
         "SELECT tickets.id FROM tickets "
         "JOIN day_tickets ON day_tickets.ticket_id = tickets.id "
         "WHERE day_tickets.day_id = ? AND tickets.worker_type = ? "
+        f"{title_clause} "
         "ORDER BY day_tickets.position, tickets.id LIMIT 1",
-        (target_day_id, worker_type),
+        parameters,
     ).fetchone()
     return None if row is None else str(row["id"])
 
@@ -238,10 +249,11 @@ def _settle_occurrence(
             existing_occurrence = data.read_occurrence(conn, schedule.id, key)
             if existing_occurrence is not None:
                 return existing_occurrence
-            existing_ticket_id = _existing_ticket_of_type_on_day(
+            existing_ticket_id = _existing_ticket_for_schedule_on_day(
                 conn,
                 target_day_id=target_day,
                 worker_type=schedule.template.worker_type,
+                title=schedule.template.title,
             )
             if existing_ticket_id is not None:
                 return data.insert_occurrence(

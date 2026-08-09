@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date
@@ -43,7 +43,14 @@ def cadence_qualifies(
     sprint_id = current_sprint_id(planning_day, sprint_ranges)
     if sprint_id is None:
         return False
-    return next(item for item in sprint_ranges if item.id == sprint_id).date_end == planning_day
+    sprint_range = next(item for item in sprint_ranges if item.id == sprint_id)
+    if cadence is ScheduleCadence.current_sprint_day_four:
+        sprint_day = (
+            date.fromisoformat(planning_day)
+            - date.fromisoformat(sprint_range.date_start)
+        ).days + 1
+        return sprint_day == 4
+    return sprint_range.date_end == planning_day
 
 
 def planning_day_for(now: datetime, boundary_hour: int) -> str:

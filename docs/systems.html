@@ -675,10 +675,15 @@
             </summary>
             <div class="detail-body">
               <p>
-                Sprints are two-week pushes. Sprint items are larger chunks inside
+                Sprints are fixed seven-day periods. Sprint items are larger chunks inside
                 or outside a sprint. Tickets are worker-sized work units. Days are
                 daily overview records and ordered ticket lists. Ideas are loose
                 thoughts that are not work yet.
+              </p>
+              <p>
+                The canonical sprint day changes at 05:00 local time. Existing sprint
+                ranges stay unchanged, while every new sprint covers exactly seven
+                inclusive dates.
               </p>
               <p>
                 The Board is today's execution board, not an all-ticket inventory.
@@ -700,19 +705,21 @@
             </summary>
             <div class="detail-body">
               <p>
-                A persisted schedule combines an exact local time with either every
-                planning day or the final day of the current sprint, plus ordinary
-                Ticket creation context. The actor-neutral HTTP and CLI surfaces manage
-                schedules; SQLite stores created, suppressed, and failed occurrence
-                receipts.
+                A persisted schedule combines an exact local time with every planning
+                day, day four of the current sprint, or its final day, plus ordinary
+                Ticket creation context. Day four supplies a personal Checkpoint Ticket
+                at 17:00. The final day still supplies the Planning Sprint Ticket at
+                17:00. The actor-neutral HTTP and CLI surfaces manage schedules; SQLite
+                stores created, suppressed, and failed occurrence receipts.
               </p>
               <p>
                 The clock-driven loop evaluates only the current minute under the same
                 server lifespan and machine lock as Worker readiness. It never backfills
                 a missed minute. One transaction claims the occurrence and either
-                suppresses it when that Worker type is already on the target day or
-                delegates to the ordinary Ticket writer. The resulting change signal
-                lets the unchanged readiness decision consider the Ticket.
+                suppresses a specialist schedule when that Worker type is already on the
+                target day or delegates to the ordinary Ticket writer. A personal schedule
+                also requires an exact title match. The resulting change signal lets the
+                unchanged readiness decision consider the Ticket.
               </p>
               <p class="code-paths">
                 Code paths: <code>src/planner/scheduled_tickets/</code>,

@@ -29,6 +29,7 @@
 
   const cadenceOptions: Array<{ value: ScheduleCadence; label: string }> = [
     { value: "every_planning_day", label: "Every planning day" },
+    { value: "current_sprint_day_four", label: "Current sprint day four" },
     { value: "current_sprint_final_day", label: "Current sprint final day" }
   ];
   const placementOptions: Array<{ value: SchedulePlacementMode; label: string }> = [

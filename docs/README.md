@@ -2,7 +2,7 @@
 
 The planner is a personal planning system that runs entirely on one computer. It
 replaces a folder of markdown files with a small database and a web page. It keeps
-track of four kinds of thing — **sprints** (two-week pushes), **sprint items** (the
+track of four kinds of thing — **sprints** (fixed seven-day periods), **sprint items** (the
 meaningful chunks a sprint is made of), **tickets** (pieces of work small enough to
 hand to an AI worker), and **days** (one page per day) — plus a light list of
 **ideas**, things worth remembering that aren't work yet, and a small **projects**

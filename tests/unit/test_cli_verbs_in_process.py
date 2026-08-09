@@ -353,7 +353,21 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
     assert created["placement_mode"] == "current_sprint"
 
     listed = cli(server, "schedule", "list")
-    assert [item["id"] for item in listed["schedules"]] == [created["id"]]
+    assert {item["id"] for item in listed["schedules"]} == {
+        "schedule_weekly_sprint_checkpoint",
+        created["id"],
+    }
+
+    day_four = cli(
+        server,
+        "schedule",
+        "set",
+        created["id"],
+        "cadence",
+        "--value",
+        "current-sprint-day-four",
+    )
+    assert day_four["cadence"] == "current_sprint_day_four"
 
     backlog = cli(
         server,

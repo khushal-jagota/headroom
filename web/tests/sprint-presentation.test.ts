@@ -2,12 +2,28 @@ import { describe, expect, it } from "vitest";
 import {
   sprintItemIsDone,
   sprintItemRollup,
+  sprintDayLabel,
   sprintProjectGroups,
   sprintTicketCondition,
   sprintTicketSections,
   type SprintItem,
   type SprintTicket
 } from "../src/lib/sprintPresentation";
+
+describe("Sprint day presentation", () => {
+  const weeklySprint = { date_start: "2026-08-03", date_end: "2026-08-09" };
+
+  it("reports each inclusive day of a weekly sprint from the supplied planning date", () => {
+    expect(sprintDayLabel(weeklySprint, "2026-08-03")).toBe("day 1 of 7");
+    expect(sprintDayLabel(weeklySprint, "2026-08-06")).toBe("day 4 of 7");
+    expect(sprintDayLabel(weeklySprint, "2026-08-09")).toBe("day 7 of 7");
+  });
+
+  it("rejects invalid dates and planning dates outside the sprint", () => {
+    expect(sprintDayLabel(weeklySprint, "2026-08-10")).toBe("");
+    expect(sprintDayLabel({ date_start: "bad", date_end: "2026-08-09" }, "2026-08-03")).toBe("");
+  });
+});
 
 const ticket = (overrides: Partial<SprintTicket> = {}): SprintTicket => ({
   id: "t_default",
