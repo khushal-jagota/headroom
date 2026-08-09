@@ -6,6 +6,12 @@ stored and returned as `null`; it is never interpreted as P3. The live default r
 are `project_vylo`, `project_tribe`, and `project_other`, but new rows can be added
 without changing code.
 
+```
+Project ──► Sprint Item ──► Ticket
+   └─────► backlog Ticket
+   └─────► Idea
+```
+
 Existing and built-in Projects may be unassessed. Creating a new Project through the
 ordinary API or CLI requires an explicit P0–P3. The ordinary API and CLI can reassess
 an existing Project to P0–P3. They cannot return it to the unassessed state.
@@ -21,8 +27,8 @@ locations belong in the summary text when they matter.
 
 Unparented backlog Tickets, Sprint Items, and ideas store `project_id`. API responses
 also include the legacy `project` field as the display name so older callers can keep
-reading it. Existing direct Project write surfaces accept either `project_id` or the
-legacy project name; if both are sent and they point to different rows, the server
+reading it. Placement and categorization writes accept either `project_id` or the
+legacy project name. If both are sent and they point to different rows, the server
 rejects the request.
 
 Tickets on Sprint Items do not carry their own Project or sprint placement. Their
@@ -45,12 +51,22 @@ with neither source appear under `No project`.
 - Frontend project selectors fetch the `projects` resource and use project IDs as
   values with project names as labels.
 
-There is no delete or archive flow yet.
-
 _Code paths:_ `src/planner/projects/`, `src/planner/core/db.py`,
 `src/planner/tickets/views.py`, `web/src/routes/BacklogRoute.svelte`,
 `web/src/routes/IdeasRoute.svelte`, `web/src/routes/TicketRoute.svelte`,
 `web/src/routes/BoardRoute.svelte`.
+
+## Handoffs
+
+- **Sprints** (`sprints.md`) — Sprint Items carry Projects into sprint tracking.
+- **Tickets & the gates** (`tickets-and-gates.md`) — backlog Tickets carry a Project
+  directly and placed Tickets inherit one.
+- **Backlog & Ideas** (`backlog-and-ideas.md`) — both capture surfaces use the catalog.
+
+## Deferred
+
+- **Project removal.** There is no delete or archive flow. Trigger: the catalog needs
+  lifecycle management beyond reassessment.
 
 ---
 

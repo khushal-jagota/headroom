@@ -157,8 +157,9 @@ link engine.
 
 ### Ordinary Ticket edits
 
-One ordinary edit may change a Ticket's title, priority, deadline, project, and
-sprint together. Panels checks the whole request before saving any of it. All requested
+One ordinary edit may change a Ticket's title, priority, deadline, and project
+together. Sprint placement belongs to the Sprint Item writer. Panels checks the whole
+request before saving any of it. All requested
 changes succeed together or none do, and the history records
 only fields that really changed. Sending values the Ticket already has leaves it
 unchanged.
@@ -236,20 +237,21 @@ implementation advances to **needs closeout**, and an accepted closeout advances
 straight to **done**. (The threshold used by sprint-in-progress behavior is the
 *second* stage, held distinct from this start ceiling; see `worker-types.md`.)
 
-## The approval gate, and the scope row
+## The approval gate and Ticket leash
 
 Whenever the human approves a step, they must say in the same breath how far the
 worker may go next — the system refuses an approval that doesn't answer that
-question. That same scope is shown and editable right on the ticket header as a plain
-row: "approved until [a stage] then Continue" — or "then Stop", rendered as pills you
-can tap to change any time. A fresh approval starts on Continue so the worker
+question. The Ticket details disclosure shows the same scope as a readable leash:
+"approved until [a stage], then continue" or "then stop." Opening it reveals selects
+for the ceiling and at-cap action, plus Take over or Release. A fresh approval starts
+on Continue so the worker
 keeps drafting the next gated step unless the human changes it. At Kickoff, an unchosen
 ceiling starts from that Worker type's managed suggestion. Other approvals start from
 their normal next Stage. `No further` remains a one-off choice. The stages it offers
 are always the current one and the
 ones after it, never an earlier one, so you can't hand back ground the ticket has
-already covered. One shared source of the allowed stages feeds both the header row
-and the approval screen, so the two can never disagree.
+already covered. One shared source of the allowed stages feeds both the Ticket leash
+and the approval screen, so the two cannot disagree.
 
 Review's single, oldest-first walk shows today's tickets whose status is
 `awaiting_approval` or `needs_user` — nothing else decides membership. A parked
@@ -276,12 +278,7 @@ its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision.
 
-Replying in chat to a ticket that is waiting for approval is the third way out. The
-reply moves the ticket to `paired` — the human and the worker are now talking — and the
-ticket drops out of Review. The parked proposal is not touched: it stays filed on its
-field, ready to be approved later. Nothing else about the ticket changes.
-
-_Code paths:_ `web/src/routes/TicketRoute.svelte` (the scope row),
+_Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
 (the approval walk).
 
@@ -316,7 +313,8 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
   these proposals gets asked to take the next step; committing a write is what tells the
   readiness loop to look again at once.
 - **The command-line tool** (`cli.md`) — how a worker files proposals, recaps, and
-  notes; it deliberately holds no accept/approve/grant verb.
+  notes. The direct `ticket approve` command exists, but the `worker` subgroup and a
+  Worker identity hold no approval verb or authority.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
   render a ticket's story and carry the human's decisions.
 - **Projects** (`projects.md`) — the catalog used directly by backlog Tickets and
@@ -329,5 +327,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-07-27 (the eight Ticket statuses, the unified Review walk, the
-commit itself as the change signal, and revision sent before the Ticket is handed back)._
+_Last verified: 2026-08-09._

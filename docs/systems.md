@@ -1,317 +1,235 @@
 # Systems
 
-Panels is one planning record, one gate for canonical decisions, one worker-orchestration
-system, and one conversation system. This page is the cold-start map: what each system
-owns and where the important boundaries sit.
+Panels is one canonical planning record with several narrow ways to act on it. The
+browser is the main human surface. The CLI serves direct actions, Ticket Workers, and
+the Chief. A separate conversation system runs the AI agents.
 
 ```
-Human browser ───────────────► FastAPI + SQLite ◄────────────── panels CLI
-      │                              │                              │
-      │ decisions and conversation  │ canonical record             │ proposals only
-      │                              ▼                              │
-      └──────────────►    the conversation system   ◄──────────────┘
-                                      │
-                                      ▼
-                       the agent it is running on
+human browser ───────────────┐
+direct CLI ──────────────────┼──► domain writers ─────────────► SQLite
+                             │                                      │
+Ticket Worker ─► proposal resolver                                 │ commit
+planning Worker ─► guarded Day or Sprint writer                    ▼
+Chief ───────────► external-work reconciliation             change signal
+                                                                    │
+                         ┌──────────────────────────────────────────┤
+                         ▼                                          ▼
+                 mounted browser reads                      Worker readiness
+                                                                    │
+                                                                    ▼
+                                                          Ticket conversation
 ```
 
-The browser is the human decision surface. Workers use the CLI to inspect Tickets and
-file proposals. The proposal resolver is the only door from a proposal to a canonical
-field value or Stage advance. What the human types and what Panels sends on its own
-both reach the same one conversation per Ticket.
+The proposal resolver is the only door for gated Ticket field values and Stage
+advances. It is not the only writer in Panels. Ordinary direct actions have their own
+domain writers. Three planning Worker types receive narrow Day or Sprint write authority
+for their Closeout. The Chief has explicit operations for importing external work.
 
-## The Systems
+## The systems
 
-### 1. The Record System
+### 1. The record and change signal
 
-SQLite is the canonical product record. `src/planner/core/db.py` opens connections with
-foreign keys enabled and brings a database up to the current schema. Domain writers group
-related changes in one transaction.
+SQLite is the canonical product record. It stores planning objects, Ticket fields and
+control state, conversations, notifications, schedules, and operational receipts.
+Worker settings and managed skills are filesystem state beside the database. Domain
+writers group related database changes in one transaction.
 
-The record contains planning objects, Ticket fields and status, proposals, Stage
-ownership and scope, links, pending worker context, and each Ticket's conversation
-link. Conversation transcript content belongs to the conversation system, not to
-duplicate Panels message tables.
+Schema changes are an ordered migration history. A database open applies missing
+migrations atomically and refuses an unsupported older schema instead of guessing.
 
-The schema is not written out in one place. It is a numbered history of changes, kept
-under `src/planner/core/migrations/`, starting from a first entry that holds the schema as
-it stood when the history began. Changing the schema means adding an entry, never editing
-an old one. Every open brings the database forward through whichever entries it has not
-seen yet: a new database is built from the whole history, a current one is left alone, and
-a database that predates the history is recorded as starting at the first entry, its rows
-untouched. A database older than that is refused by name rather than half-upgraded — an
-older checkout is what brings those forward. The whole step is all-or-nothing, so a change
-that fails leaves the database exactly as it was.
+Every connection created by the database door announces its commits. The signal carries
+no entity name or payload. The browser invalidates its cached reads, and Worker readiness
+checks current Tickets again. SQLite and periodic loops remain canonical if a signal is
+missed.
 
-Committing a write is also what tells the rest of the process that something changed.
-The signal carries nothing — no entity, no kind, no payload — and both listeners answer
-it the same way: the browser refetches what it is showing, and the readiness loop asks
-again which Tickets are ready. It is a nudge for latency only; SQLite and the periodic
-timer stay canonical.
-
-_Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`,
+_Code paths:_ `src/planner/core/db.py`, `src/planner/core/migrations/`, and
 `src/planner/core/change_signal.py`.
 
-### 2. The Planning Objects
+### 2. The planning domains
 
-The planning record is made from:
+Days orient one planning date. Sprints contain Sprint Items. Sprint Items are the only
+way a Ticket sits in a sprint. Backlog items are Sprint Items without a sprint. Tickets
+carry bounded work. Ideas remember possibilities. Projects classify Items, backlog
+Tickets, and Ideas.
 
-- **Days**, using the configured planning-day boundary rather than midnight.
-- **Sprints** and **Sprint items**, which group a bounded push and its meaningful
-  chunks.
-- **Tickets**, small enough to hand to one worker.
-- **Ideas**, which are remembered possibilities rather than committed work.
-- **Projects**, a shared classification catalog.
-- **Links**, currently the explicit blocker relationship between Tickets and Sprint
-  items.
+Each domain owns its contracts, rules, writers, views, and HTTP routes. Cross-domain
+actions use those owners. The planning date changes at 05:00 local time. Stored Sprint
+date ranges remain canonical.
 
-Each domain owns its contracts, framework-free rules, data writers, and HTTP routes.
-Cross-domain actions call those owners rather than writing around them.
+Read the focused pages for the product surfaces:
 
-_Code paths:_ `src/planner/days/`, `sprints/`, `tickets/`, `ideas/`, `projects/`,
-and `src/planner/core/links.py`.
+- **Days** (`days.md`)
+- **Sprints** (`sprints.md`)
+- **Backlog & Ideas** (`backlog-and-ideas.md`)
+- **Projects** (`projects.md`)
 
-### 3. Scheduled Ticket Creation
+_Code paths:_ `src/planner/days/`, `src/planner/sprints/`,
+`src/planner/tickets/`, and `src/planner/projects/`.
 
-Panels can persist a generic schedule that supplies an ordinary Ticket at one exact
-local clock time. A schedule carries one of three planning-neutral cadences: every
-planning day, day four of the current sprint, or the final day of the current sprint.
-It also carries the same creation context that an ordinary Ticket uses. Schedule
-configuration and its created, suppressed, or failed occurrence receipts are canonical
-SQLite records, managed through the actor-neutral HTTP and `panels schedule` CLI surfaces.
-
-The schedule loop runs under the same single-machine ownership and server lifespan as
-Worker readiness. It evaluates only schedules matching the current local minute. It
-never searches elapsed minutes after downtime, so a missed trigger produces no late or
-backlog occurrence. The existing 5am planning-date rule picks the target day; canonical
-sprint ranges decide whether a day-four or final-day cadence qualifies.
-
-One transaction settles a due occurrence. A specialist Ticket with the configured Worker
-type already on the target day suppresses creation. A personal schedule also requires an
-exact title match, so unrelated personal work does not suppress it. Otherwise the ordinary
-Ticket writer applies Worker registration, launch defaults, hierarchy
-validation, lifecycle initialization, and day placement. A durable occurrence identity
-makes repeated polls and restarts idempotent. A failed occurrence is recorded and does
-not stop later schedules.
-
-Scheduling ends at the committed Ticket and day placement. That commit emits the ordinary
-change signal; the readiness loop decides whether the Ticket is eligible and the
-conversation system performs any Worker handoff. The scheduler has no planning judgment,
-planning-state authority, Stage behavior, or second Worker engine.
-
-_Code paths:_ `src/planner/scheduled_tickets/`, `src/planner/core/loops.py`, and
-`src/planner/core/migrations/`.
-
-### 4. The Ticket Gate System
+### 3. Tickets, gates, and Worker types
 
 A Ticket's Worker type declares its ordered Stages, gated fields, default Stage
-ownership, scope range, and specialist skill. The coding lifecycle is one configured
-example; the engine itself uses the Ticket's stored Worker type.
+ownership, specialist skill, and launch defaults. Eleven Worker types ship, including
+coding, planning, design, debugging, general, and user-owned personal work. The browser
+gets the same registry manifest that the server uses.
 
-Workers propose. The proposal resolver alone accepts a proposal into a canonical field
-and advances the Stage. Scope says how far worker-owned work may advance without human
-approval. Stage ownership says whether the worker, the user, or both drive the current
-Stage. A paired Stage receives one automatic opening turn on entry and then continues
-through the same Ticket conversation; no further step is ever started for it
-automatically.
+Workers propose gated Ticket fields. The proposal resolver alone settles one of those
+values and advances the Stage. Scope controls how far worker-owned Stages can advance.
+Ownership says whether the worker, user, or both drive the current Stage. A paired Stage
+gets one automatic opening turn and then continues in the same Ticket conversation.
 
-Ticket status is runtime control state — one word for what is happening on the Ticket
-right now, not a conversation transcript state. There are eight: `empty` (at rest and
-ready), `blocked` (at rest, waiting on a live blocker), `agent` (a worker is running a
-step), `paired` (working together), `awaiting_approval` (a proposal is waiting for the
-human), `needs_user` (the worker asked for help), `user` (the user has taken the
-stage), and `errored` (a confirmed backend Worker failure).
+Ticket status is separate control state: `empty`, `blocked`, `agent`, `paired`,
+`awaiting_approval`, `needs_user`, `user`, or `errored`. The Review screen contains
+today's approval and help requests. Workspace groups today's Tickets by this operating
+state.
 
-`blocked` is `empty`'s stand-in and nothing else's: a Ticket that comes to rest with
-nothing running lands there instead of `empty` while a live blocker remains, and only
-`empty` Tickets are ever started automatically.
+Read **Tickets & the gates** (`tickets-and-gates.md`) and **Worker types**
+(`worker-types.md`).
 
-The Review screen is the human gate. Its single oldest-first walk holds today's Tickets
-whose status is `awaiting_approval` or `needs_user`. Approval settles a proposal and
-records the next scope in one decision. Returning for revision clears the parked
-proposal and sends the guidance as the real next message into the Ticket's conversation.
-A needs-user item opens the Ticket conversation where the Worker asked for help; it has
-no proposal controls. Replying to a parked proposal in chat instead moves the Ticket to
-`paired` and out of Review; the proposal itself stays filed.
+_Code paths:_ `src/planner/tickets/`, `src/planner/worker_types/`, and
+`src/planner/worker_settings/`.
 
-_Code paths:_ `src/planner/tickets/`, `src/planner/worker_types/`, and the proposal
-resolver in `src/planner/tickets/logic/resolution.py`.
+### 4. Scheduled Ticket creation
 
-### 5. Worker Orchestration
+A saved schedule supplies an ordinary Ticket at one exact local minute. Its cadence is
+every planning day, day four of the current sprint, or the sprint's final day. One
+transaction records a created, suppressed, or failed occurrence. The loop checks only
+the current minute and does not backfill downtime.
 
-One loop asks, over and over, which of today's Tickets are ready for their next worker
-step, and starts one for each. Ready means the record allows it — on today, not
-terminal, a blank to fill, owner is not the user, status `empty`, nothing parked,
-scope permits, Closeout lane free — plus one question the record cannot answer: the
-conversation system is asked whether that Ticket's worker is already busy.
+Scheduling stops at Ticket creation and Day placement. The commit signal hands the new
+Ticket to ordinary Worker readiness. The Scheduled tasks screen and `panels schedule`
+manage the template. Neither starts a Worker directly.
 
-Taking the Ticket out of `empty` in one guarded write **is** the claim. There is no
-claim stamp and no run record. The step is then sent as a real message: the opening
-instruction plus any worker context that was waiting. Started and queued both count as
-delivered; only a refusal gives the claim back.
+Read **Scheduled Ticket creation** (`scheduled-tickets.md`).
 
-Nothing watches the turn end. A Ticket moves again only when someone acts on it. That
-means a Ticket's status and whether its worker is actually running can disagree after
-a crash, and Panels leaves that visible rather than running a recovery sweep — the
-conversation system is asked for liveness whenever it matters.
+_Code paths:_ `src/planner/scheduled_tickets/` and `src/planner/core/loops.py`.
 
-The loop wakes on the commit signal so a write that changes readiness is picked up
-promptly; SQLite and the periodic timer remain canonical.
+### 5. Worker orchestration
+
+The readiness loop examines today's Tickets and applies one complete, read-only
+decision. A Ticket must be on today, non-terminal, worker or paired owned, `empty`,
+within scope, free of a parked proposal, and clear for its Closeout lane. The
+conversation system supplies the one fact the record cannot: whether that Ticket's
+worker is already busy.
+
+One guarded status flip out of `empty` is the claim. There is no claim stamp or run row.
+Panels then starts or reuses the Ticket conversation and sends the Stage instruction
+with pending Worker context. Started and queued both count as delivered. Only refusal
+releases the claim.
+
+Nothing watches a turn end. A Ticket moves only when someone acts on it. A process crash
+can therefore leave a Ticket marked `agent` with no live turn. Panels leaves that
+disagreement visible.
+
+Read **Worker orchestration** (`worker-orchestration.md`).
 
 _Code paths:_ `src/planner/runtime/` and `src/planner/worker_context/`.
 
-Runtime environments let the same foreground server run against separate prepared live
-and staging state. Live has a fixed ingress port. Staging keeps persistent fake state
-but chooses a port only while it is running. Ticket worktree servers are temporary
-processes with worktree-local state, not prepared environment instances. See
-[`runtime environments`](environments.md).
+### 6. The conversation system
 
-### 6. The Conversation System
+One conversation is one backend agent working in a folder, plus a durable notebook of
+finished events. The closed backend set is Hermes, Codex, and Claude. A Ticket or the
+Chief owns the conversation id. The backend's session handle remains internal and can
+be rebound.
 
-This is the one way Panels talks to an AI agent. One conversation is one agent process
-— hermes, codex, or claude — working in a folder, plus a permanent notebook of
-everything that happened in it. Every screen that shows a conversation uses it, and so
-does worker orchestration: there is no second path and no stand-in.
+The system starts conversations, sends messages, manages held messages, interrupts or
+kills activity, and reports live work that needs the user. Sending reports an honest
+fate: started, queued, injected, or refused. Backend output reaches an append-only event
+record and a live tail. Every production conversation pane and every Worker step uses
+this same system.
 
-The rest of Panels can do exactly five things to a conversation: start it, send a message
-into it, interrupt its running turn, kill its activity outright, and ask whether it is
-running. It also says whether a permission decision or agent question answer is waiting.
-boundary. In particular there is no read of which backend or model a conversation is on,
-because those are values a caller passed in rather than questions the contract answers.
+The Backends screen shows installation, identity, models, updates, model enablement,
+and the stored usage readings available from Codex and Claude.
 
-A conversation is identified by an id the caller owns. A Ticket stores its own in
-`tickets.conversation_id`; the Chief stores its own in the `agents` table. The
-backend process's own session id is an internal, rebindable detail of the conversation
-system and appears nowhere else.
+Read **The conversation system** (`conversation-system.md`).
 
-The notebook is an append-only run of numbered rows in the same database as everything
-else. A row is a finished thing: a delivered prompt, a completed agent message, a tool
-call starting or finishing, a permission ask or agent question request and its answer, a model change, a turn
-ending. A message is a run of pieces rather than a piece of text — written words and
-pictures — and a picture's bytes are kept in a file beside the notebook, which the row
-names. The browser reads the rows after a position over ordinary HTTP and then keeps up
-over a live tail. Nothing holds a socket open to Panels.
+_Code paths:_ `src/planner/conversation/` and
+`web/src/components/conversation/`.
 
-Sending says what actually happened to that text and never more: it started a turn, it
-is held until the agent is free, it was injected into a running turn, or it was refused
-for a named impossibility. A busy agent is never a refusal — a message the system can
-hold is held.
+### 7. The human interface
 
-Steering is a per-backend fact rather than a negotiation: hermes can take text into a
-running turn, codex and claude cannot, and a steer aimed at one that cannot is refused.
+The Svelte app is built by Vite and served by FastAPI. Home, Review, Workspace, Ticket,
+Sprint, Backlog, Ideas, Config, Backends, Notifications, and Scheduled tasks are server
+projections. The Chief conversation is the first Workspace row. Former Agents routes
+redirect to Workspace or Config.
 
-Which backends exist is a closed set of three, stated once, and every part of Panels
-that reads a backend name goes through one door that turns text into a member of it.
-What each backend is on this machine — installed, which version, signed in as whom,
-which models it offers and which reasoning efforts each of those takes — is one answer,
-probed when asked and kept until asked again.
+One query catalogue names cached product reads. `GET /api/changes` streams contentless
+commit signals. Each signal marks all cached reads stale, but only mounted queries
+refetch. Structural sharing keeps unchanged results still. Conversations use their own
+event read and live-tail path.
 
-Hermes' answer comes from a packaged door run by its configured Python environment,
-not from whichever `hermes` happens to be on `PATH`. The door returns only configured
-provider inventory, with opaque `provider:model` identities and a configured default.
-Panels keeps the answer in process; normal reads use Hermes' cache, and only an explicit
-backend refresh asks Hermes to refresh its own inventory. There is no polling, per-Ticket
-catalog, or Hermes reasoning control. Hermes update checking and execution use its native
-explicit update commands through the same backend-management surface.
+Markdown uses one GFM and sanitization pipeline. Managed file previews enforce safe
+paths, response types, and sandboxed HTML.
 
-_Code paths:_ `src/planner/conversation/`, and `/api/conversation` in
-`src/planner/core/server.py`.
-
-### 7. The Human UI System
-
-The web app is Svelte built by Vite. FastAPI serves `web/dist` at `/`, Vite chunks
-under `/_app/`, and the shared token and application CSS under `/assets/`.
-
-Every shared Markdown surface uses one Vite-owned GFM pipeline. Raw HTML stays visible
-as text, unsafe content is removed before DOM creation, and managed links keep their
-exact source tokens through direct editing and preview lifecycles.
-
-Canonical product reads are cached under one name each, such as `board`, `review`,
-`sprint:current`, or a single Ticket. The server holds open a change stream at
-`GET /api/changes` and sends one contentless line per committed write; the browser
-marks every cached read stale and refetches only the ones a screen is currently using.
-A refetch that comes back the same leaves the page alone. The server remains the source
-of truth; the browser does not keep a second canonical product store.
-
-Conversation state is separate from that REST cache: a pane reads the rows after the
-position it holds and keeps up over a live tail of the same rows. Chief, Ticket and
-Workspace mounts all use the same restrained pane: bubble-less worker prose, one user
-pill, compact thought/tool disclosures, one persistent status line, and distinct blocking
-insets for permission decisions and agent questions. The question inset walks through
-single-choice, multi-choice, and typed answers before submitting the whole request. The
-composer carries the text, the model and effort
-in force, and a message may be aimed at a skill. Starting a message with a slash opens
-the commands the agent itself said it takes: hermes and claude each report their own,
-codex has none to report, and the menu says so plainly rather than sitting empty.
-
-Managed Ticket and generic previews share one safety contract. Ticket paths are
-validated on the server, direct responses use `nosniff`, and HTML previews run in a
-sandbox without same-origin privilege. Conversation images do not create stored file
-routes.
+Read **The front end** (`frontend.md`).
 
 _Code paths:_ `web/src/`, `assets/`, and `web/dist/`.
 
-### 7. The CLI And Authority System
+### 8. The CLI and authority boundary
 
-`panels` is the CLI entry point. Workers use it to inspect their exact Ticket, read the
-Worker type and specialist skill, write notes and recaps, and file proposals. It has no
-general approval power.
+`panels` speaks HTTP to the server. Ordinary groups manage Days, Projects, Sprints,
+Tickets, schedules, and environments. `worker` files Ticket proposals, recaps, notes,
+and help requests. `chief` performs only bounded external-work intake.
 
-Human and service actions carry explicit actor and claim context. Direct-only
-operations reject worker claims. The three planning Workers are the narrow exception:
-the server resolves the claimed Ticket's stored Worker type and admits only its matching
-`planning-day`, `planning-midday-check`, or `planning-sprint` operations. Missing,
-unknown, and mismatched claims fail closed. Existing direct and generic permissions do
-not change, and other Worker writes remain proposals. The Chief's bounded operations do
-not create a second path around the proposal resolver.
+Requests carry explicit actor context. Direct-only operations reject Worker claims.
+The `planning-day`, `planning-midday-check`, and `planning-sprint` Workers are the narrow
+exception: the server resolves the claimed Ticket's stored Worker type before it admits
+the matching Day or Sprint write. Missing or mismatched claims fail closed. These local
+claims narrow authority; they are not authentication credentials.
 
-Worker identity uses `PLAN_TICKET_ID` and the Ticket's worker-self endpoint. The agent a
-conversation runs on is told the exact Ticket identity and the address the server that
-started it is answering on, so a bare Worker CLI command reaches that server and not
-another one on another port. All three agents are told it, because a Ticket's worker can
-be any of them, and it is read from the running server rather than remembered with the
-conversation — a conversation resumed after a restart reaches the server that resumed it.
-Duplicate session ownership fails instead of guessing which Ticket a worker belongs to.
-The CLI sends `PLAN_TICKET_ID` as `X-Plan-Ticket-ID` alongside `X-Plan-Actor`. These are
-truthful local process claims, not credentials or cryptographic authentication; the
-Ticket claim narrows worker authority and never turns another actor into a worker.
+Read **The command-line tool** (`cli.md`).
 
-_Code paths:_ `src/planner/cli/`, `src/planner/core/authctx.py`, and domain admission rules.
+_Code paths:_ `src/planner/cli/`, `src/planner/core/authctx.py`, and the domain
+admission rules.
 
-## Boundaries That Matter
+### 9. Runtime and operations
 
-- **Proposal versus canonical value.** A worker proposal is inert until the proposal
-  resolver accepts it.
-- **Signal versus state.** The change signal only says that something changed; domain
-  tables hold canonical values.
-- **Status versus liveness.** A Ticket's status is what Panels last decided; whether a
-  worker is running now is the conversation system's answer, asked fresh each time.
-- **Stored worker context versus delivered context.** Pending context reaches the model
-  only when it is included in a message that was actually sent.
-- **Conversation id versus backend session id.** The id a Ticket or the Chief names its
-  conversation by is theirs and lives on their own row; the backend process's session id
-  is internal to the conversation system and is rebound without anything outside it
-  noticing.
-- **Product cache versus conversation record.** REST resources are refetched on a
-  contentless change signal; a conversation pane reads the rows after the position it
-  holds and then keeps up over a live tail of the same rows.
-- **Human versus worker authority.** Humans approve and grant scope. Workers propose.
+Live runs as one Git-free application with persistent data and logs. Staging uses a
+prepared fake environment. Ticket servers use isolated worktrees and local state.
+Launchers scrub ambient planner configuration and supply explicit paths.
 
-## System-Level Friction
+Deployment builds one exact commit, verifies a persistent-state snapshot, replaces only
+the app, and proves the requested revision. Failure restores both the prior app and the
+pre-cutover snapshot. Backups contain the SQLite record and managed files. Web Push
+projects selected Ticket and Chief events into durable delivery work.
 
-- **An errored Ticket has no way back.** Nothing retries or resets one.
-- **A crash leaves a Ticket looking busy.** Its status still says a worker has it while
-  nothing is running. Deliberate: liveness is asked of the conversation system, and no
-  recovery machinery pretends to know better.
-- **Built frontend artifacts are tracked.** Source changes still require one deliberate
-  Vite build before the served app changes.
+Read **Runtime environments** (`environments.md`), **Production deployment**
+(`deployment.md`), **Database backups** (`backups.md`), and **Notifications**
+(`notifications.md`).
+
+_Code paths:_ `src/planner/environments/`, `src/planner/notifications/`,
+`ops/panels-environments/`, and `.github/workflows/deploy.yml`.
+
+## Boundaries that matter
+
+- **Proposal versus canonical value.** A Ticket Worker proposal is inert until the
+  proposal resolver accepts it.
+- **Signal versus state.** The change signal says only that a commit happened. Domain
+  records remain canonical.
+- **Status versus liveness.** Ticket status records the last control decision. The
+  conversation system reports current activity.
+- **Stored versus delivered context.** A Worker sees context only after that text is
+  included in a delivered prompt.
+- **Conversation id versus backend session.** The caller owns the first. The
+  conversation system owns the second.
+- **Managed skills versus packaged defaults.** `data/skills` is the live authority.
+  Packaged skills seed missing entries. Codex and Claude provision all managed Panels
+  skills. Hermes uses a separate allowlist.
+- **Human and agent authority.** Direct actions, proposals, planning writes, and Chief
+  intake use different admission paths.
 
 ## Deferred
 
-- An explicit retry/reset policy for an errored Ticket.
+- **Errored Ticket recovery.** An errored Ticket has no retry or clear path. Trigger: a
+  product decision defines safe retry semantics.
+- **Held-message durability.** A server restart loses messages still held in memory.
+  Trigger: restart loss becomes important enough to persist the queue.
+- **Missed schedule occurrences.** Exact-minute schedules do not backfill downtime.
+  Trigger: the product adopts a recovery policy.
+- **General Worker on Hermes.** The Hermes skill allowlist omits
+  `panels-worker-general`, although the `general` Worker type uses it. Trigger: before a
+  general Ticket runs on Hermes, add the specialist to that provisioning authority.
 
 ---
 
-_Last verified: 2026-07-28 (scheduled planning Ticket creation and occurrence receipts,
-the eight Ticket statuses, the unified Review walk, one contentless change signal per
-commit, and worker orchestration on the conversation contract)._
+_Last verified: 2026-08-09._

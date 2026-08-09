@@ -94,4 +94,4 @@ Off-host copies and a broader disaster recovery product remain out of scope unti
 recovery design exists. Deployment's automatic app recovery is described in
 [production deployment](deployment.md); it does not restore persistent state.
 
-_Last verified: 2026-07-25._
+_Last verified: 2026-08-09._

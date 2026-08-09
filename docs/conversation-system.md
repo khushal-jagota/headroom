@@ -2,22 +2,19 @@
 
 This is how Panels talks to an AI agent. One conversation = one agent
 process (hermes, codex, or claude) working in a folder, plus a permanent notebook
-of everything that happened in it. The rest of the planner can do exactly five
-things to a conversation — start it, send a message into it, interrupt its running
-turn, kill its activity outright, and ask whether it is running. It can also ask whether
-the agent is waiting for a permission decision or answers to its questions.
+of everything that happened in it. The rest of Panels can start it, send a message,
+interrupt or kill activity, manage held messages, and ask about live work that needs
+the user. Those operations form the whole boundary.
 
 It serves every screen that shows a conversation: a Ticket's, the Chief of
-Staff's, and the development pane at `#/dev/conversation`. There is no second
-one. The layer that came before it — a WebSocket, a session-binding table, a
-per-ticket projection of what the agent was doing — is gone, along with the
-second database, relay, neutral protocol and history adapter that preceded it.
+Staff's, and the development pane at `#/dev/conversation`. Worker orchestration
+uses the same system. There is no second path.
 
 ```
   caller (pane, loop)                the conversation system                agent CLIs
   ───────────────────                ───────────────────────                ──────────
   start / send / interrupt   ──▶   one core: queue, turns, asks,   ──▶   hermes (ACP)
-  kill / running / waiting?         notebook, janitor                     codex (app-server)
+  kill / held / live state          notebook, janitor                     codex (app-server)
                                           │                               claude (Agent SDK)
   read: events after N  ◀──   conversations + conversation_events
         + live tail                 (SQLite, written once)
@@ -405,25 +402,23 @@ that is honest: until an agent has been up once, nothing has said what it takes.
 - The three backends: `src/planner/conversation/backends/`.
 - Reading side, live tail, backend cards: `src/planner/conversation/api.py`,
   `live_tail.py`, `snapshot.py`.
-- The pane: `web/src/routes/DevConversationRoute.svelte`,
-  `web/src/components/conversation/`, `web/src/lib/conversation/`.
+- The panes: `web/src/components/conversation/`, `web/src/lib/conversation/`,
+  and the routes that mount them.
 - The contract's proof: `tests/support/conversation_contract_conformance.py`,
   run against the real system in
   `tests/unit/test_conversation_conformance.py`.
 
 ## Handoffs
 
-- Ticket-side surfacing (which ticket needs you, row dots) is the worker
-  orchestration's job, built against this contract: `worker-orchestration.md`.
+- **Worker orchestration** (`worker-orchestration.md`) sends each Worker step into
+  the Ticket's conversation.
+- **The front end** (`frontend.md`) renders the shared pane and its Workspace marks.
 
 ## Deferred
 
-- **Swap**: production screens and the worker loop move onto this system when
-  the program rules the swap; the old layer and this doc's "dev pane" framing
-  are corrected in the same breath.
 - **Held-line durability**: if losing the in-memory waiting line on a restart
   ever bites, the line can be made durable without changing the contract.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
-  planner's error envelope; unify when the swap wires production screens.
+  planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-08-05._
+_Last verified: 2026-08-09._

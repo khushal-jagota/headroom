@@ -2,16 +2,18 @@
 
 The front end is the web page the human uses — where every decision that matters
 lives. It is a Svelte app built by Vite. FastAPI serves the built `web/dist`
-document at `/`; the Vite chunks are mounted under `/_app/`. Shared tokens,
-application CSS, and the hardened markdown renderer still live in `assets/` so the
-look and written-text rendering stay centralized.
+document at `/`; the Vite chunks are mounted under `/_app/`. Shared tokens and
+application CSS live in `assets/`. The Markdown pipeline and managed rendering
+lifecycle live under `web/src/lib/`.
 
 ## The screens
 
 One screen per part of the system:
 
-- **Day** — the day overview: focus, brief take, watchout, and what makes the day
-  land. Read top to bottom in the serif voice, flat, with no boxes.
+- **Home** — the daily hub. It combines focus, what makes the day land, brief take,
+  and watchout with one progress mark per Ticket. Action tiles lead to work that needs
+  the user, needs review, is working, is paired, or is done. Day fields are written by
+  the planning Workers, not edited on this page.
 - **Review** — the human chamber for parked Ticket proposals and Worker help requests:
   one oldest-first walk with a centred item, its Ticket title, and Skip and Open Ticket
   top-right. Proposal items add their labelled recap, ask, approval, and send-back
@@ -69,10 +71,8 @@ One screen per part of the system:
   Workspace. At 960px or less, selecting a ticket opens its standalone
   `#/ticket/<ticket-id>` page.
 - **Ticket** — the whole story of one piece of work. A quiet identity eyebrow puts
-  priority, sprint, due date, and project above a serif title on its own row. Project
-  appears when there is no Sprint Item; empty scheduling values are add affordances
-  rather than blank facts. The operating line writes the leash as one readable sentence
-  beside quiet **Take over** or **Release** and **Copy** actions. Direct blockers get
+  priority, effective project, and Worker above a serif title. Scope, takeover or
+  release, and copy actions live in the Ticket details disclosure. Direct blockers get
   their own **Blocked by** line in the masthead, and the exact backend Worker failure
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
@@ -91,9 +91,8 @@ One screen per part of the system:
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
   Ticket has a conversation, the pill becomes read-only. Its project picker is backed by the shared
-  `projects` resource. Its placement picker selects one Sprint Item or the explicit
-  unparented Backlog. Moving to an item is atomic; choosing Backlog compare-clears the
-  current item so a stale browser cannot detach a Ticket that has already moved.
+  `projects` resource. Sprint placement is managed from Sprint Items, not from this
+  header.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
   plus a dedicated view for each Item and a separate documents page. The overview
   shows Item progress without Ticket rows. An Item view joins today's Day membership
@@ -102,14 +101,11 @@ One screen per part of the system:
   Review. See `sprints.md`.
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
-- **Agents** — the runtime home for agent conversations. Above 960px it follows
-  Workspace's master/detail shape: the agent roster is on the left and the selected
-  agent's canonical conversation fills the right, with Chief of Staff selected by
-  default at `#/agents`. `#/agents/chief-of-staff` records that selection in the
-  address. At 960px or less, `#/agents` is the roster and selecting Chief opens its
-  focused conversation, with a clear return to the roster. Direct loads, refreshes,
-  browser history, and resizing preserve those meanings. The old `#/chief` address
-  redirects to the selected Chief route.
+- **Chief of Staff** — the Chief is the first row in Workspace. On wide screens,
+  selecting it opens the canonical Chief conversation beside the Workspace rail at
+  `#/workspace/chief-of-staff`. On narrow screens, the same address opens the focused
+  conversation. The former `#/chief`, `#/agents`, and
+  `#/agents/chief-of-staff` addresses redirect into Workspace.
 - **Config** — the management surface at `#/config`. It contains Chief of Staff,
   the shared Worker skill, and every configured Worker type. Chief settings open at
   `#/config/chief-of-staff`, Worker skill at `#/config/worker-skill`, and a Worker at
@@ -129,14 +125,15 @@ One screen per part of the system:
   presses Enable, registers the browser's Web Push subscription, and can remove it
   again. On iPhone or iPad, Panels explains that the site must first be added to the
   Home Screen.
+- **Scheduled tasks** — the internal schedule editor at `#/scheduled-tasks`. It lists
+  schedules, creates and edits them, and enables or disables future occurrences. It
+  does not start Workers or delete schedules. See `scheduled-tickets.md`.
 
-The shell has three primary destinations in order: Review, Workspace, and Agents. More
-groups Day, Sprint, Backlog, and Ideas under Planning, and Config, Backends, and Notifications
-under System. On
-desktop the four direct controls live in the top bar and More opens a dropdown. On
-mobile those same four text-only controls form a fixed, full-width bottom bar and More
-opens a bottom sheet. Agents remains active on both its roster and selected-agent
-addresses. A slim mobile top bar
+The shell has three primary destinations in order: Home, Review, and Workspace. More
+groups Sprint, Backlog, and Ideas under Planning. It groups Config, Backends,
+Notifications, and Scheduled tasks under System. On desktop, the three destinations
+and More live in the top bar. On mobile, the same four controls form a fixed,
+full-width bottom bar and More opens a bottom sheet. A slim mobile top bar
 shows the current screen and the same quiet connection and worker-presence cluster used
 at desktop. The cluster is a live status label, not a control. It normally says
 **Connected** or **Reconnecting**. During a deployment
@@ -168,13 +165,11 @@ applies the requested update. The push-only service worker and its subscription 
 in place across this page reload.
 
 **Backends** at `#/backends` shows the conversation backends installed on this machine,
-their account and model facts, and any update Panels can run. Codex and Claude cards also
-offer a manual usage-limit check. Opening the page, refreshing its ordinary backend facts,
-and application change events never acquire usage: only pressing that backend's usage
-button calls the provider-facing check. A successful check shows each provider window,
-its used percentage, reset time, and when it was observed. Unavailable, signed-out, and
-failed checks stay visible as their own truthful states. Hermes has no provider allowance
-to acquire, so its card offers no usage action.
+their account and model facts, and any update Panels can run. Its one **Refresh** action
+re-reads every backend catalogue and the Codex and Claude usage sources. A successful
+refresh shows each provider window, its used percentage, reset time, and observation
+time. One provider failure does not discard the other's new answer. Hermes has no usage
+source.
 
 ## The two rules that shape it
 
@@ -415,4 +410,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-04 (including the Chief of Staff portrait in Workspace)._
+_Last verified: 2026-08-09._

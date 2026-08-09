@@ -1,38 +1,31 @@
-# The planner — the map
+# Panels — the map
 
-The planner is a personal planning system that runs entirely on one computer. It
-replaces a folder of markdown files with a small database and a web page. It keeps
-track of four kinds of thing — **sprints** (fixed seven-day periods), **sprint items** (the
-meaningful chunks a sprint is made of), **tickets** (pieces of work small enough to
-hand to an AI worker), and **days** (one page per day) — plus a light list of
-**ideas**, things worth remembering that aren't work yet, and a small **projects**
-catalog used by tickets, sprint items, and ideas.
+Panels is a personal planning and work system that runs on one host. Its record contains
+**Days**, **Sprints**, **Sprint Items**, **Tickets**, **Ideas**, and **Projects**. Tickets
+can carry work for an AI Worker, paired work, or user-owned personal tasks.
 
 This is the entry point. Read it to find which system owns a question, then read
 that system's doc.
 
-## The two doors
+## Interfaces and authority
 
 ```
-   THE HUMAN                              THE WORKERS (AI)
-   ─────────                              ────────────────
-   the web page                          the `panels` command-line tool
-   every decision:                       every action is a proposal:
-   approve · grant · drop · plan         draft the next blank, park it
-        \                                       /
-         \______  the proposal resolver  ______/
-                   (the single door)
-                          │
-                          ▼
-                      the record
+browser and direct CLI ───────────────► domain writers ───────► record
+                                               ▲
+Ticket Worker ──field proposal──► proposal resolver
+                                               ▲
+planning Worker ──guarded claim──► Day or Sprint writer
+Chief ──external-work intake─────► Ticket reconciliation writer
 ```
 
-Two kinds of user, two surfaces, on purpose. The human uses the web page, where
-every decision that matters lives — approving work, granting how far a worker may
-go, closing things out. AI workers use a command-line tool and can only ever file
-_proposals_. A piece of code called the **proposal resolver** is the one thing that
-can turn a proposal into a real value or move a ticket to its next stage; a worker
-can never take a decision that belongs to the human.
+The browser is the main human surface. The `panels` CLI exposes ordinary direct actions,
+Ticket Worker actions, and bounded Chief intake as separate command groups.
+
+Ticket gated fields still have one door: a Worker files a proposal, and the proposal
+resolver alone can settle its value or advance its Stage. Three planning Worker types
+also receive narrow authority to write their agreed Day or Sprint result at Closeout.
+The Chief can import reality established outside Panels through explicit reconciliation
+operations. Neither path is a general Ticket Stage setter.
 
 ## The systems
 
@@ -54,6 +47,8 @@ can never take a decision that belongs to the human.
 - **Worker orchestration** (`worker-orchestration.md`) — how Panels decides a ticket is
   ready for its next worker step, claims it, and sends the step into that ticket's
   conversation. It starts work; it does not watch it.
+- **Scheduled Ticket creation** (`scheduled-tickets.md`) — exact-time Ticket supply,
+  durable occurrence receipts, and the boundary before Worker readiness.
 - **The conversation system** (`conversation-system.md`) — the one way Panels talks to an
   agent, behind a fixed contract: one agent process per conversation, an append-only
   notebook of events, honest send fates, and backend cards. It serves every screen that
@@ -68,9 +63,9 @@ can never take a decision that belongs to the human.
 
 **The surfaces you plan on**
 
-- **Days** (`days.md`) — the daily page, the 5am boundary, and the scheduled
+- **Days** (`days.md`) — the Home daily hub, the 5am boundary, and the scheduled
   `planning-day` and `planning-midday-check` Workers.
-- **Sprints** (`sprints.md`) — Project and Sprint Item tracking, each Item's Ticket
+- **Sprints** (`sprints.md`) — Project and Sprint Item tracking, each Item's dedicated
   view, and the Sprint documents.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — the two catch surfaces.
 - **Projects** (`projects.md`) — the data-backed project catalog.
@@ -80,7 +75,8 @@ can never take a decision that belongs to the human.
 - **The front end** (`frontend.md`) — the Svelte web app: the screens, shared tokens,
   and how open screens follow the server.
 - **The command-line tool** (`cli.md`) — the `panels` tool workers act through, and
-  why it holds no approval powers.
+  the separation between direct approval commands and the approval-free `worker`
+  subgroup.
 
 ## Not built yet
 
@@ -89,5 +85,5 @@ can never take a decision that belongs to the human.
 
 ---
 
-_Last verified: 2026-07-29 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-08-09 · Covers the system landscape; each doc carries its own
 code paths._

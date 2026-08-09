@@ -1,8 +1,13 @@
 # Backlog & Ideas
 
 Backlog and Ideas are the two catch surfaces. They used to share one page; they are
-now two separate pages in the top navigation, because they are two different things —
+now two separate pages under Planning in the More menu, because they are two different things —
 one is work you haven't scheduled, the other is a thought you don't want to lose.
+
+```
+Backlog: committed work without a sprint ──► Sprint Item in a sprint
+Ideas:   remembered possibility           ──► stays an Idea
+```
 
 ## Backlog
 
@@ -23,13 +28,12 @@ The opposite: its whole job is to catch a thought before you lose it, so the box
 write one is always open at the very top and is the biggest thing on the page. Type a
 title and press Enter and it is saved; a longer note and a project are optional.
 The project list is the same data-backed catalog used by backlog items and tickets.
-Below, the ideas are listed newest first. An idea with no note is just a line; one
-with a note gets a small arrow you can click to open and read it. A light date on the
-right — "2d", or "Jul 1" for older ones — tells you roughly when it was captured.
+Below, the ideas are listed newest first. An idea with no note is one line. An idea
+with a note gets a small arrow that opens its detail.
 
 _Code paths:_ `web/src/routes/BacklogRoute.svelte`,
-`web/src/routes/IdeasRoute.svelte`. Backlog items are sprint items with no sprint;
-ideas are their own list (`src/planner/`).
+`web/src/routes/IdeasRoute.svelte`. Backlog items and ideas live in
+`src/planner/sprints/`; backlog items are Sprint Items with no sprint.
 
 ## Handoffs
 
@@ -47,4 +51,4 @@ ideas are their own list (`src/planner/`).
 
 ---
 
-_Last verified: 2026-07-08._
+_Last verified: 2026-08-09._

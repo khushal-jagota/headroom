@@ -150,9 +150,9 @@ path.
   lifecycle verbs.
 - **Worker orchestration** (`worker-orchestration.md`) — the scheduled-Ticket and
   worker-readiness loops the foreground server started by `environment run` owns.
-- **Hermes gateway** (`systems.md`) — the external worker gateway whose homes stay
-  separate between live, staging, and Ticket worktrees.
+- **The conversation system** (`conversation-system.md`) — the three agent backends
+  that use the configured provider homes.
 
 ---
 
-_Last verified: 2026-08-02._
+_Last verified: 2026-08-09._

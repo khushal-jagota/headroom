@@ -93,7 +93,7 @@ generic Stage setter.
   Item status is read-only and derived from child tickets and active blocking links.
   `sprint item delete <item-id> --yes` permanently removes a childless item. An item
   with child tickets must have that work explicitly moved or removed first.
-- **`worker propose / recap / note / my-ticket`** — worker actions. `worker propose`
+- **`worker propose / recap / note / request-user-help / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` replaces field
   guidance by default and accepts `--append` for additive guidance without changing
@@ -101,7 +101,8 @@ generic Stage setter.
   a caller. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
-  `worker-types.md`).
+  `worker-types.md`). `request-user-help` parks the Ticket for a user response after the
+  Worker records its request in the conversation.
 - **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
   record reality established outside Panels. Both require an explicit Chief request,
   a complete Kickoff field value through `--kickoff-note-file`, preserving the report and
@@ -134,6 +135,10 @@ generic Stage setter.
   so restart, exact-SHA health, and rollback remain attached to the runner-started operation.
   Linux systemd control is user-scoped; launchctl remains supported.
   `backup-current` requires `--current-app`; it does not inspect Git.
+- **`environment backup / restore / provision-skills`** — create or restore a verified
+  database-and-files snapshot, or reconcile the managed Panels skills into the three
+  production agent homes. Restore requires a stopped live service and the explicit
+  `--live-stopped` acknowledgement.
 - **`restart`** — ask that running `serve` command to load the current Panels code again.
   The command reports when the request is accepted. If `serve` is not running, it reports
   the connection error and stops.
@@ -157,8 +162,7 @@ A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The 
 forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
 an ordinary planning command. The server checks the claimed Ticket’s stored Worker type.
 Only the exact `planning-day`, `planning-midday-check`, and `planning-sprint`
-capabilities receive their narrow day or sprint writes. These Worker definitions are
-introduced by their own tickets; this change only recognizes their exact stored names.
+capabilities receive their narrow day or sprint writes.
 
 This is a truthful local process claim, like the existing actor header, not a
 cryptographic login or bearer token. Requests arriving through trusted remote ingress
@@ -184,4 +188,4 @@ one worker step at a time and writes the Ticket's status itself (see
 
 ---
 
-_Last verified: 2026-07-29._
+_Last verified: 2026-08-09._

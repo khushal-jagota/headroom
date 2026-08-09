@@ -1,8 +1,9 @@
 # Sprints
 
-A sprint is a fixed seven-day period. Its main page tracks Projects and Sprint Items.
-Each Item has a dedicated Ticket view. A separate documents page holds the sprint's
-written record.
+A sprint is a stored inclusive date range. Normal sprint planning creates a seven-day
+range, but the record accepts any valid, non-overlapping range. Its main page tracks
+Projects and Sprint Items. Each Item has a dedicated Item view. A separate documents
+page holds the sprint's written record.
 
 ```
    Sprint tracking                 Sprint Item
@@ -22,17 +23,12 @@ The documents page has three headed sections you read top to bottom: **Kickoff**
 sprint, the bet, what it rests on, what could go wrong), **Checkpoint** (where we stand,
 what's changed, and what to adjust on day four), and **Sprint Review** (how it went, at
 the end). Every section is headed writing you edit in place — click a line, type, click
-away, and it saves on its own, the same feel as the daily page. One section is open at a
-time depending on how far the sprint has gone: a brand-new sprint opens on Kickoff, one
-with a Checkpoint note opens on Checkpoint, and one being wrapped up opens on Sprint
-Review. The stored field names still use their historical `mid_*` identifiers.
+away, and it saves on its own. Kickoff opens for a new sprint. Checkpoint opens when it
+contains text. Sprint Review also opens when it contains text, so both later sections
+can be open near the end. The stored field names still use their historical `mid_*`
+identifiers.
 
-Nothing on this page locks or commits — there are no buttons and no color. That is a
-deliberate change from an earlier design where the Kickoff and Review could be
-"frozen" shut. Freezing is gone from the sprint; the only place an edit is still made
-permanent by a button is a ticket's Approve. The old freeze machinery and the old
-weekly-addenda notes still exist underneath, switched off and out of the way, so the
-change can be undone if it's ever wanted.
+Nothing on this page locks a section. Each edit writes its document field directly.
 
 The sprint day changes at 05:00 local time. Panels uses that canonical day to decide
 which sprint is current and which numbered day the sprint page shows. Existing sprint
