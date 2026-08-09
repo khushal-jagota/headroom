@@ -27,3 +27,4 @@ class CreateProjectBody(TypedDict):
 class UpdateProjectBody(TypedDict, total=False):
     name: str
     summary: str
+    priority: Priority

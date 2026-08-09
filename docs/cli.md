@@ -34,10 +34,11 @@ generic Stage setter.
   assign tickets to it. `day show` includes the day's tickets; `day list-tickets`
   returns the ticket list explicitly. `day set midday-reconciliation` writes the
   day’s separate mid-day check.
-- **`project list / create`** — inspect and add projects. Project availability is
+- **`project list / create / set`** — inspect, add, and update projects. Project availability is
   data-backed, not enum-backed. `project create` requires
   `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
-  have not yet been assessed.
+  have not yet been assessed. `project set <project_id> priority --value P0|P1|P2|P3`
+  reassesses an existing Project. It cannot clear an assessed priority.
 - **`worker-type list`** — list the registered Worker type identifiers in registry
   order. Its normal output is one identifier per line; `--json` returns the complete
   served Worker-type manifest for automation. Commands that require `--worker-type`

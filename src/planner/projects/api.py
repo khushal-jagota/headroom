@@ -30,6 +30,8 @@ def _marshal_update_project(raw: JsonDict) -> UpdateProjectBody:
         body["name"] = body_str(raw, "name")
     if "summary" in raw:
         body["summary"] = body_str(raw, "summary")
+    if "priority" in raw:
+        body["priority"] = parse_enum(Priority, body_str(raw, "priority"), "priority")
     if not body:
         raise PlannerError(ErrorCode.validation, "no project fields to update", {})
     return body
@@ -65,6 +67,7 @@ async def update_project(
         project_id,
         name=body.get("name"),
         summary=body.get("summary"),
+        priority=body.get("priority"),
         now=clk.now_unix(),
     )
     return projects_data.project_json(project)

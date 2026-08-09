@@ -515,6 +515,32 @@ def test_project_create_list_and_project_id_item_filter(
     assert listed_by_id[project["id"]]["priority"] == "P1"
     assert listed_by_id["project_other"]["priority"] is None
 
+    reassessed = cli(
+        server,
+        "project",
+        "set",
+        project["id"],
+        "priority",
+        "--value",
+        "P0",
+    )
+    assert reassessed["priority"] == "P0"
+    assert reassessed["name"] == "Alpha One"
+
+    invalid_priority = CliRunner().invoke(
+        cli_main,
+        ["project", "set", project["id"], "priority", "--value", "urgent", "--json"],
+    )
+    assert invalid_priority.exit_code == 1
+    assert "priority must be P0, P1, P2, or P3" in invalid_priority.output
+
+    cleared_priority = CliRunner().invoke(
+        cli_main,
+        ["project", "set", project["id"], "priority", "--clear", "--json"],
+    )
+    assert cleared_priority.exit_code == 1
+    assert "priority cannot be cleared" in cleared_priority.output
+
     item = cli(
         server,
         "sprint",
