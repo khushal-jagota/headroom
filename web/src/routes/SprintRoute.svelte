@@ -1,31 +1,36 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { shortMonthDayLabel } from "../lib/dates";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import { labelize } from "../lib/ui";
+  import { resourceStateForQueries } from "../lib/resourceStateForQueries";
+  import {
+    sprintItemIsDone,
+    sprintItemRollup,
+    sprintItems,
+    sprintProjectGroups,
+    sprintTicketCondition,
+    sprintTicketSections,
+    type SprintItem,
+    type SprintTicket
+  } from "../lib/sprintPresentation";
   import type { AnyRecord } from "../lib/types";
-  import Chip from "../components/Chip.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import InlineEdit from "../components/InlineEdit.svelte";
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import StageMark from "../components/StageMark.svelte";
 
   let {
     sub = "tracking",
     selectedItemId = null
   }: { sub?: string; selectedItemId?: string | null } = $props();
-  const current = createQuery(() => queries.currentSprint());
 
-  const noProjectKey = "__no_project__";
-  const itemStatusWord: Record<string, string> = {
-    in_progress: "in progress",
-    todo: "todo",
-    blocked: "blocked",
-    done: "done"
-  };
+  const current = createQuery(() => queries.currentSprint());
+  const projects = createQuery(() => queries.projects());
+  const today = createQuery(() => queries.todayDay());
+
   const kickoff = [
     ["limiting_factor", "Limiting factor"],
     ["primary_bet", "Primary bet"],
@@ -46,238 +51,298 @@
   ];
 
   let documents = $derived(sub === "documents");
+  let resource = $derived(
+    documents
+      ? resourceStateForQueries(current)
+      : resourceStateForQueries(current, projects, today)
+  );
+  let allItems = $derived(
+    sprintItems((current.data?.groups || {}) as Record<string, SprintItem[]>)
+  );
+  let projectGroups = $derived(sprintProjectGroups(allItems, projects.data?.projects || []));
+  let todayTicketIds = $derived(new Set((today.data?.tickets || []).map((ticket) => ticket.id)));
+  let selectedItem = $derived(
+    selectedItemId ? allItems.find((item) => item.id === selectedItemId) || null : null
+  );
+  let selectedSections = $derived(
+    selectedItem ? sprintTicketSections(selectedItem, todayTicketIds) : null
+  );
+
+  let summaryElement = $state<HTMLElement | null>(null);
+  let summaryExpanded = $state(false);
+  let summaryCanExpand = $state(false);
+  let measuredSummaryKey = "";
+  let summaryKey = $derived(
+    selectedItem ? `item:${selectedItem.id}:${selectedItem.body || ""}` : `sprint:${current.data?.sprint?.primary_bet || ""}`
+  );
+
+  $effect(() => {
+    const key = summaryKey;
+    if (key === measuredSummaryKey) return;
+    measuredSummaryKey = key;
+    summaryExpanded = false;
+    summaryCanExpand = false;
+  });
+
+  $effect(() => {
+    const node = summaryElement;
+    const key = summaryKey;
+    if (!node) return;
+    void key;
+    const measure = () => {
+      const lineHeight = Number.parseFloat(getComputedStyle(node).lineHeight);
+      const maxHeight = Number.isFinite(lineHeight) ? lineHeight * 4.5 : node.clientHeight;
+      summaryCanExpand = node.scrollHeight > maxHeight + 1;
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(node);
+    const frame = requestAnimationFrame(measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  });
+
+  function toggleSummary(): void {
+    if (summaryCanExpand) summaryExpanded = !summaryExpanded;
+  }
+
+  function toggleSummaryFromKeyboard(event: KeyboardEvent): void {
+    if (!summaryCanExpand || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    toggleSummary();
+  }
 
   function saveSprint(sprintId: string, field: string, raw: string): Promise<unknown> {
     return mutateJson(`/api/sprints/${sprintId}`, { method: "PATCH", body: { [field]: raw } });
   }
 
-  function allItems(groups: Record<string, AnyRecord[]>): AnyRecord[] {
-    return Object.values(groups || {}).flat();
-  }
-
   function totalItems(groups: Record<string, AnyRecord[]>): number {
-    return allItems(groups).length;
+    return Object.values(groups || {}).flat().length;
   }
 
-  // Items regrouped by their project, alphabetically, No project last; itemless
-  // projects fall away naturally (only projects that own an item appear).
-  function projectGroups(
-    groups: Record<string, AnyRecord[]>
-  ): Array<{ key: string; label: string; items: AnyRecord[] }> {
-    const byProject = new Map<string, { key: string; label: string; items: AnyRecord[] }>();
-    for (const item of allItems(groups)) {
-      const key = (item.project_id as string) || noProjectKey;
-      const label = (item.project as string) || "No project";
-      if (!byProject.has(key)) byProject.set(key, { key, label, items: [] });
-      byProject.get(key)?.items.push(item);
-    }
-    return Array.from(byProject.values()).sort((left, right) => {
-      if (left.key === noProjectKey) return 1;
-      if (right.key === noProjectKey) return -1;
-      return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
-    });
-  }
-
-  // Done-fraction from the item's Ticket-Stage rollup: done count over total tickets;
-  // an em dash when the item has no tickets yet. Dropped tickets are excluded from the
-  // denominator — item status ignores them, so a fully-done item reads "2/2 done", not
-  // "2/3", when one of its tickets was dropped.
-  function doneFraction(item: AnyRecord): string {
-    const rollup = (item.rollup as Record<string, number>) || {};
-    const total = Object.entries(rollup).reduce(
-      (sum, [stage, count]) => (stage === "dropped" ? sum : sum + count),
-      0
-    );
-    if (total === 0) return "—";
-    return `${rollup.done || 0}/${total} done`;
-  }
-
-  // A sprint date (stored ISO "YYYY-MM-DD") rendered as a month-day label.
   function sprintDate(iso: string): string {
     const parsed = Date.parse(`${iso}T00:00:00`);
     return Number.isNaN(parsed) ? iso : shortMonthDayLabel(new Date(parsed));
   }
 
-  // Day-of-sprint from the sprint dates, clamped: before the start is day 0, after the
-  // end is the final day. Derived client-side from today against the sprint range.
   function dayOfSprint(sprint: AnyRecord): string {
     const start = Date.parse(`${sprint.date_start}T00:00:00`);
     const end = Date.parse(`${sprint.date_end}T00:00:00`);
     if (Number.isNaN(start) || Number.isNaN(end)) return "";
     const dayMs = 86_400_000;
     const total = Math.round((end - start) / dayMs) + 1;
-    const today = new Date();
+    const now = new Date();
     const todayMs = Date.parse(
-      `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}T00:00:00`
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}T00:00:00`
     );
-    let day = Math.round((todayMs - start) / dayMs) + 1;
-    day = Math.max(0, Math.min(day, total));
+    const day = Math.max(0, Math.min(Math.round((todayMs - start) / dayMs) + 1, total));
     return `day ${day} of ${total}`;
-  }
-
-  // A ticket row reads active when it is in a non-empty working/review state, green
-  // when done.
-  function ticketIsActive(ticket: AnyRecord): boolean {
-    return (
-      ticket.has_pending_proposal === true ||
-      ticket.ticket_status === "awaiting_approval" ||
-      ticket.ticket_status === "agent" ||
-      ticket.ticket_status === "paired" ||
-      ticket.ticket_status === "user"
-    );
-  }
-
-  function ticketStageClass(ticket: AnyRecord): string {
-    if (ticket.stage === "done") return "tst tst--done";
-    if (ticketIsActive(ticket)) return "tst tst--now";
-    return "tst";
   }
 
   function sectionHasContent(sprint: AnyRecord, fields: string[][]): boolean {
     return fields.some((field) => String(sprint[field[0]] || "").trim() !== "");
   }
-
-  async function focusSelectedItem(): Promise<void> {
-    if (!selectedItemId || documents || !current.data?.sprint) return;
-    await tick();
-    const row = document.querySelector<HTMLElement>(
-      `[data-screen="sprint"] [data-item-id="${CSS.escape(selectedItemId)}"]`
-    );
-    if (!row) return;
-    if (row instanceof HTMLDetailsElement) row.open = true;
-    row.scrollIntoView({ block: "center", inline: "nearest" });
-    row.focus({ preventScroll: true });
-  }
-
-  $effect(() => {
-    void current.data;
-    void selectedItemId;
-    void documents;
-    void focusSelectedItem();
-  });
 </script>
 
+{#snippet ticketRows(tickets: SprintTicket[])}
+  {#each tickets as ticket (ticket.id)}
+    {@const condition = sprintTicketCondition(ticket)}
+    <a
+      class="list-row sprint-ticket-row"
+      class:sprint-ticket-row--settled={ticket.stage === "done"}
+      href={`#/ticket/${ticket.id}`}
+      data-sprint-ticket-id={ticket.id}
+      data-ticket-state={condition.mark}
+    >
+      <StageMark state={condition.mark} aria-label={condition.word} />
+      <span class="list-row-title">{ticket.title}</span>
+      <span class="sprint-ticket-state">
+        <span class="sprint-ticket-priority">{ticket.priority}</span>{#if ticket.stage !== "done"} · {condition.word}{/if}
+      </span>
+    </a>
+  {/each}
+{/snippet}
+
 <section class="sprint-screen" data-screen="sprint">
-  <ResourceState error={current.error} loading={current.isFetching} hasData={Boolean(current.data)} loadingText="Loading sprint...">
+  <ResourceState
+    error={resource.error}
+    loading={resource.loading}
+    hasData={resource.hasData}
+    loadingText="Loading sprint..."
+  >
     {#if !current.data?.sprint}
       <div class="quiet-line">No current sprint.</div>
     {:else}
       {@const sprint = current.data.sprint}
       {@const groups = current.data.groups || {}}
       <div class="doc">
-      <div class="col">
-        {#if documents}
-          <a class="sprint-back" href="#/sprint">‹ {sprint.name}</a>
-          <header class="sprint-docs-head">
-            <h1 class="sprint-docs-title">Sprint documents</h1>
-            <div class="sprint-docs-sub">Kickoff, mid-sprint review, and sprint review — the sprint's written record.</div>
-          </header>
-          {@const reviewHas = sectionHasContent(sprint, review)}
-          {@const midHas = sectionHasContent(sprint, mid)}
-          {#each [
-            { kind: "kickoff", name: "Kickoff", meta: "set at the start", open: !reviewHas && !midHas, fields: kickoff, refline: "" },
-            { kind: "mid", name: "Mid-sprint Review", meta: "mid-sprint", open: reviewHas || midHas, fields: mid, refline: "" },
-            { kind: "review", name: "Sprint Review", meta: "end of sprint", open: reviewHas, fields: review, refline: "Written with the Mid-sprint Review above in view — it's the raw material for this retrospective." }
-          ] as phase}
-            <Disclosure variant="phase" data-phase={phase.kind} defaultOpen={phase.open}>
-              {#snippet summary()}
-                <span class="pnm">{phase.name}</span>
-                <span class="pmeta">{phase.meta}</span>
-              {/snippet}
-              {#if phase.refline}<div class="refline">{phase.refline}</div>{/if}
-              {#each phase.fields as field}
-                <div class="field" data-field={field[0]}>
-                  <div class="flabel">{field[1]}</div>
-                  <div class="fval">
-                    <InlineEdit
-                      value={sprint[field[0]]}
-                      markdown
-                      multiline
-                      placeholder="(none)"
-                      onSave={(raw) => saveSprint(sprint.id, field[0], raw)}
-                    />
-                  </div>
-                </div>
-              {/each}
-            </Disclosure>
-          {/each}
-        {:else}
-          <header class="sprint-head">
-            <h1 class="sprint-title">
-              <InlineEdit
-                value={sprint.name}
-                placeholder="(unnamed sprint)"
-                onSave={(raw) => saveSprint(sprint.id, "name", raw)}
-              />
-            </h1>
-            <div class="sprint-meta-line">
-              {sprintDate(sprint.date_start)} – {sprintDate(sprint.date_end)}
-              <span class="sep">·</span> {dayOfSprint(sprint)}
-              <span class="sep">·</span> {(groups.done || []).length} of {totalItems(groups)} done
-              <a class="sprint-docs-link" href="#/sprint/documents">Sprint documents ›</a>
-            </div>
-          </header>
-
-          <section class="sprint-bet">
-            <div class="body"><MarkdownBlock text={sprint.primary_bet} /></div>
-          </section>
-
-          {#each projectGroups(groups) as group}
-            <Disclosure variant="pgroup" chevron="none" defaultOpen={true} data-project-group={group.key}>
-              {#snippet summary()}
-                <span class="pchev">›</span>
-                <span class="plabel">{group.label}</span>
-                <span class="pn">{group.items.length}</span>
-              {/snippet}
-              <div class="pbody">
-                {#each group.items as item}
-                  <Disclosure
-                    variant="item"
-                    chevron="leading"
-                    class={item.status === "done" ? "item--dim" : ""}
-                    data-item-id={item.id}
-                    data-item-kind={item.kind}
-                    data-item-status={item.status}
-                    data-selected={selectedItemId === item.id ? "true" : undefined}
-                    tabindex={selectedItemId === item.id ? "-1" : undefined}
-                    defaultOpen={selectedItemId === item.id}
-                  >
-                    {#snippet summary()}
-                      <span class="it list-row-title">{item.title}</span>
-                      {#if item.kind === "other"}<Chip keyLabel="kind" value="fallback" />{/if}
-                      <span class={`st${item.status === "in_progress" ? " st--now" : ""}`}>{itemStatusWord[item.status]}</span>
-                      <span class="frac">{doneFraction(item)}</span>
-                    {/snippet}
-                    <div class="ibody">
-                      <div class="chips">
-                        <PriorityTile priority={item.priority} />
-                        {#if item.deadline}<Chip variant="deadline" value={item.deadline} />{/if}
-                        {#each item.blocked_by_titles || [] as blockerTitle}
-                          <Chip variant="blocked-by" keyLabel="blocked by" value={blockerTitle} />
-                        {/each}
-                        {#if item.blockers_cleared}<Chip variant="blockers-cleared" />{/if}
-                      </div>
-                      {#if (item.tickets || []).length}
-                        {#each item.tickets || [] as ticket}
-                          <a class="trow" href={`#/ticket/${ticket.id}`} data-ticket-id={ticket.id}>
-                            <PriorityTile priority={ticket.priority} />
-                            <span class="t">{ticket.title}</span>
-                            <span class={ticketStageClass(ticket)}>{labelize(ticket.stage, { capitalize: false })}</span>
-                          </a>
-                        {/each}
-                      {:else}
-                        <div class="none">No tickets on this item yet.</div>
-                      {/if}
+        <div class="col">
+          {#if documents}
+            <a class="sprint-back" href="#/sprint">‹ {sprint.name}</a>
+            <header class="sprint-docs-head">
+              <h1 class="sprint-docs-title">Sprint documents</h1>
+              <div class="sprint-docs-sub">Kickoff, mid-sprint review, and sprint review — the sprint's written record.</div>
+            </header>
+            {@const reviewHas = sectionHasContent(sprint, review)}
+            {@const midHas = sectionHasContent(sprint, mid)}
+            {#each [
+              { kind: "kickoff", name: "Kickoff", meta: "set at the start", open: !reviewHas && !midHas, fields: kickoff, refline: "" },
+              { kind: "mid", name: "Mid-sprint Review", meta: "mid-sprint", open: reviewHas || midHas, fields: mid, refline: "" },
+              { kind: "review", name: "Sprint Review", meta: "end of sprint", open: reviewHas, fields: review, refline: "Written with the Mid-sprint Review above in view — it's the raw material for this retrospective." }
+            ] as phase}
+              <Disclosure variant="phase" data-phase={phase.kind} defaultOpen={phase.open}>
+                {#snippet summary()}
+                  <span class="pnm">{phase.name}</span>
+                  <span class="pmeta">{phase.meta}</span>
+                {/snippet}
+                {#if phase.refline}<div class="refline">{phase.refline}</div>{/if}
+                {#each phase.fields as field}
+                  <div class="field" data-field={field[0]}>
+                    <div class="flabel">{field[1]}</div>
+                    <div class="fval">
+                      <InlineEdit
+                        value={sprint[field[0]]}
+                        markdown
+                        multiline
+                        placeholder="(none)"
+                        onSave={(raw) => saveSprint(sprint.id, field[0], raw)}
+                      />
                     </div>
-                  </Disclosure>
+                  </div>
                 {/each}
-              </div>
-            </Disclosure>
-          {/each}
+              </Disclosure>
+            {/each}
+          {:else if selectedItemId}
+            <a class="sprint-item-back" href="#/sprint">‹ {sprint.name}</a>
+            {#if selectedItem && selectedSections}
+              <header class="sprint-item-head" data-sprint-item-view={selectedItem.id}>
+                <div class="sprint-item-project">{selectedItem.project || "Other"}</div>
+                <h1 class="sprint-item-title">{selectedItem.title}</h1>
+                {#if String(selectedItem.body || "").trim()}
+                  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                  <div
+                    bind:this={summaryElement}
+                    class="ticket-recap sprint-summary"
+                    class:ticket-recap--clamped={!summaryExpanded}
+                    class:sprint-summary--expandable={summaryCanExpand}
+                    role={summaryCanExpand ? "button" : undefined}
+                    tabindex={summaryCanExpand ? 0 : undefined}
+                    aria-expanded={summaryCanExpand ? summaryExpanded : undefined}
+                    onclick={toggleSummary}
+                    onkeydown={toggleSummaryFromKeyboard}
+                    data-sprint-item-body
+                  ><MarkdownBlock text={selectedItem.body} /></div>
+                {/if}
+                <div class="sprint-item-meta">
+                  <PriorityTile priority={selectedItem.priority} />
+                  <span class="sep">·</span>
+                  <span>{sprintItemRollup(selectedItem)}</span>
+                  {#if selectedItem.deadline}
+                    <span class="sep">·</span>
+                    <span>due {selectedItem.deadline}</span>
+                  {/if}
+                </div>
+              </header>
 
-        {/if}
+              <div class="sprint-item-body">
+                {#if selectedSections.today.length + selectedSections.later.length + selectedSections.done.length === 0}
+                  <div class="sprint-empty-line">No Tickets on this Sprint Item yet.</div>
+                {:else}
+                  <div class="sprint-ticket-section-heading">
+                    <span>On today</span>
+                    <span class="n">{selectedSections.today.length}</span>
+                  </div>
+                  {#if selectedSections.today.length}
+                    {@render ticketRows(selectedSections.today)}
+                  {:else}
+                    <div class="sprint-empty-line">Nothing here.</div>
+                  {/if}
+                  {#if selectedSections.later.length}
+                    <div class="sprint-ticket-seam" aria-hidden="true"></div>
+                    {@render ticketRows(selectedSections.later)}
+                  {/if}
+                  {#if selectedSections.done.length}
+                    <Disclosure variant="sprint-done" chevron="leading" data-sprint-done>
+                      {#snippet summary()}<span>{selectedSections.done.length} done</span>{/snippet}
+                      {@render ticketRows(selectedSections.done)}
+                    </Disclosure>
+                  {/if}
+                {/if}
+              </div>
+            {:else}
+              <div class="sprint-empty-line" data-sprint-item-missing>Sprint Item not found.</div>
+            {/if}
+          {:else}
+            <header class="sprint-head">
+              <h1 class="sprint-title">
+                <InlineEdit
+                  value={sprint.name}
+                  placeholder="(unnamed sprint)"
+                  onSave={(raw) => saveSprint(sprint.id, "name", raw)}
+                />
+              </h1>
+              {#if String(sprint.primary_bet || "").trim()}
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                <div
+                  bind:this={summaryElement}
+                  class="ticket-recap sprint-summary"
+                  class:ticket-recap--clamped={!summaryExpanded}
+                  class:sprint-summary--expandable={summaryCanExpand}
+                  role={summaryCanExpand ? "button" : undefined}
+                  tabindex={summaryCanExpand ? 0 : undefined}
+                  aria-expanded={summaryCanExpand ? summaryExpanded : undefined}
+                  onclick={toggleSummary}
+                  onkeydown={toggleSummaryFromKeyboard}
+                  data-sprint-bet
+                ><MarkdownBlock text={sprint.primary_bet} /></div>
+              {/if}
+              <div class="sprint-meta-line">
+                <span>{sprintDate(sprint.date_start)} – {sprintDate(sprint.date_end)}</span>
+                <span class="sep">·</span>
+                <span>{dayOfSprint(sprint)}</span>
+                <span class="sep">·</span>
+                <span>{allItems.filter(sprintItemIsDone).length} of {totalItems(groups)} items done</span>
+                <a class="sprint-docs-link" href="#/sprint/documents">Sprint documents ›</a>
+              </div>
+            </header>
+
+            <div class="sprint-projects" data-sprint-projects>
+              {#each projectGroups as group (group.key)}
+                <Disclosure
+                  variant="workspace-bucket"
+                  defaultOpen={true}
+                  data-sprint-project={group.key}
+                  data-project-priority={group.priority || ""}
+                >
+                  {#snippet summary()}
+                    <span class="board-workspace-bucket-label">{group.label}</span>
+                    <span class="board-workspace-bucket-count" aria-label={`${group.items.length} Sprint Items`}>
+                      {group.items.length}
+                    </span>
+                  {/snippet}
+                  <div class="sprint-project-items">
+                    {#each group.items as item (item.id)}
+                      <a
+                        class="list-row sprint-item-row"
+                        class:sprint-item-row--settled={sprintItemIsDone(item)}
+                        href={`#/sprint?item=${encodeURIComponent(item.id)}`}
+                        data-item-id={item.id}
+                        data-item-kind={item.kind}
+                        data-item-status={item.status}
+                      >
+                        <PriorityTile priority={item.priority} />
+                        <span class="list-row-title">{item.title}</span>
+                        <span class="sprint-item-rollup">{sprintItemRollup(item)}</span>
+                      </a>
+                    {/each}
+                  </div>
+                </Disclosure>
+              {/each}
+            </div>
+          {/if}
+        </div>
       </div>
-    </div>
     {/if}
   </ResourceState>
 </section>

@@ -484,9 +484,9 @@ def test_e32_sprint_live_status_and_fallback(
         "P1",
     )["id"]
 
-    # Status groups were replaced by project groups; the item's status now lives on
-    # the row itself as data-item-status. Omitted placement resolves the current
-    # sprint's Other item, which remains a visible fallback rather than a loose group.
+    # Status groups were replaced by Project groups. The Item's status remains as an
+    # invisible row attribute for live updates. Omitted placement resolves the current
+    # sprint's Other Item, which remains visible without a fallback chip.
     current_before = api.get(server, "/api/sprint/current")
     fallback_item = next(
         item
@@ -504,9 +504,6 @@ def test_e32_sprint_live_status_and_fallback(
     for p in (pa, pb):
         p.wait_for_selector(ready, timeout=WAIT_MS)
         assert p.locator(f'[data-item-id="{iid}"]').count() == 1
-        p.locator(f'[data-item-id="{iid}"]').evaluate(
-            "(element) => { element.open = true; }"
-        )
         assert (
             p.locator(f'[data-item-id="{iid}"] [data-priority-tile="P2"]').count()
             == 1
@@ -516,26 +513,22 @@ def test_e32_sprint_live_status_and_fallback(
             p.get_attribute(f'[data-item-id="{fallback_item_id}"]', "data-item-kind")
             == "other"
         )
-        assert (
-            p.query_selector(
-                f'[data-item-id="{fallback_item_id}"] [data-ticket-id="{fallback_ticket_id}"]'
-            )
-            is not None
-        )
-        p.locator(f'[data-item-id="{fallback_item_id}"]').evaluate(
-            "(element) => { element.open = true; }"
-        )
-        assert (
-            p.locator(
-                f'[data-item-id="{fallback_item_id}"] [data-ticket-id="{fallback_ticket_id}"] '
-                '[data-priority-tile="P1"]'
-            ).count()
-            == 1
-        )
-        assert "fallback" in p.inner_text(
-            f'[data-item-id="{fallback_item_id}"] summary'
-        )
+        assert p.locator('[data-item-id] [data-sprint-ticket-id]').count() == 0
+        assert p.locator(f'[data-item-id="{fallback_item_id}"] .chip').count() == 0
         assert p.query_selector("[data-loose]") is None
+
+    fallback_item_page = open_page(
+        context_factory(),
+        server,
+        f"#/sprint?item={fallback_item_id}",
+        f'[data-sprint-item-view="{fallback_item_id}"]',
+    )
+    fallback_ticket_row = fallback_item_page.locator(
+        f'[data-sprint-ticket-id="{fallback_ticket_id}"]'
+    )
+    assert fallback_ticket_row.count() == 1
+    assert E32_FALLBACK_TITLE in fallback_ticket_row.inner_text()
+    assert "P1" in fallback_ticket_row.inner_text()
 
     # The Ticket header now keeps only priority, project, and worker identity.
     ticket_page = open_page(
@@ -575,8 +568,8 @@ def test_e32_sprint_live_status_and_fallback(
     )
 
     for p, f0 in ((pa, fa), (pb, fb)):
-        # The same item now reads in_progress via its status attribute; it is still a
-        # single element (moved status, not duplicated across groups).
+        # The same Item now reads in_progress through its status attribute. It remains
+        # one overview row and does not expose its child Ticket on that overview.
         p.wait_for_selector(
             f'[data-item-id="{iid}"][data-item-status="in_progress"]', timeout=WAIT_MS
         )
@@ -585,17 +578,26 @@ def test_e32_sprint_live_status_and_fallback(
             p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status")
             == "in_progress"
         )
-        assert p.query_selector(f'[data-ticket-id="{child}"]') is not None
+        assert p.locator(f'[data-item-id="{iid}"] [data-sprint-ticket-id="{child}"]').count() == 0
         assert p.evaluate("window.__plannerDebug.flushes") > f0
+
+    item_page = open_page(
+        context_factory(),
+        server,
+        f"#/sprint?item={iid}",
+        f'[data-sprint-item-view="{iid}"]',
+    )
+    child_row_on_item = item_page.locator(f'[data-sprint-ticket-id="{child}"]')
+    assert child_row_on_item.count() == 1
+    assert f"{E32_ITEM_TITLE} child" in child_row_on_item.inner_text()
 
     cur = api.get(server, "/api/sprint/current")
     assert iid in [i["id"] for i in cur["groups"]["in_progress"]], cur
     assert iid not in [i["id"] for i in cur["groups"]["todo"]], cur
     assert "loose_tickets" not in cur, cur
 
-    # The item ticket projection carries the two board-card signals the sprint ticket
-    # rows colour off (added this wave): has_pending_proposal + ticket_status. The
-    # advanced child sits in_progress with no pending gating proposal.
+    # The Item Ticket projection carries the two signals that its dedicated Ticket rows
+    # use: has_pending_proposal and ticket_status. The advanced child has no proposal.
     item = next(i for i in cur["groups"]["in_progress"] if i["id"] == iid)
     child_row = next(t for t in item["tickets"] if t["id"] == child)
     assert child_row["has_pending_proposal"] is False, child_row

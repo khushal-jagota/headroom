@@ -1,21 +1,24 @@
 # Sprints
 
-A sprint is a two-week push. It is two pages, switched by a small pair of tabs at the
-top: **Sprint Overview** (where the thinking lives) and **Sprint Tracking** (the list
-of items and their tickets).
+A sprint is a two-week push. Its main page tracks Projects and Sprint Items. Each Item
+has a dedicated Ticket view. A separate documents page holds the sprint's written
+record.
 
 ```
-   [ Overview ]   [ Tracking ]
-   ─────────────  ───────────────────────────
-   Kickoff           the sprint's items
-   Mid-sprint Review   └ each item's tickets + a progress rollup
-   Sprint Review
-   (one open at a time, by how far the sprint has gone)
+   Sprint tracking                 Sprint Item
+   ───────────────────────────     ───────────────────────────
+   Project                          On today
+    └ Sprint Item · progress        ─ off-today Tickets
+                                    ▸ done Tickets
+
+   Sprint documents
+   ───────────────────────────
+   Kickoff · Mid-sprint Review · Sprint Review
 ```
 
-## Overview — the thinking
+## Sprint documents — the thinking
 
-Overview is three headed sections you read top to bottom: **Kickoff** (why this
+The documents page has three headed sections you read top to bottom: **Kickoff** (why this
 sprint, the bet, what it rests on, what could go wrong), **Mid-sprint Review** (where
 we stand, what's changed, what to adjust — written at the halfway point), and
 **Sprint Review** (how it went, at the end). Every section is headed writing you edit
@@ -24,7 +27,7 @@ the daily page. One section is open at a time depending on how far the sprint ha
 gone: a brand-new sprint opens on Kickoff, one with a mid-point note opens on the
 Mid-sprint Review, one being wrapped up opens on the Sprint Review.
 
-Nothing on this page locks or commits — there are no buttons and no colour. That is a
+Nothing on this page locks or commits — there are no buttons and no color. That is a
 deliberate change from an earlier design where the Kickoff and Review could be
 "frozen" shut. Freezing is gone from the sprint; the only place an edit is still made
 permanent by a button is a ticket's Approve. The old freeze machinery and the old
@@ -41,10 +44,23 @@ sprint-planning workflow and no backfill.
 
 ## Tracking — the items
 
-Tracking is the sprint's items and, under each, the tickets that carry it, with a
-progress rollup. Each sprint item stores plain fields and placement only: title, body,
-priority, deadline, project, optional sprint, and a machine-readable `kind` of `normal`
-or `other`. Its status is derived when read:
+Tracking groups Sprint Items under foldable Projects. The overview does not show Ticket
+rows. Project priority orders the groups. Vylo comes first and Other comes last when
+Projects need the stable fallback order. Done Items come last inside a Project. An
+`other` fallback comes after its shaped Items.
+
+Each Item row shows its priority, title, and Ticket completion. It says `to do` before
+any Ticket is done, a fraction during progress, and `done` when all non-dropped Tickets
+are done. Selecting the row opens the dedicated Item address.
+
+The Item view shows its Project, title, body, priority, completion, and optional
+deadline. Its Ticket list starts with `On today`. A seam separates off-today Tickets.
+Done Tickets stay in a fold. Priority orders each block, and blocked Tickets come last
+in `On today`. Ticket marks and words show the live Ticket state.
+
+Each sprint item stores plain fields and placement only: title, body, priority,
+deadline, project, optional sprint, and a machine-readable `kind` of `normal` or
+`other`. Its status is derived when read:
 an item is done when all non-dropped child tickets are done, in progress when any
 child ticket is active or an agent is working, blocked when it has an open blocking
 ticket or blocked/errored child, and todo otherwise.
@@ -58,7 +74,7 @@ runs, `sprint_item` names an exact parent, and `backlog` explicitly stays unpare
 Every `(sprint, Project)` pair that needs a catch-all has one `other` item. Panels
 creates or reuses that fallback when a Ticket is scheduled without a more specific
 item. The database prevents duplicate Other items for the same pair, and Tracking
-labels them as fallbacks so catch-all work stays visible during planning and review.
+keeps them after shaped Items, so catch-all work stays visible during planning and review.
 
 Planning writes validate the full requested change before altering the sprint or item,
 then commit the compound change once. `panels sprint item move-ticket` atomically moves
@@ -74,17 +90,17 @@ has child Tickets, so existing work cannot disappear as a side effect. Deleting 
 childless item also removes its blocking links and refreshes sprint, backlog, board,
 and linked-Ticket views.
 
-_Code paths:_ `src/planner/sprints/` (the sprint, its items, and the overview
-fields), `web/src/routes/SprintRoute.svelte` (both tabs).
+_Code paths:_ `src/planner/sprints/` (the sprint, its items, and the document
+fields), `web/src/routes/SprintRoute.svelte` (tracking, Item, and document views), and
+`web/src/lib/sprintPresentation.ts` (presentation rules).
 
 ## Handoffs
 
 - **Tickets & the gates** (`tickets-and-gates.md`) — the tickets a sprint item is
   made of.
-- **The front end** (`frontend.md`) — the two-tab Sprint screen and its edit-in-place
-  fields.
+- **The front end** (`frontend.md`) — the Sprint routes and their shared visual system.
 - **Projects** (`projects.md`) — the catalog used by sprint items.
 
 ---
 
-_Last verified: 2026-07-28._
+_Last verified: 2026-08-09._

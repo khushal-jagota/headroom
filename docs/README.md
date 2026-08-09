@@ -70,8 +70,8 @@ can never take a decision that belongs to the human.
 
 - **Days** (`days.md`) — the daily page, the 5am boundary, and the scheduled
   `planning-day` and `planning-midday-check` Workers.
-- **Sprints** (`sprints.md`) — the Overview (Kickoff / Mid-sprint / Review) and the
-  Tracking list.
+- **Sprints** (`sprints.md`) — Project and Sprint Item tracking, each Item's Ticket
+  view, and the Sprint documents.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — the two catch surfaces.
 - **Projects** (`projects.md`) — the data-backed project catalog.
 

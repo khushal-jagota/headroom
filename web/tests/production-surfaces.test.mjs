@@ -27,6 +27,10 @@ const sprintRouteSource = await readFile(
   new URL("../src/routes/SprintRoute.svelte", import.meta.url),
   "utf8",
 );
+const sprintPresentationSource = await readFile(
+  new URL("../src/lib/sprintPresentation.ts", import.meta.url),
+  "utf8",
+);
 const backlogRouteSource = await readFile(
   new URL("../src/routes/BacklogRoute.svelte", import.meta.url),
   "utf8",
@@ -112,11 +116,22 @@ assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP ba
 assert.doesNotMatch(ticketRouteSource, /data-sprint-item-control|\/api\/items\//);
 assert.doesNotMatch(ticketRouteSource, /detail\.sprint_id|body: \{ sprint_id/);
 
-// Sprint tracking has only Sprint Item groups. Machine-recognized Other items remain
-// visible as fallbacks instead of disappearing into the old loose-Ticket section.
+// Sprint tracking joins the Sprint, Project, and Today resources in the browser. Its
+// overview contains Project folds and linked Sprint Item rows, while Ticket rows and
+// work-state marks belong to the dedicated Item view.
+assert.match(sprintRouteSource, /queries\.currentSprint\(\)/);
+assert.match(sprintRouteSource, /queries\.projects\(\)/);
+assert.match(sprintRouteSource, /queries\.todayDay\(\)/);
+assert.match(sprintRouteSource, /variant="workspace-bucket"/);
 assert.match(sprintRouteSource, /data-item-kind=\{item\.kind\}/);
-assert.match(sprintRouteSource, /item\.kind === "other"/);
+assert.match(sprintRouteSource, /data-item-status=\{item\.status\}/);
+assert.match(sprintRouteSource, /#\/sprint\?item=\$\{encodeURIComponent\(item\.id\)\}/);
+assert.match(sprintRouteSource, /data-sprint-item-view=\{selectedItem\.id\}/);
+assert.match(sprintRouteSource, /<StageMark state=\{condition\.mark\}/);
+assert.match(sprintPresentationSource, /left\.kind === "other"/);
+assert.match(sprintPresentationSource, /todayTicketIds\.has\(ticket\.id\)/);
 assert.doesNotMatch(sprintRouteSource, /loose_tickets|Loose tickets|data-loose/);
+assert.doesNotMatch(sprintRouteSource, /<Chip/);
 
 // --- the one priority tile ---------------------------------------------------------------
 

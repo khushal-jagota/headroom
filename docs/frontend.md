@@ -94,10 +94,11 @@ One screen per part of the system:
   `projects` resource. Its placement picker selects one Sprint Item or the explicit
   unparented Backlog. Moving to an item is atomic; choosing Backlog compare-clears the
   current item so a stale browser cannot detach a Ticket that has already moved.
-- **Sprint** — one tracking page that scrolls (name, a meta line, the bet, then the
-  Sprint Items grouped by project and their child Tickets), plus a separate documents
-  page for the kickoff/mid/review record (see `sprints.md`). Other items are marked as
-  fallbacks so catch-all work is not mistaken for an intentionally shaped outcome.
+- **Sprint** — one tracking overview that presents Projects and their Sprint Items,
+  plus a dedicated view for each Item and a separate documents page. The overview
+  shows Item progress without Ticket rows. An Item view joins today's Day membership
+  to split its Tickets into on-today, off-today, and folded done work. Project priority
+  orders the Project folds. See `sprints.md`.
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
 - **Agents** — the runtime home for agent conversations. Above 960px it follows
