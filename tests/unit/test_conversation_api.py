@@ -69,6 +69,8 @@ from planner.conversation.events import (
     AgentMessageEventPayload,
     ConversationTurnEnding,
     PermissionAskOption,
+    ToolCallFinishedEventPayload,
+    ToolCallStartedEventPayload,
     ToolCallStatus,
     UserInputAnswer,
     UserInputOption,
@@ -1400,6 +1402,207 @@ def test_the_rows_after_a_position_come_back_in_order_and_decoded(harness: _Harn
                 await client.get("/api/conversation/conversations/c/events", params={"after": 1})
             ).json()["events"]
             assert [event["sequence"] for event in after_the_first] == [2]
+
+    _run(exercise)
+
+
+def test_claude_legacy_image_detail_stays_in_rows_but_not_public_replays(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        legacy_detail = json.dumps(
+            [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "A" * 810_000,
+                    },
+                }
+            ],
+            sort_keys=True,
+        )
+        async with harness.client() as client:
+            await _start(client, "claude-images", backend_key="claude")
+            for payload in (
+                ToolCallStartedEventPayload(
+                    tool_call_id="view-1",
+                    title="View image",
+                    tool_kind="view_image",
+                    detail="image.png",
+                ),
+                ToolCallFinishedEventPayload(
+                    tool_call_id="view-1",
+                    tool_call_status=ToolCallStatus.completed,
+                    detail=legacy_detail,
+                ),
+                AgentMessageEventPayload(
+                    content=text_message_content("The image is clear.")
+                ),
+            ):
+                await harness.store.append_event("claude-images", payload)
+
+            raw_rows = await harness.store.read_events_after("claude-images", 0)
+            assert isinstance(raw_rows[1].payload, ToolCallFinishedEventPayload)
+            assert raw_rows[1].payload.detail == legacy_detail
+
+            fetched_response = await client.get(
+                "/api/conversation/conversations/claude-images/events"
+            )
+            fetched = fetched_response.json()["events"]
+            assert len(fetched_response.content) < len(legacy_detail) // 100
+            assert [event["sequence"] for event in fetched] == [1, 2, 3]
+            assert [event["kind"] for event in fetched] == [
+                "tool_call_started",
+                "tool_call_finished",
+                "agent_message",
+            ]
+            assert fetched[0]["payload"] == {
+                "tool_call_id": "view-1",
+                "title": "View image",
+                "tool_kind": "view_image",
+                "detail": "image.png",
+            }
+            assert fetched[1]["payload"] == {
+                "tool_call_id": "view-1",
+                "tool_call_status": "completed",
+                "detail": None,
+            }
+            assert fetched[2]["payload"] == {"text": "The image is clear."}
+
+            async with _EventStreamDrive(
+                harness.app,
+                "/api/conversation/conversations/claude-images/tail",
+                "after=0",
+            ) as stream:
+                replayed = [await stream.next_named_frame() for _ in range(3)]
+                assert [name for name, _event in replayed] == [
+                    COMMITTED_EVENT_STREAM_NAME,
+                    COMMITTED_EVENT_STREAM_NAME,
+                    COMMITTED_EVENT_STREAM_NAME,
+                ]
+                assert [event for _name, event in replayed] == fetched
+                assert await stream.next_named_frame() == (
+                    LIVE_FRAME_STREAM_NAME,
+                    {"frame": "held_prompts_changed"},
+                )
+
+                live_row = await harness.store.append_event(
+                    "claude-images",
+                    ToolCallFinishedEventPayload(
+                        tool_call_id="view-2",
+                        tool_call_status=ToolCallStatus.completed,
+                        detail=legacy_detail,
+                    ),
+                )
+                harness.live_tail.publish_event(live_row)
+                name, live_event = await stream.next_named_frame()
+                assert name == COMMITTED_EVENT_STREAM_NAME
+                assert live_event["sequence"] == 4
+                assert live_event["payload"] == {
+                    "tool_call_id": "view-2",
+                    "tool_call_status": "completed",
+                    "detail": None,
+                }
+
+            raw_rows = await harness.store.read_events_after("claude-images", 0)
+            assert isinstance(raw_rows[-1].payload, ToolCallFinishedEventPayload)
+            assert raw_rows[-1].payload.detail == legacy_detail
+
+    _run(exercise)
+
+
+def test_public_replays_keep_non_claude_and_unrecognized_json_detail(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        image_detail = json.dumps(
+            [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": "image-bytes",
+                    },
+                }
+            ]
+        )
+        controls = (
+            ("codex-image-json", "codex", image_detail),
+            (
+                "claude-url-image",
+                "claude",
+                json.dumps(
+                    [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.test/image",
+                            },
+                        }
+                    ]
+                ),
+            ),
+            (
+                "claude-text-json",
+                "claude",
+                json.dumps([{"type": "text", "text": "readable result"}]),
+            ),
+            (
+                "claude-image-caption",
+                "claude",
+                json.dumps(
+                    [
+                        {
+                            "type": "image",
+                            "text": "readable caption",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "image-bytes",
+                            },
+                        }
+                    ]
+                ),
+            ),
+            (
+                "claude-image-source-extra",
+                "claude",
+                json.dumps(
+                    [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "image-bytes",
+                                "filename": "result.png",
+                            },
+                        }
+                    ]
+                ),
+            ),
+        )
+        async with harness.client() as client:
+            for conversation_id, backend_key, detail in controls:
+                await _start(client, conversation_id, backend_key=backend_key)
+                await harness.store.append_event(
+                    conversation_id,
+                    ToolCallFinishedEventPayload(
+                        tool_call_id="tool-1",
+                        tool_call_status=ToolCallStatus.completed,
+                        detail=detail,
+                    ),
+                )
+                events = (
+                    await client.get(
+                        f"/api/conversation/conversations/{conversation_id}/events"
+                    )
+                ).json()["events"]
+                assert events[0]["payload"]["detail"] == detail
 
     _run(exercise)
 

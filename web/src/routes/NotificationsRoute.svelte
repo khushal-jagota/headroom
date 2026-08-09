@@ -83,18 +83,30 @@
     });
   });
 
-  async function savePreference(id: string, enabled: boolean): Promise<void> {
-    saving = { ...saving, [id]: true };
-    saveErrors = { ...saveErrors, [id]: null };
+  function preferenceKey(subjectKey: string, notificationType: string): string {
+    return `${subjectKey}:${notificationType}`;
+  }
+
+  async function savePreference(
+    subjectKey: string,
+    notificationType: string,
+    enabled: boolean
+  ): Promise<void> {
+    const key = preferenceKey(subjectKey, notificationType);
+    saving = { ...saving, [key]: true };
+    saveErrors = { ...saveErrors, [key]: null };
     try {
-      await mutateJson(`/api/notifications/preferences/${encodeURIComponent(id)}`, {
-        method: "PUT",
-        body: { enabled }
-      });
+      await mutateJson(
+        `/api/notifications/preferences/${encodeURIComponent(subjectKey)}/${encodeURIComponent(notificationType)}`,
+        {
+          method: "PUT",
+          body: { enabled }
+        }
+      );
     } catch (error) {
-      saveErrors = { ...saveErrors, [id]: error };
+      saveErrors = { ...saveErrors, [key]: error };
     } finally {
-      saving = { ...saving, [id]: false };
+      saving = { ...saving, [key]: false };
     }
   }
 
@@ -155,25 +167,36 @@
   <ResourceState {...resourceStateForQueries(settings)} loadingText="Loading notifications…">
     <section class="notifications-section">
       <h2>What counts</h2>
-      <div class="notification-options">
-        {#each settings.data?.types || [] as item (item.id)}
-          <label class="notification-option" data-notification-type={item.id}>
-            <span>
-              <strong>{item.label}</strong>
-              <small>{item.description}</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={item.enabled}
-              disabled={saving[item.id]}
-              onchange={(event) => void savePreference(item.id, event.currentTarget.checked)}
-            />
-          </label>
-          {#if saveErrors[item.id]}
-            <div class="error-line">{errorMessage(saveErrors[item.id])}</div>
-          {/if}
+      {#each settings.data?.subjects || [] as subject (subject.key)}
+        <div class="notification-subject" data-notification-subject={subject.key}>
+          <h3>{subject.label}</h3>
+          <div class="notification-options">
+            {#each subject.types as item (item.id)}
+              {@const key = preferenceKey(subject.key, item.id)}
+              <label
+                class="notification-option"
+                data-notification-cell={key}
+                data-notification-type={item.id}
+              >
+                <span>
+                  <strong>{item.label}</strong>
+                  <small>{item.description}</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={item.enabled}
+                  disabled={saving[key]}
+                  onchange={(event) =>
+                    void savePreference(subject.key, item.id, event.currentTarget.checked)}
+                />
+              </label>
+              {#if saveErrors[key]}
+                <div class="error-line">{errorMessage(saveErrors[key])}</div>
+              {/if}
+            {/each}
+          </div>
+        </div>
         {/each}
-      </div>
     </section>
 
     <section class="notifications-section" data-device-state={deviceState}>

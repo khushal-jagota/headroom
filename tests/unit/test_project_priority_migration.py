@@ -12,7 +12,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "sprint_item_only_placement"
-HEAD_REVISION = "backend_usage_and_model_enablement"
+HEAD_REVISION = "weekly_sprint_checkpoint_schedule"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:

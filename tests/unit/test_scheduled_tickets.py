@@ -156,6 +156,16 @@ def test_exact_time_and_cadence_rules_are_planning_neutral() -> None:
         sprint_ranges=ranges,
     )
     assert cadence_qualifies(
+        ScheduleCadence.current_sprint_day_four,
+        planning_day="2026-07-23",
+        sprint_ranges=ranges,
+    )
+    assert not cadence_qualifies(
+        ScheduleCadence.current_sprint_day_four,
+        planning_day="2026-07-24",
+        sprint_ranges=ranges,
+    )
+    assert cadence_qualifies(
         ScheduleCadence.current_sprint_final_day,
         planning_day="2026-08-02",
         sprint_ranges=ranges,
@@ -169,6 +179,7 @@ def test_approved_production_planning_schedule_definitions_are_exact(
     schedules = {
         schedule.template.worker_type: schedule
         for schedule in data.list_schedules(tmp_db)
+        if schedule.id in schedule_ids.values()
     }
 
     assert set(schedules) == set(schedule_ids) == {
@@ -592,6 +603,129 @@ def test_pre_five_am_occurrence_targets_the_previous_planning_day(
     ).fetchone()
 
 
+def test_day_four_cadence_uses_the_pre_five_am_planning_day(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_week', 'Week', '2026-08-06', '2026-08-12', 0, 0)"
+    )
+    schedule_id = _schedule(
+        tmp_db,
+        local_time="04:59",
+        cadence=ScheduleCadence.current_sprint_day_four,
+    )
+    now = _now("2026-08-10T04:59:00")
+
+    result = actions.run_current_slot(
+        tmp_db,
+        planning_now=now,
+        now=int(now.timestamp()),
+        boundary_hour=5,
+    )
+
+    assert [item.schedule_id for item in result] == [schedule_id]
+    assert result[0].target_day_id == "day_2026-08-09"
+
+
+def test_seeded_checkpoint_creates_a_user_owned_personal_ticket_on_day_four(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_week', 'Week', '2026-08-06', '2026-08-12', 0, 0)"
+    )
+    now = _now("2026-08-09T17:00:00")
+
+    result = actions.run_current_slot(
+        tmp_db,
+        planning_now=now,
+        now=int(now.timestamp()),
+        boundary_hour=5,
+    )
+
+    assert [item.schedule_id for item in result] == [
+        "schedule_weekly_sprint_checkpoint"
+    ]
+    assert result[0].ticket_id is not None
+    ticket = tickets_data.read_ticket(tmp_db, result[0].ticket_id)
+    assert ticket.title == "Checkpoint"
+    assert ticket.worker_type == "personal"
+    assert ticket.stage == "needs_kickoff"
+    assert ticket.ticket_status is TicketStatus.awaiting_approval
+    kickoff_proposal = fields_codec.get_slot(ticket.fields, "kickoff").proposal
+    assert kickoff_proposal is not None
+    assert kickoff_proposal.body == (
+        "Review the sprint so far and decide what to adjust for the remaining days."
+    )
+
+
+def test_unrelated_personal_ticket_does_not_suppress_seeded_checkpoint(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_week', 'Week', '2026-08-06', '2026-08-12', 0, 0)"
+    )
+    now = _now("2026-08-09T17:00:00")
+    unrelated = tickets_actions.create_ticket(
+        tmp_db,
+        title="Book a dentist appointment",
+        actor="owner",
+        now=int(now.timestamp()) - 60,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="personal",
+        kickoff_note=None,
+        planning_now=now,
+        boundary_hour=5,
+    )
+
+    result = actions.run_current_slot(
+        tmp_db,
+        planning_now=now,
+        now=int(now.timestamp()),
+        boundary_hour=5,
+    )
+
+    assert result[0].outcome is OccurrenceOutcome.created
+    checkpoint_id = result[0].ticket_id
+    assert checkpoint_id is not None
+    assert checkpoint_id != unrelated.id
+    assert tickets_data.read_ticket(tmp_db, checkpoint_id).title == "Checkpoint"
+
+
+def test_matching_personal_checkpoint_suppresses_seeded_checkpoint(
+    tmp_db: Connection,
+) -> None:
+    tmp_db.execute(
+        "INSERT INTO sprints (id, name, date_start, date_end, created_at, updated_at) "
+        "VALUES ('sp_week', 'Week', '2026-08-06', '2026-08-12', 0, 0)"
+    )
+    now = _now("2026-08-09T17:00:00")
+    prelaid = tickets_actions.create_ticket(
+        tmp_db,
+        title="Checkpoint",
+        actor="owner",
+        now=int(now.timestamp()) - 60,
+        title_max_chars=TITLE_MAX_CHARS,
+        worker_type="personal",
+        kickoff_note=None,
+        planning_now=now,
+        boundary_hour=5,
+    )
+
+    result = actions.run_current_slot(
+        tmp_db,
+        planning_now=now,
+        now=int(now.timestamp()),
+        boundary_hour=5,
+    )
+
+    assert result[0].outcome is OccurrenceOutcome.suppressed
+    assert result[0].ticket_id == prelaid.id
+    assert tmp_db.execute("SELECT count(*) FROM tickets").fetchone()[0] == 1
+
+
 def test_occurrence_commit_emits_the_signal_readiness_already_uses(
     tmp_db: Connection,
 ) -> None:
@@ -791,7 +925,7 @@ def test_api_manages_configuration_and_exposes_occurrences(tmp_path: Path) -> No
         )
         updated = client.patch(
             f"/api/schedules/{schedule_id}",
-            json={"cadence": "current_sprint_final_day", "enabled": False},
+            json={"cadence": "current_sprint_day_four", "enabled": False},
         )
         shown = client.get(f"/api/schedules/{schedule_id}")
         listed = client.get("/api/schedules")
@@ -803,11 +937,12 @@ def test_api_manages_configuration_and_exposes_occurrences(tmp_path: Path) -> No
     assert unknown_type.status_code == 400
     assert unknown_type_update.status_code == 400
     assert updated.json()["enabled"] is False
-    assert updated.json()["cadence"] == "current_sprint_final_day"
+    assert updated.json()["cadence"] == "current_sprint_day_four"
     assert shown.json()["occurrences"] == []
     assert {item["id"] for item in listed.json()["schedules"]} == {
         schedule_id,
         backlog.json()["id"],
+        "schedule_weekly_sprint_checkpoint",
     }
 
 

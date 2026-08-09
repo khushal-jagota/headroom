@@ -16,13 +16,19 @@ and replacement tag.
 
 This chokepoint is intentional. The source adapters, user choices, wording, and delivery
 provider do not decide independently what counts. The server owns one catalogue, and
-the Notifications screen renders that catalogue directly. Today it offers:
+the Notifications screen renders its subject groups and choices directly. Today it
+offers five choices for Tickets:
 
 - a Ticket needs approval;
-- a Ticket or worker needs input;
+- a Ticket worker needs input;
 - a worker requests permission;
 - a worker turn completes; and
 - a worker turn fails or a Ticket errors.
+
+Chief of Staff has four separate choices: needs input, permission request, worker
+completed, and worker failed. Needs approval is Ticket-only because it comes from a
+Ticket status. Each saved choice uses its subject and notification type as one key, so a
+Chief choice never changes the matching Ticket choice.
 
 The notification contains no transcript, prompt, permission detail, or worker output.
 Opening a Ticket notification goes to `/#/ticket/<ticket-id>`. Opening a Chief of Staff
@@ -52,7 +58,8 @@ restore therefore preserve the identity that existing devices trust.
 
 ## Enabling a device
 
-Open **More → Notifications**. Choose the kinds of event that should count, then press
+Open **More → Notifications**. Choose the kinds of event that count for Tickets and the
+Chief of Staff, then press
 **Enable on this device**. Panels asks the browser for notification permission only at
 that point. On iPhone and iPad, first add Panels to the Home Screen and open that
 installed app. Web Push also requires Panels to be served over HTTPS in production
@@ -62,8 +69,8 @@ Disabling a device removes its subscription from Panels and asks the browser to
 unsubscribe. Changing a “What counts” switch affects later facts; it does not resurrect
 events that were suppressed earlier.
 
-Code paths: `src/planner/notifications/`, the `notifications` and
-`notification_subjects` database migrations, `static/service-worker.js`, and
+Code paths: `src/planner/notifications/`, the notification database migrations,
+`static/service-worker.js`, and
 `web/src/routes/NotificationsRoute.svelte`.
 
 _Last verified: 2026-08-06._

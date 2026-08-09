@@ -165,6 +165,7 @@ def update_project(
     *,
     name: str | None = None,
     summary: str | None = None,
+    priority: Priority | None = None,
     now: int,
 ) -> Project:
     updates: dict[str, str] = {}
@@ -175,6 +176,8 @@ def update_project(
         updates["name"] = clean_name
     if summary is not None:
         updates["summary"] = summary.strip()
+    if priority is not None:
+        updates["priority"] = priority.value
     if not updates:
         raise PlannerError(ErrorCode.validation, "no project fields to update", {})
 

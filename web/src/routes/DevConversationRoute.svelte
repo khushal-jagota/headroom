@@ -195,4 +195,16 @@
     font-family: var(--font-mono);
     font-size: var(--type-xs);
   }
+  @media (max-width: 720px) {
+    /* Both fixed navigation bars, both content gutters, and the home indicator own space. */
+    .c2-route {
+      --conversation-safe-area-bottom: env(safe-area-inset-bottom);
+      height: calc(
+        100dvh
+        - 2 * var(--shell-nav-height)
+        - 2 * var(--page-gutter)
+        - var(--conversation-safe-area-bottom)
+      );
+    }
+  }
 </style>

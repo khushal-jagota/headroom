@@ -91,6 +91,12 @@ deleting a Ticket leaves its conversation behind. A file removed by either would
 turn a picture somebody sent into a picture nobody can see, while the row still
 says a picture was sent.
 
+A finished tool call keeps the readable text that its backend reports. Claude can
+report a result as a list of text and non-text blocks. Panels joins its text blocks
+and keeps no finish detail when the list contains no text. Some older Claude rows
+contain image-only block lists with base64 bytes. Public event reads omit the detail
+from those recognized rows, but the append-only notebook rows stay unchanged.
+
 ## What a turn cost, and where the thread was cut
 
 Two more kinds of row, both of them facts the backends were already reporting and
@@ -126,11 +132,15 @@ Send has no delivery knob. Every new message runs when the agent is free, and a
 busy agent holds it in a FIFO line. Enter and the send arrow use that same rule,
 including while a turn runs.
 
-The composer shows the held line as a stack inside its recessed well. Each row
-shows one message and can discard it or make it run next. A Hermes row can also
-steer its text into the running turn. The server snapshot is the shared answer,
-so a second tab or device shows the same held line. A tab merges its immediate
-copy with that snapshot by the sender's message id rather than drawing it twice.
+The composer shows the held line in one inset tray above its recessed input on desktop
+and phone. Messages stack inside that tray. Each row stays on one line and can discard
+the message or make it run next. A Hermes row can also steer its text into the running
+turn. The server snapshot is the shared answer, so a second tab or device shows the same
+held line. A tab merges its immediate copy with that snapshot by the sender's message id
+rather than drawing it twice.
+
+The queue actions and the input action row use the same order, labels, and button treatment
+on desktop and phone. Width changes the available text space, not the control design.
 
 The answer to a send is the fate of that delivery, and fate means it happened:
 started (the text reached a live agent), queued at a position, injected, or

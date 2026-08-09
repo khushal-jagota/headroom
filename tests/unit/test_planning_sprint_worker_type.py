@@ -153,6 +153,8 @@ def test_planning_sprint_is_announced_at_agent_front_doors() -> None:
     chief = (root / "src/planner/skills/panels-chief-of-staff/SKILL.md").read_text(encoding="utf-8")
     worker = (root / "src/planner/skills/panels-worker/SKILL.md").read_text(encoding="utf-8")
     assert "`planning-sprint` (reviewing one sprint" in panels
+    assert "A **sprint** is a fixed seven-day period" in panels
+    assert "Checkpoint Ticket prompts reflection at 17:00 on sprint day four" in panels
     assert "panels-ticket-creation" in chief
     assert "`panels-worker-planning-sprint` — planning-sprint tickets" in worker
     assert "panels ticket create --worker-type <planning-worker-type>" in chief
@@ -175,4 +177,6 @@ def test_planning_sprint_skill_preserves_the_approved_judgments() -> None:
     assert "first sprint" in skill
     assert "perform no review" in skill
     assert "Closeout is the only canonical-write phase" in skill
-    assert "midpoint review, in-sprint reconciliation" in skill
+    assert "day-four Checkpoint, in-sprint reconciliation" in skill
+    assert "exactly seven inclusive dates" in skill
+    assert "Existing historical sprint ranges remain unchanged" in skill

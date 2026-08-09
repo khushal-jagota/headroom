@@ -8,7 +8,7 @@ description: Stage-by-stage guidance for reviewing the current sprint and planni
 Planning Sprint is the durable final-day carrier for one ordered boundary workflow:
 review the current sprint, then plan the next. The Worker prepares automatically, pauses
 for the user's strategic judgment, and writes only the approved result during Closeout.
-It does not own midpoint review, in-sprint reconciliation, daily planning, scheduling,
+It does not own the day-four Checkpoint, in-sprint reconciliation, daily planning, scheduling,
 or operational cutover.
 
 ### The stages
@@ -96,9 +96,10 @@ and supports, and genuinely new work. Reuse an existing backlog item where it al
 represents the outcome; create one only when it does not. Do not create child Tickets,
 put sprint work onto today, or let backlog volume choose the strategy.
 
-After explicit Release, propose one concise **next sprint** package: name and dates,
-limiting factor, primary bet, supports, pre-mortem, and exact intended Sprint Item moves
-or creations using supported fields.
+After explicit Release, propose one concise **next sprint** package. Give a start date
+and an end date that define exactly seven inclusive dates. Include the name, limiting
+factor, primary bet, supports, pre-mortem, and exact intended Sprint Item moves or
+creations with supported fields. Existing historical sprint ranges remain unchanged.
 
 ### needs_closeout — write and verify
 

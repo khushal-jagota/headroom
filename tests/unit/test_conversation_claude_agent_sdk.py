@@ -1182,6 +1182,72 @@ def test_a_valid_tool_result_just_over_one_megabyte_reaches_panels(tmp_path: Pat
     _run(exercise)
 
 
+def test_only_readable_text_from_block_tool_results_reaches_panels(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))
+        await child.start(
+            _start_request(workspace_folder=tmp_path), vendor_session_cursor=None
+        )
+        await _write(child)
+        clients[0].say(
+            UserMessage(
+                content=[
+                    ToolResultBlock(
+                        tool_use_id="text-list",
+                        content=[
+                            {"type": "text", "text": "first"},
+                            {"type": "text", "text": "second"},
+                        ],
+                    ),
+                    ToolResultBlock(
+                        tool_use_id="mixed",
+                        content=[
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": "binary-image",
+                                },
+                            },
+                            {"type": "text", "text": "caption"},
+                        ],
+                    ),
+                    ToolResultBlock(
+                        tool_use_id="image-only",
+                        content=[
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": "binary-image",
+                                },
+                            }
+                        ],
+                    ),
+                    ToolResultBlock(
+                        tool_use_id="other-non-text",
+                        content=[{"type": "document", "source": {"type": "file"}}],
+                    ),
+                ]
+            )
+        )
+        await clients[0].until_taken_in()
+
+        assert [finished["detail"] for finished in sink.tools_finished] == [
+            "first\nsecond",
+            "caption",
+            None,
+            None,
+        ]
+        await child.stop()
+
+    _run(exercise)
+
+
 def test_a_tool_call_that_went_wrong_is_recorded_as_a_failure(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, sink, clients = _bench(_start_request(workspace_folder=tmp_path))

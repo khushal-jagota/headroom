@@ -83,6 +83,7 @@ def _start_server(
     srvdir: Path,
     *,
     fake_now: str | None = None,
+    app_sha: str | None = None,
     trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
     seed_db: Callable[[Path], None] | None = None,
     port: int | None = None,
@@ -118,6 +119,8 @@ def _start_server(
             "PLAN_HERMES_HOME": str(srvdir / "hermes-home"),
         }
     )
+    if app_sha is not None:
+        env["PLAN_APP_SHA"] = app_sha
     if trusted_ingress_env is not None:
         env.update(
             trusted_ingress_env(base)
@@ -182,6 +185,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
 
     def make(
         fake_now: str | None = None,
+        app_sha: str | None = None,
         trusted_ingress_env: Mapping[str, str] | Callable[[str], Mapping[str, str]] | None = None,
         seed_db: Callable[[Path], None] | None = None,
     ) -> ServerHandle:
@@ -191,6 +195,7 @@ def server_factory(tmp_path: Path) -> Iterator[Callable[..., ServerHandle]]:
         handle = _start_server(
             srvdir,
             fake_now=fake_now,
+            app_sha=app_sha,
             trusted_ingress_env=trusted_ingress_env,
             seed_db=seed_db,
         )
@@ -216,12 +221,13 @@ def restart_server() -> Iterator[Callable[[ServerHandle], ServerHandle]]:
 
     replacements: list[ServerHandle] = []
 
-    def restart(handle: ServerHandle) -> ServerHandle:
+    def restart(handle: ServerHandle, app_sha: str | None = None) -> ServerHandle:
         if handle.proc.poll() is None:
             raise AssertionError("restart_server requires a stopped server")
         replacement = _start_server(
             handle.db_path.parent,
             port=handle.port,
+            app_sha=app_sha,
         )
         replacements.append(replacement)
         return replacement

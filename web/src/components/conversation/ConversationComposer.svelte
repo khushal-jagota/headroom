@@ -45,6 +45,7 @@
   import { askPlaceholder } from "../../lib/conversation/composer";
   import type { RunValues } from "../../lib/conversation/composer";
   import type { HeldPromptRow } from "../../lib/conversation/heldPrompts";
+  import { COMPOSITION_STATE_EVENT } from "../../lib/releaseMonitor";
   import {
     createVoiceCapture,
     formatVoiceTime,
@@ -243,6 +244,26 @@
     sendsInFlight
   });
   let runControlsView = $derived(resolveComposerRunControls(runControlsInput));
+  /** A retained page must not reload while this composer owns work or a user decision. */
+  let compositionActive = $derived(
+    text !== ""
+    || pendingImages.length > 0
+    || voiceState.phase !== "idle"
+    || takenOver
+    || draggingImages
+    || imageIntakesInFlight > 0
+    || runSelection.pickedBackend !== null
+    || runSelection.pickedModel !== null
+    || runSelection.pickedReasoningEffort !== null
+  );
+
+  function publishCompositionState(active: boolean): void {
+    document.dispatchEvent(new CustomEvent(COMPOSITION_STATE_EVENT, { detail: { active } }));
+  }
+
+  $effect(() => {
+    publishCompositionState(compositionActive);
+  });
 
   // --- the command being written -----------------------------------------------------------
   let commandUnderway = $derived(commandOnTheCursorsLine(text, cursorAt));
@@ -682,6 +703,7 @@
     });
     return () => {
       destroyed = true;
+      publishCompositionState(false);
       releasePendingImages(pendingImages);
       voice?.dispose();
       voice = null;
@@ -689,8 +711,20 @@
   });
 </script>
 
-<section class="c2-composer" data-conversation-composer>
+<section
+  class="c2-composer"
+  data-conversation-composer
+  data-conversation-composition-active={compositionActive ? "true" : undefined}
+>
   <div class="chat-box-stack">
+    <HeldPromptStack
+      rows={heldPromptRows}
+      hermes={backendKey === "hermes"}
+      {running}
+      onDiscard={onDiscardHeldPrompt}
+      onPromote={onPromoteHeldPrompt}
+    />
+
     <div
       class="chat-box"
       class:drag={draggingImages}
@@ -720,14 +754,6 @@
           onAnswer={(optionId) => onAnswer?.(optionId)}
         />
       {/if}
-
-      <HeldPromptStack
-        rows={heldPromptRows}
-        hermes={backendKey === "hermes"}
-        {running}
-        onDiscard={onDiscardHeldPrompt}
-        onPromote={onPromoteHeldPrompt}
-      />
 
       {#if commandMenuIsOpen}
         <AgentCommandMenu

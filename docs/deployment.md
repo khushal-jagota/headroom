@@ -81,6 +81,11 @@ The workflow uses the fixed VPS contract:
 - managed skills: `~/Deployments/Panels/current/data/skills`
 - agent homes: `~/.hermes`, `~/.codex`, and `~/.claude`
 
+The server puts the deployed app SHA in each root document and requires that document
+to revalidate. A retained installed app checks `/api/meta` without cache reuse. If the
+running SHA changes, the app offers a user-controlled page update. This path does not
+replace the push-only service worker or its subscriptions.
+
 After the app deployment succeeds, the current workflow deployment tool invokes
 `environment provision-skills` with all four paths explicitly. Using the workflow tool
 means an intentional rollback to an older app still applies the current skill-retirement

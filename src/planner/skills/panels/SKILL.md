@@ -10,7 +10,7 @@ Panels is a **workspace for agents**, where the user's work lives. It includes a
 The planning system has these pieces:
 
 - A **day** is what the user wants to get done on a planning date.
-- A **sprint** is a two-week block of work.
+- A **sprint** is a fixed seven-day period.
 - A **sprint item** is a goal or outcome inside a sprint, or in the backlog when unscheduled.
 - A **ticket** is one unit of work, often done by an agent alongside the user.
 - An **idea** is a loose thought that may or may not become committed work.
@@ -53,11 +53,13 @@ Panels schedules ordinary planning Tickets and hands each one to its specialist 
 
 - `planning-day` gathers the morning evidence and plans the Day with the user.
 - `planning-midday-check` checks execution against the morning intent.
+- A personal Checkpoint Ticket prompts reflection at 17:00 on sprint day four.
 - `planning-sprint` reviews the current sprint and plans the next at the boundary.
 
-The 5am planning-day boundary determines which Day is current; it does not run a
-separate rollover workflow. If a scheduled run is missed, recover by creating the
-intended planning Ticket through ordinary `panels ticket create`.
+The 05:00 boundary determines which Day and sprint day are current. It does not run a
+separate rollover workflow. The Planning Sprint Ticket stays at 17:00 on the final day.
+Scheduled Tickets do not backfill a missed occurrence. If a run is missed, recover by
+creating the intended Ticket through ordinary `panels ticket create`.
 
 ## The CLI
 

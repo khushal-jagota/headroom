@@ -2472,10 +2472,15 @@ button.list-row:hover .list-row-title {
   display: block;
 }
 .chat-ta::placeholder { color: var(--text-faintest); }
-/* The foot may wrap: on a phone the pickers and the mid-turn delivery segment do
- * not all fit one row, and a row that refuses to wrap forces the page wider than
- * the screen — the browser then zooms the whole layout out to fit it. */
-.chat-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; row-gap: var(--space-1); margin-top: var(--space-1); }
+/* The input actions use one row and one treatment at every width. */
+.chat-foot {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  margin-top: var(--space-1);
+}
 .chat-slash {
   background: none;
   border: none;
@@ -2610,11 +2615,16 @@ button.list-row:hover .list-row-title {
   line-height: 1;
 }
 
-/* Waiting messages are part of the recessed composer well. */
+/* Waiting messages share one inset tray directly above the separate input box. */
 .chat-box-stack { display: grid; min-width: 0; max-width: 100%; }
 .chat-queue-wrap {
-  border-bottom: var(--border-hairline) solid var(--border-color);
-  padding-bottom: var(--space-1);
+  min-width: 0;
+  margin: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-sunken);
+  border: var(--border-hairline) solid var(--border-color);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 .chat-queue-stack {
   margin: 0;
@@ -2624,15 +2634,12 @@ button.list-row:hover .list-row-title {
   overflow-y: auto;
   scrollbar-width: thin;
 }
-.chat-queue-stack.is-scrollable {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
-}
 .chat-qrow {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-1);
-  padding: var(--space-2) 0;
+  min-width: 0;
+  padding: var(--space-1) 0;
   border-bottom: var(--border-hairline) solid var(--border-color);
   animation: chat-queue-row-in var(--motion-base) var(--motion-ease);
 }
@@ -2651,17 +2658,13 @@ button.list-row:hover .list-row-title {
 .chat-qrow-txt {
   flex: 1;
   min-width: 0;
-  padding-top: 3px;
   color: var(--text-muted);
   font-family: var(--font-serif);
-  font-size: var(--type-serif-sm);
-  line-height: 1.5;
+  font-size: var(--type-xs);
+  line-height: 1.35;
   overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow-wrap: anywhere;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-qrow[data-fate="in_flight"] .chat-qrow-txt,
 .chat-qrow[data-fate="unknown"] .chat-qrow-txt { color: var(--text-faintest); }
@@ -2669,8 +2672,7 @@ button.list-row:hover .list-row-title {
   flex: none;
   background: none;
   border: 0;
-  padding: var(--space-2);
-  margin-inline-start: calc(var(--space-2) * -1);
+  padding: var(--space-1);
   border-radius: var(--radius-sm);
   color: var(--text-faintest);
   cursor: pointer;
@@ -2709,9 +2711,6 @@ button.list-row:hover .list-row-title {
 @media (prefers-reduced-motion: reduce) {
   .chat-qrow { animation: none; }
   .chat-qrow.is-leaving { transition: none; transform: none; }
-}
-@media (max-width: 560px) {
-  .chat-qrow-txt { -webkit-line-clamp: 2; line-clamp: 2; }
 }
 
 /* Composer receipt: only failures speak — a mono error line under the box */
@@ -4999,12 +4998,9 @@ select {
 }
 
 /* --- Sprint = TRACKING page (redesign) ----------------------------------- */
-/* Sprint → items → tickets, progressive disclosure, calm at rest. One centered
-   column; the sprint name is the only editable
-   surface (the .ed inline-edit is reused); everything else is read + navigate. Scoped
-   under [data-screen="sprint"] so the generic disclosure/row classes can't collide;
-   all values from tokens.css. The Overview sub-page reuses the panel/field styling
-   above (relocated as-is) inside this same .doc/.col frame. */
+/* The tracking overview reads Project → Sprint Item. A dedicated Item view owns
+   Ticket rows, and the documents view preserves the editable sprint record. All three
+   use one centered column and stay scoped under [data-screen="sprint"]. */
 
 [data-screen="sprint"] .doc {
   width: 100%;
@@ -5025,11 +5021,38 @@ select {
 [data-screen="sprint"] .sprint-title {
   margin: 0;
   font-family: var(--font-serif);
-  font-size: var(--type-serif-display);
+  font-size: var(--type-serif-hero);
   font-weight: 500;
   letter-spacing: var(--tracking-title);
   line-height: 1.26;
   color: var(--text-strong);
+}
+
+/* The primary bet and Sprint Item body use the Ticket recap voice. The text is
+ * the control only when the four-and-a-half-line clamp hides content. */
+[data-screen="sprint"] .sprint-summary {
+  cursor: default;
+}
+
+[data-screen="sprint"] .sprint-summary.ticket-recap--clamped {
+  max-height: calc(var(--type-serif-lg) * 1.5 * 4.5);
+}
+
+[data-screen="sprint"] .sprint-summary .markdown > :first-child {
+  margin-top: 0;
+}
+
+[data-screen="sprint"] .sprint-summary .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+[data-screen="sprint"] .sprint-summary--expandable {
+  cursor: pointer;
+}
+
+[data-screen="sprint"] .sprint-summary--expandable:hover,
+[data-screen="sprint"] .sprint-summary--expandable:focus-visible {
+  color: var(--text-muted);
 }
 
 [data-screen="sprint"] .sprint-meta-line {
@@ -5055,19 +5078,6 @@ select {
 
 [data-screen="sprint"] .sprint-docs-link:hover {
   color: var(--text-default);
-}
-
-/* the bet, stated once — the serif lead the sprint is tracked against */
-[data-screen="sprint"] .sprint-bet {
-  padding: var(--space-6) 0 0;
-}
-
-[data-screen="sprint"] .sprint-bet .body {
-  font-family: var(--font-serif);
-  font-size: var(--type-serif-lg);
-  line-height: 1.66;
-  color: var(--text-strong);
-  max-width: 62ch;
 }
 
 /* Documents page — a back link to the sprint, then the serif title + sub, then the
@@ -5105,7 +5115,7 @@ select {
   color: var(--text-faintest);
 }
 
-/* Sprint Overview (rev6): Kickoff / Mid-sprint Review / Sprint Review. Three headed
+/* Sprint Overview (rev6): Kickoff / Checkpoint / Sprint Review. Three headed
    .disclosure--phase sections; the phase decides which is open (JS). Each field is a
    label + the shared .ed inline-edit surface. No freeze, no accent, no ✓/●/○ marks. */
 [data-screen="sprint"] .disclosure--phase {
@@ -5128,7 +5138,7 @@ select {
   color: var(--text-strong);
 }
 
-/* the phase meta ("set at the start" / "mid-sprint" / "end of sprint") is a plain
+/* the phase meta ("set at the start" / "day four" / "end of sprint") is a plain
  * lowercase whisper — no weight, no tracking, per the docs mockup. */
 [data-screen="sprint"] .disclosure--phase .pmeta {
   flex: 1;
@@ -5172,192 +5182,248 @@ select {
   color: var(--text-default);
 }
 
-/* Project group — the work grouped by project; every group (loose tickets included)
- * is the same collapsible primitive: an uppercase label + a right-aligned count. */
-[data-screen="sprint"] .disclosure--pgroup {
+/* Sprint tracking rebuild: Projects contain Sprint Items. Ticket rows live only
+ * on the dedicated Sprint Item view. The Project fold reuses Workspace's bucket
+ * disclosure behavior, with the Sprint screen's unboxed reading layout. */
+[data-screen="sprint"] .sprint-projects {
+  margin-top: var(--space-6);
+}
+
+[data-screen="sprint"] .sprint-projects .disclosure--workspace-bucket {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+[data-screen="sprint"] .sprint-projects .disclosure--workspace-bucket + .disclosure--workspace-bucket {
   margin-top: var(--space-7);
 }
 
-[data-screen="sprint"] .disclosure--pgroup > .disclosure-summary {
-  align-items: baseline;
-  gap: var(--space-2);
-  padding-bottom: var(--space-1);
+[data-screen="sprint"] .sprint-projects .disclosure--workspace-bucket > .disclosure-summary {
+  margin-bottom: var(--space-3);
 }
 
-[data-screen="sprint"] .disclosure--pgroup .pchev {
-  align-self: center;
-  color: var(--text-faintest);
-  font-size: var(--type-xs);
-  transition: transform var(--motion-fast) var(--motion-ease);
+[data-screen="sprint"] .sprint-projects .disclosure--workspace-bucket:not([open]) > .disclosure-summary {
+  margin-bottom: 0;
 }
 
-[data-screen="sprint"] .disclosure--pgroup[open] > .disclosure-summary .pchev {
-  transform: rotate(90deg);
-}
-
-[data-screen="sprint"] .disclosure--pgroup .plabel {
-  font-size: var(--type-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-label);
-  text-transform: uppercase;
-  color: var(--text-faintest);
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .disclosure--pgroup > .disclosure-summary:hover .plabel {
-  color: var(--text-muted);
-}
-
-[data-screen="sprint"] .disclosure--pgroup .pn {
-  margin-left: auto;
-  font-size: var(--type-xs);
-  font-weight: 500;
-  color: var(--text-faintest);
-  font-variant-numeric: tabular-nums;
-}
-
-/* Loose tickets sit directly in the group body; item tickets are indented under
- * their item's chevron column to read as one aligned list. */
-[data-screen="sprint"] .disclosure--pgroup > .disclosure-body > .pbody > .trow {
-  padding-left: 20px;
-}
-
-/* item = the primary row, collapsed by default; expand reveals its tickets. Lines
-   only between rows; the first row in a group has no top border. */
-[data-screen="sprint"] .disclosure--item {
-  border-top: var(--border-hairline) solid var(--border-color);
-}
-
-[data-screen="sprint"] .pbody > .disclosure--item:first-of-type {
-  border-top: 0;
-}
-
-[data-screen="sprint"] .disclosure--item > .disclosure-summary {
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) 0;
-  transition: color var(--motion-fast) var(--motion-ease);
-}
-
-[data-screen="sprint"] .disclosure--item .disclosure-chev {
-  flex: none;
-}
-
-[data-screen="sprint"] .disclosure--item .disclosure-chev::before {
-  font-size: var(--type-sm);
-}
-
-[data-screen="sprint"] .disclosure--item .it {
-  flex: 1;
+[data-screen="sprint"] .sprint-project-items {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--type-md);
-  color: var(--text-default);
-  transition: color var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] .disclosure--item > .disclosure-summary:hover .it {
-  color: var(--text-strong);
-}
-
-[data-screen="sprint"] .disclosure--item[data-selected="true"] > .disclosure-summary {
-  outline: var(--border-hairline) solid var(--accent-bright);
-  outline-offset: var(--space-1);
-}
-
-/* status word on the item row — faint by default, brand accent when in progress */
-[data-screen="sprint"] .disclosure--item .st {
-  white-space: nowrap;
-  font-size: var(--type-xs);
-  color: var(--text-faint);
-}
-
-[data-screen="sprint"] .disclosure--item .st--now {
-  color: var(--accent-bright);
-}
-
-[data-screen="sprint"] .disclosure--item .frac {
-  min-width: 52px;
-  text-align: right;
-  white-space: nowrap;
-  font-size: var(--type-xs);
-  color: var(--text-faintest);
-  font-variant-numeric: tabular-nums;
-}
-
-/* done items dim to settled: the title recedes, the status word goes green */
-[data-screen="sprint"] .disclosure--item.item--dim > .disclosure-summary .it {
-  color: var(--text-faintest);
-}
-
-[data-screen="sprint"] .disclosure--item.item--dim .st {
-  color: var(--accent-done);
-}
-
-[data-screen="sprint"] .disclosure--item .ibody {
-  padding: 0 0 var(--space-4) var(--space-5);
-}
-
-[data-screen="sprint"] .disclosure--item .chips {
-  display: flex;
-  gap: var(--space-1);
-  flex-wrap: wrap;
-  align-items: baseline;
-  padding-bottom: var(--space-2);
-}
-
-/* ticket row — priority · title · state word; navigate-only, colours off state */
-[data-screen="sprint"] .trow {
-  display: flex;
-  align-items: center;
+[data-screen="sprint"] .sprint-item-row {
+  width: 100%;
   gap: var(--space-3);
-  padding: var(--space-2);
+  padding: var(--space-3) var(--space-2);
   margin: 0 calc(-1 * var(--space-2));
-  border-radius: var(--radius-md);
-  text-decoration: none;
+  border-top: var(--border-hairline) solid var(--border-color);
   color: inherit;
   transition: background var(--motion-fast) var(--motion-ease);
 }
 
-[data-screen="sprint"] .trow:hover {
-  background: var(--surface-overlay);
+[data-screen="sprint"] .sprint-project-items > .sprint-item-row:first-child {
+  border-top: 0;
 }
 
-[data-screen="sprint"] .trow .t {
-  flex: 1;
-  min-width: 0;
+[data-screen="sprint"] .sprint-item-row .list-row-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+[data-screen="sprint"] .sprint-item-rollup {
+  flex: 0 0 auto;
+  color: var(--text-faintest);
   font-size: var(--type-sm);
-  color: var(--text-muted);
-}
-
-[data-screen="sprint"] .trow:hover .t {
-  color: var(--text-strong);
-}
-
-[data-screen="sprint"] .trow .tst {
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   text-align: right;
-  font-size: var(--type-xs);
+}
+
+[data-screen="sprint"] .sprint-item-row--settled .list-row-title {
   color: var(--text-faintest);
 }
 
-[data-screen="sprint"] .trow .tst--now {
-  color: var(--accent-bright);
+[data-screen="sprint"] .sprint-item-row--settled .priority-tile {
+  opacity: 0.5;
 }
 
-[data-screen="sprint"] .trow .tst--done {
+[data-screen="sprint"] .sprint-item-row--settled .sprint-item-rollup {
   color: var(--accent-done);
 }
 
-[data-screen="sprint"] .ibody .none {
-  padding: var(--space-1) 0;
-  font-size: var(--type-sm);
+[data-screen="sprint"] .sprint-item-back {
+  display: inline-block;
+  padding-top: var(--space-6);
   color: var(--text-faintest);
+  font-size: var(--type-sm);
+  text-decoration: none;
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="sprint"] .sprint-item-back:hover {
+  color: var(--text-default);
+}
+
+[data-screen="sprint"] .sprint-item-head {
+  padding-top: var(--space-4);
+}
+
+[data-screen="sprint"] .sprint-item-project {
+  padding-bottom: var(--space-2);
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+[data-screen="sprint"] .sprint-item-title {
+  margin: 0;
+  color: var(--text-strong);
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-hero);
+  font-weight: 500;
+  letter-spacing: var(--tracking-title);
+  line-height: 1.26;
+}
+
+[data-screen="sprint"] .sprint-item-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-screen="sprint"] .sprint-item-body {
+  margin-top: var(--space-6);
+}
+
+[data-screen="sprint"] .sprint-ticket-section-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+}
+
+[data-screen="sprint"] .sprint-ticket-section-heading .n {
+  margin-left: auto;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+[data-screen="sprint"] .sprint-ticket-row {
+  width: 100%;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  border-radius: var(--radius-md);
+  color: inherit;
+  transition: background var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="sprint"] .sprint-ticket-row .list-row-title {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--type-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-screen="sprint"] .sprint-ticket-state {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: var(--type-xs);
+  text-align: right;
+  white-space: nowrap;
+}
+
+[data-screen="sprint"] .sprint-ticket-priority,
+[data-screen="sprint"] .sprint-ticket-row--settled .list-row-title,
+[data-screen="sprint"] .sprint-ticket-row--settled .sprint-ticket-state {
+  color: var(--text-faintest);
+}
+
+[data-screen="sprint"] .sprint-ticket-seam {
+  height: var(--border-hairline);
+  margin: var(--space-5) 0;
+  background: var(--border-color);
+}
+
+[data-screen="sprint"] .disclosure--sprint-done {
+  margin-top: var(--space-5);
+  border-top: var(--border-hairline) solid var(--border-color);
+}
+
+[data-screen="sprint"] .disclosure--sprint-done > .disclosure-summary {
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+  transition: color var(--motion-fast) var(--motion-ease);
+}
+
+[data-screen="sprint"] .disclosure--sprint-done > .disclosure-summary:hover {
+  color: var(--text-default);
+}
+
+[data-screen="sprint"] .disclosure--sprint-done > .disclosure-body {
+  padding-top: var(--space-2);
+}
+
+[data-screen="sprint"] .sprint-empty-line {
+  padding: var(--space-2);
+  color: var(--text-faintest);
+  font-size: var(--type-sm);
+}
+
+@media (max-width: 600px) {
+  [data-screen="sprint"] .sprint-title,
+  [data-screen="sprint"] .sprint-item-title {
+    font-size: 24px;
+  }
+
+  [data-screen="sprint"] .sprint-meta-line {
+    flex-wrap: wrap;
+  }
+
+  [data-screen="sprint"] .sprint-docs-link {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+
+  [data-screen="sprint"] .sprint-item-row,
+  [data-screen="sprint"] .sprint-ticket-row {
+    align-items: flex-start;
+  }
+
+  [data-screen="sprint"] .sprint-item-row .list-row-title,
+  [data-screen="sprint"] .sprint-ticket-row .list-row-title {
+    display: -webkit-box;
+    overflow: hidden;
+    line-height: 1.35;
+    text-overflow: clip;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  [data-screen="sprint"] .sprint-item-row .priority-tile,
+  [data-screen="sprint"] .sprint-item-rollup,
+  [data-screen="sprint"] .sprint-ticket-row .stage-mark,
+  [data-screen="sprint"] .sprint-ticket-state {
+    margin-top: 3px;
+  }
 }
 
 /* --- Backlog screen (redesign) ------------------------------------------- */
@@ -6125,6 +6191,18 @@ select {
 
 .notifications-section h2 {
   margin: 0 0 var(--space-3);
+}
+
+.notification-subject + .notification-subject {
+  margin-top: var(--space-6);
+}
+
+.notification-subject h3 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--type-serif-xl);
+  font-weight: 500;
+  color: var(--text-strong);
 }
 
 .notification-option {

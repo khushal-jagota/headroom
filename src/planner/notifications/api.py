@@ -11,7 +11,11 @@ from pydantic import BaseModel, Field
 
 from planner.core.errors import ErrorCode, PlannerError
 from planner.notifications import data
-from planner.notifications.contracts import NOTIFICATION_TYPE_BY_ID, NOTIFICATION_TYPES
+from planner.notifications.contracts import (
+    NOTIFICATION_SUBJECTS,
+    NOTIFICATION_TYPE_BY_ID,
+    notification_preference_is_valid,
+)
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -38,14 +42,21 @@ def _settings_payload(conn: sqlite3.Connection) -> dict[str, object]:
     preferences = data.resolved_preferences(conn)
     identity = data.read_web_push_identity(conn)
     return {
-        "types": [
+        "subjects": [
             {
-                "id": item.id,
-                "label": item.label,
-                "description": item.description,
-                "enabled": preferences[item.id],
+                "key": subject.key,
+                "label": subject.label,
+                "types": [
+                    {
+                        "id": notification_type,
+                        "label": NOTIFICATION_TYPE_BY_ID[notification_type].label,
+                        "description": NOTIFICATION_TYPE_BY_ID[notification_type].description,
+                        "enabled": preferences[(subject.key, notification_type)],
+                    }
+                    for notification_type in subject.notification_type_ids
+                ],
             }
-            for item in NOTIFICATION_TYPES
+            for subject in NOTIFICATION_SUBJECTS
         ],
         "vapid_public_key": identity.public_key,
     }
@@ -60,16 +71,26 @@ def read_settings(request: Request) -> dict[str, object]:
         conn.close()
 
 
-@router.put("/preferences/{notification_type}")
+@router.put("/preferences/{subject_key}/{notification_type}")
 def write_preference(
-    notification_type: str, body: PreferenceWrite, request: Request
+    subject_key: str,
+    notification_type: str,
+    body: PreferenceWrite,
+    request: Request,
 ) -> dict[str, object]:
-    if notification_type not in NOTIFICATION_TYPE_BY_ID:
-        raise PlannerError(ErrorCode.not_found, f"notification type not found: {notification_type}")
+    if not notification_preference_is_valid(subject_key, notification_type):
+        raise PlannerError(
+            ErrorCode.not_found,
+            f"notification preference not found: {subject_key}/{notification_type}",
+        )
     conn = _conn(request)
     try:
         data.set_preference(
-            conn, notification_type, body.enabled, request.app.state.clock.now_unix()
+            conn,
+            subject_key,
+            notification_type,
+            body.enabled,
+            request.app.state.clock.now_unix(),
         )
         return _settings_payload(conn)
     finally:
@@ -77,14 +98,10 @@ def write_preference(
 
 
 @router.post("/subscriptions")
-def register_subscription(
-    body: SubscriptionWrite, request: Request
-) -> dict[str, object]:
+def register_subscription(body: SubscriptionWrite, request: Request) -> dict[str, object]:
     endpoint = urlsplit(body.endpoint)
     if endpoint.scheme != "https" or not endpoint.netloc or endpoint.username is not None:
-        raise PlannerError(
-            ErrorCode.validation, "push subscription endpoint must be an HTTPS URL"
-        )
+        raise PlannerError(ErrorCode.validation, "push subscription endpoint must be an HTTPS URL")
     conn = _conn(request)
     try:
         subscription = data.register_subscription(

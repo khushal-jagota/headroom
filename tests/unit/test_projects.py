@@ -81,6 +81,24 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
         assert updated.status_code == 200, updated.json()
         assert updated.json()["summary"] == "Lives in ~/alpha"
 
+        reassessed = client.patch(
+            f"/api/projects/{created.json()['id']}", json={"priority": "P0"}
+        )
+        assert reassessed.status_code == 200, reassessed.json()
+        assert reassessed.json()["priority"] == "P0"
+        assert reassessed.json()["name"] == "Alpha One"
+        assert reassessed.json()["summary"] == "Lives in ~/alpha"
+
+        invalid_reassessment = client.patch(
+            f"/api/projects/{created.json()['id']}", json={"priority": "urgent"}
+        )
+        assert invalid_reassessment.status_code == 400
+        assert invalid_reassessment.json()["error"] == {
+            "code": "validation",
+            "message": "invalid priority",
+            "detail": {"priority": "urgent"},
+        }
+
         cleared = client.patch(f"/api/projects/{created.json()['id']}", json={"summary": ""})
         assert cleared.status_code == 200, cleared.json()
         assert cleared.json()["summary"] == ""
@@ -116,7 +134,7 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
         assert duplicate_create.json()["error"]["code"] == "validation"
 
         agent_patch = client.patch(
-            f"/api/projects/{renamed.json()['id']}", json={"summary": "Agent edit"}, headers=_AGENT
+            f"/api/projects/{renamed.json()['id']}", json={"priority": "P2"}, headers=_AGENT
         )
         assert agent_patch.status_code == 400
         assert agent_patch.json()["error"]["code"] == "agent_forbidden"
@@ -142,7 +160,7 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
     assert stored is not None
     assert str(stored["name"]) == "Alpha Renamed"
     assert str(stored["summary"]) == ""
-    assert str(stored["priority"]) == "P1"
+    assert str(stored["priority"]) == "P0"
 
 
 def test_project_id_and_legacy_project_compatibility(tmp_path: Path) -> None:

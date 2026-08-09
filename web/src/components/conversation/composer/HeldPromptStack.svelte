@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import { messageContentText } from "../../../lib/conversation/wire";
   import type { HeldPromptRow } from "../../../lib/conversation/heldPrompts";
 
@@ -18,19 +17,6 @@
   } = $props();
 
   let actionInFlight = $state<string | null>(null);
-  let stackElement = $state<HTMLOListElement | null>(null);
-  let stackClientHeight = $state(0);
-  let stackScrollHeight = $state(0);
-  let scrollable = $derived(stackScrollHeight > stackClientHeight + 1);
-
-  $effect(() => {
-    rows;
-    stackClientHeight;
-    void tick().then(() => {
-      stackScrollHeight = stackElement?.scrollHeight ?? 0;
-    });
-  });
-
   function rowText(row: HeldPromptRow): string {
     const words = messageContentText(row.content);
     if (words !== "") return words;
@@ -61,10 +47,7 @@
   <div class="chat-queue-wrap" data-conversation-held-stack>
     <ol
       class="chat-queue-stack"
-      class:is-scrollable={scrollable}
       aria-label="Messages waiting"
-      bind:this={stackElement}
-      bind:clientHeight={stackClientHeight}
     >
       {#each rows as row (row.key)}
         {@const actionable = row.heldPromptId !== null && actionInFlight === null}
@@ -88,19 +71,6 @@
           >×</button>
           <span class="chat-qrow-txt">{rowText(row)}</span>
           {#if word}<span class="chat-qrow-state">{word}</span>{/if}
-          {#if hermes}
-            <button
-              type="button"
-              class="chat-qrow-act"
-              data-conversation-held-promote="steer"
-              data-held-prompt-id={row.heldPromptId ?? undefined}
-              title="Put this into the turn that is already running"
-              disabled={!actionable || !running}
-              onclick={() => row.heldPromptId === null
-                ? undefined
-                : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
-            >Steer</button>
-          {/if}
           <button
             type="button"
             class="chat-qrow-act"
@@ -112,6 +82,19 @@
               ? undefined
               : void act(row.key, () => onPromote?.(row.heldPromptId!, "send_now"))}
           >Send now</button>
+          {#if hermes}
+            <button
+              type="button"
+              class="chat-qrow-act"
+              data-conversation-held-promote="steer"
+              data-held-prompt-id={row.heldPromptId ?? undefined}
+              title="Put this into the turn that is already running"
+              disabled={!actionable || !running}
+              onclick={() => row.heldPromptId === null
+                ? undefined
+                : void act(row.key, () => onPromote?.(row.heldPromptId!, "steer"))}
+            >Hermes Steer</button>
+          {/if}
         </li>
       {/each}
     </ol>

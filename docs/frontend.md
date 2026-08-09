@@ -94,10 +94,12 @@ One screen per part of the system:
   `projects` resource. Its placement picker selects one Sprint Item or the explicit
   unparented Backlog. Moving to an item is atomic; choosing Backlog compare-clears the
   current item so a stale browser cannot detach a Ticket that has already moved.
-- **Sprint** — one tracking page that scrolls (name, a meta line, the bet, then the
-  Sprint Items grouped by project and their child Tickets), plus a separate documents
-  page for the kickoff/mid/review record (see `sprints.md`). Other items are marked as
-  fallbacks so catch-all work is not mistaken for an intentionally shaped outcome.
+- **Sprint** — one tracking overview that presents Projects and their Sprint Items,
+  plus a dedicated view for each Item and a separate documents page. The overview
+  shows Item progress without Ticket rows. An Item view joins today's Day membership
+  to split its Tickets into on-today, off-today, and folded done work. Project priority
+  orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
+  Review. See `sprints.md`.
 - **Backlog** and **Ideas** — the two catch surfaces; both capture through the same
   unboxed serif idiom (see `backlog-and-ideas.md`).
 - **Agents** — the runtime home for agent conversations. Above 960px it follows
@@ -120,9 +122,10 @@ One screen per part of the system:
   `#/agents/workers/<worker-type>` paths, plus legacy `#/workers` paths, redirect to
   Config.
 - **Notifications** — the personal notification settings at `#/notifications`.
-  “What counts” is rendered from the server's notification catalogue, so adding a
-  future choice does not require a second hard-coded browser list. Each switch saves
-  independently. “This device” asks for browser permission only after the user
+  “What counts” renders the Ticket and Chief of Staff groups from the server's
+  notification catalogue. Tickets have five switches, and the Chief has four. Each
+  subject-and-type switch saves and reports errors independently. “This device” asks
+  for browser permission only after the user
   presses Enable, registers the browser's Web Push subscription, and can remove it
   again. On iPhone or iPad, Panels explains that the site must first be added to the
   Home Screen.
@@ -150,6 +153,19 @@ horizontally.
 Each screen is a projection of a backend; the behaviour behind it is documented with
 that backend, not here. This doc owns the shell and the rendering rules the screens
 share.
+
+## Installed app releases
+
+The root document carries the deployed app SHA that booted the browser. The browser
+checks `/api/meta` without cache reuse when it loads and when a retained page resumes.
+If the server reports a different SHA, Panels shows an **Update now** action. Panels
+never reloads for a new release without that action.
+
+Conversation composers publish `panels:composition-state` on `document`, with an
+`active` boolean. If the user requests an update during active composition, Panels
+waits. It checks the server identity again when composition becomes inactive, then
+applies the requested update. The push-only service worker and its subscription remain
+in place across this page reload.
 
 **Backends** at `#/backends` shows the conversation backends installed on this machine,
 their account and model facts, and any update Panels can run. Codex and Claude cards also
@@ -365,9 +381,9 @@ native selects.
 
 **The voice.** Every screen now speaks in the serif/sans split, amber-only accent, line
 diet, and single depth-bearing ask surface that `DESIGN.md` defines — see it there, not
-restated here. One caveat lives in the Sprint tracking page: its "day N of M" readout is
-derived from the browser's own clock against the sprint dates, so it follows the reader's
-local day, not the server's planning-day boundary.
+restated here. The Sprint tracking page derives its "day N of M" readout from the
+canonical sprint day. That day changes at 05:00 local time, in step with the server's
+planning-day boundary.
 
 _Code paths:_ `web/src/App.svelte` (the shell and router), `web/src/routes/`
 (one route per screen), `web/src/components/` (shared pieces),

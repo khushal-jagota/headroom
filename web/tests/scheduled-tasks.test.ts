@@ -77,6 +77,15 @@ describe("scheduled task form mapping", () => {
     });
   });
 
+  it("round-trips the current sprint day four cadence", () => {
+    const form = scheduledTaskFormFromSchedule({
+      ...schedule,
+      cadence: "current_sprint_day_four"
+    });
+
+    expect(scheduledTaskPayload(form).cadence).toBe("current_sprint_day_four");
+  });
+
   it("reports the fields the screen cannot submit without", () => {
     const form = blankScheduledTaskForm();
     expect(scheduledTaskFormError(form)).toBe("Give the scheduled Ticket a title.");

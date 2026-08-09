@@ -23,7 +23,7 @@ import threading
 import zlib
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from playwright.sync_api import BrowserContext, Page, Route
@@ -264,9 +264,7 @@ def _store_the_commands_the_agent_reported(
 ) -> None:
     """Put the agent's own menu where the backend puts it when it reports one."""
     _on_its_own_thread(
-        ConversationStore(str(server.db_path)).replace_available_commands(
-            conversation_id, commands
-        )
+        ConversationStore(str(server.db_path)).replace_available_commands(conversation_id, commands)
     )
 
 
@@ -388,9 +386,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
             question_id="proof",
             header="Proof",
             question="What proof should be required?",
-            options=(
-                UserInputOption(label="Browser test", description="Exercise the full flow"),
-            ),
+            options=(UserInputOption(label="Browser test", description="Exercise the full flow"),),
             multi_select=False,
             allow_other=True,
         ),
@@ -432,9 +428,7 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
         }
         route.fulfill(response=response, json=body)
 
-    context.route(
-        f"**/api/conversation/conversations/{conversation_id}", running_view
-    )
+    context.route(f"**/api/conversation/conversations/{conversation_id}", running_view)
 
     def take_user_input_answer(route: Any) -> None:
         submitted.append(route.request.post_data_json)
@@ -486,12 +480,11 @@ def test_agent_questions_survive_reload_submit_as_one_map_and_replay_answers(
         ),
     )
     page.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")
-    page.wait_for_selector(
-        '[data-conversation-user-input-state="answered"]', timeout=WAIT_MS
+    page.wait_for_selector('[data-conversation-user-input-state="answered"]', timeout=WAIT_MS)
+    assert (
+        "Recorded event replay"
+        in page.locator("[data-conversation-user-input-answers]").inner_text()
     )
-    assert "Recorded event replay" in page.locator(
-        "[data-conversation-user-input-answers]"
-    ).inner_text()
 
 
 def test_canonical_queue_rows_work_across_tabs_and_on_a_phone(
@@ -570,16 +563,58 @@ def test_canonical_queue_rows_work_across_tabs_and_on_a_phone(
 
     expected = [f"queued message {number}" for number in range(1, 7)]
     for page in (desktop, phone):
-        assert page.locator(
-            "[data-conversation-held-row] .chat-qrow-txt"
-        ).all_inner_texts() == expected
+        assert (
+            page.locator("[data-conversation-held-row] .chat-qrow-txt").all_inner_texts()
+            == expected
+        )
+
+    def control_signature(page: Page) -> dict[str, object]:
+        return cast(
+            dict[str, object],
+            page.evaluate(
+                """() => {
+              const signature = (button) => {
+                const style = getComputedStyle(button);
+                return {
+                  label: button.getAttribute('aria-label') || button.textContent.trim(),
+                  className: button.className,
+                  borderRadius: style.borderRadius,
+                  fontFamily: style.fontFamily,
+                  fontSize: style.fontSize,
+                  height: style.height,
+                  padding: style.padding,
+                };
+              };
+              const row = document.querySelector('[data-conversation-held-row]');
+              const foot = document.querySelector('.chat-foot');
+              return {
+                queue: [...row.querySelectorAll('button')].map(signature),
+                input: [...foot.querySelectorAll('button')].map(signature),
+                inputWrap: getComputedStyle(foot).flexWrap,
+              };
+            }"""
+            ),
+        )
+
+    desktop_controls = control_signature(desktop)
+    phone_controls = control_signature(phone)
+    assert desktop_controls == phone_controls
+    assert desktop_controls["inputWrap"] == "nowrap"
+
+    phone.locator(".c2-route").evaluate(
+        "route => route.style.setProperty('--conversation-safe-area-bottom', '34px')"
+    )
 
     assert phone.evaluate(
         "() => {"
         " const stack = document.querySelector('.chat-queue-stack');"
         " const text = document.querySelector('.chat-qrow-txt');"
+        " const composer = document.querySelector('[data-conversation-composer]');"
+        " const bottomNav = document.querySelector('.shell-nav');"
         " return stack.scrollHeight > stack.clientHeight"
-        "   && getComputedStyle(text).webkitLineClamp === '2'"
+        "   && getComputedStyle(text).whiteSpace === 'nowrap'"
+        "   && composer.getBoundingClientRect().bottom"
+        "     <= bottomNav.getBoundingClientRect().top"
         "   && document.documentElement.scrollWidth <= window.innerWidth;"
         "}"
     )

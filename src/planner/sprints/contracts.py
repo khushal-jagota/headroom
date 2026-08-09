@@ -44,8 +44,8 @@ REVIEW_FIELDS: Final[tuple[str, ...]] = (
     "updates_to_thinking",
     "carry_forward",
 )
-# Mid-sprint Review (rev6): three headed markdown sub-fields on the sprint, edited
-# per-field in place. Always-editable, like every sprint text field.
+# Checkpoint (rev6): three headed markdown sub-fields on the sprint, edited per-field
+# in place. The historical mid_* identifiers remain. All sprint text fields stay editable.
 MID_SPRINT_FIELDS: Final[tuple[str, ...]] = (
     "mid_where_we_stand",
     "mid_whats_changed",
@@ -63,7 +63,7 @@ class Sprint:  # §3.1
     primary_bet: str
     supports: str
     premortem: str
-    mid_where_we_stand: str = ""  # Mid-sprint Review sub-fields (rev6)
+    mid_where_we_stand: str = ""  # Checkpoint sub-fields; historical mid_* identifiers
     mid_whats_changed: str = ""
     mid_what_to_adjust: str = ""
     outcomes: str = ""

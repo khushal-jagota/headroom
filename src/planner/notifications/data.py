@@ -14,14 +14,16 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from planner.notifications.contracts import (
+    NOTIFICATION_SUBJECTS,
     NOTIFICATION_TYPE_BY_ID,
-    NOTIFICATION_TYPES,
+    TICKET_NOTIFICATION_SUBJECT_KEY,
     NotificationFact,
     NotificationIntent,
     NotificationSubjectKind,
     PendingDelivery,
     PushSubscription,
     WebPushIdentity,
+    notification_preference_is_valid,
 )
 from planner.notifications.logic.policy import decide_notification
 from planner.worker_settings.service import CHIEF_LABEL, CHIEF_SETTINGS_KEY
@@ -46,37 +48,44 @@ def _txn(conn: sqlite3.Connection) -> Iterator[None]:
         conn.execute("COMMIT" if conn.total_changes != changes_before else "ROLLBACK")
 
 
-def resolved_preferences(conn: sqlite3.Connection) -> dict[str, bool]:
+def resolved_preferences(conn: sqlite3.Connection) -> dict[tuple[str, str], bool]:
     stored = {
-        str(row["notification_type"]): bool(row["enabled"])
+        (str(row["subject_key"]), str(row["notification_type"])): bool(row["enabled"])
         for row in conn.execute(
-            "SELECT notification_type, enabled FROM notification_preferences"
+            "SELECT subject_key, notification_type, enabled FROM notification_preferences"
         )
     }
     return {
-        item.id: stored.get(item.id, item.default_enabled) for item in NOTIFICATION_TYPES
+        (subject.key, notification_type): stored.get(
+            (subject.key, notification_type),
+            NOTIFICATION_TYPE_BY_ID[notification_type].default_enabled,
+        )
+        for subject in NOTIFICATION_SUBJECTS
+        for notification_type in subject.notification_type_ids
     }
 
 
 def set_preference(
-    conn: sqlite3.Connection, notification_type: str, enabled: bool, now: int
+    conn: sqlite3.Connection,
+    subject_key: str,
+    notification_type: str,
+    enabled: bool,
+    now: int,
 ) -> None:
-    if notification_type not in NOTIFICATION_TYPE_BY_ID:
-        raise ValueError(f"unknown notification type: {notification_type}")
+    if not notification_preference_is_valid(subject_key, notification_type):
+        raise ValueError(f"unknown notification preference: {subject_key}/{notification_type}")
     conn.execute(
-        "INSERT INTO notification_preferences(notification_type, enabled, updated_at) "
-        "VALUES (?, ?, ?) ON CONFLICT(notification_type) DO UPDATE SET "
+        "INSERT INTO notification_preferences"
+        "(subject_key, notification_type, enabled, updated_at) "
+        "VALUES (?, ?, ?, ?) ON CONFLICT(subject_key, notification_type) DO UPDATE SET "
         "enabled = excluded.enabled, updated_at = excluded.updated_at",
-        (notification_type, int(enabled), now),
+        (subject_key, notification_type, int(enabled), now),
     )
 
 
-def get_or_create_web_push_identity(
-    conn: sqlite3.Connection, now: int
-) -> WebPushIdentity:
+def get_or_create_web_push_identity(conn: sqlite3.Connection, now: int) -> WebPushIdentity:
     row = conn.execute(
-        "SELECT private_key, public_key FROM notification_web_push_identity "
-        "WHERE singleton = 1"
+        "SELECT private_key, public_key FROM notification_web_push_identity WHERE singleton = 1"
     ).fetchone()
     if row is not None:
         return WebPushIdentity(str(row["private_key"]), str(row["public_key"]))
@@ -98,8 +107,7 @@ def get_or_create_web_push_identity(
             (candidate.private_key, candidate.public_key, now),
         )
     row = conn.execute(
-        "SELECT private_key, public_key FROM notification_web_push_identity "
-        "WHERE singleton = 1"
+        "SELECT private_key, public_key FROM notification_web_push_identity WHERE singleton = 1"
     ).fetchone()
     assert row is not None
     return WebPushIdentity(str(row["private_key"]), str(row["public_key"]))
@@ -107,8 +115,7 @@ def get_or_create_web_push_identity(
 
 def read_web_push_identity(conn: sqlite3.Connection) -> WebPushIdentity:
     row = conn.execute(
-        "SELECT private_key, public_key FROM notification_web_push_identity "
-        "WHERE singleton = 1"
+        "SELECT private_key, public_key FROM notification_web_push_identity WHERE singleton = 1"
     ).fetchone()
     if row is None:
         raise RuntimeError("Web Push identity was not initialized")
@@ -206,7 +213,7 @@ def _insert_fact(
 def _ticket_fact_type(status: str) -> str | None:
     return {
         "awaiting_approval": "ticket_needs_approval",
-        "needs_user": "ticket_needs_input",
+        "needs_user": "needs_input",
         "errored": "worker_failed",
     }.get(status)
 
@@ -266,9 +273,7 @@ def project_facts(conn: sqlite3.Connection) -> int:
         ).fetchall()
         for conversation in conversations:
             conversation_id = str(conversation["conversation_id"])
-            subject_kind = cast(
-                NotificationSubjectKind, str(conversation["subject_kind"])
-            )
+            subject_kind = cast(NotificationSubjectKind, str(conversation["subject_kind"]))
             subject_id = str(conversation["subject_id"])
             subject_label = (
                 str(conversation["ticket_title"])
@@ -292,7 +297,7 @@ def project_facts(conn: sqlite3.Connection) -> int:
                 if kind == "permission_asked":
                     event_notification_type = "permission_requested"
                 elif kind == "user_input_requested":
-                    event_notification_type = "ticket_needs_input"
+                    event_notification_type = "needs_input"
                 elif kind == "turn_ended" and payload.get("ending") == "completed":
                     event_notification_type = "worker_completed"
                 elif kind == "turn_ended" and payload.get("ending") == "failed":
@@ -348,13 +353,18 @@ def apply_policy(conn: sqlite3.Connection, now: int) -> int:
                 ),
                 occurred_at=int(row["occurred_at"]),
             )
+            subject_key = (
+                TICKET_NOTIFICATION_SUBJECT_KEY
+                if fact.subject_kind == "ticket"
+                else fact.subject_id
+            )
             intent = decide_notification(
-                fact, enabled=preferences.get(fact.notification_type, False)
+                fact,
+                enabled=preferences.get((subject_key, fact.notification_type), False),
             )
             outcome = "notify" if intent is not None else "suppress"
             conn.execute(
-                "INSERT INTO notification_decisions(fact_id, outcome, decided_at) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO notification_decisions(fact_id, outcome, decided_at) VALUES (?, ?, ?)",
                 (fact.fact_id, outcome, now),
             )
             if intent is not None:

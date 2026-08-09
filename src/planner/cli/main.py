@@ -77,6 +77,7 @@ _ITEM_FIELDS = {
 
 _PROJECT_FIELDS = {
     "name": "name",
+    "priority": "priority",
     "summary": "summary",
 }
 
@@ -96,7 +97,11 @@ _SCHEDULE_FIELDS = {
     "employee-launch-model": "employee_launch_model",
 }
 
-_SCHEDULE_CADENCES = ("every-planning-day", "current-sprint-final-day")
+_SCHEDULE_CADENCES = (
+    "every-planning-day",
+    "current-sprint-day-four",
+    "current-sprint-final-day",
+)
 
 
 def _read_source(spec: str, as_json: bool) -> str:
@@ -622,7 +627,7 @@ def worker_type_list(as_json: bool) -> None:
 
 @main.group("project")
 def project_group() -> None:
-    """List and create projects."""
+    """List, create, and update projects."""
 
 
 @project_group.command("list")
@@ -679,8 +684,10 @@ def project_set(
 ) -> None:
     api_field = _PROJECT_FIELDS[field]
     new_value = read_value_or_file(value, body_file, clear, as_json, field)
-    if field == "name" and new_value is None:
-        http.fail_validation("name cannot be cleared", as_json)
+    if field in {"name", "priority"} and new_value is None:
+        http.fail_validation(f"{field} cannot be cleared", as_json)
+    if field == "priority" and new_value not in _PRIORITIES:
+        http.fail_validation("priority must be P0, P1, P2, or P3", as_json)
     data = http.send(
         "PATCH",
         f"/api/projects/{project_id}",

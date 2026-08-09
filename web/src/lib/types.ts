@@ -90,7 +90,10 @@ export type ProjectsResponse = {
   projects: ProjectSummary[];
 };
 
-export type ScheduleCadence = "every_planning_day" | "current_sprint_final_day";
+export type ScheduleCadence =
+  | "every_planning_day"
+  | "current_sprint_day_four"
+  | "current_sprint_final_day";
 
 export type SchedulePlacementMode = "current_sprint" | "backlog" | "sprint_item";
 
@@ -247,8 +250,14 @@ export type TicketDeletionResponse = {
   linked_entity_ids: string[];
 };
 
+export type CurrentSprint = AnyRecord & {
+  date_start: string;
+  date_end: string;
+};
+
 export type CurrentSprintResponse = {
-  sprint: AnyRecord | null;
+  planning_date: string;
+  sprint: CurrentSprint | null;
   groups: Record<string, AnyRecord[]>;
 };
 
@@ -318,7 +327,13 @@ export type NotificationTypeSetting = {
   enabled: boolean;
 };
 
-export type NotificationSettingsResponse = {
+export type NotificationSubjectSettings = {
+  key: string;
+  label: string;
   types: NotificationTypeSetting[];
+};
+
+export type NotificationSettingsResponse = {
+  subjects: NotificationSubjectSettings[];
   vapid_public_key: string;
 };

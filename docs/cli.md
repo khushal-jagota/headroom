@@ -34,18 +34,20 @@ generic Stage setter.
   assign tickets to it. `day show` includes the day's tickets; `day list-tickets`
   returns the ticket list explicitly. `day set midday-reconciliation` writes the
   day’s separate mid-day check.
-- **`project list / create`** — inspect and add projects. Project availability is
+- **`project list / create / set`** — inspect, add, and update projects. Project availability is
   data-backed, not enum-backed. `project create` requires
   `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
-  have not yet been assessed.
+  have not yet been assessed. `project set <project_id> priority --value P0|P1|P2|P3`
+  reassesses an existing Project. It cannot clear an assessed priority.
 - **`worker-type list`** — list the registered Worker type identifiers in registry
   order. Its normal output is one identifier per line; `--json` returns the complete
   served Worker-type manifest for automation. Commands that require `--worker-type`
   point to this list instead of embedding a second catalog.
 - **`schedule create / list / show / set`** — manage generic internal schedules that
-  create and place an ordinary Ticket at an exact local time. A schedule uses either
-  `every-planning-day` or `current-sprint-final-day`, carries the same Worker type and
-  placement context as `ticket create`, and can be enabled or disabled. With no kickoff
+  create and place an ordinary Ticket at an exact local time. A schedule uses
+  `every-planning-day`, `current-sprint-day-four`, or `current-sprint-final-day`. It
+  carries the same Worker type and placement context as `ticket create`, and it can be
+  enabled or disabled. With no kickoff
   context, the created Ticket has no pending proposal, so readiness can start its
   Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
   and waits for approval. By default each

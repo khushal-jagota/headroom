@@ -353,7 +353,21 @@ def test_schedule_cli_creates_lists_updates_and_shows_run_state(
     assert created["placement_mode"] == "current_sprint"
 
     listed = cli(server, "schedule", "list")
-    assert [item["id"] for item in listed["schedules"]] == [created["id"]]
+    assert {item["id"] for item in listed["schedules"]} == {
+        "schedule_weekly_sprint_checkpoint",
+        created["id"],
+    }
+
+    day_four = cli(
+        server,
+        "schedule",
+        "set",
+        created["id"],
+        "cadence",
+        "--value",
+        "current-sprint-day-four",
+    )
+    assert day_four["cadence"] == "current_sprint_day_four"
 
     backlog = cli(
         server,
@@ -514,6 +528,32 @@ def test_project_create_list_and_project_id_item_filter(
     listed_by_id = {entry["id"]: entry for entry in listed_projects["projects"]}
     assert listed_by_id[project["id"]]["priority"] == "P1"
     assert listed_by_id["project_other"]["priority"] is None
+
+    reassessed = cli(
+        server,
+        "project",
+        "set",
+        project["id"],
+        "priority",
+        "--value",
+        "P0",
+    )
+    assert reassessed["priority"] == "P0"
+    assert reassessed["name"] == "Alpha One"
+
+    invalid_priority = CliRunner().invoke(
+        cli_main,
+        ["project", "set", project["id"], "priority", "--value", "urgent", "--json"],
+    )
+    assert invalid_priority.exit_code == 1
+    assert "priority must be P0, P1, P2, or P3" in invalid_priority.output
+
+    cleared_priority = CliRunner().invoke(
+        cli_main,
+        ["project", "set", project["id"], "priority", "--clear", "--json"],
+    )
+    assert cleared_priority.exit_code == 1
+    assert "priority cannot be cleared" in cleared_priority.output
 
     item = cli(
         server,
