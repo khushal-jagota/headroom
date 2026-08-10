@@ -7,7 +7,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from planner.core.errors import ErrorCode, PlannerError
-from planner.judgments.contracts import TicketJudgment, Verdict
+from planner.judgments.contracts import TicketJudgment, TroubleNote, Verdict
+from planner.judgments.logic.trouble_notes import normalize_trouble_note
 from planner.judgments.logic.verdicts import normalize_verdict, require_finished_ticket
 
 
@@ -52,6 +53,7 @@ def read_ticket_judgment(
         verdict_text=(
             str(row["verdict_text"]) if row["verdict_text"] is not None else None
         ),
+        trouble_notes=read_trouble_notes(conn, ticket_id),
     )
 
 
@@ -62,6 +64,64 @@ def read_verdict(conn: sqlite3.Connection, ticket_id: str) -> Verdict | None:
     ):
         return None
     return Verdict(rating=judgment.verdict_rating, text=judgment.verdict_text)
+
+
+def read_trouble_notes(
+    conn: sqlite3.Connection, ticket_id: str
+) -> tuple[TroubleNote, ...]:
+    rows = conn.execute(
+        "SELECT sequence, body, created_at "
+        "FROM ticket_judgment_trouble_notes WHERE ticket_id = ? "
+        "ORDER BY sequence ASC",
+        (ticket_id,),
+    ).fetchall()
+    return tuple(
+        TroubleNote(
+            sequence=int(row["sequence"]),
+            body=str(row["body"]),
+            created_at=int(row["created_at"]),
+        )
+        for row in rows
+    )
+
+
+def append_trouble_note(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    body: object,
+    created_at: int,
+) -> TroubleNote:
+    normalized_body = normalize_trouble_note(body)
+    with _txn(conn):
+        ticket = conn.execute(
+            "SELECT id FROM tickets WHERE id = ?", (ticket_id,)
+        ).fetchone()
+        if ticket is None:
+            raise PlannerError(
+                ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id}
+            )
+        conn.execute(
+            "INSERT INTO ticket_judgments (ticket_id) VALUES (?) "
+            "ON CONFLICT(ticket_id) DO NOTHING",
+            (ticket_id,),
+        )
+        row = conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence "
+            "FROM ticket_judgment_trouble_notes WHERE ticket_id = ?",
+            (ticket_id,),
+        ).fetchone()
+        sequence = int(row["sequence"])
+        conn.execute(
+            "INSERT INTO ticket_judgment_trouble_notes "
+            "(ticket_id, sequence, body, created_at) VALUES (?, ?, ?, ?)",
+            (ticket_id, sequence, normalized_body, created_at),
+        )
+    return TroubleNote(
+        sequence=sequence,
+        body=normalized_body,
+        created_at=created_at,
+    )
 
 
 def upsert_verdict(

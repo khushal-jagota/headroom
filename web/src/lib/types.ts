@@ -232,12 +232,19 @@ export type TicketDetail = {
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   verdict: TicketVerdict | null;
+  trouble_notes: TicketTroubleNote[];
   fields: Record<string, TicketField>;
 };
 
 export type TicketVerdict = {
   rating: number | null;
   text: string | null;
+};
+
+export type TicketTroubleNote = {
+  sequence: number;
+  body: string;
+  created_at: number;
 };
 
 export type EmployeeConfigurationSnapshot = {

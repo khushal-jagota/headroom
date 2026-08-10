@@ -41,8 +41,8 @@ operations. Neither path is a general Ticket Stage setter.
 - **Tickets & the gates** (`tickets-and-gates.md`) — what a ticket is, the stages
   it moves through, and the proposal resolver, scope, and approval gate that govern
   every advance. The correctness heart of the system.
-- **Ticket judgments** (`judgments.md`) — the optional user verdict on finished work,
-  kept outside the Ticket workflow fields.
+- **Ticket judgments** (`judgments.md`) — the optional user verdict and worker trouble
+  notes, kept outside the Ticket workflow fields.
 - **Worker types and settings** (`worker-types.md`) — the registry declares each workflow's
   immutable Stages, gates, fields, specialist identity, and starting worker setup. Managed
   settings own prospective Stage defaults and editable specialist-skill content.

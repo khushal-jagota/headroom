@@ -125,6 +125,66 @@ def test_worker_request_user_help_is_a_no_payload_worker_command(
     assert "user help requested on t_help" in result.output
 
 
+def test_worker_trouble_uses_only_current_ticket_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+    body_file = tmp_path / "trouble.txt"
+    body_file.write_text("Harness returned no output.\n", encoding="utf-8")
+
+    def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, path, kwargs))
+        return {
+            "trouble_note": {
+                "sequence": 1,
+                "body": "Harness returned no output.",
+                "created_at": 1,
+            }
+        }
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["worker", "trouble", "--body-file", str(body_file)],
+        env={"PLAN_TICKET_ID": "t_current"},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "POST",
+            "/api/tickets/t_current/trouble-notes",
+            {
+                "as_json": False,
+                "json_body": {"body": "Harness returned no output.\n"},
+            },
+        )
+    ]
+    assert "trouble recorded on t_current as note 1" in result.output
+
+
+def test_worker_trouble_rejects_missing_identity_before_http(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    body_file = tmp_path / "trouble.txt"
+    body_file.write_text("Harness returned no output.", encoding="utf-8")
+
+    def explode(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("no HTTP request expected")
+
+    monkeypatch.setattr(http, "send", explode)
+    result = CliRunner().invoke(
+        cli_main.main,
+        ["worker", "trouble", "--body-file", str(body_file)],
+        env={"PLAN_TICKET_ID": ""},
+    )
+
+    assert result.exit_code != 0
+    assert "ticket id required" in result.output
+
+
 def test_ticket_list_passes_repeatable_filters_and_page_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

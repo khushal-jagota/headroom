@@ -16,11 +16,16 @@ from planner.core.db import connect, create_schema
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.server import create_app
 from planner.judgments import data as judgments_data
-from planner.judgments.contracts import TicketJudgment
+from planner.judgments.contracts import TicketJudgment, TroubleNote
+from planner.judgments.logic.trouble_notes import normalize_trouble_note
 from planner.judgments.logic.verdicts import normalize_verdict
 from planner.tickets import data as tickets_data
 
 _AGENT = {"X-Plan-Actor": "worker"}
+
+
+def _worker(ticket_id: str) -> dict[str, str]:
+    return {"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id}
 
 
 def _make_app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -195,6 +200,151 @@ def test_successful_verdict_write_emits_one_change_signal(tmp_path: Path) -> Non
             response = client.put(
                 f"/api/tickets/{ticket_id}/verdict",
                 json={"rating": 4, "text": "Good work."},
+            )
+    finally:
+        unsubscribe()
+    assert response.status_code == 200
+    assert signals == 1
+
+
+def test_trouble_note_writer_creates_parent_and_preserves_append_order(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "trouble-writer.db"
+    conn = connect(str(db_path))
+    create_schema(conn)
+    ticket_id = _ticket(db_path, stage="needs_implementation")
+
+    first = judgments_data.append_trouble_note(
+        conn, ticket_id, body="  Harness lost the process.\n", created_at=20
+    )
+    second = judgments_data.append_trouble_note(
+        conn, ticket_id, body="Tool returned no output.", created_at=10
+    )
+
+    assert first == TroubleNote(
+        sequence=1, body="Harness lost the process.", created_at=20
+    )
+    assert second.sequence == 2
+    assert judgments_data.read_trouble_notes(conn, ticket_id) == (first, second)
+    judgment = judgments_data.read_ticket_judgment(conn, ticket_id)
+    assert judgment is not None
+    assert judgment.trouble_notes == (first, second)
+
+    with pytest.raises(IntegrityError, match="UNIQUE constraint failed"):
+        conn.execute(
+            "INSERT INTO ticket_judgment_trouble_notes "
+            "(ticket_id, sequence, body, created_at) VALUES (?, 2, 'duplicate', 30)",
+            (ticket_id,),
+        )
+
+    conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+    assert judgments_data.read_trouble_notes(conn, ticket_id) == ()
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    "body",
+    ("", "  ", "first\nsecond", "first\rsecond", "x" * 501, 42),
+)
+def test_trouble_note_validation_rejects_invalid_body(body: object) -> None:
+    with pytest.raises(PlannerError) as raised:
+        normalize_trouble_note(body)
+    assert raised.value.code == ErrorCode.validation
+
+
+def test_trouble_note_api_requires_exact_current_worker_and_projects_notes(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path, stage="needs_implementation")
+    other_ticket_id = _ticket(db_path, stage="needs_implementation")
+
+    with TestClient(app) as client:
+        direct = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "Direct caller"},
+        )
+        missing_claim = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "Missing claim"},
+            headers=_AGENT,
+        )
+        cross_ticket = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "Wrong Ticket"},
+            headers=_worker(other_ticket_id),
+        )
+        first = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "  Harness dropped the output.  "},
+            headers=_worker(ticket_id),
+        )
+        second = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "The tool timed out."},
+            headers=_worker(ticket_id),
+        )
+        detail = client.get(f"/api/tickets/{ticket_id}").json()
+
+    assert direct.json()["error"]["code"] == "agent_forbidden"
+    assert missing_claim.json()["error"]["code"] == "agent_forbidden"
+    assert cross_ticket.json()["error"]["code"] == "agent_forbidden"
+    assert first.status_code == 200, first.json()
+    assert second.status_code == 200, second.json()
+    assert first.json()["trouble_note"]["body"] == "Harness dropped the output."
+    assert [note["sequence"] for note in detail["trouble_notes"]] == [1, 2]
+    assert [note["body"] for note in detail["trouble_notes"]] == [
+        "Harness dropped the output.",
+        "The tool timed out.",
+    ]
+    assert all(note["created_at"] > 0 for note in detail["trouble_notes"])
+
+
+def test_trouble_note_api_rejects_multiline_over_limit_and_unknown_ticket(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path, stage="needs_implementation")
+
+    with TestClient(app) as client:
+        multiline = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "one\ntwo"},
+            headers=_worker(ticket_id),
+        )
+        over_limit = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "x" * 501},
+            headers=_worker(ticket_id),
+        )
+        unknown = client.post(
+            "/api/tickets/t_missing/trouble-notes",
+            json={"body": "Missing Ticket"},
+            headers=_worker("t_missing"),
+        )
+
+    assert multiline.json()["error"]["code"] == "validation"
+    assert over_limit.json()["error"]["code"] == "validation"
+    assert unknown.status_code == 404
+
+
+def test_successful_trouble_note_write_emits_one_change_signal(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path, stage="needs_implementation")
+    signals = 0
+
+    def record() -> None:
+        nonlocal signals
+        signals += 1
+
+    unsubscribe = change_signal.subscribe(record)
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/tickets/{ticket_id}/trouble-notes",
+                json={"body": "The harness stopped."},
+                headers=_worker(ticket_id),
             )
     finally:
         unsubscribe()

@@ -33,6 +33,7 @@
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
   import TicketVerdict from "../components/TicketVerdict.svelte";
+  import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
 
   let { id }: { id: string } = $props();
   const stableId = untrack(() => id);
@@ -557,6 +558,7 @@
 
         <div class="ticket-col">
           <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
+          <TicketTroubleNotes notes={detail.trouble_notes} />
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}
