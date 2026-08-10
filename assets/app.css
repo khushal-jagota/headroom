@@ -2346,8 +2346,8 @@ button.list-row:hover .list-row-title {
  * lives here because component styles may not declare box-shadow. */
 .task-pop { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
 
-/* the "/" command menu = a raised popover above the composer; a read of the
- * gateway catalog. No dividers, no accent — grouped rows fade into the surface. */
+/* The composer catalog is a raised popover above the composer. No dividers and no accent:
+ * grouped rows fade into the surface. */
 .chat-menu {
   position: absolute;
   left: 0;

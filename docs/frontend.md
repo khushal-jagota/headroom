@@ -77,6 +77,11 @@ One screen per part of the system:
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
 
+  A done Ticket offers an optional verdict above its Stage history. The user can choose
+  one of five ratings, add text, use both, or clear the verdict. A saved verdict remains
+  visible without edit controls if the Ticket returns to an earlier Stage. See
+  `judgments.md`.
+
   The stages and their workflow remain the Ticket's Worker type's, derived from the
   served manifest (see below and `worker-types.md`); the kickoff user note sits first in
   that spine, collapsed. The current Stage mark speaks without a second status pill.
@@ -356,10 +361,10 @@ hand-rolling the same shapes per screen. Each does one job:
   Which state it opens in is the page's to choose, and the page can change it later. A
   page that says nothing gets no layer at all: the Chief of Staff, the Workspace desk and
   the development pane each keep a conversation that simply fills the space it is given.
-- **AgentCommandMenu** — the list that opens in the composer when a message is started
-  with a slash. It offers the commands this conversation's agent said it takes, narrowed
-  as the name is typed. Choosing one writes the command into the message as ordinary
-  text; the agent reads its own name back out.
+- **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
+  `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and
+  plugins. The list narrows as text is typed. A choice inserts its exact catalog text
+  into the draft. Sending and transcript display still use ordinary text.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.

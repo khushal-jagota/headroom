@@ -110,7 +110,8 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -410,10 +411,10 @@ class ClaudeAgentSdkBackendChild:
         replacing it with an empty one, because having no commands and never having said
         is not the same thing.
         """
-        available_commands = _commands_from_the_handshake(await client.get_server_info())
-        if available_commands is None:
+        composer_catalog = _composer_catalog_from_the_handshake(await client.get_server_info())
+        if composer_catalog is None:
             return
-        await self._sink.available_commands_reported(available_commands)
+        await self._sink.composer_catalog_reported(composer_catalog)
 
     async def write_prompt(
         self,
@@ -1183,9 +1184,9 @@ def _identity_environment(
     return role_materials.identity_environment_variables
 
 
-def _commands_from_the_handshake(
+def _composer_catalog_from_the_handshake(
     handshake: dict[str, Any] | None,
-) -> tuple[AgentCommand, ...] | None:
+) -> tuple[ComposerCatalogEntry, ...] | None:
     """The commands the child said it takes, or nothing when it said nothing about them.
 
     The handshake is raw wire data — the SDK hands it over as it came, with no model of
@@ -1202,7 +1203,7 @@ def _commands_from_the_handshake(
     listed = handshake.get("commands")
     if not isinstance(listed, list):
         return None
-    commands: list[AgentCommand] = []
+    commands: list[ComposerCatalogEntry] = []
     for entry in listed:
         if not isinstance(entry, dict):
             continue
@@ -1216,8 +1217,10 @@ def _commands_from_the_handshake(
         # offering the same command several times over.
         argument_hint = entry.get("argumentHint")
         commands.append(
-            AgentCommand(
-                name=name,
+            ComposerCatalogEntry(
+                kind=ComposerCatalogEntryKind.command,
+                display_text=f"/{name}",
+                insertion_text=f"/{name} ",
                 description=description if isinstance(description, str) else "",
                 argument_hint=(
                     argument_hint if isinstance(argument_hint, str) and argument_hint else None

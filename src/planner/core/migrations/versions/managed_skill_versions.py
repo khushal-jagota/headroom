@@ -1,7 +1,7 @@
 """Keep immutable managed-skill versions and bind them to worker-step messages.
 
 Revision ID: managed_skill_versions
-Revises: weekly_sprint_checkpoint_schedule
+Revises: conversation_composer_catalog
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "managed_skill_versions"
-down_revision = "weekly_sprint_checkpoint_schedule"
+down_revision = "conversation_composer_catalog"
 branch_labels = None
 depends_on = None
 

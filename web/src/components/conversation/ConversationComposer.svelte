@@ -14,13 +14,12 @@
    * unless something else has been composed in the meantime, in which case that draft is
    * what matters and the error under the box is the whole of the news.
    *
-   * Writing a command is writing a line that starts with a slash, and while the cursor is
-   * still inside that first word the agent's own commands are offered under it. Choosing
-   * one writes the words a person would have typed and nothing else: the message goes as
-   * ordinary text, and the agent reads its own command name back out of it.
+   * Writing a catalog token starts a line with slash, dollar, or at. While the cursor is
+   * still inside that first word the eligible catalog entries are offered under it.
+   * Choosing one inserts its exact text. The message still goes as ordinary text.
    */
   import { onMount, tick } from "svelte";
-  import AgentCommandMenu from "./AgentCommandMenu.svelte";
+  import ComposerCatalogMenu from "./ComposerCatalogMenu.svelte";
   import ComposerRunControls from "./composer/ComposerRunControls.svelte";
   import HeldPromptStack from "./composer/HeldPromptStack.svelte";
   import PermissionAskActions from "./PermissionAskActions.svelte";
@@ -60,7 +59,8 @@
     type PendingConversationImage
   } from "../../lib/conversation/pendingImages";
   import type {
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     BackendModel,
     BackendSnapshot,
     ConversationBackendKey,
@@ -83,7 +83,7 @@
     models = [],
     backends = [],
     effortOptions = [],
-    availableCommands = [],
+    composerCatalog = [],
     startsOnModel = null,
     startsOnReasoningEffort = null,
     heldPromptRows = [],
@@ -129,9 +129,8 @@
      *  them, and then there is nothing to switch to. */
     backends?: readonly BackendSnapshot[];
     effortOptions?: readonly string[];
-    /** The commands this conversation's agent reports. An agent that reports none, and an
-     *  agent that has not been asked yet, are both an empty list. */
-    availableCommands?: readonly AgentCommand[];
+    /** The typed text shortcuts this conversation offers in the composer. */
+    composerCatalog?: readonly ComposerCatalogEntry[];
     /** What a conversation started from here would run on, before there is one: the
      *  owner's own values, resolved by the same code that will create it. They are what
      *  the selectors show with nothing picked, and neither is ever offered as an option.
@@ -181,10 +180,9 @@
    *  here, so a person who has gone to read the thread is not writing a command and the
    *  menu is not floating over what they went to read. */
   let theCursorIsInTheBox = $state(false);
-  /** Escape, on a command still being written. Forgotten as soon as the cursor leaves it,
-   *  so coming back to the command offers the menu again. */
+  /** Escape, on a catalog token still being written. Forgotten after the cursor leaves. */
   let menuWasDismissed = $state(false);
-  let activeCommandIndex = $state(0);
+  let activeCatalogEntryIndex = $state(0);
   let pendingImages = $state<PendingConversationImage[]>([]);
   let imageInput = $state<HTMLInputElement | null>(null);
   let nextImageId = 1;
@@ -265,30 +263,35 @@
     publishCompositionState(compositionActive);
   });
 
-  // --- the command being written -----------------------------------------------------------
-  let commandUnderway = $derived(commandOnTheCursorsLine(text, cursorAt));
-  /** What has been typed of the command's name, which is what the list is narrowed by.
-   *  Null when the cursor is not inside the name, and then the writing rule offers
-   *  nothing. */
-  let typedCommandName = $derived(commandUnderway?.typedSoFar ?? null);
-  let commandMenuIsOpen = $derived(
+  // --- the catalog token being written ----------------------------------------------------
+  let catalogTokenUnderway = $derived(catalogTokenOnTheCursorsLine(text, cursorAt));
+  let typedCatalogText = $derived(catalogTokenUnderway?.typedSoFar ?? null);
+  let catalogMenuIsOpen = $derived(
     !inputDisabled
     && theCursorIsInTheBox
-    && typedCommandName !== null
+    && typedCatalogText !== null
     && !menuWasDismissed
   );
-  let matchingCommands = $derived(commandsMatching(availableCommands, typedCommandName ?? ""));
+  let eligibleCatalogEntries = $derived(
+    catalogEntriesForTrigger(composerCatalog, catalogTokenUnderway?.trigger ?? null)
+  );
+  let matchingCatalogEntries = $derived(
+    catalogEntriesMatching(
+      eligibleCatalogEntries,
+      typedCatalogText ?? "",
+      catalogTokenUnderway?.trigger ?? null
+    )
+  );
 
-  // A dismissal belongs to the command it was made on: once the cursor is out of the name,
-  // there is nothing left to have dismissed.
+  // A dismissal belongs to the active token. Leaving the token clears it.
   $effect(() => {
-    if (typedCommandName === null) menuWasDismissed = false;
+    if (typedCatalogText === null) menuWasDismissed = false;
   });
 
   // A different list is a different highlight, and it starts at the top.
   $effect(() => {
-    matchingCommands;
-    activeCommandIndex = 0;
+    matchingCatalogEntries;
+    activeCatalogEntryIndex = 0;
   });
 
   $effect(() => {
@@ -518,7 +521,7 @@
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (commandMenuIsOpen) {
+    if (catalogMenuIsOpen) {
       if (event.key === "Escape") {
         event.preventDefault();
         menuWasDismissed = true;
@@ -526,17 +529,18 @@
       }
       // Only when there is something to move between or take. A menu that is open saying
       // there is nothing to offer is a sentence, not a list, and the keys stay the box's.
-      if (matchingCommands.length > 0) {
+      if (matchingCatalogEntries.length > 0) {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
-          const step = event.key === "ArrowDown" ? 1 : matchingCommands.length - 1;
-          activeCommandIndex = (activeCommandIndex + step) % matchingCommands.length;
+          const step = event.key === "ArrowDown" ? 1 : matchingCatalogEntries.length - 1;
+          activeCatalogEntryIndex =
+            (activeCatalogEntryIndex + step) % matchingCatalogEntries.length;
           return;
         }
-        const highlighted = matchingCommands[activeCommandIndex];
+        const highlighted = matchingCatalogEntries[activeCatalogEntryIndex];
         if ((event.key === "Enter" || event.key === "Tab") && highlighted !== undefined) {
           event.preventDefault();
-          void takeTheCommand(highlighted);
+          void takeTheCatalogEntry(highlighted);
           return;
         }
       }
@@ -564,66 +568,72 @@
     readWhereTheCursorIs();
   }
 
-  /** Where the command being written on this line is, and how much of its name is typed.
-   *
-   * A command is a line that starts with a slash — the line the cursor is on, not the
-   * message, so a command can be written under something already written. Its name runs to
-   * the first space, and the menu is offered while the cursor is still inside that name:
-   * a space between the slash and the cursor means the person has moved on to what they
-   * are asking for.
-   */
-  function commandOnTheCursorsLine(
+  /** The line-start catalog token under the cursor. */
+  function catalogTokenOnTheCursorsLine(
     written: string,
     at: number
-  ): { start: number; end: number; typedSoFar: string | null } | null {
+  ): { start: number; end: number; trigger: "/" | "$" | "@"; typedSoFar: string | null } | null {
     const lineStart = at === 0 ? 0 : written.lastIndexOf("\n", at - 1) + 1;
-    if (written[lineStart] !== "/") return null;
+    const trigger = written[lineStart];
+    if (trigger !== "/" && trigger !== "$" && trigger !== "@") return null;
     let end = lineStart + 1;
     while (end < written.length && !/\s/.test(written[end] ?? "")) end += 1;
     return {
       start: lineStart,
       end,
+      trigger,
       typedSoFar: at > lineStart && at <= end ? written.slice(lineStart + 1, at) : null
     };
   }
 
-  /** The commands a typed name reaches, best first: the ones that start with it, then the
-   *  ones that merely contain it, alphabetically within each. Nothing typed reaches them
-   *  all. */
-  function commandsMatching(
-    commands: readonly AgentCommand[],
-    typed: string
-  ): AgentCommand[] {
-    const wanted = typed.toLowerCase();
-    const byName = (one: AgentCommand, other: AgentCommand): number =>
-      one.name.localeCompare(other.name);
-    const startsWithIt = commands.filter((command) =>
-      command.name.toLowerCase().startsWith(wanted)
-    );
-    const containsIt = commands.filter(
-      (command) =>
-        !command.name.toLowerCase().startsWith(wanted)
-        && command.name.toLowerCase().includes(wanted)
-    );
-    return [...startsWithIt.sort(byName), ...containsIt.sort(byName)];
+  function catalogEntriesForTrigger(
+    entries: readonly ComposerCatalogEntry[],
+    trigger: "/" | "$" | "@" | null
+  ): ComposerCatalogEntry[] {
+    const kinds: readonly ComposerCatalogEntryKind[] = trigger === "/"
+      ? ["command"]
+      : trigger === "$"
+        ? ["skill"]
+        : trigger === "@"
+          ? ["app", "plugin"]
+          : [];
+    return entries.filter((entry) => kinds.includes(entry.kind));
   }
 
-  /** Take the highlighted command: its name goes in, and the message is the person's again.
-   *
-   * What is written is exactly what they would have typed — the slash, the name, and one
-   * space after it — over the command that was being written. Nothing about the message is
-   * structured by this: it is sent as the words it is, and the agent reads its own command
-   * name back out of them.
-   */
-  async function takeTheCommand(command: AgentCommand): Promise<void> {
-    const underway = commandUnderway;
+  /** Prefix matches come before contains matches, alphabetically within each group. */
+  function catalogEntriesMatching(
+    entries: readonly ComposerCatalogEntry[],
+    typed: string,
+    trigger: "/" | "$" | "@" | null
+  ): ComposerCatalogEntry[] {
+    const wanted = typed.toLowerCase();
+    const searchable = (entry: ComposerCatalogEntry): string => {
+      const displayText = entry.display_text.toLowerCase();
+      return trigger !== null && displayText.startsWith(trigger)
+        ? displayText.slice(trigger.length)
+        : displayText;
+    };
+    const byDisplayText = (one: ComposerCatalogEntry, other: ComposerCatalogEntry): number =>
+      one.display_text.localeCompare(other.display_text);
+    const startsWithIt = entries.filter((entry) =>
+      searchable(entry).startsWith(wanted)
+    );
+    const containsIt = entries.filter(
+      (entry) => !searchable(entry).startsWith(wanted) && searchable(entry).includes(wanted)
+    );
+    return [...startsWithIt.sort(byDisplayText), ...containsIt.sort(byDisplayText)];
+  }
+
+  /** Replace the active token with the entry's exact insertion text. */
+  async function takeTheCatalogEntry(entry: ComposerCatalogEntry): Promise<void> {
+    const underway = catalogTokenUnderway;
     if (underway === null) return;
-    const written = `/${command.name} `;
+    const written = entry.insertion_text;
     recordDraftChange();
-    // The space the name is followed by is the one already there, where there is one,
-    // rather than a second one after it.
     const rest = text.slice(underway.end);
-    text = text.slice(0, underway.start) + written + (rest.startsWith(" ") ? rest.slice(1) : rest);
+    const preservedRest = written.endsWith(" ") && rest.startsWith(" ") ? rest.slice(1) : rest;
+    text = text.slice(0, underway.start) + written + preservedRest;
+    menuWasDismissed = true;
     const cursorGoes = underway.start + written.length;
     await tick();
     const input = inputElement;
@@ -755,13 +765,13 @@
         />
       {/if}
 
-      {#if commandMenuIsOpen}
-        <AgentCommandMenu
-          commands={matchingCommands}
-          activeIndex={activeCommandIndex}
-          anyCommandsAtAll={availableCommands.length > 0}
-          onChoose={(command) => void takeTheCommand(command)}
-          onHighlight={(index) => (activeCommandIndex = index)}
+      {#if catalogMenuIsOpen}
+        <ComposerCatalogMenu
+          entries={matchingCatalogEntries}
+          activeIndex={activeCatalogEntryIndex}
+          anyEntriesAtAll={eligibleCatalogEntries.length > 0}
+          onChoose={(entry) => void takeTheCatalogEntry(entry)}
+          onHighlight={(index) => (activeCatalogEntryIndex = index)}
         />
       {/if}
 
@@ -902,8 +912,8 @@
             type="button"
             class="chat-slash"
             data-conversation-slash
-            aria-label="Aim this message at a skill"
-            title="Aim this message at a skill"
+            aria-label="Write a command"
+            title="Write a command"
             disabled={inputDisabled}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => void startWritingACommand()}

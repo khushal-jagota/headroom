@@ -68,7 +68,8 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -207,7 +208,7 @@ class _RecordingSink:
         self.user_input_failures: list[tuple[str, str]] = []
         self.endings: list[dict[str, Any]] = []
         self.cursors: list[str] = []
-        self.available_commands: list[tuple[AgentCommand, ...]] = []
+        self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self.token_usage: list[dict[str, Any]] = []
         self.compactions: list[TurnToken] = []
         # The order the facts a result message carries were told in. What is said about a
@@ -345,10 +346,22 @@ class _RecordingSink:
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.cursors.append(vendor_session_cursor)
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
-        self.available_commands.append(available_commands)
+        self.composer_catalog.append(composer_catalog)
+
+
+def _command(
+    name: str, description: str, argument_hint: str | None = None
+) -> ComposerCatalogEntry:
+    return ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.command,
+        display_text=f"/{name}",
+        insertion_text=f"/{name} ",
+        description=description,
+        argument_hint=argument_hint,
+    )
 
 
 def _start_request(
@@ -724,13 +737,13 @@ def test_the_commands_claude_takes_are_reported_as_the_session_is_established(
         )
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-        assert sink.available_commands == [
+        assert sink.composer_catalog == [
             (
-                AgentCommand(
+                _command(
                     name="review", description="Review the working tree", argument_hint="[path]"
                 ),
                 # Nothing to type after it, so there is no hint rather than an empty one.
-                AgentCommand(name="clear", description="Start the conversation again"),
+                _command(name="clear", description="Start the conversation again"),
             )
         ]
         await child.stop()
@@ -757,8 +770,8 @@ def test_the_commands_are_the_answer_for_this_conversations_own_folder(tmp_path:
 
         assert len(clients) == 1
         assert clients[0].options.cwd == str(tmp_path)
-        assert sink.available_commands == [
-            (AgentCommand(name="ship", description="This project's own"),)
+        assert sink.composer_catalog == [
+            (_command(name="ship", description="This project's own"),)
         ]
         await child.stop()
 
@@ -783,8 +796,8 @@ def test_a_commands_other_spellings_are_dropped_rather_than_offered(tmp_path: Pa
         )
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-        assert sink.available_commands == [
-            (AgentCommand(name="review", description="Review the working tree"),)
+        assert sink.composer_catalog == [
+            (_command(name="review", description="Review the working tree"),)
         ]
         await child.stop()
 
@@ -813,8 +826,8 @@ def test_an_entry_with_no_name_to_type_is_left_out_and_the_rest_stand(tmp_path: 
         )
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-        assert sink.available_commands == [
-            (AgentCommand(name="review", description="Review the working tree"),)
+        assert sink.composer_catalog == [
+            (_command(name="review", description="Review the working tree"),)
         ]
         assert sink.cursors != []
         await child.stop()
@@ -830,7 +843,7 @@ def test_a_handshake_that_says_nothing_about_commands_reports_nothing(tmp_path: 
             child, sink, _ = _bench(_start_request(workspace_folder=tmp_path), handshake=handshake)
             await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-            assert sink.available_commands == []
+            assert sink.composer_catalog == []
             assert sink.cursors != []
             await child.stop()
 
@@ -848,7 +861,7 @@ def test_claude_saying_it_has_no_commands_is_not_the_same_as_saying_nothing(
         )
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
 
-        assert sink.available_commands == [()]
+        assert sink.composer_catalog == [()]
         await child.stop()
 
     _run(exercise)

@@ -194,6 +194,7 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     default_stage_ownership_mode: "worker",
     effective_stage_ownership_mode: "worker",
     conversation_id: null,
+    verdict: null,
     fields: {},
     ...overrides
   };

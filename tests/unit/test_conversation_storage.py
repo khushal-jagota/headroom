@@ -11,7 +11,8 @@ import pytest
 
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     ConversationAlreadyStarted,
     ConversationBackendKey,
@@ -370,12 +371,34 @@ def test_the_session_cursor_moves(store: ConversationStore) -> None:
 # --- the commands the agent says a person may type at it -----------------------------------
 
 FIRST_MENU = (
-    AgentCommand(name="review", description="Review the diff", argument_hint="[path]"),
-    AgentCommand(name="compact", description="Summarise the conversation so far"),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.command,
+        display_text="/review",
+        insertion_text="/review ",
+        description="Review the diff",
+        argument_hint="[path]",
+    ),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.skill,
+        display_text="$compact",
+        insertion_text="$compact ",
+        description="Summarise the conversation so far",
+    ),
 )
 SECOND_MENU = (
-    AgentCommand(name="compact", description="Summarise the conversation so far"),
-    AgentCommand(name="ship", description="Open the pull request", argument_hint="<title>"),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.app,
+        display_text="@compact",
+        insertion_text="@compact ",
+        description="Summarise the conversation so far",
+    ),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.plugin,
+        display_text="@ship",
+        insertion_text="@ship exact ",
+        description="Open the pull request",
+        argument_hint="<title>",
+    ),
 )
 
 
@@ -384,11 +407,11 @@ def test_the_commands_an_agent_offers_are_kept_and_read_back(store: Conversation
 
     async def exercise() -> None:
         await store.create_conversation(_resolved())
-        await store.replace_available_commands("c", FIRST_MENU)
+        await store.replace_composer_catalog("c", FIRST_MENU)
         read = await store.read_conversation("c")
 
         assert read is not None
-        assert read.available_commands == FIRST_MENU
+        assert read.composer_catalog == FIRST_MENU
 
     asyncio.run(exercise())
 
@@ -400,13 +423,13 @@ def test_a_second_report_puts_the_whole_menu_where_the_old_one_was(
 
     async def exercise() -> None:
         await store.create_conversation(_resolved())
-        await store.replace_available_commands("c", FIRST_MENU)
-        await store.replace_available_commands("c", SECOND_MENU)
+        await store.replace_composer_catalog("c", FIRST_MENU)
+        await store.replace_composer_catalog("c", SECOND_MENU)
         read = await store.read_conversation("c")
 
         assert read is not None
-        assert read.available_commands == SECOND_MENU
-        assert "review" not in {command.name for command in read.available_commands}
+        assert read.composer_catalog == SECOND_MENU
+        assert "/review" not in {entry.display_text for entry in read.composer_catalog}
 
     asyncio.run(exercise())
 
@@ -420,13 +443,13 @@ def test_a_conversation_nothing_has_reported_for_offers_no_commands(
         await store.create_conversation(_resolved())
         read = await store.read_conversation("c")
         assert read is not None
-        assert read.available_commands == ()
+        assert read.composer_catalog == ()
 
-        await store.replace_available_commands("c", FIRST_MENU)
-        await store.replace_available_commands("c", ())
+        await store.replace_composer_catalog("c", FIRST_MENU)
+        await store.replace_composer_catalog("c", ())
         emptied = await store.read_conversation("c")
         assert emptied is not None
-        assert emptied.available_commands == ()
+        assert emptied.composer_catalog == ()
 
     asyncio.run(exercise())
 

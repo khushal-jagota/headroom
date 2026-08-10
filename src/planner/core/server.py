@@ -40,6 +40,7 @@ from planner.environments.vps_status import (
     collect_vps_status_summary,
 )
 from planner.files.api import router as files_router
+from planner.judgments.api import router as judgments_router
 from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
@@ -234,6 +235,7 @@ def create_app(
 
     for domain_router in (
         tickets_router,
+        judgments_router,
         projects_router,
         sprints_router,
         days_router,

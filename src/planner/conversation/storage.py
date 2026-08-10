@@ -24,7 +24,8 @@ from pathlib import Path
 
 from planner.conversation.backends.contracts import BackendSpawnFailed
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     ConversationAlreadyStarted,
     ConversationBackendKey,
@@ -80,8 +81,8 @@ class ConversationRecord:
     ``model`` and ``reasoning_effort`` are the current values, which a delivery carrying a
     change moves. ``vendor_session_cursor`` is the backend's own session identity — it is
     internal, it is rebindable, and it is what a lazy resume starts from.
-    ``available_commands`` is what the backend last said a person may type at this agent,
-    kept here so it is still there when no child is.
+    ``composer_catalog`` is what the backend last said the composer can offer for this
+    agent, kept here so it is still there when no child is.
     """
 
     conversation_id: str
@@ -95,7 +96,7 @@ class ConversationRecord:
     identity_environment_variables: tuple[tuple[str, str], ...]
     access: ConversationAccess
     vendor_session_cursor: str | None
-    available_commands: tuple[AgentCommand, ...]
+    composer_catalog: tuple[ComposerCatalogEntry, ...]
     latest_sequence: int
     created_at: int
 
@@ -227,17 +228,16 @@ class ConversationStore:
             self._update_vendor_session_cursor_sync, conversation_id, vendor_session_cursor
         )
 
-    async def replace_available_commands(
-        self, conversation_id: str, available_commands: tuple[AgentCommand, ...]
+    async def replace_composer_catalog(
+        self, conversation_id: str, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
-        """Put the whole command list where the old one was.
+        """Put the whole composer catalog where the old one was.
 
-        A backend reports the menu it has now, not what moved in it, so what was there
-        before is out of date rather than partly right. Merging would keep a command the
-        agent has stopped answering to.
+        A backend reports the catalog it has now, not what moved in it. The prior catalog
+        is out of date rather than partly right, so this does not merge entries.
         """
         await asyncio.to_thread(
-            self._replace_available_commands_sync, conversation_id, available_commands
+            self._replace_composer_catalog_sync, conversation_id, composer_catalog
         )
 
     # --- inside the worker thread ---
@@ -256,7 +256,7 @@ class ConversationStore:
             ),
             access=resolved.access,
             vendor_session_cursor=None,
-            available_commands=(),
+            composer_catalog=(),
             latest_sequence=0,
             created_at=self._integer_now(),
         )
@@ -266,7 +266,7 @@ class ConversationStore:
                 "INSERT INTO conversations (conversation_id, backend_key, model, "
                 "reasoning_effort, workspace_folder, role_text, "
                 "identity_environment_variables, access, vendor_session_cursor, "
-                "available_commands, latest_sequence, created_at) "
+                "composer_catalog, latest_sequence, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     record.conversation_id,
@@ -278,7 +278,7 @@ class ConversationStore:
                     _identity_environment_variables_to_json(record.identity_environment_variables),
                     str(record.access),
                     record.vendor_session_cursor,
-                    _available_commands_to_json(record.available_commands),
+                    _composer_catalog_to_json(record.composer_catalog),
                     record.latest_sequence,
                     record.created_at,
                 ),
@@ -295,7 +295,7 @@ class ConversationStore:
             row = conn.execute(
                 "SELECT conversation_id, backend_key, model, reasoning_effort, "
                 "workspace_folder, role_text, identity_environment_variables, access, "
-                "vendor_session_cursor, available_commands, latest_sequence, created_at "
+                "vendor_session_cursor, composer_catalog, latest_sequence, created_at "
                 "FROM conversations WHERE conversation_id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -464,14 +464,14 @@ class ConversationStore:
         finally:
             conn.close()
 
-    def _replace_available_commands_sync(
-        self, conversation_id: str, available_commands: tuple[AgentCommand, ...]
+    def _replace_composer_catalog_sync(
+        self, conversation_id: str, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
         conn = self._connect()
         try:
             conn.execute(
-                "UPDATE conversations SET available_commands = ? WHERE conversation_id = ?",
-                (_available_commands_to_json(available_commands), conversation_id),
+                "UPDATE conversations SET composer_catalog = ? WHERE conversation_id = ?",
+                (_composer_catalog_to_json(composer_catalog), conversation_id),
             )
         finally:
             conn.close()
@@ -497,7 +497,7 @@ def _conversation_record(row: sqlite3.Row) -> ConversationRecord:
         vendor_session_cursor=(
             None if row["vendor_session_cursor"] is None else str(row["vendor_session_cursor"])
         ),
-        available_commands=_available_commands_from_json(str(row["available_commands"])),
+        composer_catalog=_composer_catalog_from_json(str(row["composer_catalog"])),
         latest_sequence=int(row["latest_sequence"]),
         created_at=int(row["created_at"]),
     )
@@ -529,29 +529,33 @@ def _identity_environment_variables_from_json(stored: str) -> tuple[tuple[str, s
     return tuple((str(name), str(value)) for name, value in pairs)
 
 
-def _available_commands_to_json(available_commands: tuple[AgentCommand, ...]) -> str:
+def _composer_catalog_to_json(composer_catalog: tuple[ComposerCatalogEntry, ...]) -> str:
     return json.dumps(
         [
             {
-                "name": command.name,
-                "description": command.description,
-                "argument_hint": command.argument_hint,
+                "kind": str(entry.kind),
+                "display_text": entry.display_text,
+                "insertion_text": entry.insertion_text,
+                "description": entry.description,
+                "argument_hint": entry.argument_hint,
             }
-            for command in available_commands
+            for entry in composer_catalog
         ],
         separators=(",", ":"),
         ensure_ascii=False,
     )
 
 
-def _available_commands_from_json(stored: str) -> tuple[AgentCommand, ...]:
+def _composer_catalog_from_json(stored: str) -> tuple[ComposerCatalogEntry, ...]:
     return tuple(
-        AgentCommand(
-            name=str(command["name"]),
-            description=str(command["description"]),
+        ComposerCatalogEntry(
+            kind=ComposerCatalogEntryKind(str(entry["kind"])),
+            display_text=str(entry["display_text"]),
+            insertion_text=str(entry["insertion_text"]),
+            description=str(entry["description"]),
             argument_hint=(
-                None if command.get("argument_hint") is None else str(command["argument_hint"])
+                None if entry.get("argument_hint") is None else str(entry["argument_hint"])
             ),
         )
-        for command in json.loads(stored)
+        for entry in json.loads(stored)
     )

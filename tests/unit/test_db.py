@@ -42,7 +42,7 @@ RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "managed_skill_versions"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
-CURRENT_SCHEMA_OBJECT_COUNT = 41
+CURRENT_SCHEMA_OBJECT_COUNT = 42
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
