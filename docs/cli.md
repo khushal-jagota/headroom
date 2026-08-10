@@ -151,7 +151,8 @@ record shapes. Direct `show` commands also keep their full record shapes.
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
   `worker-types.md`). `worker trouble --body-file PATH` appends one short trouble note
-  to the current worker's Ticket during its active run. `request-user-help` parks the Ticket for a user response after the
+  to the current worker's Ticket during its active claimed worker step.
+  `request-user-help` parks the Ticket for a user response after the
   Worker records its request in the conversation.
 - **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
   record reality established outside Panels. Both require an explicit Chief request,

@@ -62,6 +62,17 @@ def _ticket(db_path: Path, *, stage: str) -> str:
         conn.close()
 
 
+def _set_ticket_status(db_path: Path, ticket_id: str, ticket_status: str) -> None:
+    conn = connect(str(db_path))
+    try:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = ? WHERE id = ?",
+            (ticket_status, ticket_id),
+        )
+    finally:
+        conn.close()
+
+
 def test_fresh_schema_has_constrained_cascading_judgment_record(tmp_path: Path) -> None:
     db_path = tmp_path / "judgments.db"
     conn = connect(str(db_path))
@@ -214,6 +225,7 @@ def test_trouble_note_writer_creates_parent_and_preserves_append_order(
     conn = connect(str(db_path))
     create_schema(conn)
     ticket_id = _ticket(db_path, stage="needs_implementation")
+    _set_ticket_status(db_path, ticket_id, "agent")
 
     first = judgments_data.append_trouble_note(
         conn, ticket_id, body="  Harness lost the process.\n", created_at=20
@@ -259,6 +271,7 @@ def test_trouble_note_api_requires_exact_current_worker_and_projects_notes(
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path, stage="needs_implementation")
     other_ticket_id = _ticket(db_path, stage="needs_implementation")
+    _set_ticket_status(db_path, ticket_id, "agent")
 
     with TestClient(app) as client:
         direct = client.post(
@@ -301,11 +314,57 @@ def test_trouble_note_api_requires_exact_current_worker_and_projects_notes(
     assert all(note["created_at"] > 0 for note in detail["trouble_notes"])
 
 
+def test_trouble_note_api_rejects_an_unclaimed_ticket(tmp_path: Path) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path, stage="needs_implementation")
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "This step is not claimed."},
+            headers=_worker(ticket_id),
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation"
+    assert "active claimed worker step" in response.json()["error"]["message"]
+    conn = connect(str(db_path))
+    try:
+        assert judgments_data.read_ticket_judgment(conn, ticket_id) is None
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("stage", ("done", "dropped"))
+def test_trouble_note_api_rejects_terminal_tickets(
+    tmp_path: Path, stage: str
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    ticket_id = _ticket(db_path, stage=stage)
+
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/tickets/{ticket_id}/trouble-notes",
+            json={"body": "This Ticket is terminal."},
+            headers=_worker(ticket_id),
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "validation"
+    conn = connect(str(db_path))
+    try:
+        assert judgments_data.read_trouble_notes(conn, ticket_id) == ()
+        assert judgments_data.read_ticket_judgment(conn, ticket_id) is None
+    finally:
+        conn.close()
+
+
 def test_trouble_note_api_rejects_multiline_over_limit_and_unknown_ticket(
     tmp_path: Path,
 ) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path, stage="needs_implementation")
+    _set_ticket_status(db_path, ticket_id, "agent")
 
     with TestClient(app) as client:
         multiline = client.post(
@@ -332,6 +391,7 @@ def test_trouble_note_api_rejects_multiline_over_limit_and_unknown_ticket(
 def test_successful_trouble_note_write_emits_one_change_signal(tmp_path: Path) -> None:
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path, stage="needs_implementation")
+    _set_ticket_status(db_path, ticket_id, "agent")
     signals = 0
 
     def record() -> None:

@@ -95,11 +95,20 @@ def append_trouble_note(
     normalized_body = normalize_trouble_note(body)
     with _txn(conn):
         ticket = conn.execute(
-            "SELECT id FROM tickets WHERE id = ?", (ticket_id,)
+            "SELECT ticket_status FROM tickets WHERE id = ?", (ticket_id,)
         ).fetchone()
         if ticket is None:
             raise PlannerError(
                 ErrorCode.not_found, "ticket not found", {"ticket_id": ticket_id}
+            )
+        if str(ticket["ticket_status"]) != "agent":
+            raise PlannerError(
+                ErrorCode.validation,
+                "trouble can be recorded only during an active claimed worker step",
+                {
+                    "ticket_id": ticket_id,
+                    "ticket_status": str(ticket["ticket_status"]),
+                },
             )
         conn.execute(
             "INSERT INTO ticket_judgments (ticket_id) VALUES (?) "

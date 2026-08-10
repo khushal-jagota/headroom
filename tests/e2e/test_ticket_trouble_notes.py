@@ -14,6 +14,20 @@ from pathlib import Path
 from playwright.sync_api import BrowserContext, Page
 from tests.e2e.harness import WAIT_MS, JsonObject, ServerHandle
 
+from planner.core.db import connect
+
+
+def _claim_worker_step(server: ServerHandle, ticket_id: str) -> None:
+    """Enter the durable claim state without starting a real agent in this browser test."""
+    conn = connect(str(server.db_path))
+    try:
+        conn.execute(
+            "UPDATE tickets SET ticket_status = 'agent' WHERE id = ?",
+            (ticket_id,),
+        )
+    finally:
+        conn.close()
+
 
 def test_worker_cli_trouble_notes_refresh_open_ticket_in_order(
     tmp_path: Path,
@@ -31,6 +45,7 @@ def test_worker_cli_trouble_notes_refresh_open_ticket_in_order(
         "--title",
         "A run with recorded trouble",
     )["id"]
+    _claim_worker_step(server, ticket_id)
     ready = f'section[data-screen="ticket"][data-ticket-id="{ticket_id}"]'
     page = open_page(context_factory(), server, f"#/ticket/{ticket_id}", ready)
     assert page.locator("[data-ticket-trouble-notes]").count() == 0

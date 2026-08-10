@@ -82,9 +82,9 @@ One screen per part of the system:
   visible without edit controls if the Ticket returns to an earlier Stage. See
   `judgments.md`.
 
-  When a worker records trouble during a run, a read-only section appears next to the
-  verdict. It shows each short note and its recorded time in creation order. The section
-  stays absent when no trouble was recorded.
+  When a worker records trouble during its claimed step, a read-only section appears
+  next to the verdict. It shows each short note and its recorded time in creation order.
+  The section stays absent when no trouble was recorded.
 
   The stages and their workflow remain the Ticket's Worker type's, derived from the
   served manifest (see below and `worker-types.md`); the kickoff user note sits first in
