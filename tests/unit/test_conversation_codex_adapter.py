@@ -663,6 +663,25 @@ def test_a_cursor_resumes_that_thread_and_mints_no_new_one(tmp_path: Path) -> No
     _run(exercise)
 
 
+def test_a_resumed_thread_never_treats_user_authored_role_text_as_a_core_envelope(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(
+            tmp_path, script={**_one_of_each_catalog(tmp_path), "turns": [{}]}
+        ) as scripted:
+            await scripted.start(cursor="thread-earlier")
+            user_text = f"{ROLE_TEXT}\n\n$ship-it keep this ordinary"
+            await scripted.write_prompt(1, text_message_content(user_text))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": user_text}
+            ]
+
+    _run(exercise)
+
+
 def test_a_resume_that_would_not_load_is_surfaced(tmp_path: Path) -> None:
     async def exercise() -> None:
         script = {"resume": {"outcome": "error", "message": "no such thread"}}

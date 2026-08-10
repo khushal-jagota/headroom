@@ -306,7 +306,7 @@ class CodexAppServerBackendChild:
         self._catalog_refresh_requested = False
         self._catalog_refresh_task: asyncio.Task[None] | None = None
         self._catalog_refresh_lock = asyncio.Lock()
-        self._has_accepted_prompt = False
+        self._core_role_envelope_expected = False
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -333,6 +333,7 @@ class CodexAppServerBackendChild:
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
         try:
             await self._shake_hands()
+            self._core_role_envelope_expected = vendor_session_cursor is None
             if vendor_session_cursor is None:
                 await self._start_thread(resolved_start)
             else:
@@ -401,7 +402,7 @@ class CodexAppServerBackendChild:
         if not native_command:
             self._model = model
             self._reasoning_effort = reasoning_effort
-        self._has_accepted_prompt = True
+        self._core_role_envelope_expected = False
 
     async def steer(self, content: MessageContent, *, sender_label: str) -> None:
         """Never called: codex is one of the backends the contract says cannot steer.
@@ -682,7 +683,7 @@ class CodexAppServerBackendChild:
             return None
         prompt_text = content[0].text
         role_materials = self._resolved_start.role_materials
-        if not self._has_accepted_prompt and role_materials is not None:
+        if self._core_role_envelope_expected and role_materials is not None:
             role_prefix = role_materials.role_text + CORE_ROLE_TEXT_PROMPT_SEPARATOR
             if prompt_text.startswith(role_prefix):
                 prompt_text = prompt_text[len(role_prefix) :]
