@@ -9,6 +9,7 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.core.contracts import BlockerSummary, JsonDict
+from planner.judgments import data as judgments_data
 from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
 from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.tickets import data as tickets_data
@@ -309,12 +310,18 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         (ticket_id,),
     ).fetchall()
     blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    verdict = judgments_data.read_verdict(conn, ticket_id)
     detail.update(
         {
             "blocked": blocker_summary.blocked,
             "day_ids": [str(r["day_id"]) for r in day_rows],
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
                 ticket
+            ),
+            "verdict": (
+                {"rating": verdict.rating, "text": verdict.text}
+                if verdict is not None
+                else None
             ),
         }
     )

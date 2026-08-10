@@ -77,6 +77,11 @@ One screen per part of the system:
   reason remains visible when one exists. The inline-editable recap is always open on a
   recessed surface, without another label.
 
+  A done Ticket offers an optional verdict above its Stage history. The user can choose
+  one of five ratings, add text, use both, or clear the verdict. A saved verdict remains
+  visible without edit controls if the Ticket returns to an earlier Stage. See
+  `judgments.md`.
+
   The stages and their workflow remain the Ticket's Worker type's, derived from the
   served manifest (see below and `worker-types.md`); the kickoff user note sits first in
   that spine, collapsed. The current Stage mark speaks without a second status pill.

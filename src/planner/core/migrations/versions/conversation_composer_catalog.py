@@ -1,7 +1,7 @@
 """Turn the conversation command list into the typed composer catalog.
 
 Revision ID: conversation_composer_catalog
-Revises: weekly_sprint_checkpoint_schedule
+Revises: ticket_judgments
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import json
 from alembic import op
 
 revision = "conversation_composer_catalog"
-down_revision = "weekly_sprint_checkpoint_schedule"
+down_revision = "ticket_judgments"
 branch_labels = None
 depends_on = None
 

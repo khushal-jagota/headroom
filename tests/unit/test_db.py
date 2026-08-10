@@ -42,7 +42,7 @@ RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "conversation_composer_catalog"
 
 # The notification revisions add their durable tables and supporting indexes.
-CURRENT_SCHEMA_OBJECT_COUNT = 37
+CURRENT_SCHEMA_OBJECT_COUNT = 38
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
