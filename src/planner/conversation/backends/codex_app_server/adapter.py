@@ -154,6 +154,12 @@ CANCEL_SETTLING_TIMEOUT_SECONDS = 15.0
 # Catalogue notifications arrive in bursts while Codex rebuilds a source. Give the reader
 # one short window to collect the burst before issuing one complete snapshot refresh.
 CATALOG_REFRESH_COALESCE_SECONDS = 0.05
+CATALOG_REQUEST_TIMEOUT_SECONDS = 60.0
+
+# The core puts role text in front of the first prompt with this separator. The Codex
+# adapter removes that known envelope only for invocation recognition. It sends the full
+# composed text unchanged.
+CORE_ROLE_TEXT_PROMPT_SEPARATOR = "\n\n"
 
 # What a codex tool item's own status means to a conversation's record. Declined is a
 # finish: the work was asked for and did not happen.
@@ -299,6 +305,8 @@ class CodexAppServerBackendChild:
         self._catalog_snapshot = EMPTY_CATALOG_SNAPSHOT
         self._catalog_refresh_requested = False
         self._catalog_refresh_task: asyncio.Task[None] | None = None
+        self._catalog_refresh_lock = asyncio.Lock()
+        self._has_accepted_prompt = False
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -393,6 +401,7 @@ class CodexAppServerBackendChild:
         if not native_command:
             self._model = model
             self._reasoning_effort = reasoning_effort
+        self._has_accepted_prompt = True
 
     async def steer(self, content: MessageContent, *, sender_label: str) -> None:
         """Never called: codex is one of the backends the contract says cannot steer.
@@ -578,17 +587,18 @@ class CodexAppServerBackendChild:
 
     async def _refresh_catalog_preserving_last_good(self) -> None:
         """Publish one complete snapshot, or leave the prior snapshot untouched."""
-        try:
-            snapshot = await self._read_catalog_snapshot()
-            await self._sink.composer_catalog_reported(snapshot.entries)
-        except (CodexAppServerError, ValidationError) as failed:
-            LOGGER.warning(
-                "conversation %s: Codex catalogue refresh failed: %s",
-                self._resolved_start.conversation_id,
-                failed,
-            )
-            return
-        self._catalog_snapshot = snapshot
+        async with self._catalog_refresh_lock:
+            try:
+                snapshot = await self._read_catalog_snapshot()
+                await self._sink.composer_catalog_reported(snapshot.entries)
+            except (CodexAppServerError, ValidationError) as failed:
+                LOGGER.warning(
+                    "conversation %s: Codex catalogue refresh failed: %s",
+                    self._resolved_start.conversation_id,
+                    failed,
+                )
+                return
+            self._catalog_snapshot = snapshot
 
     def _request_catalog_refresh(self) -> None:
         """Coalesce invalidations without making the app-server reader wait for requests."""
@@ -612,29 +622,51 @@ class CodexAppServerBackendChild:
     async def _read_catalog_snapshot(self) -> _CatalogSnapshot:
         thread_id = self._bound_thread()
         workspace = str(self._resolved_start.workspace_folder)
-        skills_result = await self._client.request(
-            "skills/list", _wire(bindings.SkillsListParams(cwds=[workspace]))
+        skills_result = await self._catalog_request(
+            "skills/list", bindings.SkillsListParams(cwds=[workspace])
         )
-        installed_apps_result = await self._client.request(
-            "app/installed", _wire(bindings.AppsInstalledParams(threadId=thread_id))
+        installed_apps_result = await self._catalog_request(
+            "app/installed", bindings.AppsInstalledParams(threadId=thread_id)
         )
         apps = await self._read_all_apps(thread_id)
-        plugins_result = await self._client.request(
-            "plugin/installed", _wire(bindings.PluginInstalledParams(cwds=[workspace]))
+        plugins_result = await self._catalog_request(
+            "plugin/installed", bindings.PluginInstalledParams(cwds=[workspace])
         )
         skills = bindings.SkillsListResponse.model_validate(skills_result)
         installed_apps = bindings.AppsInstalledResponse.model_validate(installed_apps_result)
         plugins = bindings.PluginInstalledResponse.model_validate(plugins_result)
+        skill_errors = [error for entry in skills.data for error in entry.errors]
+        if skill_errors:
+            raise CodexAppServerError(
+                "skills/list reported errors: "
+                + "; ".join(f"{error.path}: {error.message}" for error in skill_errors)
+            )
+        if plugins.marketplaceLoadErrors:
+            raise CodexAppServerError(
+                "plugin/installed reported marketplace errors: "
+                + "; ".join(
+                    f"{error.marketplacePath}: {error.message}"
+                    for error in plugins.marketplaceLoadErrors
+                )
+            )
         return _catalog_snapshot(skills, installed_apps, apps, plugins)
+
+    async def _catalog_request(self, method: str, parameters: BaseModel) -> Any:
+        """Read catalogue data without letting a stale source poison the prompt wire."""
+        return await self._client.request(
+            method,
+            _wire(parameters),
+            poison_wire_on_timeout=False,
+            timeout_seconds=CATALOG_REQUEST_TIMEOUT_SECONDS,
+        )
 
     async def _read_all_apps(self, thread_id: str) -> tuple[bindings.AppInfo, ...]:
         cursor: str | None = None
         all_apps: list[bindings.AppInfo] = []
         seen_cursors: set[str] = set()
         while True:
-            result = await self._client.request(
-                "app/list",
-                _wire(bindings.AppsListParams(cursor=cursor, threadId=thread_id)),
+            result = await self._catalog_request(
+                "app/list", bindings.AppsListParams(cursor=cursor, threadId=thread_id)
             )
             page = bindings.AppsListResponse.model_validate(result)
             all_apps.extend(page.data)
@@ -648,7 +680,13 @@ class CodexAppServerBackendChild:
     def _catalog_invocation(self, content: MessageContent) -> _CatalogInvocation | None:
         if not content or not isinstance(content[0], MessageText):
             return None
-        match = _COMPOSER_TOKEN.fullmatch(content[0].text)
+        prompt_text = content[0].text
+        role_materials = self._resolved_start.role_materials
+        if not self._has_accepted_prompt and role_materials is not None:
+            role_prefix = role_materials.role_text + CORE_ROLE_TEXT_PROMPT_SEPARATOR
+            if prompt_text.startswith(role_prefix):
+                prompt_text = prompt_text[len(role_prefix) :]
+        match = _COMPOSER_TOKEN.fullmatch(prompt_text)
         if match is None:
             return None
         token = match.group(1)
@@ -1524,7 +1562,7 @@ def _catalog_snapshot(
             # A marketplace is part of a plugin's protocol identity. Keep it in the token
             # too, so two installed marketplaces can never turn the same text into a
             # different plugin because catalogue ordering changed.
-            token = f"@{_mention_token(plugin.id)}@{_mention_token(marketplace.name)}"
+            token = f"@{_mention_token(plugin.name)}@{_mention_token(marketplace.name)}"
             candidates.append(
                 (
                     token,
@@ -1537,7 +1575,7 @@ def _catalog_snapshot(
                     _CatalogInvocation(
                         ComposerCatalogEntryKind.plugin,
                         display_name,
-                        f"plugin://{plugin.id}@{marketplace.name}",
+                        f"plugin://{plugin.name}@{marketplace.name}",
                     ),
                 )
             )

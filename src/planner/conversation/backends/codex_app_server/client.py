@@ -221,14 +221,26 @@ class CodexAppServerClient:
 
     # --- talking ------------------------------------------------------------------------
 
-    async def request(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
+    async def request(
+        self,
+        method: str,
+        params: Mapping[str, Any] | None = None,
+        *,
+        poison_wire_on_timeout: bool = True,
+        timeout_seconds: float | None = None,
+    ) -> Any:
         """Ask the child something and wait for its answer.
 
         Raises ``CodexWireFailed`` if the request did not get out or the child stopped
         answering, and ``CodexRequestRejected`` if the child answered with an error.
         """
         answer = await self.begin_request(method, params)
-        return await self.finish_request(method, answer)
+        return await self.finish_request(
+            method,
+            answer,
+            poison_wire_on_timeout=poison_wire_on_timeout,
+            timeout_seconds=timeout_seconds,
+        )
 
     async def begin_request(
         self, method: str, params: Mapping[str, Any] | None = None
@@ -254,12 +266,24 @@ class CodexAppServerClient:
             raise
         return answer
 
-    async def finish_request(self, method: str, answer: asyncio.Future[dict[str, Any]]) -> Any:
+    async def finish_request(
+        self,
+        method: str,
+        answer: asyncio.Future[dict[str, Any]],
+        *,
+        poison_wire_on_timeout: bool = True,
+        timeout_seconds: float | None = None,
+    ) -> Any:
         """Wait for one begun request's answer and unwrap it."""
         try:
-            envelope = await asyncio.wait_for(answer, REQUEST_TIMEOUT_SECONDS)
+            envelope = await asyncio.wait_for(
+                answer,
+                REQUEST_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds,
+            )
         except TimeoutError as never_answered:
-            self._wire_broken = True
+            self._remove_pending_answer(answer)
+            if poison_wire_on_timeout:
+                self._wire_broken = True
             raise CodexWireFailed(f"{method} was not answered") from never_answered
         except asyncio.CancelledError:
             raise
@@ -273,6 +297,12 @@ class CodexAppServerClient:
                 str(error.get("message")) if isinstance(error, dict) else str(error),
             )
         return envelope.get("result")
+
+    def _remove_pending_answer(self, answer: asyncio.Future[dict[str, Any]]) -> None:
+        for request_id, pending in tuple(self._pending.items()):
+            if pending is answer:
+                self._pending.pop(request_id, None)
+                return
 
     async def notify(self, method: str, params: Mapping[str, Any] | None = None) -> None:
         message: dict[str, Any] = {"method": method}

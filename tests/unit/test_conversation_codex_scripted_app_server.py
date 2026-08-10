@@ -60,6 +60,7 @@ class ScriptedAppServer:
         self._exit_code: int | None = None
         self._turn_tasks: set[asyncio.Task[None]] = set()
         self._catalog_reads: dict[str, int] = {}
+        self._app_list_notifications = 0
 
     # --- running ------------------------------------------------------------------------
 
@@ -219,6 +220,10 @@ class ScriptedAppServer:
                 answer["nextCursor"] = str(page + 1)
             await self._respond(request_id, answer)
             return
+        if self._script.get("notify_apps_during_list") and self._app_list_notifications == 0:
+            self._app_list_notifications += 1
+            await self._notify("app/list/updated", {"data": configured.get("data", [])})
+            await asyncio.sleep(self._script.get("app_list_response_delay", 0))
         await self._respond(request_id, configured)
 
     async def _run_turn(

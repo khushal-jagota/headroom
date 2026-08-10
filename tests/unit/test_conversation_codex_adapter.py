@@ -30,6 +30,7 @@ from planner.conversation.backends.codex_app_server import adapter
 from planner.conversation.backends.codex_app_server.adapter import (
     WITHDRAWN_ASK_DECISION,
     CodexAppServerBackendChild,
+    CodexAppServerBackendChildFactory,
     CodexChildLaunch,
 )
 from planner.conversation.backends.contracts import (
@@ -42,13 +43,18 @@ from planner.conversation.backends.contracts import (
 )
 from planner.conversation.contracts import (
     ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
+    ConversationBackendKey,
     ConversationRoleMaterials,
+    ConversationStartRequest,
     PromptDeliveryMode,
+    PromptDeliveryStarted,
     ResolvedConversationStart,
 )
 from planner.conversation.events import (
     ConversationTurnEnding,
+    PromptEventPayload,
     ToolCallStatus,
     UserInputAnswer,
 )
@@ -60,6 +66,9 @@ from planner.conversation.message_content import (
     text_message_content,
 )
 from planner.conversation.message_files import ConversationMessageFiles
+from planner.conversation.storage import ConversationStore
+from planner.conversation.system import SqliteProcessConversationSystem
+from planner.core.db import connect, create_schema
 
 
 def _message_files() -> ConversationMessageFiles:
@@ -196,10 +205,18 @@ def test_codex_joins_paginated_metadata_to_callable_apps_and_enabled_plugins(
             "plugins": {
                 "marketplaces": [
                     {
-                        "name": "personal",
+                        "name": "openai-curated-remote",
                         "plugins": [
-                            _plugin("analytics", enabled=True),
-                            _plugin("disabled", enabled=False),
+                            _plugin(
+                                "github",
+                                enabled=True,
+                                marketplace="openai-curated-remote",
+                            ),
+                            _plugin(
+                                "disabled",
+                                enabled=False,
+                                marketplace="openai-curated-remote",
+                            ),
                         ],
                     }
                 ]
@@ -213,7 +230,7 @@ def test_codex_joins_paginated_metadata_to_callable_apps_and_enabled_plugins(
                 ("command", "/compact"),
                 ("command", "/review "),
                 ("app", "@demo-app "),
-                ("plugin", "@analytics@personal "),
+                ("plugin", "@github@openai-curated-remote "),
                 ("skill", "$ship-it "),
             ]
             assert len(scripted.all_sent("app/list")) == 2
@@ -258,6 +275,89 @@ def test_catalog_invocations_add_structured_inputs_without_rewriting_the_text(
                     "path": "plugin://analytics@personal",
                 },
             ]
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_method"),
+    [("$ship-it release now", "turn/start"), ("/compact", "thread/compact/start")],
+)
+def test_the_systems_composed_role_does_not_hide_a_first_prompt_catalog_invocation(
+    tmp_path: Path, prompt_text: str, expected_method: str
+) -> None:
+    """Drive the real core and Codex child together across the first-prompt boundary."""
+
+    async def exercise() -> None:
+        database_path = tmp_path / "system.db"
+        connection = connect(str(database_path))
+        create_schema(connection)
+        connection.close()
+        transcript_path = tmp_path / "system-transcript.jsonl"
+        script_path = tmp_path / "system-script.json"
+        script_path.write_text(
+            json.dumps(
+                {
+                    "transcript_path": str(transcript_path),
+                    **_one_of_each_catalog(tmp_path),
+                }
+            ),
+            encoding="utf-8",
+        )
+        argv, environment = scripted_app_server_launch(script_path)
+        factory = CodexAppServerBackendChildFactory(
+            CodexChildLaunch(argv=argv, environment_overrides=tuple(environment.items()))
+        )
+        store = ConversationStore(str(database_path))
+        system = SqliteProcessConversationSystem(
+            store=store,
+            message_files=ConversationMessageFiles(str(database_path)),
+            backend_child_factories={key: factory for key in ConversationBackendKey},
+        )
+        try:
+            await system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="system-codex",
+                    backend_key=ConversationBackendKey.codex,
+                    model="gpt-5.4-mini",
+                    reasoning_effort="medium",
+                    role_materials=ConversationRoleMaterials(role_text=ROLE_TEXT),
+                    workspace_folder=tmp_path,
+                )
+            )
+            fate = await system.send(
+                "system-codex",
+                text_message_content(prompt_text),
+                sender_label="owner",
+            )
+            assert fate == PromptDeliveryStarted()
+
+            received = [
+                entry["received"]
+                for entry in (
+                    json.loads(line)
+                    for line in transcript_path.read_text(encoding="utf-8").splitlines()
+                )
+                if "received" in entry and entry["received"].get("method") == expected_method
+            ][0]
+            if expected_method == "turn/start":
+                assert received["params"]["input"] == [
+                    {"type": "text", "text": f"{ROLE_TEXT}\n\n{prompt_text}"},
+                    {
+                        "type": "skill",
+                        "name": "ship-it",
+                        "path": "/skills/ship-it/SKILL.md",
+                    },
+                ]
+            else:
+                assert received["params"] == {"threadId": "thread-1"}
+            events = await store.read_events_after("system-codex", 0)
+            prompt = next(
+                event.payload for event in events if isinstance(event.payload, PromptEventPayload)
+            )
+            assert message_content_text(prompt.content) == prompt_text
+        finally:
+            await system.shutdown()
 
     _run(exercise)
 
@@ -411,10 +511,95 @@ def test_catalog_invalidations_refresh_in_the_background_and_preserve_failures(
     _run(exercise)
 
 
-def test_a_catalog_refresh_that_never_answers_does_not_block_turn_notifications(
-    tmp_path: Path,
+@pytest.mark.parametrize("reported_error", ["skill", "plugin"])
+def test_reported_catalog_source_errors_preserve_the_last_complete_snapshot(
+    tmp_path: Path, reported_error: str
 ) -> None:
     async def exercise() -> None:
+        good_skills = _skills_response(tmp_path, "first")
+        bad_skills = {
+            "data": [
+                {
+                    "cwd": str(tmp_path),
+                    "skills": [],
+                    "errors": [{"path": "/broken/SKILL.md", "message": "cannot read"}],
+                }
+            ]
+        }
+        good_plugins: dict[str, Any] = {"marketplaces": [], "marketplaceLoadErrors": []}
+        bad_plugins = {
+            "marketplaces": [],
+            "marketplaceLoadErrors": [
+                {"marketplacePath": "/broken/marketplace.json", "message": "invalid"}
+            ],
+        }
+        script = {
+            "skills": [good_skills, bad_skills] if reported_error == "skill" else good_skills,
+            "plugins": [good_plugins, bad_plugins] if reported_error == "plugin" else good_plugins,
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "skills_changed"},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                },
+                {},
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("refresh"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            await asyncio.sleep(0.15)
+            assert len(scripted.sink.composer_catalog_reports) == 1
+
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("$first continue"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.all_sent("turn/start")[-1]["params"]["input"][-1] == {
+                "type": "skill",
+                "name": "first",
+                "path": "/skills/first/SKILL.md",
+            }
+
+    _run(exercise)
+
+
+def test_startup_and_notification_refreshes_publish_in_request_order(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        script = {
+            "skills": [
+                _skills_response(tmp_path, "startup"),
+                _skills_response(tmp_path, "notification"),
+            ],
+            "notify_apps_during_list": True,
+            "app_list_response_delay": 0.1,
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await _wait_for_catalog_reports(scripted.sink, 2)
+
+            skill_tokens = [
+                [
+                    entry.insertion_text
+                    for entry in report
+                    if entry.kind is ComposerCatalogEntryKind.skill
+                ]
+                for report in scripted.sink.composer_catalog_reports
+            ]
+            assert skill_tokens == [["$startup "], ["$notification "]]
+
+    _run(exercise)
+
+
+def test_a_catalog_refresh_that_never_answers_does_not_block_turn_notifications(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setattr(
+            "planner.conversation.backends.codex_app_server.adapter.CATALOG_REQUEST_TIMEOUT_SECONDS",
+            0.05,
+        )
         script = {
             "skills": [_skills_response(tmp_path, "first"), "never"],
             "turns": [
@@ -424,7 +609,8 @@ def test_a_catalog_refresh_that_never_answers_does_not_block_turn_notifications(
                         {"do": "sleep", "seconds": 0.1},
                         {"do": "complete", "status": "completed"},
                     ]
-                }
+                },
+                {},
             ],
         }
         async with _scripted_child(tmp_path, script=script) as scripted:
@@ -432,6 +618,15 @@ def test_a_catalog_refresh_that_never_answers_does_not_block_turn_notifications(
             await scripted.write_prompt(1, text_message_content("ordinary"))
             await asyncio.wait_for(scripted.sink.wait_for_the_turn_to_end(), 0.5)
             assert scripted.sink.endings == [ConversationTurnEnding.completed]
+            await asyncio.sleep(0.1)
+
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("wire still works"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.sink.endings == [
+                ConversationTurnEnding.completed,
+                ConversationTurnEnding.completed,
+            ]
 
     _run(exercise)
 
@@ -1523,22 +1718,22 @@ def test_the_childs_standard_error_is_kept_bounded(tmp_path: Path) -> None:
 # --- the scaffolding ------------------------------------------------------------------------------
 
 
-def _plugin(plugin_id: str, *, enabled: bool) -> dict[str, Any]:
+def _plugin(plugin_name: str, *, enabled: bool, marketplace: str = "personal") -> dict[str, Any]:
     return {
         "authPolicy": "ON_USE",
         "enabled": enabled,
-        "id": plugin_id,
+        "id": f"{plugin_name}@{marketplace}",
         "installPolicy": "AVAILABLE",
         "installed": True,
         "interface": {
             "capabilities": [],
-            "displayName": plugin_id.title(),
-            "shortDescription": f"Use {plugin_id.title()}",
+            "displayName": plugin_name.title(),
+            "shortDescription": f"Use {plugin_name.title()}",
             "screenshotUrls": [],
             "screenshots": [],
         },
-        "name": plugin_id,
-        "source": {"type": "local", "path": f"/plugins/{plugin_id}"},
+        "name": plugin_name,
+        "source": {"type": "local", "path": f"/plugins/{plugin_name}"},
     }
 
 
