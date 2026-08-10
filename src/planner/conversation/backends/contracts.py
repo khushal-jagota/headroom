@@ -300,8 +300,8 @@ class BackendEventSink(Protocol):
         first message is worth more than one that is only right while the agent is up.
 
         Report the whole list every time it changes rather than what moved in it. Hermes
-        and Claude currently map their command reports into typed command entries. Codex
-        reports nothing until its separate catalog integration supplies entries.
+        and Claude map their command reports into typed command entries. Codex joins its
+        app-server catalog sources and reports one complete typed snapshot.
         """
 
 

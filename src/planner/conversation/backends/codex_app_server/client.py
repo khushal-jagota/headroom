@@ -57,6 +57,8 @@ CONSUMED_SERVER_NOTIFICATIONS: dict[str, type[BaseModel]] = {
     "turn/plan/updated": bindings.TurnPlanUpdatedNotification,
     "thread/tokenUsage/updated": bindings.ThreadTokenUsageUpdatedNotification,
     "error": bindings.ErrorNotification,
+    "skills/changed": bindings.SkillsChangedNotification,
+    "app/list/updated": bindings.AppListUpdatedNotification,
 }
 
 # The requests codex makes of us that we answer. Anything else it asks is refused with
@@ -118,9 +120,7 @@ class CodexServerMessageHandler(Protocol):
 
     async def on_notification(self, method: str, notification: BaseModel) -> None: ...
 
-    async def on_server_request(
-        self, method: str, request_id: Any, params: BaseModel
-    ) -> None: ...
+    async def on_server_request(self, method: str, request_id: Any, params: BaseModel) -> None: ...
 
     async def on_child_ended(self) -> None:
         """The process is gone. Anything waiting on its wire will never be answered."""

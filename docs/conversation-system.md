@@ -383,8 +383,20 @@ the command list from its process handshake in the same way, so project commands
 follow the conversation folder. Their visible text is `/name`, and their insertion text
 is `/name `.
 
-Codex catalog population belongs to a separate integration. Until that integration adds
-entries, a Codex conversation offers no catalog entries.
+Codex reads its catalog from the app-server after each thread starts or resumes. It joins
+enabled skills, callable installed apps, and enabled installed plugins with the native
+`/compact` and `/review` commands. App metadata comes from `app/list`. Current app
+callability comes from `app/installed`. This prevents an installed but unusable connector
+from appearing in the menu.
+
+Codex refreshes the complete catalog after skill or app change notifications. Refreshes
+run beside the app-server reader and merge repeated notifications. A failed refresh keeps
+the last complete catalog. A partial result never replaces it.
+
+Codex resolves a selected token against that complete snapshot when the prompt starts.
+Skills use Codex skill input. Apps and plugins use exact mention paths. Unknown or
+ambiguous tokens stay ordinary text. `/compact` and `/review` use their native app-server
+methods and keep the normal conversation turn lifecycle.
 
 The last catalog reported is kept on the conversation. The menu still works when no
 child process runs. A conversation with no report yet offers nothing.

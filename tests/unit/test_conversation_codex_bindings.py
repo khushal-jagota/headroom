@@ -85,6 +85,7 @@ def test_user_input_request_and_complete_answer_map_match_the_pinned_protocol() 
             "threadId": "thread-1",
             "turnId": "turn-1",
             "itemId": "item-1",
+            "isBlocking": True,
             "questions": [
                 {
                     "id": "framework",

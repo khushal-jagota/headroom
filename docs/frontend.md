@@ -364,7 +364,9 @@ hand-rolling the same shapes per screen. Each does one job:
 - **ComposerCatalogMenu** — the typed list that opens when a composer line starts with
   `/`, `$`, or `@`. Slash offers commands, dollar offers skills, and at offers apps and
   plugins. The list narrows as text is typed. A choice inserts its exact catalog text
-  into the draft. Sending and transcript display still use ordinary text.
+  into the draft. Sending and transcript display still use ordinary text. Codex resolves
+  that text at its adapter boundary. The browser does not store vendor identifiers or
+  construct structured Codex input.
 - **EnumPill** — a pill whose value is chosen from a menu (project, sprint, scope).
 - **SegmentedControl** — a small set of toggle options (backlog project/priority).
 - **ScopePairPicker** — the "approve until … then …" scope control.

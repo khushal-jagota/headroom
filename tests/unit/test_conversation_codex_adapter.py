@@ -126,22 +126,312 @@ def test_a_fresh_conversation_shakes_hands_starts_a_thread_and_reports_its_curso
     _run(exercise)
 
 
-def test_codex_offers_no_commands_because_its_protocol_has_none_to_declare(
+def test_codex_publishes_only_the_native_built_ins_when_dynamic_sources_are_empty(
     tmp_path: Path,
 ) -> None:
-    """Not a gap in this adapter — codex's wire has no notion of a command a person types.
-
-    Codex's slash commands live inside its own terminal program and are dispatched there,
-    so nothing declares them over the protocol Panels speaks. A codex conversation has
-    none to offer, and this adapter says nothing at all rather than reporting an empty
-    list, which would be codex claiming it had looked and found none.
-    """
 
     async def exercise() -> None:
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
 
-            assert scripted.sink.composer_catalog_reports == []
+            assert [
+                entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
+            ] == [
+                "/compact",
+                "/review ",
+            ]
+
+    _run(exercise)
+
+
+def test_codex_joins_paginated_metadata_to_callable_apps_and_enabled_plugins(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "skills": {
+                "data": [
+                    {
+                        "cwd": str(tmp_path),
+                        "errors": [],
+                        "skills": [
+                            {
+                                "name": "ship-it",
+                                "description": "Ship this change",
+                                "enabled": True,
+                                "path": "/skills/ship-it/SKILL.md",
+                                "scope": "user",
+                            },
+                            {
+                                "name": "off",
+                                "description": "Disabled",
+                                "enabled": False,
+                                "path": "/skills/off/SKILL.md",
+                                "scope": "user",
+                            },
+                        ],
+                    }
+                ]
+            },
+            "installed_apps": {
+                "apps": [
+                    {"id": "demo", "runtimeName": "Demo", "enabled": True, "callable": True},
+                    {"id": "idle", "runtimeName": "Idle", "enabled": True, "callable": False},
+                ]
+            },
+            "apps": [
+                {"data": [{"id": "idle", "name": "Idle", "isEnabled": True, "isAccessible": True}]},
+                {
+                    "data": [
+                        {
+                            "id": "demo",
+                            "name": "Demo App",
+                            "description": "Demo tools",
+                            "isEnabled": True,
+                            "isAccessible": True,
+                        }
+                    ]
+                },
+            ],
+            "plugins": {
+                "marketplaces": [
+                    {
+                        "name": "personal",
+                        "plugins": [
+                            _plugin("analytics", enabled=True),
+                            _plugin("disabled", enabled=False),
+                        ],
+                    }
+                ]
+            },
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+
+            entries = scripted.sink.composer_catalog_reports[-1]
+            assert [(entry.kind.value, entry.insertion_text) for entry in entries] == [
+                ("command", "/compact"),
+                ("command", "/review "),
+                ("app", "@demo-app "),
+                ("plugin", "@analytics@personal "),
+                ("skill", "$ship-it "),
+            ]
+            assert len(scripted.all_sent("app/list")) == 2
+
+    _run(exercise)
+
+
+def test_catalog_invocations_add_structured_inputs_without_rewriting_the_text(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            **_one_of_each_catalog(tmp_path),
+            "turns": [{}, {}, {}],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            prompts = [
+                "$ship-it release now",
+                "@demo-app find updates",
+                "@analytics@personal inspect usage",
+            ]
+            for turn_number, prompt in enumerate(prompts, 1):
+                scripted.sink.expect_another_turn()
+                await scripted.write_prompt(turn_number, text_message_content(prompt))
+                await scripted.sink.wait_for_the_turn_to_end()
+
+            inputs = [message["params"]["input"] for message in scripted.all_sent("turn/start")]
+            assert inputs[0] == [
+                {"type": "text", "text": prompts[0]},
+                {"type": "skill", "name": "ship-it", "path": "/skills/ship-it/SKILL.md"},
+            ]
+            assert inputs[1] == [
+                {"type": "text", "text": prompts[1]},
+                {"type": "mention", "name": "Demo App", "path": "app://demo"},
+            ]
+            assert inputs[2] == [
+                {"type": "text", "text": prompts[2]},
+                {
+                    "type": "mention",
+                    "name": "Analytics",
+                    "path": "plugin://analytics@personal",
+                },
+            ]
+
+    _run(exercise)
+
+
+def test_unknown_and_ambiguous_tokens_remain_ordinary_text(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        catalog = _one_of_each_catalog(tmp_path)
+        duplicated = dict(catalog["skills"])
+        duplicated["data"] = [
+            *duplicated["data"],
+            {
+                "cwd": "/elsewhere",
+                "errors": [],
+                "skills": [
+                    {
+                        "name": "ship-it",
+                        "description": "Other",
+                        "enabled": True,
+                        "path": "/other/SKILL.md",
+                        "scope": "user",
+                    }
+                ],
+            },
+        ]
+        catalog["skills"] = duplicated
+        catalog["turns"] = [{}, {}]
+        async with _scripted_child(tmp_path, script=catalog) as scripted:
+            await scripted.start(cursor=None)
+            assert "$ship-it " not in {
+                entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
+            }
+            for number, prompt in enumerate(("$ship-it do it", "/unknown keep this"), 1):
+                scripted.sink.expect_another_turn()
+                await scripted.write_prompt(number, text_message_content(prompt))
+                await scripted.sink.wait_for_the_turn_to_end()
+            assert all(
+                len(message["params"]["input"]) == 1 for message in scripted.all_sent("turn/start")
+            )
+
+    _run(exercise)
+
+
+def test_compact_and_review_use_native_methods_and_the_normal_turn_lifecycle(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script: dict[str, Any] = {
+            "compact_response": "never",
+            "turns": [{}, {"respond": "never"}],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/compact"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("/review focus on races"))
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            assert scripted.sent("thread/compact/start")["params"] == {"threadId": "thread-1"}
+            review = scripted.sent("review/start")["params"]
+            assert review["delivery"] == "inline"
+            assert review["target"] == {
+                "type": "custom",
+                "instructions": "focus on races",
+            }
+            assert scripted.sent("turn/start", missing_is_none=True) is None
+            assert scripted.sink.endings == [
+                ConversationTurnEnding.completed,
+                ConversationTurnEnding.completed,
+            ]
+
+    _run(exercise)
+
+
+def test_native_review_failure_is_a_refused_prompt_and_does_not_poison_the_next_turn(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script: dict[str, Any] = {
+            "turns": [
+                {"respond": "error", "message": "review unavailable"},
+                {},
+            ]
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            with pytest.raises(PromptWriteFailed, match="review unavailable"):
+                await scripted.write_prompt(1, text_message_content("/review"))
+
+            await scripted.write_prompt(2, text_message_content("ordinary"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            assert scripted.sent("turn/start")["params"]["input"] == [
+                {"type": "text", "text": "ordinary"}
+            ]
+
+    _run(exercise)
+
+
+def test_a_native_command_with_a_model_change_stays_an_ordinary_model_changing_turn(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        async with _scripted_child(tmp_path, script={}) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("/compact"), model="gpt-5.6-codex")
+            await scripted.sink.wait_for_the_turn_to_end()
+
+            turn = scripted.sent("turn/start")["params"]
+            assert turn["model"] == "gpt-5.6-codex"
+            assert turn["input"] == [{"type": "text", "text": "/compact"}]
+            assert scripted.sent("thread/compact/start", missing_is_none=True) is None
+
+    _run(exercise)
+
+
+def test_catalog_invalidations_refresh_in_the_background_and_preserve_failures(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        first = _skills_response(tmp_path, "first")
+        second = _skills_response(tmp_path, "second")
+        script = {
+            "skills": [first, second, "error"],
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "skills_changed"},
+                        {"do": "skills_changed"},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                },
+                {"actions": [{"do": "apps_changed"}, {"do": "complete", "status": "completed"}]},
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("ordinary"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            await _wait_for_catalog_reports(scripted.sink, 2)
+            assert "$second " in {
+                entry.insertion_text for entry in scripted.sink.composer_catalog_reports[-1]
+            }
+            assert len(scripted.all_sent("skills/list")) == 2
+
+            scripted.sink.expect_another_turn()
+            await scripted.write_prompt(2, text_message_content("ordinary again"))
+            await scripted.sink.wait_for_the_turn_to_end()
+            await asyncio.sleep(0.15)
+            assert len(scripted.sink.composer_catalog_reports) == 2
+
+    _run(exercise)
+
+
+def test_a_catalog_refresh_that_never_answers_does_not_block_turn_notifications(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        script = {
+            "skills": [_skills_response(tmp_path, "first"), "never"],
+            "turns": [
+                {
+                    "actions": [
+                        {"do": "skills_changed"},
+                        {"do": "sleep", "seconds": 0.1},
+                        {"do": "complete", "status": "completed"},
+                    ]
+                }
+            ],
+        }
+        async with _scripted_child(tmp_path, script=script) as scripted:
+            await scripted.start(cursor=None)
+            await scripted.write_prompt(1, text_message_content("ordinary"))
+            await asyncio.wait_for(scripted.sink.wait_for_the_turn_to_end(), 0.5)
+            assert scripted.sink.endings == [ConversationTurnEnding.completed]
 
     _run(exercise)
 
@@ -169,6 +459,8 @@ def test_a_cursor_resumes_that_thread_and_mints_no_new_one(tmp_path: Path) -> No
 
             assert scripted.sent("thread/resume")["params"]["threadId"] == "thread-earlier"
             assert scripted.sent("thread/start", missing_is_none=True) is None
+            assert scripted.sent("app/installed")["params"]["threadId"] == "thread-earlier"
+            assert scripted.sink.composer_catalog_reports
             # Nothing was minted, so nothing is rebound: the cursor the core holds still
             # names the thread this conversation lives in.
             assert scripted.sink.vendor_session_cursor is None
@@ -1202,9 +1494,7 @@ def test_a_notification_this_reads_that_will_not_decode_is_said_out_loud(
     warnings = [record for record in caplog.records if record.levelno >= logging.WARNING]
     assert any("item/agentMessage/delta" in record.getMessage() for record in warnings)
     # The one nothing here reads is noise from a protocol far larger than this adapter uses.
-    assert not any(
-        "mcpServer/startupStatus/updated" in record.getMessage() for record in warnings
-    )
+    assert not any("mcpServer/startupStatus/updated" in record.getMessage() for record in warnings)
     assert any(
         "mcpServer/startupStatus/updated" in record.getMessage()
         for record in caplog.records
@@ -1216,7 +1506,7 @@ def test_the_childs_standard_error_is_kept_bounded(tmp_path: Path) -> None:
     """A stderr burst can neither fill the pipe nor grow without limit."""
 
     async def exercise() -> None:
-        flood = ("a codex log line that says very little\n" * 20_000)
+        flood = "a codex log line that says very little\n" * 20_000
         async with _scripted_child(tmp_path, script={"stderr": flood}) as scripted:
             await scripted.start(cursor=None)
             await scripted.write_prompt(1, text_message_content("go"))
@@ -1231,6 +1521,75 @@ def test_the_childs_standard_error_is_kept_bounded(tmp_path: Path) -> None:
 
 
 # --- the scaffolding ------------------------------------------------------------------------------
+
+
+def _plugin(plugin_id: str, *, enabled: bool) -> dict[str, Any]:
+    return {
+        "authPolicy": "ON_USE",
+        "enabled": enabled,
+        "id": plugin_id,
+        "installPolicy": "AVAILABLE",
+        "installed": True,
+        "interface": {
+            "capabilities": [],
+            "displayName": plugin_id.title(),
+            "shortDescription": f"Use {plugin_id.title()}",
+            "screenshotUrls": [],
+            "screenshots": [],
+        },
+        "name": plugin_id,
+        "source": {"type": "local", "path": f"/plugins/{plugin_id}"},
+    }
+
+
+def _skills_response(workspace: Path, name: str) -> dict[str, Any]:
+    return {
+        "data": [
+            {
+                "cwd": str(workspace),
+                "errors": [],
+                "skills": [
+                    {
+                        "name": name,
+                        "description": f"Use {name}",
+                        "enabled": True,
+                        "path": f"/skills/{name}/SKILL.md",
+                        "scope": "user",
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def _one_of_each_catalog(workspace: Path) -> dict[str, Any]:
+    return {
+        "skills": _skills_response(workspace, "ship-it"),
+        "installed_apps": {
+            "apps": [{"id": "demo", "runtimeName": "Demo", "enabled": True, "callable": True}]
+        },
+        "apps": {
+            "data": [
+                {
+                    "id": "demo",
+                    "name": "Demo App",
+                    "isEnabled": True,
+                    "isAccessible": True,
+                }
+            ]
+        },
+        "plugins": {
+            "marketplaces": [{"name": "personal", "plugins": [_plugin("analytics", enabled=True)]}]
+        },
+    }
+
+
+async def _wait_for_catalog_reports(sink: _RecordingSink, count: int) -> None:
+    for _ in range(100):
+        if len(sink.composer_catalog_reports) >= count:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"only {len(sink.composer_catalog_reports)} catalogue reports arrived")
 
 
 def _resolved_start(workspace: Path) -> ResolvedConversationStart:
@@ -1319,15 +1678,12 @@ class _RecordingSink:
     async def context_compacted(self, turn_token: TurnToken) -> None:
         self.compactions += 1
 
-
     @property
     def agent_message_texts(self) -> list[str]:
         """The words of each finished message. The messages themselves are above."""
         return [message_content_text(content) for content in self.agent_contents]
 
-    async def agent_message_completed(
-        self, turn_token: TurnToken, content: MessageContent
-    ) -> None:
+    async def agent_message_completed(self, turn_token: TurnToken, content: MessageContent) -> None:
         self.agent_contents.append(content)
 
     async def tool_call_started(
@@ -1356,9 +1712,7 @@ class _RecordingSink:
     ) -> None:
         self.tool_calls_finished.append((tool_call_id, tool_call_status))
 
-    async def permission_ask_raised(
-        self, turn_token: TurnToken, ask: BackendPermissionAsk
-    ) -> None:
+    async def permission_ask_raised(self, turn_token: TurnToken, ask: BackendPermissionAsk) -> None:
         self.asks.append(ask)
         self._an_ask.set()
 
