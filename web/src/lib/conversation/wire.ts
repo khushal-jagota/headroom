@@ -139,7 +139,7 @@ export type PendingUserInput = {
 
 export type ComposerCatalogEntryKind = "command" | "skill" | "app" | "plugin";
 
-/** One typed text shortcut the conversation composer can offer. */
+/** One typed text shortcut. Display text can include its trigger but does not need to. */
 export type ComposerCatalogEntry = {
   kind: ComposerCatalogEntryKind;
   display_text: string;

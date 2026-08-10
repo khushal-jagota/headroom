@@ -110,8 +110,9 @@ class ComposerCatalogEntryKind(StrEnum):
 class ComposerCatalogEntry:
     """One typed text shortcut the conversation composer can offer.
 
-    ``display_text`` is the label a person sees. ``insertion_text`` is the exact text
-    that replaces the active catalog token. Panels does not interpret that text after
+    ``display_text`` is the label a person sees. It can include its trigger, but the
+    composer does not require that prefix. ``insertion_text`` is the exact text that
+    replaces the active catalog token. Panels does not interpret that text after
     insertion. It follows the ordinary plain-text delivery path.
     """
 

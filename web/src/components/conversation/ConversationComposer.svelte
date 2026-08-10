@@ -276,7 +276,11 @@
     catalogEntriesForTrigger(composerCatalog, catalogTokenUnderway?.trigger ?? null)
   );
   let matchingCatalogEntries = $derived(
-    catalogEntriesMatching(eligibleCatalogEntries, typedCatalogText ?? "")
+    catalogEntriesMatching(
+      eligibleCatalogEntries,
+      typedCatalogText ?? "",
+      catalogTokenUnderway?.trigger ?? null
+    )
   );
 
   // A dismissal belongs to the active token. Leaving the token clears it.
@@ -599,11 +603,16 @@
   /** Prefix matches come before contains matches, alphabetically within each group. */
   function catalogEntriesMatching(
     entries: readonly ComposerCatalogEntry[],
-    typed: string
+    typed: string,
+    trigger: "/" | "$" | "@" | null
   ): ComposerCatalogEntry[] {
     const wanted = typed.toLowerCase();
-    const searchable = (entry: ComposerCatalogEntry): string =>
-      entry.display_text.slice(1).toLowerCase();
+    const searchable = (entry: ComposerCatalogEntry): string => {
+      const displayText = entry.display_text.toLowerCase();
+      return trigger !== null && displayText.startsWith(trigger)
+        ? displayText.slice(trigger.length)
+        : displayText;
+    };
     const byDisplayText = (one: ComposerCatalogEntry, other: ComposerCatalogEntry): number =>
       one.display_text.localeCompare(other.display_text);
     const startsWithIt = entries.filter((entry) =>

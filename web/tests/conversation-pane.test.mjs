@@ -2410,6 +2410,27 @@ with sync_playwright() as playwright:
     assert "agent" not in nothing_to_offer.lower(), nothing_to_offer
     assert page.evaluate("window.__sends().length") == sent_before_the_menu
 
+    # Display text does not need to repeat its trigger. The insertion text remains exact,
+    # and sending the selected app uses the ordinary text content path.
+    page.evaluate(
+        'window.__setCommands(['
+        '{ kind: "app", display_text: "Drive", insertion_text: "@drive --open", description: "Open Drive", argument_hint: null }'
+        '])'
+    )
+    box.fill("")
+    box.type("@dr")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation-catalog-entry]').length === 1"
+    )
+    page.locator('[data-conversation-catalog-entry="Drive"]').click()
+    assert box.input_value() == "@drive --open"
+    sends_before_app = page.evaluate("window.__sends().length")
+    page.keyboard.press("Enter")
+    page.wait_for_function(f"window.__sends().length === {sends_before_app + 1}")
+    assert page.evaluate("window.__sends().at(-1).content") == [
+        {"piece": "text", "text": "@drive --open"}
+    ]
+
     # Mid-turn the composer keeps both actions. Enter and the arrow always queue by default.
     box.fill("")
     page.wait_for_selector("[data-conversation-commands]", state="detached")
