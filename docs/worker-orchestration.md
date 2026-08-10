@@ -1,7 +1,8 @@
 # Worker orchestration
 
-Each Ticket has one conversation, and one worker on the other end of it. This system
-decides when that worker should be asked to take the Ticket's next step, and asks it.
+Each Ticket has one active conversation, and one worker on the other end of it. A Ticket
+also retains its past conversations. This system decides when the active worker receives
+the Ticket's next step, and sends that step.
 That is the whole job. It does not watch the worker, wait for it to finish, or settle
 anything afterwards — a Ticket moves again only when someone acts on it: a proposal
 filed, an approval given, a take-over.
@@ -80,13 +81,15 @@ message goes into it. If it has none, the message is what brings one into being 
 what it should run on is resolved from three layers in order: the Worker type's launch
 defaults, the Ticket's own last-chosen values, then anything the sender explicitly asked
 for. The backend, model, and reasoning effort resolve as a unit, because a model name
-means nothing to a backend that has never heard of it. The conversation is created first
-and the Ticket pointed at it second, so a Ticket never names a conversation that does not
-exist.
+means nothing to a backend that has never heard of it. The conversation is created first.
+One guarded transaction points the Ticket at it and records its durable association. If
+another start wins that pointer race, the losing conversation gets no association.
 
 Making a conversation and saying the first thing in it are one act. If the message does
 not land, the conversation goes with it and the Ticket is left with none — which is
-exactly what the next attempt wants to find.
+exactly what the next attempt wants to find. The refusal or exception also removes that
+start's exact provisional association. Reset differs: it clears the active pointer but
+keeps the association and transcript in the Ticket's history.
 
 The conversation system reports one of three fates:
 
@@ -195,4 +198,4 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`, and
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-10._

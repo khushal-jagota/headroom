@@ -202,6 +202,11 @@ export type ResolvedTicketPriorityAnchors = {
   } | null;
 };
 
+export type TicketConversationHistoryEntry = {
+  conversation_id: string;
+  created_at: number;
+};
+
 export type TicketDetail = {
   id: string;
   title: string;
@@ -227,6 +232,7 @@ export type TicketDetail = {
   default_stage_ownership_mode: StageOwnershipMode | null;
   effective_stage_ownership_mode: StageOwnershipMode | null;
   conversation_id: string | null;
+  conversation_history: TicketConversationHistoryEntry[];
   day_ids?: string[];
   blocked?: boolean;
   blocker_summary?: BlockerSummary;

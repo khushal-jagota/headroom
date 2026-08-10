@@ -80,6 +80,7 @@
     sendMessage,
     onNewConversation,
     onMessageAccepted,
+    readOnly = false,
     ticketId = null
   }: {
     /** The conversation to show, or null for a caller that has not started one. */
@@ -112,6 +113,8 @@
      *  sender with no conversation is making one, and the answer names it. */
     sendMessage: (body: OwnerSendBody) => Promise<DeliveredMessage>;
     onNewConversation?: () => Promise<void>;
+    /** One display boundary for historical transcripts. The pane removes every action. */
+    readOnly?: boolean;
     /** A message typed here reached the conversation — started, held, or steered into the
      *  running turn. Not called for a refusal, which reached nothing. What that means is
      *  the caller's business; this only says it happened. */
@@ -358,6 +361,7 @@
     mode: PromptDeliveryMode,
     picked: RunValues
   ): Promise<boolean> {
+    if (readOnly) return false;
     errorNote = null;
     fateNote = null;
     // Drawn before anything is asked of the network, including the start: the person has
@@ -456,7 +460,7 @@
   }
 
   async function stop(): Promise<void> {
-    if (openedId === null) return;
+    if (readOnly || openedId === null) return;
     try {
       await interruptConversation(openedId);
       await refreshView();
@@ -473,7 +477,7 @@
    * is on its way.
    */
   async function discard(heldPromptId: string): Promise<void> {
-    if (openedId === null) return;
+    if (readOnly || openedId === null) return;
     errorNote = null;
     try {
       await discardHeldPrompt(openedId, heldPromptId);
@@ -484,7 +488,7 @@
   }
 
   async function promote(heldPromptId: string, mode: "send_now" | "steer"): Promise<void> {
-    if (openedId === null) return;
+    if (readOnly || openedId === null) return;
     errorNote = null;
     try {
       const result = await promoteHeldPrompt(openedId, heldPromptId, mode);
@@ -500,7 +504,7 @@
 
   async function answer(optionId: string): Promise<void> {
     const askId = ask?.askId;
-    if (askId === undefined || openedId === null) return;
+    if (readOnly || askId === undefined || openedId === null) return;
     askNote = null;
     busy = true;
     try {
@@ -517,7 +521,7 @@
 
   async function submitUserInput(answers: UserInputAnswers): Promise<void> {
     const requestId = userInput?.requestId;
-    if (requestId === undefined || openedId === null) return;
+    if (readOnly || requestId === undefined || openedId === null) return;
     askNote = null;
     busy = true;
     try {
@@ -535,7 +539,7 @@
   /** New is the caller's to define, because what it means depends on what owns the
    *  conversation. All this does is let go of the one on screen once they have. */
   async function newConversation(): Promise<void> {
-    if (onNewConversation === undefined) return;
+    if (readOnly || onNewConversation === undefined) return;
     try {
       await onNewConversation();
     } catch (error) {
@@ -598,6 +602,7 @@
   {fateNote}
   {errorNote}
   {connectionTrouble}
+  {readOnly}
   composerPlaceholder={composerPlaceholder
     ?? (started ? `Message ${label}...` : "Send the first message to start it...")}
   composerDisabled={busy || opening}
