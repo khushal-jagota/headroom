@@ -106,6 +106,31 @@ PICKER_BACKENDS = {
 }
 
 
+def test_config_workers_render_in_displayed_label_order(
+    server: ServerHandle,
+    context_factory: Callable[[], BrowserContext],
+    api: ApiHelper,
+) -> None:
+    page = context_factory().new_page()
+    workers_response = api.get(server, "/api/workers")
+    original_workers = workers_response["workers"]
+    assert len(original_workers) >= 2
+    workers_response["workers"] = list(reversed(original_workers))
+    expected_labels = sorted(
+        (worker["label"] for worker in original_workers),
+        key=lambda label: str(label).casefold(),
+    )
+    page.route("**/api/workers", lambda route: route.fulfill(json=workers_response))
+
+    page.goto(server.base + "/#/config")
+    page.wait_for_selector('[data-workers-list]', timeout=WAIT_MS)
+
+    assert (
+        page.locator("[data-worker-destination] [data-destination-name]").all_inner_texts()
+        == expected_labels
+    )
+
+
 def _replace_inline_edit_text(page: Page, selector: str, text: str) -> None:
     page.locator(selector).click()
     page.locator(selector).evaluate(

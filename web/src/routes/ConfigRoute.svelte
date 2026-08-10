@@ -56,6 +56,13 @@
   let indexedSkills = $derived(
     new Map((skillsHome.data?.skills || []).map((skill) => [skill.name, skill]))
   );
+  let sortedWorkers = $derived(
+    [...(workers.data?.workers || [])].sort(
+      (left, right) =>
+        left.label.localeCompare(right.label, undefined, { sensitivity: "base" }) ||
+        left.worker_type.localeCompare(right.worker_type)
+    )
+  );
   let sharedWorkerSkill = $derived(indexedSkills.get("panels-worker"));
 
   function displaySkillForEdit(settings: WorkerManagementSettings): ManagedSkill {
@@ -257,7 +264,7 @@
           <section class="agents-index-section" data-workers-section>
             <h2 class="agents-section-title">Workers</h2>
             <div class="agents-destination-list" data-workers-list>
-              {#each workers.data.workers as item}
+              {#each sortedWorkers as item}
                 <a
                   class="agents-destination"
                   href={`#/config/workers/${encodeURIComponent(item.worker_type)}`}
