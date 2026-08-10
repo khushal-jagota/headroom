@@ -24,6 +24,7 @@ from click.core import ParameterSource
 
 from planner.cli import http
 from planner.environments.cli import environment as environment_group
+from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.tickets.contracts import AtCap
 
 _PRIORITIES = ["P0", "P1", "P2", "P3"]
@@ -276,6 +277,52 @@ def _format_tickets(tickets: list[dict[str, Any]]) -> str:
         tickets,
         lambda t: f"{t['id']} {t['stage']} {t['priority']} {t['title']}",
     )
+
+
+def _format_ticket_summaries(tickets: list[dict[str, Any]]) -> str:
+    return _lines(
+        tickets,
+        lambda ticket: (
+            f"{ticket['id']} {ticket['stage']} {ticket['ticket_status']} "
+            f"{ticket['priority']} {ticket['title']}"
+            + (f" | {ticket['project']}" if ticket["project"] else "")
+            + (f"\n  {ticket['recap_preview']}" if ticket["recap_preview"] else "")
+        ),
+    )
+
+
+def _format_bounded(rows: str, page: dict[str, Any]) -> str:
+    if page["match_count"] == 0:
+        result = "No matches."
+    elif page["return_count"] == 0:
+        result = "No results at this offset."
+    else:
+        result = rows
+    facts = (
+        f"Returned {page['return_count']} of {page['match_count']} matches. "
+        f"Omitted {page['omitted_before']} before and {page['omitted_after']} after. "
+        f"Complete: {'yes' if page['complete'] else 'no'}."
+    )
+    directions: list[str] = []
+    if page["omitted_before"]:
+        directions.append("Use --offset 0 to start from the first match.")
+    if page["next_offset"] is not None:
+        directions.append(
+            f"Use --limit {page['limit']} --offset {page['next_offset']} for the next page."
+        )
+    return "\n".join((result, facts, *directions))
+
+
+def bounded_options(func: Callable[..., Any]) -> Callable[..., Any]:
+    func = click.option(
+        "--offset", type=click.IntRange(min=0), default=0, show_default=True
+    )(func)
+    return click.option(
+        "--limit",
+        type=click.IntRange(min=1),
+        default=DEFAULT_LIST_LIMIT,
+        show_default=True,
+    )(func)
 
 
 def _format_day(data: dict[str, Any]) -> str:
@@ -631,11 +678,23 @@ def project_group() -> None:
 
 
 @project_group.command("list")
+@bounded_options
 @json_option
-def project_list(as_json: bool) -> None:
-    data = http.send("GET", "/api/projects", as_json=as_json, request_actor="ordinary")
+def project_list(limit: int, offset: int, as_json: bool) -> None:
+    data = http.send(
+        "GET",
+        "/api/project-summaries",
+        as_json=as_json,
+        params={"limit": limit, "offset": offset},
+        request_actor="ordinary",
+    )
     http.emit(
-        data, as_json, _lines(data["projects"], lambda p: f"{p['id']} {p['name']}")
+        data,
+        as_json,
+        _format_bounded(
+            _lines(data["projects"], lambda p: f"{p['id']} {p['name']}"),
+            data["page"],
+        ),
     )
 
 
@@ -718,13 +777,21 @@ def day_show(date_: str, as_json: bool) -> None:
 
 @day.command("list-tickets")
 @click.option("--date", "date_", default="today", help="today or YYYY-MM-DD.")
+@bounded_options
 @json_option
-def day_list_tickets(date_: str, as_json: bool) -> None:
+def day_list_tickets(date_: str, limit: int, offset: int, as_json: bool) -> None:
     data = http.send(
-        "GET", f"/api/day/{date_}", as_json=as_json, request_actor="ordinary"
+        "GET",
+        f"/api/day/{date_}/tickets",
+        as_json=as_json,
+        params={"limit": limit, "offset": offset},
+        request_actor="ordinary",
     )
-    payload = {"id": data["id"], "tickets": data["tickets"]}
-    http.emit(payload, as_json, _format_tickets(data["tickets"]))
+    http.emit(
+        data,
+        as_json,
+        _format_bounded(_format_ticket_summaries(data["tickets"]), data["page"]),
+    )
 
 
 @day.command("set")
@@ -927,7 +994,27 @@ def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
 
 
 @ticket.command("list")
-@click.option("--stage", default=None, help="Only show tickets in this stage.")
+@click.option("--stage", multiple=True, help="Include this Stage. Repeat for more.")
+@click.option(
+    "--exclude-stage", multiple=True, help="Exclude this Stage. Repeat for more."
+)
+@click.option(
+    "--ticket-status",
+    multiple=True,
+    help="Include this ticket status. Repeat for more.",
+)
+@click.option(
+    "--exclude-ticket-status",
+    multiple=True,
+    help="Exclude this ticket status. Repeat for more.",
+)
+@click.option(
+    "--include-terminal",
+    is_flag=True,
+    default=False,
+    help="Include done and dropped Tickets.",
+)
+@click.option("--search", default=None, help="Case-insensitive Ticket text search.")
 @click.option("--project", default=None, help="Only show project name.")
 @click.option("--project-id", default=None, help="Only show project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
@@ -935,30 +1022,53 @@ def ticket_delete(ticket_id: str | None, yes: bool, as_json: bool) -> None:
     "--sprint-item", "sprint_item", default=None, help="Only show tickets in this item."
 )
 @click.option("--day", default=None, help="today or YYYY-MM-DD.")
+@bounded_options
 @json_option
 def ticket_list(
-    stage: str | None,
+    stage: tuple[str, ...],
+    exclude_stage: tuple[str, ...],
+    ticket_status: tuple[str, ...],
+    exclude_ticket_status: tuple[str, ...],
+    include_terminal: bool,
+    search: str | None,
     project: str | None,
     project_id: str | None,
     sprint: str | None,
     sprint_item: str | None,
     day: str | None,
+    limit: int,
+    offset: int,
     as_json: bool,
 ) -> None:
     params = _drop_none(
         {
-            "stage": stage,
+            "stage": list(stage) or None,
+            "exclude_stage": list(exclude_stage) or None,
+            "ticket_status": list(ticket_status) or None,
+            "exclude_ticket_status": list(exclude_ticket_status) or None,
+            "include_terminal": include_terminal or None,
+            "search": search,
             "project": project,
             "project_id": project_id,
             "sprint_id": sprint_value_for_filter(sprint, as_json),
             "sprint_item_id": sprint_item,
             "day": day,
+            "limit": limit,
+            "offset": offset,
         }
     )
     data = http.send(
-        "GET", "/api/tickets", as_json=as_json, params=params, request_actor="ordinary"
+        "GET",
+        "/api/ticket-summaries",
+        as_json=as_json,
+        params=params,
+        request_actor="ordinary",
     )
-    http.emit(data, as_json, _format_tickets(data["tickets"]))
+    http.emit(
+        data,
+        as_json,
+        _format_bounded(_format_ticket_summaries(data["tickets"]), data["page"]),
+    )
 
 
 @ticket.command("set")
@@ -1232,15 +1342,25 @@ def sprint_create(
 
 
 @sprint.command("list")
+@bounded_options
 @json_option
-def sprint_list(as_json: bool) -> None:
-    data = http.send("GET", "/api/sprints", as_json=as_json, request_actor="ordinary")
+def sprint_list(limit: int, offset: int, as_json: bool) -> None:
+    data = http.send(
+        "GET",
+        "/api/sprint-summaries",
+        as_json=as_json,
+        params={"limit": limit, "offset": offset},
+        request_actor="ordinary",
+    )
     http.emit(
         data,
         as_json,
-        _lines(
-            data["sprints"],
-            lambda s: f"{s['id']} {s['date_start']}..{s['date_end']} {s['name']}",
+        _format_bounded(
+            _lines(
+                data["sprints"],
+                lambda s: f"{s['id']} {s['date_start']}..{s['date_end']} {s['name']}",
+            ),
+            data["page"],
         ),
     )
 
@@ -1353,12 +1473,15 @@ def sprint_item_create(
 @click.option("--project", default=None, help="Only show project name.")
 @click.option("--project-id", default=None, help="Only show project id.")
 @click.option("--sprint", default=None, help="Sprint id, current, or none.")
+@bounded_options
 @json_option
 def sprint_item_list(
     status: str | None,
     project: str | None,
     project_id: str | None,
     sprint: str | None,
+    limit: int,
+    offset: int,
     as_json: bool,
 ) -> None:
     params = _drop_none(
@@ -1367,17 +1490,26 @@ def sprint_item_list(
             "project": project,
             "project_id": project_id,
             "sprint_id": sprint_value_for_filter(sprint, as_json),
+            "limit": limit,
+            "offset": offset,
         }
     )
     data = http.send(
-        "GET", "/api/items", as_json=as_json, params=params, request_actor="ordinary"
+        "GET",
+        "/api/sprint-item-summaries",
+        as_json=as_json,
+        params=params,
+        request_actor="ordinary",
     )
     http.emit(
         data,
         as_json,
-        _lines(
-            data["items"],
-            lambda i: f"{i['id']} {i['status']} {i['priority']} {i['title']}",
+        _format_bounded(
+            _lines(
+                data["items"],
+                lambda i: f"{i['id']} {i['status']} {i['priority']} {i['title']}",
+            ),
+            data["page"],
         ),
     )
 

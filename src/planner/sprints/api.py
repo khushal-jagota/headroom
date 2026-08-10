@@ -18,6 +18,8 @@ from planner.core.authctx import (
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import planning_date
+from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.list_reads.contracts import ListPageRequest
 from planner.projects import data as projects_data
 from planner.sprints import data as sprints_data
 from planner.sprints import views as sprints_views
@@ -148,6 +150,32 @@ async def list_items(
             sprint_id_filter=sprint_id,
         )
     }
+
+
+@router.get("/sprint-item-summaries")
+async def list_item_summaries(
+    conn: DbConn,
+    status: str | None = None,
+    project: str | None = None,
+    project_id: str | None = None,
+    sprint_id: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+    offset: int = 0,
+) -> JsonDict:
+    status_enum = (
+        parse_enum(ItemStatus, status, "status") if status is not None else None
+    )
+    resolved_project = projects_data.resolve_project(
+        conn, project_id=project_id, project_name=project
+    )
+    page = sprints_views.list_item_summaries(
+        conn,
+        page_request=ListPageRequest(limit=limit, offset=offset),
+        status=status_enum,
+        project_id=resolved_project.id if resolved_project is not None else None,
+        sprint_id_filter=sprint_id,
+    )
+    return page.response("items")
 
 
 @router.get("/items/{item_id}")
@@ -285,6 +313,16 @@ async def create_sprint(
 @router.get("/sprints")
 async def list_sprints(conn: DbConn) -> JsonDict:
     return {"sprints": sprints_views.list_sprints(conn)}
+
+
+@router.get("/sprint-summaries")
+async def list_sprint_summaries(
+    conn: DbConn, limit: int = DEFAULT_LIST_LIMIT, offset: int = 0
+) -> JsonDict:
+    page = sprints_views.list_sprint_summaries(
+        conn, page_request=ListPageRequest(limit=limit, offset=offset)
+    )
+    return page.response("sprints")
 
 
 @router.get("/sprints/{sprint_id}")

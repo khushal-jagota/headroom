@@ -9,6 +9,8 @@ from fastapi import APIRouter
 from planner.core.authctx import require_direct_write
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
+from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.list_reads.contracts import ListPageRequest
 from planner.projects import data as projects_data
 from planner.projects.contracts import CreateProjectBody, UpdateProjectBody
 from planner.tickets.api import Clk, Ctx, DbConn, body_str, parse_enum
@@ -39,11 +41,27 @@ def _marshal_update_project(raw: JsonDict) -> UpdateProjectBody:
 
 @router.get("/projects")
 async def list_projects(conn: DbConn) -> JsonDict:
-    return {"projects": [projects_data.project_json(p) for p in projects_data.list_projects(conn)]}
+    return {
+        "projects": [
+            projects_data.project_json(p) for p in projects_data.list_projects(conn)
+        ]
+    }
+
+
+@router.get("/project-summaries")
+async def list_project_summaries(
+    conn: DbConn, limit: int = DEFAULT_LIST_LIMIT, offset: int = 0
+) -> JsonDict:
+    page = projects_data.list_project_summaries(
+        conn, page_request=ListPageRequest(limit=limit, offset=offset)
+    )
+    return page.response("projects")
 
 
 @router.post("/projects")
-async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
+async def create_project(
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     require_direct_write(ctx)
     body = _marshal_create_project(raw)
     project = projects_data.create_project(

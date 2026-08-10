@@ -7,6 +7,7 @@ from __future__ import annotations
 import sqlite3
 
 from planner.core.contracts import JsonDict
+from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.sprints import data as sprints_data
 from planner.sprints.contracts import ItemStatus, Sprint, SprintItem
 from planner.sprints.logic import DateRange, current_sprint_id
@@ -219,6 +220,80 @@ def list_sprints(conn: sqlite3.Connection) -> list[JsonDict]:
     return [sprint_json(sprints_data.read_sprint(conn, str(r["id"]))) for r in rows]
 
 
+def list_sprint_summaries(
+    conn: sqlite3.Connection, *, page_request: ListPageRequest
+) -> ListPage[JsonDict]:
+    rows = conn.execute(
+        "SELECT id, name, date_start, date_end FROM sprints ORDER BY date_start DESC, id"
+    ).fetchall()
+    summaries = [
+        {
+            "id": str(row["id"]),
+            "name": str(row["name"]),
+            "date_start": str(row["date_start"]),
+            "date_end": str(row["date_end"]),
+        }
+        for row in rows[page_request.offset : page_request.offset + page_request.limit]
+    ]
+    return ListPage(
+        rows=tuple(summaries),
+        match_count=len(rows),
+        limit=page_request.limit,
+        offset=page_request.offset,
+    )
+
+
+def list_item_summaries(
+    conn: sqlite3.Connection,
+    *,
+    page_request: ListPageRequest,
+    status: ItemStatus | None,
+    project_id: str | None,
+    sprint_id_filter: str | None,
+) -> ListPage[JsonDict]:
+    clauses: list[str] = []
+    params: list[str] = []
+    if project_id is not None:
+        clauses.append("project_id = ?")
+        params.append(project_id)
+    if sprint_id_filter is not None:
+        if sprint_id_filter == "null":
+            clauses.append("sprint_id IS NULL")
+        else:
+            clauses.append("sprint_id = ?")
+            params.append(sprint_id_filter)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = conn.execute(
+        "SELECT id, priority, created_at FROM sprint_items" + where,
+        tuple(params),
+    ).fetchall()
+    matches: list[sprints_data.ItemRead] = []
+    for row in sorted(rows, key=_item_row_key):
+        read = sprints_data.read_item(conn, str(row["id"]))
+        if status is not None and read.status is not status:
+            continue
+        matches.append(read)
+    selected = matches[page_request.offset : page_request.offset + page_request.limit]
+    return ListPage(
+        rows=tuple(
+            {
+                "id": read.item.id,
+                "title": read.item.title,
+                "status": read.status.value,
+                "priority": read.item.priority.value,
+                "deadline": read.item.deadline,
+                "project_id": read.item.project_id,
+                "project": read.item.project_name,
+                "sprint_id": read.item.sprint_id,
+            }
+            for read in selected
+        ),
+        match_count=len(matches),
+        limit=page_request.limit,
+        offset=page_request.offset,
+    )
+
+
 def list_ideas(
     conn: sqlite3.Connection, *, project_id: str | None = None
 ) -> list[JsonDict]:
@@ -237,9 +312,7 @@ def list_ideas(
 # --- sprint-current view (§5) --------------------------------------------------
 
 
-def sprint_current_view(
-    conn: sqlite3.Connection, planning_date_iso: str
-) -> JsonDict:
+def sprint_current_view(conn: sqlite3.Connection, planning_date_iso: str) -> JsonDict:
     ranges = [
         DateRange(
             id=str(r["id"]),

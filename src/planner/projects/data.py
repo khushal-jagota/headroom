@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
+from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.projects.contracts import Project
 
 DEFAULT_PROJECTS: tuple[tuple[str, str], ...] = (
@@ -75,6 +76,28 @@ def list_projects(conn: sqlite3.Connection) -> list[Project]:
         "FROM projects ORDER BY lower(name), id"
     ).fetchall()
     return [_row_to_project(row) for row in rows]
+
+
+def list_project_summaries(
+    conn: sqlite3.Connection, *, page_request: ListPageRequest
+) -> ListPage[JsonDict]:
+    rows = conn.execute(
+        "SELECT id, name, priority FROM projects ORDER BY lower(name), id"
+    ).fetchall()
+    summaries = [
+        {
+            "id": str(row["id"]),
+            "name": str(row["name"]),
+            "priority": str(row["priority"]) if row["priority"] is not None else None,
+        }
+        for row in rows[page_request.offset : page_request.offset + page_request.limit]
+    ]
+    return ListPage(
+        rows=tuple(summaries),
+        match_count=len(rows),
+        limit=page_request.limit,
+        offset=page_request.offset,
+    )
 
 
 def read_project(conn: sqlite3.Connection, project_id: str) -> Project:

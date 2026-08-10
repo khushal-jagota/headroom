@@ -134,6 +134,10 @@ panels sprint item list --json
 
 For review questions, inspect the review queue or relevant tickets before advising.
 
+List commands return bounded summaries. Read their page facts before you assume that a
+result is complete. Prefer Ticket filters and `--search` before a larger `--limit`. Use
+`--include-terminal` only when finished or dropped work is relevant.
+
 For capture, create the smallest correct object. **A Kickoff is intake, not your plan,
 interpretation, or extrapolation.** Preserve the user's wording closely and include only
 what the user actually stated. Bring in context from inspected records or other Tickets

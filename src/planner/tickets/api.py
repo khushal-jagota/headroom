@@ -22,7 +22,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 
 from planner.conversation.api import (
@@ -51,6 +51,8 @@ from planner.core.config import Config
 from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.days.logic.dates import resolve_day_id
+from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
+from planner.list_reads.contracts import ListPageRequest
 from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import (
@@ -82,6 +84,8 @@ from planner.tickets.contracts import (
     StageOwnershipMode,
     Ticket,
     TicketEdit,
+    TicketListFilters,
+    TicketStatus,
     ValueEditBody,
 )
 from planner.worker_context.contracts import WorkerContextService
@@ -656,6 +660,75 @@ async def list_tickets(
     }
 
 
+@router.get("/ticket-summaries")
+async def list_ticket_summaries(
+    conn: DbConn,
+    cfg: Cfg,
+    clk: Clk,
+    stage: Annotated[list[str] | None, Query()] = None,
+    exclude_stage: Annotated[list[str] | None, Query()] = None,
+    ticket_status: Annotated[list[str] | None, Query()] = None,
+    exclude_ticket_status: Annotated[list[str] | None, Query()] = None,
+    include_terminal: bool = False,
+    search: str | None = None,
+    project: str | None = None,
+    project_id: str | None = None,
+    sprint_id: str | None = None,
+    sprint_item_id: str | None = None,
+    day: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
+    offset: int = 0,
+) -> JsonDict:
+    included_stages = tuple(stage or ())
+    registry = configured_worker_type_registry()
+    terminal_stages = {
+        terminal
+        for worker_type in registry.registered_worker_types()
+        for terminal in (
+            registry.require(worker_type).completed_stage(),
+            registry.require(worker_type).dropped_stage.id,
+        )
+    }
+    requested_terminal = sorted(set(included_stages) & terminal_stages)
+    if requested_terminal and not include_terminal:
+        raise PlannerError(
+            ErrorCode.validation,
+            "terminal stages require include_terminal",
+            {"stages": requested_terminal},
+        )
+    statuses = tuple(
+        parse_enum(TicketStatus, value, "ticket_status")
+        for value in (ticket_status or ())
+    )
+    excluded_statuses = tuple(
+        parse_enum(TicketStatus, value, "exclude_ticket_status")
+        for value in (exclude_ticket_status or ())
+    )
+    resolved_project = projects_data.resolve_project(
+        conn, project_id=project_id, project_name=project
+    )
+    day_id = (
+        resolve_day_id(day, clk.now(), cfg.boundary_hour) if day is not None else None
+    )
+    page = tickets_views.list_ticket_summaries(
+        conn,
+        page_request=ListPageRequest(limit=limit, offset=offset),
+        filters=TicketListFilters(
+            stages=included_stages,
+            excluded_stages=tuple(exclude_stage or ()),
+            ticket_statuses=statuses,
+            excluded_ticket_statuses=excluded_statuses,
+            include_terminal=include_terminal,
+            search=search,
+        ),
+        project_id=resolved_project.id if resolved_project is not None else None,
+        sprint_id=sprint_id,
+        sprint_item_id=sprint_item_id,
+        day_id=day_id,
+    )
+    return page.response("tickets")
+
+
 def _backend_snapshots(request: Request) -> BackendSnapshotService:
     runtime = getattr(request.app.state, "conversation", None)
     service = (
@@ -732,7 +805,9 @@ async def get_worker_self_ticket(
                     "owner_ticket_id": owner.id,
                 },
             )
-    detail = _ticket_detail_with_worker_settings(conn, ticket.id, clk.now_unix(), config)
+    detail = _ticket_detail_with_worker_settings(
+        conn, ticket.id, clk.now_unix(), config
+    )
     detail["worker"] = (
         configured_worker_type_registry()
         .require(ticket.worker_type)

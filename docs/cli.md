@@ -28,6 +28,24 @@ declared Stage override; it is not a runtime-status setter. The exceptional `chi
 can establish a coherent Ticket Stage from externally completed work; it is not a
 generic Stage setter.
 
+## Bounded list reads
+
+The five agent-facing list commands return summary rows in pages of 30 by default:
+
+- `ticket list`
+- `sprint list`
+- `sprint item list`
+- `day list-tickets`
+- `project list`
+
+Use `--limit` to select the page size. Use `--offset` to select its starting match.
+Text and JSON responses report the number of matches and returned rows. They also report
+omissions before and after the page, whether the response is complete, and the next
+offset. An empty match set and an empty page at a later offset are different results.
+
+These commands use separate summary reads. Browser collection routes keep their rich
+record shapes. Direct `show` commands also keep their full record shapes.
+
 ## The verbs
 
 - **`day show / list-tickets / set / add-ticket / remove-ticket`** — plan a day and
@@ -66,8 +84,17 @@ generic Stage setter.
   worker on — the Worker type's own model belongs to the Worker type's own backend.
   When `--priority` is omitted, creation uses the parent Sprint Item priority, then an
   assessed Project priority, then P3. An explicit `--priority P0|P1|P2|P3` overrides
-  that default. `ticket list --stage`
-  compares the stored Stage directly. `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
+  that default. `ticket list` excludes done and dropped Tickets unless
+  `--include-terminal` is present. Repeat `--stage` or `--exclude-stage` for Stage
+  inclusion or exclusion. Repeat `--ticket-status` or `--exclude-ticket-status` for
+  control-status inclusion or exclusion. Values inside one filter type use OR. Different
+  filter types use AND, and exclusions apply last. A terminal `--stage` also requires
+  `--include-terminal`. An unknown Stage produces no matches.
+  `--search` performs a case-insensitive substring match across the title, recap, field
+  values, proposal bodies, and user notes. Search keeps stable Ticket order and combines
+  with placement filters and page controls. Results include Ticket state, placement, and
+  a short recap preview. Search does not rank matches or return snippets.
+  `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
   or `project` / `project-id`). Sprint placement is a sprint command,
   not a ticket setter.
   `ticket delete` is a permanent direct operation

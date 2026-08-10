@@ -9,11 +9,14 @@ import sqlite3
 
 from planner.core import links as core_links
 from planner.core.contracts import BlockerSummary, JsonDict
+from planner.list_reads.configuration import TICKET_RECAP_PREVIEW_CHARS
+from planner.list_reads.contracts import ListPage, ListPageRequest
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import (
     AtCap,
     FieldSlot,
     Ticket,
+    TicketListFilters,
     TicketStatus,
 )
 from planner.tickets.logic import fields_codec, machine
@@ -158,6 +161,144 @@ def list_tickets(
     return [
         ticket_json(tickets_data.read_ticket(conn, str(row["id"])), now) for row in rows
     ]
+
+
+def _ticket_search_text(row: sqlite3.Row) -> str:
+    registry = configured_worker_type_registry()
+    definition = registry.require(str(row["worker_type"]))
+    fields = fields_codec.declared_fields_from_json(
+        str(row["fields"]), definition.field_ids()
+    )
+    field_text: list[str] = []
+    for slot in fields.slots.values():
+        if slot.value:
+            field_text.append(slot.value)
+        if slot.proposal is not None:
+            field_text.append(slot.proposal.body)
+        if slot.user_note:
+            field_text.append(slot.user_note)
+    return "\n".join((str(row["title"]), str(row["recap"]), *field_text))
+
+
+def _recap_preview(recap: str) -> str:
+    compact = " ".join(recap.split())
+    if len(compact) <= TICKET_RECAP_PREVIEW_CHARS:
+        return compact
+    return compact[: TICKET_RECAP_PREVIEW_CHARS - 1].rstrip() + "…"
+
+
+def _ticket_summary_json(row: sqlite3.Row) -> JsonDict:
+    return {
+        "id": str(row["id"]),
+        "title": str(row["title"]),
+        "worker_type": str(row["worker_type"]),
+        "stage": str(row["stage"]),
+        "ticket_status": str(row["ticket_status"]),
+        "priority": str(row["priority"]),
+        "project_id": (
+            str(row["effective_project_id"])
+            if row["effective_project_id"] is not None
+            else None
+        ),
+        "project": (
+            str(row["project_name"]) if row["project_name"] is not None else None
+        ),
+        "sprint_item_id": (
+            str(row["sprint_item_id"]) if row["sprint_item_id"] is not None else None
+        ),
+        "sprint_item": (
+            str(row["sprint_item_title"])
+            if row["sprint_item_title"] is not None
+            else None
+        ),
+        "effective_sprint_id": (
+            str(row["sprint_id"]) if row["sprint_id"] is not None else None
+        ),
+        "recap_preview": _recap_preview(str(row["recap"])),
+    }
+
+
+def list_ticket_summaries(
+    conn: sqlite3.Connection,
+    *,
+    page_request: ListPageRequest,
+    filters: TicketListFilters,
+    project_id: str | None,
+    sprint_id: str | None,
+    sprint_item_id: str | None,
+    day_id: str | None = None,
+    day_order: bool = False,
+) -> ListPage[JsonDict]:
+    clauses: list[str] = []
+    params: list[str] = []
+    if project_id is not None:
+        clauses.append("COALESCE(sprint_items.project_id, tickets.project_id) = ?")
+        params.append(project_id)
+    if sprint_id is not None:
+        if sprint_id == "null":
+            clauses.append("sprint_items.sprint_id IS NULL")
+        else:
+            clauses.append("sprint_items.sprint_id = ?")
+            params.append(sprint_id)
+    if sprint_item_id is not None:
+        clauses.append("tickets.sprint_item_id = ?")
+        params.append(sprint_item_id)
+    join_day = ""
+    if day_id is not None:
+        join_day = " JOIN day_tickets ON day_tickets.ticket_id = tickets.id"
+        clauses.append("day_tickets.day_id = ?")
+        params.append(day_id)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    order = (
+        "day_tickets.position ASC, tickets.id"
+        if day_order
+        else "tickets.created_at ASC, tickets.id"
+    )
+    searchable_fields = "tickets.fields" if filters.search else "NULL"
+    rows = conn.execute(
+        "SELECT tickets.id, tickets.title, tickets.worker_type, tickets.stage, "
+        "tickets.ticket_status, tickets.priority, tickets.recap, "
+        + searchable_fields
+        + " AS fields, "
+        "COALESCE(sprint_items.project_id, tickets.project_id) AS effective_project_id, "
+        "projects.name AS project_name, tickets.sprint_item_id, "
+        "sprint_items.title AS sprint_item_title, sprint_items.sprint_id "
+        "FROM tickets "
+        "LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
+        "LEFT JOIN projects ON projects.id = COALESCE(sprint_items.project_id, tickets.project_id)"
+        + join_day
+        + where
+        + " ORDER BY "
+        + order,
+        tuple(params),
+    ).fetchall()
+    registry = configured_worker_type_registry()
+    search = filters.search.casefold() if filters.search else None
+    matches: list[sqlite3.Row] = []
+    for row in rows:
+        stage = str(row["stage"])
+        status = TicketStatus(str(row["ticket_status"]))
+        definition = registry.require(str(row["worker_type"]))
+        if not filters.include_terminal and definition.is_terminal(stage):
+            continue
+        if filters.stages and stage not in filters.stages:
+            continue
+        if stage in filters.excluded_stages:
+            continue
+        if filters.ticket_statuses and status not in filters.ticket_statuses:
+            continue
+        if status in filters.excluded_ticket_statuses:
+            continue
+        if search is not None and search not in _ticket_search_text(row).casefold():
+            continue
+        matches.append(row)
+    selected = matches[page_request.offset : page_request.offset + page_request.limit]
+    return ListPage(
+        rows=tuple(_ticket_summary_json(row) for row in selected),
+        match_count=len(matches),
+        limit=page_request.limit,
+        offset=page_request.offset,
+    )
 
 
 def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDict:

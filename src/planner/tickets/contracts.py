@@ -62,6 +62,16 @@ class TicketStatus(
     errored = "errored"
 
 
+@dataclass(frozen=True, slots=True)
+class TicketListFilters:
+    stages: tuple[str, ...] = ()
+    excluded_stages: tuple[str, ...] = ()
+    ticket_statuses: tuple[TicketStatus, ...] = ()
+    excluded_ticket_statuses: tuple[TicketStatus, ...] = ()
+    include_terminal: bool = False
+    search: str | None = None
+
+
 @dataclass(frozen=True)
 class Proposal:  # §4.2 proposal slot
     body: str

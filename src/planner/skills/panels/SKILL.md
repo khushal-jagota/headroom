@@ -77,6 +77,13 @@ The command groups describe both the object being changed and the operation's au
 - `panels worker ...` for the gated worker flow: proposals, recaps, and notes.
 - `panels chief ...` only for importing reality established outside Panels. Its two explicit operations reconcile an existing ticket or create a populated ticket from external work; it is not a general ticket-editing surface.
 
+The main list reads are bounded summaries. `ticket list`, `sprint list`, `sprint item
+list`, `day list-tickets`, and `project list` return 30 rows by default. Their text and
+JSON output state the omissions and the next offset. Use `--limit` and `--offset` for
+another page. Ticket lists exclude terminal Tickets by default. Use repeatable Stage and
+`ticket_status` filters, exclusions, `--include-terminal`, and `--search` to narrow the
+result before you increase its limit.
+
 ## Skills
 
 - **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.
