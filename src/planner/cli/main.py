@@ -2158,6 +2158,25 @@ def worker_request_user_help(ticket_id: str | None, as_json: bool) -> None:
     http.emit(data, as_json, f"user help requested on {data['id']}")
 
 
+@worker.command("trouble")
+@click.option(
+    "--body-file", required=True, help="Read the one-line trouble note from this file, or -."
+)
+@json_option
+def worker_trouble(body_file: str, as_json: bool) -> None:
+    """Record trouble on the current worker's Ticket."""
+    tid = resolve_ticket_id(None, as_json)
+    body = read_required_option_body(body_file, as_json, "body")
+    data = http.send(
+        "POST",
+        f"/api/tickets/{tid}/trouble-notes",
+        as_json=as_json,
+        json_body={"body": body},
+    )
+    note = data["trouble_note"]
+    http.emit(data, as_json, f"trouble recorded on {tid} as note {note['sequence']}")
+
+
 @worker.command("recap")
 @click.argument("ticket_id", required=False, envvar=_TICKET_ID_ENV)
 @click.option("--body-file", default=None, help="Read recap text from this file, or -.")

@@ -1,4 +1,4 @@
-"""Direct-user HTTP write path for a finished Ticket's optional verdict."""
+"""HTTP write paths for Ticket judgment signals."""
 
 from __future__ import annotations
 
@@ -11,13 +11,23 @@ from planner.core.authctx import RequestContext, request_context, require_direct
 from planner.core.contracts import JsonDict
 from planner.core.errors import ErrorCode, PlannerError
 from planner.judgments import data
-from planner.judgments.contracts import VerdictBody
-from planner.tickets.api import db_conn
+from planner.judgments.contracts import TroubleNoteBody, VerdictBody
+from planner.tickets.api import Clk, body_str, db_conn
 
 router = APIRouter()
 
 DbConn = Annotated[sqlite3.Connection, Depends(db_conn)]
 Ctx = Annotated[RequestContext, Depends(request_context)]
+
+
+def _require_current_worker(ctx: RequestContext, ticket_id: str) -> None:
+    if ctx.actor == "worker" and ctx.ticket_id == ticket_id:
+        return
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "trouble can be recorded only by this ticket's worker",
+        {"actor": ctx.actor, "ticket_id": ticket_id},
+    )
 
 
 def _optional_rating(body: JsonDict) -> int | None:
@@ -68,4 +78,29 @@ async def put_ticket_verdict(
             if verdict is not None
             else None
         )
+    }
+
+
+@router.post("/tickets/{ticket_id}/trouble-notes")
+async def post_ticket_trouble_note(
+    ticket_id: str,
+    raw: JsonDict,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    _require_current_worker(ctx, ticket_id)
+    body = TroubleNoteBody(body=body_str(raw, "body"))
+    note = data.append_trouble_note(
+        conn,
+        ticket_id,
+        body=body["body"],
+        created_at=clk.now_unix(),
+    )
+    return {
+        "trouble_note": {
+            "sequence": note.sequence,
+            "body": note.body,
+            "created_at": note.created_at,
+        }
     }

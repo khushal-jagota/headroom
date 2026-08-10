@@ -83,8 +83,9 @@ any file or prompt, and records the media type those bytes prove, not the type t
 browser claimed.
 
 Those files last as long as the notebook does, which is forever. Nothing in
-Panels deletes a conversation: resetting one stops it and unlinks it, and
-deleting a Ticket leaves its conversation behind. A file removed by either would
+Panels deletes a conversation. Reset stops the active conversation and clears its active
+pointer, but its Ticket history association remains. Ticket deletion removes the
+associations and leaves each conversation record behind. A file removed by either would
 turn a picture somebody sent into a picture nobody can see, while the row still
 says a picture was sent.
 
@@ -307,7 +308,8 @@ waiting in line (the notebook keeps what was delivered or discarded). Kill is
 the loud version of stopping: it ends the running turn and throws away the
 waiting line, writing a discard row for each thrown-away message, because text
 someone handed over must never vanish without a trace. Pressing New in the pane
-kills the old conversation before starting fresh.
+kills the old conversation before starting fresh. The old transcript remains part of the
+Ticket's ordered conversation history. Only the active conversation accepts new messages.
 
 ## Backend cards
 
@@ -434,4 +436,4 @@ child process runs. A conversation with no report yet offers nothing.
 - **Error envelope**: the conversation routes speak plain HTTP errors, not the
   planner's error envelope. Trigger: one error contract is adopted across the API.
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-10._

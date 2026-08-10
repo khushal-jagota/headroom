@@ -92,7 +92,10 @@ assert.doesNotMatch(
 // the message is what makes one — so nothing is attached on arrival and nothing is
 // started on arrival either. Both absences are asserted so the removals carry their
 // reasons forward instead of being quietly re-added.
-assert.match(ticketRouteSource, /conversationId=\{detail\.conversation_id\}/);
+assert.match(ticketRouteSource, /<TicketConversationHistory/);
+assert.match(ticketRouteSource, /bind:selectedPastConversationId/);
+assert.match(ticketRouteSource, /conversationId=\{selectedConversationId\}/);
+assert.match(ticketRouteSource, /readOnly=\{selectedPastConversationId !== null\}/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/send`/);
 assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/conversation\/reset`/);
 assert.doesNotMatch(ticketRouteSource, /deferInitialAttach|onStartConversation/);

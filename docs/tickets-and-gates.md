@@ -64,13 +64,17 @@ value path.
 
 _Code paths:_ `src/planner/tickets/` (the Ticket Stage and its fields).
 
-### The Ticket's one conversation
+### The Ticket's conversations
 
-A Ticket points at one conversation, and everything reaches the worker through it:
+A Ticket points at one active conversation, and everything reaches the worker through it:
 worker steps Panels starts on its own, what the human types in the pane, and revision
 guidance sent back from Review. Starting a fresh one is deliberate — it stops the old
 worker outright and discards anything it was still holding — and the new one starts from
 the Ticket's last-chosen backend, model and reasoning.
+
+The Ticket also keeps every conversation it has had. Reset clears only the active
+pointer. The history remains in oldest-first order, and each past transcript remains
+reachable from the Ticket. A past conversation is a record, not a place to send new work.
 
 The conversation system owns the transcript. Panels keeps no second message or
 active-turn table. Pending worker context reaches the worker only when it is included
@@ -295,8 +299,8 @@ tickets and day ordering stay intact.
 Blocker links are removed in the same transaction, and the delete response lists the
 surviving Ticket and Sprint-item endpoints those links pointed at.
 
-The conversation itself lives outside Panels' record and is not erased, but nothing in
-Panels points at it any more.
+The conversations live outside the Ticket record and are not erased. Deletion removes
+their Ticket associations, so Panels no longer assigns those transcripts to that Ticket.
 
 The whole deletion is one transaction, so it announces one change — not one per removed
 day or link.
@@ -327,4 +331,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-10._

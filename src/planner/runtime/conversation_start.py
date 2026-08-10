@@ -39,7 +39,11 @@ from planner.conversation.contracts import (
     PromptDeliveryRefused,
     PromptDeliveryStarted,
 )
+from planner.conversation.logic.conversation_start_resolution import (
+    resolve_conversation_start_request,
+)
 from planner.conversation.message_content import MessageContent
+from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.errors import ErrorCode, PlannerError
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
@@ -203,26 +207,37 @@ async def start_ticket_conversation(
     conversation that will never be spoken into, which is the whole of what this rule is
     against.
     """
-    await system.start_conversation(
-        ConversationStartRequest(
-            conversation_id=conversation_id,
-            backend_key=values.backend_key,
-            model=values.model,
-            reasoning_effort=values.reasoning_effort,
-            role_materials=values.role_materials,
-            workspace_folder=values.workspace_folder,
-            access=values.access,
-        )
-    )
-    linked = tickets_data.write_ticket_conversation_start(
-        conn,
-        ticket.id,
+    request = ConversationStartRequest(
         conversation_id=conversation_id,
-        backend=values.backend_key.value,
+        backend_key=values.backend_key,
         model=values.model,
         reasoning_effort=values.reasoning_effort,
-        now=now,
+        role_materials=values.role_materials,
+        workspace_folder=values.workspace_folder,
+        access=values.access,
     )
+    await system.start_conversation(request)
+    try:
+        ensure_started_conversation_record(
+            conn, resolve_conversation_start_request(request), created_at=now
+        )
+        linked = tickets_data.write_ticket_conversation_start(
+            conn,
+            ticket.id,
+            conversation_id=conversation_id,
+            backend=values.backend_key.value,
+            model=values.model,
+            reasoning_effort=values.reasoning_effort,
+            now=now,
+        )
+    except BaseException as start_error:
+        try:
+            await system.kill(conversation_id)
+        except BaseException as cleanup_error:
+            start_error.add_note(
+                f"cleanup also failed for conversation {conversation_id}: {cleanup_error}"
+            )
+        raise
     # Either this one landed or the Ticket already had one; both leave it naming a
     # conversation, and that is the one the caller has to send into.
     now_in = linked.conversation_id or conversation_id
@@ -488,8 +503,8 @@ async def _let_go_of_a_conversation_that_was_never_spoken_in(
 ) -> None:
     """Undo a conversation whose first message did not land, and only that one."""
     await system.kill(conversation_id)
-    tickets_data.clear_ticket_conversation_link(
-        conn, ticket_id, expected_conversation_id=conversation_id, now=now
+    tickets_data.remove_ticket_conversation_start(
+        conn, ticket_id, conversation_id=conversation_id, now=now
     )
 
 

@@ -44,6 +44,10 @@ from planner.judgments.api import router as judgments_router
 from planner.notifications.api import router as notifications_router
 from planner.projects.api import router as projects_router
 from planner.scheduled_tickets.api import router as scheduled_tickets_router
+from planner.skill_versions import (
+    reconcile_managed_skill_versions,
+    reconcile_provisional_worker_step_bindings,
+)
 from planner.sprints.api import router as sprints_router
 from planner.tickets.api import router as tickets_router
 from planner.worker_context.service import SqliteWorkerContextService
@@ -136,6 +140,8 @@ def create_app(
         audit_conn = conn_factory()
         try:
             tickets_data.audit_ticket_registry_integrity(audit_conn)
+            reconcile_managed_skill_versions(audit_conn, Path(config.db_path).expanduser().parent)
+            reconcile_provisional_worker_step_bindings(audit_conn)
         finally:
             audit_conn.close()
 

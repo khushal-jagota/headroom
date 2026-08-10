@@ -23,6 +23,16 @@ The Ticket screen shows the add and edit controls on a done Ticket. If a Ticket 
 to an earlier Stage, its saved verdict remains visible without edit controls. Panels has
 no judgment list, filter, or analysis surface.
 
-_Code paths:_ `src/planner/judgments/`, `web/src/components/TicketVerdict.svelte`.
+A Ticket worker can record a short trouble note during its active claimed worker step.
+Use `panels worker trouble --body-file PATH`. The command accepts one nonempty line of
+at most 500 characters. It records trouble that the worker encountered. It does not
+rate the worker or record what went well.
+
+Trouble notes are append-only and keep their creation order. The Ticket screen shows
+the notes and their recorded times near the verdict. Panels does not provide edit,
+delete, browse, filter, or analysis controls for trouble notes.
+
+_Code paths:_ `src/planner/judgments/`, `web/src/components/TicketVerdict.svelte`,
+`web/src/components/TicketTroubleNotes.svelte`.
 
 _Last verified: 2026-08-10._

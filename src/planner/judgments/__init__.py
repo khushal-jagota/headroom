@@ -1,2 +1,1 @@
-"""Ticket judgments and their first optional signal, the user verdict."""
-
+"""Ticket judgments: user verdicts and worker trouble notes."""

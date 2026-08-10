@@ -36,12 +36,15 @@ from planner.conversation.events import (
     ConversationEventKind,
     ConversationEventPayload,
     ModelChangedEventPayload,
+    PromptDeliveryRefusedEventPayload,
+    PromptDiscardedEventPayload,
     PromptEventPayload,
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
 from planner.core.db import connect
+from planner.skill_versions import settle_worker_step_skill_bindings
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
 
@@ -387,6 +390,16 @@ class ConversationStore:
                     created_at=created_at,
                 )
             )
+            if isinstance(payload, PromptEventPayload) and payload.sender_message_id is not None:
+                settle_worker_step_skill_bindings(conn, payload.sender_message_id, delivered=True)
+            elif (
+                isinstance(
+                    payload,
+                    (PromptDeliveryRefusedEventPayload, PromptDiscardedEventPayload),
+                )
+                and payload.sender_message_id is not None
+            ):
+                settle_worker_step_skill_bindings(conn, payload.sender_message_id, delivered=False)
         conn.execute(
             "UPDATE conversations SET latest_sequence = ? WHERE conversation_id = ?",
             (latest_sequence + len(payloads), conversation_id),
@@ -465,6 +478,63 @@ class ConversationStore:
 
     def _connect(self) -> sqlite3.Connection:
         return connect(self._db_path, self._busy_timeout_ms)
+
+
+def ensure_started_conversation_record(
+    conn: sqlite3.Connection,
+    resolved: ResolvedConversationStart,
+    *,
+    created_at: int,
+) -> None:
+    """Ensure that a successfully started Ticket conversation has its durable row.
+
+    The production system writes this row before ``start_conversation`` returns. Contract
+    implementations can keep their state elsewhere, as the in-memory implementation does.
+    Ticket ownership has a foreign key to the durable record, so the Ticket lifecycle
+    fills that representation gap before it attempts the guarded ownership write.
+
+    An existing row must describe the same conversation. A mismatch means that two
+    systems used one id for different starts, and must fail instead of attaching it.
+    """
+    role_materials = resolved.role_materials
+    identity_environment_variables_json = _identity_environment_variables_to_json(
+        () if role_materials is None else role_materials.identity_environment_variables
+    )
+    immutable_expected = (
+        str(resolved.backend_key),
+        str(resolved.workspace_folder),
+        None if role_materials is None else role_materials.role_text,
+        identity_environment_variables_json,
+        str(resolved.access),
+    )
+    inserted_values = (
+        str(resolved.backend_key),
+        resolved.model,
+        resolved.reasoning_effort,
+        str(resolved.workspace_folder),
+        None if role_materials is None else role_materials.role_text,
+        identity_environment_variables_json,
+        str(resolved.access),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO conversations (conversation_id, backend_key, model, "
+        "reasoning_effort, workspace_folder, role_text, "
+        "identity_environment_variables, access, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (resolved.conversation_id, *inserted_values, created_at),
+    )
+    row = conn.execute(
+        "SELECT backend_key, workspace_folder, role_text, "
+        "identity_environment_variables, access FROM conversations "
+        "WHERE conversation_id = ?",
+        (resolved.conversation_id,),
+    ).fetchone()
+    actual = None if row is None else tuple(row)
+    if actual != immutable_expected:
+        raise RuntimeError(
+            f"conversation {resolved.conversation_id} started with values that differ "
+            "from its durable record"
+        )
 
 
 def _conversation_record(row: sqlite3.Row) -> ConversationRecord:

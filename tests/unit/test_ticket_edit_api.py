@@ -817,6 +817,9 @@ def test_compound_patch_changes_all_fields_in_canonical_order_with_one_context_s
     before = _snapshot(db_path, ticket_id)
 
     with TestClient(app) as client:
+        # The trace below proves the PATCH transaction. Startup owns its own fail-fast
+        # skill reconciliation transactions, which finish before this request begins.
+        trace.clear()
         response = client.patch(
             f"/api/tickets/{ticket_id}",
             json={

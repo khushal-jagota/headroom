@@ -725,13 +725,39 @@ def write_ticket_conversation_start(
     """
     with _txn(conn):
         _load_ticket_for_write(conn, ticket_id)
-        conn.execute(
+        updated = conn.execute(
             "UPDATE tickets SET conversation_id = ?, employee_backend = ?, "
             "employee_launch_model = ?, employee_launch_reasoning_effort = ?, "
             "updated_at = ? WHERE id = ? AND conversation_id IS NULL",
             (conversation_id, backend, model, reasoning_effort, now, ticket_id),
         )
+        if updated.rowcount == 1:
+            conn.execute(
+                "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
+                (conversation_id, ticket_id),
+            )
         return _load_ticket_for_write(conn, ticket_id)
+
+
+def remove_ticket_conversation_start(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    *,
+    conversation_id: str,
+    now: int,
+) -> None:
+    """Undo the exact provisional association for a first message that did not land."""
+    with _txn(conn):
+        _load_ticket_for_write(conn, ticket_id)
+        conn.execute(
+            "UPDATE tickets SET conversation_id = NULL, updated_at = ? "
+            "WHERE id = ? AND conversation_id = ?",
+            (now, ticket_id, conversation_id),
+        )
+        conn.execute(
+            "DELETE FROM ticket_conversations WHERE ticket_id = ? AND conversation_id = ?",
+            (ticket_id, conversation_id),
+        )
 
 
 def write_ticket_last_chosen_configuration(
@@ -1310,7 +1336,8 @@ def read_ticket_by_conversation_id(
         "FROM tickets LEFT JOIN sprint_items ON sprint_items.id = tickets.sprint_item_id "
         "LEFT JOIN projects ON projects.id = "
         "COALESCE(sprint_items.project_id, tickets.project_id) "
-        "WHERE tickets.conversation_id = ? ORDER BY tickets.id",
+        "JOIN ticket_conversations ON ticket_conversations.ticket_id = tickets.id "
+        "WHERE ticket_conversations.conversation_id = ? ORDER BY tickets.id",
         (conversation_id,),
     ).fetchall()
     if not rows:

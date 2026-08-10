@@ -142,7 +142,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Item status is read-only and derived from child tickets and active blocking links.
   `sprint item delete <item-id> --yes` permanently removes a childless item. An item
   with child tickets must have that work explicitly moved or removed first.
-- **`worker propose / recap / note / request-user-help / my-ticket`** — worker actions. `worker propose`
+- **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` replaces field
   guidance by default and accepts `--append` for additive guidance without changing
@@ -150,7 +150,9 @@ record shapes. Direct `show` commands also keep their full record shapes.
   a caller. `worker my-ticket`
   reports the current Ticket, and names the **specialist skill** for its Worker type —
   the one the base worker loads to learn that Worker type's Stages (see
-  `worker-types.md`). `request-user-help` parks the Ticket for a user response after the
+  `worker-types.md`). `worker trouble --body-file PATH` appends one short trouble note
+  to the current worker's Ticket during its active claimed worker step.
+  `request-user-help` parks the Ticket for a user response after the
   Worker records its request in the conversation.
 - **`chief reconcile-ticket-from-external-work / create-ticket-from-external-work`** —
   record reality established outside Panels. Both require an explicit Chief request,

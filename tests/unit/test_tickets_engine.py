@@ -1655,6 +1655,14 @@ def test_read_ticket_by_conversation_id(
     """A worker resolves its own ticket from its live session key; unknown key -> not_found."""
     t = _create(tmp_db, cfg, fake_clock)
     tmp_db.execute(
+        "INSERT INTO conversations (conversation_id, backend_key, model, workspace_folder, "
+        "access, created_at) VALUES ('sess_abc', 'codex', 'model', '/work', 'full', 1)"
+    )
+    tmp_db.execute(
+        "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
+        ("sess_abc", t.id),
+    )
+    tmp_db.execute(
         "UPDATE tickets SET conversation_id = ? WHERE id = ?", ("sess_abc", t.id)
     )
     assert data.read_ticket_by_conversation_id(tmp_db, "sess_abc").id == t.id

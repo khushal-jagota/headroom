@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "conversation_composer_catalog"
+HEAD_REVISION = "ticket_judgment_trouble_notes"
 
 
 def _table_columns(

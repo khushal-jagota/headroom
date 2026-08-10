@@ -310,7 +310,15 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         (ticket_id,),
     ).fetchall()
     blocker_summary = core_links.blocker_summary(conn, ticket_id)
-    verdict = judgments_data.read_verdict(conn, ticket_id)
+    conversation_rows = conn.execute(
+        "SELECT ticket_conversations.conversation_id, conversations.created_at "
+        "FROM ticket_conversations JOIN conversations "
+        "ON conversations.conversation_id = ticket_conversations.conversation_id "
+        "WHERE ticket_conversations.ticket_id = ? "
+        "ORDER BY conversations.created_at, ticket_conversations.conversation_id",
+        (ticket_id,),
+    ).fetchall()
+    judgment = judgments_data.read_ticket_judgment(conn, ticket_id)
     detail.update(
         {
             "blocked": blocker_summary.blocked,
@@ -318,11 +326,35 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
                 ticket
             ),
+            "conversation_history": [
+                {
+                    "conversation_id": str(row["conversation_id"]),
+                    "created_at": int(row["created_at"]),
+                }
+                for row in conversation_rows
+            ],
             "verdict": (
-                {"rating": verdict.rating, "text": verdict.text}
-                if verdict is not None
+                {
+                    "rating": judgment.verdict_rating,
+                    "text": judgment.verdict_text,
+                }
+                if judgment is not None
+                and (
+                    judgment.verdict_rating is not None
+                    or judgment.verdict_text is not None
+                )
                 else None
             ),
+            "trouble_notes": [
+                {
+                    "sequence": note.sequence,
+                    "body": note.body,
+                    "created_at": note.created_at,
+                }
+                for note in (
+                    judgment.trouble_notes if judgment is not None else ()
+                )
+            ],
         }
     )
     if blocker_summary.blocked:

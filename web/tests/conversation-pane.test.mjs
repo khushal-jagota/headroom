@@ -190,6 +190,41 @@ assert.ok(
 // rather than each in their own. These are assertions about that one piece of code.
 const binderSource = sources["LiveConversation.svelte"];
 
+// A historical pane removes mutation controls at its rendering boundary. The live binder
+// also refuses every mutation callback, so a stale event handler cannot cross it.
+function binderFunction(name, nextName) {
+  const start = binderSource.indexOf(`async function ${name}`);
+  const end = binderSource.indexOf(`async function ${nextName}`, start + 1);
+  assert.ok(start >= 0 && end > start, `find ${name} before ${nextName}`);
+  return binderSource.slice(start, end);
+}
+
+assert.match(binderFunction("send", "stop"), /if \(readOnly\) return false;/);
+assert.match(
+  binderFunction("stop", "discard"),
+  /if \(readOnly \|\| openedId === null\) return;/
+);
+assert.match(
+  binderFunction("discard", "promote"),
+  /if \(readOnly \|\| openedId === null\) return;/
+);
+assert.match(
+  binderFunction("promote", "answer"),
+  /if \(readOnly \|\| openedId === null\) return;/
+);
+assert.match(
+  binderFunction("answer", "submitUserInput"),
+  /if \(readOnly \|\| askId === undefined \|\| openedId === null\) return;/
+);
+assert.match(
+  binderFunction("submitUserInput", "newConversation"),
+  /if \(readOnly \|\| requestId === undefined \|\| openedId === null\) return;/
+);
+assert.match(
+  binderSource.slice(binderSource.indexOf("async function newConversation")),
+  /if \(readOnly \|\| onNewConversation === undefined\) return;/
+);
+
 // Reconnecting is the ordinary read, not a whole-screen refetch.
 assert.match(binderSource, /visibilitychange/);
 assert.match(binderSource, /stream\?\.connect\(\)/);
@@ -433,6 +468,33 @@ try {
   assert.match(peekedPane, /class="chat-lbl">Product Design worker/);
   assert.match(peekedPane, /class="chat-state[^>]*>working/);
   assert.match(peekedPane, /class="chat-usage" data-conversation-workspace/);
+
+  // History uses one boundary around the whole pane. The transcript remains, while the
+  // composer and the options door that owns New do not enter the rendered tree.
+  const historicalPane = drawn(Pane, {
+    conversationId: "past-1",
+    label: "Coding",
+    conversationState: "opened",
+    readOnly: true,
+    rows: [
+      {
+        key: "past-message",
+        kind: "prompt",
+        sequence: 1,
+        createdAt: 1,
+        content: [{ piece: "text", text: "the old request" }],
+        senderLabel: "owner",
+        mode: "run_when_free",
+        sentAtUnixMilliseconds: 1_000
+      }
+    ],
+    onSend: async () => true
+  });
+  assert.match(historicalPane, /data-conversation-read-only="true"/);
+  assert.match(historicalPane, /data-conversation-read-only-boundary="true"/);
+  assert.match(historicalPane, /data-conversation-row="prompt"/);
+  assert.doesNotMatch(historicalPane, /data-conversation-input/);
+  assert.doesNotMatch(historicalPane, /aria-label="Conversation options"/);
 
   const activePlanRows = [
     {
@@ -1234,6 +1296,7 @@ try {
 <script lang="ts">
   import ConversationComposer from "../src/components/conversation/ConversationComposer.svelte";
   import ConversationPane from "../src/components/conversation/ConversationPane.svelte";
+  import TicketConversationHistory from "../src/components/TicketConversationHistory.svelte";
   import ConversationTranscript from "../src/components/conversation/ConversationTranscript.svelte";
   import TaskProgress from "../src/components/conversation/TaskProgress.svelte";
   import PermissionAskCard from "../src/components/conversation/PermissionAskCard.svelte";
@@ -1246,6 +1309,8 @@ try {
   let holdNextSend = false;
   let heldSend: ((accepted: boolean) => void) | null = null;
   let showComposer = $state(true);
+  let activeTicketConversation = $state<string | null>("active-1");
+  let selectedPastConversation = $state<string | null>(null);
   (window as any).__sends = () => sends;
   (window as any).__answers = () => answers;
   (window as any).__userInputAnswers = () => userInputAnswers;
@@ -1261,6 +1326,9 @@ try {
   };
   (window as any).__destroyComposer = () => {
     showComposer = false;
+  };
+  (window as any).__setActiveTicketConversation = (conversationId: string | null) => {
+    activeTicketConversation = conversationId;
   };
 
   // What the agent reported it can be asked to do. Settable from the test, because an
@@ -1516,6 +1584,44 @@ try {
   </div>
 </div>
 
+<div data-history-fixture>
+  <TicketConversationHistory
+    history={[
+      { conversation_id: "past-1", created_at: 1_700_000_000 },
+      { conversation_id: "active-1", created_at: 1_700_000_100 },
+      { conversation_id: "active-2", created_at: 1_700_000_200 }
+    ]}
+    activeConversationId={activeTicketConversation}
+    bind:selectedPastConversationId={selectedPastConversation}
+  />
+  <span data-history-selection>{selectedPastConversation ?? activeTicketConversation ?? "new"}</span>
+</div>
+
+<div data-read-only-fixture style="width: 100%; max-width: 700px; height: 360px;">
+  <ConversationPane
+    conversationId="past-1"
+    label="Coding"
+    conversationExists={true}
+    conversationState="opened"
+    readOnly={true}
+    running={true}
+    ask={question}
+    userInput={userInputRequest}
+    heldPromptRows={[
+      {
+        key: "held:past",
+        heldPromptId: "past",
+        senderMessageId: "past-message",
+        content: [{ piece: "text", text: "held in the past" }],
+        senderLabel: "owner",
+        sentAtUnixMilliseconds: 1_000,
+        state: "held"
+      }
+    ]}
+    {onSend}
+  />
+</div>
+
 <ConversationTranscript rows={settledRows} ownSenderLabel="owner" />
 
 <div data-running-thread>
@@ -1602,6 +1708,33 @@ with sync_playwright() as playwright:
     page.add_style_tag(path="assets/tokens.css")
     page.add_style_tag(path="assets/app.css")
 
+    # An explicit past selection survives active-pointer refreshes. Current follows them,
+    # and a Ticket with no active pointer returns to the writable new-conversation choice.
+    history = page.locator("[data-history-fixture]")
+    selector = history.get_by_label("Ticket conversation")
+    selection = history.locator("[data-history-selection]")
+    assert selection.inner_text() == "active-1"
+    selector.select_option("past-1")
+    assert selection.inner_text() == "past-1"
+    page.evaluate("window.__setActiveTicketConversation('active-2')")
+    assert selection.inner_text() == "past-1"
+    selector.select_option("__current__")
+    assert selection.inner_text() == "active-2"
+    page.evaluate("window.__setActiveTicketConversation(null)")
+    assert selection.inner_text() == "new"
+    assert selector.locator("option:checked").inner_text() == "Current · new conversation"
+
+    # The pane's read-only boundary keeps the transcript surface and removes every action
+    # category together. There is no independent control that can escape this boundary.
+    historical = page.locator("[data-read-only-fixture]")
+    assert historical.locator("[data-conversation-read-only-boundary=true]").count() == 1
+    assert historical.locator("[data-conversation-input]").count() == 0
+    assert historical.locator("[data-conversation-picker-model]").count() == 0
+    assert historical.locator("[data-conversation-stop]").count() == 0
+    assert historical.locator("[data-conversation-held-discard]").count() == 0
+    assert historical.locator("[data-conversation-held-promote]").count() == 0
+    assert historical.get_by_role("button", name="Conversation options").count() == 0
+
     # The opened top bar matches the approved desktop geometry. Its content keeps the
     # complete worker phrase only where that phrase tells the person who receives a message.
     top_bar_fixture = page.locator("[data-top-bar-fixture]")
@@ -1666,6 +1799,7 @@ with sync_playwright() as playwright:
     options.press("Escape")
     page.reload(wait_until="domcontentloaded")
     page.locator("[data-top-bar-fixture]").evaluate("element => element.remove()")
+    page.locator("[data-read-only-fixture]").evaluate("element => element.remove()")
     page.set_viewport_size({"width": 1280, "height": 720})
 
     # FINDING 11 — the pickers show the concrete value already in force, unlabelled, and

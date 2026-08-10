@@ -13,7 +13,7 @@ from planner.core import db as db_module
 from planner.core.db import connect, create_schema
 
 PREVIOUS_REVISION = "day_midday_reconciliation"
-HEAD_REVISION = "conversation_composer_catalog"
+HEAD_REVISION = "ticket_judgment_trouble_notes"
 
 
 def _upgrade_to_previous_revision(path: Path) -> sqlite3.Connection:

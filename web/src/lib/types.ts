@@ -202,6 +202,11 @@ export type ResolvedTicketPriorityAnchors = {
   } | null;
 };
 
+export type TicketConversationHistoryEntry = {
+  conversation_id: string;
+  created_at: number;
+};
+
 export type TicketDetail = {
   id: string;
   title: string;
@@ -227,17 +232,25 @@ export type TicketDetail = {
   default_stage_ownership_mode: StageOwnershipMode | null;
   effective_stage_ownership_mode: StageOwnershipMode | null;
   conversation_id: string | null;
+  conversation_history: TicketConversationHistoryEntry[];
   day_ids?: string[];
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
   recap?: string | null;
   verdict: TicketVerdict | null;
+  trouble_notes: TicketTroubleNote[];
   fields: Record<string, TicketField>;
 };
 
 export type TicketVerdict = {
   rating: number | null;
   text: string | null;
+};
+
+export type TicketTroubleNote = {
+  sequence: number;
+  body: string;
+  created_at: number;
 };
 
 export type EmployeeConfigurationSnapshot = {
