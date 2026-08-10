@@ -3,6 +3,27 @@
 `panels` is the command-line tool. It speaks to the server over HTTP and answers in
 machine-readable JSON with `--json`.
 
+Single-record reads use one grammar. With no part list, a read returns an identity and
+state header plus a manifest. The manifest lists every authored part in stable order,
+including empty parts. It reports the Unicode character count and `has_user_note` for
+each part. Pass one optional comma-separated positional list to expand only those parts.
+Each expanded part contains `value`, `user_note`, and `proposal`:
+
+```sh
+panels ticket show t_example
+panels ticket show t_example success,approach --json
+panels sprint show current primary_bet
+panels sprint item show si_example body
+panels day show 2026-08-10 focus,watchout
+panels day show --date 2026-08-10 focus
+panels project show project_panels summary
+panels worker my-ticket plan,implementation
+```
+
+The same projection serves text and JSON. An unknown or duplicate part name fails and
+lists the valid names. Day records contain authored Day text only. Use `day list-tickets`
+for the linked Tickets.
+
 On the production host, `~/.local/bin/panels` follows
 `~/Deployments/Panels/current/app/bin/panels`. The deployed command locates its own
 interpreter, so it keeps following atomic app replacements and works from any directory.
@@ -49,10 +70,11 @@ record shapes. Direct `show` commands also keep their full record shapes.
 ## The verbs
 
 - **`day show / list-tickets / set / add-ticket / remove-ticket`** — plan a day and
-  assign tickets to it. `day show` includes the day's tickets; `day list-tickets`
-  returns the ticket list explicitly. `day set midday-reconciliation` writes the
-  day’s separate mid-day check.
-- **`project list / create / set`** — inspect, add, and update projects. Project availability is
+  assign tickets to it. `day show` returns the Day header and authored parts;
+  `day list-tickets` returns the ticket list explicitly. `day set
+  midday-reconciliation` writes the day’s separate mid-day check.
+- **`project list / show / create / set`** — inspect, add, and update projects. `show`
+  exposes the Project header and `summary` part. Project availability is
   data-backed, not enum-backed. `project create` requires
   `--priority P0|P1|P2|P3`; existing Projects may report `null` priority when they
   have not yet been assessed. `project set <project_id> priority --value P0|P1|P2|P3`

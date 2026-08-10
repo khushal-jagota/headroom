@@ -323,9 +323,11 @@ registry; `src/planner/tickets/data.py` stores and freezes the Ticket setup; and
 The launched base role is `panels-worker`. It knows how to work one Ticket step at a time,
 but it does not contain the substance of every Worker type.
 
-The worker runs `panels worker my-ticket`. That response includes the Ticket's stored
-Worker type and the specialist skill named by its `WorkerTypeDefinition`. The worker loads
-that skill with `skill_view` and follows its Stage-specific guidance.
+The worker runs `panels worker my-ticket`. The default response contains a header and
+the Ticket part manifest. The header includes the Ticket's stored Worker type and the
+specialist skill named by its `WorkerTypeDefinition`. The worker can pass one
+comma-separated part list to expand only the needed fields. It loads the specialist
+skill with `skill_view` and follows its Stage-specific guidance.
 
 Panels starts the Ticket's conversation the first time it has something to send, and uses
 that same one afterwards. The Ticket names it in `tickets.conversation_id` and nothing else

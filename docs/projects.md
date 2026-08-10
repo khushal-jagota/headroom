@@ -42,9 +42,10 @@ with neither source appear under `No project`.
 ## Surfaces
 
 - `GET /api/projects` lists available projects.
+- `GET /api/projects/{project_id}` returns one canonical Project record.
 - `POST /api/projects {name, priority, summary?}` creates an assessed project.
 - `PATCH /api/projects/{project_id}` updates the project name, summary, or priority.
-- `panels project list`,
+- `panels project list`, `panels project show <project_id> [summary]`,
   `panels project create --name ... --priority P0|P1|P2|P3 --summary ...`, and
   `panels project set <project_id> priority --value P0|P1|P2|P3` expose the same
   catalog. The `set` command also supports the `name` and `summary` fields.
