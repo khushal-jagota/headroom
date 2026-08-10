@@ -103,7 +103,8 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -978,8 +979,8 @@ class HermesAcpBackendChild:
             # Answered above the turn, because hermes sends this when a session is
             # established — before there is a turn for it to belong to. Below the guard
             # every one of them would be dropped.
-            await self._sink.available_commands_reported(
-                _agent_commands(update.available_commands)
+            await self._sink.composer_catalog_reported(
+                _composer_catalog_entries(update.available_commands)
             )
             return
         turn = self._turn
@@ -1254,7 +1255,9 @@ def _plan_entries(entries: Any) -> tuple[PlanEntry, ...]:
     )
 
 
-def _agent_commands(commands: Sequence[AvailableCommand]) -> tuple[AgentCommand, ...]:
+def _composer_catalog_entries(
+    commands: Sequence[AvailableCommand],
+) -> tuple[ComposerCatalogEntry, ...]:
     """The commands hermes says a person may type, in this system's own words.
 
     ACP words the thing to type after a command's name as an input object, and the only
@@ -1262,8 +1265,10 @@ def _agent_commands(commands: Sequence[AvailableCommand]) -> tuple[AgentCommand,
     writing the message. A command that takes nothing has no input at all, and so no hint.
     """
     return tuple(
-        AgentCommand(
-            name=command.name,
+        ComposerCatalogEntry(
+            kind=ComposerCatalogEntryKind.command,
+            display_text=f"/{command.name}",
+            insertion_text=f"/{command.name} ",
             description=command.description,
             argument_hint=None if command.input is None else command.input.root.hint,
         )

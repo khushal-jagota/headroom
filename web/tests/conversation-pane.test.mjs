@@ -29,8 +29,8 @@ const componentDirectory = new URL("../src/components/conversation/", import.met
 // --- what the components are ----------------------------------------------------------------
 
 const expectedInventory = [
-  "AgentCommandMenu.svelte",
   "BackendMark.svelte",
+  "ComposerCatalogMenu.svelte",
   "ConversationComposer.svelte",
   "ConversationPane.svelte",
   "ConversationRestBar.svelte",
@@ -280,7 +280,7 @@ try {
       'export { default as NewForm } from "../src/components/conversation/NewConversationForm.svelte";',
       'export { default as Pane } from "../src/components/conversation/ConversationPane.svelte";',
       'export { default as RestBar } from "../src/components/conversation/ConversationRestBar.svelte";',
-      'export { default as CommandMenu } from "../src/components/conversation/AgentCommandMenu.svelte";',
+      'export { default as CommandMenu } from "../src/components/conversation/ComposerCatalogMenu.svelte";',
       ""
     ].join("\n"),
     "utf8"
@@ -1170,12 +1170,12 @@ try {
   // The command menu draws what the agent reported and nothing else: the name a person
   // types, what the backend said it does, and the argument where it named one.
   const menu = drawn(CommandMenu, {
-    commands: [
-      { name: "plan", description: "Write the plan", argument_hint: null },
-      { name: "compact", description: "Shrink the context", argument_hint: "[instructions]" }
+    entries: [
+      { kind: "command", display_text: "/plan", insertion_text: "/plan ", description: "Write the plan", argument_hint: null },
+      { kind: "command", display_text: "/compact", insertion_text: "/compact ", description: "Shrink the context", argument_hint: "[instructions]" }
     ],
     activeIndex: 1,
-    anyCommandsAtAll: true,
+    anyEntriesAtAll: true,
     onChoose() {},
     onHighlight() {}
   });
@@ -1198,25 +1198,25 @@ try {
   // commands and an agent that has not reported yet, and nothing here knows which, so the
   // sentence must be true of both and must not put it on the agent.
   const noCommandsAtAll = drawn(CommandMenu, {
-    commands: [],
-    anyCommandsAtAll: false,
+    entries: [],
+    anyEntriesAtAll: false,
     onChoose() {},
     onHighlight() {}
   });
   assert.match(noCommandsAtAll, /data-conversation-commands-empty/);
-  assert.match(noCommandsAtAll, /No commands here\./);
+  assert.match(noCommandsAtAll, /No entries here\./);
   assert.doesNotMatch(
     noCommandsAtAll,
     /agent/i,
     "an empty list is not something the agent can be said to have reported"
   );
   const nothingMatched = drawn(CommandMenu, {
-    commands: [],
-    anyCommandsAtAll: true,
+    entries: [],
+    anyEntriesAtAll: true,
     onChoose() {},
     onHighlight() {}
   });
-  assert.match(nothingMatched, /No command matches that\./);
+  assert.match(nothingMatched, /No catalog entry matches that\./);
 
   // And nothing is on screen until a command is being written.
   assert.doesNotMatch(idleComposer, /data-conversation-commands/);
@@ -1265,14 +1265,17 @@ try {
 
   // What the agent reported it can be asked to do. Settable from the test, because an
   // agent that reports none is a state a person must be able to read, not a second pane.
-  let availableCommands = $state<any[]>([
-    { name: "plan", description: "Write the plan", argument_hint: "[what to plan]" },
-    { name: "replan", description: "Start the plan again", argument_hint: null },
-    { name: "compact", description: "Shrink the context", argument_hint: null },
-    { name: "apply-plan", description: "Do what the plan says", argument_hint: null }
+  let composerCatalog = $state<any[]>([
+    { kind: "command", display_text: "/plan", insertion_text: "/plan ", description: "Write the plan", argument_hint: "[what to plan]" },
+    { kind: "command", display_text: "/replan", insertion_text: "/replan ", description: "Start the plan again", argument_hint: null },
+    { kind: "command", display_text: "/compact", insertion_text: "/compact ", description: "Shrink the context", argument_hint: null },
+    { kind: "command", display_text: "/apply-plan", insertion_text: "/apply-plan ", description: "Do what the plan says", argument_hint: null },
+    { kind: "skill", display_text: "$review", insertion_text: "$review-exact", description: "Review with a skill", argument_hint: null },
+    { kind: "app", display_text: "@drive", insertion_text: "@drive ", description: "Use Drive", argument_hint: null },
+    { kind: "plugin", display_text: "@github", insertion_text: "@github exact ", description: "Use GitHub", argument_hint: null }
   ]);
   (window as any).__setCommands = (next: any[]) => {
-    availableCommands = next;
+    composerCatalog = next;
   };
 
   // What an ask taking the composer over does to the footer, without an ask to write.
@@ -1488,7 +1491,7 @@ try {
       { model_id: "haiku", display_name: "Haiku", enabled: true, reasoning_effort_options: [] }
     ]}
     effortOptions={["low", "high"]}
-    {availableCommands}
+    {composerCatalog}
     {backends}
     {conversationExists}
     {disabled}
@@ -2311,6 +2314,36 @@ with sync_playwright() as playwright:
         "document.querySelector('[data-conversation-input]').value === '/compact '"
     )
 
+    # Each trigger admits only its own kinds. Selection uses the exact insertion text.
+    box.fill("")
+    box.type("$rev")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation-catalog-entry]').length === 1"
+    )
+    assert page.locator("[data-conversation-catalog-entry]").get_attribute(
+        "data-conversation-catalog-kind"
+    ) == "skill"
+    page.keyboard.press("Tab")
+    assert box.input_value() == "$review-exact"
+    assert page.locator("[data-conversation-catalog]").count() == 0
+    assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    box.fill("")
+    box.type("@")
+    page.wait_for_function(
+        "document.querySelectorAll('[data-conversation-catalog-entry]').length === 2"
+    )
+    assert page.eval_on_selector_all(
+        "[data-conversation-catalog-entry]",
+        "rows => rows.map(row => row.dataset.conversationCatalogKind)",
+    ) == ["app", "plugin"]
+    page.locator('[data-conversation-catalog-entry="@github"]').click()
+    assert box.input_value() == "@github exact "
+    assert page.evaluate("window.__sends().length") == sent_before_the_menu
+
+    box.fill("not-at-line-start $rev")
+    assert page.locator("[data-conversation-catalog]").count() == 0
+
     # A command is a line that starts with a slash, not a message that does: one written
     # under something already written is offered the same menu, and replaces only itself.
     box.fill("")
@@ -2335,15 +2368,15 @@ with sync_playwright() as playwright:
     )
     assert page.locator("[data-conversation-command]").count() == 0
     matched_nothing = page.locator("[data-conversation-commands-empty]").inner_text()
-    assert "No command matches" in matched_nothing, matched_nothing
+    assert "No catalog entry matches" in matched_nothing, matched_nothing
 
     # The list is the agent's own, and an agent can genuinely report the same name twice —
     # a project command shadowing a user one. Both rows are drawn, rather than the menu
     # throwing on a repeated name and taking the composer down with it.
     page.evaluate(
         'window.__setCommands(['
-        '{ name: "review", description: "the project one", argument_hint: null },'
-        '{ name: "review", description: "the one in your home directory", argument_hint: null }'
+        '{ kind: "command", display_text: "/review", insertion_text: "/review ", description: "the project one", argument_hint: null },'
+        '{ kind: "command", display_text: "/review", insertion_text: "/review ", description: "the one in your home directory", argument_hint: null }'
         '])'
     )
     box.fill("")
@@ -2373,7 +2406,7 @@ with sync_playwright() as playwright:
         "document.querySelectorAll('[data-conversation-commands-empty]').length === 1"
     )
     nothing_to_offer = page.locator("[data-conversation-commands-empty]").inner_text()
-    assert "No commands here." in nothing_to_offer, nothing_to_offer
+    assert "No entries here." in nothing_to_offer, nothing_to_offer
     assert "agent" not in nothing_to_offer.lower(), nothing_to_offer
     assert page.evaluate("window.__sends().length") == sent_before_the_menu
 
