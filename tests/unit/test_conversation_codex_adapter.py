@@ -49,6 +49,7 @@ from planner.conversation.contracts import (
     ConversationRoleMaterials,
     ConversationStartRequest,
     PromptDeliveryMode,
+    PromptDeliveryRefused,
     PromptDeliveryStarted,
     ResolvedConversationStart,
 )
@@ -358,6 +359,107 @@ def test_the_systems_composed_role_does_not_hide_a_first_prompt_catalog_invocati
             assert message_content_text(prompt.content) == prompt_text
         finally:
             await system.shutdown()
+
+    _run(exercise)
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected_method"),
+    [("$ship-it retry", "turn/start"), ("/compact", "thread/compact/start")],
+)
+def test_a_persisted_cursor_without_a_delivered_prompt_keeps_first_prompt_dispatch(
+    tmp_path: Path, prompt_text: str, expected_method: str
+) -> None:
+    """A restart keeps the core's sender/composed distinction independent of its cursor."""
+
+    async def exercise() -> None:
+        database_path = tmp_path / "restart.db"
+        connection = connect(str(database_path))
+        create_schema(connection)
+        connection.close()
+        store = ConversationStore(str(database_path))
+
+        def build_system(
+            name: str, script: dict[str, Any]
+        ) -> tuple[SqliteProcessConversationSystem, Path]:
+            transcript_path = tmp_path / f"{name}-transcript.jsonl"
+            script_path = tmp_path / f"{name}-script.json"
+            script_path.write_text(
+                json.dumps({"transcript_path": str(transcript_path), **script}),
+                encoding="utf-8",
+            )
+            argv, environment = scripted_app_server_launch(script_path)
+            factory = CodexAppServerBackendChildFactory(
+                CodexChildLaunch(argv=argv, environment_overrides=tuple(environment.items()))
+            )
+            return (
+                SqliteProcessConversationSystem(
+                    store=store,
+                    message_files=ConversationMessageFiles(str(database_path)),
+                    backend_child_factories={key: factory for key in ConversationBackendKey},
+                ),
+                transcript_path,
+            )
+
+        failed_script = _one_of_each_catalog(tmp_path)
+        if expected_method == "turn/start":
+            failed_script["turns"] = [{"respond": "error"}]
+        else:
+            failed_script["compact_response"] = "error"
+        first, _ = build_system("first", failed_script)
+        try:
+            await first.start_conversation(
+                ConversationStartRequest(
+                    conversation_id="restart-codex",
+                    backend_key=ConversationBackendKey.codex,
+                    model="gpt-5.4-mini",
+                    reasoning_effort="medium",
+                    role_materials=ConversationRoleMaterials(role_text=ROLE_TEXT),
+                    workspace_folder=tmp_path,
+                )
+            )
+            refused = await first.send(
+                "restart-codex", text_message_content(prompt_text), sender_label="owner"
+            )
+            assert isinstance(refused, PromptDeliveryRefused)
+            record = await store.read_conversation("restart-codex")
+            assert record is not None and record.vendor_session_cursor == "thread-1"
+            assert await store.has_delivered_prompt("restart-codex") is False
+        finally:
+            await first.shutdown()
+
+        second, transcript_path = build_system(
+            "second", {**_one_of_each_catalog(tmp_path), "turns": [{}]}
+        )
+        try:
+            assert (
+                await second.send(
+                    "restart-codex", text_message_content(prompt_text), sender_label="owner"
+                )
+                == PromptDeliveryStarted()
+            )
+            received = [
+                entry["received"]
+                for entry in (
+                    json.loads(line)
+                    for line in transcript_path.read_text(encoding="utf-8").splitlines()
+                )
+                if "received" in entry and entry["received"].get("method") == expected_method
+            ][0]
+            if expected_method == "turn/start":
+                assert received["params"]["input"][-1] == {
+                    "type": "skill",
+                    "name": "ship-it",
+                    "path": "/skills/ship-it/SKILL.md",
+                }
+                assert received["params"]["input"][0] == {
+                    "type": "text",
+                    "text": f"{ROLE_TEXT}\n\n{prompt_text}",
+                }
+            else:
+                assert received["params"] == {"threadId": "thread-1"}
+        finally:
+            await second.shutdown()
 
     _run(exercise)
 
@@ -1990,6 +2092,7 @@ class _ScriptedChild:
         await self.child.write_prompt(
             TurnToken(conversation_id="c", turn_number=turn_number),
             content,
+            sender_content=content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change=model,
@@ -2102,6 +2205,10 @@ def test_a_picture_reaches_codex_as_the_file_it_is(tmp_path: Path) -> None:
             await scripted.child.write_prompt(
                 TurnToken(conversation_id="c", turn_number=1),
                 (
+                    MessageText(text="look at this"),
+                    MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+                ),
+                sender_content=(
                     MessageText(text="look at this"),
                     MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
                 ),

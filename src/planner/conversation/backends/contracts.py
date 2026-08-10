@@ -340,12 +340,18 @@ class BackendChild(Protocol):
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
         reasoning_effort_change: str | None,
     ) -> None:
         """Start a turn with this message, on these values.
+
+        ``content`` is the complete message that goes to the backend. ``sender_content``
+        is the exact message the sender wrote before the core added conversation-owned
+        material such as the first-prompt role envelope. An adapter can use sender content
+        to resolve backend-specific composer entries, but it must send ``content``.
 
         **Every piece goes over the wire, or none of it does.** The core has already
         refused a message carrying a piece this backend cannot be handed, so an adapter

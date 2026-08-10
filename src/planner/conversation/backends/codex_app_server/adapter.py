@@ -156,11 +156,6 @@ CANCEL_SETTLING_TIMEOUT_SECONDS = 15.0
 CATALOG_REFRESH_COALESCE_SECONDS = 0.05
 CATALOG_REQUEST_TIMEOUT_SECONDS = 60.0
 
-# The core puts role text in front of the first prompt with this separator. The Codex
-# adapter removes that known envelope only for invocation recognition. It sends the full
-# composed text unchanged.
-CORE_ROLE_TEXT_PROMPT_SEPARATOR = "\n\n"
-
 # What a codex tool item's own status means to a conversation's record. Declined is a
 # finish: the work was asked for and did not happen.
 _FINISHED_TOOL_CALL_STATUSES: dict[str, ToolCallStatus] = {
@@ -306,7 +301,6 @@ class CodexAppServerBackendChild:
         self._catalog_refresh_requested = False
         self._catalog_refresh_task: asyncio.Task[None] | None = None
         self._catalog_refresh_lock = asyncio.Lock()
-        self._core_role_envelope_expected = False
 
     # --- the seam -----------------------------------------------------------------------
 
@@ -333,7 +327,6 @@ class CodexAppServerBackendChild:
             raise BackendSpawnFailed(str(would_not_spawn)) from would_not_spawn
         try:
             await self._shake_hands()
-            self._core_role_envelope_expected = vendor_session_cursor is None
             if vendor_session_cursor is None:
                 await self._start_thread(resolved_start)
             else:
@@ -350,6 +343,7 @@ class CodexAppServerBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -370,7 +364,7 @@ class CodexAppServerBackendChild:
         )
         turn = _TurnInFlight(token=turn_token, started=asyncio.get_running_loop().create_future())
         self._turn = turn
-        invocation = self._catalog_invocation(content)
+        invocation = self._catalog_invocation(sender_content)
         native_command = (
             invocation is not None
             and invocation.kind is ComposerCatalogEntryKind.command
@@ -402,7 +396,6 @@ class CodexAppServerBackendChild:
         if not native_command:
             self._model = model
             self._reasoning_effort = reasoning_effort
-        self._core_role_envelope_expected = False
 
     async def steer(self, content: MessageContent, *, sender_label: str) -> None:
         """Never called: codex is one of the backends the contract says cannot steer.
@@ -681,13 +674,7 @@ class CodexAppServerBackendChild:
     def _catalog_invocation(self, content: MessageContent) -> _CatalogInvocation | None:
         if not content or not isinstance(content[0], MessageText):
             return None
-        prompt_text = content[0].text
-        role_materials = self._resolved_start.role_materials
-        if self._core_role_envelope_expected and role_materials is not None:
-            role_prefix = role_materials.role_text + CORE_ROLE_TEXT_PROMPT_SEPARATOR
-            if prompt_text.startswith(role_prefix):
-                prompt_text = prompt_text[len(role_prefix) :]
-        match = _COMPOSER_TOKEN.fullmatch(prompt_text)
+        match = _COMPOSER_TOKEN.fullmatch(content[0].text)
         if match is None:
             return None
         token = match.group(1)

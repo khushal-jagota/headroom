@@ -1020,6 +1020,7 @@ class SqliteProcessConversationSystem:
             await child.write_prompt(
                 turn_token,
                 composed,
+                sender_content=content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -1032,6 +1033,7 @@ class SqliteProcessConversationSystem:
                 state,
                 turn_token,
                 content=composed,
+                sender_content=content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,
@@ -1049,6 +1051,7 @@ class SqliteProcessConversationSystem:
         turn_token: TurnToken,
         *,
         content: MessageContent,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -1083,6 +1086,7 @@ class SqliteProcessConversationSystem:
             await child.write_prompt(
                 turn_token,
                 content,
+                sender_content=sender_content,
                 sender_label=sender_label,
                 mode=mode,
                 model_change=model_change,

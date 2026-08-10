@@ -437,9 +437,11 @@ async def _write(
     text: str = "hello",
     turn_token: TurnToken = TURN,
 ) -> None:
+    content = text_message_content(text)
     await child.write_prompt(
         turn_token,
-        text_message_content(text),
+        content,
+        sender_content=content,
         sender_label="owner",
         mode=PromptDeliveryMode.run_when_free,
         model_change=None,
@@ -935,9 +937,11 @@ def test_a_model_change_asks_for_a_child_started_on_it(tmp_path: Path) -> None:
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=None)
         with pytest.raises(NeedsRebind):
+            content = text_message_content("on the other model please")
             await child.write_prompt(
                 TURN,
-                text_message_content("on the other model please"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change="claude-sonnet-4-5",
@@ -955,9 +959,11 @@ def test_a_reasoning_effort_change_asks_for_a_child_started_on_it(tmp_path: Path
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=None)
         with pytest.raises(NeedsRebind):
+            content = text_message_content("think harder")
             await child.write_prompt(
                 TURN,
-                text_message_content("think harder"),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=None,
@@ -983,9 +989,11 @@ def test_the_rebound_child_takes_the_prompt_that_asked_for_it(tmp_path: Path) ->
         )
         child, _, clients = _bench(resolved_start)
         await child.start(resolved_start, vendor_session_cursor=SESSION_ID)
+        content = text_message_content("on the other model please")
         await child.write_prompt(
             TURN,
-            text_message_content("on the other model please"),
+            content,
+            sender_content=content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change="claude-sonnet-4-5",
@@ -1007,9 +1015,11 @@ def test_the_label_and_the_mode_are_taken_and_dropped(tmp_path: Path) -> None:
     async def exercise() -> None:
         child, _, clients = _bench(_start_request(workspace_folder=tmp_path))
         await child.start(_start_request(workspace_folder=tmp_path), vendor_session_cursor=None)
+        content = text_message_content("hello")
         await child.write_prompt(
             TURN,
-            text_message_content("hello"),
+            content,
+            sender_content=content,
             sender_label="the automatic loop",
             mode=PromptDeliveryMode.send_now,
             model_change=None,
@@ -2304,9 +2314,13 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path
         await _until_the_turn_ends(sink)
 
         with pytest.raises(NeedsRebind):
+            content = text_message_content(
+                "What was the codeword? Reply with just the word."
+            )
             await child.write_prompt(
                 TURN,
-                text_message_content("What was the codeword? Reply with just the word."),
+                content,
+                sender_content=content,
                 sender_label="owner",
                 mode=PromptDeliveryMode.run_when_free,
                 model_change=CLAUDE_OTHER_MODEL,
@@ -2319,7 +2333,8 @@ def test_real_claude_keeps_the_conversation_across_a_model_change(tmp_path: Path
         await rebound.start(on_the_new_model, vendor_session_cursor=cursor)
         await rebound.write_prompt(
             TURN,
-            text_message_content("What was the codeword? Reply with just the word."),
+            content,
+            sender_content=content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change=CLAUDE_OTHER_MODEL,
@@ -2428,12 +2443,14 @@ def test_a_picture_reaches_claude_as_a_content_block_beside_the_words(
             "c-claude-1", b"\x89PNG not really", media_type="image/png"
         )
 
+        content = (
+            MessageText(text="look at this"),
+            MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
+        )
         await child.write_prompt(
             TURN,
-            (
-                MessageText(text="look at this"),
-                MessageImage(stored_file_id=kept.stored_file_id, media_type="image/png"),
-            ),
+            content,
+            sender_content=content,
             sender_label="owner",
             mode=PromptDeliveryMode.run_when_free,
             model_change=None,

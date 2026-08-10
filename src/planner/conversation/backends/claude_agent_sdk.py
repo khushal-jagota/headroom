@@ -421,6 +421,7 @@ class ClaudeAgentSdkBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -437,7 +438,7 @@ class ClaudeAgentSdkBackendChild:
         half-made here: the adapter asks for a rebind before it writes anything, and the
         child that is written to is one that was started on the new values.
         """
-        del sender_label, mode
+        del sender_content, sender_label, mode
         self._require_the_carried_values_are_in_force(model_change, reasoning_effort_change)
         client = self._connected_client()
         self._require_a_live_wire()

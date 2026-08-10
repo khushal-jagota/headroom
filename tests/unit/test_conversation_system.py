@@ -107,6 +107,7 @@ class _FakeBackendWrite:
     """
 
     content: MessageContent
+    sender_content: MessageContent | None = None
     steered: bool = False
 
     @property
@@ -170,6 +171,13 @@ class _FakeBackend:
     def written_texts(self) -> tuple[str, ...]:
         return tuple(write.text for write in self.writes)
 
+    def sender_written_texts(self) -> tuple[str, ...]:
+        return tuple(
+            message_content_text(write.sender_content)
+            for write in self.writes
+            if write.sender_content is not None
+        )
+
 
 class _FakeBackendChild:
     """One child process stand-in. Everything it is told goes to its conversation's backend."""
@@ -208,6 +216,7 @@ class _FakeBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -239,7 +248,9 @@ class _FakeBackendChild:
             self._backend.model = model_change
         if reasoning_effort_change is not None:
             self._backend.reasoning_effort = reasoning_effort_change
-        self._backend.writes.append(_FakeBackendWrite(content=content))
+        self._backend.writes.append(
+            _FakeBackendWrite(content=content, sender_content=sender_content)
+        )
         self._backend.lifecycle_events.append(f"write:{message_content_text(content)}")
         self._backend.live_turn_token = turn_token
         if self._backend.ends_the_turn_while_writing:
@@ -1467,6 +1478,7 @@ def test_a_backend_that_can_only_change_by_starting_again_is_started_again(
         assert backend.started_from_cursor == VENDOR_SESSION_CURSOR
         assert backend.model == "second-model"
         assert backend.written_texts() == ("first", "switch here")
+        assert backend.sender_written_texts() == ("first", "switch here")
 
     _run(exercise)
 
@@ -1975,6 +1987,7 @@ def test_the_role_text_rides_the_very_first_prompt_and_only_that_one(harness: _H
             "You are the Chief of Staff.\n\nfirst",
             "second",
         )
+        assert harness.backend("c").sender_written_texts() == ("first", "second")
         # The record keeps what the sender wrote: the role belongs to the conversation.
         assert await harness.recorded_prompts("c") == (
             ("first", "owner", "run_when_free"),

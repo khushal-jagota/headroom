@@ -355,6 +355,7 @@ class HermesAcpBackendChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -368,6 +369,7 @@ class HermesAcpBackendChild:
         way to name that again — the child as it stands is no longer what the conversation
         is running on, and the honest answer is to start it again.
         """
+        del sender_content
         previously = (self._session_model, self._session_reasoning_effort)
         try:
             await self._apply_values(model_change, reasoning_effort_change)

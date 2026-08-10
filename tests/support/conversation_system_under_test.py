@@ -307,6 +307,7 @@ class _CountedChild:
         turn_token: TurnToken,
         content: MessageContent,
         *,
+        sender_content: MessageContent,
         sender_label: str,
         mode: PromptDeliveryMode,
         model_change: str | None,
@@ -315,6 +316,7 @@ class _CountedChild:
         await self._child.write_prompt(
             turn_token,
             content,
+            sender_content=sender_content,
             sender_label=sender_label,
             mode=mode,
             model_change=model_change,
