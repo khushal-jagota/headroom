@@ -226,14 +226,17 @@ async def get_skill(skill_name: str, config: Cfg) -> JsonDict:
 
 @router.patch("/skills/{skill_name}")
 async def patch_skill(
-    skill_name: str, raw: dict[str, Any], ctx: Ctx, config: Cfg
+    skill_name: str, raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "skill patch requires exactly one field", {})
     skill = service.save_skill(
-        _database_parent(config), skill_name, raw,
+        _database_parent(config),
+        skill_name,
+        raw,
         after_publish=_announce_worker_settings_change,
+        version_connection=conn,
     )
     return _skill_json(skill)
 
@@ -259,27 +262,30 @@ async def put_chief_launch_defaults(
 
 @router.put("/workers/chief-of-staff/skill")
 async def put_chief_skill(
-    raw: dict[str, Any], ctx: Ctx, config: Cfg
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
     settings = service.save_chief_skill(
         _database_parent(config),
         raw,
         after_publish=_announce_worker_settings_change,
+        version_connection=conn,
     )
     return _chief_json(settings)
 
 
 @router.patch("/workers/chief-of-staff/skill")
 async def patch_chief_skill(
-    raw: dict[str, Any], ctx: Ctx, config: Cfg
+    raw: dict[str, Any], conn: DbConn, ctx: Ctx, config: Cfg
 ) -> JsonDict:
     require_direct_write(ctx)
     if set(raw) not in ({"description"}, {"markdown_body"}, {"body"}):
         raise PlannerError(ErrorCode.validation, "Chief skill patch requires exactly one field", {})
     settings = service.save_chief_skill(
-        _database_parent(config), raw,
+        _database_parent(config),
+        raw,
         after_publish=_announce_worker_settings_change,
+        version_connection=conn,
     )
     return _chief_json(settings)
 
@@ -374,6 +380,7 @@ async def put_stage_default_ownership(
 async def put_worker_skill(
     worker_type: str,
     raw: dict[str, Any],
+    conn: DbConn,
     ctx: Ctx,
     config: Cfg,
 ) -> JsonDict:
@@ -386,6 +393,7 @@ async def put_worker_skill(
         raw,
         after_publish=_announce_worker_settings_change,
         runtime_skills_root=_planner_home(config) / "skills",
+        version_connection=conn,
     )
     return _settings_json(settings)
 
@@ -394,6 +402,7 @@ async def put_worker_skill(
 async def patch_worker_skill(
     worker_type: str,
     raw: dict[str, Any],
+    conn: DbConn,
     ctx: Ctx,
     config: Cfg,
 ) -> JsonDict:
@@ -417,5 +426,6 @@ async def patch_worker_skill(
         patch,
         after_publish=_announce_worker_settings_change,
         runtime_skills_root=_planner_home(config) / "skills",
+        version_connection=conn,
     )
     return _settings_json(settings)

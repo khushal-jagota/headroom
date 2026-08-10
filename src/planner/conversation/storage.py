@@ -35,12 +35,15 @@ from planner.conversation.events import (
     ConversationEventKind,
     ConversationEventPayload,
     ModelChangedEventPayload,
+    PromptDeliveryRefusedEventPayload,
+    PromptDiscardedEventPayload,
     PromptEventPayload,
     conversation_event_payload_from_canonical_json,
     conversation_event_payload_kind,
     conversation_event_payload_to_canonical_json,
 )
 from planner.core.db import connect
+from planner.skill_versions import settle_worker_step_skill_bindings
 
 DEFAULT_BUSY_TIMEOUT_MILLISECONDS = 5000
 
@@ -387,6 +390,16 @@ class ConversationStore:
                     created_at=created_at,
                 )
             )
+            if isinstance(payload, PromptEventPayload) and payload.sender_message_id is not None:
+                settle_worker_step_skill_bindings(conn, payload.sender_message_id, delivered=True)
+            elif (
+                isinstance(
+                    payload,
+                    (PromptDeliveryRefusedEventPayload, PromptDiscardedEventPayload),
+                )
+                and payload.sender_message_id is not None
+            ):
+                settle_worker_step_skill_bindings(conn, payload.sender_message_id, delivered=False)
         conn.execute(
             "UPDATE conversations SET latest_sequence = ? WHERE conversation_id = ?",
             (latest_sequence + len(payloads), conversation_id),

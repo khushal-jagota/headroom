@@ -174,8 +174,23 @@ values, kept up to date with what its conversation actually runs on, so a fresh
 conversation starts from where the last one ended. Managed Worker and Chief settings
 own the defaults a Ticket starts from, and the Workers screen edits them.
 
-_Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`, and
-`src/planner/skills/`.
+Panels keeps every distinct byte sequence for each managed skill in SQLite. A SHA-256
+content hash reuses an existing version when an edit returns to the same content. Startup
+records all current managed skills before any worker loop starts.
+
+Each automatic worker-step message gets a sender message ID. Before the send, Panels binds
+that ID to the current `panels`, `panels-worker`, and specialist versions. The binding stays
+provisional while a prompt waits in the process-local queue. The conversation record makes
+it final in the same transaction that stores the prompt event. A refusal or discard event
+removes it. Startup resolves any provisional binding from its durable prompt outcome and
+expires one with no outcome, because the old process queue no longer exists.
+
+The sender message ID links these records without a second run tracker. The prompt row keeps
+the Ticket and Stage instruction that the worker received. This version store has no API or
+browser reader yet.
+
+_Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`,
+`src/planner/skill_versions.py`, and `src/planner/skills/`.
 
 ## Handoffs
 
@@ -195,4 +210,4 @@ _Code paths:_ `src/planner/worker_types/`, `src/planner/worker_settings/`, and
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-10._

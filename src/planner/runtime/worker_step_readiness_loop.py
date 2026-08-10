@@ -25,10 +25,12 @@ import threading
 from collections.abc import Callable
 from time import monotonic as _monotonic
 from typing import Final
+from uuid import uuid4
 
 from planner.conversation.contracts import (
     ConversationSystem,
     PromptDeliveryMode,
+    PromptDeliveryQueued,
     PromptDeliveryRefused,
 )
 from planner.conversation.message_content import text_message_content
@@ -37,8 +39,14 @@ from planner.core.db import connect
 from planner.days.logic import dates
 from planner.runtime import conversation_start, worker_step_readiness
 from planner.runtime.logic.worker_step_prompt import worker_step_prompt
+from planner.skill_versions import (
+    bind_worker_step_skills,
+    delete_worker_step_skill_bindings,
+    settle_worker_step_skill_bindings,
+)
 from planner.tickets import data as tickets_data
 from planner.worker_context.contracts import WorkerContextService
+from planner.worker_settings.service import database_parent_from_connection
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
 
@@ -71,6 +79,9 @@ async def start_ready_worker_step(
     """
     conn = connect_database()
     try:
+        database_parent = database_parent_from_connection(conn)
+        if database_parent is None:
+            raise RuntimeError("worker-step skill bindings need a file-backed database")
         ticket = tickets_data.read_ticket(conn, ticket_id)
         conversation_id = ticket.conversation_id
         if conversation_id is not None and await conversation_system.is_running(conversation_id):
@@ -89,6 +100,9 @@ async def start_ready_worker_step(
             return False
         departure_status = claimed.ticket_status
         departure_status_changed_at = claimed.ticket_status_changed_at
+        sender_message_id = f"worker_step_message_{uuid4().hex}"
+
+        worker_type_definition = worker_type_registry.require(claimed.worker_type)
 
         def give_the_claim_back() -> None:
             tickets_data.release_worker_step_claim(
@@ -99,7 +113,16 @@ async def start_ready_worker_step(
                 now=now(),
             )
 
+        def remove_tentative_bindings() -> None:
+            delete_worker_step_skill_bindings(conn, sender_message_id)
+
         try:
+            bind_worker_step_skills(
+                conn,
+                database_parent,
+                sender_message_id,
+                worker_type_definition.worker_profile.specialist_skill,
+            )
             conversation_id = claimed.conversation_id
             # Composed before anything is made: a prepare that falls over must not leave a
             # conversation behind, and the opener is what would have brought one into being.
@@ -107,7 +130,7 @@ async def start_ready_worker_step(
                 ticket_id,
                 worker_step_prompt(
                     claimed,
-                    worker_type_definition=worker_type_registry.require(claimed.worker_type),
+                    worker_type_definition=worker_type_definition,
                 ),
             )
             delivered = await conversation_start.send_to_ticket_conversation(
@@ -119,6 +142,7 @@ async def start_ready_worker_step(
                 created_conversation_id=conversation_start.new_conversation_id(),
                 sender_label=LOOP_SENDER_LABEL,
                 mode=PromptDeliveryMode.run_when_free,
+                sender_message_id=sender_message_id,
                 worker_type_registry=worker_type_registry,
                 now=now(),
             )
@@ -130,6 +154,7 @@ async def start_ready_worker_step(
                 ticket_id,
                 conversation_id,
             )
+            remove_tentative_bindings()
             give_the_claim_back()
             return False
 
@@ -142,8 +167,15 @@ async def start_ready_worker_step(
                 conversation_id,
                 fate.refusal_reason.value,
             )
+            remove_tentative_bindings()
             give_the_claim_back()
             return False
+
+        if not isinstance(fate, PromptDeliveryQueued):
+            # The durable conversation record normally finalizes this in the same
+            # transaction as its prompt row. This idempotent update also supports the
+            # in-memory conversation system used by focused worker-step tests.
+            settle_worker_step_skill_bindings(conn, sender_message_id, delivered=True)
 
         try:
             worker_context_service.acknowledge(ticket_id, prepared.receipts)
