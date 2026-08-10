@@ -61,6 +61,36 @@ export function dayVisualTicket(
   return { ticket, state: presentation.state, ariaLabel: presentation.ariaLabel, group };
 }
 
+/**
+ * Where each dot state sits in the Day progress row, most urgent first.
+ *
+ * The Day row only produces `needs-me`, `current-awaiting-approval`,
+ * `current-paired`, `current-running`, `upcoming`, and `completed`. The rest are
+ * ranked so the sort stays total. `errored` sits beside `needs-me`: both mean the
+ * ticket stopped and wants the user.
+ */
+const dotOrder: Record<FieldStageVisualState, number> = {
+  "needs-me": 0,
+  errored: 1,
+  "current-awaiting-approval": 2,
+  "current-paired": 3,
+  "current-running": 4,
+  "current-waiting": 5,
+  upcoming: 6,
+  "reply-seen": 7,
+  completed: 8
+};
+
+/**
+ * The Day's tickets in progress-row order: one unbroken run per state, roster
+ * order inside a run. The sort is stable, and the given list is left alone.
+ */
+export function dayDotOrder(
+  visualTickets: readonly DayVisualTicket[]
+): DayVisualTicket[] {
+  return [...visualTickets].sort((left, right) => dotOrder[left.state] - dotOrder[right.state]);
+}
+
 export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayActionTile[] {
   const counts: Record<DayActionTile["key"], number> = {
     "needs-me": 0,

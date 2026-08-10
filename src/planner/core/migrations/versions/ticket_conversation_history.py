@@ -4,7 +4,7 @@ The active pointer remains on ``tickets``.  This relation records durable owners
 including conversations recovered from the exact opener that Panels sends to workers.
 
 Revision ID: ticket_conversation_history
-Revises: weekly_sprint_checkpoint_schedule
+Revises: managed_skill_versions
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from alembic import op
 from sqlalchemy.engine import Connection
 
 revision = "ticket_conversation_history"
-down_revision = "weekly_sprint_checkpoint_schedule"
+down_revision = "managed_skill_versions"
 branch_labels = None
 depends_on = None
 

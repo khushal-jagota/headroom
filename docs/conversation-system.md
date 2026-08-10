@@ -368,27 +368,28 @@ catalogue, but no model picker offers it. Existing saved selections remain histo
 facts and can still appear as the current value until a person chooses another model.
 New Ticket, Chief, and Worker default saves refuse an off model.
 
-## The commands an agent takes
+## The composer catalog
 
-Each agent has its own commands — the things you type at it starting with a
-slash. They belong to the agent, not to us: the agent says what it takes, the
-composer offers that list and narrows it as you type, and the command you pick
-goes into the message as ordinary text. The agent reads its own name back out of
-that text. Nothing on our side interprets a command or acts on one, and we do not
-add commands of our own to the list or leave any of the agent's out.
+Each conversation keeps one typed catalog for commands, skills, apps, and plugins.
+Each entry carries its visible text, exact insertion text, description, and optional
+argument hint. A slash at the start of a composer line offers commands. A dollar offers
+skills. An at sign offers apps and plugins. The composer narrows that eligible list as
+text is typed.
 
-The three agents answer differently, and all three answers are true. Hermes
-volunteers its list as soon as a session starts, unasked, and may send a fresh one
-later. Claude has its list in the handshake its process gives when it connects,
-which is why the list follows the conversation's folder — a project can keep
-commands of its own. Codex's wire has no notion of a typed command at all; its
-slash commands live inside its own terminal program, so a codex conversation has
-none to offer, and the menu says so rather than sitting there empty.
+A choice replaces the active token with the entry's exact insertion text. That result is
+still an ordinary draft. Message delivery and transcript rendering do not interpret or
+rewrite it.
 
-The last list an agent reported is kept on the conversation, so the menu still
-works when nothing is running — which is exactly when you are likely to be writing
-the first message. A conversation nobody has reported for yet offers nothing, and
-that is honest: until an agent has been up once, nothing has said what it takes.
+Hermes maps the command lists that it volunteers into slash command entries. Claude maps
+the command list from its process handshake in the same way, so project commands still
+follow the conversation folder. Their visible text is `/name`, and their insertion text
+is `/name `.
+
+Codex catalog population belongs to a separate integration. Until that integration adds
+entries, a Codex conversation offers no catalog entries.
+
+The last catalog reported is kept on the conversation. The menu still works when no
+child process runs. A conversation with no report yet offers nothing.
 
 ## Code paths
 

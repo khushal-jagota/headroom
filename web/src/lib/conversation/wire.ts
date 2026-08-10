@@ -137,12 +137,13 @@ export type PendingUserInput = {
   questions: UserInputQuestion[];
 };
 
-/**
- * One command the agent says a person may type at it. The name carries no leading slash
- * — the slash is how a person writes a command, not part of what it is called.
- */
-export type AgentCommand = {
-  name: string;
+export type ComposerCatalogEntryKind = "command" | "skill" | "app" | "plugin";
+
+/** One typed text shortcut. Display text can include its trigger but does not need to. */
+export type ComposerCatalogEntry = {
+  kind: ComposerCatalogEntryKind;
+  display_text: string;
+  insertion_text: string;
   description: string;
   argument_hint: string | null;
 };
@@ -169,7 +170,7 @@ export type ConversationView = {
   held_prompts: HeldPrompt[];
   pending_permission_ask: PendingPermissionAsk | null;
   pending_user_input: PendingUserInput | null;
-  available_commands: AgentCommand[];
+  composer_catalog: ComposerCatalogEntry[];
 };
 
 type Row<Kind extends string, Payload> = {

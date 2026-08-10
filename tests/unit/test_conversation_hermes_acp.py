@@ -49,7 +49,8 @@ from planner.conversation.backends.hermes_acp import (
     hermes_acp_child_launch,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAccess,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -974,7 +975,7 @@ class _RecordingSink:
         self.token_usage: list[dict[str, object]] = []
         self.compactions = 0
         self.vendor_session_cursor: str | None = None
-        self.available_commands: list[tuple[AgentCommand, ...]] = []
+        self.composer_catalog: list[tuple[ComposerCatalogEntry, ...]] = []
         self._turn_over = asyncio.Event()
         self._an_ask_arrived = asyncio.Event()
         self._a_compaction_arrived = asyncio.Event()
@@ -1079,12 +1080,12 @@ class _RecordingSink:
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.vendor_session_cursor = vendor_session_cursor
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
         # Each report is kept whole and on its own, so an exercise can say what the last
         # one was and how many there have been.
-        self.available_commands.append(available_commands)
+        self.composer_catalog.append(composer_catalog)
         self._commands_arrived.set()
 
     @property
@@ -1409,15 +1410,22 @@ def test_the_commands_hermes_pushes_before_any_turn_reach_the_sink_whole(
             await sink.wait_for_available_commands()
 
             assert child._turn is None
-            assert sink.available_commands[-1] == (
-                AgentCommand(
-                    name="plan",
+            assert sink.composer_catalog[-1] == (
+                ComposerCatalogEntry(
+                    kind=ComposerCatalogEntryKind.command,
+                    display_text="/plan",
+                    insertion_text="/plan ",
                     description="Write a plan for the work",
                     argument_hint="what to plan",
                 ),
-                AgentCommand(name="clear", description="Start the thread again"),
+                ComposerCatalogEntry(
+                    kind=ComposerCatalogEntryKind.command,
+                    display_text="/clear",
+                    insertion_text="/clear ",
+                    description="Start the thread again",
+                ),
             )
-            assert sink.available_commands[-1][1].argument_hint is None
+            assert sink.composer_catalog[-1][1].argument_hint is None
 
     _run(exercise)
 
@@ -1448,11 +1456,22 @@ def test_the_commands_pushed_a_second_time_replace_the_ones_before_them(
             )
             await sink.wait_for_available_commands()
 
-            assert sink.available_commands == [
-                (AgentCommand(name="plan", description="Write a plan"),),
+            assert sink.composer_catalog == [
                 (
-                    AgentCommand(
-                        name="review", description="Look it over", argument_hint="what to read"
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.command,
+                        display_text="/plan",
+                        insertion_text="/plan ",
+                        description="Write a plan",
+                    ),
+                ),
+                (
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.command,
+                        display_text="/review",
+                        insertion_text="/review ",
+                        description="Look it over",
+                        argument_hint="what to read",
                     ),
                 ),
             ]

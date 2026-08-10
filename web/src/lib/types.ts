@@ -237,7 +237,13 @@ export type TicketDetail = {
   blocked?: boolean;
   blocker_summary?: BlockerSummary;
   recap?: string | null;
+  verdict: TicketVerdict | null;
   fields: Record<string, TicketField>;
+};
+
+export type TicketVerdict = {
+  rating: number | null;
+  text: string | null;
 };
 
 export type EmployeeConfigurationSnapshot = {

@@ -86,11 +86,12 @@ def test_durable_record_fallback_accepts_matching_immutable_start_values(
     tmp_db.execute(
         "INSERT INTO conversations (conversation_id, backend_key, model, reasoning_effort, "
         "workspace_folder, role_text, identity_environment_variables, access, "
-        "vendor_session_cursor, latest_sequence, available_commands, created_at) "
+        "vendor_session_cursor, latest_sequence, composer_catalog, created_at) "
         "VALUES ('conv_existing', 'claude', 'new-model', 'low', '/worktree', "
         "'Ticket worker', '[[\"PLAN_ACTOR\",\"worker\"],[\"PLAN_TICKET_ID\",\"t\"]]', "
-        "'full', 'session-now', 7, '[{\"name\":\"review\",\"description\":\"Review\","
-        "\"argument_hint\":null}]', 1)"
+        "'full', 'session-now', 7, '[{\"kind\":\"command\","
+        "\"display_text\":\"/review\",\"insertion_text\":\"/review \","
+        "\"description\":\"Review\",\"argument_hint\":null}]', 1)"
     )
 
     ensure_started_conversation_record(tmp_db, _resolved("conv_existing"), created_at=99)

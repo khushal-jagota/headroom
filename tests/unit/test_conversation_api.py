@@ -59,7 +59,8 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationBackendKey,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -709,12 +710,12 @@ def test_starting_a_conversation_answers_with_what_it_resolved_to(harness: _Harn
             assert view["held_prompts"] == []
             assert view["pending_permission_ask"] is None
             # Nothing has reported a menu, so there is none to offer.
-            assert view["available_commands"] == []
+            assert view["composer_catalog"] == []
 
     _run(exercise)
 
 
-def test_the_view_carries_the_commands_the_agent_says_may_be_typed_at_it(
+def test_the_view_carries_the_typed_composer_catalog(
     harness: _Harness,
 ) -> None:
     """Each command as its name, what it does, and what to type after it, in order."""
@@ -732,25 +733,38 @@ def test_the_view_carries_the_commands_the_agent_says_may_be_typed_at_it(
             )
             backend = harness.backend("c")
             assert backend.sink is not None
-            await backend.sink.available_commands_reported(
+            await backend.sink.composer_catalog_reported(
                 (
-                    AgentCommand(
-                        name="review", description="Review the diff", argument_hint="[path]"
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.command,
+                        display_text="/review",
+                        insertion_text="/review ",
+                        description="Review the diff",
+                        argument_hint="[path]",
                     ),
-                    AgentCommand(name="compact", description="Summarise the conversation so far"),
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.plugin,
+                        display_text="@compact",
+                        insertion_text="@compact exact ",
+                        description="Summarise the conversation so far",
+                    ),
                 )
             )
             await harness.settle()
 
             view = (await client.get("/api/conversation/conversations/c")).json()
-            assert view["available_commands"] == [
+            assert view["composer_catalog"] == [
                 {
-                    "name": "review",
+                    "kind": "command",
+                    "display_text": "/review",
+                    "insertion_text": "/review ",
                     "description": "Review the diff",
                     "argument_hint": "[path]",
                 },
                 {
-                    "name": "compact",
+                    "kind": "plugin",
+                    "display_text": "@compact",
+                    "insertion_text": "@compact exact ",
                     "description": "Summarise the conversation so far",
                     "argument_hint": None,
                 },

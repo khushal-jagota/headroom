@@ -19,7 +19,7 @@
   import { taskProgressFrom } from "../../lib/conversation/taskProgress";
   import type { TranscriptRow } from "../../lib/conversation/transcript";
   import type {
-    AgentCommand,
+    ComposerCatalogEntry,
     BackendModel,
     BackendSnapshot,
     ConversationBackendKey,
@@ -48,7 +48,7 @@
     ownSenderLabel = null,
     livenessPulse = 0,
     effortOptions = [],
-    availableCommands = [],
+    composerCatalog = [],
     startsOnModel = null,
     startsOnReasoningEffort = null,
     heldPromptRows = [],
@@ -105,9 +105,8 @@
     ownSenderLabel?: string | null;
     livenessPulse?: number;
     effortOptions?: readonly string[];
-    /** The commands this conversation's agent reports, which the composer offers under a
-     *  line being written as one. */
-    availableCommands?: readonly AgentCommand[];
+    /** The typed text shortcuts this conversation offers in the composer. */
+    composerCatalog?: readonly ComposerCatalogEntry[];
     /** What a conversation started from here would run on, for the composer to show while
      *  there is none. Its owner resolved them; nothing here reads them. */
     startsOnModel?: string | null;
@@ -358,7 +357,7 @@
       {models}
       {backends}
       {effortOptions}
-      {availableCommands}
+      {composerCatalog}
       {startsOnModel}
       {startsOnReasoningEffort}
       {heldPromptRows}

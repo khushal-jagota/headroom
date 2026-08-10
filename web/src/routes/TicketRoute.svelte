@@ -33,6 +33,7 @@
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
   import TicketConversationHistory from "../components/TicketConversationHistory.svelte";
+  import TicketVerdict from "../components/TicketVerdict.svelte";
 
   let { id }: { id: string } = $props();
   const stableId = untrack(() => id);
@@ -254,6 +255,13 @@
     return mutateJson(`/api/tickets/${stableId}/value/${field}`, {
       method: "PUT",
       body: { body }
+    });
+  }
+
+  function saveVerdict(verdict: { rating: number | null; text: string | null }): Promise<unknown> {
+    return mutateJson(`/api/tickets/${stableId}/verdict`, {
+      method: "PUT",
+      body: verdict
     });
   }
 
@@ -556,6 +564,7 @@
         </header>
 
         <div class="ticket-col">
+          <TicketVerdict stage={detail.stage} verdict={detail.verdict} onSave={saveVerdict} />
           <div class="fields">
             {#snippet kickoffContextRow()}
               {#if detail.employee_configuration_editable}

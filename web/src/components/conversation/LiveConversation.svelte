@@ -595,7 +595,7 @@
   {current}
   models={backendSnapshot?.available_models ?? []}
   effortOptions={backendSnapshot?.reasoning_effort_options ?? []}
-  availableCommands={view?.available_commands ?? []}
+  composerCatalog={view?.composer_catalog ?? []}
   startsOnModel={startValues?.model ?? null}
   startsOnReasoningEffort={startValues?.reasoning_effort ?? null}
   bind:conversationState

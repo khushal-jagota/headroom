@@ -41,8 +41,8 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 RESHAPE_REVISION = "ticket_status_reshape"
 HEAD_REVISION = "ticket_conversation_history"
 
-# The notification revisions add their durable tables and supporting indexes.
-CURRENT_SCHEMA_OBJECT_COUNT = 39
+# Later revisions add their durable tables, indexes, and immutability triggers.
+CURRENT_SCHEMA_OBJECT_COUNT = 44
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (

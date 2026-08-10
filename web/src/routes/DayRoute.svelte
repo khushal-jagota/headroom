@@ -2,7 +2,12 @@
   import { onMount } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { shortMonthDayLabel, weekdayLabel } from "../lib/dates";
-  import { dayActionTiles, dayPageState, dayVisualTicket } from "../lib/dayPresentation";
+  import {
+    dayActionTiles,
+    dayDotOrder,
+    dayPageState,
+    dayVisualTicket
+  } from "../lib/dayPresentation";
   import { onReplyWatermarkMoved, readReplyWatermark } from "../lib/replyWatermark";
   import { queries } from "../lib/queryCatalogue";
   import ResourceState from "../components/ResourceState.svelte";
@@ -46,6 +51,7 @@
 
   let tickets = $derived(day.data?.tickets || []);
   let visualTickets = $derived(tickets.map((ticket) => dayVisualTicket(ticket, replyWatermarks)));
+  let dotTickets = $derived(dayDotOrder(visualTickets));
   let actionTiles = $derived(dayActionTiles(visualTickets));
   let pageState = $derived(dayPageState(visualTickets));
 </script>
@@ -90,7 +96,7 @@
             {/if}
 
             <div class="dots" data-day-dots aria-label="Today's ticket progress">
-              {#each visualTickets as visual (visual.ticket.id)}
+              {#each dotTickets as visual (visual.ticket.id)}
                 <StageMark
                   state={visual.state}
                   data-day-ticket-dot

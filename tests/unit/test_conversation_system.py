@@ -34,7 +34,8 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationAlreadyStarted,
     ConversationBackendKey,
     ConversationRoleMaterials,
@@ -2063,10 +2064,28 @@ def test_a_session_cursor_the_backend_mints_is_kept(harness: _Harness) -> None:
 
 
 A_MENU = (
-    AgentCommand(name="review", description="Review the diff", argument_hint="[path]"),
-    AgentCommand(name="compact", description="Summarise the conversation so far"),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.command,
+        display_text="/review",
+        insertion_text="/review ",
+        description="Review the diff",
+        argument_hint="[path]",
+    ),
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.skill,
+        display_text="$compact",
+        insertion_text="$compact ",
+        description="Summarise the conversation so far",
+    ),
 )
-A_LATER_MENU = (AgentCommand(name="compact", description="Summarise the conversation so far"),)
+A_LATER_MENU = (
+    ComposerCatalogEntry(
+        kind=ComposerCatalogEntryKind.plugin,
+        display_text="@compact",
+        insertion_text="@compact exact ",
+        description="Summarise the conversation so far",
+    ),
+)
 
 
 def test_the_commands_a_backend_reports_are_kept_and_outlive_its_child(
@@ -2085,7 +2104,7 @@ def test_the_commands_a_backend_reports_are_kept_and_outlive_its_child(
         await harness.system.send("c", text_message_content("first"), sender_label="owner")
         backend = harness.backend("c")
         assert backend.sink is not None
-        await backend.sink.available_commands_reported(A_MENU)
+        await backend.sink.composer_catalog_reported(A_MENU)
         await harness.settle()
         await harness.complete_turn("c")
 
@@ -2095,7 +2114,7 @@ def test_the_commands_a_backend_reports_are_kept_and_outlive_its_child(
 
         stored = await harness.store.read_conversation("c")
         assert stored is not None
-        assert stored.available_commands == A_MENU
+        assert stored.composer_catalog == A_MENU
         assert await harness.recorded_kinds("c") == (
             ConversationEventKind.prompt,
             ConversationEventKind.turn_ended,
@@ -2111,14 +2130,14 @@ def test_a_second_report_leaves_only_what_the_backend_offers_now(harness: _Harne
         backend = harness.backend("c")
         assert backend.sink is not None
 
-        await backend.sink.available_commands_reported(A_MENU)
+        await backend.sink.composer_catalog_reported(A_MENU)
         await harness.settle()
-        await backend.sink.available_commands_reported(A_LATER_MENU)
+        await backend.sink.composer_catalog_reported(A_LATER_MENU)
         await harness.settle()
 
         stored = await harness.store.read_conversation("c")
         assert stored is not None
-        assert stored.available_commands == A_LATER_MENU
+        assert stored.composer_catalog == A_LATER_MENU
 
     _run(exercise)
 
