@@ -21,16 +21,39 @@ def test_panels_is_the_startup_console_script() -> None:
     assert "planner" not in scripts
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["ticket", "show"],
+        ["worker", "my-ticket"],
+        ["sprint", "show"],
+        ["sprint", "item", "show"],
+        ["day", "show"],
+        ["project", "show"],
+    ],
+)
+def test_record_read_help_teaches_the_optional_part_list(command: list[str]) -> None:
+    result = CliRunner().invoke(cli_main.main, [*command, "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "[PART_NAMES]" in result.output
+    assert "selected comma-separated PART_NAMES" in result.output
+    assert "Print machine-readable JSON" in result.output
+
+
 def test_worker_my_ticket_human_line_surfaces_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     # t_tt05: the human line names the resolved worker specialist so the agent can
     # self-route with skill_view("<name>"). The server computes `worker` from the type.
     def fake_send(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         return {
             "id": "t_demo",
+            "worker_type": "coding",
             "stage": "needs_success",
+            "ticket_status": "user",
             "priority": "P2",
             "title": "Demo",
             "worker": "panels-worker-coding",
+            "fields": {"success": {"value": None, "user_note": None, "proposal": None}},
         }
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -54,10 +77,13 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
         requested_paths.append(path)
         return {
             "id": "t_correct",
+            "worker_type": "exploration",
             "stage": "needs_understanding",
+            "ticket_status": "agent",
             "priority": "P1",
             "title": "Correct ticket",
             "worker": "panels-worker-exploration",
+            "fields": {"understanding": {"value": None, "user_note": None, "proposal": None}},
         }
 
     monkeypatch.setattr(http, "send", fake_send)
@@ -69,7 +95,8 @@ def test_worker_my_ticket_requests_worker_self_for_explicit_ticket(
 
     assert result.exit_code == 0, result.output
     assert requested_paths == ["/api/tickets/t_correct/worker-self"]
-    assert "t_correct needs_understanding" in result.output
+    assert "id: t_correct" in result.output
+    assert "stage: needs_understanding" in result.output
 
 
 def test_worker_request_user_help_is_a_no_payload_worker_command(

@@ -140,10 +140,13 @@ class _RecordingSend:
 
 _DETAIL_BODY = {
     "id": "t_abc",
+    "worker_type": "coding",
     "stage": "coding",
+    "ticket_status": "agent",
     "priority": "P1",
     "title": "Do the thing",
     "worker": "panels-worker-coding",
+    "fields": {"implementation": {"value": None, "user_note": None, "proposal": None}},
 }
 
 

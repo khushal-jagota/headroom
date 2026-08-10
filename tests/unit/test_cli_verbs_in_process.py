@@ -197,10 +197,152 @@ def test_day_cli_round_trips_midday_reconciliation(
         "--value",
         "The morning bet still holds.",
     )
-    shown = cli(server, "day", "show", "--date", "2026-07-04")
+    shown = cli(
+        server,
+        "day",
+        "show",
+        "2026-07-04",
+        "midday_reconciliation",
+    )
 
     assert updated["midday_reconciliation"] == "The morning bet still holds."
-    assert shown["midday_reconciliation"] == "The morning bet still holds."
+    assert (
+        shown["parts"]["midday_reconciliation"]["value"]
+        == "The morning bet still holds."
+    )
+
+
+def test_record_reads_share_manifests_selection_and_identity(
+    cli_app: tuple[ServerHandle, Callable[..., JsonObject], ApiHelper],
+) -> None:
+    server, cli, _ = cli_app
+    cli(
+        server,
+        "project",
+        "set",
+        "project_other",
+        "summary",
+        "--value",
+        "Shared work.",
+    )
+    sprint = cli(
+        server,
+        "sprint",
+        "create",
+        "--name",
+        "Current sprint",
+        "--date-start",
+        "2026-06-29",
+        "--date-end",
+        "2026-07-12",
+        "--primary-bet",
+        "Keep the grammar shared.",
+    )
+    item = cli(
+        server,
+        "sprint",
+        "item",
+        "create",
+        "--title",
+        "Record reads",
+        "--project-id",
+        "project_other",
+        "--sprint",
+        sprint["id"],
+        "--body-file",
+        "-",
+        stdin="Show one part. 🌱",
+    )
+    ticket = cli(
+        server,
+        "ticket",
+        "create",
+        "--title",
+        "Build record reads",
+        "--worker-type",
+        "coding",
+        "--sprint-item",
+        item["id"],
+        "--kickoff-note",
+        "Approved context.",
+    )
+    cli(
+        server,
+        "day",
+        "add-ticket",
+        ticket["id"],
+        "--date",
+        "2026-07-04",
+    )
+
+    ticket_manifest = cli(server, "ticket", "show", ticket["id"])
+    worker_manifest = cli(
+        server,
+        "worker",
+        "my-ticket",
+        ticket_id=ticket["id"],
+        actor="worker",
+    )
+    sprint_manifest = cli(server, "sprint", "show", "current")
+    item_part = cli(server, "sprint", "item", "show", item["id"], "body")
+    day_manifest = cli(server, "day", "show", "2026-07-04")
+    day_part = cli(
+        server,
+        "day",
+        "show",
+        "--date",
+        "2026-07-04",
+        "notes,focus",
+    )
+    project_part = cli(server, "project", "show", "project_other", "summary")
+
+    assert list(ticket_manifest["manifest"])[0] == "kickoff"
+    assert ticket_manifest["header"]["ticket_status"] == "awaiting_approval"
+    assert worker_manifest["header"]["worker"] == "panels-worker-coding"
+    assert worker_manifest["header"]["id"] == ticket["id"]
+    assert sprint_manifest["header"]["id"] == sprint["id"]
+    assert list(sprint_manifest["manifest"]) == [
+        "limiting_factor",
+        "primary_bet",
+        "supports",
+        "premortem",
+        "mid_where_we_stand",
+        "mid_whats_changed",
+        "mid_what_to_adjust",
+        "outcomes",
+        "solo_reflection",
+        "joint_discussion",
+        "updates_to_thinking",
+        "carry_forward",
+    ]
+    assert item_part["parts"]["body"]["value"] == "Show one part. 🌱"
+    assert sum(item_part["header"]["rollup"].values()) == 1
+    assert "tickets" not in day_manifest
+    assert "tickets" not in day_manifest["header"]
+    assert "tickets" not in day_manifest["manifest"]
+    assert list(day_part["parts"]) == ["notes", "focus"]
+    assert project_part["parts"]["summary"]["value"] == "Shared work."
+
+    human = CliRunner().invoke(
+        cli_main,
+        ["ticket", "show", ticket["id"], "kickoff"],
+        env={"PLAN_SERVER_URL": server.base},
+    )
+    assert human.exit_code == 0, human.output
+    assert "ticket_status: awaiting_approval" in human.stdout
+    assert "value: null" in human.stdout
+    assert "proposal:" in human.stdout
+
+    invalid = CliRunner().invoke(
+        cli_main,
+        ["project", "show", "project_other", "missing", "--json"],
+        env={"PLAN_SERVER_URL": server.base},
+    )
+    assert invalid.exit_code == 1
+    error = json.loads(invalid.stderr)["error"]
+    assert error["message"] == (
+        "unknown part names: missing; valid part names: summary"
+    )
 
 
 def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
@@ -281,11 +423,14 @@ def test_planning_worker_cli_claims_authorize_day_midday_and_sprint_writes(
         ticket_id=sprint_ticket["id"],
         actor="worker",
     )
-    sprint_readback = cli(server, "sprint", "show", sprint["id"])
+    sprint_readback = cli(server, "sprint", "show", sprint["id"], "primary_bet")
 
     assert day["focus"] == "Ship the planning boundary."
     assert midday["midday_reconciliation"] == "The morning bet still holds."
-    assert sprint_readback["primary_bet"] == "Use one canonical sprint."
+    assert (
+        sprint_readback["parts"]["primary_bet"]["value"]
+        == "Use one canonical sprint."
+    )
 
 
 def test_ticket_cli_forwards_the_whole_launch_configuration_create_and_set(

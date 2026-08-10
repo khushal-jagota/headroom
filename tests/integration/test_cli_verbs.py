@@ -82,7 +82,7 @@ def test_installed_panels_preserves_worker_identity_for_read_and_write(
         text=True,
         timeout=30,
     )
-    assert json.loads(identity.stdout)["id"] == ticket_id
+    assert json.loads(identity.stdout)["header"]["id"] == ticket_id
 
     proposal = subprocess.run(
         [

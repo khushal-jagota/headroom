@@ -42,6 +42,11 @@ async def list_projects(conn: DbConn) -> JsonDict:
     return {"projects": [projects_data.project_json(p) for p in projects_data.list_projects(conn)]}
 
 
+@router.get("/projects/{project_id}")
+async def get_project(project_id: str, conn: DbConn) -> JsonDict:
+    return projects_data.project_json(projects_data.read_project(conn, project_id))
+
+
 @router.post("/projects")
 async def create_project(raw: dict[str, Any], conn: DbConn, ctx: Ctx, clk: Clk) -> JsonDict:
     require_direct_write(ctx)
