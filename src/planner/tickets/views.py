@@ -310,6 +310,14 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
         (ticket_id,),
     ).fetchall()
     blocker_summary = core_links.blocker_summary(conn, ticket_id)
+    conversation_rows = conn.execute(
+        "SELECT ticket_conversations.conversation_id, conversations.created_at "
+        "FROM ticket_conversations JOIN conversations "
+        "ON conversations.conversation_id = ticket_conversations.conversation_id "
+        "WHERE ticket_conversations.ticket_id = ? "
+        "ORDER BY conversations.created_at, ticket_conversations.conversation_id",
+        (ticket_id,),
+    ).fetchall()
     judgment = judgments_data.read_ticket_judgment(conn, ticket_id)
     detail.update(
         {
@@ -318,6 +326,13 @@ def ticket_detail(conn: sqlite3.Connection, ticket_id: str, now: int) -> JsonDic
             "employee_configuration_editable": tickets_data.employee_configuration_editable(
                 ticket
             ),
+            "conversation_history": [
+                {
+                    "conversation_id": str(row["conversation_id"]),
+                    "created_at": int(row["created_at"]),
+                }
+                for row in conversation_rows
+            ],
             "verdict": (
                 {
                     "rating": judgment.verdict_rating,

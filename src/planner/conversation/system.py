@@ -54,7 +54,7 @@ from planner.conversation.backends.contracts import (
     UserInputAnswerWriteFailed,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
     ConversationBackendKey,
     ConversationStartRequest,
     HeldPrompt,
@@ -1755,19 +1755,18 @@ class SqliteProcessConversationSystem:
         )
         state.record = replace(state.record, vendor_session_cursor=vendor_session_cursor)
 
-    async def _on_available_commands_reported(
-        self, state: _ConversationState, available_commands: tuple[AgentCommand, ...]
+    async def _on_composer_catalog_reported(
+        self, state: _ConversationState, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
         """The whole menu, as the backend has it now, put where the last one was.
 
-        It goes onto the conversation and nowhere near its record: which commands an agent
-        answers to is something that is true about it, not something that happened in the
-        conversation, so there is nothing here for a transcript to show.
+        It goes onto the conversation and nowhere near its event record. The catalog is a
+        current capability, not something that happened, so no transcript row shows it.
         """
-        await self._store.replace_available_commands(
-            state.record.conversation_id, available_commands
+        await self._store.replace_composer_catalog(
+            state.record.conversation_id, composer_catalog
         )
-        state.record = replace(state.record, available_commands=available_commands)
+        state.record = replace(state.record, composer_catalog=composer_catalog)
 
     def _log_failed_turn(
         self,
@@ -2166,14 +2165,14 @@ class _CoreBackendEventSink:
             )
         )
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
         self._enqueue(
             partial(
-                self._system._on_available_commands_reported,
+                self._system._on_composer_catalog_reported,
                 self._state,
-                available_commands,
+                composer_catalog,
             )
         )
 

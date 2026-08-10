@@ -10,7 +10,7 @@ from alembic import op
 from sqlalchemy import Column, ForeignKey, Integer, PrimaryKeyConstraint, Text
 
 revision = "ticket_judgment_trouble_notes"
-down_revision = "ticket_judgments"
+down_revision = "ticket_conversation_history"
 branch_labels = None
 depends_on = None
 

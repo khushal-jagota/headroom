@@ -41,7 +41,7 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
     ConversationAccess,
     ConversationRoleMaterials,
     PromptDeliveryMode,
@@ -141,7 +141,7 @@ def test_codex_offers_no_commands_because_its_protocol_has_none_to_declare(
         async with _scripted_child(tmp_path, script={}) as scripted:
             await scripted.start(cursor=None)
 
-            assert scripted.sink.available_commands_reports == []
+            assert scripted.sink.composer_catalog_reports == []
 
     _run(exercise)
 
@@ -1269,7 +1269,7 @@ class _RecordingSink:
         self.error_summaries: list[str | None] = []
         self.standard_error_tails: list[str | None] = []
         self.vendor_session_cursor: str | None = None
-        self.available_commands_reports: list[tuple[AgentCommand, ...]] = []
+        self.composer_catalog_reports: list[tuple[ComposerCatalogEntry, ...]] = []
         self._turn_over = asyncio.Event()
         self._an_ask = asyncio.Event()
         self._user_input = asyncio.Event()
@@ -1390,10 +1390,10 @@ class _RecordingSink:
     async def vendor_session_cursor_rebound(self, vendor_session_cursor: str) -> None:
         self.vendor_session_cursor = vendor_session_cursor
 
-    async def available_commands_reported(
-        self, available_commands: tuple[AgentCommand, ...]
+    async def composer_catalog_reported(
+        self, composer_catalog: tuple[ComposerCatalogEntry, ...]
     ) -> None:
-        self.available_commands_reports.append(available_commands)
+        self.composer_catalog_reports.append(composer_catalog)
 
 
 @dataclass

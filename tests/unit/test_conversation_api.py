@@ -59,7 +59,8 @@ from planner.conversation.backends.contracts import (
     TurnToken,
 )
 from planner.conversation.contracts import (
-    AgentCommand,
+    ComposerCatalogEntry,
+    ComposerCatalogEntryKind,
     ConversationBackendKey,
     PromptDeliveryMode,
     ResolvedConversationStart,
@@ -99,6 +100,8 @@ from planner.core.clock import build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
 from planner.core.server import create_app
+from planner.files.logic.paths import conversation_files_root
+from planner.tickets import data as tickets_data
 
 VENDOR_SESSION_CURSOR = "vendor-session-1"
 HEARTBEAT_MILLISECONDS = 40
@@ -291,6 +294,7 @@ class _Harness:
             system=self.system,
             live_tail=self.live_tail,
             message_files=self.message_files,
+            database_path=str(db_path),
             backend_snapshots=BackendSnapshotService(
                 self.machine,
                 codex_model_catalog_probe=_no_codex_to_ask,
@@ -473,6 +477,35 @@ def _run(exercise: Callable[[], Coroutine[Any, Any, None]]) -> None:
     asyncio.run(asyncio.wait_for(exercise(), 20.0))
 
 
+def _associate_ticket_conversations(
+    harness: _Harness, *, active: str, past: str
+) -> None:
+    conn = connect(str(harness.db_path))
+    try:
+        ticket = tickets_data.create_ticket(
+            conn,
+            title="Conversation boundary",
+            worker_type="coding",
+            actor="human",
+            now=1,
+            title_max_chars=200,
+        )
+        conn.execute(
+            "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
+            (past, ticket.id),
+        )
+        conn.execute(
+            "INSERT INTO ticket_conversations (conversation_id, ticket_id) VALUES (?, ?)",
+            (active, ticket.id),
+        )
+        conn.execute(
+            "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+            (active, ticket.id),
+        )
+    finally:
+        conn.close()
+
+
 async def _start(
     client: httpx.AsyncClient,
     conversation_id: str = "c",
@@ -580,6 +613,84 @@ class _EventStreamDrive:
 # --- starting a conversation ----------------------------------------------------------------
 
 
+def test_every_conversation_mutation_rejects_a_tickets_past_conversation(
+    harness: _Harness,
+) -> None:
+    async def exercise() -> None:
+        async with harness.client() as client:
+            assert (await _start(client, "past")).status_code == 201
+            assert (await _start(client, "active")).status_code == 201
+            _associate_ticket_conversations(harness, active="active", past="past")
+            past_files = conversation_files_root(harness.db_path) / "past"
+            assert not past_files.exists()
+
+            requests = (
+                (
+                    "POST",
+                    "/api/conversation/conversations/past/send",
+                    {
+                        "content": [{"piece": "text", "text": "do not send"}],
+                        "sender_label": "owner",
+                    },
+                ),
+                (
+                    "POST",
+                    "/api/conversation/conversations/past/voice-transcriptions",
+                    {"audio": base64.b64encode(b"audio").decode("ascii")},
+                ),
+                ("POST", "/api/conversation/conversations/past/interrupt", None),
+                ("POST", "/api/conversation/conversations/past/kill", None),
+                (
+                    "DELETE",
+                    "/api/conversation/conversations/past/held-prompts/held-1",
+                    None,
+                ),
+                (
+                    "POST",
+                    "/api/conversation/conversations/past/held-prompts/held-1/promote",
+                    {"mode": "send_now"},
+                ),
+                (
+                    "POST",
+                    "/api/conversation/conversations/past/permission-answers",
+                    {"ask_id": "ask-1", "option_id": "allow"},
+                ),
+                (
+                    "POST",
+                    "/api/conversation/conversations/past/user-input-answers",
+                    {"request_id": "input-1", "answers": {}},
+                ),
+            )
+            for method, path, body in requests:
+                response = await client.request(method, path, json=body)
+                assert response.status_code == 409, (method, path, response.text)
+                assert response.json()["detail"] == (
+                    "the conversation is not the Ticket's active conversation"
+                )
+            assert not past_files.exists()
+
+            active_send = await client.post(
+                "/api/conversation/conversations/active/send",
+                json={
+                    "content": [{"piece": "text", "text": "active work"}],
+                    "sender_label": "owner",
+                },
+            )
+            assert active_send.status_code == 200
+
+            assert (await _start(client, "unassociated")).status_code == 201
+            unassociated_send = await client.post(
+                "/api/conversation/conversations/unassociated/send",
+                json={
+                    "content": [{"piece": "text", "text": "development work"}],
+                    "sender_label": "owner",
+                },
+            )
+            assert unassociated_send.status_code == 200
+
+    _run(exercise)
+
+
 def test_starting_a_conversation_answers_with_what_it_resolved_to(harness: _Harness) -> None:
     async def exercise() -> None:
         async with harness.client() as client:
@@ -599,12 +710,12 @@ def test_starting_a_conversation_answers_with_what_it_resolved_to(harness: _Harn
             assert view["held_prompts"] == []
             assert view["pending_permission_ask"] is None
             # Nothing has reported a menu, so there is none to offer.
-            assert view["available_commands"] == []
+            assert view["composer_catalog"] == []
 
     _run(exercise)
 
 
-def test_the_view_carries_the_commands_the_agent_says_may_be_typed_at_it(
+def test_the_view_carries_the_typed_composer_catalog(
     harness: _Harness,
 ) -> None:
     """Each command as its name, what it does, and what to type after it, in order."""
@@ -622,25 +733,38 @@ def test_the_view_carries_the_commands_the_agent_says_may_be_typed_at_it(
             )
             backend = harness.backend("c")
             assert backend.sink is not None
-            await backend.sink.available_commands_reported(
+            await backend.sink.composer_catalog_reported(
                 (
-                    AgentCommand(
-                        name="review", description="Review the diff", argument_hint="[path]"
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.command,
+                        display_text="/review",
+                        insertion_text="/review ",
+                        description="Review the diff",
+                        argument_hint="[path]",
                     ),
-                    AgentCommand(name="compact", description="Summarise the conversation so far"),
+                    ComposerCatalogEntry(
+                        kind=ComposerCatalogEntryKind.plugin,
+                        display_text="@compact",
+                        insertion_text="@compact exact ",
+                        description="Summarise the conversation so far",
+                    ),
                 )
             )
             await harness.settle()
 
             view = (await client.get("/api/conversation/conversations/c")).json()
-            assert view["available_commands"] == [
+            assert view["composer_catalog"] == [
                 {
-                    "name": "review",
+                    "kind": "command",
+                    "display_text": "/review",
+                    "insertion_text": "/review ",
                     "description": "Review the diff",
                     "argument_hint": "[path]",
                 },
                 {
-                    "name": "compact",
+                    "kind": "plugin",
+                    "display_text": "@compact",
+                    "insertion_text": "@compact exact ",
                     "description": "Summarise the conversation so far",
                     "argument_hint": None,
                 },

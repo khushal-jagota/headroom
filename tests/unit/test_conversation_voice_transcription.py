@@ -214,6 +214,7 @@ class _Harness:
             ),
             backend_usage=BackendUsageService({}),
             message_files=self.message_files,
+            database_path=str(db_path),
             sse_heartbeat_ms=1000,
         )
         self.app = FastAPI()

@@ -32,6 +32,7 @@
   import StageMark from "../components/StageMark.svelte";
   import TicketStageSection from "../components/TicketStageSection.svelte";
   import TicketPriorityControl from "../components/TicketPriorityControl.svelte";
+  import TicketConversationHistory from "../components/TicketConversationHistory.svelte";
   import TicketVerdict from "../components/TicketVerdict.svelte";
   import TicketTroubleNotes from "../components/TicketTroubleNotes.svelte";
 
@@ -78,6 +79,13 @@
    * the conversation writes back here when they do.
    */
   let conversationState = $state<ConversationState>("rest");
+  /** Null means that this screen follows the Ticket's active conversation. An id means
+   *  that the person explicitly chose one durable history entry, so detail refreshes do
+   *  not move the transcript when the active pointer changes. */
+  let selectedPastConversationId = $state<string | null>(null);
+  let selectedConversationId = $derived(
+    selectedPastConversationId ?? ticket.data?.conversation_id ?? null
+  );
 
   /** Seed the conversation once from the status at the start of this Ticket visit.
    *
@@ -655,10 +663,16 @@
         onclickcapture={dismissConversationOnAPressBesideTheCard}
       >
         <div class="ticket-conversation-column">
+          <TicketConversationHistory
+            history={detail.conversation_history}
+            activeConversationId={detail.conversation_id}
+            bind:selectedPastConversationId
+          />
           <LiveConversation
             bind:conversationState
-            conversationId={detail.conversation_id}
+            conversationId={selectedConversationId}
             ticketId={detail.id}
+            readOnly={selectedPastConversationId !== null}
             label={conversationWorkerTypeLabel(detail)}
             composerPlaceholder={`Message ${conversationEmployeeLabel(detail)}...`}
             backends={conversationBackends}
