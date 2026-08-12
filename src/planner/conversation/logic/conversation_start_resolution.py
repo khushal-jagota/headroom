@@ -17,7 +17,7 @@ def resolve_conversation_start_request(
     """Turn a start request into the concrete values a conversation is started with.
 
     The three floor defaults are applied here: an absent backend key becomes codex, an
-    absent workspace folder becomes ``~/Coding``, and an absent access posture becomes
+    absent workspace folder becomes ``~/projects``, and an absent access posture becomes
     full access. Reasoning effort and role materials have no floor default, so absent
     stays absent. The model has none either, and needs none: the request has to name one,
     and text that names nothing — blank, or padded out with spaces — is refused here

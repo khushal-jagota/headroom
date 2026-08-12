@@ -168,9 +168,10 @@ file proposals. Panels exposes the repository's role skills through each backend
 native skill location: project links for Codex and Claude Code, and startup links in
 the configured planner Hermes home.
 
-The production catalog is exactly `hermes`, `codex`, and `claude`. Workers run in
-`~/Coding` when that folder exists, and in the Panels repository otherwise; startup
-only chooses between those two paths and never creates either.
+The production catalog is exactly `hermes`, `codex`, and `claude`. A new Ticket worker
+runs in its Project folder when that path names an existing directory. Otherwise, it
+runs in `~/projects` when that folder exists, and in the Panels repository otherwise.
+Startup creates no folders. Existing conversations keep their stored workspace folder.
 
 The Ticket's stored backend, model, and reasoning effort are its **last-chosen**
 values, kept up to date with what its conversation actually runs on, so a fresh

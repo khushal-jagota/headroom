@@ -45,6 +45,7 @@ from planner.conversation.logic.conversation_start_resolution import (
 from planner.conversation.message_content import MessageContent
 from planner.conversation.storage import ensure_started_conversation_record
 from planner.core.errors import ErrorCode, PlannerError
+from planner.projects import data as projects_data
 from planner.runtime.logic.conversation_start_resolution import (
     NO_CONVERSATION_START_OVERRIDES,
     ConversationStartConfiguration,
@@ -130,10 +131,20 @@ def worker_resolve(
             )
         ),
         overrides=overrides,
-        workspace_folder=(
-            _default_workspace_folder() if workspace_folder is None else workspace_folder
-        ),
+        workspace_folder=_worker_workspace_folder(conn, ticket, workspace_folder),
     )
+
+
+def _worker_workspace_folder(
+    conn: sqlite3.Connection, ticket: Ticket, explicit: Path | None
+) -> Path:
+    if explicit is not None:
+        return explicit
+    if ticket.project_id is not None:
+        project_folder = projects_data.read_project(conn, ticket.project_id).folder_path
+        if project_folder is not None and project_folder.is_dir():
+            return project_folder.resolve(strict=False)
+    return _default_workspace_folder()
 
 
 def agent_resolve(

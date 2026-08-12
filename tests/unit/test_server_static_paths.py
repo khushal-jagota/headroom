@@ -8,6 +8,7 @@ from sqlite3 import Connection
 import pytest
 from fastapi.testclient import TestClient
 
+from planner.conversation.contracts import FLOOR_DEFAULT_WORKSPACE_FOLDER
 from planner.core import server
 from planner.core.clock import build_clock
 from planner.core.config import load_config
@@ -15,12 +16,12 @@ from planner.core.db import connect, create_schema
 from planner.core.server import create_app
 
 
-def test_worker_workspace_root_prefers_existing_coding_directory(
+def test_worker_workspace_root_prefers_existing_projects_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository_root = tmp_path / "repository"
     repository_root.mkdir()
-    preferred_root = tmp_path / "Coding"
+    preferred_root = tmp_path / "projects"
     preferred_root.mkdir()
     monkeypatch.setattr(server, "_REPO_ROOT", repository_root)
     monkeypatch.setattr(server, "_PREFERRED_WORKER_WORKSPACE_ROOT", preferred_root)
@@ -33,7 +34,7 @@ def test_worker_workspace_root_falls_back_without_creating_missing_preference(
 ) -> None:
     repository_root = tmp_path / "repository"
     repository_root.mkdir()
-    missing_preferred_root = tmp_path / "missing" / "Coding"
+    missing_preferred_root = tmp_path / "missing" / "projects"
     monkeypatch.setattr(server, "_REPO_ROOT", repository_root)
     monkeypatch.setattr(
         server, "_PREFERRED_WORKER_WORKSPACE_ROOT", missing_preferred_root
@@ -49,12 +50,19 @@ def test_worker_workspace_root_falls_back_when_preference_is_not_a_directory(
 ) -> None:
     repository_root = tmp_path / "repository"
     repository_root.mkdir()
-    preferred_file = tmp_path / "Coding"
+    preferred_file = tmp_path / "projects"
     preferred_file.write_text("not a directory", encoding="utf-8")
     monkeypatch.setattr(server, "_REPO_ROOT", repository_root)
     monkeypatch.setattr(server, "_PREFERRED_WORKER_WORKSPACE_ROOT", preferred_file)
 
     assert server.resolve_worker_workspace_root() == repository_root.resolve()
+
+
+def test_shared_workspace_defaults_name_the_projects_folder() -> None:
+    expected = Path.home() / "projects"
+
+    assert server._PREFERRED_WORKER_WORKSPACE_ROOT == expected
+    assert FLOOR_DEFAULT_WORKSPACE_FOLDER == expected
 
 
 def test_static_assets_are_served_when_cwd_has_no_assets(

@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "ticket_review_routes"
+HEAD_REVISION = "project_folder_path"
 
 
 def _table_columns(

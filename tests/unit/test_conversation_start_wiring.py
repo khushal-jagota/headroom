@@ -32,7 +32,10 @@ from planner.conversation.in_memory_conversation_system import (
     InMemoryConversationSystem,
 )
 from planner.conversation.message_content import MessageContent, text_message_content
+from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
+from planner.projects.data import create_project
+from planner.runtime import conversation_start as conversation_start_module
 from planner.runtime.conversation_start import (
     CONVERSATION_ID_PREFIX,
     agent_resolve,
@@ -813,6 +816,89 @@ def test_worker_resolve_reads_the_worker_types_managed_launch_defaults(
     assert values.reasoning_effort == "medium"
     assert values.role_materials == worker_conversation_role_materials(ticket.id)
     assert values.workspace_folder == _WORKSPACE
+
+
+def test_worker_resolve_uses_an_existing_project_folder(
+    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+) -> None:
+    project_folder = tmp_path / "project"
+    project_folder.mkdir()
+    project = create_project(
+        tmp_db,
+        name="Folder Project",
+        priority=Priority.P1,
+        folder_path=project_folder,
+        now=2,
+    )
+    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
+
+    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id))
+
+    assert values.workspace_folder == project_folder.resolve()
+
+
+@pytest.mark.parametrize("configured_path_kind", ["null", "missing", "file"])
+def test_worker_resolve_falls_back_when_the_project_folder_is_not_an_existing_directory(
+    tmp_db: Connection,
+    ticket: Ticket,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    configured_path_kind: str,
+) -> None:
+    fallback = tmp_path / "fallback"
+    configured_path: Path | None = None
+    if configured_path_kind == "missing":
+        configured_path = tmp_path / "missing"
+    elif configured_path_kind == "file":
+        configured_path = tmp_path / "file"
+        configured_path.write_text("not a directory", encoding="utf-8")
+    project = create_project(
+        tmp_db,
+        name=f"Fallback {configured_path_kind}",
+        priority=Priority.P1,
+        folder_path=configured_path,
+        now=2,
+    )
+    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
+    monkeypatch.setattr(conversation_start_module, "_default_workspace_folder", lambda: fallback)
+
+    values = worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id))
+
+    assert values.workspace_folder == fallback
+
+
+def test_worker_resolve_falls_back_when_the_ticket_has_no_project(
+    tmp_db: Connection,
+    ticket: Ticket,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fallback = tmp_path / "fallback"
+    monkeypatch.setattr(conversation_start_module, "_default_workspace_folder", lambda: fallback)
+
+    assert worker_resolve(tmp_db, ticket).workspace_folder == fallback
+
+
+def test_worker_resolve_explicit_folder_beats_the_project_folder(
+    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+) -> None:
+    project_folder = tmp_path / "project"
+    project_folder.mkdir()
+    project = create_project(
+        tmp_db,
+        name="Override Project",
+        priority=Priority.P1,
+        folder_path=project_folder,
+        now=2,
+    )
+    tmp_db.execute("UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id))
+
+    assert (
+        worker_resolve(
+            tmp_db, read_ticket(tmp_db, ticket.id), workspace_folder=_WORKSPACE
+        ).workspace_folder
+        == _WORKSPACE
+    )
 
 
 def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_defaults(

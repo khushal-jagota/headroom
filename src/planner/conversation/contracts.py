@@ -79,7 +79,7 @@ class ConversationAccess(StrEnum):
 # contract — not as an invitation to omit fields. Callers are expected to pass explicit
 # values.
 FLOOR_DEFAULT_BACKEND_KEY: Final = ConversationBackendKey.codex
-FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "Coding"
+FLOOR_DEFAULT_WORKSPACE_FOLDER: Final[Path] = Path.home() / "projects"
 FLOOR_DEFAULT_ACCESS: Final = ConversationAccess.full
 
 BACKEND_KEYS_SUPPORTING_STEER: Final[frozenset[ConversationBackendKey]] = frozenset(
@@ -149,7 +149,7 @@ class ConversationStartRequest:
     means nothing to a backend that has never heard of it.
 
     An absent ``backend_key``, ``workspace_folder`` or ``access`` takes its floor default
-    (codex, ``~/Coding``, full access). ``reasoning_effort`` and ``role_materials`` have
+    (codex, ``~/projects``, full access). ``reasoning_effort`` and ``role_materials`` have
     no floor default: absent means the conversation is started without them, and for
     reasoning effort that is a real answer — some models take none.
 

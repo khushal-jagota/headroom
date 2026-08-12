@@ -1,7 +1,7 @@
 # Projects
 
 Projects are a small catalog, not a fixed enum. Each project has a stable ID, a
-display name, and a priority. Priority is either P0–P3 or unassessed. Unassessed is
+display name, an optional folder path, and a priority. Priority is either P0–P3 or unassessed. Unassessed is
 stored and returned as `null`; it is never interpreted as P3. The live rows include a
 Personal Project for planning work. New rows can be added without changing code.
 
@@ -19,10 +19,14 @@ an existing Project to P0–P3. They cannot return it to the unassessed state.
 import names it and the project is missing, the importer creates it as part of the
 same transaction. It is not recreated when a fresh database is initialized.
 
+Each Project folder is explicit and does not depend on the Project name. Panels expands
+paths that start with `~` and stores an absolute path. The folder can be absent on disk.
+Panels does not create it. A clear operation returns the stored path to `null`.
+
 Each project also has one free-text summary. That summary is the project context
 for humans and agents: what the project is, what matters about it, and any repo or
-file locations worth remembering. There is no separate repo-location field yet;
-locations belong in the summary text when they matter.
+file locations worth remembering. A repository can be one item inside the Project
+folder. Panels does not define or manage the folder contents.
 
 Tickets, Sprint Items, and ideas store `project_id`. API responses
 also include the legacy `project` field as the display name so older callers can keep
@@ -41,12 +45,13 @@ under `No project`.
 
 - `GET /api/projects` lists available projects.
 - `GET /api/projects/{project_id}` returns one canonical Project record.
-- `POST /api/projects {name, priority, summary?}` creates an assessed project.
-- `PATCH /api/projects/{project_id}` updates the project name, summary, or priority.
+- `POST /api/projects {name, priority, summary?, folder_path?}` creates an assessed project.
+- `PATCH /api/projects/{project_id}` updates the name, summary, priority, or folder path.
 - `panels project list`, `panels project show <project_id> [summary]`,
-  `panels project create --name ... --priority P0|P1|P2|P3 --summary ...`, and
+  `panels project create --name ... --priority P0|P1|P2|P3 --summary ... --folder-path ...`, and
   `panels project set <project_id> priority --value P0|P1|P2|P3` expose the same
-  catalog. The `set` command also supports the `name` and `summary` fields.
+  catalog. The `set` command also supports the `name`, `summary`, and `folder-path`
+  fields. Use `--clear` to clear the folder path.
 - Frontend project selectors fetch the `projects` resource and use project IDs as
   values with project names as labels.
 

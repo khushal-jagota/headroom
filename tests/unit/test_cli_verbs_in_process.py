@@ -648,8 +648,9 @@ def test_ticket_list_day_filter(
 
 
 def test_project_create_list_and_project_id_item_filter(
-    server: ServerHandle, cli: Callable[..., JsonObject]
+    server: ServerHandle, cli: Callable[..., JsonObject], tmp_path: Path
 ) -> None:
+    project_folder = tmp_path / "Alpha"
     missing_priority = CliRunner().invoke(
         cli_main, ["project", "create", "--name", "Missing Priority", "--json"]
     )
@@ -664,10 +665,30 @@ def test_project_create_list_and_project_id_item_filter(
         "Alpha One",
         "--priority",
         "P1",
+        "--folder-path",
+        str(project_folder),
     )
     assert project["id"] == "project_alpha_one"
     assert project["name"] == "Alpha One"
     assert project["priority"] == "P1"
+    assert project["folder_path"] == str(project_folder)
+
+    shown = cli(server, "project", "show", project["id"])
+    assert shown["header"]["folder_path"] == str(project_folder)
+
+    cleared_folder = cli(server, "project", "set", project["id"], "folder-path", "--clear")
+    assert cleared_folder["folder_path"] is None
+
+    reset_folder = cli(
+        server,
+        "project",
+        "set",
+        project["id"],
+        "folder-path",
+        "--value",
+        str(project_folder),
+    )
+    assert reset_folder["folder_path"] == str(project_folder)
 
     listed_projects = cli(server, "project", "list")
     listed_by_id = {entry["id"]: entry for entry in listed_projects["projects"]}

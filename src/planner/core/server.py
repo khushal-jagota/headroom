@@ -78,7 +78,7 @@ def resolve_application_root(
 
 
 _REPO_ROOT = resolve_application_root()
-_PREFERRED_WORKER_WORKSPACE_ROOT = Path.home() / "Coding"
+_PREFERRED_WORKER_WORKSPACE_ROOT = Path.home() / "projects"
 _WEB_DIST = _REPO_ROOT / "web" / "dist"
 _WEB_INDEX = _WEB_DIST / "index.html"
 _ASSETS_DIR = _REPO_ROOT / "assets"
