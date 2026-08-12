@@ -19,11 +19,14 @@ router = APIRouter()
 
 
 def _marshal_create_project(raw: JsonDict) -> CreateProjectBody:
-    return CreateProjectBody(
+    body = CreateProjectBody(
         name=body_str(raw, "name"),
         summary=body_str(raw, "summary"),
         priority=parse_enum(Priority, body_str(raw, "priority"), "priority"),
     )
+    if "folder_path" in raw:
+        body["folder_path"] = _nullable_folder_path(raw["folder_path"])
+    return body
 
 
 def _marshal_update_project(raw: JsonDict) -> UpdateProjectBody:
@@ -34,9 +37,19 @@ def _marshal_update_project(raw: JsonDict) -> UpdateProjectBody:
         body["summary"] = body_str(raw, "summary")
     if "priority" in raw:
         body["priority"] = parse_enum(Priority, body_str(raw, "priority"), "priority")
+    if "folder_path" in raw:
+        body["folder_path"] = _nullable_folder_path(raw["folder_path"])
     if not body:
         raise PlannerError(ErrorCode.validation, "no project fields to update", {})
     return body
+
+
+def _nullable_folder_path(raw: Any) -> str | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise PlannerError(ErrorCode.validation, "invalid folder_path", {"folder_path": raw})
+    return raw
 
 
 @router.get("/projects")
@@ -74,6 +87,7 @@ async def create_project(
         name=body["name"],
         summary=body["summary"],
         priority=body["priority"],
+        folder_path=body.get("folder_path"),
         now=clk.now_unix(),
     )
     return projects_data.project_json(project)
@@ -85,6 +99,9 @@ async def update_project(
 ) -> JsonDict:
     require_direct_write(ctx)
     body = _marshal_update_project(raw)
+    folder_path: dict[str, Any] = {}
+    if "folder_path" in body:
+        folder_path["folder_path"] = body["folder_path"]
     project = projects_data.update_project(
         conn,
         project_id,
@@ -92,5 +109,6 @@ async def update_project(
         summary=body.get("summary"),
         priority=body.get("priority"),
         now=clk.now_unix(),
+        **folder_path,
     )
     return projects_data.project_json(project)

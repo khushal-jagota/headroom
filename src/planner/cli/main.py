@@ -97,6 +97,7 @@ _SUPERVISOR_TICKET_FIELDS = {
 }
 
 _PROJECT_FIELDS = {
+    "folder-path": "folder_path",
     "name": "name",
     "priority": "priority",
     "summary": "summary",
@@ -348,7 +349,7 @@ def _day_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, RecordP
 
 def _project_record(data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, RecordPart]]:
     return (
-        {key: data[key] for key in ("id", "name", "priority")},
+        {key: data[key] for key in ("id", "name", "priority", "folder_path")},
         {"summary": part(data["summary"])},
     )
 
@@ -861,11 +862,20 @@ def project_show(project_id: str, part_names: str | None, as_json: bool) -> None
     help="Assessed Project priority.",
 )
 @click.option("--summary", default=None, help="Optional project summary text.")
+@click.option("--folder-path", default=None, help="Optional absolute Project folder path.")
 @json_option
-def project_create(name: str, priority: str, summary: str | None, as_json: bool) -> None:
+def project_create(
+    name: str,
+    priority: str,
+    summary: str | None,
+    folder_path: str | None,
+    as_json: bool,
+) -> None:
     body: dict[str, Any] = {"name": name, "priority": priority}
     if summary is not None:
         body["summary"] = summary
+    if folder_path is not None:
+        body["folder_path"] = folder_path
     data = http.send(
         "POST",
         "/api/projects",
@@ -905,7 +915,13 @@ def project_set(
         "PATCH",
         f"/api/projects/{project_id}",
         as_json=as_json,
-        json_body={api_field: "" if new_value is None else new_value},
+        json_body={
+            api_field: (
+                None if field == "folder-path" and new_value is None
+                else "" if new_value is None
+                else new_value
+            )
+        },
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{data['id']} {field} set")

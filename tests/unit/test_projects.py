@@ -47,6 +47,7 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
         }
         assert all(project["summary"] == "" for project in listed.json()["projects"])
         assert all(project["priority"] is None for project in listed.json()["projects"])
+        assert all(project["folder_path"] is None for project in listed.json()["projects"])
 
         missing_priority = client.post("/api/projects", json={"name": "Missing Priority"})
         assert missing_priority.status_code == 400
@@ -68,6 +69,7 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
                 "name": "Alpha One",
                 "priority": "P1",
                 "summary": "  Repo: /srv/alpha  ",
+                "folder_path": "~/projects/alpha",
             },
         )
         assert created.status_code == 200, created.json()
@@ -75,12 +77,34 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
         assert created.json()["name"] == "Alpha One"
         assert created.json()["summary"] == "Repo: /srv/alpha"
         assert created.json()["priority"] == "P1"
+        assert created.json()["folder_path"] == str(Path.home() / "projects" / "alpha")
 
         updated = client.patch(
             f"/api/projects/{created.json()['id']}", json={"summary": "  Lives in ~/alpha  "}
         )
         assert updated.status_code == 200, updated.json()
         assert updated.json()["summary"] == "Lives in ~/alpha"
+        assert updated.json()["folder_path"] == str(Path.home() / "projects" / "alpha")
+
+        absent_folder = tmp_path / "does-not-exist" / "alpha"
+        folder_updated = client.patch(
+            f"/api/projects/{created.json()['id']}",
+            json={"folder_path": str(absent_folder / ".." / "alpha")},
+        )
+        assert folder_updated.status_code == 200, folder_updated.json()
+        assert folder_updated.json()["folder_path"] == str(absent_folder.resolve())
+
+        relative_folder = client.patch(
+            f"/api/projects/{created.json()['id']}", json={"folder_path": "projects/alpha"}
+        )
+        assert relative_folder.status_code == 400
+        assert relative_folder.json()["error"]["code"] == "validation"
+
+        cleared_folder = client.patch(
+            f"/api/projects/{created.json()['id']}", json={"folder_path": None}
+        )
+        assert cleared_folder.status_code == 200, cleared_folder.json()
+        assert cleared_folder.json()["folder_path"] is None
 
         reassessed = client.patch(
             f"/api/projects/{created.json()['id']}", json={"priority": "P0"}
@@ -154,7 +178,8 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
     conn = connect(str(db_path))
     try:
         stored = conn.execute(
-            "SELECT name, summary, priority FROM projects WHERE id = 'project_alpha_one'"
+            "SELECT name, summary, priority, folder_path "
+            "FROM projects WHERE id = 'project_alpha_one'"
         ).fetchone()
     finally:
         conn.close()
@@ -162,6 +187,7 @@ def test_project_list_create_duplicate_and_agent_rejection(tmp_path: Path) -> No
     assert str(stored["name"]) == "Alpha Renamed"
     assert str(stored["summary"]) == ""
     assert str(stored["priority"]) == "P0"
+    assert stored["folder_path"] is None
 
 
 def test_project_id_and_legacy_project_compatibility(tmp_path: Path) -> None:

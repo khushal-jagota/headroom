@@ -11,9 +11,10 @@ not by Linux accounts.
     ├── data/      live database, files, config, locks, and sockets
     └── logs/      live logs
 
-~/Coding/Panels/
-├── source checkout
-└── data/environments/staging/   persistent fake staging state
+~/projects/Panels/
+└── Panels/
+    ├── source checkout
+    └── data/environments/staging/   persistent fake staging state
 ```
 
 Live uses loopback port 8767 behind the existing Tailscale Serve route. Staging and
@@ -62,18 +63,19 @@ the account, move existing host state, or alter Tailscale Serve.
 
 ## Staging
 
-Staging is an on-demand foreground process from `~/Coding/Panels`. Its fake database,
-managed files, and logs persist below `~/Coding/Panels/data/environments/staging`.
+Staging is an on-demand foreground process from `~/projects/Panels/Panels`. Its fake
+database, managed files, and logs persist below
+`~/projects/Panels/Panels/data/environments/staging`.
 
 ```sh
-STAGING_ROOT="$HOME/Coding/Panels/data/environments"
-STAGING_REPOSITORY="$HOME/Coding/Panels"
+STAGING_ROOT="$HOME/projects/Panels/Panels/data/environments"
+STAGING_REPOSITORY="$HOME/projects/Panels/Panels"
 
 panels environment prepare \
   --kind staging \
   --environment-root "$STAGING_ROOT" \
   --repository-root "$STAGING_REPOSITORY" \
-  --credentials-env-file "$HOME/Coding/Panels/data/staging.env" \
+  --credentials-env-file "$HOME/projects/Panels/Panels/data/staging.env" \
   --json
 
 panels environment run \
