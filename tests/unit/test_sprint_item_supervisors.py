@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.conversation.message_content import text_message_content
+from planner.core import change_signal
 from planner.core import db as db_module
 from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
@@ -199,6 +200,15 @@ def test_supervisor_context_and_history_use_only_the_current_child_conversation(
             params={"limit": 1},
             headers=_supervisor_headers(str(item["id"])),
         )
+        signals: list[None] = []
+        unsubscribe = change_signal.subscribe(lambda: signals.append(None))
+        try:
+            quiet_context = client.get(
+                f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
+                headers=_supervisor_headers(str(item["id"])),
+            )
+        finally:
+            unsubscribe()
 
     assert context.status_code == 200, context.text
     assert context.json()["triggering_worker_message"]["payload"]["text"] == (
@@ -206,6 +216,8 @@ def test_supervisor_context_and_history_use_only_the_current_child_conversation(
     )
     assert context.json()["conversation_id"] == conversation_id
     assert context_without_trigger.json()["triggering_worker_message"] is None
+    assert quiet_context.status_code == 200, quiet_context.text
+    assert signals == []
     assert history.json()["events"][0]["sequence"] == 2
     assert history.json()["has_more"] is True
 
@@ -249,7 +261,7 @@ def test_ticket_context_serializes_a_concurrent_child_move(
             move_thread = threading.Thread(target=move_child)
             move_thread.start()
             assert move_attempted.wait(1)
-            assert not move_finished.wait(0.05)
+            assert move_finished.wait(1)
             return original_ticket_detail(conn, ticket_id, now)
 
         monkeypatch.setattr(tickets_views, "ticket_detail", ticket_detail_during_move)
@@ -276,7 +288,7 @@ def test_history_serializes_a_concurrent_conversation_reset(
     reset_attempted = threading.Event()
     reset_finished = threading.Event()
     reset_thread: threading.Thread | None = None
-    original_event_json = supervisor_service._event_json
+    original_require_current_child = supervisor_service.require_current_child
 
     with TestClient(app) as client:
         item = _create_item(client)
@@ -323,15 +335,18 @@ def test_history_serializes_a_concurrent_conversation_reset(
                 resetting.commit()
             reset_finished.set()
 
-        def event_json_during_reset(row: Any) -> dict[str, object]:
+        def require_child_during_reset(*args: Any, **kwargs: Any) -> Any:
             nonlocal reset_thread
+            ticket_result = original_require_current_child(*args, **kwargs)
             reset_thread = threading.Thread(target=reset_conversation)
             reset_thread.start()
             assert reset_attempted.wait(1)
-            assert not reset_finished.wait(0.05)
-            return original_event_json(row)
+            assert reset_finished.wait(1)
+            return ticket_result
 
-        monkeypatch.setattr(supervisor_service, "_event_json", event_json_during_reset)
+        monkeypatch.setattr(
+            supervisor_service, "require_current_child", require_child_during_reset
+        )
         history = client.get(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
             headers=_supervisor_headers(str(item["id"])),

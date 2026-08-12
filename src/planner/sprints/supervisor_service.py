@@ -141,22 +141,19 @@ def conversation_history(
 def _coherent_read(conn: sqlite3.Connection) -> Iterator[None]:
     """Hold one read result against child moves and conversation resets.
 
-    ``BEGIN IMMEDIATE`` takes the writer reservation before the scope check. A concurrent
-    parent move or reset waits until this complete result leaves the transaction. Existing
-    transaction owners keep ownership and supply their own coherent boundary.
+    A deferred ``BEGIN`` fixes one WAL snapshot at the scope check and does not reserve
+    the writer. ``ROLLBACK`` closes an owned read on every exit without emitting the
+    process change signal. Existing transaction owners keep ownership and supply their
+    own coherent boundary.
     """
     owns_transaction = not conn.in_transaction
     if owns_transaction:
-        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("BEGIN")
     try:
         yield
-    except BaseException:
-        if owns_transaction:
+    finally:
+        if owns_transaction and conn.in_transaction:
             conn.execute("ROLLBACK")
-        raise
-    else:
-        if owns_transaction:
-            conn.execute("COMMIT")
 
 
 async def message_current_worker(
