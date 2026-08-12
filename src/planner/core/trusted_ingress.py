@@ -13,17 +13,17 @@ from typing import Any, Final
 
 from planner.core.authctx import (
     PLAN_ACTOR_SCOPE_KEY,
+    PLAN_SPRINT_ITEM_ID_SCOPE_KEY,
     PLAN_TICKET_ID_SCOPE_KEY,
     X_PLAN_ACTOR,
+    X_PLAN_SPRINT_ITEM_ID,
     X_PLAN_TICKET_ID,
 )
 from planner.core.config import Config
 
 TAILSCALE_USER_LOGIN_HEADER: Final = "tailscale-user-login"
 ORIGIN_HEADER: Final = "origin"
-_SINGLETON_SECURITY_HEADERS: Final = frozenset(
-    {TAILSCALE_USER_LOGIN_HEADER, ORIGIN_HEADER}
-)
+_SINGLETON_SECURITY_HEADERS: Final = frozenset({TAILSCALE_USER_LOGIN_HEADER, ORIGIN_HEADER})
 _SAFE_HTTP_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 
 
@@ -66,8 +66,7 @@ class TrustedIngressMiddleware:
         if origin is not None and self.config.canonical_origin is not None:
             origin_allowed = origin == self.config.canonical_origin
             unsafe_http = (
-                scope["type"] == "http"
-                and scope["method"].upper() not in _SAFE_HTTP_METHODS
+                scope["type"] == "http" and scope["method"].upper() not in _SAFE_HTTP_METHODS
             )
             websocket = scope["type"] == "websocket"
             if (unsafe_http or websocket) and not origin_allowed:
@@ -82,8 +81,10 @@ class TrustedIngressMiddleware:
                     return
                 scope = _without_header(scope, X_PLAN_ACTOR)
                 scope = _without_header(scope, X_PLAN_TICKET_ID)
+                scope = _without_header(scope, X_PLAN_SPRINT_ITEM_ID)
                 scope[PLAN_ACTOR_SCOPE_KEY] = None
                 scope[PLAN_TICKET_ID_SCOPE_KEY] = None
+                scope[PLAN_SPRINT_ITEM_ID_SCOPE_KEY] = None
 
         await self.app(scope, receive, send)
 
@@ -137,8 +138,6 @@ def _without_header(scope: dict[str, Any], header_name: str) -> dict[str, Any]:
     lowered = header_name.lower().encode("latin1")
     copied = dict(scope)
     copied["headers"] = [
-        (name, value)
-        for name, value in scope.get("headers", ())
-        if name.lower() != lowered
+        (name, value) for name, value in scope.get("headers", ()) if name.lower() != lowered
     ]
     return copied

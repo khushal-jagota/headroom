@@ -12,20 +12,28 @@ from contextlib import contextmanager
 from datetime import date
 from typing import NamedTuple, cast
 
+from planner.conversation.contracts import ConversationBackendKey
 from planner.core import links as core_links
 from planner.core.clock import Clock
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
+from planner.files.lifecycle import (
+    purge_quarantined_sprint_item_files,
+    quarantine_sprint_item_files,
+    restore_quarantined_sprint_item_files,
+)
 from planner.sprints.contracts import (
     KICKOFF_FIELDS,
     MID_SPRINT_FIELDS,
     REVIEW_FIELDS,
+    SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS,
     ItemStatus,
     Sprint,
     SprintItem,
     SprintItemDeletion,
     SprintItemKind,
+    SprintItemSupervisorLaunchConfiguration,
 )
 from planner.sprints.logic import (
     DateRange,
@@ -55,6 +63,16 @@ _SPRINT_TEXT_FIELDS: frozenset[str] = frozenset(
 PERSONAL_PROJECT_ID = "project_personal"
 
 
+def supervisor_agent_key(item_id: str) -> str:
+    return f"sprint_item_supervisor_{item_id}"
+
+
+def _create_supervisor(conn: sqlite3.Connection, item_id: str) -> str:
+    agent_key = supervisor_agent_key(item_id)
+    conn.execute("INSERT INTO agents(agent_key, conversation_id) VALUES (?, NULL)", (agent_key,))
+    return agent_key
+
+
 def planning_item_id(sprint_id: str) -> str:
     return f"si_planning_{sprint_id.removeprefix('sp_')}"
 
@@ -72,12 +90,29 @@ def ensure_planning_item(
         or str(existing["sprint_id"]) != sprint_id
     ):
         raise RuntimeError("the deterministic Planning Sprint Item id is already in use")
+    if existing is None:
+        agent_key = _create_supervisor(conn, item_id)
+        defaults = SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
+    else:
+        agent_key = supervisor_agent_key(item_id)
+        defaults = SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
     conn.execute(
         "INSERT OR IGNORE INTO sprint_items ("
         "id, title, body, priority, deadline, project_id, sprint_id, kind, "
-        "created_at, updated_at) VALUES (?, 'Planning', '', 'P2', NULL, ?, ?, "
-        "'normal', ?, ?)",
-        (item_id, PERSONAL_PROJECT_ID, sprint_id, now, now),
+        "supervisor_agent_key, supervisor_backend, supervisor_model, "
+        "supervisor_reasoning_effort, created_at, updated_at) VALUES "
+        "(?, 'Planning', '', 'P2', NULL, ?, ?, 'normal', ?, ?, ?, ?, ?, ?)",
+        (
+            item_id,
+            PERSONAL_PROJECT_ID,
+            sprint_id,
+            agent_key,
+            defaults.employee_backend.value,
+            defaults.employee_launch_model,
+            defaults.employee_launch_reasoning_effort,
+            now,
+            now,
+        ),
     )
     return _load_item(conn, item_id)
 
@@ -138,6 +173,16 @@ def _row_to_item(row: sqlite3.Row) -> SprintItem:
         project_id=row["project_id"],
         project_name=row["project_name"],
         sprint_id=row["sprint_id"],
+        supervisor_agent_key=str(row["supervisor_agent_key"]),
+        supervisor_launch_configuration=SprintItemSupervisorLaunchConfiguration(
+            employee_backend=ConversationBackendKey(str(row["supervisor_backend"])),
+            employee_launch_model=str(row["supervisor_model"]),
+            employee_launch_reasoning_effort=(
+                str(row["supervisor_reasoning_effort"])
+                if row["supervisor_reasoning_effort"] is not None
+                else None
+            ),
+        ),
         kind=SprintItemKind(row["kind"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -426,11 +471,14 @@ def create_item(
             raise PlannerError(
                 ErrorCode.not_found, "sprint not found", {"id": sprint_id}
             )
+        agent_key = _create_supervisor(conn, item_id)
+        defaults = SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS
         conn.execute(
             "INSERT INTO sprint_items ("
             "id, title, body, priority, deadline, project_id, sprint_id, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "supervisor_agent_key, supervisor_backend, supervisor_model, "
+            "supervisor_reasoning_effort, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 item_id,
                 title,
@@ -439,6 +487,10 @@ def create_item(
                 deadline,
                 project_id,
                 sprint_id,
+                agent_key,
+                defaults.employee_backend.value,
+                defaults.employee_launch_model,
+                defaults.employee_launch_reasoning_effort,
                 now,
                 now,
             ),
@@ -474,6 +526,32 @@ def create_idea(
     )
     assert row is not None
     return row
+
+
+def update_supervisor_launch_configuration(
+    conn: sqlite3.Connection,
+    item_id: str,
+    configuration: SprintItemSupervisorLaunchConfiguration,
+    *,
+    actor: str,
+    clock: Clock,
+) -> SprintItem:
+    """Save the complete configuration that an accepted supervisor message used."""
+    admission.require_direct_actor(actor, "update_supervisor_launch_configuration")
+    _load_item(conn, item_id)
+    with _tx(conn):
+        conn.execute(
+            "UPDATE sprint_items SET supervisor_backend=?, supervisor_model=?, "
+            "supervisor_reasoning_effort=?, updated_at=? WHERE id=?",
+            (
+                configuration.employee_backend.value,
+                configuration.employee_launch_model,
+                configuration.employee_launch_reasoning_effort,
+                clock.now_unix(),
+                item_id,
+            ),
+        )
+    return _load_item(conn, item_id)
 
 
 def update_item_field(
@@ -653,50 +731,73 @@ def delete_item(
     anything.
     """
     admission.require_direct_actor(actor, "delete_item")
-    with _tx(conn):
-        item = _load_item(conn, item_id)
-        ticket_ids = tuple(
-            str(row["id"])
-            for row in conn.execute(
-                "SELECT id FROM tickets WHERE sprint_item_id = ? ORDER BY id",
-                (item_id,),
-            ).fetchall()
-        )
-        if ticket_ids:
-            raise PlannerError(
-                ErrorCode.validation,
-                "sprint item has child tickets",
-                {"sprint_item_id": item_id, "ticket_ids": list(ticket_ids)},
-            )
-
-        link_rows = conn.execute(
-            "SELECT from_id, to_id, kind FROM links "
-            "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
-            (item_id, item_id),
+    item = _load_item(conn, item_id)
+    # Verify the childless rule before files move. The same check repeats under the
+    # transaction because another writer can race this early read.
+    early_ticket_ids = [
+        str(row["id"])
+        for row in conn.execute(
+            "SELECT id FROM tickets WHERE sprint_item_id=? ORDER BY id", (item_id,)
         ).fetchall()
-        linked_entity_ids = tuple(
-            sorted(
-                {
-                    str(row["to_id"] if row["from_id"] == item_id else row["from_id"])
-                    for row in link_rows
-                }
-            )
+    ]
+    if early_ticket_ids:
+        raise PlannerError(
+            ErrorCode.validation,
+            "sprint item has child tickets",
+            {"sprint_item_id": item_id, "ticket_ids": early_ticket_ids},
         )
-        sprint_ids = (item.sprint_id,) if item.sprint_id is not None else ()
-
-        for row in link_rows:
-            conn.execute(
-                "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
-                (str(row["from_id"]), str(row["to_id"]), str(row["kind"])),
+    quarantined = quarantine_sprint_item_files(conn, item_id)
+    try:
+        with _tx(conn):
+            item = _load_item(conn, item_id)
+            ticket_ids = tuple(
+                str(row["id"])
+                for row in conn.execute(
+                    "SELECT id FROM tickets WHERE sprint_item_id = ? ORDER BY id",
+                    (item_id,),
+                ).fetchall()
             )
+            if ticket_ids:
+                raise PlannerError(
+                    ErrorCode.validation,
+                    "sprint item has child tickets",
+                    {"sprint_item_id": item_id, "ticket_ids": list(ticket_ids)},
+                )
 
-        conn.execute("DELETE FROM sprint_items WHERE id = ?", (item_id,))
-        return SprintItemDeletion(
-            sprint_item_id=item_id,
-            title=item.title,
-            sprint_ids=sprint_ids,
-            linked_entity_ids=linked_entity_ids,
-        )
+            link_rows = conn.execute(
+                "SELECT from_id, to_id, kind FROM links "
+                "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
+                (item_id, item_id),
+            ).fetchall()
+            linked_entity_ids = tuple(
+                sorted(
+                    {
+                        str(row["to_id"] if row["from_id"] == item_id else row["from_id"])
+                        for row in link_rows
+                    }
+                )
+            )
+            sprint_ids = (item.sprint_id,) if item.sprint_id is not None else ()
+
+            for row in link_rows:
+                conn.execute(
+                    "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
+                    (str(row["from_id"]), str(row["to_id"]), str(row["kind"])),
+                )
+
+            conn.execute("DELETE FROM sprint_items WHERE id = ?", (item_id,))
+            conn.execute("DELETE FROM agents WHERE agent_key = ?", (item.supervisor_agent_key,))
+            deleted = SprintItemDeletion(
+                sprint_item_id=item_id,
+                title=item.title,
+                sprint_ids=sprint_ids,
+                linked_entity_ids=linked_entity_ids,
+            )
+    except BaseException:
+        restore_quarantined_sprint_item_files(quarantined)
+        raise
+    purge_quarantined_sprint_item_files(quarantined)
+    return deleted
 
 
 # --- reads ----------------------------------------------------------------------

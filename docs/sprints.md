@@ -98,6 +98,25 @@ has child Tickets, so existing work cannot disappear as a side effect. Deleting 
 childless item also removes its blocking links and refreshes sprint, backlog, board,
 and linked-Ticket views.
 
+## Sprint Item supervisors
+
+Each normal Sprint Item owns one supervisor identity. Panels creates the identity and
+its launch configuration with the item. Existing items received the same fixed
+configuration during migration. The Other section is a view of loose Tickets and owns
+no supervisor.
+
+The supervisor conversation starts only after a person sends its first message. A reset
+kills current work and clears the agent link. Conversation records and message files
+remain as history. The Sprint Item body is the shared brief.
+
+A supervisor can read only its Sprint Item and the Tickets that currently belong to it.
+This identity grants no Ticket, Day, proposal, block, scope, or Worker-message writes.
+
+Managed item artifacts live under `files/sprint-items/<item-id>/`. The server exposes
+them through `/files/sprint-items/<item-id>/<relative-path>`. Item deletion moves this
+directory to quarantine before its database transaction. A failed transaction restores
+the directory. A successful deletion removes the item, its agent row, and its files.
+
 _Code paths:_ `src/planner/sprints/` (the sprint, its items, and the document
 fields), `web/src/routes/SprintRoute.svelte` (tracking, Item, and document views), and
 `web/src/lib/sprintPresentation.ts` (presentation rules).

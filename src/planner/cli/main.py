@@ -1860,6 +1860,78 @@ def sprint_item_unblock(item_id: str, blocker_id: str, as_json: bool) -> None:
     http.emit(data, as_json, f"{item_id} unblocked from {blocker_id}")
 
 
+@sprint_item.group("supervisor")
+def sprint_item_supervisor() -> None:
+    """Inspect and talk to a Sprint Item supervisor."""
+
+
+@sprint_item_supervisor.command("show")
+@click.argument("item_id")
+@json_option
+def sprint_item_supervisor_show(item_id: str, as_json: bool) -> None:
+    data = http.send(
+        "GET", f"/api/items/{item_id}/supervisor", as_json=as_json,
+        request_actor="ordinary",
+    )
+    launch = data["launch_configuration"]
+    http.emit(
+        data,
+        as_json,
+        f"{data['agent_key']} {launch['employee_backend']} / "
+        f"{launch['employee_launch_model']}",
+    )
+
+
+@sprint_item_supervisor.command("context")
+@click.argument("item_id")
+@json_option
+def sprint_item_supervisor_context(item_id: str, as_json: bool) -> None:
+    data = http.send(
+        "GET", f"/api/items/{item_id}/supervisor/context", as_json=as_json,
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{item_id} {len(data['tickets'])} current Tickets")
+
+
+@sprint_item_supervisor.command("send")
+@click.argument("item_id")
+@click.option("--message", default=None, help="Message text.")
+@click.option("--body-file", default=None, help="Read message text from this file, or -.")
+@json_option
+def sprint_item_supervisor_send(
+    item_id: str, message: str | None, body_file: str | None, as_json: bool
+) -> None:
+    if (message is None) == (body_file is None):
+        http.fail_validation("send requires exactly one of --message or --body-file", as_json)
+    if message is not None:
+        text = message
+    else:
+        assert body_file is not None
+        text = _read_source(body_file, as_json)
+    data = http.send(
+        "POST",
+        f"/api/items/{item_id}/supervisor/conversation/send",
+        as_json=as_json,
+        json_body={
+            "content": [{"piece": "text", "text": text}],
+            "sender_label": "You",
+        },
+        request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"message {data['fate']}")
+
+
+@sprint_item_supervisor.command("reset")
+@click.argument("item_id")
+@json_option
+def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
+    data = http.send(
+        "POST", f"/api/items/{item_id}/supervisor/conversation/reset",
+        as_json=as_json, request_actor="ordinary",
+    )
+    http.emit(data, as_json, f"{item_id} supervisor conversation reset")
+
+
 # --- chief --------------------------------------------------------------------
 
 _EXTERNAL_WORK_RECONCILE_FIXED_KEYS = frozenset({"stage", "kickoff_note", "recap"})

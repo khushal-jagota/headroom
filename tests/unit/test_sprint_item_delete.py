@@ -10,6 +10,7 @@ no audit row to assert and none of these tests looks for one.
 
 from __future__ import annotations
 
+from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
@@ -136,3 +137,62 @@ def test_delete_item_rejects_agent_and_missing_item(
         sprints_data.delete_item(tmp_db, "si_missing", actor="human")
     assert missing_exc.value.code is ErrorCode.not_found
     assert missing_exc.value.detail == {"id": "si_missing"}
+
+
+def test_delete_item_removes_agent_and_files_but_keeps_conversation_history(
+    tmp_db: Connection,
+    fake_clock: PlannerTestClock,
+    tmp_path: Path,
+) -> None:
+    item = _item(tmp_db, fake_clock, "With files")
+    conversation_id = "conv_retained"
+    tmp_db.execute(
+        "INSERT INTO conversations(conversation_id,backend_key,model,workspace_folder,"
+        "access,created_at) VALUES (?, 'codex', 'model', '/tmp', 'full', 1)",
+        (conversation_id,),
+    )
+    tmp_db.execute(
+        "UPDATE agents SET conversation_id=? WHERE agent_key=?",
+        (conversation_id, item.supervisor_agent_key),
+    )
+    db_path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    managed = db_path.parent / "files" / "sprint-items" / item.id / "brief.md"
+    managed.parent.mkdir(parents=True)
+    managed.write_text("brief", encoding="utf-8")
+
+    sprints_data.delete_item(tmp_db, item.id, actor="human")
+
+    assert not managed.exists()
+    assert (
+        tmp_db.execute(
+            "SELECT 1 FROM agents WHERE agent_key=?", (item.supervisor_agent_key,)
+        ).fetchone()
+        is None
+    )
+    assert (
+        tmp_db.execute(
+            "SELECT 1 FROM conversations WHERE conversation_id=?", (conversation_id,)
+        ).fetchone()
+        is not None
+    )
+
+
+def test_delete_item_restores_quarantined_files_when_the_database_refuses(
+    tmp_db: Connection,
+    fake_clock: PlannerTestClock,
+) -> None:
+    item = _item(tmp_db, fake_clock, "Restore files")
+    db_path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    managed = db_path.parent / "files" / "sprint-items" / item.id / "brief.md"
+    managed.parent.mkdir(parents=True)
+    managed.write_text("brief", encoding="utf-8")
+    tmp_db.execute(
+        "CREATE TRIGGER refuse_item_delete BEFORE DELETE ON sprint_items "
+        "BEGIN SELECT RAISE(ABORT, 'refused for test'); END"
+    )
+
+    with pytest.raises(Exception, match="refused for test"):
+        sprints_data.delete_item(tmp_db, item.id, actor="human")
+
+    assert managed.read_text(encoding="utf-8") == "brief"
+    assert sprints_data.read_item(tmp_db, item.id).item.id == item.id

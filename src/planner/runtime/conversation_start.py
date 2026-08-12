@@ -26,7 +26,7 @@ import sqlite3
 from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final
 from uuid import uuid4
 
 from planner.conversation.contracts import (
@@ -51,6 +51,7 @@ from planner.runtime.logic.conversation_start_resolution import (
     ConversationStartOverrides,
     ConversationStartValues,
     resolve_agent_conversation_start,
+    resolve_sprint_item_supervisor_conversation_start,
     resolve_worker_conversation_start,
 )
 from planner.tickets import data as tickets_data
@@ -62,6 +63,9 @@ from planner.worker_settings.service import (
 )
 from planner.worker_types.configuration import configured_worker_type_registry
 from planner.worker_types.registry import WorkerTypeRegistry
+
+if TYPE_CHECKING:
+    from planner.sprints.contracts import SprintItem
 
 CONVERSATION_ID_PREFIX: Final = "conv_"
 
@@ -152,6 +156,27 @@ def agent_resolve(
             backend_key=ConversationBackendKey(launch_defaults.employee_backend),
             model=launch_defaults.employee_launch_model,
             reasoning_effort=launch_defaults.employee_launch_reasoning_effort,
+        ),
+        overrides=overrides,
+        workspace_folder=(
+            _default_workspace_folder() if workspace_folder is None else workspace_folder
+        ),
+    )
+
+
+def sprint_item_supervisor_resolve(
+    item: SprintItem,
+    overrides: ConversationStartOverrides = NO_CONVERSATION_START_OVERRIDES,
+    *,
+    workspace_folder: Path | None = None,
+) -> ConversationStartValues:
+    launch = item.supervisor_launch_configuration
+    return resolve_sprint_item_supervisor_conversation_start(
+        sprint_item_id=item.id,
+        launch_configuration=ConversationStartConfiguration(
+            backend_key=launch.employee_backend,
+            model=launch.employee_launch_model,
+            reasoning_effort=launch.employee_launch_reasoning_effort,
         ),
         overrides=overrides,
         workspace_folder=(
@@ -397,9 +422,7 @@ async def _send_into_the_conversation_the_ticket_is_in(
             conn,
             ticket_id,
             expected_conversation_id=sending_into,
-            model=(
-                ticket.employee_launch_model if runs_under.model is None else runs_under.model
-            ),
+            model=(ticket.employee_launch_model if runs_under.model is None else runs_under.model),
             reasoning_effort=(
                 ticket.employee_launch_reasoning_effort
                 if runs_under.reasoning_effort is None
@@ -671,8 +694,7 @@ async def _let_go_of_an_agent_conversation(
     await system.kill(conversation_id)
     with conn:
         conn.execute(
-            "UPDATE agents SET conversation_id = NULL "
-            "WHERE agent_key = ? AND conversation_id = ?",
+            "UPDATE agents SET conversation_id = NULL WHERE agent_key = ? AND conversation_id = ?",
             (agent_key, conversation_id),
         )
 
@@ -702,8 +724,7 @@ async def reset_agent_conversation(
     await system.kill(conversation_id)
     with conn:
         conn.execute(
-            "UPDATE agents SET conversation_id = NULL "
-            "WHERE agent_key = ? AND conversation_id = ?",
+            "UPDATE agents SET conversation_id = NULL WHERE agent_key = ? AND conversation_id = ?",
             (agent_key, conversation_id),
         )
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, TypedDict
 
+from planner.conversation.contracts import ConversationBackendKey
 from planner.core.contracts import Priority
 
 
@@ -19,6 +20,22 @@ class ItemStatus(StrEnum):
 class SprintItemKind(StrEnum):
     normal = "normal"
     other = "other"
+
+
+@dataclass(frozen=True, slots=True)
+class SprintItemSupervisorLaunchConfiguration:
+    employee_backend: ConversationBackendKey
+    employee_launch_model: str
+    employee_launch_reasoning_effort: str | None
+
+
+# This snapshot is part of the Sprint Item domain. Migration code repeats these literal
+# values so an upgrade never reads mutable Worker or Chief settings.
+SPRINT_ITEM_SUPERVISOR_LAUNCH_DEFAULTS: Final = SprintItemSupervisorLaunchConfiguration(
+    employee_backend=ConversationBackendKey.codex,
+    employee_launch_model="gpt-5.6-sol",
+    employee_launch_reasoning_effort="medium",
+)
 
 
 ITEM_STATUS_ORDER: Final[tuple[ItemStatus, ...]] = (
@@ -85,6 +102,8 @@ class SprintItem:  # §3.2
     project_id: str
     project_name: str
     sprint_id: str | None  # NULL = backlog/deferred
+    supervisor_agent_key: str
+    supervisor_launch_configuration: SprintItemSupervisorLaunchConfiguration
     kind: SprintItemKind = SprintItemKind.normal
     created_at: int = 0
     updated_at: int = 0

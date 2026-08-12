@@ -254,6 +254,10 @@ source.
   `/files/tickets/<ticket_id>/<relative-path>`. The server sends `nosniff`; only
   explicit image, audio, and video types are inline. Markdown, HTML, SVG, and
   unknown files are attachments when opened directly.
+- **Sprint Item files use an isolated sibling root.** Item artifacts live under
+  `files/sprint-items/<sprint_item_id>/` and use
+  `/files/sprint-items/<sprint_item_id>/<relative-path>`. This contract is read-only and
+  applies the same safe-path, symlink, media-type, and `nosniff` response policy.
 - **File previews use one contract.** Markdown turns a link that names a managed file,
   such as `/files/tickets/t_123/notes/plan.md`, into the shared file preview component,
   and every image into that same component wherever the image is hosted. Any other link

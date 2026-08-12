@@ -150,6 +150,9 @@ record shapes. Direct `show` commands also keep their full record shapes.
   Item status is read-only and derived from child tickets and active blocking links.
   `sprint item delete <item-id> --yes` permanently removes a childless item. An item
   with child tickets must have that work explicitly moved or removed first.
+- **`sprint item supervisor show / context / send / reset`** — inspect the supervisor
+  and launch configuration, read its scoped brief and current Tickets, send a direct
+  user message, or reset its current conversation.
 - **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` replaces field
