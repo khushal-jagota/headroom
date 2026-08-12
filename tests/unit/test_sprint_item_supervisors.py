@@ -781,15 +781,23 @@ def test_supervision_system_scenario_preserves_retry_restart_and_canonical_resol
         assert direction.json()["effective_stage_ownership_mode"] == "worker"
         assert direction.json()["ticket_status"] == "empty"
 
-        worker_started = client.post(
-            f"/api/tickets/{ticket_id}/conversation/send",
-            json={
-                "content": [{"piece": "text", "text": "Starting the wireframe."}],
-                "sender_label": "owner",
-            },
+        placed_today = client.post(
+            f"/api/items/{item['id']}/supervisor/days/today/tickets/{ticket_id}",
+            headers=_supervisor_headers(str(item["id"])),
         )
+        assert placed_today.status_code == 200, placed_today.text
+        worker_started = client.post(f"/api/test/run-step/{ticket_id}")
         assert worker_started.status_code == 200, worker_started.text
-        worker_conversation_id = str(worker_started.json()["conversation_id"])
+        assert worker_started.json() == {"dispatched": True, "ticket_id": ticket_id}
+        claimed = client.get(f"/api/tickets/{ticket_id}")
+        assert claimed.status_code == 200, claimed.text
+        assert claimed.json()["ticket_status"] == "agent"
+        worker_conversation_id = str(claimed.json()["conversation_id"])
+        opener_writes = first_system.backend_prompt_writes(worker_conversation_id)
+        assert len(opener_writes) == 1
+        assert opener_writes[0].sender_label == "loop"
+        assert "Stage 'needs_wireframe'" in opener_writes[0].text
+        assert "Stage owner: worker" in opener_writes[0].text
         first_system.complete_running_turn(worker_conversation_id)
         proposed = client.post(
             f"/api/tickets/{ticket_id}/propose/wireframe",
