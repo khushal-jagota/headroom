@@ -15,7 +15,7 @@ from planner.core.authctx import (
 
 
 class SprintItemSupervisorScopeMiddleware:
-    """Keep the supervisor on its explicit read-only application-service surface."""
+    """Keep the supervisor on its explicit application-service surface."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -32,6 +32,9 @@ class SprintItemSupervisorScopeMiddleware:
         path = str(scope.get("path", ""))
         method = str(scope.get("method", "")).upper()
         if item_id is not None and method in {"GET", "HEAD"} and _is_owned_read(path, item_id):
+            await self.app(scope, receive, send)
+            return
+        if item_id is not None and method == "POST" and _is_owned_ticket_review(path, item_id):
             await self.app(scope, receive, send)
             return
         await _reject(send, item_id)
@@ -58,6 +61,19 @@ def _is_owned_read(path: str, item_id: str) -> bool:
     }:
         return True
     return path.startswith(f"/files/sprint-items/{item_id}/")
+
+
+def _is_owned_ticket_review(path: str, item_id: str) -> bool:
+    prefix = f"/api/items/{item_id}/supervisor/tickets/"
+    if not path.startswith(prefix):
+        return False
+    remainder = path.removeprefix(prefix)
+    ticket_id, separator, action = remainder.partition("/")
+    return bool(
+        ticket_id
+        and separator
+        and action in {"approve", "reject", "transfer-to-user-review"}
+    )
 
 
 async def _reject(send: Any, item_id: str | None) -> None:

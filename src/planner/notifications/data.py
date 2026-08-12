@@ -212,7 +212,7 @@ def _insert_fact(
 
 def _ticket_fact_type(status: str) -> str | None:
     return {
-        "awaiting_approval": "ticket_needs_approval",
+        "awaiting_user_review": "ticket_needs_approval",
         "needs_user": "needs_input",
         "errored": "worker_failed",
     }.get(status)

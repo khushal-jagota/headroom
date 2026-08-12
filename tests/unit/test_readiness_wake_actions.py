@@ -106,7 +106,7 @@ def _create_direct(db_path: Path, *, title: str = "Ready") -> str:
             actor="human",
             now=1,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
         ).id
     finally:
         conn.close()
@@ -329,7 +329,7 @@ def test_creator_blockers_all_must_clear_before_readiness_resumes(
         conn.close()
         accepted = client.post(
             f"/api/tickets/{dependent}/accept/kickoff",
-            json={"next_ceiling": "needs_success", "at_cap": "propose"},
+            json={"next_ceiling": "needs_success", "at_cap": "user_review"},
         )
         assert accepted.status_code == 200, accepted.text
         assert not _is_ready_today(db_path, dependent)
@@ -425,7 +425,7 @@ def test_accepting_kickoff_into_paired_stage_leaves_empty_and_signals(
     with TestClient(app) as client:
         accepted = client.post(
             f"/api/tickets/{ticket.id}/accept/kickoff",
-            json={"next_ceiling": "needs_understanding", "at_cap": "propose"},
+            json={"next_ceiling": "needs_understanding", "at_cap": "user_review"},
         )
 
     assert accepted.status_code == 200, accepted.text
@@ -588,14 +588,14 @@ def test_every_approved_ticket_control_action_signals_once_and_failures_signal_z
         changes.reset()
         denied_accept = client.post(
             f"/api/tickets/{accept_id}/accept/success",
-            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
+            json={"next_ceiling": "needs_approach", "at_cap": "user_review"},
             headers=_AGENT,
         )
         assert denied_accept.status_code == 400
         assert changes.calls == 0
         response = client.post(
             f"/api/tickets/{accept_id}/accept/success",
-            json={"next_ceiling": "needs_approach", "at_cap": "propose"},
+            json={"next_ceiling": "needs_approach", "at_cap": "user_review"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["fields"]["success"]["value"] == "proposal"
@@ -628,7 +628,7 @@ def test_every_approved_ticket_control_action_signals_once_and_failures_signal_z
             conn,
             review.id,
             ceiling="needs_closeout",
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
             actor="human",
             now=3,
         )
@@ -644,14 +644,14 @@ def test_every_approved_ticket_control_action_signals_once_and_failures_signal_z
         changes.reset()
         denied_approve = client.post(
             f"/api/tickets/{review.id}/accept/closeout",
-            json={"next_ceiling": "none", "at_cap": "propose"},
+            json={"next_ceiling": "none", "at_cap": "user_review"},
             headers=_AGENT,
         )
         assert denied_approve.status_code == 400
         assert changes.calls == 0
         response = client.post(
             f"/api/tickets/{review.id}/accept/closeout",
-            json={"next_ceiling": "none", "at_cap": "propose"},
+            json={"next_ceiling": "none", "at_cap": "user_review"},
         )
         assert response.status_code == 200, response.text
         assert response.json()["stage"] == "done"
@@ -704,21 +704,21 @@ def test_every_approved_ticket_control_action_signals_once_and_failures_signal_z
         changes.reset()
         denied_scope = client.post(
             f"/api/tickets/{scope_id}/scope",
-            json={"ceiling": "needs_approach", "at_cap": "propose"},
+            json={"ceiling": "needs_approach", "at_cap": "user_review"},
             headers=_AGENT,
         )
         assert denied_scope.status_code == 400
         assert changes.calls == 0
         response = client.post(
             f"/api/tickets/{scope_id}/scope",
-            json={"ceiling": "needs_approach", "at_cap": "propose"},
+            json={"ceiling": "needs_approach", "at_cap": "user_review"},
         )
         assert response.status_code == 200, response.text
         assert changes.calls == 1
         changes.reset()
         invalid_scope = client.post(
             f"/api/tickets/{scope_id}/scope",
-            json={"ceiling": "bogus", "at_cap": "propose"},
+            json={"ceiling": "bogus", "at_cap": "user_review"},
         )
         assert invalid_scope.status_code == 400
         assert changes.calls == 0
@@ -1163,7 +1163,7 @@ def test_every_committed_ticket_and_day_write_signals(tmp_path: Path) -> None:
     assert success_slot.proposal is not None
     assert success_slot.proposal.body == "combined proposal"
     assert persisted.recap == "combined recap"
-    assert persisted.ticket_status is TicketStatus.awaiting_approval
+    assert persisted.ticket_status is TicketStatus.awaiting_user_review
 
 
 def test_parentage_project_and_sprint_writes_signal_like_every_other_commit(

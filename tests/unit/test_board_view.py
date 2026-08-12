@@ -284,7 +284,7 @@ def test_board_coding_card_keys_superset_and_columns_unchanged(
 @pytest.mark.parametrize(
     ("stage", "ticket_status", "ceiling", "at_cap", "expected"),
     [
-        ("needs_closeout", "empty", "needs_closeout", "propose", True),
+        ("needs_closeout", "empty", "needs_closeout", "user_review", True),
         ("needs_closeout", "empty", "needs_closeout", "stop", False),
         ("needs_closeout", "empty", "done", "stop", True),
         ("needs_success", "empty", "done", "stop", False),
@@ -333,7 +333,7 @@ def test_board_mixed_coding_probe_does_not_throw(
         actor="human",
         now=2,
         next_ceiling=NEEDS_BETA,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
 
     board = _board(tmp_db)
@@ -446,7 +446,7 @@ def test_board_cards_expose_active_incoming_blocking_without_changing_real_stage
         actor="human",
         now=4,
         next_ceiling="needs_success",
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     core_links.add_link(tmp_db, blocker, kickoff_dependent, LinkKind.blocks, 5)
     core_links.add_link(tmp_db, blocker, later_dependent, LinkKind.blocks, 5)

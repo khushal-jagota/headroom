@@ -95,7 +95,11 @@ export function sprintTicketCondition(ticket: SprintTicket): SprintTicketConditi
   if (ticket.ticket_status === "blocked" || ticket.ticket_status === "errored") {
     return { mark: "errored", word: "blocked" };
   }
-  if (ticket.has_pending_proposal || ticket.ticket_status === "awaiting_approval") {
+  if (
+    ticket.has_pending_proposal ||
+    ticket.ticket_status === "awaiting_agent_review" ||
+    ticket.ticket_status === "awaiting_user_review"
+  ) {
     return { mark: "current-awaiting-approval", word: "to review" };
   }
   if (ticket.ticket_status === "needs_user") return { mark: "needs-me", word: "need you" };

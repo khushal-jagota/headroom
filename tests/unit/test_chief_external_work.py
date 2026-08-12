@@ -96,7 +96,7 @@ def _ordinary_ticket(db_path: Path) -> str:
             actor="unattributed",
             now=1,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
         ).id
     finally:
         conn.close()
@@ -233,7 +233,7 @@ def test_create_external_work_enforces_exact_settled_prefix_and_coherent_control
     ticket = response.json()
     assert ticket["stage"] == state
     assert ticket["ceiling"] == state
-    assert ticket["at_cap"] == "propose"
+    assert ticket["at_cap"] == "user_review"
     assert ticket["ticket_status"] == "empty"
     expected = {
         key: body.get(key) for key in ("success", "approach", "plan", "implementation", "closeout")
@@ -340,7 +340,7 @@ def test_reconcile_rejects_backward_pending_active_control_and_running_turn(tmp_
         )
     assert pending.status_code == 400
 
-    for status in ("agent", "awaiting_approval"):
+    for status in ("agent", "awaiting_user_review"):
         ticket_id = _ordinary_ticket(db_path)
         conn = connect(str(db_path))
         try:
@@ -430,7 +430,7 @@ def test_reconcile_is_atomic_and_normalizes_an_errored_ticket(
     ticket = response.json()
     assert ticket["ticket_status"] == "empty"
     assert ticket["ceiling"] == "needs_plan"
-    assert ticket["at_cap"] == "propose"
+    assert ticket["at_cap"] == "user_review"
     assert ticket["stage"] == "needs_plan"
     assert ticket["recap"] == "recap"
     assert [
@@ -456,7 +456,7 @@ def test_create_external_work_settles_every_provided_field(tmp_path: Path) -> No
     created = response.json()
     assert created["stage"] == "done"
     assert created["ceiling"] == "done"
-    assert created["at_cap"] == "propose"
+    assert created["at_cap"] == "user_review"
     assert created["recap"] == "done elsewhere"
     assert [
         created["fields"][field]["value"]

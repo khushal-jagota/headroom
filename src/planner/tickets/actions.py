@@ -19,8 +19,8 @@ from planner.runtime.logic.worker_step_prompt import revision_guidance_prompt
 from planner.sprints import data as sprints_data
 from planner.sprints.logic import DateRange, current_sprint_id
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import Ticket
-from planner.tickets.logic import admission, resolution
+from planner.tickets.contracts import Proposal, Ticket
+from planner.tickets.logic import admission, fields_codec, resolution
 from planner.worker_context.contracts import WorkerContextService
 from planner.worker_types.configuration import configured_worker_type_registry
 
@@ -50,13 +50,9 @@ def resolve_creation_placement(
         if item is None:
             return day_id, project_id or "", sprint_id, sprint_item_id
         if project_id is not None and project_id != item["project_id"]:
-            raise PlannerError(
-                ErrorCode.validation, "ticket placement does not match sprint item"
-            )
+            raise PlannerError(ErrorCode.validation, "ticket placement does not match sprint item")
         if sprint_id_explicit and sprint_id != item["sprint_id"]:
-            raise PlannerError(
-                ErrorCode.validation, "ticket placement does not match sprint item"
-            )
+            raise PlannerError(ErrorCode.validation, "ticket placement does not match sprint item")
         return day_id, str(item["project_id"]), item["sprint_id"], sprint_item_id
     if sprint_id_explicit:
         if sprint_id is not None and worker_type in {
@@ -74,9 +70,7 @@ def resolve_creation_placement(
             date_start=str(row["date_start"]),
             date_end=str(row["date_end"]),
         )
-        for row in conn.execute(
-            "SELECT id, date_start, date_end FROM sprints"
-        ).fetchall()
+        for row in conn.execute("SELECT id, date_start, date_end FROM sprints").fetchall()
     ]
     current_id = current_sprint_id(planning_day, ranges)
     if current_id is not None and worker_type in {
@@ -266,6 +260,7 @@ async def return_ticket_for_revision(
     message: str,
     actor: str,
     now: int,
+    supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
     """Send the owner's guidance to the worker, then hand the Ticket back to it.
 
@@ -284,12 +279,15 @@ async def return_ticket_for_revision(
     # The decision is the whole check, run here on a read of the Ticket: wrong actor,
     # wrong status, terminal stage, and no conversation to send into all fail here,
     # before a word has been sent and before anything has been written.
+    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
     resolution.decide_return_for_revision(
         ticket,
         actor,
-        worker_type_definition=configured_worker_type_registry().require(
-            ticket.worker_type
-        ),
+        worker_type_definition=worker_type_definition,
+    )
+    field = worker_type_definition.gating_field(ticket.stage)
+    expected_proposal: Proposal | None = (
+        fields_codec.get_slot(ticket.fields, field).proposal if field is not None else None
     )
     prepared = worker_context_service.prepare(
         ticket_id,
@@ -329,4 +327,6 @@ async def return_ticket_for_revision(
         message=message,
         actor=actor,
         now=now,
+        expected_proposal=expected_proposal,
+        supervisor_sprint_item_id=supervisor_sprint_item_id,
     )

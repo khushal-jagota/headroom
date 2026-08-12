@@ -90,7 +90,8 @@ One screen per part of the system:
   that spine, collapsed. The current Stage mark speaks without a second status pill.
   Its summary adds words only where the mark would otherwise be ambiguous:
   **you're on it** for user-owned or taken-over work, with **Release**, and
-  **awaiting approval** for a proposal. Running, completed, and upcoming marks need no
+  **awaiting agent review** or **awaiting user review** for a parked proposal. Running,
+  completed, and upcoming marks need no
   extra label. Stage bodies, editing and approval behavior, and the worker conversation
   in serif along the bottom remain in place. **Copy** still produces a plain-text block
   for pasting anywhere. During pristine Kickoff, the approval context also shows a restrained

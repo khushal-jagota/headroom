@@ -10,7 +10,12 @@ import json
 from typing import Any, cast
 
 from planner.core.contracts import ErrorCode, PlannerError
-from planner.tickets.contracts import FieldSlot, Proposal, TicketFields
+from planner.tickets.contracts import (
+    FieldSlot,
+    Proposal,
+    ProposalReviewRoute,
+    TicketFields,
+)
 
 
 def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
@@ -20,6 +25,7 @@ def _slot_to_dict(slot: FieldSlot) -> dict[str, Any]:
             "body": slot.proposal.body,
             "proposed_by": slot.proposal.proposed_by,
             "created_at": slot.proposal.created_at,
+            "review_route": slot.proposal.review_route.value,
         }
     return {"value": slot.value, "proposal": proposal, "user_note": slot.user_note}
 
@@ -41,10 +47,21 @@ def _proposal_from_obj(obj: Any) -> Proposal | None:
     body = obj.get("body")
     proposed_by = obj.get("proposed_by")
     created_at = obj.get("created_at")
+    review_route = obj.get("review_route", ProposalReviewRoute.user_review.value)
     _require(isinstance(body, str))
     _require(isinstance(proposed_by, str))
     _require(isinstance(created_at, int) and not isinstance(created_at, bool))
-    return Proposal(body=body, proposed_by=proposed_by, created_at=created_at)
+    _require(isinstance(review_route, str))
+    try:
+        parsed_review_route = ProposalReviewRoute(review_route)
+    except ValueError as exc:
+        raise PlannerError(ErrorCode.validation, "corrupt ticket fields JSON") from exc
+    return Proposal(
+        body=body,
+        proposed_by=proposed_by,
+        created_at=created_at,
+        review_route=parsed_review_route,
+    )
 
 
 def _slot_from_obj(obj: Any) -> FieldSlot:

@@ -420,7 +420,7 @@ def _past_kickoff(db_path: Path, ticket_id: str) -> None:
             actor="human",
             now=1,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
         )
         conn.commit()
     finally:
@@ -444,7 +444,7 @@ def test_replying_to_a_parked_proposal_moves_the_ticket_to_paired(tmp_path: Path
     app, db_path = _make_app(tmp_path)
     ticket_id = _ticket(db_path)
     _park_on_a_proposal(db_path, ticket_id)
-    assert _ticket_status(db_path, ticket_id) == "awaiting_approval"
+    assert _ticket_status(db_path, ticket_id) == "awaiting_user_review"
 
     with TestClient(app) as client:
         replied = client.post(f"/api/tickets/{ticket_id}/human-reply")
@@ -479,4 +479,4 @@ def test_only_a_person_can_say_they_replied(tmp_path: Path) -> None:
         refused = client.post(f"/api/tickets/{ticket_id}/human-reply", headers=_AGENT)
 
     assert refused.json()["error"]["code"] == "agent_forbidden", refused.text
-    assert _ticket_status(db_path, ticket_id) == "awaiting_approval"
+    assert _ticket_status(db_path, ticket_id) == "awaiting_user_review"

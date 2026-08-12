@@ -4,7 +4,7 @@
   import { fetchText } from "../lib/api";
   import { mutateJson } from "../lib/mutate";
   import { queries } from "../lib/queryCatalogue";
-  import { fieldSlot, labelize, stageLabel } from "../lib/ui";
+  import { fieldSlot, labelize, reviewRouteLabel, stageLabel } from "../lib/ui";
   import {
     ceilingOptionsFor,
     fieldStageVisualStateFor,
@@ -369,7 +369,8 @@
 
   function currentStageRunLabel(detail: TicketDetail): string | null {
     if (detail.blocked || detail.ticket_status === "blocked") return null;
-    if (detail.ticket_status === "awaiting_approval") return "awaiting approval";
+    if (detail.ticket_status === "awaiting_agent_review") return "awaiting agent review";
+    if (detail.ticket_status === "awaiting_user_review") return "awaiting user review";
     if (userOwnsCurrentStage(detail)) {
       return "you're on it";
     }
@@ -553,7 +554,7 @@
                   {/if}
                   approved until
                   <span class="ticket-leash-value" data-leash-ceiling>{stageLabel(detail.ceiling)}</span>,
-                  then <span class="ticket-leash-value" data-leash-cap>{detail.at_cap === "propose" ? "continue" : "stop"}</span>
+                  then <span class="ticket-leash-value" data-leash-cap>{reviewRouteLabel(detail.at_cap)}</span>
                   <span class="disclosure-chev" aria-hidden="true"></span>
                 </summary>
                 <div class="ticket-leash-menu" role="menu">
@@ -577,7 +578,10 @@
                       onchange={(event) => void updateScope({ ceiling: detail.ceiling, at_cap: event.currentTarget.value })}
                     >
                       <option value="stop">then stop</option>
-                      <option value="propose">then continue</option>
+                      {#if detail.sprint_item_id !== null}
+                        <option value="agent_review">then agent review</option>
+                      {/if}
+                      <option value="user_review">then user review</option>
                     </select>
                   </div>
                   <div class="ticket-leash-rule"></div>
@@ -676,6 +680,7 @@
                         ticketStage={detail.stage}
                         ceiling={detail.ceiling}
                         suggestedNextCeiling={detail.suggested_next_ceiling}
+                        allowAgentReview={detail.sprint_item_id !== null}
                         emptyText={emptyTicketFieldText}
                         runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                         runLabelAttention={stageState === "current-awaiting-approval"}
@@ -713,6 +718,7 @@
                   ticketStage={detail.stage}
                   ceiling={detail.ceiling}
                   suggestedNextCeiling={detail.suggested_next_ceiling}
+                  allowAgentReview={detail.sprint_item_id !== null}
                   emptyText={emptyTicketFieldText}
                   runLabel={stageState.startsWith("current-") ? currentStageRunLabel(detail) : null}
                   runLabelAttention={stageState === "current-awaiting-approval"}

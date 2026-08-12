@@ -104,7 +104,8 @@
     if (card.is_done) return "done";
     if (card.waiting_to_closeout) return "waiting_to_closeout";
     if (
-      card.ticket_status === "awaiting_approval" &&
+      (card.ticket_status === "awaiting_agent_review" ||
+        card.ticket_status === "awaiting_user_review") &&
       card.gating_field === "kickoff"
     ) {
       return "waiting_for_kickoff";
@@ -122,7 +123,8 @@
     "paired",
     "agent",
     "waiting_to_closeout",
-    "awaiting_approval",
+    "awaiting_agent_review",
+    "awaiting_user_review",
     "waiting_for_kickoff",
     "empty",
     "blocked",

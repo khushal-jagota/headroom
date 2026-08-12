@@ -130,8 +130,11 @@ export type TicketField = {
   proposal?: {
     body: string;
     proposed_by: string;
+    review_route?: ReviewRoute;
   } | null;
 };
+
+export type ReviewRoute = "stop" | "agent_review" | "user_review";
 
 export type BlockedByTicket = {
   ticket_id: string;
@@ -220,7 +223,7 @@ export type TicketDetail = {
   employee_configuration_editable: boolean;
   stage: string;
   ceiling: string;
-  at_cap: string;
+  at_cap: ReviewRoute;
   suggested_next_ceiling: string;
   priority: string;
   deadline?: string | null;

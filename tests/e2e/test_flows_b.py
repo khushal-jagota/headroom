@@ -78,9 +78,9 @@ def _scope_and_advance(
 ) -> JsonObject:
     # Unattributed direct scope; attributed worker agents are rejected.
     g = api.direct_post(
-        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "propose"}
+        server, f"/api/tickets/{tid}/scope", {"ceiling": ceiling, "at_cap": "user_review"}
     )
-    assert g["ceiling"] == ceiling and g["at_cap"] == "propose", g
+    assert g["ceiling"] == ceiling and g["at_cap"] == "user_review", g
     # Claimless CLI proposals auto-accept up the chain to needs_implementation (like flows_a e27).
     for field in ("success", "approach", "plan"):
         cli(
@@ -123,7 +123,7 @@ def _snap_board(p: Page, mid: str) -> dict[str, Any]:
     card = (
         f'[data-card][data-ticket-stage="needs_implementation"][data-ticket-id="{mid}"]'
     )
-    bucket = '[data-bucket-section][data-bucket-key="awaiting_approval"]'
+    bucket = '[data-bucket-section][data-bucket-key="awaiting_user_review"]'
     return {
         "title": p.inner_text(f"{card} .list-row-title"),
         "bucket": p.inner_text(f"{bucket} > summary .board-workspace-bucket-label"),
@@ -415,7 +415,7 @@ def test_e31_refresh_restores_state(
     after_b = _snap_board(page_b, mid)
     expected_b = {
         "title": E31_TITLE,
-        "bucket": "Awaiting approval",
+            "bucket": "Awaiting user review",
         "nested": 1,
         "marks": 1,
         "agent_working": "false",

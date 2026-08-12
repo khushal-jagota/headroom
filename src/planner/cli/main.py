@@ -1400,7 +1400,7 @@ def ticket_ownership(ticket_id: str, stage: str, mode: str, as_json: bool) -> No
     "--at-cap",
     default=None,
     type=click.Choice([a.value for a in AtCap]),
-    help="propose or stop.",
+    help="stop, agent_review, or user_review.",
 )
 @click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
 @click.option("--kickoff-title", default=None, help="Edited Kickoff title.")
@@ -1930,6 +1930,84 @@ def sprint_item_supervisor_reset(item_id: str, as_json: bool) -> None:
         as_json=as_json, request_actor="ordinary",
     )
     http.emit(data, as_json, f"{item_id} supervisor conversation reset")
+
+
+@sprint_item_supervisor.command("approve")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--ceiling", required=True, help="Next ceiling Stage or none.")
+@click.option(
+    "--at-cap",
+    required=True,
+    type=click.Choice([a.value for a in AtCap]),
+    help="Review route at the next ceiling.",
+)
+@click.option("--edit-file", default=None, help="Edited accepted body, or - for stdin.")
+@json_option
+def sprint_item_supervisor_approve(
+    item_id: str,
+    ticket_id: str,
+    ceiling: str,
+    at_cap: str,
+    edit_file: str | None,
+    as_json: bool,
+) -> None:
+    """Approve one agent-review proposal for this Sprint Item."""
+    body: dict[str, Any] = {"next_ceiling": ceiling, "at_cap": at_cap}
+    if edit_file is not None:
+        body["edited_body"] = _read_source(edit_file, as_json)
+    data = http.send(
+        "POST",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/approve",
+        as_json=as_json,
+        json_body=body,
+    )
+    http.emit(data, as_json, f"{ticket_id} agent review approved")
+
+
+@sprint_item_supervisor.command("reject")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--message", default=None, help="Focused revision guidance.")
+@click.option("--body-file", default=None, help="Read revision guidance from this file, or -.")
+@json_option
+def sprint_item_supervisor_reject(
+    item_id: str,
+    ticket_id: str,
+    message: str | None,
+    body_file: str | None,
+    as_json: bool,
+) -> None:
+    """Reject one agent-review proposal with focused guidance."""
+    if (message is None) == (body_file is None):
+        http.fail_validation(
+            "reject requires exactly one of --message or --body-file", as_json
+        )
+    text = message if message is not None else _read_source(body_file or "", as_json)
+    data = http.send(
+        "POST",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/reject",
+        as_json=as_json,
+        json_body={"message": text},
+    )
+    http.emit(data, as_json, f"{ticket_id} agent review rejected")
+
+
+@sprint_item_supervisor.command("transfer-to-user-review")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@json_option
+def sprint_item_supervisor_transfer_to_user_review(
+    item_id: str, ticket_id: str, as_json: bool
+) -> None:
+    """Move one parked proposal to User Review without changing Ticket scope."""
+    data = http.send(
+        "POST",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/transfer-to-user-review",
+        as_json=as_json,
+        json_body={},
+    )
+    http.emit(data, as_json, f"{ticket_id} transferred to user review")
 
 
 # --- chief --------------------------------------------------------------------

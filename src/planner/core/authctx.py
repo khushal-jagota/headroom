@@ -117,6 +117,42 @@ def require_sprint_item_supervisor_read(
         _reject_sprint_item_supervisor_read(ctx, sprint_item_id)
 
 
+def require_sprint_item_supervisor_ticket_write(
+    conn: sqlite3.Connection,
+    ctx: RequestContext,
+    sprint_item_id: str,
+    ticket_id: str,
+) -> None:
+    """Permit only the exact durable supervisor and its direct child Ticket."""
+    if (
+        ctx.actor != SPRINT_ITEM_SUPERVISOR_ACTOR
+        or ctx.sprint_item_id != sprint_item_id
+    ):
+        _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
+    row = conn.execute(
+        "SELECT 1 FROM sprint_items AS item "
+        "JOIN tickets AS ticket ON ticket.sprint_item_id = item.id "
+        "WHERE item.id = ? AND item.kind = 'normal' AND ticket.id = ?",
+        (sprint_item_id, ticket_id),
+    ).fetchone()
+    if row is None:
+        _reject_sprint_item_supervisor_write(ctx, sprint_item_id, ticket_id)
+
+
+def _reject_sprint_item_supervisor_write(
+    ctx: RequestContext, sprint_item_id: str, ticket_id: str
+) -> None:
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "Ticket review is not available to this Sprint Item supervisor",
+        {
+            "actor": ctx.actor,
+            "sprint_item_id": sprint_item_id,
+            "ticket_id": ticket_id,
+        },
+    )
+
+
 def _reject_sprint_item_supervisor_read(ctx: RequestContext, sprint_item_id: str) -> None:
     raise PlannerError(
         ErrorCode.agent_forbidden,

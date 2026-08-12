@@ -11,6 +11,10 @@ const ticketRouteSource = await readFile(
   new URL("../src/routes/TicketRoute.svelte", import.meta.url),
   "utf8",
 );
+const scopePairPickerSource = await readFile(
+  new URL("../src/components/ScopePairPicker.svelte", import.meta.url),
+  "utf8",
+);
 const boardRouteSource = await readFile(
   new URL("../src/routes/BoardRoute.svelte", import.meta.url),
   "utf8",
@@ -114,6 +118,20 @@ assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/human-reply/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
+assert.match(ticketRouteSource, /value="stop">then stop/);
+assert.match(ticketRouteSource, /value="agent_review">then agent review/);
+assert.match(ticketRouteSource, /value="user_review">then user review/);
+assert.doesNotMatch(ticketRouteSource, /value="propose"|then continue/i);
+assert.match(scopePairPickerSource, /value="stop">Stop/);
+assert.match(scopePairPickerSource, /value="agent_review">Agent review/);
+assert.match(scopePairPickerSource, /\{#if allowAgentReview\}<option value="agent_review"/);
+assert.match(ticketRouteSource, /allowAgentReview=\{detail\.sprint_item_id !== null\}/);
+assert.match(
+  ticketRouteSource,
+  /\{#if detail\.sprint_item_id !== null\}[\s\S]*?<option value="agent_review">then agent review/,
+);
+assert.match(scopePairPickerSource, /value="user_review">User review/);
+assert.doesNotMatch(scopePairPickerSource, /value="propose"|>Continue</);
 // Ticket placement is one compound Project, Sprint, and optional Sprint Item edit.
 assert.match(ticketRouteSource, /data-ticket-placement/);
 assert.match(ticketRouteSource, /data-sprint-control/);
@@ -207,7 +225,7 @@ const groupKeySource = boardRouteSource.slice(
 );
 assert.match(
   groupKeySource,
-  /if \(card\.is_done\) return "done";[\s\S]*if \(card\.waiting_to_closeout\) return "waiting_to_closeout";[\s\S]*card\.ticket_status === "awaiting_approval"[\s\S]*card\.gating_field === "kickoff"[\s\S]*return "waiting_for_kickoff";/,
+  /if \(card\.is_done\) return "done";[\s\S]*if \(card\.waiting_to_closeout\) return "waiting_to_closeout";[\s\S]*card\.ticket_status === "awaiting_agent_review"[\s\S]*card\.ticket_status === "awaiting_user_review"[\s\S]*card\.gating_field === "kickoff"[\s\S]*return "waiting_for_kickoff";/,
 );
 assert.match(boardRouteSource, /waiting_for_kickoff: "Waiting for Kickoff"/);
 
@@ -225,7 +243,8 @@ assert.deepEqual(groupOrder, [
   "paired",
   "agent",
   "waiting_to_closeout",
-  "awaiting_approval",
+  "awaiting_agent_review",
+  "awaiting_user_review",
   "waiting_for_kickoff",
   "empty",
   "blocked",

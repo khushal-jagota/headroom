@@ -122,7 +122,7 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
     loose-ticket ordering). A light projection — not full ticket_json — since the
     disclosure only lists rows that link to the ticket."""
     rows = conn.execute(
-        "SELECT id, title, stage, priority, ticket_status, fields, worker_type, "
+        "SELECT id, title, stage, priority, ticket_status, fields, worker_type, at_cap, "
         "employee_backend FROM tickets "
         "WHERE sprint_item_id = ? ORDER BY created_at, id",
         (item_id,),
@@ -134,6 +134,12 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
         worker_type_definition = registry.require(str(r["worker_type"]))
         fields = fields_codec.declared_fields_from_json(
             str(r["fields"]), worker_type_definition.field_ids()
+        )
+        gating_field = worker_type_definition.gating_field(stage)
+        proposal = (
+            None
+            if gating_field is None
+            else fields_codec.get_slot(fields, gating_field).proposal
         )
         result.append(
             {
@@ -147,6 +153,10 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                     worker_type_definition=worker_type_definition,
                 ),
                 "ticket_status": str(r["ticket_status"]),
+                "review_route": str(r["at_cap"]),
+                "proposal_review_route": (
+                    proposal.review_route.value if proposal is not None else None
+                ),
                 "employee_backend": str(r["employee_backend"]),
             }
         )

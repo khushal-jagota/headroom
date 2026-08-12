@@ -577,9 +577,9 @@ def _review_items(conn: sqlite3.Connection, *, day_id: str) -> list[JsonDict]:
                 }
             )
             continue
-        # Review is a pure filter on the control statuses that mean the user has
-        # something to handle: a parked proposal or an explicit Worker help request.
-        if ticket_status != TicketStatus.awaiting_approval.value:
+        # Review contains user work only. Agent-review proposals remain with the
+        # owning Sprint Item supervisor until that supervisor transfers them.
+        if ticket_status != TicketStatus.awaiting_user_review.value:
             continue
         worker_type_definition = registry.require(str(row["worker_type"]))
         stage = str(row["stage"])

@@ -18,7 +18,15 @@ TITLE_MAX_CHARS: Final = 200
 
 class AtCap(StrEnum):  # §4.3
     stop = "stop"
-    propose = "propose"
+    agent_review = "agent_review"
+    user_review = "user_review"
+
+
+class ProposalReviewRoute(StrEnum):
+    """The reviewer selected when a proposal became parked."""
+
+    agent_review = "agent_review"
+    user_review = "user_review"
 
 
 class StageOwnershipMode(StrEnum):
@@ -49,14 +57,13 @@ class ResolvedTicketPriorityAnchors:
     project: ProjectPriorityAnchor | None
 
 
-class TicketStatus(
-    StrEnum
-):  # durable state-of-control, written by data-layer transitions
+class TicketStatus(StrEnum):  # durable state-of-control, written by data-layer transitions
     empty = "empty"
     blocked = "blocked"  # empty's stand-in while a live blocker exists
     agent = "agent"
     paired = "paired"
-    awaiting_approval = "awaiting_approval"
+    awaiting_agent_review = "awaiting_agent_review"
+    awaiting_user_review = "awaiting_user_review"
     needs_user = "needs_user"
     user = "user"
     errored = "errored"
@@ -77,6 +84,9 @@ class Proposal:  # §4.2 proposal slot
     body: str
     proposed_by: str  # actor string: "agent", run id context, or PLAN_ACTOR
     created_at: int
+    # A snapshot, not a view of current Ticket scope. A later scope change cannot move
+    # an already parked proposal between its agent and user reviewer.
+    review_route: ProposalReviewRoute = ProposalReviewRoute.user_review
 
 
 @dataclass
@@ -211,9 +221,7 @@ class ValueEditBody(TypedDict, total=False):  # PUT /tickets/{id}/value/{field}
     body: str  # default ""
 
 
-class RevisionMessageBody(
-    TypedDict, total=False
-):  # POST /tickets/{id}/return-for-revision
+class RevisionMessageBody(TypedDict, total=False):  # POST /tickets/{id}/return-for-revision
     message: str  # required non-empty by the writer
 
 
@@ -265,10 +273,8 @@ class Ticket:  # §3.3 — column names match exactly
     resolved_priority_anchors: ResolvedTicketPriorityAnchors
     recap: str  # writable only past the type's first worker Stage
     ceiling: str  # ceiling id; a member of the type's ceiling_range
-    at_cap: AtCap  # default propose (R2)
-    ticket_status: (
-        TicketStatus  # durable state-of-control; transition functions write it
-    )
+    at_cap: AtCap  # default user_review
+    ticket_status: TicketStatus  # durable state-of-control; transition functions write it
     # When ticket_status last actually changed. Claiming a Ticket for a worker step
     # captures it, and giving that claim back compares it, so a late release cannot erase
     # a later transition that happens to have landed on the same status value.
@@ -280,9 +286,7 @@ class Ticket:  # §3.3 — column names match exactly
     stage_ownership_overrides: Mapping[str, StageOwnershipMode]
     default_stage_ownership_mode: StageOwnershipMode | None
     effective_stage_ownership_mode: StageOwnershipMode | None
-    conversation_id: (
-        str | None
-    )  # the Ticket's conversation link (column name is frozen)
+    conversation_id: str | None  # the Ticket's conversation link (column name is frozen)
     alias: str | None  # migration "Ticket ID:" (§12), unique when present
     fields: TicketFields
     created_at: int

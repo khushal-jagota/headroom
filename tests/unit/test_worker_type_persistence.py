@@ -472,6 +472,6 @@ def test_second_type_reaches_coding_default_engine_paths(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert accepted.stage == "needs_success"

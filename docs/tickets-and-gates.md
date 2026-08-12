@@ -101,7 +101,7 @@ is not a worker proposal and not a general Stage bypass. The operation requires 
 complete Kickoff field value, an exact settled-field prefix for the target Stage, and a Chief
 request. It refuses backward moves, pending proposals, active ticket control, and a
 worker that is mid-turn. It moves the ceiling to the imported Stage but preserves the Ticket's
-at-cap choice: an explicit **Stop** remains Stop; otherwise **Continue** remains. The
+review route: an explicit **Stop** remains Stop; otherwise **User review** remains. The
 target Stage's effective ownership then determines whether the Ticket rests ready for
 the worker, with the user, or paired.
 
@@ -230,17 +230,23 @@ _Code paths:_ `src/planner/tickets/logic/resolution.py` (the proposal resolver),
 
 ## How far a worker may go: the scope
 
-Every ticket carries a permission with two parts — together, its **scope**:
+Every ticket carries a permission with two parts. Together, these parts form its **scope**:
 
 - **The ceiling** — how far along the stages a worker may push this ticket on its own.
-- **At the cap** — what a worker may do once the ticket reaches that ceiling: either
-  **Stop** (don't even suggest anything) or **Continue** (draft the next step and park
-  it for approval). Continue keeps the stored `propose` value and its existing behavior.
+- **At the cap** — the route at the ceiling:
+
+| Route | Paired Stage behavior | At the ceiling | User Review |
+| --- | --- | --- | --- |
+| **Stop** | Preserve normal ownership | Prevent a proposal | Hidden |
+| **Agent review** | Use worker ownership through the ceiling | Park for the owning Sprint Item supervisor | Hidden |
+| **User review** | Preserve normal ownership | Park for the user | Visible |
 
 Below the ceiling, a worker-owned Stage's proposal is accepted automatically and the
-ticket advances. A paired Stage's proposal always parks instead. At the ceiling, the
-at-cap rule decides whether a worker-owned Stage may propose. User-owned Stages are not
-automatically dispatched; paired Stages only get their opening turn. New tickets start leashed right at
+ticket advances. Agent review makes paired Stages worker-owned through the ceiling.
+The explicit ownership override still takes priority. Stop and User review preserve the
+normal Stage ownership. At the ceiling, the route decides whether a worker-owned Stage
+can propose and where that proposal parks. User-owned Stages do not dispatch automatically.
+Paired Stages get one opening turn. New tickets start leashed right at
 **Kickoff**: the ceiling is `needs_kickoff` for every Worker type, so nothing advances past
 the human-approved intake until the human grants scope onward — review before agents
 start. Every later stage behaves the same way, including the last two: an accepted
@@ -251,12 +257,11 @@ straight to **done**. (The threshold used by sprint-in-progress behavior is the
 ## The approval gate and Ticket leash
 
 Whenever the human approves a step, they must say in the same breath how far the
-worker may go next — the system refuses an approval that doesn't answer that
+worker can go next. The system refuses an approval that does not answer that
 question. The Ticket details disclosure shows the same scope as a readable leash:
-"approved until [a stage], then continue" or "then stop." Opening it reveals selects
-for the ceiling and at-cap action, plus Take over or Release. A fresh approval starts
-on Continue so the worker
-keeps drafting the next gated step unless the human changes it. At Kickoff, an unchosen
+"approved until [a stage], then [route]." The disclosure includes selects for the
+ceiling and route, plus Take over or Release. A fresh approval starts on User review.
+This default preserves the direct user gate unless the user selects another route. At Kickoff, an unchosen
 ceiling starts from that Worker type's managed suggestion. Other approvals start from
 their normal next Stage. `No further` remains a one-off choice. The stages it offers
 are always the current one and the
@@ -265,8 +270,8 @@ already covered. One shared source of the allowed stages feeds both the Ticket l
 and the approval screen, so the two cannot disagree.
 
 Review's single, oldest-first walk shows today's tickets whose status is
-`awaiting_approval` or `needs_user` — nothing else decides membership. A parked
-proposal keeps its approval and revision controls. A Worker help request uses the same
+`awaiting_user_review` or `needs_user`. It excludes `awaiting_agent_review`.
+A user-review proposal keeps its approval and revision controls. A Worker help request uses the same
 Ticket title, Skip, and Open Ticket structure without proposal controls; the answer
 belongs in the Ticket conversation. Either kind leaves Review the moment its status
 changes, whichever way that happens.
@@ -278,7 +283,7 @@ leaves Review. It moves when the message has actually reached the conversation: 
 that got nowhere is not a reply. Only a person can do this. The automatic loop sends into
 the same conversation, and its prompts are not replies.
 
-The Review screen can also send a ticket back instead of accepting it, whatever field
+The Review screen can also send a user-review ticket back instead of accepting it, whatever field
 is currently gated. The human writes short guidance in the review card. Panels
 sends that guidance as the real next message into the Ticket's conversation, and only
 then hands the Ticket back to the worker — that order matters, because the hand-back
@@ -288,6 +293,22 @@ gated proposal is cleared, settled values remain, and the ticket leaves Review w
 its control status is `agent`. The gated field can therefore be revised
 while the ticket remains at its current stage; it returns to Review when the worker
 submits the revision.
+
+An agent-review proposal stores `agent_review` as its route snapshot and enters
+`awaiting_agent_review`. A later scope edit does not redirect it. The exact owning Sprint
+Item supervisor can approve it, reject it with focused revision guidance, or transfer it
+to User Review. Approval uses the canonical proposal resolver. Transfer changes only the
+parked proposal route and status. The user can still approve or reject either parked route
+through the direct Ticket controls. Agent review is available only while the Ticket belongs
+to a normal Sprint Item; placement edits cannot detach a Ticket whose scope or parked proposal
+still requires that supervisor.
+
+The database migration maps legacy `propose` scope to `user_review`. It maps legacy parked
+proposals to `awaiting_user_review` and gives each one a `user_review` route snapshot. It
+preserves the proposal body, author, timestamp, Stage, ceiling, status time, and status revision.
+
+Panels does not automatically tell a supervisor about a new agent-review proposal. General
+Worker messages also remain outside this system. Later work owns both delivery paths.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`
