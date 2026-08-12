@@ -442,7 +442,7 @@ def test_e31_refresh_restores_state(
     assert before_d == after_d == expected_d, (before_d, after_d)
 
 
-def test_e32_sprint_live_status_and_fallback(
+def test_e32_sprint_live_status_and_view_only_other(
     server: ServerHandle,
     context_factory: Callable[[], BrowserContext],
     open_page: Callable[..., Page],
@@ -470,7 +470,7 @@ def test_e32_sprint_live_status_and_fallback(
         "--priority",
         "P2",
     )["id"]
-    fallback_ticket_id = cli(
+    other_ticket_id = cli(
         server,
         "ticket",
         "create",
@@ -480,22 +480,16 @@ def test_e32_sprint_live_status_and_fallback(
         E32_FALLBACK_TITLE,
         "--project",
         E32_ITEM_PROJECT,
+        "--sprint",
+        sid,
         "--priority",
         "P1",
     )["id"]
 
-    # Status groups were replaced by Project groups. The Item's status remains as an
-    # invisible row attribute for live updates. Omitted placement resolves the current
-    # sprint's Other Item, which remains visible without a fallback chip.
+    # The Item's status remains as an invisible row attribute for live updates. Direct
+    # Sprint placement appears under view-only Other without a Sprint Item identity.
     current_before = api.get(server, "/api/sprint/current")
-    fallback_item = next(
-        item
-        for group in current_before["groups"].values()
-        for item in group
-        if item["kind"] == "other"
-        and any(ticket["id"] == fallback_ticket_id for ticket in item["tickets"])
-    )
-    fallback_item_id = fallback_item["id"]
+    assert any(ticket["id"] == other_ticket_id for ticket in current_before["other_tickets"])
 
     ready = f'[data-item-id="{iid}"][data-item-status="todo"]'
     pa = open_page(context_factory(), server, "#/sprint", ready)
@@ -509,32 +503,20 @@ def test_e32_sprint_live_status_and_fallback(
             == 1
         )
         assert p.get_attribute(f'[data-item-id="{iid}"]', "data-item-status") == "todo"
-        assert (
-            p.get_attribute(f'[data-item-id="{fallback_item_id}"]', "data-item-kind")
-            == "other"
-        )
         assert p.locator('[data-item-id] [data-sprint-ticket-id]').count() == 0
-        assert p.locator(f'[data-item-id="{fallback_item_id}"] .chip').count() == 0
-        assert p.query_selector("[data-loose]") is None
-
-    fallback_item_page = open_page(
-        context_factory(),
-        server,
-        f"#/sprint?item={fallback_item_id}",
-        f'[data-sprint-item-view="{fallback_item_id}"]',
-    )
-    fallback_ticket_row = fallback_item_page.locator(
-        f'[data-sprint-ticket-id="{fallback_ticket_id}"]'
-    )
-    assert fallback_ticket_row.count() == 1
-    assert E32_FALLBACK_TITLE in fallback_ticket_row.inner_text()
-    assert "P1" in fallback_ticket_row.inner_text()
+        other_ticket_row = p.locator(
+            f'[data-sprint-other] [data-sprint-ticket-id="{other_ticket_id}"]'
+        )
+        assert other_ticket_row.count() == 1
+        assert E32_FALLBACK_TITLE in other_ticket_row.inner_text()
+        assert "P1" in other_ticket_row.inner_text()
+        assert p.locator('[data-sprint-other] [data-item-id]').count() == 0
 
     # The Ticket header now keeps only priority, project, and worker identity.
     ticket_page = open_page(
         context_factory(),
         server,
-        f"#/ticket/{fallback_ticket_id}",
+        f"#/ticket/{other_ticket_id}",
         "[data-ticket-identity]",
     )
     assert ticket_page.locator("[data-sprint-item-control]").count() == 0

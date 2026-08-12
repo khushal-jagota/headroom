@@ -112,7 +112,7 @@ Chief ───────────► external-work reconciliation         
         </details>
         <details>
           <summary><span class="number">02</span><span><b>Planning domains</b><span>Days, Sprints, Sprint Items, Tickets, Ideas, and Projects.</span></span></summary>
-          <div class="body"><p>Each domain owns its contracts, rules, writers, views, and routes. Sprint Items are the only sprint placement for Tickets. Backlog items are Sprint Items without a sprint. The planning date changes at 05:00 local time.</p><p class="paths"><code>src/planner/days/</code> · <code>src/planner/sprints/</code> · <code>src/planner/tickets/</code> · <code>src/planner/projects/</code></p></div>
+          <div class="body"><p>Each domain owns its contracts, rules, writers, views, and routes. Tickets own their Project and optional Sprint placement. Sprint Items classify related Tickets. The Sprint view groups unclassified Tickets under Other without creating an Item. The planning date changes at 05:00 local time.</p><p class="paths"><code>src/planner/days/</code> · <code>src/planner/sprints/</code> · <code>src/planner/tickets/</code> · <code>src/planner/projects/</code></p></div>
         </details>
         <details>
           <summary><span class="number">03</span><span><b>Tickets, gates, and Worker types</b><span>Workflow shape, proposals, scope, ownership, and control state.</span></span></summary>

@@ -446,44 +446,6 @@ def create_item(
     return _load_item(conn, item_id)
 
 
-def get_or_create_other_item(
-    conn: sqlite3.Connection,
-    *,
-    sprint_id: str,
-    project_id: str,
-    now: int,
-) -> SprintItem:
-    """Resolve the sole machine-recognizable fallback for a sprint and Project."""
-    with _tx(conn):
-        _load_sprint(conn, sprint_id)
-        if (
-            conn.execute(
-                "SELECT 1 FROM projects WHERE id = ?", (project_id,)
-            ).fetchone()
-            is None
-        ):
-            raise PlannerError(
-                ErrorCode.validation, "invalid project_id", {"project_id": project_id}
-            )
-        row = conn.execute(
-            "SELECT id FROM sprint_items "
-            "WHERE sprint_id = ? AND project_id = ? AND kind = 'other'",
-            (sprint_id, project_id),
-        ).fetchone()
-        if row is None:
-            item_id = new_id(ID_PREFIXES["sprint_item"])
-            conn.execute(
-                "INSERT INTO sprint_items ("
-                "id, title, body, priority, deadline, project_id, sprint_id, kind, "
-                "created_at, updated_at) "
-                "VALUES (?, 'Other', '', ?, NULL, ?, ?, 'other', ?, ?)",
-                (item_id, Priority.P3.value, project_id, sprint_id, now, now),
-            )
-        else:
-            item_id = str(row["id"])
-    return _load_item(conn, item_id)
-
-
 def create_idea(
     conn: sqlite3.Connection,
     *,
