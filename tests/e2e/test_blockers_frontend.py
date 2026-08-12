@@ -103,18 +103,19 @@ def test_workspace_places_post_kickoff_dependents_in_quiet_blocked_section(
     kickoff_card = f'[data-card][data-ticket-id="{kickoff_dependent}"]'
     shared_card = f'[data-card][data-ticket-id="{shared_dependent}"]'
 
-    # Blocked is the resting status of a ticket held by a live blocker, and its
-    # group collapses by default. The blocker itself does not choose the group:
-    # Kickoff approvals use their own group, while approval at a later gated
-    # field remains under the generic approval status.
+    # Blocked is the resting status of a ticket held by a live blocker. Both
+    # Blocked and Waiting for Kickoff collapse by default. The blocker itself
+    # does not choose the group: Kickoff approvals use their own group, while
+    # approval at a later gated field remains under the generic approval status.
     assert page.locator(blocked).get_attribute("open") is None
     assert page.locator(empty).get_attribute("open") is not None
     assert page.locator(f"{empty} {active_card}").is_visible()
     assert page.locator(approval).get_attribute("open") is not None
     assert page.locator(f"{approval} {later_card}").is_visible()
     assert page.locator(f"{blocked} {later_card}").count() == 0
-    assert page.locator(kickoff).get_attribute("open") is not None
-    assert page.locator(f"{kickoff} {kickoff_card}").is_visible()
+    assert page.locator(kickoff).get_attribute("open") is None
+    assert page.locator(f"{kickoff} {kickoff_card}").count() == 1
+    assert not page.locator(f"{kickoff} {kickoff_card}").is_visible()
     assert page.locator(f"{approval} {kickoff_card}").count() == 0
     assert page.locator(f"{blocked} {kickoff_card}").count() == 0
     assert not page.locator(f"{blocked} {shared_card}").is_visible()

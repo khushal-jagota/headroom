@@ -118,18 +118,22 @@
   const GROUP_ORDER: readonly string[] = [
     "errored",
     "needs_user",
-    "waiting_for_kickoff",
     "user",
     "paired",
     "agent",
     "waiting_to_closeout",
     "awaiting_approval",
+    "waiting_for_kickoff",
     "empty",
     "blocked",
     "done"
   ];
 
-  const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set(["blocked", "done"]);
+  const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set([
+    "waiting_for_kickoff",
+    "blocked",
+    "done"
+  ]);
   const GROUP_LABELS: Readonly<Record<string, string>> = {
     waiting_to_closeout: "Waiting to Closeout",
     waiting_for_kickoff: "Waiting for Kickoff"

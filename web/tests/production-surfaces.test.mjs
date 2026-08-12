@@ -219,13 +219,29 @@ const groupOrder = [...groupOrderMatch[1].matchAll(/"([^"]+)"/g)].map(
 assert.deepEqual(groupOrder, [
   "errored",
   "needs_user",
-  "waiting_for_kickoff",
   "user",
   "paired",
   "agent",
   "waiting_to_closeout",
   "awaiting_approval",
+  "waiting_for_kickoff",
   "empty",
+  "blocked",
+  "done",
+]);
+
+const defaultCollapsedGroupsMatch = boardRouteSource.match(
+  /const DEFAULT_COLLAPSED_GROUPS: ReadonlySet<string> = new Set\(\[([\s\S]*?)\n  \]\);/,
+);
+assert.ok(
+  defaultCollapsedGroupsMatch,
+  "Workspace declares one canonical default-collapsed group set",
+);
+const defaultCollapsedGroups = [
+  ...defaultCollapsedGroupsMatch[1].matchAll(/"([^"]+)"/g),
+].map((match) => match[1]);
+assert.deepEqual(defaultCollapsedGroups, [
+  "waiting_for_kickoff",
   "blocked",
   "done",
 ]);
