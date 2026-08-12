@@ -23,12 +23,15 @@
   import PriorityTile from "./PriorityTile.svelte";
   import ResourceState from "./ResourceState.svelte";
   import StageMark from "./StageMark.svelte";
+  import TicketConversationHistory from "./TicketConversationHistory.svelte";
 
   let { itemId, sprintName }: { itemId: string; sprintName: string } = $props();
 
   const workspace = createQuery(() => queries.sprintItemWorkspace(itemId));
   const startValues = createQuery(() => queries.sprintItemConversationStartValues(itemId));
   let conversationId = $state<string | null>(null);
+  let selectedPastConversationId = $state<string | null>(null);
+  let selectedConversationId = $derived(selectedPastConversationId ?? conversationId);
   let conversationState = $state<ConversationState>("rest");
   let backends = $state<readonly BackendSnapshot[]>([]);
 
@@ -100,7 +103,11 @@
   }
 </script>
 
-<div class="sprint-item-page" data-sprint-item-workspace={itemId}>
+<div
+  class="sprint-item-page"
+  data-sprint-item-workspace={itemId}
+  data-sprint-item-view={itemId}
+>
   <main class="sprint-item-doc" onclickcapture={dismissConversationToRest}>
     <ResourceState
       error={workspace.error}
@@ -161,7 +168,12 @@
                   </summary>
                   {#each group.tickets as ticket (ticket.id)}
                     {@const condition = sprintTicketCondition(ticket)}
-                    <a class="sprint-workspace-ticket-row" href={`#/ticket/${ticket.id}`} data-ticket-state={condition.mark}>
+                    <a
+                      class="sprint-workspace-ticket-row"
+                      href={`#/ticket/${ticket.id}`}
+                      data-sprint-ticket-id={ticket.id}
+                      data-ticket-state={condition.mark}
+                    >
                       <PriorityTile priority={ticket.priority} />
                       <span>{ticket.title}</span>
                       <StageMark state={condition.mark} aria-label={condition.word} />
@@ -180,11 +192,20 @@
             </summary>
             {#if remainingTickets.length}
               {#each remainingTickets as ticket (ticket.id)}
+                {@const condition = sprintTicketCondition(ticket)}
                 <a
                   class="sprint-workspace-name-row"
                   class:sprint-workspace-name-row--done={ticket.stage === "done"}
+                  class:sprint-workspace-name-row--attention={condition.word === "to review" || condition.word === "need you" || condition.word === "yours"}
                   href={`#/ticket/${ticket.id}`}
-                >{ticket.title}</a>
+                  data-sprint-ticket-id={ticket.id}
+                  data-ticket-state={condition.mark}
+                >
+                  <span>{ticket.title}</span>
+                  {#if ticket.stage !== "done" && condition.word !== "to do"}
+                    <span class="sprint-workspace-name-state">{condition.word}</span>
+                  {/if}
+                </a>
               {/each}
             {:else}
               <div class="sprint-workspace-empty">Every Ticket on this outcome is on today.</div>
@@ -213,9 +234,18 @@
   </main>
   <div class="sprint-item-conversation-layer" onclickcapture={dismissConversation}>
     <div class="sprint-item-conversation-column">
+      {#if workspace.data}
+        <TicketConversationHistory
+          history={workspace.data.conversation_history}
+          activeConversationId={conversationId}
+          label="Sprint Item conversation"
+          bind:selectedPastConversationId
+        />
+      {/if}
       <LiveConversation
         bind:conversationState
-        {conversationId}
+        conversationId={selectedConversationId}
+        readOnly={selectedPastConversationId !== null}
         label="Sprint Item"
         composerPlaceholder="Message this Sprint Item…"
         {backends}

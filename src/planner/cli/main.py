@@ -1934,7 +1934,14 @@ def sprint_item_supervisor_obligations(
         "GET", f"/api/items/{item_id}/supervisor/obligations", as_json=as_json,
         params={"limit": limit, "open_only": str(open_only).lower()},
     )
-    http.emit(data, as_json, _lines(data["obligations"], lambda row: f"{row['id']} {row['kind']} {row['ticket_id']}"))
+    http.emit(
+        data,
+        as_json,
+        _lines(
+            data["obligations"],
+            lambda row: f"{row['id']} {row['kind']} {row['ticket_id']}",
+        ),
+    )
 
 
 @sprint_item_supervisor.command("acknowledge")

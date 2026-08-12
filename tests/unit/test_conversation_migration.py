@@ -17,7 +17,7 @@ import pytest
 from planner.conversation.storage import ConversationStore
 from planner.core.db import connect, create_schema
 
-HEAD_REVISION = "project_folder_path"
+HEAD_REVISION = "supervisor_obligations"
 
 
 def _table_columns(

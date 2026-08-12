@@ -11,7 +11,7 @@ from planner.core.db import connect, create_schema
 from planner.notifications import data as notifications_data
 
 PREVIOUS_REVISION = "notifications"
-HEAD_REVISION = "project_folder_path"
+HEAD_REVISION = "supervisor_obligations"
 
 
 def _upgrade_to_previous_revision(path: Path) -> None:

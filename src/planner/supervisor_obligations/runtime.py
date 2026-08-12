@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import threading
+from collections.abc import Sequence
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from time import monotonic
 
@@ -17,9 +19,11 @@ from planner.conversation.message_content import text_message_content
 from planner.core.clock import Clock
 from planner.core.db import connect
 from planner.runtime import conversation_start
+from planner.runtime.conversation_start import DeliveredMessage
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.supervisor_obligations import data
+from planner.supervisor_obligations.contracts import SupervisorDelivery, SupervisorObligation
 
 _LOGGER = logging.getLogger(__name__)
 MAXIMUM_ATTEMPTS = 5
@@ -81,7 +85,7 @@ class SupervisorObligationLoop:
         finally:
             conn.close()
 
-    def run_once(self, conn=None) -> bool:
+    def run_once(self, conn: sqlite3.Connection | None = None) -> bool:
         owns = conn is None
         if conn is None:
             conn = connect(self._db_path, self._busy_timeout_ms)
@@ -155,7 +159,7 @@ class SupervisorObligationLoop:
             if owns:
                 conn.close()
 
-    def _recover_after_restart(self, conn) -> None:
+    def _recover_after_restart(self, conn: sqlite3.Connection) -> None:
         """Recover only queues that belonged to the previous process."""
         now = self._clock.now_unix()
         data.reconcile_deliveries(conn, now)
@@ -179,7 +183,9 @@ class SupervisorObligationLoop:
             ):
                 data.mark_queued_outcome_uncertain(conn, str(row["id"]), now)
 
-    async def _deliver(self, delivery, text: str):
+    async def _deliver(
+        self, delivery: SupervisorDelivery, text: str
+    ) -> DeliveredMessage:
         """Resolve the current lazy supervisor and send under its deletion lock."""
         async with sprints_service.supervisor_lifecycle_lock(delivery.sprint_item_id):
             conn = connect(self._db_path, self._busy_timeout_ms)
@@ -206,7 +212,7 @@ class SupervisorObligationLoop:
                 conn.close()
 
 
-def _batch_text(obligations) -> str:
+def _batch_text(obligations: Sequence[SupervisorObligation]) -> str:
     lines = ["Sprint Item supervisor obligations:"]
     for obligation in obligations:
         lines.append(

@@ -45,6 +45,7 @@ from planner.sprints.contracts import (
     SprintItemSupervisorLaunchConfiguration,
 )
 from planner.supervisor_obligations import data as supervisor_obligations_data
+from planner.supervisor_obligations.contracts import SupervisorObligation
 from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
@@ -242,7 +243,7 @@ async def get_item_supervisor(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
     return _supervisor_json(conn, item_id)
 
 
-def _obligation_json(obligation) -> JsonDict:
+def _obligation_json(obligation: SupervisorObligation) -> JsonDict:
     return {
         "id": obligation.id,
         "sprint_item_id": obligation.sprint_item_id,

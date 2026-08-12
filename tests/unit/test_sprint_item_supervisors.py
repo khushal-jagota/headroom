@@ -27,6 +27,7 @@ from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
 from planner.sprints import supervisor_service
+from planner.supervisor_obligations import data as supervisor_obligations_data
 from planner.tickets import data as tickets_data
 from planner.tickets import views as tickets_views
 
@@ -149,6 +150,7 @@ def test_workspace_read_joins_today_artifacts_and_supervisor_attention(tmp_path:
     assert body["tickets"][0]["day_ids"] == [body["planning_day_id"]]
     assert body["artifacts"] == ["proof.md"]
     assert body["obligations"] == []
+    assert body["conversation_history"] == []
 
 
 def test_supervisor_reads_only_its_item_and_current_children(tmp_path: Path) -> None:
@@ -735,6 +737,94 @@ def test_supervisor_rejection_delivers_focused_guidance_then_returns_work(
     assert "State the verification evidence." in writes[0].text
 
 
+def test_supervision_system_scenario_preserves_retry_restart_and_canonical_resolution(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _app(tmp_path)
+    worker_conversation_id = "conv-supervision-system-worker"
+    with TestClient(app) as client:
+        item = _create_item(client, "System outcome")
+        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET conversation_id=? WHERE id=?",
+                (worker_conversation_id, ticket["id"]),
+            )
+            conn.commit()
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id=worker_conversation_id,
+                    model="test-model",
+                )
+            )
+        )
+        rejected = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
+            json={"message": "Add the missing proof."},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        steered = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/message",
+            json={
+                "conversation_id": worker_conversation_id,
+                "message": "Check the phone result too.",
+            },
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        reproposed = client.post(
+            f"/api/tickets/{ticket['id']}/propose/success",
+            json={"body": "Desktop and phone proof are attached."},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": str(ticket["id"])},
+        )
+
+        assert rejected.status_code == 200, rejected.text
+        assert steered.status_code == 200, steered.text
+        assert steered.json()["fate"] == "queued"
+        assert reproposed.status_code == 200, reproposed.text
+
+        with connect(str(db_path)) as conn:
+            supervisor_obligations_data.reconcile(conn, 20)
+            claimed = supervisor_obligations_data.claim_batch(conn, 20)
+            assert claimed is not None
+            first_delivery, first_obligations = claimed
+            supervisor_obligations_data.settle_delivery(
+                conn,
+                first_delivery.id,
+                state="refused",
+                now=21,
+                error="backend unavailable",
+            )
+            assert supervisor_obligations_data.claim_batch(conn, 25) is None
+            retry = supervisor_obligations_data.claim_batch(conn, 26)
+            assert retry is not None
+            retry_delivery, retry_obligations = retry
+            assert [entry.id for entry in retry_obligations] == [
+                entry.id for entry in first_obligations
+            ]
+            supervisor_obligations_data.settle_delivery(
+                conn,
+                retry_delivery.id,
+                state="queued",
+                now=27,
+                conversation_id="conv-supervisor-restart",
+            )
+            supervisor_obligations_data.mark_queued_outcome_uncertain(
+                conn, retry_delivery.id, 28
+            )
+            failed = supervisor_obligations_data.list_for_item(conn, str(item["id"]))
+            assert failed[0].lifecycle.value == "failed"
+
+        resolved = client.post(
+            f"/api/tickets/{ticket['id']}/accept/success",
+            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+        )
+        assert resolved.status_code == 200, resolved.text
+        with connect(str(db_path)) as conn:
+            supervisor_obligations_data.reconcile(conn, 29)
+            assert supervisor_obligations_data.list_for_item(conn, str(item["id"])) == ()
+
+
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
     tmp_path: Path,
 ) -> None:
@@ -756,12 +846,21 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
         with connect(str(db_path)) as conn:
             conn.execute(
                 "INSERT INTO conversations(conversation_id,backend_key,model,"
-                "workspace_folder,access,created_at) VALUES "
-                "(?, 'codex', 'gpt-5.6-sol', '/tmp', 'full', 1)",
-                (conversation_id,),
+                "workspace_folder,identity_environment_variables,access,created_at) VALUES "
+                "(?, 'codex', 'gpt-5.6-sol', '/tmp', ?, 'full', 1)",
+                (
+                    conversation_id,
+                    json.dumps(
+                        [
+                            ["PLAN_ACTOR", "sprint_item_supervisor"],
+                            ["PLAN_SPRINT_ITEM_ID", item["id"]],
+                        ]
+                    ),
+                ),
             )
             conn.commit()
         reset = client.post(f"/api/items/{item['id']}/supervisor/conversation/reset")
+        workspace = client.get(f"/api/items/{item['id']}/workspace")
 
     assert before["conversation_id"] is None
     assert sent.status_code == 200, sent.text
@@ -769,6 +868,9 @@ def test_first_message_creates_the_conversation_and_reset_preserves_history(
     assert after_send["launch_configuration"]["employee_launch_model"] == ("gpt-5.6-terra")
     assert after_send["launch_configuration"]["employee_launch_reasoning_effort"] == "high"
     assert reset.json() == {"conversation_id": None}
+    assert workspace.json()["conversation_history"] == [
+        {"conversation_id": conversation_id, "created_at": 1}
+    ]
     with connect(str(db_path)) as conn:
         assert (
             conn.execute(

@@ -288,6 +288,11 @@ def item_workspace(conn: sqlite3.Connection, item_id: str, planning_day_id: str)
                 for ticket in tickets
                 if planning_day_id in ticket["day_ids"]
             ],
+            "conversation_history": (
+                conversation_start.read_sprint_item_supervisor_conversation_history(
+                    conn, item_id
+                )
+            ),
         }
     )
     return result

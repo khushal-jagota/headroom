@@ -327,6 +327,7 @@ export type SprintItemWorkspace = SprintItemSummary & {
   tickets: SprintItemWorkspaceTicket[];
   artifacts: string[];
   obligations: SprintItemWorkspaceObligation[];
+  conversation_history: TicketConversationHistoryEntry[];
 };
 
 export type ReviewProposalItem = {

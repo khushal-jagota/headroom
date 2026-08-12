@@ -64,8 +64,9 @@ Ticket rows link to the canonical Ticket page for all review and resolution acti
 The workspace also lists managed Item artifacts and opens them through the shared file
 preview. Delivery failures appear as attention above the work. The supervisor uses the
 same live conversation, composer, model controls, transcript, reset, and change-stream
-behavior as Ticket conversations. The layout preserves the same document and conversation
-split on desktop and phone.
+behavior as Ticket conversations. Reset starts a new current conversation without hiding
+prior transcripts. The layout preserves the same document and conversation split on
+desktop and phone.
 
 Each Sprint Item stores plain fields and placement only: title, body, priority,
 deadline, Project, and optional Sprint. Its status is derived when read:

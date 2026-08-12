@@ -81,7 +81,8 @@ function workspace(): SprintItemWorkspace {
         retry_at: null,
         last_error: "offline"
       }
-    ]
+    ],
+    conversation_history: []
   };
 }
 

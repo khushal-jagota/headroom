@@ -22,6 +22,7 @@ can see and nobody can send from, which is what a separate start door left behin
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -594,6 +595,41 @@ def read_agent_conversations(
         keys,
     ).fetchall()
     return {str(row[0]): str(row[1]) for row in rows}
+
+
+def read_sprint_item_supervisor_conversation_history(
+    conn: sqlite3.Connection, sprint_item_id: str
+) -> list[dict[str, str | int]]:
+    """Find every durable transcript started under one Sprint Item identity."""
+    rows = conn.execute(
+        "SELECT conversation_id,identity_environment_variables,created_at "
+        "FROM conversations ORDER BY created_at,conversation_id"
+    ).fetchall()
+    history: list[dict[str, str | int]] = []
+    for row in rows:
+        try:
+            identity = json.loads(str(row["identity_environment_variables"]))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(identity, list):
+            continue
+        values = {
+            str(pair[0]): str(pair[1])
+            for pair in identity
+            if isinstance(pair, list) and len(pair) == 2
+        }
+        if (
+            values.get("PLAN_ACTOR") != "sprint_item_supervisor"
+            or values.get("PLAN_SPRINT_ITEM_ID") != sprint_item_id
+        ):
+            continue
+        history.append(
+            {
+                "conversation_id": str(row["conversation_id"]),
+                "created_at": int(row["created_at"]),
+            }
+        )
+    return history
 
 
 async def start_agent_conversation(

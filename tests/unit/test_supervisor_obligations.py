@@ -4,24 +4,26 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from sqlite3 import Connection
 
 from planner.core.clock import TestClock
 from planner.core.contracts import Priority
 from planner.core.db import connect, create_schema
 from planner.sprints import data as sprints_data
+from planner.sprints.contracts import SprintItem
 from planner.supervisor_obligations import data
 from planner.tickets import data as tickets_data
-from planner.tickets.contracts import TicketStatus
+from planner.tickets.contracts import Ticket, TicketStatus
 
 
-def _database(tmp_path: Path):
+def _database(tmp_path: Path) -> Connection:
     path = tmp_path / "panels.db"
     conn = connect(str(path))
     create_schema(conn)
     return conn
 
 
-def _item(conn):
+def _item(conn: Connection) -> SprintItem:
     return sprints_data.create_item(
         conn,
         title="Item",
@@ -34,7 +36,9 @@ def _item(conn):
     )
 
 
-def _ticket(conn, item_id: str, title: str = "Ticket", now: int = 2):
+def _ticket(
+    conn: Connection, item_id: str, title: str = "Ticket", now: int = 2
+) -> Ticket:
     return tickets_data.create_ticket(
         conn,
         title=title,

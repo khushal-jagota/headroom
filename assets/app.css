@@ -5649,13 +5649,30 @@ details:not([open]) > summary > .sprint-workspace-chevron {
 }
 
 .sprint-workspace-name-row {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
   margin-inline: calc(var(--space-2) * -1);
   padding: 6px var(--space-2);
   border-radius: var(--radius-md);
   color: var(--text-faint);
   font-size: var(--type-sm);
   text-decoration: none;
+}
+
+.sprint-workspace-name-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.sprint-workspace-name-row--attention {
+  color: var(--text-default);
+}
+
+.sprint-workspace-name-state {
+  flex: none;
+  color: var(--text-faintest);
+  font-size: var(--type-xs);
 }
 
 .sprint-workspace-name-row--done {

@@ -6,10 +6,12 @@
   let {
     history,
     activeConversationId,
+    label = "Ticket conversation",
     selectedPastConversationId = $bindable(null)
   }: {
     history: readonly TicketConversationHistoryEntry[];
     activeConversationId: string | null;
+    label?: string;
     selectedPastConversationId?: string | null;
   } = $props();
 
@@ -38,7 +40,7 @@
   <label class="ticket-conversation-history" data-ticket-conversation-history>
     <span>Conversation</span>
     <select
-      aria-label="Ticket conversation"
+      aria-label={label}
       value={selectedPastConversationId ?? CURRENT_SELECTION}
       onchange={selectConversation}
     >

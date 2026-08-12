@@ -31,6 +31,10 @@ const sprintRouteSource = await readFile(
   new URL("../src/routes/SprintRoute.svelte", import.meta.url),
   "utf8",
 );
+const sprintItemWorkspaceSource = await readFile(
+  new URL("../src/components/SprintItemWorkspace.svelte", import.meta.url),
+  "utf8",
+);
 const sprintPresentationSource = await readFile(
   new URL("../src/lib/sprintPresentation.ts", import.meta.url),
   "utf8",
@@ -150,7 +154,8 @@ assert.doesNotMatch(sprintRouteSource, /Mid-sprint Review|mid-sprint review/);
 assert.match(sprintRouteSource, /variant="workspace-bucket"/);
 assert.match(sprintRouteSource, /data-item-status=\{item\.status\}/);
 assert.match(sprintRouteSource, /#\/sprint\?item=\$\{encodeURIComponent\(item\.id\)\}/);
-assert.match(sprintRouteSource, /data-sprint-item-view=\{selectedItem\.id\}/);
+assert.match(sprintItemWorkspaceSource, /data-sprint-item-view=\{itemId\}/);
+assert.match(sprintItemWorkspaceSource, /data-sprint-ticket-id=\{ticket\.id\}/);
 assert.match(sprintRouteSource, /<StageMark state=\{condition\.mark\}/);
 assert.match(sprintPresentationSource, /todayTicketIds\.has\(ticket\.id\)/);
 assert.match(sprintRouteSource, /data-sprint-other/);
