@@ -153,6 +153,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`sprint item supervisor show / context / send / reset`** — inspect the supervisor
   and launch configuration, read its scoped brief and current Tickets, send a direct
   user message, or reset its current conversation.
+- **`sprint item supervisor approve / reject / transfer-to-user-review`** — resolve an
+  agent-review proposal for the exact owning Sprint Item. Approval requires the next
+  ceiling and review route. Rejection requires focused revision guidance. Transfer moves
+  only the parked proposal to User Review and preserves future Ticket scope.
 - **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` replaces field
@@ -174,7 +178,7 @@ record shapes. Direct `show` commands also keep their full record shapes.
   new Ticket, and a different backend needs `--employee-launch-model` with it.
   Reconciliation refuses pending or active Ticket work; both
   operations move the ceiling to the imported Stage, preserve an explicit Stop
-  (otherwise Continue remains), and apply that Stage's effective ownership.
+  (otherwise User review remains), and apply that Stage's effective ownership.
 - **`serve`** — run the server and background worker runtime in the foreground.
   It keeps ownership while Panels restarts, so the same terminal continues to show the
   server logs.

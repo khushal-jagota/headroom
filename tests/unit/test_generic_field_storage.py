@@ -147,7 +147,7 @@ def test_coding_stored_fields_bytes_after_drive_are_golden(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     tickets_data.file_proposal(
         tmp_db, t.id, field="success", body="the success", actor="agent", now=now
@@ -159,7 +159,7 @@ def test_coding_stored_fields_bytes_after_drive_are_golden(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     row = tmp_db.execute("SELECT fields FROM tickets WHERE id = ?", (t.id,)).fetchone()
     assert row["fields"] == _CODING_STORED_AFTER_DRIVE
@@ -247,9 +247,9 @@ def test_tier2_scope_generic(probe_registry: WorkerTypeDefinition) -> None:
     assert machine.resolve_scope(
         _A,
         NO_FURTHER,
-        AtCap.propose,
+        AtCap.user_review,
         worker_type_definition=probe_registry,
-    ) == ScopePair(next_ceiling=_A, at_cap=AtCap.propose)
+    ) == ScopePair(next_ceiling=_A, at_cap=AtCap.user_review)
 
     # a ceiling before the new state is rejected.
     with pytest.raises(PlannerError) as exc:
@@ -365,7 +365,7 @@ def test_probe_data_layer_drive_to_done(
         actor="human",
         now=now,
         next_ceiling=_B,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == _A
     assert t.ceiling == _B
@@ -395,7 +395,7 @@ def test_probe_data_layer_drive_to_done(
         and beta.proposal.body == "beta v1"
     )
     assert t.stage == _B
-    assert t.ticket_status == TicketStatus.awaiting_approval
+    assert t.ticket_status == TicketStatus.awaiting_user_review
 
     # --- propose beta AGAIN -> SUPERSEDES the first.
     t = tickets_data.file_proposal(
@@ -433,7 +433,7 @@ def test_probe_recap_path_infers_gating_field(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == _A
 
@@ -460,7 +460,7 @@ def test_probe_return_for_revision_clears_parked_proposal(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == _A
     # park an alpha proposal, then attach a worker session (return needs an existing one).
@@ -496,7 +496,7 @@ def test_probe_admission_error_payload(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == _A and t.ceiling == _A  # at the ceiling, at_cap propose
 
@@ -549,7 +549,7 @@ def test_probe_drive_to_dropped(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert t.stage == _A
     # drop is universal (reserved bookend); it works on a probe ticket.
@@ -601,7 +601,7 @@ def test_coding_bookend_comparisons_survive_str_flip(
         actor="human",
         now=now,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     # a state jump reaches needs_approach; its bookend guards still fire on a str state.
     t = tickets_data.set_stage(
@@ -642,7 +642,7 @@ def test_decide_drop_and_jump_bookends_pure_str_stage() -> None:
             ),
             recap="",
             ceiling="needs_alpha",
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
             ticket_status=TicketStatus.empty,
             ticket_status_changed_at=0,
             ticket_status_revision=0,

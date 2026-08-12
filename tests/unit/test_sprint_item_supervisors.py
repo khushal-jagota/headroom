@@ -23,6 +23,7 @@ from planner.core.server import create_app
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
+from planner.tickets import data as tickets_data
 
 
 def _app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -47,6 +48,40 @@ def _create_item(client: TestClient, title: str = "Supervised") -> dict[str, Any
     response = client.post("/api/items", json={"title": title, "project_id": "project_vylo"})
     assert response.status_code == 200, response.text
     return cast(dict[str, Any], response.json())
+
+
+def _park_agent_review_ticket(client: TestClient, item_id: str) -> dict[str, Any]:
+    created = client.post(
+        "/api/tickets",
+        json={
+            "worker_type": "coding",
+            "title": "Supervisor review",
+            "kickoff_note": "Start here.",
+            "sprint_item_id": item_id,
+        },
+    )
+    assert created.status_code == 200, created.text
+    ticket_id = str(created.json()["id"])
+    kickoff = client.post(
+        f"/api/tickets/{ticket_id}/accept/kickoff",
+        json={"next_ceiling": "needs_success", "at_cap": "agent_review"},
+    )
+    assert kickoff.status_code == 200, kickoff.text
+    proposed = client.post(
+        f"/api/tickets/{ticket_id}/propose/success",
+        json={"body": "The result is verified."},
+        headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": ticket_id},
+    )
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["ticket_status"] == "awaiting_agent_review"
+    return cast(dict[str, Any], proposed.json())
+
+
+def _supervisor_headers(item_id: str) -> dict[str, str]:
+    return {
+        "X-Plan-Actor": "sprint_item_supervisor",
+        "X-Plan-Sprint-Item-ID": item_id,
+    }
 
 
 def test_creation_owns_one_agent_and_detail_exposes_the_launch_snapshot(
@@ -96,6 +131,150 @@ def test_supervisor_reads_only_its_item_and_current_children(tmp_path: Path) -> 
     assert cross.json()["error"]["code"] == "agent_forbidden"
     assert broad_read.json()["error"]["code"] == "agent_forbidden"
     assert write.json()["error"]["code"] == "agent_forbidden"
+
+
+def test_supervisor_approves_only_an_exact_child_agent_review(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        first = _create_item(client, "First")
+        second = _create_item(client, "Second")
+        ticket = _park_agent_review_ticket(client, str(first["id"]))
+        path = f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/approve"
+        cross = client.post(
+            path,
+            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+            headers=_supervisor_headers(str(second["id"])),
+        )
+        approved = client.post(
+            path,
+            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+            headers=_supervisor_headers(str(first["id"])),
+        )
+
+    assert cross.status_code == 403
+    assert cross.json()["error"]["code"] == "agent_forbidden"
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["stage"] == "needs_approach"
+    assert approved.json()["fields"]["success"]["value"] == "The result is verified."
+
+
+def test_supervisor_transfer_changes_only_the_parked_review_route(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        before_review = client.get("/api/review")
+        transferred = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/transfer-to-user-review",
+            json={},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        supervisor_approve_after_transfer = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/approve",
+            json={"next_ceiling": "needs_approach", "at_cap": "user_review"},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        after_review = client.get("/api/review")
+
+    assert before_review.json()["items"] == []
+    assert transferred.status_code == 200, transferred.text
+    assert transferred.json()["at_cap"] == "agent_review"
+    assert transferred.json()["ticket_status"] == "awaiting_user_review"
+    assert supervisor_approve_after_transfer.json()["error"]["code"] == "agent_forbidden"
+    assert supervisor_approve_after_transfer.status_code == 400
+    proposal = transferred.json()["fields"]["success"]["proposal"]
+    assert proposal["review_route"] == "user_review"
+    assert [item["ticket_id"] for item in after_review.json()["items"]] == [ticket["id"]]
+    with connect(str(db_path)) as conn:
+        stored = tickets_data.read_ticket(conn, str(ticket["id"]))
+    assert stored.at_cap.value == "agent_review"
+
+
+def test_direct_user_can_approve_an_agent_review_proposal(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        approved = client.post(
+            f"/api/tickets/{ticket['id']}/accept/success",
+            json={"next_ceiling": "needs_approach", "at_cap": "agent_review"},
+        )
+
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["stage"] == "needs_approach"
+
+
+def test_supervisor_rejection_delivers_before_it_mutates(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path)
+    conversation_id = "conv-supervisor-reject"
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                (conversation_id, ticket["id"]),
+            )
+            conn.commit()
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id=conversation_id,
+                    model="test-model",
+                )
+            )
+        )
+        system = cast(InMemoryConversationSystem, app.state.conversation_system)
+        system.arm_backend_write_failure(conversation_id)
+        rejected = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
+            json={"message": "State the verification evidence."},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert rejected.status_code == 503
+    assert rejected.json()["error"]["code"] == "gateway_offline"
+    with connect(str(db_path)) as conn:
+        unchanged = tickets_data.read_ticket(conn, str(ticket["id"]))
+    assert unchanged.ticket_status.value == "awaiting_agent_review"
+    assert unchanged.fields.slots["success"].proposal is not None
+
+
+def test_supervisor_rejection_delivers_focused_guidance_then_returns_work(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _app(tmp_path)
+    conversation_id = "conv-supervisor-reject-success"
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = _park_agent_review_ticket(client, str(item["id"]))
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                (conversation_id, ticket["id"]),
+            )
+            conn.commit()
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(
+                    conversation_id=conversation_id,
+                    model="test-model",
+                )
+            )
+        )
+        rejected = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/reject",
+            json={"message": "State the verification evidence."},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["ticket_status"] == "agent"
+    assert rejected.json()["fields"]["success"]["proposal"] is None
+    system = cast(InMemoryConversationSystem, app.state.conversation_system)
+    writes = system.backend_prompt_writes(conversation_id)
+    assert len(writes) == 1
+    assert "State the verification evidence." in writes[0].text
 
 
 def test_first_message_creates_the_conversation_and_reset_preserves_history(
@@ -184,10 +363,13 @@ def test_deleting_an_item_stops_its_active_supervisor(tmp_path: Path) -> None:
     assert deleted.status_code == 200, deleted.text
     assert asyncio.run(system.is_running(conversation_id)) is False
     with connect(str(db_path)) as conn:
-        assert conn.execute(
-            "SELECT 1 FROM agents WHERE agent_key=?",
-            (item["supervisor"]["agent_key"],),
-        ).fetchone() is None
+        assert (
+            conn.execute(
+                "SELECT 1 FROM agents WHERE agent_key=?",
+                (item["supervisor"]["agent_key"],),
+            ).fetchone()
+            is None
+        )
 
 
 def test_queued_override_does_not_replace_the_saved_launch_choice(tmp_path: Path) -> None:
@@ -295,9 +477,12 @@ def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
         with pytest.raises(PlannerError, match="no longer exists"):
             await send
         assert await system.is_running(created_id) is False
-        assert sender.execute(
-            "SELECT 1 FROM agents WHERE agent_key=?", (item.supervisor_agent_key,)
-        ).fetchone() is None
+        assert (
+            sender.execute(
+                "SELECT 1 FROM agents WHERE agent_key=?", (item.supervisor_agent_key,)
+            ).fetchone()
+            is None
+        )
         sender.close()
         deleter.close()
 

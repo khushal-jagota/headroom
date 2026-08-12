@@ -58,13 +58,13 @@ def _passed_ticket(db_path: Path) -> str:
             actor="human",
             now=0,
             next_ceiling=NO_FURTHER,
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
         )
         change_scope(
             conn,
             ticket.id,
             ceiling="needs_plan",
-            at_cap=AtCap.propose,
+            at_cap=AtCap.user_review,
             actor="human",
             now=0,
         )

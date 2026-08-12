@@ -13,7 +13,7 @@ import {
   type WorkerTypesResponse
 } from "../src/lib/lifecycle";
 import type { TicketDetail } from "../src/lib/types";
-import { ticketStatusText } from "../src/lib/ui";
+import { reviewRouteLabel, ticketStatusText } from "../src/lib/ui";
 
 const codingManifest = {
   worker_type: "coding",
@@ -182,7 +182,7 @@ function ticketDetail(overrides: Partial<TicketDetail> = {}): TicketDetail {
     employee_configuration_editable: true,
     stage: "needs_success",
     ceiling: "done",
-    at_cap: "no",
+    at_cap: "user_review",
     suggested_next_ceiling: "needs_success",
     priority: "P1",
     resolved_priority_anchors: {
@@ -302,9 +302,9 @@ describe("coding lifecycle", () => {
     ["running", "needs_success", "agent", "success", false, "current-running"],
     ["errored", "needs_success", "errored", "success", false, "errored"],
     [
-      "awaiting approval",
+      "awaiting agent review",
       "needs_success",
-      "awaiting_approval",
+      "awaiting_agent_review",
       "success",
       false,
       "current-awaiting-approval"
@@ -357,7 +357,13 @@ describe("coding lifecycle", () => {
 
   it("formats Ticket status text", () => {
     expect(ticketStatusText("paired")).toBe("paired");
-    expect(ticketStatusText("awaiting_approval")).toBe("awaiting approval");
+    expect(ticketStatusText("awaiting_user_review")).toBe("awaiting user review");
+  });
+
+  it("names each review route for the Ticket scope controls", () => {
+    expect(reviewRouteLabel("stop")).toBe("stop");
+    expect(reviewRouteLabel("agent_review")).toBe("agent review");
+    expect(reviewRouteLabel("user_review")).toBe("user review");
   });
 });
 

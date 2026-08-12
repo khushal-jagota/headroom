@@ -8,8 +8,9 @@
   import ScopePairPicker from "./ScopePairPicker.svelte";
   import { labelize } from "../lib/ui";
   import type { Lifecycle } from "../lib/lifecycle";
+  import type { ReviewRoute } from "../lib/types";
 
-  type ScopePair = { next_ceiling: string; at_cap: string };
+  type ScopePair = { next_ceiling: string; at_cap: ReviewRoute };
 
   let {
     mode,
@@ -21,6 +22,7 @@
     newStage = null,
     suggestedNextCeiling = null,
     lifecycle = null,
+    allowAgentReview = true,
     layout = "default",
     requireScope = false,
     disabled = false,
@@ -38,6 +40,7 @@
     newStage?: string | null;
     suggestedNextCeiling?: string | null;
     lifecycle?: Lifecycle | null;
+    allowAgentReview?: boolean;
     layout?: "default" | "review";
     requireScope?: boolean;
     disabled?: boolean;
@@ -125,7 +128,7 @@
       >
         {actionLabel}
       </Button>
-      {#if showScope}<ScopePairPicker {newStage} {suggestedNextCeiling} {lifecycle} bind:scope />{/if}
+      {#if showScope}<ScopePairPicker {newStage} {suggestedNextCeiling} {lifecycle} {allowAgentReview} bind:scope />{/if}
     </div>
   </div>
 {/snippet}

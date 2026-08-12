@@ -80,9 +80,9 @@ Ownership says whether the worker, user, or both drive the current Stage. A pair
 gets one automatic opening turn and then continues in the same Ticket conversation.
 
 Ticket status is separate control state: `empty`, `blocked`, `agent`, `paired`,
-`awaiting_approval`, `needs_user`, `user`, or `errored`. The Review screen contains
-today's approval and help requests. Workspace groups today's Tickets by this operating
-state.
+`awaiting_agent_review`, `awaiting_user_review`, `needs_user`, `user`, or `errored`.
+The Review screen contains today's user-review proposals and help requests. Workspace
+groups today's Tickets by this operating state.
 
 Read **Tickets & the gates** (`tickets-and-gates.md`) and **Worker types**
 (`worker-types.md`).

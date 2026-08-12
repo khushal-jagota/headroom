@@ -19,7 +19,11 @@ export type DayActionTile = {
 function groupKeyFor(ticket: DayTicket): string {
   if (ticket.is_done || ticket.stage === "done") return "done";
   if (ticket.waiting_to_closeout) return "waiting_to_closeout";
-  if (ticket.ticket_status === "awaiting_approval" && ticket.gating_field === "kickoff") {
+  if (
+    (ticket.ticket_status === "awaiting_agent_review" ||
+      ticket.ticket_status === "awaiting_user_review") &&
+    ticket.gating_field === "kickoff"
+  ) {
     return "waiting_for_kickoff";
   }
   return String(ticket.ticket_status);
@@ -52,7 +56,8 @@ export function dayVisualTicket(
   }
   if (
     presentation.state === "upcoming" &&
-    (group === "awaiting_approval" ||
+    (group === "awaiting_agent_review" ||
+      group === "awaiting_user_review" ||
       group === "waiting_for_kickoff" ||
       group === "needs_user")
   ) {
@@ -103,7 +108,10 @@ export function dayActionTiles(visualTickets: readonly DayVisualTicket[]): DayAc
   for (const visual of visualTickets) {
     if (visual.state === "needs-me") counts["needs-me"] += 1;
     else if (visual.state === "current-running") counts.working += 1;
-    else if (visual.state === "current-awaiting-approval") counts.review += 1;
+    else if (
+      visual.state === "current-awaiting-approval" &&
+      (visual.group === "awaiting_user_review" || visual.group === "waiting_for_kickoff")
+    ) counts.review += 1;
     else if (visual.state === "current-paired") counts.paired += 1;
     else if (visual.state === "completed") counts.done += 1;
   }

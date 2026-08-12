@@ -11,9 +11,8 @@ from planner.tickets.logic import machine
 from planner.worker_types.contracts import WorkerTypeDefinition
 
 _LEGACY_DIRECT_ACTOR: Final[str] = "human"
-DIRECT_ACTORS: Final[frozenset[str]] = frozenset(
-    {"unattributed", "chief", _LEGACY_DIRECT_ACTOR}
-)
+DIRECT_ACTORS: Final[frozenset[str]] = frozenset({"unattributed", "chief", _LEGACY_DIRECT_ACTOR})
+SPRINT_ITEM_SUPERVISOR_ACTOR: Final[str] = "sprint_item_supervisor"
 
 
 def is_direct_actor(actor: str) -> bool:
@@ -35,6 +34,15 @@ def require_worker_actor(actor: str, action: str) -> None:
         raise PlannerError(
             ErrorCode.agent_forbidden,
             f"{action} is only available to a Worker",
+            {"action": action, "actor": actor},
+        )
+
+
+def require_direct_or_supervisor_actor(actor: str, action: str) -> None:
+    if not is_direct_actor(actor) and actor != SPRINT_ITEM_SUPERVISOR_ACTOR:
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            f"{action} requires a direct user or Sprint Item supervisor",
             {"action": action, "actor": actor},
         )
 

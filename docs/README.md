@@ -16,6 +16,7 @@ browser and direct CLI ───────────────► domain w
                                                ▲
 Ticket Worker ──field proposal──► proposal resolver
                                                ▲
+Sprint Item supervisor ──agent review──────────┘
 planning Worker ──guarded claim──► Day or Sprint writer
 Chief ──external-work intake─────► Ticket reconciliation writer
 ```
@@ -28,6 +29,10 @@ resolver alone can settle its value or advance its Stage. Three planning Worker 
 also receive narrow authority to write their agreed Day or Sprint result at Closeout.
 The Chief can import reality established outside Panels through explicit reconciliation
 operations. Neither path is a general Ticket Stage setter.
+
+Each Ticket ceiling uses Stop, Agent review, or User review. Agent review parks for the
+exact owning Sprint Item supervisor. User Review contains only user-review proposals and
+explicit Worker help requests. Automatic supervisor delivery remains later work.
 
 ## The systems
 

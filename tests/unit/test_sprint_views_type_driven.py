@@ -61,7 +61,7 @@ def test_item_tickets_probe_child_decodes(
         actor="human",
         now=2,
         next_ceiling=NEEDS_ALPHA,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     file_proposal(tmp_db, probe.id, field=FIELD_ALPHA, body="alpha body", actor="agent", now=3)
 
@@ -73,7 +73,9 @@ def test_item_tickets_probe_child_decodes(
     assert row["id"] == probe.id
     assert row["stage"] == "needs_alpha"
     assert row["has_pending_proposal"] is True
-    assert row["ticket_status"] == "awaiting_approval"
+    assert row["ticket_status"] == "awaiting_user_review"
+    assert row["review_route"] == "user_review"
+    assert row["proposal_review_route"] == "user_review"
 
 
 def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
@@ -100,7 +102,7 @@ def test_item_tickets_coding_child_unchanged(tmp_db: Connection) -> None:
         actor="human",
         now=2,
         next_ceiling="needs_success",
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     file_proposal(tmp_db, child.id, field="success", body="s", actor="agent", now=3)
 

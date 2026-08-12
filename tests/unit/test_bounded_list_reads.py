@@ -127,7 +127,7 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
         filters=TicketListFilters(
             stages=("needs_kickoff", "needs_success"),
             excluded_stages=("needs_success",),
-            ticket_statuses=(TicketStatus.awaiting_approval, TicketStatus.errored),
+            ticket_statuses=(TicketStatus.awaiting_user_review, TicketStatus.errored),
             excluded_ticket_statuses=(TicketStatus.errored,),
             search="source",
         ),
@@ -157,7 +157,7 @@ def test_ticket_summary_filters_search_and_bounds_before_selection(
         page_request=ListPageRequest(),
         filters=TicketListFilters(
             stages=("needs_kickoff", "needs_success"),
-            ticket_statuses=(TicketStatus.awaiting_approval, TicketStatus.errored),
+            ticket_statuses=(TicketStatus.awaiting_user_review, TicketStatus.errored),
             excluded_ticket_statuses=(TicketStatus.errored,),
             search="source",
         ),

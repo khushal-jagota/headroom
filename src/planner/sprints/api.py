@@ -17,6 +17,7 @@ from planner.core.authctx import (
     require_direct_write,
     require_planning_write,
     require_sprint_item_supervisor_read,
+    require_sprint_item_supervisor_ticket_write,
     require_ticket_worker_write,
 )
 from planner.core.contracts import JsonDict, Priority
@@ -41,7 +42,9 @@ from planner.sprints.contracts import (
     MoveItemTicketBody,
     SprintItemSupervisorLaunchConfiguration,
 )
+from planner.tickets import actions as tickets_actions
 from planner.tickets import data as tickets_data
+from planner.tickets import views as tickets_views
 from planner.tickets.api import (
     Cfg,
     Clk,
@@ -49,10 +52,15 @@ from planner.tickets.api import (
     Ctx,
     DbConn,
     MessageFiles,
+    WorkerContext,
+    _marshal_accept,
+    _parse_next_ceiling,
+    _parse_scope_at_cap,
     body_opt_str,
     body_str,
     parse_enum,
 )
+from planner.worker_types.configuration import configured_worker_type_registry
 
 router = APIRouter()
 
@@ -240,6 +248,96 @@ async def get_item_supervisor_start_values(item_id: str, conn: DbConn, ctx: Ctx)
     }
 
 
+def _supervisor_ticket_field(conn: DbConn, ticket_id: str) -> tuple[str, Any]:
+    ticket = tickets_data.read_ticket(conn, ticket_id)
+    worker_type_definition = configured_worker_type_registry().require(ticket.worker_type)
+    field = worker_type_definition.gating_field(ticket.stage)
+    if field is None:
+        raise PlannerError(
+            ErrorCode.validation,
+            "ticket has no review field",
+            {"ticket_id": ticket_id, "stage": ticket.stage},
+        )
+    return field, worker_type_definition
+
+
+@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/approve")
+async def supervisor_approve_ticket(
+    item_id: str,
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
+    body = _marshal_accept(raw)
+    field, worker_type_definition = _supervisor_ticket_field(conn, ticket_id)
+    now = clk.now_unix()
+    ticket = tickets_data.accept_proposal(
+        conn,
+        ticket_id,
+        field=field,
+        actor=ctx.actor,
+        now=now,
+        edited_body=body["edited_body"],
+        next_ceiling=_parse_next_ceiling(body["next_ceiling"], worker_type_definition),
+        at_cap=_parse_scope_at_cap(body["at_cap"]),
+        supervisor_sprint_item_id=item_id,
+    )
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/reject")
+async def supervisor_reject_ticket(
+    item_id: str,
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    conversations: Conversations,
+    worker_context: WorkerContext,
+) -> JsonDict:
+    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
+    message = body_str(raw, "message")
+    now = clk.now_unix()
+    ticket = await tickets_actions.return_ticket_for_revision(
+        conversations,
+        worker_context,
+        conn,
+        ticket_id,
+        message=message,
+        actor=ctx.actor,
+        now=now,
+        supervisor_sprint_item_id=item_id,
+    )
+    return tickets_views.ticket_json(ticket, now)
+
+
+@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/transfer-to-user-review")
+async def supervisor_transfer_ticket_to_user_review(
+    item_id: str,
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, ticket_id)
+    if raw:
+        raise PlannerError(ErrorCode.validation, "transfer body must be empty", {})
+    now = clk.now_unix()
+    ticket = tickets_data.transfer_proposal_to_user_review(
+        conn,
+        ticket_id,
+        actor=ctx.actor,
+        now=now,
+        supervisor_sprint_item_id=item_id,
+    )
+    return tickets_views.ticket_json(ticket, now)
+
+
 @router.post("/items/{item_id}/supervisor/conversation/send")
 async def send_to_item_supervisor(
     item_id: str,
@@ -306,9 +404,7 @@ async def _send_to_item_supervisor(
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
         required_sprint_item_id=item_id,
     )
-    created_here = (
-        current is None and delivered.conversation_id == created_conversation_id
-    )
+    created_here = current is None and delivered.conversation_id == created_conversation_id
     if created_here or isinstance(delivered.fate, PromptDeliveryStarted):
         sprints_data.update_supervisor_launch_configuration(
             conn,
@@ -342,9 +438,7 @@ async def delete_item(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     require_direct_write(ctx)
-    deleted = await sprints_service.delete_item(
-        conversations, conn, item_id, actor=ctx.actor
-    )
+    deleted = await sprints_service.delete_item(conversations, conn, item_id, actor=ctx.actor)
     return {
         "ok": True,
         "sprint_item_id": deleted.sprint_item_id,

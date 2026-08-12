@@ -25,7 +25,7 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 PREVIOUS_REVISION = "ticket_status_reshape"
 # The database is brought all the way up, so it comes to rest at the current head rather
 # than at the revision this module is about.
-HEAD_REVISION = "sprint_item_supervisors"
+HEAD_REVISION = "ticket_review_routes"
 
 _EMPTY_CODING_FIELDS = json.dumps(
     {
@@ -214,7 +214,7 @@ def test_a_new_ticket_and_a_status_change_keep_the_column_current(
         actor="human",
         now=11_000,
         next_ceiling=NO_FURTHER,
-        at_cap=AtCap.propose,
+        at_cap=AtCap.user_review,
     )
     assert settled.ticket_status is not created.ticket_status
     assert _status_changed_at(upgraded, created.id) == 11_000

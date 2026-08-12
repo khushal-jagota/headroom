@@ -39,15 +39,15 @@ SCHEMA_V37_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "schema_
 # The revision that reshaped ticket statuses, and the current head: a fresh database is
 # built to it, and a database the ladder built is adopted at the baseline and brought to it.
 RESHAPE_REVISION = "ticket_status_reshape"
-HEAD_REVISION = "sprint_item_supervisors"
+HEAD_REVISION = "ticket_review_routes"
 
 # Later revisions add their durable tables, indexes, and immutability triggers.
 CURRENT_SCHEMA_OBJECT_COUNT = 49
 
 # The eight statuses the reshape left behind, as the CHECK constraint renders them.
 FINAL_TICKET_STATUS_CHECK = (
-    "ticket_status IN ('empty','blocked','agent','paired','awaiting_approval','needs_user',"
-    "'user','errored')"
+    "ticket_status IN ('empty','blocked','agent','paired','awaiting_agent_review',"
+    "'awaiting_user_review','needs_user','user','errored')"
 )
 
 # The names the reshape moved off. None of them survives, in the schema or in the rows.
@@ -116,10 +116,13 @@ def _with_the_conversation_link_renamed(
     "the same table, with exactly the column this build renamed renamed" — which is a
     claim a silent second change would still break.
     """
-    columns = [
-        ("conversation_id", *rest) if name == "employee_session_id" else (name, *rest)
-        for name, *rest in structure["columns"]  # type: ignore[attr-defined]
-    ]
+    columns = []
+    for name, kind, not_null, default, primary_key in structure["columns"]:  # type: ignore[attr-defined]
+        if name == "employee_session_id":
+            name = "conversation_id"
+        if name == "at_cap":
+            default = "'user_review'"
+        columns.append((name, kind, not_null, default, primary_key))
     return {**structure, "columns": columns}
 
 
@@ -341,7 +344,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
         "t_paired": "paired",
         "t_takeover": "user",
         "t_discussion": "paired",
-        "t_awaiting": "awaiting_approval",
+        "t_awaiting": "awaiting_user_review",
         "t_needs_user": "needs_user",
         "t_errored": "errored",
         "t_live_blocker": "empty",
@@ -374,7 +377,7 @@ def test_the_reshape_maps_every_old_ticket_status_and_derives_blocked(
     assert FINAL_TICKET_STATUS_CHECK in tickets_sql
     assert "length(title) <= 200" in tickets_sql
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
-    assert "at_cap IN ('stop','propose')" in tickets_sql
+    assert "at_cap IN ('stop','agent_review','user_review')" in tickets_sql
     assert "default_stage_ownership_mode IN ('worker','user','paired')" in tickets_sql
     for retired in RETIRED_TICKET_STATUSES:
         assert retired not in tickets_sql
@@ -921,7 +924,7 @@ def test_fresh_schema_has_worker_type_not_null_no_default_and_composite_index(
     assert "ceiling IN ('needs_success'" not in tickets_sql
     assert "length(title) <= 200" in tickets_sql
     assert "priority IN ('P0','P1','P2','P3')" in tickets_sql
-    assert "at_cap IN ('stop','propose')" in tickets_sql
+    assert "at_cap IN ('stop','agent_review','user_review')" in tickets_sql
     assert FINAL_TICKET_STATUS_CHECK in tickets_sql
     for retired in RETIRED_TICKET_STATUSES:
         assert retired not in tickets_sql

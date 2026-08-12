@@ -92,7 +92,7 @@ class _World:
                 actor="human",
                 now=0,
                 next_ceiling="none",
-                at_cap=AtCap.propose,
+                at_cap=AtCap.user_review,
             )
             if ownership_mode is not None:
                 tickets_data.set_stage_ownership(
