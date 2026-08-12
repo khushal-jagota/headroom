@@ -24,8 +24,7 @@ One screen per part of the system:
   go next" has been answered, both halves.
 - **Workspace** — today's tickets in a left rail backed by the board resource. “Today”
   follows the same 5am planning-day boundary as the Day screen; dropped tickets never
-  appear. The rail shows all visible tickets across their effective projects. A Ticket on a
-  Sprint Item uses that item's project; an unparented backlog Ticket uses its own project.
+  appear. The rail shows all visible tickets across their direct Projects.
   The Chief of Staff row leads the ticket groups. The rail groups the visible tickets into
   collapsible boxed groups in a fixed order that puts what needs the user
   first: Errored, Needs user, Waiting for Kickoff, User, Paired, Agent, Waiting to
@@ -99,12 +98,14 @@ One screen per part of the system:
   the same answer the conversation composer's model and effort pickers read. Changing
   it writes the stored Ticket choice but does not create a session. The first prompt attaches
   through that choice; accepting Kickoff may eagerly attach. Once Kickoff advances or the
-  Ticket has a conversation, the pill becomes read-only. Its project picker is backed by the shared
-  `projects` resource. Sprint placement is managed from Sprint Items, not from this
-  header.
+  Ticket has a conversation, the pill becomes read-only. Its Project, Sprint, and
+  optional Sprint Item controls edit one coherent Ticket placement. Changing Project or
+  Sprint clears an incompatible Item classification. The selectors use the shared
+  Project, Sprint, and Item resources.
 - **Sprint** — one tracking overview that presents Projects and their Sprint Items,
-  plus a dedicated view for each Item and a separate documents page. The overview
-  shows Item progress without Ticket rows. An Item view joins today's Day membership
+  plus a dedicated view for each Item and a separate documents page. The overview shows
+  Item progress and presents unclassified Tickets in a view-only Other group. Other has
+  no Item identity or route. An Item view joins today's Day membership
   to split its Tickets into on-today, off-today, and folded done work. Project priority
   orders the Project folds. The documents page presents Kickoff, Checkpoint, and Sprint
   Review. See `sprints.md`.
@@ -421,4 +422,4 @@ styling), `web/dist/` (built app served by FastAPI).
 
 ---
 
-_Last verified: 2026-08-09._
+_Last verified: 2026-08-12._

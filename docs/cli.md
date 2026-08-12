@@ -91,8 +91,10 @@ record shapes. Direct `show` commands also keep their full record shapes.
   context, the created Ticket has no pending proposal, so readiness can start its
   Worker-owned Kickoff. Supplying kickoff context creates the ordinary proposed Kickoff
   and waits for approval. By default each
-  occurrence resolves the current sprint's Project fallback item; `--sprint-item`
-  selects an exact item and `--backlog` keeps occurrences out of a sprint. Use
+  occurrence resolves direct placement in the current Sprint; `--sprint-item`
+  selects an exact coherent Item classification and `--backlog` keeps occurrences out
+  of a Sprint. The three planning Worker types use the Personal Project and that
+  Sprint's Planning Item. Use
   `schedule set … placement --value current-sprint|backlog` to switch the reusable
   placement mode. `show` includes its durable created, suppressed, or failed occurrence
   receipts. These commands
@@ -116,9 +118,15 @@ record shapes. Direct `show` commands also keep their full record shapes.
   values, proposal bodies, and user notes. Search keeps stable Ticket order and combines
   with placement filters and page controls. Results include Ticket state, placement, and
   a short recap preview. Search does not rank matches or return snippets.
-  `ticket set` names one field (`title`, `kickoff-note`, `priority`, `deadline`,
-  or `project` / `project-id`). Sprint placement is a sprint command,
-  not a ticket setter.
+  `ticket create` uses Today and the current Sprint when placement is omitted.
+  `--sprint <id|current>` selects a Sprint, `--backlog` selects no Sprint, and
+  `--sprint-item <id>` adds coherent Item classification.
+  `ticket set` names one field (`title`, `kickoff-note`, `priority`, or `deadline`).
+  `ticket place <ticket-id>` updates Project, Sprint, and optional Sprint Item as one
+  coherent change. Select a Project with `--project` or `--project-id`. Select a Sprint
+  with `--sprint <id|current>` or `--backlog`. Select classification with
+  `--sprint-item <id>` or `--clear-sprint-item`. Omitted dimensions keep their current
+  values, and the server rejects an incoherent final combination.
   `ticket delete` is a permanent direct operation
   and requires `--yes`.
 - **`ticket employee-configuration <id> --backend <key> --model <id> [--reasoning-effort <e>]`**
@@ -133,11 +141,11 @@ record shapes. Direct `show` commands also keep their full record shapes.
 - **`sprint create / list / show / set`** — plan sprints. `current` resolves through
   `/api/sprint/current`; `none` means the backlog where a list supports it.
 - **`sprint item create / list / show / set / move-ticket / move-ticket-to-backlog / block / unblock / delete`**
-  — manage Sprint Items and Ticket placement. Creating a Ticket is still `ticket
-  create`. `sprint item move-ticket <item-id> <ticket-id>` atomically moves an existing
-  Ticket from backlog or another item. `sprint item move-ticket-to-backlog <item-id>
-  <ticket-id>` compare-clears the named current item, so a stale command cannot detach
-  a Ticket that has since moved.
+  — manage Sprint Items and Ticket classification. Creating a Ticket is still `ticket
+  create`. `sprint item move-ticket <item-id> <ticket-id>` classifies an existing Ticket
+  and aligns its Project and Sprint. `sprint item move-ticket-to-backlog <item-id>
+  <ticket-id>` compares the named current Item before it moves the Ticket to backlog, so
+  a stale command cannot move a Ticket that was since reclassified.
   `sprint item block <item-id> --by <ticket-id>` records a Ticket blocking an item.
   Item status is read-only and derived from child tickets and active blocking links.
   `sprint item delete <item-id> --yes` permanently removes a childless item. An item

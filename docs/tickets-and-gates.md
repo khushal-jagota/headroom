@@ -110,12 +110,15 @@ scope, and ownership-derived resting status together. A validation or concurrenc
 failure leaves the ticket exactly as it was. Committing is itself what tells the
 readiness loop to look again.
 
-An unparented backlog Ticket may point at a project by `project_id`. A Ticket under a
-Sprint Item derives its Project and effective sprint from that item. Ticket responses
-expose `sprint_item_id`, `effective_sprint_id`, and `resolved_priority_anchors`; they do
-not expose or accept a direct Ticket `sprint_id`. The resolved anchors name the Sprint
-Item and Project, with each anchor's priority state, so callers can explain the context
-used at creation. The `project` display name remains in responses for compatibility.
+Every Ticket stores its Project and optional Sprint directly. A `null` Sprint means
+backlog. A Ticket can also name one optional Sprint Item whose Project and Sprint match
+the Ticket. The compound placement writer rejects mismatched combinations and clears a
+classification that no longer matches a changed Project or Sprint.
+
+Ticket responses expose `project_id`, `sprint_id`, `sprint_item_id`, and
+`resolved_priority_anchors`. `effective_sprint_id` remains a compatibility alias for the
+direct Sprint. The resolved anchors name the optional Sprint Item and Project, with each
+anchor's priority state. The `project` display name also remains for compatibility.
 
 If creation does not supply a Ticket priority, Panels uses the Sprint Item priority
 when the Ticket has an item, otherwise the assessed Project priority, otherwise P3. An
@@ -161,9 +164,8 @@ link engine.
 
 ### Ordinary Ticket edits
 
-One ordinary edit may change a Ticket's title, priority, deadline, and project
-together. Sprint placement belongs to the Sprint Item writer. Panels checks the whole
-request before saving any of it. All requested
+One ordinary edit may change a Ticket's title, priority, deadline, Project, Sprint, and
+optional Sprint Item together. Panels checks the whole request before saving any of it. All requested
 changes succeed together or none do, and the history records
 only fields that really changed. Sending values the Ticket already has leaves it
 unchanged.
@@ -321,8 +323,8 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
   Worker identity hold no approval verb or authority.
 - **The front end** (`frontend.md`) — the Ticket, Review, and Board screens that
   render a ticket's story and carry the human's decisions.
-- **Projects** (`projects.md`) — the catalog used directly by backlog Tickets and
-  inherited through Sprint Items by scheduled Tickets.
+- **Projects** (`projects.md`) — the catalog that Tickets, Sprint Items, and Ideas use
+  directly.
 
 ## Deferred
 
@@ -331,4 +333,4 @@ _Code paths:_ `src/planner/tickets/data.py`, `src/planner/tickets/api.py`,
 
 ---
 
-_Last verified: 2026-08-10._
+_Last verified: 2026-08-12._

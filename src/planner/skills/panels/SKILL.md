@@ -11,8 +11,10 @@ The planning system has these pieces:
 
 - A **day** is what the user wants to get done on a planning date.
 - A **sprint** is a fixed seven-day period.
-- A **sprint item** is a goal or outcome inside a sprint, or in the backlog when unscheduled.
-- A **ticket** is one unit of work, often done by an agent alongside the user.
+- A **sprint item** is an optional goal or outcome classification inside a sprint, or
+  a backlog item when unscheduled.
+- A **ticket** is one unit of work with direct Project and optional Sprint placement,
+  often done by an agent alongside the user.
 - An **idea** is a loose thought that may or may not become committed work.
 
 Tickets have a Worker type that sets their stages and worker. Worker types include
@@ -55,6 +57,9 @@ Panels schedules ordinary planning Tickets and hands each one to its specialist 
 - `planning-midday-check` checks execution against the morning intent.
 - A personal Checkpoint Ticket prompts reflection at 17:00 on sprint day four.
 - `planning-sprint` reviews the current sprint and plans the next at the boundary.
+
+The three planning Worker types use the Personal Project and each Sprint's Planning
+Item. Initiative Planning stays with its initiative.
 
 The 05:00 boundary determines which Day and sprint day are current. It does not run a
 separate rollover workflow. The Planning Sprint Ticket stays at 17:00 on the final day.

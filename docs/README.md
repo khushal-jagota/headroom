@@ -2,7 +2,9 @@
 
 Panels is a personal planning and work system that runs on one host. Its record contains
 **Days**, **Sprints**, **Sprint Items**, **Tickets**, **Ideas**, and **Projects**. Tickets
-can carry work for an AI Worker, paired work, or user-owned personal tasks.
+can carry work for an AI Worker, paired work, or user-owned personal tasks. Each Ticket
+owns its Project and optional Sprint placement. A Sprint Item is an optional outcome
+classification, not the container that places a Ticket in a Sprint.
 
 This is the entry point. Read it to find which system owns a question, then read
 that system's doc.
@@ -67,8 +69,8 @@ operations. Neither path is a general Ticket Stage setter.
 
 - **Days** (`days.md`) — the Home daily hub, the 5am boundary, and the scheduled
   `planning-day` and `planning-midday-check` Workers.
-- **Sprints** (`sprints.md`) — Project and Sprint Item tracking, each Item's dedicated
-  view, and the Sprint documents.
+- **Sprints** (`sprints.md`) — direct Ticket placement, optional Sprint Item
+  classification, Project tracking, and the Sprint documents.
 - **Backlog & Ideas** (`backlog-and-ideas.md`) — the two catch surfaces.
 - **Projects** (`projects.md`) — the data-backed project catalog.
 
@@ -87,5 +89,5 @@ operations. Neither path is a general Ticket Stage setter.
 
 ---
 
-_Last verified: 2026-08-09 · Covers the system landscape; each doc carries its own
+_Last verified: 2026-08-12 · Covers the system landscape; each doc carries its own
 code paths._
