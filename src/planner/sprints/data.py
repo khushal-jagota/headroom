@@ -731,73 +731,67 @@ def delete_item(
     anything.
     """
     admission.require_direct_actor(actor, "delete_item")
-    item = _load_item(conn, item_id)
-    # Verify the childless rule before files move. The same check repeats under the
-    # transaction because another writer can race this early read.
-    early_ticket_ids = [
-        str(row["id"])
-        for row in conn.execute(
-            "SELECT id FROM tickets WHERE sprint_item_id=? ORDER BY id", (item_id,)
-        ).fetchall()
-    ]
-    if early_ticket_ids:
-        raise PlannerError(
-            ErrorCode.validation,
-            "sprint item has child tickets",
-            {"sprint_item_id": item_id, "ticket_ids": early_ticket_ids},
-        )
+    require_item_can_delete(conn, item_id)
     quarantined = quarantine_sprint_item_files(conn, item_id)
     try:
         with _tx(conn):
-            item = _load_item(conn, item_id)
-            ticket_ids = tuple(
-                str(row["id"])
-                for row in conn.execute(
-                    "SELECT id FROM tickets WHERE sprint_item_id = ? ORDER BY id",
-                    (item_id,),
-                ).fetchall()
-            )
-            if ticket_ids:
-                raise PlannerError(
-                    ErrorCode.validation,
-                    "sprint item has child tickets",
-                    {"sprint_item_id": item_id, "ticket_ids": list(ticket_ids)},
-                )
-
-            link_rows = conn.execute(
-                "SELECT from_id, to_id, kind FROM links "
-                "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
-                (item_id, item_id),
-            ).fetchall()
-            linked_entity_ids = tuple(
-                sorted(
-                    {
-                        str(row["to_id"] if row["from_id"] == item_id else row["from_id"])
-                        for row in link_rows
-                    }
-                )
-            )
-            sprint_ids = (item.sprint_id,) if item.sprint_id is not None else ()
-
-            for row in link_rows:
-                conn.execute(
-                    "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
-                    (str(row["from_id"]), str(row["to_id"]), str(row["kind"])),
-                )
-
-            conn.execute("DELETE FROM sprint_items WHERE id = ?", (item_id,))
-            conn.execute("DELETE FROM agents WHERE agent_key = ?", (item.supervisor_agent_key,))
-            deleted = SprintItemDeletion(
-                sprint_item_id=item_id,
-                title=item.title,
-                sprint_ids=sprint_ids,
-                linked_entity_ids=linked_entity_ids,
-            )
+            deleted = delete_item_rows(conn, item_id)
     except BaseException:
         restore_quarantined_sprint_item_files(quarantined)
         raise
     purge_quarantined_sprint_item_files(quarantined)
     return deleted
+
+
+def require_item_can_delete(conn: sqlite3.Connection, item_id: str) -> SprintItem:
+    item = _load_item(conn, item_id)
+    ticket_ids = [
+        str(row["id"])
+        for row in conn.execute(
+            "SELECT id FROM tickets WHERE sprint_item_id=? ORDER BY id", (item_id,)
+        ).fetchall()
+    ]
+    if ticket_ids:
+        raise PlannerError(
+            ErrorCode.validation,
+            "sprint item has child tickets",
+            {"sprint_item_id": item_id, "ticket_ids": ticket_ids},
+        )
+    return item
+
+
+def delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDeletion:
+    """Delete one verified item inside the caller's transaction."""
+    item = require_item_can_delete(conn, item_id)
+    link_rows = conn.execute(
+        "SELECT from_id, to_id, kind FROM links "
+        "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",
+        (item_id, item_id),
+    ).fetchall()
+    linked_entity_ids = tuple(
+        sorted(
+            {
+                str(row["to_id"] if row["from_id"] == item_id else row["from_id"])
+                for row in link_rows
+            }
+        )
+    )
+    sprint_ids = (item.sprint_id,) if item.sprint_id is not None else ()
+
+    for row in link_rows:
+        conn.execute(
+            "DELETE FROM links WHERE from_id = ? AND to_id = ? AND kind = ?",
+            (str(row["from_id"]), str(row["to_id"]), str(row["kind"])),
+        )
+
+    conn.execute("DELETE FROM sprint_items WHERE id = ?", (item_id,))
+    conn.execute("DELETE FROM agents WHERE agent_key = ?", (item.supervisor_agent_key,))
+    return SprintItemDeletion(
+        sprint_item_id=item_id,
+        title=item.title,
+        sprint_ids=sprint_ids,
+        linked_entity_ids=linked_entity_ids,
+    )
 
 
 # --- reads ----------------------------------------------------------------------

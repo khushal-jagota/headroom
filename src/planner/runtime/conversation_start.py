@@ -575,6 +575,7 @@ async def start_agent_conversation(
     values: ConversationStartValues,
     *,
     conversation_id: str,
+    required_sprint_item_id: str | None = None,
 ) -> LinkedConversation:
     """Start a conversation for an agent that is not a Ticket, under a minted name.
 
@@ -596,12 +597,28 @@ async def start_agent_conversation(
         )
     )
     with conn:
-        conn.execute(
-            "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
-            "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
-            "WHERE agents.conversation_id IS NULL",
-            (agent_key, conversation_id),
-        )
+        if required_sprint_item_id is None:
+            conn.execute(
+                "INSERT INTO agents (agent_key, conversation_id) VALUES (?, ?) "
+                "ON CONFLICT(agent_key) DO UPDATE SET conversation_id = excluded.conversation_id "
+                "WHERE agents.conversation_id IS NULL",
+                (agent_key, conversation_id),
+            )
+        else:
+            linked = conn.execute(
+                "UPDATE agents SET conversation_id=? WHERE agent_key=? "
+                "AND conversation_id IS NULL AND EXISTS ("
+                "SELECT 1 FROM sprint_items WHERE id=? AND kind='normal' "
+                "AND supervisor_agent_key=agents.agent_key)",
+                (conversation_id, agent_key, required_sprint_item_id),
+            )
+            if linked.rowcount == 0 and read_agent_conversation(conn, agent_key) is None:
+                await system.kill(conversation_id)
+                raise PlannerError(
+                    ErrorCode.not_found,
+                    "Sprint Item supervisor no longer exists",
+                    {"sprint_item_id": required_sprint_item_id},
+                )
     now_in = read_agent_conversation(conn, agent_key) or conversation_id
     return LinkedConversation(conversation_id=now_in, made_here=now_in == conversation_id)
 
@@ -620,6 +637,7 @@ async def send_to_agent_conversation(
     mode: PromptDeliveryMode = PromptDeliveryMode.run_when_free,
     sender_message_id: str | None = None,
     sent_at_unix_milliseconds: int | None = None,
+    required_sprint_item_id: str | None = None,
 ) -> DeliveredMessage:
     """Send a message into this agent's conversation, making one if there is none yet.
 
@@ -634,7 +652,12 @@ async def send_to_agent_conversation(
             return _no_turn_to_steer_into()
         making = created_conversation_id or new_conversation_id()
         linked = await start_agent_conversation(
-            system, conn, agent_key, values, conversation_id=making
+            system,
+            conn,
+            agent_key,
+            values,
+            conversation_id=making,
+            required_sprint_item_id=required_sprint_item_id,
         )
         if linked.made_here:
             # Made here, on the values this message says it runs under, so the message has

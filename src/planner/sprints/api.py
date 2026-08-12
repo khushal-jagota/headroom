@@ -11,10 +11,7 @@ from typing import Any
 from fastapi import APIRouter
 
 from planner.conversation.api import OwnerSendBody, conversation_message_content, delivery_fate_json
-from planner.conversation.contracts import (
-    PromptDeliveryRefused,
-    require_conversation_backend_key,
-)
+from planner.conversation.contracts import PromptDeliveryStarted, require_conversation_backend_key
 from planner.core.authctx import (
     reject_agent_fields,
     require_direct_write,
@@ -31,6 +28,7 @@ from planner.projects import data as projects_data
 from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 from planner.sprints import data as sprints_data
+from planner.sprints import service as sprints_service
 from planner.sprints import views as sprints_views
 from planner.sprints.contracts import (
     KICKOFF_FIELDS,
@@ -253,6 +251,21 @@ async def send_to_item_supervisor(
     clk: Clk,
 ) -> JsonDict:
     require_direct_write(ctx)
+    async with sprints_service.supervisor_lifecycle_lock(item_id):
+        return await _send_to_item_supervisor(
+            item_id, body, conn, ctx, conversations, message_files, clk
+        )
+
+
+async def _send_to_item_supervisor(
+    item_id: str,
+    body: OwnerSendBody,
+    conn: DbConn,
+    ctx: Ctx,
+    conversations: Conversations,
+    message_files: MessageFiles,
+    clk: Clk,
+) -> JsonDict:
     item = sprints_data.read_item(conn, item_id).item
     created_conversation_id = conversation_start.new_conversation_id()
     overrides = ConversationStartOverrides(
@@ -263,6 +276,16 @@ async def send_to_item_supervisor(
         reasoning_effort=body.reasoning_effort,
     )
     current = conversation_start.read_agent_conversation(conn, item.supervisor_agent_key)
+    if (
+        current is not None
+        and overrides.backend_key is not None
+        and overrides.backend_key != item.supervisor_launch_configuration.employee_backend
+    ):
+        raise PlannerError(
+            ErrorCode.validation,
+            "an existing supervisor conversation cannot change backend",
+            {"conversation_id": current, "backend_key": overrides.backend_key.value},
+        )
     resolved_start = conversation_start.sprint_item_supervisor_resolve(item, overrides)
     delivered = await conversation_start.send_to_agent_conversation(
         conversations,
@@ -281,8 +304,12 @@ async def send_to_item_supervisor(
         mode=body.mode,
         sender_message_id=body.sender_message_id,
         sent_at_unix_milliseconds=body.sent_at_unix_milliseconds,
+        required_sprint_item_id=item_id,
     )
-    if not isinstance(delivered.fate, PromptDeliveryRefused):
+    created_here = (
+        current is None and delivered.conversation_id == created_conversation_id
+    )
+    if created_here or isinstance(delivered.fate, PromptDeliveryStarted):
         sprints_data.update_supervisor_launch_configuration(
             conn,
             item_id,
@@ -302,17 +329,22 @@ async def reset_item_supervisor(
     item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
 ) -> JsonDict:
     require_direct_write(ctx)
-    item = sprints_data.read_item(conn, item_id).item
-    await conversation_start.reset_agent_conversation(
-        conversations, conn, item.supervisor_agent_key
-    )
+    async with sprints_service.supervisor_lifecycle_lock(item_id):
+        item = sprints_data.read_item(conn, item_id).item
+        await conversation_start.reset_agent_conversation(
+            conversations, conn, item.supervisor_agent_key
+        )
     return {"conversation_id": None}
 
 
 @router.delete("/items/{item_id}")
-async def delete_item(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+async def delete_item(
+    item_id: str, conn: DbConn, ctx: Ctx, conversations: Conversations
+) -> JsonDict:
     require_direct_write(ctx)
-    deleted = sprints_data.delete_item(conn, item_id, actor=ctx.actor)
+    deleted = await sprints_service.delete_item(
+        conversations, conn, item_id, actor=ctx.actor
+    )
     return {
         "ok": True,
         "sprint_item_id": deleted.sprint_item_id,

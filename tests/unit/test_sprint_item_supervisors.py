@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 from alembic import command
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from planner.conversation.contracts import ConversationStartRequest
 from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
+from planner.conversation.message_content import text_message_content
 from planner.core import db as db_module
-from planner.core.clock import build_clock
+from planner.core.clock import RealClock, build_clock
 from planner.core.config import load_config
 from planner.core.db import connect, create_schema
+from planner.core.errors import PlannerError
 from planner.core.server import create_app
+from planner.runtime import conversation_start
+from planner.sprints import data as sprints_data
+from planner.sprints import service as sprints_service
 
 
 def _app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -155,6 +163,145 @@ def test_deleted_item_refuses_its_stale_supervisor_identity(tmp_path: Path) -> N
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "agent_forbidden"
+
+
+def test_deleting_an_item_stops_its_active_supervisor(tmp_path: Path) -> None:
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        sent = client.post(
+            f"/api/items/{item['id']}/supervisor/conversation/send",
+            json={
+                "content": [{"piece": "text", "text": "Working"}],
+                "sender_label": "owner",
+            },
+        ).json()
+        conversation_id = sent["conversation_id"]
+        system = cast(InMemoryConversationSystem, app.state.conversation_system)
+        assert asyncio.run(system.is_running(conversation_id)) is True
+        deleted = client.delete(f"/api/items/{item['id']}")
+
+    assert deleted.status_code == 200, deleted.text
+    assert asyncio.run(system.is_running(conversation_id)) is False
+    with connect(str(db_path)) as conn:
+        assert conn.execute(
+            "SELECT 1 FROM agents WHERE agent_key=?",
+            (item["supervisor"]["agent_key"],),
+        ).fetchone() is None
+
+
+def test_queued_override_does_not_replace_the_saved_launch_choice(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        first = client.post(
+            f"/api/items/{item['id']}/supervisor/conversation/send",
+            json={
+                "content": [{"piece": "text", "text": "First"}],
+                "sender_label": "owner",
+            },
+        ).json()
+        queued = client.post(
+            f"/api/items/{item['id']}/supervisor/conversation/send",
+            json={
+                "conversation_id": first["conversation_id"],
+                "model": "gpt-5.6-terra",
+                "reasoning_effort": "high",
+                "content": [{"piece": "text", "text": "Later"}],
+                "sender_label": "owner",
+            },
+        )
+        shown = client.get(f"/api/items/{item['id']}/supervisor").json()
+        client.post(f"/api/items/{item['id']}/supervisor/conversation/reset")
+
+    assert queued.json()["fate"] == "queued"
+    assert shown["launch_configuration"] == {
+        "employee_backend": "codex",
+        "employee_launch_model": "gpt-5.6-sol",
+        "employee_launch_reasoning_effort": "medium",
+    }
+
+
+def test_existing_conversation_rejects_a_backend_override(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        first = client.post(
+            f"/api/items/{item['id']}/supervisor/conversation/send",
+            json={
+                "content": [{"piece": "text", "text": "First"}],
+                "sender_label": "owner",
+            },
+        ).json()
+        changed = client.post(
+            f"/api/items/{item['id']}/supervisor/conversation/send",
+            json={
+                "conversation_id": first["conversation_id"],
+                "backend_key": "hermes",
+                "model": "openai-codex:gpt-5.6-sol",
+                "content": [{"piece": "text", "text": "Move"}],
+                "sender_label": "owner",
+            },
+        )
+
+    assert changed.json()["error"]["code"] == "validation"
+
+
+class _PausedStartSystem(InMemoryConversationSystem):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def start_conversation(self, request: ConversationStartRequest) -> None:
+        await super().start_conversation(request)
+        self.started.set()
+        await self.release.wait()
+
+
+def test_delete_between_backend_start_and_link_cannot_recreate_the_agent(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        db_path = tmp_path / "race.db"
+        sender = connect(str(db_path))
+        create_schema(sender)
+        clock = RealClock()
+        item = sprints_data.create_item(
+            sender,
+            title="Racing",
+            project_id="project_vylo",
+            clock=clock,
+        )
+        deleter = connect(str(db_path))
+        system = _PausedStartSystem()
+        created_id = conversation_start.new_conversation_id()
+        send = asyncio.create_task(
+            conversation_start.send_to_agent_conversation(
+                system,
+                sender,
+                item.supervisor_agent_key,
+                text_message_content("Hello"),
+                conversation_start.sprint_item_supervisor_resolve(item),
+                conversation_id=None,
+                created_conversation_id=created_id,
+                sender_label="owner",
+                required_sprint_item_id=item.id,
+            )
+        )
+        await system.started.wait()
+        await sprints_service.delete_item(system, deleter, item.id, actor="human")
+        system.release.set()
+        with pytest.raises(PlannerError, match="no longer exists"):
+            await send
+        assert await system.is_running(created_id) is False
+        assert sender.execute(
+            "SELECT 1 FROM agents WHERE agent_key=?", (item.supervisor_agent_key,)
+        ).fetchone() is None
+        sender.close()
+        deleter.close()
+
+    asyncio.run(scenario())
 
 
 def test_migration_backfills_normal_items_without_starting_conversations(
