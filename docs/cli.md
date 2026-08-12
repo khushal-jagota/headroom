@@ -207,13 +207,14 @@ Project-aware commands accept `--project-id` as the preferred selector and keep
 `--project` as legacy name compatibility. Passing both is allowed only when they
 resolve to the same project.
 
-## Planning Worker identity
+## Ticket Worker identity
 
 A Ticket worker runs with `PLAN_ACTOR=worker` and its own `PLAN_TICKET_ID`. The CLI
 forwards those as `X-Plan-Actor` and `X-Plan-Ticket-ID`, including when the worker uses
-an ordinary planning command. The server checks the claimed Ticket’s stored Worker type.
-Only the exact `planning-day`, `planning-midday-check`, and `planning-sprint`
-capabilities receive their narrow day or sprint writes.
+an ordinary command. The server checks that the claimed Ticket exists. Any Ticket
+worker can use the existing commands that move Tickets and add or remove blocking
+links. The exact `planning-day`, `planning-midday-check`, and `planning-sprint`
+Worker types keep their other narrow day or sprint writes.
 
 This is a truthful local process claim, like the existing actor header, not a
 cryptographic login or bearer token. Requests arriving through trusted remote ingress
