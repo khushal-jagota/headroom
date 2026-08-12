@@ -18,11 +18,6 @@ from planner.core.clock import Clock
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
 from planner.core.ids import ID_PREFIXES, new_id
-from planner.files.lifecycle import (
-    purge_quarantined_sprint_item_files,
-    quarantine_sprint_item_files,
-    restore_quarantined_sprint_item_files,
-)
 from planner.sprints.contracts import (
     KICKOFF_FIELDS,
     MID_SPRINT_FIELDS,
@@ -716,34 +711,7 @@ def update_item(
     return _load_item(conn, item_id)
 
 
-def delete_item(
-    conn: sqlite3.Connection,
-    item_id: str,
-    *,
-    actor: str,
-) -> SprintItemDeletion:
-    """Permanently remove a childless Sprint Item and its reference footprint.
-
-    What was removed comes back to the caller — the item, the sprints it sat in, and
-    everything that was linked to it — because those are the things whose own screens
-    just changed. Nothing is written down about the removal: the commit announces
-    itself, and a row describing a row that no longer exists is not a record of
-    anything.
-    """
-    admission.require_direct_actor(actor, "delete_item")
-    require_item_can_delete(conn, item_id)
-    quarantined = quarantine_sprint_item_files(conn, item_id)
-    try:
-        with _tx(conn):
-            deleted = delete_item_rows(conn, item_id)
-    except BaseException:
-        restore_quarantined_sprint_item_files(quarantined)
-        raise
-    purge_quarantined_sprint_item_files(quarantined)
-    return deleted
-
-
-def require_item_can_delete(conn: sqlite3.Connection, item_id: str) -> SprintItem:
+def _require_item_can_delete(conn: sqlite3.Connection, item_id: str) -> SprintItem:
     item = _load_item(conn, item_id)
     ticket_ids = [
         str(row["id"])
@@ -760,9 +728,9 @@ def require_item_can_delete(conn: sqlite3.Connection, item_id: str) -> SprintIte
     return item
 
 
-def delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDeletion:
+def _delete_item_rows(conn: sqlite3.Connection, item_id: str) -> SprintItemDeletion:
     """Delete one verified item inside the caller's transaction."""
-    item = require_item_can_delete(conn, item_id)
+    item = _require_item_can_delete(conn, item_id)
     link_rows = conn.execute(
         "SELECT from_id, to_id, kind FROM links "
         "WHERE from_id = ? OR to_id = ? ORDER BY from_id, to_id, kind",

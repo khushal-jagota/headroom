@@ -10,17 +10,20 @@ no audit row to assert and none of these tests looks for one.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from sqlite3 import Connection
 
 import pytest
 
+from planner.conversation.in_memory_conversation_system import InMemoryConversationSystem
 from planner.core import links as core_links
 from planner.core.clock import TestClock as PlannerTestClock
 from planner.core.contracts import LinkKind
 from planner.core.errors import ErrorCode, PlannerError
 from planner.sprints import data as sprints_data
-from planner.sprints.contracts import SprintItem
+from planner.sprints import service as sprints_service
+from planner.sprints.contracts import SprintItem, SprintItemDeletion
 from planner.tickets import data as tickets_data
 from planner.tickets.contracts import TITLE_MAX_CHARS
 
@@ -38,6 +41,16 @@ def _item(
         project_id="project_vylo",
         sprint_id=sprint_id,
         clock=clock,
+    )
+
+
+def _delete(
+    conn: Connection, item_id: str, *, actor: str = "human"
+) -> SprintItemDeletion:
+    return asyncio.run(
+        sprints_service.delete_item(
+            InMemoryConversationSystem(), conn, item_id, actor=actor
+        )
     )
 
 
@@ -68,7 +81,7 @@ def test_delete_item_removes_the_item_and_its_links_and_names_what_changed(
     )
     core_links.add_link(tmp_db, blocker.id, item.id, LinkKind.blocks, now)
 
-    deleted = sprints_data.delete_item(tmp_db, item.id, actor="human")
+    deleted = _delete(tmp_db, item.id)
 
     assert deleted.sprint_item_id == item.id
     assert deleted.title == "Redundant item"
@@ -109,7 +122,7 @@ def test_delete_item_refuses_ordered_child_tickets_without_changes(
         )
 
     with pytest.raises(PlannerError) as exc:
-        sprints_data.delete_item(tmp_db, item.id, actor="human")
+        _delete(tmp_db, item.id)
 
     assert exc.value.code is ErrorCode.validation
     assert exc.value.message == "sprint item has child tickets"
@@ -129,12 +142,12 @@ def test_delete_item_rejects_agent_and_missing_item(
 ) -> None:
     item = _item(tmp_db, fake_clock, "Direct only")
     with pytest.raises(PlannerError) as agent_exc:
-        sprints_data.delete_item(tmp_db, item.id, actor="agent")
+        _delete(tmp_db, item.id, actor="agent")
     assert agent_exc.value.code is ErrorCode.agent_forbidden
     assert sprints_data.read_item(tmp_db, item.id).item.id == item.id
 
     with pytest.raises(PlannerError) as missing_exc:
-        sprints_data.delete_item(tmp_db, "si_missing", actor="human")
+        _delete(tmp_db, "si_missing")
     assert missing_exc.value.code is ErrorCode.not_found
     assert missing_exc.value.detail == {"id": "si_missing"}
 
@@ -160,7 +173,7 @@ def test_delete_item_removes_agent_and_files_but_keeps_conversation_history(
     managed.parent.mkdir(parents=True)
     managed.write_text("brief", encoding="utf-8")
 
-    sprints_data.delete_item(tmp_db, item.id, actor="human")
+    _delete(tmp_db, item.id)
 
     assert not managed.exists()
     assert (
@@ -192,7 +205,41 @@ def test_delete_item_restores_quarantined_files_when_the_database_refuses(
     )
 
     with pytest.raises(Exception, match="refused for test"):
-        sprints_data.delete_item(tmp_db, item.id, actor="human")
+        _delete(tmp_db, item.id)
 
     assert managed.read_text(encoding="utf-8") == "brief"
     assert sprints_data.read_item(tmp_db, item.id).item.id == item.id
+
+
+class _FilesRecreatedOnKill(InMemoryConversationSystem):
+    def __init__(self, target: Path) -> None:
+        super().__init__()
+        self._target = target
+
+    async def kill(self, conversation_id: str) -> None:
+        await super().kill(conversation_id)
+        self._target.parent.mkdir(parents=True, exist_ok=True)
+        self._target.write_text("created during kill", encoding="utf-8")
+
+
+def test_delete_quarantines_files_created_while_the_supervisor_stops(
+    tmp_db: Connection,
+    fake_clock: PlannerTestClock,
+) -> None:
+    item = _item(tmp_db, fake_clock, "Kill creates files")
+    db_path = Path(tmp_db.execute("PRAGMA database_list").fetchone()[2])
+    managed = db_path.parent / "files" / "sprint-items" / item.id / "late.md"
+    tmp_db.execute(
+        "UPDATE agents SET conversation_id='conv_active' WHERE agent_key=?",
+        (item.supervisor_agent_key,),
+    )
+
+    asyncio.run(
+        sprints_service.delete_item(
+            _FilesRecreatedOnKill(managed), tmp_db, item.id, actor="human"
+        )
+    )
+
+    quarantine = db_path.parent / "files" / ".sprint-item-quarantine"
+    assert not managed.exists()
+    assert not list(quarantine.glob(f"{item.id}.*"))

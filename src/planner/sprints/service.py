@@ -37,11 +37,11 @@ async def delete_item(
     """Stop the supervisor and delete its childless item as one guarded action."""
     admission.require_direct_actor(actor, "delete_item")
     async with supervisor_lifecycle_lock(item_id):
-        sprints_data.require_item_can_delete(conn, item_id)
-        quarantined = quarantine_sprint_item_files(conn, item_id)
+        sprints_data._require_item_can_delete(conn, item_id)
+        quarantined = None
         try:
             while True:
-                item = sprints_data.require_item_can_delete(conn, item_id)
+                item = sprints_data._require_item_can_delete(conn, item_id)
                 conversation_id = conversation_start.read_agent_conversation(
                     conn, item.supervisor_agent_key
                 )
@@ -55,14 +55,15 @@ async def delete_item(
                         )
 
                 conn.execute("BEGIN IMMEDIATE")
-                item = sprints_data.require_item_can_delete(conn, item_id)
+                item = sprints_data._require_item_can_delete(conn, item_id)
                 late_conversation_id = conversation_start.read_agent_conversation(
                     conn, item.supervisor_agent_key
                 )
                 if late_conversation_id is not None:
                     conn.execute("ROLLBACK")
                     continue
-                deleted = sprints_data.delete_item_rows(conn, item_id)
+                quarantined = quarantine_sprint_item_files(conn, item_id)
+                deleted = sprints_data._delete_item_rows(conn, item_id)
                 conn.execute("COMMIT")
                 break
         except BaseException:
