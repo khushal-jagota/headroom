@@ -114,10 +114,11 @@ assert.match(ticketRouteSource, /\/api\/tickets\/\$\{stableId\}\/human-reply/);
 assert.doesNotMatch(ticketRouteSource, /pristineKickoff|employeeBackendOptions|\/employee-backend/);
 assert.doesNotMatch(ticketRouteSource, /["'](?:hermes|codex|claude(?: code)?)["']/i);
 assert.doesNotMatch(ticketRouteSource, /<style>|settings|employee backend|ACP backend/i);
-// Sprint placement belongs to the Sprint surface; the redesigned Ticket identity keeps
-// only priority, project, and Worker identity.
-assert.doesNotMatch(ticketRouteSource, /data-sprint-item-control|\/api\/items\//);
-assert.doesNotMatch(ticketRouteSource, /detail\.sprint_id|body: \{ sprint_id/);
+// Ticket placement is one compound Project, Sprint, and optional Sprint Item edit.
+assert.match(ticketRouteSource, /data-ticket-placement/);
+assert.match(ticketRouteSource, /data-sprint-control/);
+assert.match(ticketRouteSource, /data-sprint-item-control/);
+assert.match(ticketRouteSource, /project_id: projectId, sprint_id: sprintId, sprint_item_id: sprintItemId/);
 
 // Sprint tracking joins the Sprint, Project, and Today resources in the browser. Its
 // overview contains Project folds and linked Sprint Item rows, while Ticket rows and
@@ -129,14 +130,15 @@ assert.match(sprintRouteSource, /sprintDayLabel\(sprint, current\.data\.planning
 assert.match(sprintRouteSource, /name: "Checkpoint", meta: "day four"/);
 assert.doesNotMatch(sprintRouteSource, /Mid-sprint Review|mid-sprint review/);
 assert.match(sprintRouteSource, /variant="workspace-bucket"/);
-assert.match(sprintRouteSource, /data-item-kind=\{item\.kind\}/);
 assert.match(sprintRouteSource, /data-item-status=\{item\.status\}/);
 assert.match(sprintRouteSource, /#\/sprint\?item=\$\{encodeURIComponent\(item\.id\)\}/);
 assert.match(sprintRouteSource, /data-sprint-item-view=\{selectedItem\.id\}/);
 assert.match(sprintRouteSource, /<StageMark state=\{condition\.mark\}/);
-assert.match(sprintPresentationSource, /left\.kind === "other"/);
 assert.match(sprintPresentationSource, /todayTicketIds\.has\(ticket\.id\)/);
-assert.doesNotMatch(sprintRouteSource, /loose_tickets|Loose tickets|data-loose/);
+assert.match(sprintRouteSource, /data-sprint-other/);
+assert.match(sprintRouteSource, /data-sprint-other-tickets/);
+assert.match(sprintRouteSource, /current\.data\?\.other_tickets/);
+assert.doesNotMatch(sprintRouteSource, /#\/sprint\?item=.*otherTicket/);
 assert.doesNotMatch(sprintRouteSource, /<Chip/);
 
 // --- the one priority tile ---------------------------------------------------------------

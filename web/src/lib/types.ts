@@ -54,6 +54,8 @@ export type { WorkerTypesResponse } from "./lifecycle";
 export type SprintSummary = {
   id: string;
   name: string;
+  date_start?: string;
+  date_end?: string;
 };
 
 export type SprintsResponse = {
@@ -62,7 +64,7 @@ export type SprintsResponse = {
 
 export type Priority = "P0" | "P1" | "P2" | "P3";
 
-export type SprintItemKind = "normal" | "other";
+export type SprintItemKind = "normal";
 
 export type SprintItemSummary = AnyRecord & {
   id: string;
@@ -223,6 +225,7 @@ export type TicketDetail = {
   deadline?: string | null;
   project_id?: string | null;
   project?: string | null;
+  sprint_id?: string | null;
   effective_sprint_id?: string | null;
   sprint_item_id?: string | null;
   resolved_priority_anchors: ResolvedTicketPriorityAnchors;
@@ -278,6 +281,7 @@ export type CurrentSprintResponse = {
   planning_date: string;
   sprint: CurrentSprint | null;
   groups: Record<string, AnyRecord[]>;
+  other_tickets: AnyRecord[];
 };
 
 export type ReviewProposalItem = {

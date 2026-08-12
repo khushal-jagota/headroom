@@ -47,6 +47,8 @@
     queries.ticketConversationStartValues(stableId)
   );
   const projects = createQuery(() => queries.projects());
+  const sprints = createQuery(() => queries.sprintSummaries());
+  const sprintItems = createQuery(() => queries.sprintItems());
   const manifest = createQuery(() => queries.workerTypeManifests());
 
   // Derive the per-Worker-type lifecycle from the QUERY (ticket.data?.worker_type), not
@@ -125,6 +127,18 @@
     { value: "", label: "No project" },
     ...(projects.data?.projects || []).map((project) => ({ value: project.id, label: project.name }))
   ]);
+  let sprintOptions = $derived([
+    { value: "", label: "Backlog" },
+    ...(sprints.data?.sprints || []).map((sprint) => ({ value: sprint.id, label: sprint.name }))
+  ]);
+  let placementItemOptions = $derived(
+    (sprintItems.data?.items || []).filter(
+      (item) =>
+        item.kind === "normal" &&
+        item.project_id === ticket.data?.project_id &&
+        item.sprint_id === ticket.data?.sprint_id
+    )
+  );
 
   $effect(() => {
     const recap = ticket.data?.recap;
@@ -198,6 +212,27 @@
 
   function patch(body: Record<string, unknown>): Promise<unknown> {
     return mutateJson(`/api/tickets/${stableId}`, { method: "PATCH", body });
+  }
+
+  async function patchPlacement(
+    detail: TicketDetail,
+    changes: Partial<Pick<TicketDetail, "project_id" | "sprint_id" | "sprint_item_id">>
+  ): Promise<void> {
+    const projectId = changes.project_id !== undefined ? changes.project_id : detail.project_id ?? null;
+    const sprintId = changes.sprint_id !== undefined ? changes.sprint_id : detail.sprint_id ?? null;
+    const requestedItemId =
+      changes.sprint_item_id !== undefined ? changes.sprint_item_id : detail.sprint_item_id ?? null;
+    const requestedItem = (sprintItems.data?.items || []).find((item) => item.id === requestedItemId);
+    const sprintItemId =
+      requestedItem?.project_id === projectId && requestedItem?.sprint_id === sprintId
+        ? requestedItem.id
+        : null;
+    headerError = null;
+    try {
+      await patch({ project_id: projectId, sprint_id: sprintId, sprint_item_id: sprintItemId });
+    } catch (err) {
+      headerError = err;
+    }
   }
 
   function saveScope(body: Record<string, unknown>): Promise<unknown> {
@@ -399,7 +434,7 @@
                 if (priority !== detail.priority) void patch({ priority });
               }}
             />
-            <span class="ticket-identity-group">
+            <span class="ticket-identity-group" data-ticket-placement>
               <span class="ticket-identity-separator" aria-hidden="true">·</span>
               <span
                 class="ticket-identity-fact"
@@ -411,18 +446,57 @@
                 {:else}
                   No project
                 {/if}
-                {#if !detail.sprint_item_id}
+                <select
+                  aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
+                  value={detail.project_id || ""}
+                  onchange={(event) => void patchPlacement(detail, {
+                    project_id: event.currentTarget.value || null,
+                    sprint_item_id: null
+                  })}
+                >
+                  {#each projectOptions as option}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              </span>
+              <span class="ticket-identity-separator" aria-hidden="true">·</span>
+              <span class="ticket-identity-fact" data-sprint-control>
+                {sprintOptions.find((option) => option.value === (detail.sprint_id || ""))?.label || "Backlog"}
+                <select
+                  aria-label="Ticket sprint"
+                  value={detail.sprint_id || ""}
+                  onchange={(event) => void patchPlacement(detail, {
+                    sprint_id: event.currentTarget.value || null,
+                    sprint_item_id: null
+                  })}
+                >
+                  {#each sprintOptions as option}
+                    <option value={option.value}>{option.label}</option>
+                  {/each}
+                </select>
+              </span>
+              {#if detail.sprint_id}
+                <span class="ticket-identity-separator" aria-hidden="true">·</span>
+                <span
+                  class="ticket-identity-fact"
+                  class:ticket-identity-add={!detail.sprint_item_id}
+                  data-sprint-item-control
+                >
+                  {placementItemOptions.find((item) => item.id === detail.sprint_item_id)?.title || "Other"}
                   <select
-                    aria-label={detail.project_id ? "Ticket project" : "Add ticket project"}
-                    value={detail.project_id || ""}
-                    onchange={(event) => void patch({ project_id: event.currentTarget.value || null })}
+                    aria-label="Ticket sprint item"
+                    value={detail.sprint_item_id || ""}
+                    onchange={(event) => void patchPlacement(detail, {
+                      sprint_item_id: event.currentTarget.value || null
+                    })}
                   >
-                    {#each projectOptions as option}
-                      <option value={option.value}>{option.label}</option>
+                    <option value="">Other</option>
+                    {#each placementItemOptions as item}
+                      <option value={item.id}>{item.title}</option>
                     {/each}
                   </select>
-                {/if}
-              </span>
+                </span>
+              {/if}
             </span>
             {#if lc}
               <span class="ticket-identity-group">

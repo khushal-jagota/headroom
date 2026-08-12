@@ -123,10 +123,17 @@ export function sprintTicketSections(
   item: SprintItem,
   todayTicketIds: ReadonlySet<string>
 ): SprintTicketSections {
+  return sprintTicketSectionsForTickets(item.tickets || [], todayTicketIds);
+}
+
+export function sprintTicketSectionsForTickets(
+  tickets: SprintTicket[],
+  todayTicketIds: ReadonlySet<string>
+): SprintTicketSections {
   const today: SprintTicket[] = [];
   const later: SprintTicket[] = [];
   const done: SprintTicket[] = [];
-  for (const ticket of item.tickets || []) {
+  for (const ticket of tickets) {
     if (ticket.stage === "dropped") continue;
     if (ticket.stage === "done") done.push(ticket);
     else if (todayTicketIds.has(ticket.id)) today.push(ticket);
@@ -176,7 +183,6 @@ export function sprintProjectGroups(
   for (const group of grouped.values()) {
     group.items.sort((left, right) =>
       Number(sprintItemIsDone(left)) - Number(sprintItemIsDone(right)) ||
-      Number(left.kind === "other") - Number(right.kind === "other") ||
       rankPriority(left.priority) - rankPriority(right.priority) ||
       left.title.localeCompare(right.title, undefined, { sensitivity: "base" }) ||
       left.id.localeCompare(right.id)

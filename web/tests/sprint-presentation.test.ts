@@ -6,6 +6,7 @@ import {
   sprintProjectGroups,
   sprintTicketCondition,
   sprintTicketSections,
+  sprintTicketSectionsForTickets,
   type SprintItem,
   type SprintTicket
 } from "../src/lib/sprintPresentation";
@@ -73,6 +74,17 @@ describe("Sprint Item presentation", () => {
     expect(sprintItemIsDone(settled)).toBe(true);
   });
 
+  it("presents unclassified Sprint Tickets without a Sprint Item identity", () => {
+    const today = ticket({ id: "t_today", priority: "P2" });
+    const later = ticket({ id: "t_later", priority: "P1" });
+    const dropped = ticket({ id: "t_dropped", stage: "dropped" });
+    expect(sprintTicketSectionsForTickets([today, later, dropped], new Set([today.id]))).toEqual({
+      today: [today],
+      later: [later],
+      done: []
+    });
+  });
+
   it("excludes dropped Tickets from sections and rollups", () => {
     const value = item({ tickets: [ticket({ stage: "done" }), ticket({ id: "t_drop", stage: "dropped" })] });
     expect(sprintItemRollup(value)).toBe("done");
@@ -107,11 +119,11 @@ describe("Sprint Project overview", () => {
     expect(groups.map((group) => group.label)).toEqual(["Panels", "Vylo", "Other"]);
   });
 
-  it("puts completed and fallback Items last within each Project", () => {
+  it("puts completed Items last within each Project", () => {
     const normal = item({ id: "si_normal", priority: "P3" });
-    const fallback = item({ id: "si_fallback", priority: "P0", kind: "other" });
+    const urgent = item({ id: "si_urgent", priority: "P0" });
     const done = item({ id: "si_done", priority: "P0", tickets: [ticket({ stage: "done" })] });
-    const [group] = sprintProjectGroups([fallback, done, normal], []);
-    expect(group.items.map((entry) => entry.id)).toEqual(["si_normal", "si_fallback", "si_done"]);
+    const [group] = sprintProjectGroups([normal, done, urgent], []);
+    expect(group.items.map((entry) => entry.id)).toEqual(["si_urgent", "si_normal", "si_done"]);
   });
 });

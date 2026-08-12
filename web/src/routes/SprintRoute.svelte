@@ -12,6 +12,7 @@
     sprintProjectGroups,
     sprintTicketCondition,
     sprintTicketSections,
+    sprintTicketSectionsForTickets,
     type SprintItem,
     type SprintTicket
   } from "../lib/sprintPresentation";
@@ -67,6 +68,15 @@
   );
   let selectedSections = $derived(
     selectedItem ? sprintTicketSections(selectedItem, todayTicketIds) : null
+  );
+  let otherSections = $derived(
+    sprintTicketSectionsForTickets(
+      (current.data?.other_tickets || []) as SprintTicket[],
+      todayTicketIds
+    )
+  );
+  let otherTicketCount = $derived(
+    otherSections.today.length + otherSections.later.length + otherSections.done.length
   );
 
   let summaryElement = $state<HTMLElement | null>(null);
@@ -315,7 +325,6 @@
                         class:sprint-item-row--settled={sprintItemIsDone(item)}
                         href={`#/sprint?item=${encodeURIComponent(item.id)}`}
                         data-item-id={item.id}
-                        data-item-kind={item.kind}
                         data-item-status={item.status}
                       >
                         <PriorityTile priority={item.priority} />
@@ -326,6 +335,25 @@
                   </div>
                 </Disclosure>
               {/each}
+              {#if otherTicketCount}
+                <Disclosure
+                  variant="workspace-bucket"
+                  defaultOpen={true}
+                  data-sprint-other
+                >
+                  {#snippet summary()}
+                    <span class="board-workspace-bucket-label">Other</span>
+                    <span class="board-workspace-bucket-count" aria-label={`${otherTicketCount} Tickets`}>
+                      {otherTicketCount}
+                    </span>
+                  {/snippet}
+                  <div class="sprint-project-items" data-sprint-other-tickets>
+                    {@render ticketRows(otherSections.today)}
+                    {@render ticketRows(otherSections.later)}
+                    {@render ticketRows(otherSections.done)}
+                  </div>
+                </Disclosure>
+              {/if}
             </div>
           {/if}
         </div>
