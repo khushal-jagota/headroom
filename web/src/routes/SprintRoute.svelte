@@ -22,6 +22,7 @@
   import MarkdownBlock from "../components/MarkdownBlock.svelte";
   import PriorityTile from "../components/PriorityTile.svelte";
   import ResourceState from "../components/ResourceState.svelte";
+  import SprintItemWorkspace from "../components/SprintItemWorkspace.svelte";
   import StageMark from "../components/StageMark.svelte";
 
   let {
@@ -161,7 +162,11 @@
   {/each}
 {/snippet}
 
-<section class="sprint-screen" data-screen="sprint">
+<section
+  class="sprint-screen"
+  class:sprint-screen--workspace={selectedItemId !== null}
+  data-screen="sprint"
+>
   <ResourceState
     error={resource.error}
     loading={resource.loading}
@@ -173,8 +178,11 @@
     {:else}
       {@const sprint = current.data.sprint}
       {@const groups = current.data.groups || {}}
-      <div class="doc">
-        <div class="col">
+      {#if selectedItemId}
+        <SprintItemWorkspace itemId={selectedItemId} sprintName={sprint.name} />
+      {:else}
+        <div class="doc">
+          <div class="col">
           {#if documents}
             <a class="sprint-back" href="#/sprint">‹ {sprint.name}</a>
             <header class="sprint-docs-head">
@@ -356,8 +364,9 @@
               {/if}
             </div>
           {/if}
+          </div>
         </div>
-      </div>
+      {/if}
     {/if}
   </ResourceState>
 </section>

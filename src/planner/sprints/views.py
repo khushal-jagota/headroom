@@ -158,6 +158,14 @@ def item_tickets(conn: sqlite3.Connection, item_id: str) -> list[JsonDict]:
                     proposal.review_route.value if proposal is not None else None
                 ),
                 "employee_backend": str(r["employee_backend"]),
+                "worker_type": str(r["worker_type"]),
+                "day_ids": [
+                    str(day_row["day_id"])
+                    for day_row in conn.execute(
+                        "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
+                        (str(r["id"]),),
+                    ).fetchall()
+                ],
             }
         )
     return result
@@ -259,6 +267,28 @@ def item_detail(conn: sqlite3.Connection, item_id: str) -> JsonDict:
     }
     result["supervisor"]["conversation_id"] = conversation_start.read_agent_conversation(
         conn, read.item.supervisor_agent_key
+    )
+    return result
+
+
+def item_workspace(conn: sqlite3.Connection, item_id: str, planning_day_id: str) -> JsonDict:
+    """The smallest coherent read for the Sprint Item workspace.
+
+    Ticket writes remain on their canonical routes. This read only assembles the child
+    state and identifies which rows belong to the current planning day.
+    """
+    result = item_detail(conn, item_id)
+    tickets = item_tickets(conn, item_id)
+    result.update(
+        {
+            "planning_day_id": planning_day_id,
+            "tickets": tickets,
+            "today_ticket_ids": [
+                str(ticket["id"])
+                for ticket in tickets
+                if planning_day_id in ticket["day_ids"]
+            ],
+        }
     )
     return result
 

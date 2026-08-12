@@ -199,6 +199,26 @@ async def get_item(item_id: str, conn: DbConn) -> JsonDict:
     return sprints_views.item_detail(conn, item_id)
 
 
+@router.get("/items/{item_id}/workspace")
+async def get_item_workspace(
+    item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg, clk: Clk
+) -> JsonDict:
+    """Return the page facts without creating a second action surface."""
+    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    planning_day_id = resolve_day_id("today", clk.now(), cfg.boundary_hour)
+    result = sprints_views.item_workspace(conn, item_id, planning_day_id)
+    result["artifacts"] = supervisor_service.list_artifacts(
+        conn, ctx, item_id, cfg.db_path
+    )["artifacts"]
+    result["obligations"] = [
+        _obligation_json(obligation)
+        for obligation in supervisor_obligations_data.list_for_item(
+            conn, item_id, limit=50, open_only=True
+        )
+    ]
+    return result
+
+
 def _supervisor_json(conn: DbConn, item_id: str) -> JsonDict:
     item = sprints_data.read_item(conn, item_id).item
     launch = item.supervisor_launch_configuration

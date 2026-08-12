@@ -8,9 +8,11 @@ separate documents page holds the sprint's written record.
 ```
    Sprint tracking                 Sprint Item
    ───────────────────────────     ───────────────────────────
-   Project                          On today
-    └ Sprint Item · progress        ─ off-today Tickets
+   Project                          Today · live state groups
+    └ Sprint Item · progress        Remaining Tickets
    Other · unclassified Tickets     ▸ done Tickets
+                                    Artifacts
+                                    Supervisor conversation
 
    Sprint documents
    ───────────────────────────
@@ -54,10 +56,16 @@ Each Item row shows its priority, title, and Ticket completion. It says `to do` 
 any Ticket is done, a fraction during progress, and `done` when all non-dropped Tickets
 are done. Selecting the row opens the dedicated Item address.
 
-The Item view shows its Project, title, body, priority, completion, and optional
-deadline. Its Ticket list starts with `On today`. A seam separates off-today Tickets.
-Done Tickets stay in a fold. Priority orders each block, and blocked Tickets come last
-in `On today`. Ticket marks and words show the live Ticket state.
+The Item workspace shows its identity, editable title, and editable shared brief. Today
+Tickets use live state groups. Each group and section shows its count only while folded.
+Remaining Tickets keeps off-today and done work visible without competing with Today.
+Ticket rows link to the canonical Ticket page for all review and resolution actions.
+
+The workspace also lists managed Item artifacts and opens them through the shared file
+preview. Delivery failures appear as attention above the work. The supervisor uses the
+same live conversation, composer, model controls, transcript, reset, and change-stream
+behavior as Ticket conversations. The layout preserves the same document and conversation
+split on desktop and phone.
 
 Each Sprint Item stores plain fields and placement only: title, body, priority,
 deadline, Project, and optional Sprint. Its status is derived when read:
@@ -127,17 +135,20 @@ Supervisor obligations are durable and separate from Web Push notifications. Pan
 bounded ordered batches through the conversation runtime. The runtime starts or queues them.
 Acknowledgement records attention, while canonical Ticket state closes the obligation.
 
-The Sprint Item workspace remains later
-work. Worker readiness remains the only automatic creator of a Worker step.
+The workspace reads one coherent Item snapshot with child Ticket Day membership,
+artifacts, open obligations, supervisor state, and the current conversation link. It adds
+no second Ticket review or Worker-control route. Worker readiness remains the only
+automatic creator of a Worker step.
 
 Managed item artifacts live under `files/sprint-items/<item-id>/`. The server exposes
 them through `/files/sprint-items/<item-id>/<relative-path>`. Item deletion moves this
 directory to quarantine before its database transaction. A failed transaction restores
 the directory. A successful deletion removes the item, its agent row, and its files.
 
-_Code paths:_ `src/planner/sprints/` (the sprint, its items, and the document
-fields), `web/src/routes/SprintRoute.svelte` (tracking, Item, and document views), and
-`web/src/lib/sprintPresentation.ts` (presentation rules).
+_Code paths:_ `src/planner/sprints/` (the sprint, its items, and workspace read),
+`web/src/components/SprintItemWorkspace.svelte` (the Item workspace),
+`web/src/routes/SprintRoute.svelte` (tracking and documents), and
+`web/src/lib/sprintItemWorkspace.ts` (workspace presentation rules).
 
 ## Handoffs
 

@@ -16,6 +16,7 @@ import type {
   SkillsHomeResponse,
   SprintsResponse,
   SprintItemsResponse,
+  SprintItemWorkspace,
   TicketDetail,
   VpsStatusSummary,
   WorkerManagementDetail,
@@ -54,6 +55,16 @@ export const queries = {
   sprintItems: () => jsonQuery<SprintItemsResponse>(["items"], "/api/items"),
   currentSprint: () =>
     jsonQuery<CurrentSprintResponse>(["sprint", "current"], "/api/sprint/current"),
+  sprintItemWorkspace: (itemId: string) =>
+    jsonQuery<SprintItemWorkspace>(
+      ["sprint-item", itemId, "workspace"],
+      `/api/items/${encodeURIComponent(itemId)}/workspace`
+    ),
+  sprintItemConversationStartValues: (itemId: string) =>
+    jsonQuery<ConversationStartValues>(
+      ["sprint-item", itemId, "conversation-start-values"],
+      `/api/items/${encodeURIComponent(itemId)}/supervisor/conversation/start-values`
+    ),
   ticket: (ticketId: string) =>
     jsonQuery<TicketDetail>(["ticket", ticketId], `/api/tickets/${encodeURIComponent(ticketId)}`),
   // What a conversation started right now would run on, for each owner that starts one.

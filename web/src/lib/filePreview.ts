@@ -1,5 +1,6 @@
 export type FilePreviewTarget =
   | { kind: "ticket-file"; ticketId: string; path: string }
+  | { kind: "sprint-item-file"; sprintItemId: string; path: string }
   | { kind: "external-link"; href: string; label?: string };
 
 export type FilePreviewKind =
@@ -70,13 +71,19 @@ export function resolvePreview(target: FilePreviewTarget): ResolvedPreview {
     };
   }
 
-  if (!ticketFileTarget(target.ticketId, target.path)) {
+  if (target.kind === "ticket-file" && !ticketFileTarget(target.ticketId, target.path)) {
     throw new Error("unsafe ticket file target");
+  }
+  if (
+    target.kind === "sprint-item-file" &&
+    !sprintItemFileTarget(target.sprintItemId, target.path)
+  ) {
+    throw new Error("unsafe Sprint Item file target");
   }
   return {
     kind: KIND_BY_EXTENSION.get(extensionFor(target.path)) || "download",
     target,
-    href: ticketFileHref(target),
+    href: managedFileHref(target),
     label: filenameLabel(target.path),
     previewHref: previewHashHref(target)
   };
@@ -108,6 +115,8 @@ export function markdownExpansionFor(
 export function targetFromHref(href: string, label = ""): FilePreviewTarget {
   const ticketTarget = ticketFileTargetFromHref(href);
   if (ticketTarget) return ticketTarget;
+  const sprintItemTarget = sprintItemFileTargetFromHref(href);
+  if (sprintItemTarget) return sprintItemTarget;
   return { kind: "external-link", href, label: label || href };
 }
 
@@ -119,9 +128,24 @@ export function ticketFileTarget(
   return { kind: "ticket-file", ticketId, path };
 }
 
+export function sprintItemFileTarget(
+  sprintItemId: string,
+  path: string
+): Extract<FilePreviewTarget, { kind: "sprint-item-file" }> | null {
+  if (!/^si_[a-z0-9]+$/.test(sprintItemId) || !safeManagedPath(path)) return null;
+  return { kind: "sprint-item-file", sprintItemId, path };
+}
+
 export function previewHashHref(
-  target: Extract<FilePreviewTarget, { kind: "ticket-file" }>
+  target: Extract<FilePreviewTarget, { kind: "ticket-file" | "sprint-item-file" }>
 ): string {
+  if (target.kind === "sprint-item-file") {
+    return (
+      "#/preview?source=sprint-item" +
+      `&item=${encodeURIComponent(target.sprintItemId)}` +
+      `&path=${encodeURIComponent(target.path)}`
+    );
+  }
   return (
     "#/preview?source=ticket" +
     `&ticket=${encodeURIComponent(target.ticketId)}` +
@@ -129,15 +153,34 @@ export function previewHashHref(
   );
 }
 
+function managedFileHref(
+  target: Extract<FilePreviewTarget, { kind: "ticket-file" | "sprint-item-file" }>
+): string {
+  return target.kind === "ticket-file" ? ticketFileHref(target) : sprintItemFileHref(target);
+}
+
 export function ticketFileHref(target: Extract<FilePreviewTarget, { kind: "ticket-file" }>): string {
   const path = encodedManagedPath(target.path);
   return `/files/tickets/${encodeURIComponent(target.ticketId)}/${path}`;
+}
+
+export function sprintItemFileHref(
+  target: Extract<FilePreviewTarget, { kind: "sprint-item-file" }>
+): string {
+  const path = encodedManagedPath(target.path);
+  return `/files/sprint-items/${encodeURIComponent(target.sprintItemId)}/${path}`;
 }
 
 function ticketFileTargetFromHref(href: string): FilePreviewTarget | null {
   const parts = managedHrefParts(href, "/files/tickets/");
   if (!parts) return null;
   return ticketFileTarget(parts.entityId, parts.path);
+}
+
+function sprintItemFileTargetFromHref(href: string): FilePreviewTarget | null {
+  const parts = managedHrefParts(href, "/files/sprint-items/");
+  if (!parts) return null;
+  return sprintItemFileTarget(parts.entityId, parts.path);
 }
 
 function managedHrefParts(href: string, prefix: string): { entityId: string; path: string } | null {

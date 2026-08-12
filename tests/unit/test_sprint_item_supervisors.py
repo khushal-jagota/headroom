@@ -114,6 +114,43 @@ def test_creation_owns_one_agent_and_detail_exposes_the_launch_snapshot(
         assert row is not None and row[0] is None
 
 
+def test_workspace_read_joins_today_artifacts_and_supervisor_attention(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client, "Workspace outcome")
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Today work",
+                "kickoff_note": "Do the work.",
+                "sprint_item_id": item["id"],
+            },
+        ).json()
+        headers = _supervisor_headers(str(item["id"]))
+        placed = client.post(
+            f"/api/items/{item['id']}/supervisor/days/today/tickets/{ticket['id']}",
+            headers=headers,
+        )
+        artifact = client.put(
+            f"/api/items/{item['id']}/supervisor/artifacts/proof.md",
+            json={"content": "# Proof"},
+            headers=headers,
+        )
+        workspace = client.get(f"/api/items/{item['id']}/workspace")
+
+    assert placed.status_code == 200, placed.text
+    assert artifact.status_code == 200, artifact.text
+    assert workspace.status_code == 200, workspace.text
+    body = workspace.json()
+    assert body["title"] == "Workspace outcome"
+    assert body["today_ticket_ids"] == [ticket["id"]]
+    assert body["tickets"][0]["worker_type"] == "coding"
+    assert body["tickets"][0]["day_ids"] == [body["planning_day_id"]]
+    assert body["artifacts"] == ["proof.md"]
+    assert body["obligations"] == []
+
+
 def test_supervisor_reads_only_its_item_and_current_children(tmp_path: Path) -> None:
     app, _db_path = _app(tmp_path)
     with TestClient(app) as client:

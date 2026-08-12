@@ -288,6 +288,47 @@ export type CurrentSprintResponse = {
   other_tickets: AnyRecord[];
 };
 
+export type SprintItemWorkspaceTicket = {
+  id: string;
+  title: string;
+  stage: string;
+  priority: Priority;
+  ticket_status: string;
+  has_pending_proposal: boolean;
+  proposal_review_route: ReviewRoute | null;
+  review_route: ReviewRoute;
+  worker_type: string;
+  day_ids: string[];
+};
+
+export type SprintItemWorkspaceObligation = {
+  id: string;
+  ticket_id: string;
+  kind: string;
+  lifecycle: string;
+  attempt_count: number;
+  retry_at: number | null;
+  last_error: string | null;
+};
+
+export type SprintItemWorkspace = SprintItemSummary & {
+  body: string;
+  status: string;
+  priority: Priority;
+  deadline: string | null;
+  rollup: Record<string, number>;
+  supervisor: {
+    agent_key: string;
+    conversation_id: string | null;
+    launch_configuration: EmployeeConfigurationSnapshot;
+  };
+  planning_day_id: string;
+  today_ticket_ids: string[];
+  tickets: SprintItemWorkspaceTicket[];
+  artifacts: string[];
+  obligations: SprintItemWorkspaceObligation[];
+};
+
 export type ReviewProposalItem = {
   review_item_type: "proposal";
   ticket_id: string;
