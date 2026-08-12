@@ -47,6 +47,10 @@ def test_hermes_skill_is_symlink_to_managed_source(tmp_path: Path) -> None:
     target = tmp_path / "home" / "skills" / "panels-worker-coding"
     assert target.is_symlink()
     assert target.resolve() == source.resolve()
+    supervisor_source = tmp_path / "skills" / "panels-sprint-item-supervisor"
+    supervisor_target = tmp_path / "home" / "skills" / "panels-sprint-item-supervisor"
+    assert supervisor_target.is_symlink()
+    assert supervisor_target.resolve() == supervisor_source.resolve()
 
 
 def test_debugging_worker_runtime_app_boundary_is_packaged_for_new_homes(tmp_path: Path) -> None:

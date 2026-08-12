@@ -157,6 +157,14 @@ record shapes. Direct `show` commands also keep their full record shapes.
   agent-review proposal for the exact owning Sprint Item. Approval requires the next
   ceiling and review route. Rejection requires focused revision guidance. Transfer moves
   only the parked proposal to User Review and preserves future Ticket scope.
+- **`sprint item supervisor ticket-context / history / message-worker`** — read one
+  current child Ticket, page through its current Worker conversation, or send attributed
+  guidance to that exact existing conversation. `message-worker` requires the current
+  conversation id and refuses stale ids.
+- **`sprint item supervisor set-item / set-ticket / scope / add-to-day / remove-from-day / block / unblock`**
+  — use item-scoped canonical actions for the owning Item and its current child Tickets.
+- **`sprint item supervisor artifact-list / artifact-write / artifact-delete`** — manage
+  files under the owning Item's `artifacts/` directory.
 - **`worker propose / recap / note / trouble / request-user-help / my-ticket`** — worker actions. `worker propose`
   infers the current gating field from the Ticket Stage and requires a short recap
   (`--recap` or `--recap-file`) in the same request. `worker note` replaces field

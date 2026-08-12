@@ -178,9 +178,11 @@ in place across this page reload.
 **Backends** at `#/backends` shows the conversation backends installed on this machine,
 their account and model facts, and any update Panels can run. Its one **Refresh** action
 re-reads every backend catalogue and the Codex and Claude usage sources. A successful
-refresh shows each provider window, its used percentage, reset time, and observation
-time. One provider failure does not discard the other's new answer. Hermes has no usage
-source.
+refresh shows each provider window as its remaining percentage, reset time, and
+observation time. The backend source still reports the used percentage. The shared
+ring derives the remaining value and empties counter-clockwise from the top as the
+allowance falls. One provider failure does not discard the other's new answer. Hermes
+has no usage source.
 
 ## The two rules that shape it
 

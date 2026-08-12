@@ -110,7 +110,21 @@ kills current work and clears the agent link. Conversation records and message f
 remain as history. The Sprint Item body is the shared brief.
 
 A supervisor can read only its Sprint Item and the Tickets that currently belong to it.
-This identity grants no Ticket, Day, proposal, block, scope, or Worker-message writes.
+Its managed skill uses one item-scoped service for Item fields, child Ticket fields,
+Day membership, blocks, scope, proposal review, and Item artifacts. Each write delegates
+to the same domain action that direct product routes use.
+
+Ticket context includes current Ticket facts, Day membership, the current Worker
+conversation, and the exact triggering Worker message when its sequence is supplied.
+The supervisor can read bounded pages from that current conversation.
+
+A targeted Worker message requires the exact current child conversation. Panels records
+the Sprint Item supervisor agent key as the sender. A missing, reset, stale, or unrelated
+conversation is refused. This message path cannot create a conversation and does not
+change the Ticket Stage, scope, status, or Day membership.
+
+Automatic supervisor obligation delivery and the Sprint Item workspace remain later
+work. Worker readiness remains the only automatic creator of a Worker step.
 
 Managed item artifacts live under `files/sprint-items/<item-id>/`. The server exposes
 them through `/files/sprint-items/<item-id>/<relative-path>`. Item deletion moves this

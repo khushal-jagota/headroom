@@ -91,6 +91,8 @@ result before you increase its limit.
 
 ## Skills
 
+- **`panels-sprint-item-supervisor`** — supervising one Sprint Item with scoped actions
+  and safe messages to existing child Worker conversations.
 - **`panels-ticket-creation`** — the shared model for creating a coherent Ticket.
 - **`panels-worker`** — working a single ticket: shaping it through its stages, executing it, and reviewing it.
 - **`panels-worker-planning-day`** — gathering evidence and planning the Day.

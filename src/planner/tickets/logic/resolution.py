@@ -442,7 +442,7 @@ def decide_scope_change(
     *,
     worker_type_definition: WorkerTypeDefinition,
 ) -> Decision:
-    admission.require_direct_actor(actor, "change_scope")
+    admission.require_direct_or_supervisor_actor(actor, "change_scope")
     if ceiling not in worker_type_definition.ceiling_range():
         raise PlannerError(
             ErrorCode.scope_invalid,

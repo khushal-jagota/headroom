@@ -83,6 +83,19 @@ _ITEM_FIELDS = {
     "sprint": "sprint_id",
 }
 
+_SUPERVISOR_ITEM_FIELDS = {
+    "title": "title",
+    "body": "body",
+    "priority": "priority",
+    "deadline": "deadline",
+}
+
+_SUPERVISOR_TICKET_FIELDS = {
+    "title": "title",
+    "priority": "priority",
+    "deadline": "deadline",
+}
+
 _PROJECT_FIELDS = {
     "folder-path": "folder_path",
     "name": "name",
@@ -1907,6 +1920,262 @@ def sprint_item_supervisor_context(item_id: str, as_json: bool) -> None:
         request_actor="ordinary",
     )
     http.emit(data, as_json, f"{item_id} {len(data['tickets'])} current Tickets")
+
+
+@sprint_item_supervisor.command("ticket-context")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--triggering-message-sequence", type=int, default=None)
+@json_option
+def sprint_item_supervisor_ticket_context(
+    item_id: str,
+    ticket_id: str,
+    triggering_message_sequence: int | None,
+    as_json: bool,
+) -> None:
+    data = http.send(
+        "GET",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/context",
+        as_json=as_json,
+        params=_drop_none(
+            {"triggering_message_sequence": triggering_message_sequence}
+        ),
+    )
+    http.emit(data, as_json, f"{ticket_id} current Worker context")
+
+
+@sprint_item_supervisor.command("history")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--limit", type=click.IntRange(1, 100), default=30, show_default=True)
+@click.option("--before-sequence", type=int, default=None)
+@json_option
+def sprint_item_supervisor_history(
+    item_id: str,
+    ticket_id: str,
+    limit: int,
+    before_sequence: int | None,
+    as_json: bool,
+) -> None:
+    data = http.send(
+        "GET",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/history",
+        as_json=as_json,
+        params=_drop_none({"limit": limit, "before_sequence": before_sequence}),
+    )
+    http.emit(data, as_json, f"{ticket_id} {len(data['events'])} history events")
+
+
+@sprint_item_supervisor.command("message-worker")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--conversation-id", required=True, help="Current Worker conversation id.")
+@click.option("--message", default=None, help="Message text.")
+@click.option("--body-file", default=None, help="Read message text from this file, or -.")
+@json_option
+def sprint_item_supervisor_message_worker(
+    item_id: str,
+    ticket_id: str,
+    conversation_id: str,
+    message: str | None,
+    body_file: str | None,
+    as_json: bool,
+) -> None:
+    if (message is None) == (body_file is None):
+        http.fail_validation(
+            "message-worker requires exactly one of --message or --body-file", as_json
+        )
+    text = message if message is not None else _read_source(body_file or "", as_json)
+    data = http.send(
+        "POST",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/message",
+        as_json=as_json,
+        json_body={"conversation_id": conversation_id, "message": text},
+    )
+    http.emit(data, as_json, f"Worker message {data['fate']}")
+
+
+@sprint_item_supervisor.command("set-item")
+@click.argument("item_id")
+@click.argument("field", type=click.Choice(sorted(_SUPERVISOR_ITEM_FIELDS)))
+@click.option("--value", default=None)
+@click.option("--body-file", default=None)
+@click.option("--clear", is_flag=True, default=False)
+@json_option
+def sprint_item_supervisor_set_item(
+    item_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    clear: bool,
+    as_json: bool,
+) -> None:
+    new_value = read_value_or_file(value, body_file, clear, as_json, field)
+    if field in {"title", "priority"} and new_value is None:
+        http.fail_validation(f"{field} cannot be cleared", as_json)
+    data = http.send(
+        "PATCH",
+        f"/api/items/{item_id}/supervisor/item",
+        as_json=as_json,
+        json_body={_SUPERVISOR_ITEM_FIELDS[field]: new_value},
+    )
+    http.emit(data, as_json, f"{item_id} {field} set")
+
+
+@sprint_item_supervisor.command("set-ticket")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.argument("field", type=click.Choice(sorted(_SUPERVISOR_TICKET_FIELDS)))
+@click.option("--value", default=None)
+@click.option("--body-file", default=None)
+@click.option("--clear", is_flag=True, default=False)
+@json_option
+def sprint_item_supervisor_set_ticket(
+    item_id: str,
+    ticket_id: str,
+    field: str,
+    value: str | None,
+    body_file: str | None,
+    clear: bool,
+    as_json: bool,
+) -> None:
+    new_value = read_value_or_file(value, body_file, clear, as_json, field)
+    if field in {"title", "priority"} and new_value is None:
+        http.fail_validation(f"{field} cannot be cleared", as_json)
+    data = http.send(
+        "PATCH",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}",
+        as_json=as_json,
+        json_body={_SUPERVISOR_TICKET_FIELDS[field]: new_value},
+    )
+    http.emit(data, as_json, f"{ticket_id} {field} set")
+
+
+@sprint_item_supervisor.command("scope")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--ceiling", required=True)
+@click.option("--at-cap", required=True, type=click.Choice([a.value for a in AtCap]))
+@json_option
+def sprint_item_supervisor_scope(
+    item_id: str, ticket_id: str, ceiling: str, at_cap: str, as_json: bool
+) -> None:
+    data = http.send(
+        "POST",
+        f"/api/items/{item_id}/supervisor/tickets/{ticket_id}/scope",
+        as_json=as_json,
+        json_body={"ceiling": ceiling, "at_cap": at_cap},
+    )
+    http.emit(data, as_json, f"{ticket_id} scope set")
+
+
+def _supervisor_day_membership(
+    method: str, item_id: str, ticket_id: str, date_: str, as_json: bool
+) -> None:
+    data = http.send(
+        method,
+        f"/api/items/{item_id}/supervisor/days/{date_}/tickets/{ticket_id}",
+        as_json=as_json,
+    )
+    http.emit(data, as_json, f"{ticket_id} Day membership changed")
+
+
+@sprint_item_supervisor.command("add-to-day")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--date", "date_", default="today")
+@json_option
+def sprint_item_supervisor_add_to_day(
+    item_id: str, ticket_id: str, date_: str, as_json: bool
+) -> None:
+    _supervisor_day_membership("POST", item_id, ticket_id, date_, as_json)
+
+
+@sprint_item_supervisor.command("remove-from-day")
+@click.argument("item_id")
+@click.argument("ticket_id")
+@click.option("--date", "date_", default="today")
+@json_option
+def sprint_item_supervisor_remove_from_day(
+    item_id: str, ticket_id: str, date_: str, as_json: bool
+) -> None:
+    _supervisor_day_membership("DELETE", item_id, ticket_id, date_, as_json)
+
+
+def _supervisor_block(
+    method: str, item_id: str, from_id: str, to_id: str, as_json: bool
+) -> None:
+    kwargs: dict[str, Any] = {"as_json": as_json}
+    if method == "POST":
+        kwargs["json_body"] = {"from_id": from_id, "to_id": to_id}
+    else:
+        kwargs["params"] = {"from_id": from_id, "to_id": to_id}
+    data = http.send(method, f"/api/items/{item_id}/supervisor/blocks", **kwargs)
+    http.emit(data, as_json, f"{from_id} blocks {to_id}: {method.lower()}")
+
+
+@sprint_item_supervisor.command("block")
+@click.argument("item_id")
+@click.option("--from-ticket", "from_id", required=True)
+@click.option("--to", "to_id", required=True)
+@json_option
+def sprint_item_supervisor_block(
+    item_id: str, from_id: str, to_id: str, as_json: bool
+) -> None:
+    _supervisor_block("POST", item_id, from_id, to_id, as_json)
+
+
+@sprint_item_supervisor.command("unblock")
+@click.argument("item_id")
+@click.option("--from-ticket", "from_id", required=True)
+@click.option("--to", "to_id", required=True)
+@json_option
+def sprint_item_supervisor_unblock(
+    item_id: str, from_id: str, to_id: str, as_json: bool
+) -> None:
+    _supervisor_block("DELETE", item_id, from_id, to_id, as_json)
+
+
+@sprint_item_supervisor.command("artifact-list")
+@click.argument("item_id")
+@json_option
+def sprint_item_supervisor_artifact_list(item_id: str, as_json: bool) -> None:
+    data = http.send(
+        "GET", f"/api/items/{item_id}/supervisor/artifacts", as_json=as_json
+    )
+    http.emit(data, as_json, _lines(data["artifacts"], str))
+
+
+@sprint_item_supervisor.command("artifact-write")
+@click.argument("item_id")
+@click.argument("artifact_path")
+@click.option("--body-file", required=True)
+@json_option
+def sprint_item_supervisor_artifact_write(
+    item_id: str, artifact_path: str, body_file: str, as_json: bool
+) -> None:
+    data = http.send(
+        "PUT",
+        f"/api/items/{item_id}/supervisor/artifacts/{artifact_path}",
+        as_json=as_json,
+        json_body={"content": _read_source(body_file, as_json)},
+    )
+    http.emit(data, as_json, data["url"])
+
+
+@sprint_item_supervisor.command("artifact-delete")
+@click.argument("item_id")
+@click.argument("artifact_path")
+@json_option
+def sprint_item_supervisor_artifact_delete(
+    item_id: str, artifact_path: str, as_json: bool
+) -> None:
+    data = http.send(
+        "DELETE",
+        f"/api/items/{item_id}/supervisor/artifacts/{artifact_path}",
+        as_json=as_json,
+    )
+    http.emit(data, as_json, f"{artifact_path} deleted")
 
 
 @sprint_item_supervisor.command("send")
