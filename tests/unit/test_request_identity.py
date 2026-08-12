@@ -109,7 +109,7 @@ def test_cli_ticket_claim_is_not_forwarded_outside_exact_worker_identity(
     assert http._headers("ordinary") == {"X-Plan-Actor": actor}
 
 
-def _planning_claim_connection() -> sqlite3.Connection:
+def _ticket_claim_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE tickets (id TEXT PRIMARY KEY, worker_type TEXT NOT NULL)")
@@ -126,6 +126,53 @@ def _planning_claim_connection() -> sqlite3.Connection:
     return conn
 
 
+@pytest.mark.parametrize("ticket_id", ("t_coding", "t_sprint"))
+def test_ticket_worker_write_accepts_any_stored_ticket_claim(ticket_id: str) -> None:
+    conn = _ticket_claim_connection()
+    try:
+        authctx.require_ticket_worker_write(
+            conn,
+            authctx._classify("worker", ticket_id),
+        )
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("actor", "ticket_id"),
+    (
+        ("worker", None),
+        ("worker", "t_missing"),
+        ("agent", "t_coding"),
+    ),
+)
+def test_ticket_worker_write_fails_closed_for_invalid_claims(
+    actor: str,
+    ticket_id: str | None,
+) -> None:
+    conn = _ticket_claim_connection()
+    try:
+        with pytest.raises(PlannerError) as raised:
+            authctx.require_ticket_worker_write(
+                conn,
+                authctx._classify(actor, ticket_id),
+            )
+    finally:
+        conn.close()
+
+    assert raised.value.code is ErrorCode.agent_forbidden
+    assert raised.value.detail == {"actor": actor}
+
+
+def test_ticket_worker_write_preserves_existing_direct_authority() -> None:
+    conn = _ticket_claim_connection()
+    try:
+        authctx.require_ticket_worker_write(conn, authctx._classify(None))
+        authctx.require_ticket_worker_write(conn, authctx._classify("chief"))
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize(
     ("ticket_id", "capability"),
     (
@@ -138,7 +185,7 @@ def test_planning_write_requires_exact_stored_worker_capability(
     ticket_id: str,
     capability: authctx.PlanningCapability,
 ) -> None:
-    conn = _planning_claim_connection()
+    conn = _ticket_claim_connection()
     try:
         authctx.require_planning_write(
             conn,
@@ -164,7 +211,7 @@ def test_planning_write_fails_closed_for_missing_unknown_or_nonmatching_claims(
     actor: str,
     ticket_id: str | None,
 ) -> None:
-    conn = _planning_claim_connection()
+    conn = _ticket_claim_connection()
     try:
         with pytest.raises(PlannerError) as raised:
             authctx.require_planning_write(
@@ -180,7 +227,7 @@ def test_planning_write_fails_closed_for_missing_unknown_or_nonmatching_claims(
 
 
 def test_planning_write_preserves_existing_direct_authority() -> None:
-    conn = _planning_claim_connection()
+    conn = _ticket_claim_connection()
     try:
         authctx.require_planning_write(conn, authctx._classify(None), "planning-day")
         authctx.require_planning_write(
@@ -193,7 +240,7 @@ def test_planning_write_preserves_existing_direct_authority() -> None:
 
 
 def test_planning_write_rejects_unknown_capability_programmer_error() -> None:
-    conn = _planning_claim_connection()
+    conn = _ticket_claim_connection()
     try:
         with pytest.raises(ValueError, match="unknown planning capability"):
             authctx.require_planning_write(

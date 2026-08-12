@@ -1704,6 +1704,44 @@ def test_link_add_and_remove_settle_the_blocked_standin(
     assert data.read_ticket(tmp_db, target.id).ticket_status is TicketStatus.empty
 
 
+def test_link_admission_runs_inside_each_write_transaction(
+    tmp_db: Connection, cfg: Config, fake_clock: TestClock
+) -> None:
+    now = fake_clock.now_unix()
+    blocker = _create(tmp_db, cfg, fake_clock, title="Blocker")
+    target = _create(tmp_db, cfg, fake_clock, title="Target")
+    admission_calls: list[str] = []
+
+    def admit_add() -> None:
+        assert tmp_db.in_transaction
+        admission_calls.append("add")
+
+    def admit_remove() -> None:
+        assert tmp_db.in_transaction
+        admission_calls.append("remove")
+
+    actions.add_link(
+        tmp_db,
+        blocker.id,
+        target.id,
+        LinkKind.blocks,
+        now=now,
+        admit=admit_add,
+    )
+    assert not tmp_db.in_transaction
+    actions.remove_link(
+        tmp_db,
+        blocker.id,
+        target.id,
+        LinkKind.blocks,
+        now=now,
+        admit=admit_remove,
+    )
+
+    assert not tmp_db.in_transaction
+    assert admission_calls == ["add", "remove"]
+
+
 def test_repeated_link_add_is_rejected_and_leaves_the_target_blocked(
     tmp_db: Connection, cfg: Config, fake_clock: TestClock
 ) -> None:

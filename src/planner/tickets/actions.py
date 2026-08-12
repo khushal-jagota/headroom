@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Final
 
@@ -216,10 +216,13 @@ def add_link(
     kind: LinkKind,
     *,
     now: int,
+    admit: Callable[[], None] | None = None,
 ) -> None:
     """Create a link and settle the target's blocked stand-in in the same transaction."""
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if admit is not None:
+            admit()
         core_links.add_link(conn, from_id, to_id, kind, now)
         if kind is LinkKind.blocks:
             tickets_data.settle_blocked_standin_for_link_target(conn, to_id, now)
@@ -237,10 +240,13 @@ def remove_link(
     kind: LinkKind,
     *,
     now: int,
+    admit: Callable[[], None] | None = None,
 ) -> None:
     """Delete a link and settle the target's blocked stand-in in the same transaction."""
     conn.execute("BEGIN IMMEDIATE")
     try:
+        if admit is not None:
+            admit()
         core_links.remove_link(conn, from_id, to_id, kind, now)
         if kind is LinkKind.blocks:
             tickets_data.settle_blocked_standin_for_link_target(conn, to_id, now)

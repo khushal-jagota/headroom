@@ -14,6 +14,7 @@ from planner.core.authctx import (
     reject_agent_fields,
     require_direct_write,
     require_planning_write,
+    require_ticket_worker_write,
 )
 from planner.core.contracts import JsonDict, Priority
 from planner.core.errors import ErrorCode, PlannerError
@@ -207,7 +208,7 @@ async def move_item_ticket(
         sprint_item_id=item_id,
         actor=ctx.actor,
         now=clk.now_unix(),
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+        admit=lambda: require_ticket_worker_write(conn, ctx),
     )
     return sprints_views.item_detail(conn, item_id)
 
@@ -222,7 +223,7 @@ async def move_item_ticket_to_backlog(
         sprint_item_id=item_id,
         actor=ctx.actor,
         now=clk.now_unix(),
-        admit=lambda: require_planning_write(conn, ctx, "planning-sprint"),
+        admit=lambda: require_ticket_worker_write(conn, ctx),
     )
     return sprints_views.item_detail(conn, item_id)
 

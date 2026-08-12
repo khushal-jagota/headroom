@@ -88,6 +88,10 @@ safe. Sprint creation remains an explicit
 non-idempotent operation: after an ambiguous response, read the sprint list before
 trying another create.
 
+Any Ticket worker can use both Ticket placement commands when it sends its own existing
+Ticket id with its worker identity. Direct callers keep the same access. Other sprint
+planning writes still require the `planning-sprint` Worker type.
+
 An unwanted Sprint Item can be permanently deleted through
 `panels sprint item delete <item-id> --yes`. Panels refuses deletion while the item
 has child Tickets, so existing work cannot disappear as a side effect. Deleting a

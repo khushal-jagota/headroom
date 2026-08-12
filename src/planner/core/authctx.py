@@ -4,7 +4,7 @@ No ``X-Plan-Actor`` header means the request is unattributed. ``chief`` identifi
 the Panels Chief. Every other non-empty actor value identifies an attributed
 non-Chief agent. Direct product operations permit unattributed and Chief requests;
 worker identities remain subject to the existing direct-write restrictions except
-for the narrow, Ticket-backed planning capabilities defined here.
+for the narrow, Ticket-backed operations defined here.
 """
 
 from __future__ import annotations
@@ -91,6 +91,32 @@ def require_direct_write(ctx: RequestContext) -> None:
     raise PlannerError(
         ErrorCode.agent_forbidden,
         "direct operation is not available to this actor",
+        {"actor": ctx.actor},
+    )
+
+
+def require_ticket_worker_write(
+    conn: sqlite3.Connection,
+    ctx: RequestContext,
+) -> None:
+    """Permit a direct caller or any exact Ticket-backed Worker."""
+    if not ctx.is_attributed or ctx.is_chief:
+        return
+    if ctx.actor != _WORKER_ACTOR or ctx.ticket_id is None:
+        _reject_ticket_worker_write(ctx)
+
+    row = conn.execute(
+        "SELECT 1 FROM tickets WHERE id = ?",
+        (ctx.ticket_id,),
+    ).fetchone()
+    if row is None:
+        _reject_ticket_worker_write(ctx)
+
+
+def _reject_ticket_worker_write(ctx: RequestContext) -> None:
+    raise PlannerError(
+        ErrorCode.agent_forbidden,
+        "ticket operation is not available to this worker",
         {"actor": ctx.actor},
     )
 

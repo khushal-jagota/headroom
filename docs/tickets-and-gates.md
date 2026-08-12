@@ -162,6 +162,11 @@ when no active blocker remains. Panels does not show reverse, cleared, transitiv
 graph views. A Ticket may still block a Sprint item through the same existing directed
 link engine.
 
+Any Ticket worker can add or remove these supported blocking links. The worker must
+send its own existing Ticket id with its worker identity. Direct callers keep the same
+access. The link writer still validates every endpoint, rejects active cycles, updates
+blocked Ticket status, and commits the complete change once.
+
 ### Ordinary Ticket edits
 
 One ordinary edit may change a Ticket's title, priority, deadline, Project, Sprint, and

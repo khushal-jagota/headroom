@@ -45,6 +45,7 @@ from planner.core.authctx import (
     request_context,
     require_chief,
     require_direct_write,
+    require_ticket_worker_write,
 )
 from planner.core.clock import Clock
 from planner.core.config import Config
@@ -1632,7 +1633,6 @@ async def add_link(
     ctx: Ctx,
     clk: Clk,
 ) -> JsonDict:
-    require_direct_write(ctx)
     body = LinkBody(
         from_id=body_str(raw, "from_id"),
         to_id=body_str(raw, "to_id"),
@@ -1646,6 +1646,7 @@ async def add_link(
         body["to_id"],
         kind,
         now=now,
+        admit=lambda: require_ticket_worker_write(conn, ctx),
     )
     return {"from_id": body["from_id"], "to_id": body["to_id"], "kind": kind.value}
 
@@ -1659,7 +1660,6 @@ async def remove_link(
     to_id: str,
     kind: str,
 ) -> JsonDict:
-    require_direct_write(ctx)
     kind_enum = parse_enum(LinkKind, kind, "kind")
     now = clk.now_unix()
     tickets_actions.remove_link(
@@ -1668,6 +1668,7 @@ async def remove_link(
         to_id,
         kind_enum,
         now=now,
+        admit=lambda: require_ticket_worker_write(conn, ctx),
     )
     return {"ok": True}
 

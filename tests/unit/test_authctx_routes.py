@@ -73,7 +73,7 @@ def _ticket(db_path: Path) -> str:
     return ticket.id
 
 
-def _planning_headers(db_path: Path, worker_type: str) -> dict[str, str]:
+def _worker_headers(db_path: Path, worker_type: str) -> dict[str, str]:
     conn = connect(str(db_path))
     try:
         ticket = create_ticket(
@@ -352,8 +352,8 @@ def test_planning_sprint_worker_can_shape_item_and_sprint_but_not_delete(
     planning_worker_registry: None,
 ) -> None:
     app, db_path = _make_app(tmp_path)
-    headers = _planning_headers(db_path, "planning-sprint")
-    wrong_headers = _planning_headers(db_path, "planning-day")
+    headers = _worker_headers(db_path, "planning-sprint")
+    wrong_headers = _worker_headers(db_path, "planning-day")
     iid = _item(db_path)
     sid = _sprint(db_path)
     child = _ticket(db_path)
@@ -565,21 +565,95 @@ def test_item_placement_changes_notify_child_ticket_workers(tmp_path: Path) -> N
     assert context[0][2] == 2
 
 
-def test_item_ticket_routes_are_direct_only(tmp_path: Path) -> None:
+def test_item_ticket_routes_accept_any_ticket_worker_and_reject_invalid_claims(
+    tmp_path: Path,
+    planning_worker_registry: None,
+) -> None:
     app, db_path = _make_app(tmp_path)
     sid = _sprint(db_path)
     iid = _item_in_sprint(db_path, sid)
     tid = _ticket(db_path)
+    coding_headers = _worker_headers(db_path, "coding")
+    planning_headers = _worker_headers(db_path, "planning-day")
     with TestClient(app) as client:
         added = client.post(
-            f"/api/items/{iid}/tickets", json={"ticket_id": tid}, headers=_AGENT
+            f"/api/items/{iid}/tickets",
+            json={"ticket_id": tid},
+            headers=coding_headers,
         )
-        removed = client.delete(f"/api/items/{iid}/tickets/{tid}", headers=_AGENT)
-    assert added.status_code == 400
-    assert added.json()["error"]["code"] == "agent_forbidden"
-    assert removed.status_code == 400
-    assert removed.json()["error"]["code"] == "agent_forbidden"
+        removed = client.delete(
+            f"/api/items/{iid}/tickets/{tid}", headers=planning_headers
+        )
+        missing_claim = client.post(
+            f"/api/items/{iid}/tickets",
+            json={"ticket_id": tid},
+            headers={"X-Plan-Actor": "worker"},
+        )
+        unknown_claim = client.post(
+            f"/api/items/{iid}/tickets",
+            json={"ticket_id": tid},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_missing"},
+        )
+
+    assert added.status_code == 200, added.json()
+    assert removed.status_code == 200, removed.json()
+    assert missing_claim.status_code == 400
+    assert missing_claim.json()["error"]["code"] == "agent_forbidden"
+    assert unknown_claim.status_code == 400
+    assert unknown_claim.json()["error"]["code"] == "agent_forbidden"
     assert _col(db_path, "tickets", tid, "sprint_item_id") is None
+
+
+def test_link_routes_accept_ticket_workers_for_ticket_and_item_targets(
+    tmp_path: Path,
+    planning_worker_registry: None,
+) -> None:
+    app, db_path = _make_app(tmp_path)
+    source = _ticket(db_path)
+    target_ticket = _ticket(db_path)
+    target_item = _item(db_path)
+    coding_headers = _worker_headers(db_path, "coding")
+    planning_headers = _worker_headers(db_path, "planning-sprint")
+
+    with TestClient(app) as client:
+        ticket_link = client.post(
+            "/api/links",
+            json={"from_id": source, "to_id": target_ticket, "kind": "blocks"},
+            headers=coding_headers,
+        )
+        item_link = client.post(
+            "/api/links",
+            json={"from_id": source, "to_id": target_item, "kind": "blocks"},
+            headers=planning_headers,
+        )
+        remove_ticket_link = client.delete(
+            "/api/links",
+            params={"from_id": source, "to_id": target_ticket, "kind": "blocks"},
+            headers=planning_headers,
+        )
+        remove_item_link = client.delete(
+            "/api/links",
+            params={"from_id": source, "to_id": target_item, "kind": "blocks"},
+            headers=coding_headers,
+        )
+        invalid_claim = client.post(
+            "/api/links",
+            json={"from_id": source, "to_id": target_ticket, "kind": "blocks"},
+            headers={"X-Plan-Actor": "worker", "X-Plan-Ticket-ID": "t_missing"},
+        )
+
+    assert ticket_link.status_code == 200, ticket_link.json()
+    assert item_link.status_code == 200, item_link.json()
+    assert remove_ticket_link.status_code == 200, remove_ticket_link.json()
+    assert remove_item_link.status_code == 200, remove_item_link.json()
+    assert invalid_claim.status_code == 400
+    assert invalid_claim.json()["error"]["code"] == "agent_forbidden"
+
+    conn = connect(str(db_path))
+    try:
+        assert conn.execute("SELECT 1 FROM links").fetchone() is None
+    finally:
+        conn.close()
 
 
 # --- PATCH /sprints/{id}: direct-only (§8) --------------------------------------
