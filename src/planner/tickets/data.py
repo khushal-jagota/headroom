@@ -2039,11 +2039,22 @@ def change_scope(
     at_cap: AtCap,
     actor: str,
     now: int,
+    supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
+    if (
+        actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
+        and supervisor_sprint_item_id is None
+    ):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "change_scope requires the Sprint Item supervisor parent",
+            {"actor": actor, "ticket_id": ticket_id},
+        )
     with _txn(conn):
         ticket, worker_type_definition = _load_ticket_and_worker_type_definition_for_write(
             conn, ticket_id
         )
+        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
         _require_agent_review_placement(conn, ticket, at_cap, ticket.sprint_item_id)
         decision = resolution.decide_scope_change(
             ticket,
@@ -2224,9 +2235,20 @@ def edit_ticket(
     title_max_chars: int,
     actor: str,
     now: int,
+    supervisor_sprint_item_id: str | None = None,
 ) -> Ticket:
+    if (
+        actor == admission.SPRINT_ITEM_SUPERVISOR_ACTOR
+        and supervisor_sprint_item_id is None
+    ):
+        raise PlannerError(
+            ErrorCode.agent_forbidden,
+            "edit_ticket requires the Sprint Item supervisor parent",
+            {"actor": actor, "ticket_id": ticket_id},
+        )
     with _txn(conn):
         ticket = _load_ticket_for_write(conn, ticket_id)
+        _require_current_supervisor_parent(conn, ticket, supervisor_sprint_item_id)
 
         title = edit["title"] if "title" in edit else ticket.title
         priority = edit["priority"] if "priority" in edit else ticket.priority

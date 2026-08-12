@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -131,6 +132,264 @@ def test_supervisor_reads_only_its_item_and_current_children(tmp_path: Path) -> 
     assert cross.json()["error"]["code"] == "agent_forbidden"
     assert broad_read.json()["error"]["code"] == "agent_forbidden"
     assert write.json()["error"]["code"] == "agent_forbidden"
+
+
+def test_supervisor_context_and_history_use_only_the_current_child_conversation(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _app(tmp_path)
+    conversation_id = "conv-current-worker-history"
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Current child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": item["id"],
+            },
+        ).json()
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                (conversation_id, ticket["id"]),
+            )
+            conn.execute(
+                "INSERT INTO conversations(conversation_id,backend_key,model,"
+                "workspace_folder,access,latest_sequence,created_at) "
+                "VALUES (?, 'codex', 'test', '/tmp', 'full', 2, 1)",
+                (conversation_id,),
+            )
+            conn.executemany(
+                "INSERT INTO conversation_events "
+                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,?,?,?,?)",
+                (
+                    (
+                        conversation_id,
+                        1,
+                        "prompt",
+                        json.dumps({"text": "Start", "sender_label": "automatic-loop"}),
+                        1,
+                    ),
+                    (
+                        conversation_id,
+                        2,
+                        "agent_message",
+                        json.dumps({"text": "Exact Worker update"}),
+                        2,
+                    ),
+                ),
+            )
+            conn.commit()
+        context = client.get(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
+            params={"triggering_message_sequence": 2},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        history = client.get(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
+            params={"limit": 1},
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert context.status_code == 200, context.text
+    assert context.json()["triggering_worker_message"]["payload"]["text"] == (
+        "Exact Worker update"
+    )
+    assert context.json()["conversation_id"] == conversation_id
+    assert history.json()["events"][0]["sequence"] == 2
+    assert history.json()["has_more"] is True
+
+
+def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _app(tmp_path)
+    conversation_id = "conv-current-worker-message"
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Current child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": item["id"],
+            },
+        ).json()
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                (conversation_id, ticket["id"]),
+            )
+            conn.commit()
+        asyncio.run(
+            app.state.conversation_system.start_conversation(
+                ConversationStartRequest(conversation_id=conversation_id, model="test-model")
+            )
+        )
+        before = client.get(f"/api/tickets/{ticket['id']}").json()
+        sent = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/message",
+            json={
+                "conversation_id": conversation_id,
+                "message": "Check the acceptance evidence.",
+            },
+            headers=_supervisor_headers(str(item["id"])),
+        )
+        after = client.get(f"/api/tickets/{ticket['id']}").json()
+
+    assert sent.status_code == 200, sent.text
+    assert sent.json()["sender"] == item["supervisor"]["agent_key"]
+    for field in ("stage", "ceiling", "at_cap", "ticket_status", "day_ids"):
+        assert after[field] == before[field]
+    write = cast(
+        InMemoryConversationSystem, app.state.conversation_system
+    ).backend_prompt_writes(conversation_id)[0]
+    assert write.sender_label == item["supervisor"]["agent_key"]
+    assert write.text == "Check the acceptance evidence."
+
+
+def test_targeted_worker_message_refuses_missing_stale_and_cross_item_targets(
+    tmp_path: Path,
+) -> None:
+    app, db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        first = _create_item(client, "First")
+        second = _create_item(client, "Second")
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Current child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": first["id"],
+            },
+        ).json()
+        path = f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/message"
+        missing = client.post(
+            path,
+            json={"conversation_id": "conv_missing", "message": "Hello"},
+            headers=_supervisor_headers(str(first["id"])),
+        )
+        with connect(str(db_path)) as conn:
+            conn.execute(
+                "UPDATE tickets SET conversation_id='conv_current' WHERE id=?",
+                (ticket["id"],),
+            )
+            conn.commit()
+        stale = client.post(
+            path,
+            json={"conversation_id": "conv_stale", "message": "Hello"},
+            headers=_supervisor_headers(str(first["id"])),
+        )
+        cross = client.post(
+            path,
+            json={"conversation_id": "conv_current", "message": "Hello"},
+            headers=_supervisor_headers(str(second["id"])),
+        )
+
+    assert missing.json()["error"]["code"] == "not_found"
+    assert stale.json()["error"]["code"] == "not_found"
+    assert cross.json()["error"]["code"] == "agent_forbidden"
+
+
+def test_supervisor_artifacts_stay_under_the_owned_item(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        headers = _supervisor_headers(str(item["id"]))
+        written = client.put(
+            f"/api/items/{item['id']}/supervisor/artifacts/notes/proof.md",
+            json={"content": "Verified."},
+            headers=headers,
+        )
+        listed = client.get(
+            f"/api/items/{item['id']}/supervisor/artifacts", headers=headers
+        )
+        traversal = client.put(
+            f"/api/items/{item['id']}/supervisor/artifacts/%2e%2e/escape.md",
+            json={"content": "No."},
+            headers=headers,
+        )
+
+    assert written.status_code == 200, written.text
+    assert written.json()["url"].endswith("/artifacts/notes/proof.md")
+    assert listed.json()["artifacts"] == ["notes/proof.md"]
+    assert traversal.status_code in {400, 404}
+
+
+def test_supervisor_management_actions_use_current_child_scope(tmp_path: Path) -> None:
+    app, _db_path = _app(tmp_path)
+    with TestClient(app) as client:
+        item = _create_item(client)
+        other = _create_item(client, "Other")
+        first = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "First",
+                "kickoff_note": "Start.",
+                "sprint_item_id": item["id"],
+            },
+        ).json()
+        second = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Second",
+                "kickoff_note": "Start.",
+                "sprint_item_id": item["id"],
+            },
+        ).json()
+        foreign = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Foreign",
+                "kickoff_note": "Start.",
+                "sprint_item_id": other["id"],
+            },
+        ).json()
+        headers = _supervisor_headers(str(item["id"]))
+        item_edit = client.patch(
+            f"/api/items/{item['id']}/supervisor/item",
+            json={"body": "Updated brief."},
+            headers=headers,
+        )
+        ticket_edit = client.patch(
+            f"/api/items/{item['id']}/supervisor/tickets/{first['id']}",
+            json={"priority": "P1"},
+            headers=headers,
+        )
+        scoped = client.post(
+            f"/api/items/{item['id']}/supervisor/tickets/{first['id']}/scope",
+            json={"ceiling": "needs_approach", "at_cap": "agent_review"},
+            headers=headers,
+        )
+        day = client.post(
+            f"/api/items/{item['id']}/supervisor/days/2026-08-13/tickets/{first['id']}",
+            headers=headers,
+        )
+        blocked = client.post(
+            f"/api/items/{item['id']}/supervisor/blocks",
+            json={"from_id": second["id"], "to_id": first["id"]},
+            headers=headers,
+        )
+        cross = client.patch(
+            f"/api/items/{item['id']}/supervisor/tickets/{foreign['id']}",
+            json={"priority": "P0"},
+            headers=headers,
+        )
+
+    assert item_edit.json()["body"] == "Updated brief."
+    assert ticket_edit.json()["priority"] == "P1"
+    assert scoped.json()["ceiling"] == "needs_approach"
+    assert scoped.json()["at_cap"] == "agent_review"
+    assert day.json()["day_id"] == "day_2026-08-13"
+    assert blocked.json()["kind"] == "blocks"
+    assert cross.json()["error"]["code"] == "agent_forbidden"
 
 
 def test_supervisor_approves_only_an_exact_child_agent_review(tmp_path: Path) -> None:

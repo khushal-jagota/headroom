@@ -20,9 +20,10 @@ from planner.core.authctx import (
     require_sprint_item_supervisor_ticket_write,
     require_ticket_worker_write,
 )
-from planner.core.contracts import JsonDict, Priority
+from planner.core.contracts import JsonDict, LinkKind, Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.days.logic.dates import planning_date
+from planner.days import actions as days_actions
+from planner.days.logic.dates import planning_date, resolve_day_id
 from planner.list_reads.configuration import DEFAULT_LIST_LIMIT
 from planner.list_reads.contracts import ListPageRequest
 from planner.projects import data as projects_data
@@ -30,6 +31,7 @@ from planner.runtime import conversation_start
 from planner.runtime.logic.conversation_start_resolution import ConversationStartOverrides
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
+from planner.sprints import supervisor_service
 from planner.sprints import views as sprints_views
 from planner.sprints.contracts import (
     KICKOFF_FIELDS,
@@ -60,6 +62,7 @@ from planner.tickets.api import (
     body_str,
     parse_enum,
 )
+from planner.tickets.contracts import TITLE_MAX_CHARS, AtCap, TicketEdit
 from planner.worker_types.configuration import configured_worker_type_registry
 
 router = APIRouter()
@@ -219,7 +222,9 @@ async def get_item_supervisor(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
 
 
 @router.get("/items/{item_id}/supervisor/context")
-async def get_item_supervisor_context(item_id: str, conn: DbConn, ctx: Ctx) -> JsonDict:
+async def get_item_supervisor_context(
+    item_id: str, conn: DbConn, ctx: Ctx, clk: Clk
+) -> JsonDict:
     require_sprint_item_supervisor_read(conn, ctx, item_id)
     item = sprints_data.read_item(conn, item_id).item
     return {
@@ -231,8 +236,294 @@ async def get_item_supervisor_context(item_id: str, conn: DbConn, ctx: Ctx) -> J
             "sprint_id": item.sprint_id,
         },
         "supervisor": _supervisor_json(conn, item_id),
-        "tickets": sprints_views.item_tickets(conn, item_id),
+        "tickets": [
+            tickets_views.ticket_detail(conn, str(ticket["id"]), clk.now_unix())
+            for ticket in sprints_views.item_tickets(conn, item_id)
+        ],
     }
+
+
+@router.get("/items/{item_id}/supervisor/tickets/{ticket_id}/context")
+async def get_supervisor_ticket_context(
+    item_id: str,
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    triggering_message_sequence: int | None = None,
+) -> JsonDict:
+    return supervisor_service.ticket_context(
+        conn,
+        ctx,
+        item_id,
+        ticket_id,
+        now=clk.now_unix(),
+        triggering_message_sequence=triggering_message_sequence,
+    )
+
+
+@router.get("/items/{item_id}/supervisor/tickets/{ticket_id}/history")
+async def get_supervisor_ticket_history(
+    item_id: str,
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    limit: int = 30,
+    before_sequence: int | None = None,
+) -> JsonDict:
+    return supervisor_service.conversation_history(
+        conn,
+        ctx,
+        item_id,
+        ticket_id,
+        limit=limit,
+        before_sequence=before_sequence,
+    )
+
+
+@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/message")
+async def supervisor_message_worker(
+    item_id: str,
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    conversations: Conversations,
+) -> JsonDict:
+    return await supervisor_service.message_current_worker(
+        conversations,
+        conn,
+        ctx,
+        item_id,
+        ticket_id,
+        conversation_id=body_str(raw, "conversation_id"),
+        message=body_str(raw, "message"),
+        now=clk.now_unix(),
+    )
+
+
+@router.patch("/items/{item_id}/supervisor/item")
+async def supervisor_update_item(
+    item_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    require_sprint_item_supervisor_read(conn, ctx, item_id)
+    if len(raw) != 1:
+        raise PlannerError(ErrorCode.validation, "set exactly one Sprint Item field", {})
+    field, raw_value = next(iter(raw.items()))
+    if field not in _ITEM_PLAIN_FIELDS:
+        raise PlannerError(ErrorCode.validation, "unknown item field", {"field": field})
+    if raw_value is not None and not isinstance(raw_value, str):
+        raise PlannerError(ErrorCode.validation, "invalid item field value", {"field": field})
+    if field in {"title", "body", "priority", "project_id"} and raw_value is None:
+        raise PlannerError(
+            ErrorCode.validation, "Sprint Item field cannot be cleared", {"field": field}
+        )
+    if field == "title" and raw_value == "":
+        raise PlannerError(ErrorCode.validation, "item title is required", {})
+    if field == "deadline":
+        _marshal_item_deadline(raw_value)
+    item = sprints_data.update_item_field(conn, item_id, field, raw_value, clock=clk)
+    return sprints_views.item_detail(conn, item.id)
+
+
+@router.patch("/items/{item_id}/supervisor/tickets/{ticket_id}")
+async def supervisor_update_ticket(
+    item_id: str,
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
+    if len(raw) != 1:
+        raise PlannerError(ErrorCode.validation, "set exactly one Ticket field", {})
+    field, value = next(iter(raw.items()))
+    edit = TicketEdit()
+    if field == "title":
+        edit["title"] = body_str(raw, field)
+    elif field == "priority":
+        edit["priority"] = parse_enum(Priority, body_str(raw, field), field)
+    elif field == "deadline":
+        edit["deadline"] = body_opt_str(raw, field)
+    else:
+        raise PlannerError(ErrorCode.validation, "unknown Ticket field", {"field": field})
+    ticket = tickets_data.edit_ticket(
+        conn,
+        ticket_id,
+        edit=edit,
+        title_max_chars=TITLE_MAX_CHARS,
+        actor=ctx.actor,
+        now=clk.now_unix(),
+        supervisor_sprint_item_id=item_id,
+    )
+    return tickets_views.ticket_json(ticket, clk.now_unix())
+
+
+@router.post("/items/{item_id}/supervisor/tickets/{ticket_id}/scope")
+async def supervisor_change_ticket_scope(
+    item_id: str,
+    ticket_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    supervisor_service.require_current_child(conn, ctx, item_id, ticket_id)
+    ceiling = body_str(raw, "ceiling")
+    at_cap_raw = body_str(raw, "at_cap")
+    try:
+        at_cap = AtCap(at_cap_raw)
+    except ValueError:
+        raise PlannerError(
+            ErrorCode.scope_invalid, "unknown at_cap", {"at_cap": at_cap_raw}
+        ) from None
+    ticket = tickets_data.change_scope(
+        conn,
+        ticket_id,
+        ceiling=ceiling,
+        at_cap=at_cap,
+        actor=ctx.actor,
+        now=clk.now_unix(),
+        supervisor_sprint_item_id=item_id,
+    )
+    return tickets_views.ticket_json(ticket, clk.now_unix())
+
+
+@router.post("/items/{item_id}/supervisor/days/{date}/tickets/{ticket_id}")
+async def supervisor_add_ticket_to_day(
+    item_id: str,
+    date: str,
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+) -> JsonDict:
+    day_id = resolve_day_id(date, clk.now(), cfg.boundary_hour)
+    days_actions.add_ticket_to_day(
+        conn,
+        day_id,
+        ticket_id,
+        now=clk.now_unix(),
+        admit=lambda: require_sprint_item_supervisor_ticket_write(
+            conn, ctx, item_id, ticket_id
+        ),
+    )
+    return {"sprint_item_id": item_id, "ticket_id": ticket_id, "day_id": day_id}
+
+
+@router.delete("/items/{item_id}/supervisor/days/{date}/tickets/{ticket_id}")
+async def supervisor_remove_ticket_from_day(
+    item_id: str,
+    date: str,
+    ticket_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+    clk: Clk,
+) -> JsonDict:
+    day_id = resolve_day_id(date, clk.now(), cfg.boundary_hour)
+    days_actions.remove_ticket_from_day(
+        conn,
+        day_id,
+        ticket_id,
+        now=clk.now_unix(),
+        admit=lambda: require_sprint_item_supervisor_ticket_write(
+            conn, ctx, item_id, ticket_id
+        ),
+    )
+    return {"sprint_item_id": item_id, "ticket_id": ticket_id, "day_id": day_id}
+
+
+def _require_supervisor_block_scope(
+    conn: DbConn, ctx: Ctx, item_id: str, from_id: str, to_id: str
+) -> None:
+    require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, from_id)
+    if to_id == item_id:
+        require_sprint_item_supervisor_read(conn, ctx, item_id)
+    else:
+        require_sprint_item_supervisor_ticket_write(conn, ctx, item_id, to_id)
+
+
+@router.post("/items/{item_id}/supervisor/blocks")
+async def supervisor_add_block(
+    item_id: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+) -> JsonDict:
+    from_id = body_str(raw, "from_id")
+    to_id = body_str(raw, "to_id")
+    tickets_actions.add_link(
+        conn,
+        from_id,
+        to_id,
+        LinkKind.blocks,
+        now=clk.now_unix(),
+        admit=lambda: _require_supervisor_block_scope(conn, ctx, item_id, from_id, to_id),
+    )
+    return {"from_id": from_id, "to_id": to_id, "kind": "blocks"}
+
+
+@router.delete("/items/{item_id}/supervisor/blocks")
+async def supervisor_remove_block(
+    item_id: str,
+    conn: DbConn,
+    ctx: Ctx,
+    clk: Clk,
+    from_id: str,
+    to_id: str,
+) -> JsonDict:
+    tickets_actions.remove_link(
+        conn,
+        from_id,
+        to_id,
+        LinkKind.blocks,
+        now=clk.now_unix(),
+        admit=lambda: _require_supervisor_block_scope(conn, ctx, item_id, from_id, to_id),
+    )
+    return {"ok": True}
+
+
+@router.get("/items/{item_id}/supervisor/artifacts")
+async def supervisor_list_artifacts(
+    item_id: str, conn: DbConn, ctx: Ctx, cfg: Cfg
+) -> JsonDict:
+    return supervisor_service.list_artifacts(conn, ctx, item_id, cfg.db_path)
+
+
+@router.put("/items/{item_id}/supervisor/artifacts/{artifact_path:path}")
+async def supervisor_write_artifact(
+    item_id: str,
+    artifact_path: str,
+    raw: dict[str, Any],
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+) -> JsonDict:
+    return supervisor_service.write_artifact(
+        conn, ctx, item_id, cfg.db_path, artifact_path, body_str(raw, "content")
+    )
+
+
+@router.delete("/items/{item_id}/supervisor/artifacts/{artifact_path:path}")
+async def supervisor_delete_artifact(
+    item_id: str,
+    artifact_path: str,
+    conn: DbConn,
+    ctx: Ctx,
+    cfg: Cfg,
+) -> JsonDict:
+    return supervisor_service.delete_artifact(
+        conn, ctx, item_id, cfg.db_path, artifact_path
+    )
 
 
 @router.get("/items/{item_id}/supervisor/conversation/start-values")

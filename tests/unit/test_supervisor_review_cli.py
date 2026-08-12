@@ -94,3 +94,84 @@ def test_supervisor_reject_requires_one_guidance_source(
 
     assert result.exit_code != 0
     assert "reject requires exactly one" in result.output
+
+
+def test_supervisor_message_worker_names_the_current_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, request_path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, request_path, kwargs))
+        return {"fate": "queued"}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        main,
+        [
+            "sprint",
+            "item",
+            "supervisor",
+            "message-worker",
+            "si_one",
+            "t_one",
+            "--conversation-id",
+            "conv_current",
+            "--message",
+            "Check the evidence.",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "POST",
+            "/api/items/si_one/supervisor/tickets/t_one/message",
+            {
+                "as_json": False,
+                "json_body": {
+                    "conversation_id": "conv_current",
+                    "message": "Check the evidence.",
+                },
+            },
+        )
+    ]
+
+
+def test_supervisor_history_requests_one_bounded_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def fake_send(method: str, request_path: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append((method, request_path, kwargs))
+        return {"events": []}
+
+    monkeypatch.setattr(http, "send", fake_send)
+    result = CliRunner().invoke(
+        main,
+        [
+            "sprint",
+            "item",
+            "supervisor",
+            "history",
+            "si_one",
+            "t_one",
+            "--limit",
+            "12",
+            "--before-sequence",
+            "30",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        (
+            "GET",
+            "/api/items/si_one/supervisor/tickets/t_one/history",
+            {
+                "as_json": False,
+                "params": {"limit": 12, "before_sequence": 30},
+            },
+        )
+    ]

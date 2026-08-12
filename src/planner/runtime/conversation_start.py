@@ -297,6 +297,7 @@ async def send_to_ticket_conversation(
     sent_at_unix_milliseconds: int | None = None,
     worker_type_registry: WorkerTypeRegistry | None = None,
     now: int,
+    required_sprint_item_id: str | None = None,
 ) -> DeliveredMessage:
     """Send a message into this Ticket's conversation, making one if there is none yet.
 
@@ -333,6 +334,22 @@ async def send_to_ticket_conversation(
     own values.
     """
     ticket = tickets_data.read_ticket(conn, ticket_id)
+    if required_sprint_item_id is not None:
+        if ticket.sprint_item_id != required_sprint_item_id:
+            raise PlannerError(
+                ErrorCode.agent_forbidden,
+                "the ticket is not a current child of this Sprint Item supervisor",
+                {
+                    "ticket_id": ticket_id,
+                    "sprint_item_id": required_sprint_item_id,
+                },
+            )
+        if ticket.conversation_id is None:
+            raise PlannerError(
+                ErrorCode.not_found,
+                "the ticket has no current Worker conversation",
+                {"ticket_id": ticket_id},
+            )
     if conversation_id is None and ticket.conversation_id is None:
         if mode is PromptDeliveryMode.steer:
             # A steer is text for a turn that is already running, and there is no
