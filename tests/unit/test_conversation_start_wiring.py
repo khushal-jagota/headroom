@@ -34,7 +34,7 @@ from planner.conversation.in_memory_conversation_system import (
 from planner.conversation.message_content import MessageContent, text_message_content
 from planner.core.contracts import Priority
 from planner.core.errors import ErrorCode, PlannerError
-from planner.projects.data import create_project
+from planner.projects.data import create_project, update_project
 from planner.runtime import conversation_start as conversation_start_module
 from planner.runtime.conversation_start import (
     CONVERSATION_ID_PREFIX,
@@ -899,6 +899,47 @@ def test_worker_resolve_explicit_folder_beats_the_project_folder(
         ).workspace_folder
         == _WORKSPACE
     )
+
+
+def test_an_existing_conversation_keeps_its_workspace_after_the_project_folder_changes(
+    tmp_db: Connection, ticket: Ticket, tmp_path: Path
+) -> None:
+    async def exercise() -> None:
+        original_folder = tmp_path / "original"
+        replacement_folder = tmp_path / "replacement"
+        original_folder.mkdir()
+        replacement_folder.mkdir()
+        project = create_project(
+            tmp_db,
+            name="Moved Project",
+            priority=Priority.P1,
+            folder_path=original_folder,
+            now=2,
+        )
+        tmp_db.execute(
+            "UPDATE tickets SET project_id = ? WHERE id = ?", (project.id, ticket.id)
+        )
+        system = InMemoryConversationSystem()
+        conversation_id = await _started(
+            system,
+            tmp_db,
+            read_ticket(tmp_db, ticket.id),
+            worker_resolve(tmp_db, read_ticket(tmp_db, ticket.id)),
+            now=3,
+        )
+
+        update_project(tmp_db, project.id, folder_path=replacement_folder, now=4)
+        fate = await _sent(system, tmp_db, ticket.id, "continue", now=5)
+
+        assert isinstance(fate, PromptDeliveryStarted)
+        stored_workspace = tmp_db.execute(
+            "SELECT workspace_folder FROM conversations WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        assert stored_workspace is not None
+        assert Path(str(stored_workspace["workspace_folder"])) == original_folder.resolve()
+
+    asyncio.run(exercise())
 
 
 def test_worker_resolve_lets_the_tickets_own_values_beat_the_worker_type_defaults(
