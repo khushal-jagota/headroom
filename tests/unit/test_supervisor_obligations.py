@@ -85,7 +85,10 @@ def test_batch_membership_is_ordered_and_recoverable(tmp_path: Path) -> None:
     )
     data.mark_queued_outcome_uncertain(conn, delivery.id, 22)
     assert data.prepared_delivery(conn) is None
-    assert data.list_for_item(conn, item.id)[0].lifecycle.value == "failed"
+    failed = data.list_for_item(conn, item.id)[0]
+    assert failed.lifecycle.value == "failed"
+    assert failed.delivery_id == delivery.id
+    assert data.claim_batch(conn, 23) is None
 
 
 def test_item_deletion_cascades_obligations(tmp_path: Path) -> None:

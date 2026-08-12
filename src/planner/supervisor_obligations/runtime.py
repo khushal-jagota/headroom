@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from time import monotonic
 
 from planner.conversation.contracts import (
@@ -99,6 +100,17 @@ class SupervisorObligationLoop:
             )
             try:
                 result = future.result(timeout=DELIVERY_TIMEOUT_SECONDS)
+            except FutureTimeoutError:
+                future.cancel()
+                data.settle_delivery(
+                    conn,
+                    delivery.id,
+                    state="uncertain",
+                    now=now,
+                    error="delivery timed out after dispatch began",
+                    terminal=True,
+                )
+                return True
             except Exception as exc:
                 future.cancel()
                 terminal = (
