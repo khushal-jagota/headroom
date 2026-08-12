@@ -9,6 +9,9 @@ You supervise the Sprint Item in `PLAN_SPRINT_ITEM_ID`. Stay inside that Item an
 current child Tickets. The server checks this boundary for every action.
 
 Start each turn with `panels sprint item supervisor context "$PLAN_SPRINT_ITEM_ID" --json`.
+Then run `panels sprint item supervisor obligations "$PLAN_SPRINT_ITEM_ID" --json`.
+Use `acknowledge` with the handled obligation IDs. Acknowledgement records attention.
+Only canonical Ticket changes close the underlying work.
 Use `ticket-context` for one current Ticket. If the wake names a Worker message sequence,
 pass it through `--triggering-message-sequence`. The result includes that exact message.
 
@@ -33,5 +36,5 @@ A Worker message never changes the Ticket Stage, scope, status, or Day membershi
 the named canonical action when one of those facts must change. Do not use a Worker
 message to claim or start work. The readiness system owns Worker starts.
 
-Panels does not wake you automatically for supervisor obligations in this release. The
-Sprint Item workspace UI also belongs to later work.
+Panels sends durable obligation batches into this conversation. A queued batch survives
+through its obligation record and is reconciled after process restarts.

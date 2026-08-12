@@ -105,7 +105,7 @@ its launch configuration with the item. Existing items received the same fixed
 configuration during migration. The Other section is a view of loose Tickets and owns
 no supervisor.
 
-The supervisor conversation starts only after a person sends its first message. A reset
+The supervisor conversation starts only after its first user or obligation message. A reset
 kills current work and clears the agent link. Conversation records and message files
 remain as history. The Sprint Item body is the shared brief.
 
@@ -123,7 +123,11 @@ the Sprint Item supervisor agent key as the sender. A missing, reset, stale, or 
 conversation is refused. This message path cannot create a conversation and does not
 change the Ticket Stage, scope, status, or Day membership.
 
-Automatic supervisor obligation delivery and the Sprint Item workspace remain later
+Supervisor obligations are durable and separate from Web Push notifications. Panels sends
+bounded ordered batches through the conversation runtime. The runtime starts or queues them.
+Acknowledgement records attention, while canonical Ticket state closes the obligation.
+
+The Sprint Item workspace remains later
 work. Worker readiness remains the only automatic creator of a Worker step.
 
 Managed item artifacts live under `files/sprint-items/<item-id>/`. The server exposes

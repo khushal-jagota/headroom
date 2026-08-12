@@ -197,6 +197,14 @@ class ConversationStore:
             self._read_events_after_sync, conversation_id, after_sequence
         )
 
+    async def sender_message_outcome(
+        self, conversation_id: str, sender_message_id: str
+    ) -> StoredConversationEvent | None:
+        """Return the one durable outcome for a sender message identity."""
+        return await asyncio.to_thread(
+            self._sender_message_outcome_sync, conversation_id, sender_message_id
+        )
+
     async def latest_turn_ended_sequences(
         self, conversation_ids: Collection[str]
     ) -> dict[str, int]:
@@ -420,6 +428,21 @@ class ConversationStore:
         finally:
             conn.close()
         return tuple(_stored_event(row) for row in rows)
+
+    def _sender_message_outcome_sync(
+        self, conversation_id: str, sender_message_id: str
+    ) -> StoredConversationEvent | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT conversation_id,sequence,kind,payload,created_at FROM conversation_events "
+                "WHERE conversation_id=? AND json_extract(payload,'$.sender_message_id')=? "
+                "AND kind IN ('prompt','prompt_delivery_refused','prompt_discarded') LIMIT 1",
+                (conversation_id, sender_message_id),
+            ).fetchone()
+        finally:
+            conn.close()
+        return None if row is None else _stored_event(row)
 
     def _latest_turn_ended_sequences_sync(
         self, conversation_ids: Collection[str]

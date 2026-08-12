@@ -307,8 +307,9 @@ The database migration maps legacy `propose` scope to `user_review`. It maps leg
 proposals to `awaiting_user_review` and gives each one a `user_review` route snapshot. It
 preserves the proposal body, author, timestamp, Stage, ceiling, status time, and status revision.
 
-Panels does not automatically tell a supervisor about a new agent-review proposal. General
-Worker messages also remain outside this system. Later work owns both delivery paths.
+Panels creates a durable supervisor obligation for agent and user review. It sends bounded
+batches through the Sprint Item conversation. General Worker messages use the separate
+targeted message path and require an existing Worker conversation.
 
 _Code paths:_ `web/src/routes/TicketRoute.svelte` (the Ticket leash),
 `web/src/lib/ui.ts` (the shared ceiling options), `web/src/routes/ReviewRoute.svelte`

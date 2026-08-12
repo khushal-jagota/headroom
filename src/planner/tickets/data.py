@@ -647,6 +647,11 @@ def _write_ticket_status(
             ticket_id,
         ),
     )
+    # This projection shares the canonical status transaction. Reconciliation repairs
+    # interrupted deployments, but it is not the source capture door.
+    from planner.supervisor_obligations.data import project_ticket
+
+    project_ticket(conn, ticket_id, now)
 
 
 def _resting_status_for_ticket(
@@ -2291,6 +2296,10 @@ def edit_ticket(
             f"UPDATE tickets SET {assignments}, updated_at = ? WHERE id = ?",
             (*params, now, ticket_id),
         )
+        if any(field == "sprint_item_id" for field, *_rest in changes):
+            from planner.supervisor_obligations.data import project_ticket
+
+            project_ticket(conn, ticket_id, now)
         ticket_worker_context.set_ticket_changed(conn, ticket_id, actor)
         return _load_ticket_for_write(conn, ticket_id)
 
@@ -2338,6 +2347,9 @@ def move_ticket_to_sprint_item(
             "updated_at = ? WHERE id = ?",
             (sprint_item_id, str(item["project_id"]), item["sprint_id"], now, ticket_id),
         )
+        from planner.supervisor_obligations.data import project_ticket
+
+        project_ticket(conn, ticket_id, now)
         ticket_worker_context.set_ticket_placement_changed(conn, ticket_id)
         return _load_ticket_for_write(conn, ticket_id)
 
