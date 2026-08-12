@@ -1,7 +1,7 @@
 """Store durable work and delivery attempts for Sprint Item supervisors.
 
 Revision ID: supervisor_obligations
-Revises: ticket_review_routes
+Revises: project_folder_path
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "supervisor_obligations"
-down_revision = "ticket_review_routes"
+down_revision = "project_folder_path"
 branch_labels = None
 depends_on = None
 
