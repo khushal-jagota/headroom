@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
@@ -48,47 +50,44 @@ def ticket_context(
     now: int,
     triggering_message_sequence: int | None,
 ) -> dict[str, object]:
-    ticket = require_current_child(conn, ctx, sprint_item_id, ticket_id)
-    triggering_message = None
-    if ticket.conversation_id is not None:
-        params: list[object] = [ticket.conversation_id]
-        sequence_clause = ""
-        if triggering_message_sequence is not None:
-            sequence_clause = " AND sequence = ?"
-            params.append(triggering_message_sequence)
-        row = conn.execute(
-            "SELECT sequence, kind, payload, created_at FROM conversation_events "
-            "WHERE conversation_id = ? AND kind = 'agent_message'"
-            + sequence_clause
-            + " ORDER BY sequence DESC LIMIT 1",
-            tuple(params),
-        ).fetchone()
-        if row is not None:
-            triggering_message = _event_json(row)
-    if triggering_message_sequence is not None and triggering_message is None:
-        raise PlannerError(
-            ErrorCode.not_found,
-            "the triggering Worker message is not in the current conversation",
-            {
-                "ticket_id": ticket_id,
-                "conversation_id": ticket.conversation_id,
-                "sequence": triggering_message_sequence,
-            },
-        )
-    day_ids = [
-        str(row["day_id"])
-        for row in conn.execute(
-            "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
-            (ticket_id,),
-        ).fetchall()
-    ]
-    return {
-        "sprint_item_id": sprint_item_id,
-        "ticket": tickets_views.ticket_detail(conn, ticket_id, now),
-        "day_ids": day_ids,
-        "conversation_id": ticket.conversation_id,
-        "triggering_worker_message": triggering_message,
-    }
+    with _coherent_read(conn):
+        ticket = require_current_child(conn, ctx, sprint_item_id, ticket_id)
+        triggering_message = None
+        if (
+            triggering_message_sequence is not None
+            and ticket.conversation_id is not None
+        ):
+            row = conn.execute(
+                "SELECT sequence, kind, payload, created_at FROM conversation_events "
+                "WHERE conversation_id = ? AND kind = 'agent_message' AND sequence = ?",
+                (ticket.conversation_id, triggering_message_sequence),
+            ).fetchone()
+            if row is not None:
+                triggering_message = _event_json(row)
+        if triggering_message_sequence is not None and triggering_message is None:
+            raise PlannerError(
+                ErrorCode.not_found,
+                "the triggering Worker message is not in the current conversation",
+                {
+                    "ticket_id": ticket_id,
+                    "conversation_id": ticket.conversation_id,
+                    "sequence": triggering_message_sequence,
+                },
+            )
+        day_ids = [
+            str(row["day_id"])
+            for row in conn.execute(
+                "SELECT day_id FROM day_tickets WHERE ticket_id = ? ORDER BY day_id",
+                (ticket_id,),
+            ).fetchall()
+        ]
+        return {
+            "sprint_item_id": sprint_item_id,
+            "ticket": tickets_views.ticket_detail(conn, ticket_id, now),
+            "day_ids": day_ids,
+            "conversation_id": ticket.conversation_id,
+            "triggering_worker_message": triggering_message,
+        }
 
 
 def conversation_history(
@@ -106,35 +105,58 @@ def conversation_history(
             f"limit must be between 1 and {MAXIMUM_HISTORY_EVENTS}",
             {"limit": limit},
         )
-    ticket = require_current_child(conn, ctx, sprint_item_id, ticket_id)
-    if ticket.conversation_id is None:
-        raise PlannerError(
-            ErrorCode.not_found,
-            "the ticket has no current Worker conversation",
-            {"ticket_id": ticket_id},
-        )
-    params: list[object] = [ticket.conversation_id]
-    before_clause = ""
-    if before_sequence is not None:
-        before_clause = " AND sequence < ?"
-        params.append(before_sequence)
-    params.append(limit)
-    rows = conn.execute(
-        "SELECT * FROM ("
-        "SELECT sequence, kind, payload, created_at FROM conversation_events "
-        "WHERE conversation_id = ?"
-        + before_clause
-        + " ORDER BY sequence DESC LIMIT ?) ORDER BY sequence",
-        tuple(params),
-    ).fetchall()
-    events = [_event_json(row) for row in rows]
-    return {
-        "sprint_item_id": sprint_item_id,
-        "ticket_id": ticket_id,
-        "conversation_id": ticket.conversation_id,
-        "events": events,
-        "has_more": bool(events and int(str(events[0]["sequence"])) > 1),
-    }
+    with _coherent_read(conn):
+        ticket = require_current_child(conn, ctx, sprint_item_id, ticket_id)
+        if ticket.conversation_id is None:
+            raise PlannerError(
+                ErrorCode.not_found,
+                "the ticket has no current Worker conversation",
+                {"ticket_id": ticket_id},
+            )
+        params: list[object] = [ticket.conversation_id]
+        before_clause = ""
+        if before_sequence is not None:
+            before_clause = " AND sequence < ?"
+            params.append(before_sequence)
+        params.append(limit)
+        rows = conn.execute(
+            "SELECT * FROM ("
+            "SELECT sequence, kind, payload, created_at FROM conversation_events "
+            "WHERE conversation_id = ?"
+            + before_clause
+            + " ORDER BY sequence DESC LIMIT ?) ORDER BY sequence",
+            tuple(params),
+        ).fetchall()
+        events = [_event_json(row) for row in rows]
+        return {
+            "sprint_item_id": sprint_item_id,
+            "ticket_id": ticket_id,
+            "conversation_id": ticket.conversation_id,
+            "events": events,
+            "has_more": bool(events and int(str(events[0]["sequence"])) > 1),
+        }
+
+
+@contextmanager
+def _coherent_read(conn: sqlite3.Connection) -> Iterator[None]:
+    """Hold one read result against child moves and conversation resets.
+
+    ``BEGIN IMMEDIATE`` takes the writer reservation before the scope check. A concurrent
+    parent move or reset waits until this complete result leaves the transaction. Existing
+    transaction owners keep ownership and supply their own coherent boundary.
+    """
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        if owns_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    else:
+        if owns_transaction:
+            conn.execute("COMMIT")
 
 
 async def message_current_worker(

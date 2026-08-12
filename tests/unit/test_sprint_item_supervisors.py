@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -24,7 +25,9 @@ from planner.core.server import create_app
 from planner.runtime import conversation_start
 from planner.sprints import data as sprints_data
 from planner.sprints import service as sprints_service
+from planner.sprints import supervisor_service
 from planner.tickets import data as tickets_data
+from planner.tickets import views as tickets_views
 
 
 def _app(tmp_path: Path) -> tuple[FastAPI, Path]:
@@ -187,6 +190,10 @@ def test_supervisor_context_and_history_use_only_the_current_child_conversation(
             params={"triggering_message_sequence": 2},
             headers=_supervisor_headers(str(item["id"])),
         )
+        context_without_trigger = client.get(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/context",
+            headers=_supervisor_headers(str(item["id"])),
+        )
         history = client.get(
             f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
             params={"limit": 1},
@@ -198,8 +205,148 @@ def test_supervisor_context_and_history_use_only_the_current_child_conversation(
         "Exact Worker update"
     )
     assert context.json()["conversation_id"] == conversation_id
+    assert context_without_trigger.json()["triggering_worker_message"] is None
     assert history.json()["events"][0]["sequence"] == 2
     assert history.json()["has_more"] is True
+
+
+def test_ticket_context_serializes_a_concurrent_child_move(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, db_path = _app(tmp_path)
+    move_attempted = threading.Event()
+    move_finished = threading.Event()
+    move_thread: threading.Thread | None = None
+    original_ticket_detail = tickets_views.ticket_detail
+
+    with TestClient(app) as client:
+        first = _create_item(client, "First")
+        second = _create_item(client, "Second")
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Moving child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": first["id"],
+            },
+        ).json()
+
+        def move_child() -> None:
+            with connect(str(db_path)) as moving:
+                move_attempted.set()
+                moving.execute(
+                    "UPDATE tickets SET sprint_item_id = ? WHERE id = ?",
+                    (second["id"], ticket["id"]),
+                )
+                moving.commit()
+            move_finished.set()
+
+        def ticket_detail_during_move(
+            conn: Any, ticket_id: str, now: int
+        ) -> dict[str, Any]:
+            nonlocal move_thread
+            move_thread = threading.Thread(target=move_child)
+            move_thread.start()
+            assert move_attempted.wait(1)
+            assert not move_finished.wait(0.05)
+            return original_ticket_detail(conn, ticket_id, now)
+
+        monkeypatch.setattr(tickets_views, "ticket_detail", ticket_detail_during_move)
+        context = client.get(
+            f"/api/items/{first['id']}/supervisor/tickets/{ticket['id']}/context",
+            headers=_supervisor_headers(str(first["id"])),
+        )
+
+    assert move_thread is not None
+    move_thread.join(timeout=2)
+    assert move_finished.is_set()
+    assert context.status_code == 200, context.text
+    assert context.json()["ticket"]["sprint_item_id"] == first["id"]
+    with connect(str(db_path)) as conn:
+        assert tickets_data.read_ticket(conn, str(ticket["id"])).sprint_item_id == second["id"]
+
+
+def test_history_serializes_a_concurrent_conversation_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, db_path = _app(tmp_path)
+    conversation_id = "conv-history-before-reset"
+    replacement_id = "conv-history-after-reset"
+    reset_attempted = threading.Event()
+    reset_finished = threading.Event()
+    reset_thread: threading.Thread | None = None
+    original_event_json = supervisor_service._event_json
+
+    with TestClient(app) as client:
+        item = _create_item(client)
+        ticket = client.post(
+            "/api/tickets",
+            json={
+                "worker_type": "coding",
+                "title": "Reset child",
+                "kickoff_note": "Start.",
+                "sprint_item_id": item["id"],
+            },
+        ).json()
+        with connect(str(db_path)) as conn:
+            conn.executemany(
+                "INSERT INTO conversations(conversation_id,backend_key,model,"
+                "workspace_folder,access,latest_sequence,created_at) "
+                "VALUES (?, 'codex', 'test', '/tmp', 'full', ?, 1)",
+                ((conversation_id, 1), (replacement_id, 0)),
+            )
+            conn.execute(
+                "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                (conversation_id, ticket["id"]),
+            )
+            conn.execute(
+                "INSERT INTO conversation_events "
+                "(conversation_id,sequence,kind,payload,created_at) VALUES (?,?,?,?,?)",
+                (
+                    conversation_id,
+                    1,
+                    "agent_message",
+                    json.dumps({"text": "History before reset"}),
+                    1,
+                ),
+            )
+            conn.commit()
+
+        def reset_conversation() -> None:
+            with connect(str(db_path)) as resetting:
+                reset_attempted.set()
+                resetting.execute(
+                    "UPDATE tickets SET conversation_id = ? WHERE id = ?",
+                    (replacement_id, ticket["id"]),
+                )
+                resetting.commit()
+            reset_finished.set()
+
+        def event_json_during_reset(row: Any) -> dict[str, object]:
+            nonlocal reset_thread
+            reset_thread = threading.Thread(target=reset_conversation)
+            reset_thread.start()
+            assert reset_attempted.wait(1)
+            assert not reset_finished.wait(0.05)
+            return original_event_json(row)
+
+        monkeypatch.setattr(supervisor_service, "_event_json", event_json_during_reset)
+        history = client.get(
+            f"/api/items/{item['id']}/supervisor/tickets/{ticket['id']}/history",
+            headers=_supervisor_headers(str(item["id"])),
+        )
+
+    assert reset_thread is not None
+    reset_thread.join(timeout=2)
+    assert reset_finished.is_set()
+    assert history.status_code == 200, history.text
+    assert history.json()["conversation_id"] == conversation_id
+    assert history.json()["events"][0]["payload"]["text"] == "History before reset"
+    with connect(str(db_path)) as conn:
+        assert tickets_data.read_ticket(conn, str(ticket["id"])).conversation_id == (
+            replacement_id
+        )
 
 
 def test_targeted_worker_message_is_attributed_and_preserves_ticket_facts(
